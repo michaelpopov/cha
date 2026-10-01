@@ -44,7 +44,8 @@ public:
         std::string session_id,
         std::string url,
         std::string authorization,
-        std::chrono::milliseconds deadline);
+        std::chrono::milliseconds deadline,
+        std::chrono::milliseconds idle_timeout = {});
 
     [[nodiscard]] std::shared_ptr<app::OperationReply> audio(
         std::string connection_id,

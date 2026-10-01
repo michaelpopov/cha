@@ -1841,19 +1841,39 @@ describe('live chat', () => {
   });
 
   it('sends an OpenAI dictation when it ends with Over to you', async () => {
-    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
-    let appendVoice = (_text: string) => {};
-    const stop = vi.fn(async () => {});
-    vi.spyOn(VoiceInputSession, 'start').mockImplementation(
-      async (_configuration, onTranscription) => {
-        appendVoice = onTranscription;
-        return { stop, cancel: vi.fn() };
+    const track = { kind: 'audio', enabled: true, stop: vi.fn() };
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn(async () => ({
+        getAudioTracks: () => [track], getTracks: () => [track],
+      })) },
+    });
+    const channel = Object.assign(new EventTarget(), {
+      readyState: 'open', send: vi.fn(),
+      close() { this.readyState = 'closed'; },
+      message(event: object) {
+        channel.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(event) }));
       },
-    );
+    });
+    class Peer extends EventTarget {
+      connectionState = 'new';
+      addTrack() { return { replaceTrack: async () => {} }; }
+      createDataChannel() { return channel; }
+      async createOffer() { return { type: 'offer', sdp: 'offer' }; }
+      async setLocalDescription() {}
+      async setRemoteDescription() { channel.dispatchEvent(new Event('open')); }
+      close() { this.connectionState = 'closed'; }
+    }
+    vi.stubGlobal('RTCPeerConnection', Peer);
+    let transcript = '';
+    function appendVoice(delta: string) {
+      transcript += delta;
+      channel.message({ type: 'conversation.item.input_audio_transcription.delta', delta });
+    }
     const events = drivableEvents();
     const submitInput = vi.fn(async () => ({ clear_input: true }));
     render(<App client={fixtureClient({
       submitInput,
+      connectVoiceInput: async () => 'answer',
       getVoiceInputRuntime: async () => ({
         provider: 'openai',
         url: 'https://api.openai.com/v1/realtime/calls',
@@ -1876,7 +1896,7 @@ describe('live chat', () => {
     await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
       'entrance', 'welcome', { text: 'Explain this.' },
     ), { timeout: 2500 });
-    expect(stop).not.toHaveBeenCalled();
+    expect(channel.send).not.toHaveBeenCalled();
     expect(input).toHaveValue('');
     expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
 
@@ -1884,16 +1904,22 @@ describe('live chat', () => {
     await waitFor(() => expect(submitInput).toHaveBeenLastCalledWith(
       'entrance', 'welcome', { text: 'Next question.' },
     ), { timeout: 2500 });
-    expect(stop).not.toHaveBeenCalled();
+    expect(channel.send).not.toHaveBeenCalled();
 
     act(() => appendVoice('Hello comma how are you question mark over to you'));
     await waitFor(() => expect(submitInput).toHaveBeenLastCalledWith(
       'entrance', 'welcome', { text: 'Hello, how are you?' },
     ), { timeout: 2500 });
 
+    act(() => appendVoice('A final note'));
     fireEvent.click(screen.getByRole('button', { name: 'Stop voice input' }));
+    expect(channel.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+    act(() => channel.message({
+      type: 'conversation.item.input_audio_transcription.completed',
+      transcript: `${transcript} from the final reply.`,
+    }));
     await screen.findByRole('button', { name: 'Start voice input' });
-    expect(stop).toHaveBeenCalledOnce();
+    expect(input).toHaveValue('A final note from the final reply.');
 
     fireEvent.change(input, { target: { value: 'Write over to you' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));

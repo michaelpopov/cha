@@ -7,10 +7,12 @@
 #include "util/text.h"
 
 #include <charconv>
+#include <chrono>
 #include <limits>
 #include <optional>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 
@@ -172,6 +174,12 @@ enum class Route {
     unknown,
     bootstrap,
     voice_output,
+    voice_input,
+    voice_connect,
+    voice_xai_start,
+    voice_xai_audio,
+    voice_xai_stop,
+    voice_xai_cancel,
     sessions,
     session,
     input,
@@ -214,6 +222,18 @@ ParsedRoute parse_route(std::string_view uri) {
     if (first == "voice-output") {
         if (!rest.empty()) return {};
         return {.route = Route::voice_output};
+    }
+    if (first == "voice-input") {
+        if (rest.empty()) return {.route = Route::voice_input};
+        std::string_view action;
+        if (!take_segment(rest, action)) return {};
+        if (action == "connect" && rest.empty()) return {.route = Route::voice_connect};
+        if (action != "xai" || !take_segment(rest, action) || !rest.empty()) return {};
+        if (action == "start") return {.route = Route::voice_xai_start};
+        if (action == "audio") return {.route = Route::voice_xai_audio};
+        if (action == "stop") return {.route = Route::voice_xai_stop};
+        if (action == "cancel") return {.route = Route::voice_xai_cancel};
+        return {};
     }
     if (first != "forums") return {};
     std::string_view forum;
@@ -349,6 +369,98 @@ bool write_rejected(
 bool write_failed(
     int fd, const SubmitView& view, const std::atomic<bool>& stop) {
     return write_code(fd, view.code, stop, view.message);
+}
+
+void serve_voice_input(
+    app::Application& application,
+    const ScgiRequest& request,
+    Route route,
+    int fd,
+    const std::atomic<bool>& stop) {
+    using namespace std::chrono_literals;
+    if (!require_json_body(request, fd, stop)) return;
+    const auto object = parse_object(request.body, fd, stop);
+    if (!object) return;
+    const auto& body = *object;
+    const bool connect = route == Route::voice_connect;
+    const bool start = route == Route::voice_xai_start;
+    const bool audio = route == Route::voice_xai_audio;
+    const bool finish = route == Route::voice_xai_stop;
+    const auto invalid = [] {
+        throw app::ApplicationError(ErrorCode::invalid_argument, "The request was not valid.");
+    };
+    std::set<std::string> keys = connect ? std::set<std::string>{"sdp", "languages"}
+        : start ? std::set<std::string>{"session_id", "languages"}
+        : audio ? std::set<std::string>{"session_id", "pcm_base64"}
+        : finish ? std::set<std::string>{"session_id", "remaining_ms"}
+        : std::set<std::string>{"session_id"};
+    if (body.size() != keys.size()) invalid();
+    for (const auto& key : keys) if (!body.contains(key)) invalid();
+    std::vector<std::string> languages;
+    if (connect || start) {
+        if (!body["languages"].is_array()) invalid();
+        for (const auto& value : body["languages"]) {
+            if (!value.is_string()) invalid();
+            languages.push_back(value.get<std::string>());
+        }
+    }
+    std::string session;
+    if (!connect) {
+        if (!body["session_id"].is_string()) invalid();
+        session = body["session_id"].get<std::string>();
+        if (session.empty() || session.size() > 64
+            || session.find_first_not_of(
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+                != std::string::npos) invalid();
+    }
+    static std::atomic<std::uint64_t> next_request{0};
+    const auto id = ++next_request;
+    // Each dictation owns a stable scope across separate HTTP requests.
+    const std::string connection = "chaweb-voice-" + (connect ? std::to_string(id) : session);
+    const auto epoch = application.context_epoch();
+    std::shared_ptr<app::OperationReply> reply;
+    if (connect) {
+        if (!body["sdp"].is_string()) invalid();
+        reply = application.connect_voice_input(
+            connection, id, body["sdp"].get<std::string>(), std::move(languages), epoch);
+    } else if (start) {
+        reply = application.start_xai_voice_input(
+            connection, id, session, std::move(languages), epoch, 30s, 15s);
+    } else if (audio) {
+        if (!body["pcm_base64"].is_string()) invalid();
+        reply = application.send_xai_voice_audio(
+            connection, id, session, body["pcm_base64"].get<std::string>(), epoch, 30s);
+    } else if (finish) {
+        if (!body["remaining_ms"].is_number_integer()) invalid();
+        reply = application.stop_xai_voice_input(
+            connection, id, session, body["remaining_ms"].get<std::int64_t>(), epoch, 30s);
+    } else {
+        application.release_connection_resources(connection);
+        write_json(fd, 200, nlohmann::json::object(), stop);
+        return;
+    }
+    const auto deadline = std::chrono::steady_clock::now() + 30s;
+    while (!stop.load() && !peer_closed(fd)) {
+        if (const auto result = reply->peek()) {
+            if (const auto* failure = std::get_if<app::OperationReply::Failure>(&*result)) {
+                write_code(fd, failure->code, stop, failure->message);
+                application.release_connection_resources(connection);
+            } else {
+                if (!write_json(fd, 200, std::get<nlohmann::json>(*result), stop)
+                    || connect || finish) {
+                    application.release_connection_resources(connection);
+                }
+            }
+            return;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            write_code(fd, ErrorCode::command_timeout, stop, "Voice input timed out.");
+            break;
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+    reply->abandon();
+    application.release_connection_resources(connection);
 }
 
 void serve_bootstrap(
@@ -646,6 +758,18 @@ void handle_chaweb_request(
         if (request.method == "GET" && route.route == Route::voice_output) {
             const auto runtime = application.get_voice_output_runtime(application.context_epoch());
             write_json(fd, 200, runtime ? nlohmann::json(*runtime) : nlohmann::json(nullptr), stop);
+            return;
+        }
+        if (request.method == "GET" && route.route == Route::voice_input) {
+            const auto runtime = application.get_voice_input_runtime(application.context_epoch());
+            write_json(fd, 200, runtime ? nlohmann::json(*runtime) : nlohmann::json(nullptr), stop);
+            return;
+        }
+        if (request.method == "POST"
+            && (route.route == Route::voice_connect || route.route == Route::voice_xai_start
+                || route.route == Route::voice_xai_audio || route.route == Route::voice_xai_stop
+                || route.route == Route::voice_xai_cancel)) {
+            serve_voice_input(application, request, route.route, fd, stop);
             return;
         }
         if ((request.method == "GET"

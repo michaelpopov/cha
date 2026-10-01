@@ -4,6 +4,7 @@ import { onSpeechPlaybackChange } from './speechPlayback';
 import captureUrl from './voiceInputCapture.worklet.js?url&no-inline';
 import type {
   VoiceInputConfiguration,
+  VoiceInputCapture,
   VoiceInputTransport,
   VoiceInputXaiBridge,
 } from './voiceInput';
@@ -64,9 +65,12 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     private readonly onTranscription: (text: string, provisional?: boolean) => void,
     private readonly onFailure: (failure: unknown) => void,
     private readonly xaiBridge: VoiceInputXaiBridge,
+    private readonly gain: GainNode,
+    private readonly ownsContext: boolean,
   ) {
     this.worklet.port.addEventListener('message', this.onWorkletMessage);
     this.worklet.addEventListener('processorerror', this.onCaptureFailure);
+    this.context.addEventListener('statechange', this.onContextStateChange);
     for (const track of this.stream.getTracks()) {
       track.addEventListener('ended', this.onCaptureFailure);
     }
@@ -130,6 +134,12 @@ class XaiVoiceInputSession implements VoiceInputTransport {
 
   private readonly onCaptureFailure = (): void => {
     if (!this.captureStopped) this.fail(new Error('Voice input audio capture failed.'));
+  };
+
+  private readonly onContextStateChange = (): void => {
+    if (!this.captureStopped && this.context.state !== 'running') {
+      this.fail(new Error('Voice input was interrupted. Tap the microphone to restart.'));
+    }
   };
 
   // Nineteen completed batches may wait, including the in-flight request.
@@ -286,11 +296,12 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     this.captureStopped = true;
     this.release();
     void this.xaiBridge.cancel(this.sessionId).catch(() => undefined);
-    this.clearPreview();
     this.notifyIdle();
     this.flushResolve?.();
     this.flushResolve = null;
     this.onFailure(failure);
+    // Let the consumer preserve visible words before retiring the preview.
+    this.clearPreview();
   }
 
   private release(): Promise<void> {
@@ -299,11 +310,15 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     this.captureStopped = true;
     this.worklet.port.removeEventListener('message', this.onWorkletMessage);
     this.worklet.removeEventListener('processorerror', this.onCaptureFailure);
+    this.context.removeEventListener('statechange', this.onContextStateChange);
     for (const track of this.stream.getTracks()) {
       track.removeEventListener('ended', this.onCaptureFailure);
     }
     stopTracks(this.stream);
-    this.releasePromise = this.context.close();
+    this.source?.disconnect();
+    this.worklet.disconnect();
+    this.gain.disconnect();
+    this.releasePromise = this.ownsContext ? this.context.close() : Promise.resolve();
     // Cancel and failure initiate cleanup without waiting; graceful stop awaits
     // this same promise inside its timeout budget.
     void this.releasePromise.catch(() => undefined);
@@ -317,11 +332,14 @@ export async function startXaiVoiceInput(
   onFailure: (failure: unknown) => void,
   xaiBridge: VoiceInputXaiBridge,
   signal?: AbortSignal,
+  capture?: VoiceInputCapture,
 ): Promise<VoiceInputTransport> {
   const sessionId = crypto.randomUUID();
   const setup = new AbortController();
   let stream: MediaStream | null = null;
   let context: AudioContext | null = null;
+  let worklet: AudioWorkletNode | null = null;
+  let gain: GainNode | null = null;
   let session: XaiVoiceInputSession | null = null;
   let started = false;
   let nativeCancelled = false;
@@ -332,7 +350,9 @@ export async function startXaiVoiceInput(
       return;
     }
     stopTracks(stream);
-    void context?.close().catch(() => undefined);
+    worklet?.disconnect();
+    gain?.disconnect();
+    if (!capture) void context?.close().catch(() => undefined);
     if (!started || nativeCancelled) return;
     nativeCancelled = true;
     void xaiBridge.cancel(sessionId).catch(() => undefined);
@@ -342,19 +362,21 @@ export async function startXaiVoiceInput(
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
     if (setup.signal.aborted) throw abortError();
-    context = new AudioContext({ sampleRate: captureSampleRate });
+    context = capture?.context ?? new AudioContext({ sampleRate: captureSampleRate });
     if (context.sampleRate !== captureSampleRate) {
       throw new Error(unsupportedAudioFormat);
     }
     if (context.state === 'suspended') await context.resume();
     if (setup.signal.aborted) throw abortError();
-    if (context.state === 'suspended') {
+    if (context.state !== 'running') {
       throw new Error('Voice input could not start audio capture.');
     }
     await context.audioWorklet.addModule(captureUrl);
     if (setup.signal.aborted) throw abortError();
-    const worklet = new AudioWorkletNode(context, 'cha-voice-capture');
-    const gain = context.createGain();
+    worklet = new AudioWorkletNode(context, 'cha-voice-capture', {
+      processorOptions: { batchSamples: capture?.batchSamples ?? 1600 },
+    });
+    gain = context.createGain();
     gain.gain.value = 0;
     worklet.connect(gain);
     gain.connect(context.destination);
@@ -380,6 +402,8 @@ export async function startXaiVoiceInput(
       onTranscription,
       onFailure,
       xaiBridge,
+      gain,
+      !capture,
     );
     session.attachMicrophone();
     if (setup.signal.aborted) throw abortError();

@@ -21,6 +21,11 @@ export interface VoiceInputTransport {
   cancel(): void;
 }
 
+export interface VoiceInputCapture {
+  context: AudioContext;
+  batchSamples: number;
+}
+
 export type VoiceInputXaiStartResult = XaiVoiceStartResult;
 export type VoiceInputXaiPieces = XaiVoicePieces;
 
@@ -68,6 +73,7 @@ export class VoiceInputSession {
     nativeConnect: VoiceInputConnect,
     xaiBridge: VoiceInputXaiBridge,
     signal?: AbortSignal,
+    capture?: VoiceInputCapture,
   ): Promise<VoiceInputTransport> {
     if (signal?.aborted) {
       throw new DOMException('The operation was aborted.', 'AbortError');
@@ -75,7 +81,7 @@ export class VoiceInputSession {
     if (configuration.provider === 'xai') {
       if (!VoiceInputSession.supported('xai')) throw new Error('Voice input is unavailable.');
       return startXaiVoiceInput(
-        configuration, onTranscription, onFailure, xaiBridge, signal,
+        configuration, onTranscription, onFailure, xaiBridge, signal, capture,
       );
     }
     if (configuration.provider !== 'openai' || !VoiceInputSession.supported('openai')) {

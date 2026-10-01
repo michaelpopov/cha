@@ -1,6 +1,10 @@
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChaError, ChaProtocolError } from './api/client';
+import type { ChaWebClient } from './chaweb/client';
+import { useVoiceInput } from './chaweb/useVoiceInput';
 import { OpenAiVoiceInputSession } from './openAiVoiceInput';
 import { beginSpeechPlayback } from './speechPlayback';
 import {
@@ -52,7 +56,7 @@ class FakeWorklet extends EventTarget {
   }
 }
 
-class FakeContext {
+class FakeContext extends EventTarget {
   static latest: FakeContext | null = null;
   static moduleUrl = '';
   static rate = 16000;
@@ -69,6 +73,7 @@ class FakeContext {
   };
 
   constructor(_options?: AudioContextOptions) {
+    super();
     FakeContext.latest = this;
   }
 
@@ -106,6 +111,69 @@ const xaiConfiguration = {
   delay: 'low' as const,
   prompt: 'Do not send this prompt.',
 };
+
+it('reuses an unlocked browser audio context across dictations and releases tracks on interruption', async () => {
+  const { stopTrack } = installCapture();
+  const context = new FakeContext();
+  const capture = { context: context as unknown as AudioContext, batchSamples: 8000 };
+  const failure = vi.fn();
+  const bridge = readyBridge();
+  const first = await VoiceInputSession.start(xaiConfiguration, vi.fn(), failure,
+    vi.fn(), bridge, undefined, capture);
+  await first.stop();
+  expect(context.closed).toBe(false);
+  stopTrack.mockClear();
+  const second = await VoiceInputSession.start(xaiConfiguration, vi.fn(), failure,
+    vi.fn(), bridge, undefined, capture);
+  context.state = 'interrupted';
+  context.dispatchEvent(new Event('statechange'));
+  expect(failure).toHaveBeenCalledOnce();
+  expect(stopTrack).toHaveBeenCalledOnce();
+  expect(context.closed).toBe(false);
+  second.cancel();
+  await context.close();
+});
+
+it.each(['audio', 'interruption', 'stop'])('preserves the chaweb draft after an xAI %s failure', async (failureAt) => {
+  const { stopTrack } = installCapture();
+  vi.stubGlobal('isSecureContext', true);
+  const bridge = readyBridge();
+  let failAudio = false;
+  bridge.audio = vi.fn(async (id) => {
+    if (failAudio) throw new Error('Connection lost.');
+    return { session_id: id, pieces: [], preview: 'Keep these words' };
+  });
+  bridge.stop = vi.fn(async () => { throw new Error('Connection lost.'); });
+  const client = {
+    getVoiceInputRuntime: async () => ({ ...xaiConfiguration, url: 'wss://example.test/stt', send_phrase: 'over to you' }),
+    startXaiVoiceInput: bridge.start, sendXaiVoiceAudio: bridge.audio,
+    stopXaiVoiceInput: bridge.stop, cancelXaiVoiceInput: bridge.cancel,
+  } as unknown as ChaWebClient;
+  const { result } = renderHook(() => {
+    const [draft, setDraft] = useState('Typed.');
+    const voice = useVoiceInput(client, 'session:lobby/one', draft, setDraft, vi.fn(), false);
+    return { draft, voice };
+  });
+  await waitFor(() => expect(result.current.voice.available).toBe(true));
+  await act(async () => result.current.voice.toggle());
+  await act(async () => FakeWorklet.latest?.emit(Int16Array.from([1])));
+  expect(result.current.draft).toBe('Typed. Keep these words');
+  await act(async () => {
+    if (failureAt === 'audio') {
+      failAudio = true;
+      FakeWorklet.latest?.emit(Int16Array.from([2]));
+    } else if (failureAt === 'interruption') {
+      FakeContext.latest!.state = 'interrupted';
+      FakeContext.latest!.dispatchEvent(new Event('statechange'));
+    } else {
+      result.current.voice.toggle();
+    }
+  });
+  expect(result.current.voice.error).not.toBeNull();
+  expect(result.current.voice.enabled).toBe(false);
+  expect(stopTrack).toHaveBeenCalled();
+  expect(result.current.draft).toBe('Typed. Keep these words');
+});
 
 function installCapture() {
   const stopTrack = vi.fn();

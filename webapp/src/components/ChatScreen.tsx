@@ -1,3 +1,4 @@
+import { withoutVoiceSendPhrase } from '../dictationText';
 import {
   Fragment,
   useCallback,
@@ -109,20 +110,6 @@ function xaiBridgeFromClient(client: ChaClient): VoiceInputXaiBridge {
 // first time it scrolled itself.
 const followSlack = 24;
 const allCharactersTarget = '*';
-function withoutVoiceSendPhrase(text: string, phrase: string): string | null {
-  const spokenPhrase = phrase.trim().replace(/[,.!?;:…]+$/, '').trim();
-  if (!spokenPhrase) return null;
-  const escaped = spokenPhrase.split(/\s+/)
-    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('\\s+');
-  const pattern = new RegExp(`(?:^|[\\s,;:]+)${escaped}([,.!?;:…]*)\\s*$`, 'i');
-  const match = text.match(pattern);
-  if (!match) return null;
-  const prompt = text.replace(pattern, '').trimEnd();
-  return match[1]?.includes('?') && prompt && !/[.!?…]$/.test(prompt)
-    ? `${prompt}?` : prompt;
-}
-
 // Older stored transcripts can contain a model-echoed UTC metadata line. Entry
 // creation time already has its own UI below the message, so hide that legacy
 // prefix here as well.
@@ -998,6 +985,7 @@ export function ChatScreen({
     voiceInputStartup.current = startup;
     let receivedVoiceDelta = false;
     let voicePreview = '';
+    let openAiTranscript = '';
     setVoiceSendPending(false);
     setVoiceInputState('starting');
     setActionError(null);
@@ -1032,6 +1020,16 @@ export function ChatScreen({
         configuration,
         (text, provisional) => {
           if (voiceInputAttempt.current !== attempt) return;
+          if (configuration.provider === 'openai') {
+            // Native spoken sends keep recording. Consume only new text so
+            // cumulative previews cannot restore an already submitted prompt.
+            if (provisional && !text) return;
+            const transcript = text;
+            text = transcript.startsWith(openAiTranscript)
+              ? transcript.slice(openAiTranscript.length) : '';
+            openAiTranscript = provisional ? transcript : '';
+            provisional = false;
+          }
           if (provisional) {
             const current = draftRef.current;
             const at = voicePreview ? current.lastIndexOf(voicePreview) : -1;

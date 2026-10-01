@@ -66,3 +66,17 @@ export function prepareDictationPiece(raw: string, previousCharacter: string): s
   if (!normalized) return null;
   return needsSpace(previousCharacter, normalized) ? ` ${normalized}` : normalized;
 }
+
+export function withoutVoiceSendPhrase(text: string, phrase: string): string | null {
+  const spokenPhrase = phrase.trim().replace(/[,.!?;:…]+$/, '').trim();
+  if (!spokenPhrase) return null;
+  const escaped = spokenPhrase.split(/\s+/)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('\\s+');
+  const pattern = new RegExp(`(?:^|[\\s,;:]+)${escaped}([,.!?;:…]*)\\s*$`, 'i');
+  const match = text.match(pattern);
+  if (!match) return null;
+  const prompt = text.replace(pattern, '').trimEnd();
+  return match[1]?.includes('?') && prompt && !/[.!?…]$/.test(prompt)
+    ? `${prompt}?` : prompt;
+}

@@ -1,11 +1,15 @@
 import { act, renderHook } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { bootstrapFixture, snapshotFixture as baseSnapshot, voiceOutputRuntimeFixture } from '../test/fixtures';
 import type { AudioDownloadAcceptance, AudioDownloadStatus, SessionSnapshot } from '../api/client';
 import { TextToSpeechError, TextToSpeechSession } from '../textToSpeech';
+import { beginSpeechPlayback } from '../speechPlayback';
+import { VoiceInputSession } from '../voiceInput';
 import { ChaWebError, type ChaWebClient } from './client';
 import { useReadAloud } from './useReadAloud';
+import { useVoiceInput } from './useVoiceInput';
 import type { TranscriptEntry } from './transcript';
 
 vi.mock('../textToSpeech', async (importOriginal) => {
@@ -28,6 +32,12 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   return {
     getBootstrap: vi.fn(), listSessions: vi.fn(), createSession: vi.fn(), getSession: vi.fn(),
     submitInput: vi.fn(), stopSession: vi.fn(), deleteSession: vi.fn(),
+    getVoiceInputRuntime: vi.fn(async () => null),
+    connectVoiceInput: vi.fn(),
+    startXaiVoiceInput: vi.fn(),
+    sendXaiVoiceAudio: vi.fn(),
+    stopXaiVoiceInput: vi.fn(),
+    cancelXaiVoiceInput: vi.fn(),
     getVoiceOutputRuntime: vi.fn(async () => voiceOutputRuntimeFixture),
     startAudio,
     startAudioBatch: vi.fn(async (forum: string, session: string, ids: number[], vault: string) => ({
@@ -55,7 +65,87 @@ beforeEach(() => {
     return { play, stop } as unknown as TextToSpeechSession;
   });
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it.each(['ended', 'failed', 'disabled'])('holds xAI capture through automatic audio admission and loading until %s', async (outcome) => {
+  vi.stubGlobal('isSecureContext', true);
+  vi.stubGlobal('AudioContext', class {
+    resume = vi.fn(async () => undefined);
+    close = vi.fn(async () => undefined);
+  });
+  vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+  const captures: Array<{ text: Parameters<typeof VoiceInputSession.start>[1]; cancel: ReturnType<typeof vi.fn> }> = [];
+  vi.spyOn(VoiceInputSession, 'start').mockImplementation(async (_config, text) => {
+    const capture = { text, cancel: vi.fn(), stop: vi.fn(async () => undefined) };
+    captures.push(capture);
+    return capture;
+  });
+  let accept!: (value: AudioDownloadAcceptance) => void;
+  let loaded!: () => void;
+  let failed!: (failure: unknown) => void;
+  const audio: AudioDownloadStatus = { cached_entry_ids: [], downloads: [] };
+  play.mockImplementationOnce(() => new Promise<void>((resolve, reject) => { loaded = resolve; failed = reject; }));
+  const api = client({
+    getVoiceInputRuntime: vi.fn(async () => ({ provider: 'xai' as const, url: 'wss://example.test/stt',
+      model: 'test', delay: 'low' as const, prompt: '', send_phrase: 'over to you' })),
+    startAudio: vi.fn(() => new Promise<AudioDownloadAcceptance>((resolve) => { accept = resolve; })),
+    getAudioStatus: vi.fn(async () => ({ ...audio, downloads: [...audio.downloads] })),
+  });
+  const saved: SessionSnapshot = { ...snapshotFixture, transcript: [],
+    generation: { ...snapshotFixture.generation, active: false } };
+  const { result, rerender } = renderHook(({ snapshot }) => {
+    const speech = useReadAloud(api, snapshot, 'Personal', false);
+    const [draft, setDraft] = useState('');
+    const voice = useVoiceInput(api, 'session:lobby/planning', draft, setDraft,
+      vi.fn(), snapshot.generation.active, speech.busy);
+    return { speech, voice, draft };
+  }, { initialProps: { snapshot: saved } });
+  await act(async () => {});
+  await act(async () => result.current.speech.toggleAutomatic());
+  await act(async () => result.current.voice.toggle());
+  expect(captures).toHaveLength(1);
+  await act(async () => rerender({ snapshot: { ...saved, transcript: [{ ...entry, status: 'streaming' }],
+    generation: { ...saved.generation, active: true } } }));
+  expect(captures[0].cancel).toHaveBeenCalledOnce();
+  await act(async () => rerender({ snapshot: { ...saved, transcript: [entry] } }));
+  expect(api.startAudio).toHaveBeenCalledOnce();
+  expect(result.current.speech.busy).toBe(true);
+  expect(captures).toHaveLength(1);
+  act(() => captures[0].text('late words', true));
+  expect(result.current.draft).toBe('');
+  await act(async () => {
+    audio.downloads.push({ entry_id: 7, state: 'running' });
+    accept({ entry_id: 7, cached: false, state: 'running' });
+  });
+  expect(play).toHaveBeenCalledOnce();
+  expect(result.current.speech).toMatchObject({ busy: true, state: 'loading' });
+  expect(captures).toHaveLength(1);
+  if (outcome === 'failed') {
+    await act(async () => failed(new TextToSpeechError('Audio could not be played.')));
+    expect(result.current.speech.automatic).toBe(false);
+  } else if (outcome === 'disabled') {
+    await act(async () => result.current.speech.toggleAutomatic());
+    await act(async () => loaded());
+    expect(result.current.speech.entryId).toBeNull();
+  } else {
+    let endPlayback!: () => void;
+    try {
+      await act(async () => { endPlayback = beginSpeechPlayback(); loaded(); });
+      expect(result.current.speech.state).toBe('playing');
+      expect(captures).toHaveLength(1);
+      act(() => { ended(); endPlayback(); });
+      expect(captures).toHaveLength(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(399); });
+      expect(captures).toHaveLength(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    } finally {
+      act(() => endPlayback?.());
+      await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    }
+  }
+  expect(result.current.speech.busy).toBe(false);
+  expect(captures).toHaveLength(2);
+});
 
 it('starts streaming immediately after acceptance without waiting for the cached clip', async () => {
   let started!: () => void;

@@ -157,7 +157,7 @@ describe('voice input', () => {
     expect(appendTranscription('', 'First new line Second')).toBe('First\nSecond');
   });
 
-  it('streams transcript deltas and commits the final turn before stopping', async () => {
+  it('streams provisional text and replaces it with the final turn before stopping', async () => {
     const stopTrack = vi.fn();
     const audioTrack = { kind: 'audio', stop: stopTrack } as unknown as MediaStreamTrack;
     Object.defineProperty(navigator, 'mediaDevices', {
@@ -205,7 +205,7 @@ describe('voice input', () => {
       expect(languages).toEqual(['ru', 'en']);
       return 'test answer';
     });
-    const received: string[] = [];
+    const received: Array<{ text: string; provisional?: boolean }> = [];
     const session = await VoiceInputSession.start(
       {
         provider: 'openai',
@@ -214,7 +214,7 @@ describe('voice input', () => {
         prompt: 'A discussion about software architecture.',
         languages: ['ru', 'en'],
       },
-      (text) => received.push(text),
+      (text, provisional) => received.push({ text, provisional }),
       () => {},
       connect,
       unusedXaiBridge,
@@ -230,7 +230,10 @@ describe('voice input', () => {
     channel.message({
       type: 'conversation.item.input_audio_transcription.delta', delta: ' world.',
     });
-    expect(received).toEqual(['Hello', ' world.']);
+    expect(received).toEqual([
+      { text: 'Hello', provisional: true },
+      { text: 'Hello world.', provisional: true },
+    ]);
 
     const stopping = session.stop();
     expect(channel.sent.map((event) => JSON.parse(event))).toEqual([
@@ -242,9 +245,12 @@ describe('voice input', () => {
     expect(stopped).toBe(false);
     channel.message({
       type: 'conversation.item.input_audio_transcription.completed',
-      transcript: 'Hello world.',
+      transcript: 'Hello world!',
     });
     await stopping;
+    expect(received.slice(-2)).toEqual([
+      { text: '', provisional: true }, { text: 'Hello world!', provisional: undefined },
+    ]);
     expect(stopped).toBe(true);
     expect(stopTrack).toHaveBeenCalled();
   });

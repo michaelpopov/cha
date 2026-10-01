@@ -3,6 +3,12 @@ import {
   isAudioAcceptance,
   isAudioStatus,
   isVoiceOutputRuntime,
+  isNativeVoiceInputRuntime,
+  isXaiVoiceStartResult,
+  isXaiVoicePieces,
+  type NativeVoiceInputRuntime,
+  type XaiVoiceStartResult,
+  type XaiVoicePieces,
   type AudioDownloadAcceptance,
   type AudioDownloadBatchAcceptance,
   type AudioDownloadStatus,
@@ -41,6 +47,12 @@ export function chaWebMessage(failure: unknown, fallback: string): string {
 }
 
 export interface ChaWebClient {
+  getVoiceInputRuntime(): Promise<NativeVoiceInputRuntime | null>;
+  connectVoiceInput(sdp: string, languages: string[], signal: AbortSignal): Promise<string>;
+  startXaiVoiceInput(sessionId: string, languages: string[], signal: AbortSignal): Promise<XaiVoiceStartResult>;
+  sendXaiVoiceAudio(sessionId: string, pcmBase64: string, signal: AbortSignal): Promise<XaiVoicePieces>;
+  stopXaiVoiceInput(sessionId: string, remainingMs: number, signal: AbortSignal): Promise<XaiVoicePieces>;
+  cancelXaiVoiceInput(sessionId: string): Promise<void>;
   getVoiceOutputRuntime(): Promise<VoiceOutputRuntime | null>;
   startAudio(forumId: string, sessionId: string, entryId: number, vaultName: string): Promise<AudioDownloadAcceptance>;
   startAudioBatch(forumId: string, sessionId: string, entryIds: number[], vaultName: string): Promise<AudioDownloadBatchAcceptance>;
@@ -120,10 +132,14 @@ async function exchange<T>(
   expected: number,
   consume: (response: Response) => Promise<T>,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
+    signal?.throwIfAborted();
     const response = await fetch(path, {
       method,
       redirect: 'error',
@@ -137,6 +153,7 @@ async function exchange<T>(
     }
     return await consume(response);
   } catch (error) {
+    if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
     if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
       throw new ChaWebError(0, TIMED_OUT);
     }
@@ -144,6 +161,7 @@ async function exchange<T>(
     throw new ChaWebError(0, FAILED);
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
   }
 }
 
@@ -158,6 +176,45 @@ async function readGuarded<T>(
 
 export function createChaWebClient(): ChaWebClient {
   return {
+    async getVoiceInputRuntime() {
+      return exchange('GET', `${API}/voice-input`, 200,
+        (response) => readGuarded(response,
+          (value): value is NativeVoiceInputRuntime | null => value === null || isNativeVoiceInputRuntime(value)));
+    },
+
+    async connectVoiceInput(sdp, languages, signal) {
+      const result = await exchange('POST', `${API}/voice-input/connect`, 200,
+        (response) => readGuarded(response,
+          (value): value is { sdp: string } => isRecord(value) && typeof value.sdp === 'string' && value.sdp.length > 0),
+        { sdp, languages }, signal);
+      return result.sdp;
+    },
+
+    async startXaiVoiceInput(sessionId, languages, signal) {
+      return exchange('POST', `${API}/voice-input/xai/start`, 200,
+        (response) => readGuarded(response,
+          (value): value is XaiVoiceStartResult => isXaiVoiceStartResult(value) && value.session_id === sessionId),
+        { session_id: sessionId, languages }, signal);
+    },
+
+    async sendXaiVoiceAudio(sessionId, pcmBase64, signal) {
+      return exchange('POST', `${API}/voice-input/xai/audio`, 200,
+        (response) => readGuarded(response,
+          (value): value is XaiVoicePieces => isXaiVoicePieces(value) && value.session_id === sessionId),
+        { session_id: sessionId, pcm_base64: pcmBase64 }, signal);
+    },
+
+    async stopXaiVoiceInput(sessionId, remainingMs, signal) {
+      return exchange('POST', `${API}/voice-input/xai/stop`, 200,
+        (response) => readGuarded(response,
+          (value): value is XaiVoicePieces => isXaiVoicePieces(value) && value.session_id === sessionId),
+        { session_id: sessionId, remaining_ms: remainingMs }, signal);
+    },
+
+    async cancelXaiVoiceInput(sessionId) {
+      await exchange('POST', `${API}/voice-input/xai/cancel`, 200,
+        async () => undefined, { session_id: sessionId });
+    },
     async getVoiceOutputRuntime() {
       return exchange('GET', `${API}/voice-output`, 200,
         (response) => readGuarded(response,

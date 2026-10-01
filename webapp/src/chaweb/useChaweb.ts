@@ -665,7 +665,8 @@ export function useChaweb(client: ChaWebClient) {
     updateDrafts((current) => editDraft(current, key, text));
   }
 
-  function send() {
+  function send(submittedText?: string) {
+    if (submittedText !== undefined) onDraft(submittedText);
     if (statusRef.current.deletes[currentDraftKey() ?? '']) return;
     const control = commandControl(buildCommand(
       statusRef.current,
@@ -1124,14 +1125,15 @@ export function useChaweb(client: ChaWebClient) {
 
   const active = conversation && screen === 'conversation' ? conversation : null;
   const activeKey = active ? conversationKey(active) : '';
-  const control = commandControl(buildCommand(
+  const command = buildCommand(
     status,
     conversation,
     screen,
     drafts,
     snapshot,
     bootstrap,
-  ));
+  );
+  const control = commandControl(command);
   const snapshotReady = active?.kind === 'session'
     && snapshot !== null
     && snapshot.forum.id === active.forumId
@@ -1166,6 +1168,9 @@ export function useChaweb(client: ChaWebClient) {
     notice,
     showSending,
     pendingText,
+    voiceBlocked: !active || deleting || command.generationActive
+      || command.createPending || command.inputPending || command.stopPending
+      || command.stopping || command.stateUnknown || command.sendBlocked,
     mode: control.mode,
     commandDisabled: control.disabled || deleting,
     deleting,

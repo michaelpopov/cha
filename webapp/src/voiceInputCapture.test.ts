@@ -19,7 +19,7 @@ interface CaptureProcessor {
   process(inputs: Array<ArrayLike<number>[]>): boolean;
 }
 
-function loadProcessor(): {
+function loadProcessor(batchSamples?: number): {
   processor: CaptureProcessor;
   messages: Array<{ type: string; samples?: Int16Array }>;
 } {
@@ -30,15 +30,25 @@ function loadProcessor(): {
       postMessage: (data) => { messages.push(data); },
     };
   }
-  let Processor!: new () => CaptureProcessor;
+  let Processor!: new (options: object) => CaptureProcessor;
   new Function('AudioWorkletProcessor', 'registerProcessor', workletSource)(
     AudioWorkletProcessor,
-    (_name: string, ctor: new () => CaptureProcessor) => { Processor = ctor; },
+    (_name: string, ctor: new (options: object) => CaptureProcessor) => { Processor = ctor; },
   );
-  return { processor: new Processor(), messages };
+  return { processor: new Processor({ processorOptions: { batchSamples } }), messages };
 }
 
 describe('voice capture worklet', () => {
+  it('uses half-second batches for the HTTP transport and flushes the final short batch', () => {
+    const { processor, messages } = loadProcessor(8000);
+    for (let i = 0; i < 5; ++i) processor.process([[new Float32Array(1600)]]);
+    expect(messages.map(({ samples }) => samples?.length)).toEqual([8000]);
+    processor.process([[new Float32Array(100)]]);
+    processor.port.onmessage?.(new MessageEvent('message', { data: { type: 'flush' } }));
+    expect(messages.map(({ type, samples }) => [type, samples?.length])).toEqual([
+      ['batch', 8000], ['flush-batch', 100], ['flushed', undefined],
+    ]);
+  });
   it('downmixes to mono PCM16 and posts 100 ms batches', () => {
     const { processor, messages } = loadProcessor();
     const frames = 1600;

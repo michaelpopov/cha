@@ -653,6 +653,7 @@ if(BUILD_TESTING)
             tests/daemon/unit_chaweb_adapter.cpp
             tests/daemon/unit_daemon_process.cpp
             tests/support/test_workspace.cpp
+            tests/support/xai_fake_server.cpp
             src/daemon/scgi.cpp
             src/daemon/chaweb_adapter.cpp)
         target_link_libraries(

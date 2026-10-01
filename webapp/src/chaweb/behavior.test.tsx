@@ -88,6 +88,12 @@ afterEach(() => {
 
 function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   return {
+    getVoiceInputRuntime: vi.fn(async () => null),
+    connectVoiceInput: vi.fn(),
+    startXaiVoiceInput: vi.fn(),
+    sendXaiVoiceAudio: vi.fn(),
+    stopXaiVoiceInput: vi.fn(),
+    cancelXaiVoiceInput: vi.fn(),
     getVoiceOutputRuntime: vi.fn(async () => null),
     startAudio: vi.fn(),
     startAudioBatch: vi.fn(),

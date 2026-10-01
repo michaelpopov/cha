@@ -420,7 +420,8 @@ public:
         std::string session_id,
         std::vector<std::string> languages,
         std::uint64_t epoch,
-        std::chrono::milliseconds deadline);
+        std::chrono::milliseconds deadline,
+        std::chrono::milliseconds idle_timeout = {});
     [[nodiscard]] std::shared_ptr<OperationReply> send_xai_voice_audio(
         std::string connection_id,
         std::uint64_t request_id,

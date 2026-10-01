@@ -26,6 +26,47 @@ function installFetch(handler: (url: string, init?: RequestInit) => Promise<Resp
 }
 
 describe('ChaWeb HTTP client', () => {
+  it('connects voice input and sends xAI audio through the same origin without provider keys', async () => {
+    const calls = installFetch((url) => {
+      if (url.endsWith('/voice-input')) return jsonResponse({
+        provider: 'openai', url: 'https://provider.test/realtime', model: 'test',
+        delay: 'low', prompt: '', send_phrase: 'over to you',
+      });
+      if (url.endsWith('/connect')) return jsonResponse({ sdp: 'answer' });
+      if (url.endsWith('/start')) return jsonResponse({ session_id: 'dictation-1', stop_budget_ms: 20000 });
+      if (url.endsWith('/cancel')) return jsonResponse({});
+      return jsonResponse({ session_id: 'dictation-1', pieces: ['Hello'], preview: '' });
+    });
+    const client = createChaWebClient();
+    const signal = new AbortController().signal;
+    await expect(client.getVoiceInputRuntime()).resolves.toMatchObject({ provider: 'openai' });
+    await expect(client.connectVoiceInput('offer', ['en'], signal)).resolves.toBe('answer');
+    await client.startXaiVoiceInput('dictation-1', [], signal);
+    await expect(client.sendXaiVoiceAudio('dictation-1', 'AAAA', signal)).resolves.toMatchObject({ pieces: ['Hello'] });
+    await client.stopXaiVoiceInput('dictation-1', 1000, signal);
+    await client.cancelXaiVoiceInput('dictation-1');
+    expect(calls.map(({ url }) => url)).toEqual([
+      '/api/cha/v1/voice-input', '/api/cha/v1/voice-input/connect',
+      '/api/cha/v1/voice-input/xai/start', '/api/cha/v1/voice-input/xai/audio',
+      '/api/cha/v1/voice-input/xai/stop', '/api/cha/v1/voice-input/xai/cancel',
+    ]);
+    expect(calls[1].init?.body).toBe(JSON.stringify({ sdp: 'offer', languages: ['en'] }));
+    expect(calls[3].init?.body).toBe(JSON.stringify({ session_id: 'dictation-1', pcm_base64: 'AAAA' }));
+    expect(calls.every(({ init }) => !new Headers(init?.headers).has('Authorization'))).toBe(true);
+  });
+
+  it('rejects a mismatched dictation and preserves explicit cancellation', async () => {
+    installFetch(() => jsonResponse({ session_id: 'other', pieces: [] }));
+    const controller = new AbortController();
+    await expect(createChaWebClient().sendXaiVoiceAudio('one', 'AAAA', controller.signal))
+      .rejects.toMatchObject({ status: 200 });
+    installFetch((_url, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    }));
+    const pending = createChaWebClient().connectVoiceInput('offer', [], controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
   it('admits a session audio batch and validates each returned entry in order', async () => {
     const accepted = { entries: [{ entry_id: 7, cached: false, state: 'queued' }, { entry_id: 8, cached: true }] };
     const calls = installFetch(() => jsonResponse(accepted));

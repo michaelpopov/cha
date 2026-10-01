@@ -282,6 +282,81 @@ TEST(XaiVoice, KeepsTheKeyOnTheNativeSocketAndFormatsTheRequest) {
     wait_closed(*script);
 }
 
+TEST(XaiVoice, HttpDictationExpiresWithoutAudioAndReleasesItsScope) {
+    OwnedApp owned;
+    save_xai(*owned.application, "wss://example.test/v1/stt");
+    const auto epoch = owned.application->context_epoch();
+    auto first = install_script(*owned.application);
+    push_event(*first, created_event());
+    (void)wait_reply(owned.application->start_xai_voice_input(
+        "chaweb-voice-one", 1, "one", {}, epoch, 30000ms, 50ms));
+    wait_closed(*first);
+    const auto expired = owned.application->send_xai_voice_audio(
+        "chaweb-voice-one", 2, "one", "AAE=", epoch, 30000ms);
+    const auto result = expired->peek();
+    ASSERT_TRUE(result);
+    const auto* failure = std::get_if<OperationReply::Failure>(&*result);
+    ASSERT_NE(failure, nullptr);
+    EXPECT_EQ(failure->code, ErrorCode::invalid_argument);
+    auto second = install_script(*owned.application);
+    push_event(*second, created_event());
+    // The expired HTTP session leaves no terminal slot or active connection.
+    EXPECT_NO_THROW((void)wait_reply(owned.application->start_xai_voice_input(
+        "chaweb-voice-one", 2, "one", {}, epoch, 30000ms, 50ms)));
+    owned.application->release_connection_resources("chaweb-voice-one");
+    wait_closed(*second);
+}
+
+TEST(XaiVoice, HttpDictationKeepsFailuresBetweenRequestsUntilAudioOrStopReadsThem) {
+    for (const bool provider_error : {false, true}) {
+        for (const bool stop_request : {false, true}) {
+            SCOPED_TRACE(provider_error ? "provider error" : "socket close");
+            SCOPED_TRACE(stop_request ? "stop request" : "audio request");
+            OwnedApp owned;
+            save_xai(*owned.application, "wss://example.test/v1/stt");
+            const auto epoch = owned.application->context_epoch();
+            auto script = install_script(*owned.application);
+            push_event(*script, created_event());
+            (void)wait_reply(owned.application->start_xai_voice_input(
+                "chaweb-voice-one", 1, "one", {}, epoch, 30000ms, 15s));
+            (void)wait_reply(owned.application->send_xai_voice_audio(
+                "chaweb-voice-one", 2, "one", "AAE=", epoch, 30000ms));
+            if (provider_error) {
+                push_event(*script, {{"type", "error"}});
+            } else {
+                {
+                    std::lock_guard lock(script->mu);
+                    script->incoming.push_back(media::XaiIncoming{.closed = true});
+                }
+                script->cv.notify_all();
+            }
+            // Wait for failure cleanup with no audio or stop request pending.
+            wait_closed(*script);
+            const auto reply = stop_request
+                ? owned.application->stop_xai_voice_input(
+                    "chaweb-voice-one", 3, "one", 20000, epoch, 30000ms)
+                : owned.application->send_xai_voice_audio(
+                    "chaweb-voice-one", 3, "one", "AAE=", epoch, 30000ms);
+            try {
+                (void)wait_reply(reply);
+                ADD_FAILURE() << "The next request must receive the original failure";
+            } catch (const ApplicationError& error) {
+                EXPECT_EQ(error.code, ErrorCode::internal_error);
+                EXPECT_EQ(error.what(), std::string(provider_error
+                    ? media::xai_provider_error : media::xai_connection_closed));
+            }
+            // Reading the failure consumes its terminal record.
+            const auto consumed = owned.application->send_xai_voice_audio(
+                "chaweb-voice-one", 4, "one", "AAE=", epoch, 30000ms)->peek();
+            ASSERT_TRUE(consumed);
+            const auto* failure = std::get_if<OperationReply::Failure>(&*consumed);
+            ASSERT_NE(failure, nullptr);
+            EXPECT_EQ(failure->code, ErrorCode::invalid_argument);
+            owned.application->release_connection_resources("chaweb-voice-one");
+        }
+    }
+}
+
 TEST(XaiVoice, DeliversSeparatePiecesAndSendsAudioBeforeDone) {
     OwnedApp owned;
     auto script = install_script(*owned.application);

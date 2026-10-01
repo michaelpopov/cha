@@ -4,6 +4,7 @@
 #include "runtime/runtime_settings.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
+#include "support/xai_fake_server.h"
 #include "storage/session_database.h"
 #include "workspace/builtins.h"
 
@@ -239,6 +240,98 @@ TEST_F(ChaWebAdapterTest, BootstrapUsesExistingSerializer) {
     EXPECT_FALSE(response.json.contains("state"));
     EXPECT_FALSE(response.json.contains("context_epoch"));
     EXPECT_NE(response.raw.find("Content-Type: application/json"), std::string::npos);
+}
+
+TEST_F(ChaWebAdapterTest, VoiceInputUsesStoredSettingsAndKeepsOpenAiCredentialsOnTheServer) {
+    EXPECT_TRUE(get("/api/cha/v1/voice-input").json.is_null());
+    const std::string answer = "test SDP answer";
+    MockHttpServer provider({
+        "HTTP/1.1 200 OK\r\nContent-Type: application/sdp\r\nContent-Length: "
+        + std::to_string(answer.size()) + "\r\nConnection: close\r\n\r\n" + answer});
+    provider.start();
+    const auto epoch = application_->context_epoch();
+    const auto key = application_->create_api_key(
+        {.display_name = "STT", .value = "stt-secret"}, epoch);
+    (void)application_->save_voice_input_settings({
+        .provider = "openai",
+        .url = "http://127.0.0.1:" + std::to_string(provider.port()) + "/realtime",
+        .model = "test-transcription",
+        .api_key = key.id,
+        .delay = "low",
+        .prompt = "software",
+        .send_phrase = "over to you",
+    }, epoch);
+    const auto runtime = get("/api/cha/v1/voice-input");
+    ASSERT_EQ(runtime.status, 200);
+    EXPECT_EQ(runtime.json["provider"], "openai");
+    EXPECT_EQ(runtime.json["send_phrase"], "over to you");
+    EXPECT_EQ(runtime.raw.find("stt-secret"), std::string::npos);
+    EXPECT_FALSE(runtime.json.contains("api_key"));
+    const auto connected = post("/api/cha/v1/voice-input/connect",
+        nlohmann::json({{"sdp", "browser offer"}, {"languages", {"en"}}}));
+    ASSERT_EQ(connected.status, 200);
+    EXPECT_EQ(connected.json["sdp"], answer);
+    EXPECT_EQ(connected.raw.find("stt-secret"), std::string::npos);
+    provider.join();
+    ASSERT_EQ(provider.requests().size(), 1U);
+    EXPECT_NE(provider.requests().front().find("Authorization: Bearer stt-secret"), std::string::npos);
+    EXPECT_NE(provider.requests().front().find("browser offer"), std::string::npos);
+    EXPECT_NE(provider.requests().front().find("test-transcription"), std::string::npos);
+}
+
+TEST_F(ChaWebAdapterTest, XaiDictationSurvivesSeparateHttpRequestsAndFlushesFinalWords) {
+    XaiFakeServer provider({
+        .messages = {R"({"type":"transcript.created"})"},
+        .after_audio_done = {
+            R"({"type":"transcript.partial","is_final":true,"speech_final":true,"text":"Hello","words":[{"text":"Hello","start":0,"end":0.5}]})",
+            R"({"type":"transcript.done"})",
+        },
+    });
+    provider.start();
+    const auto epoch = application_->context_epoch();
+    const auto key = application_->create_api_key(
+        {.display_name = "STT", .value = "xai-secret"}, epoch);
+    (void)application_->save_voice_input_settings({
+        .provider = "xai",
+        .url = "ws://127.0.0.1:" + std::to_string(provider.port()) + "/v1/stt",
+        .model = "test-transcription",
+        .api_key = key.id,
+        .delay = "low",
+    }, epoch);
+    const auto started = post("/api/cha/v1/voice-input/xai/start",
+        nlohmann::json({{"session_id", "dictation-1"}, {"languages", {"en"}}}));
+    ASSERT_EQ(started.status, 200);
+    EXPECT_EQ(started.json["session_id"], "dictation-1");
+    const auto audio = post("/api/cha/v1/voice-input/xai/audio",
+        nlohmann::json({{"session_id", "dictation-1"},
+            {"pcm_base64", xai_fake_base64(std::vector<unsigned char>(3200, 0))}}));
+    ASSERT_EQ(audio.status, 200);
+    EXPECT_EQ(audio.json["pieces"], nlohmann::json::array());
+    const auto stopped = post("/api/cha/v1/voice-input/xai/stop",
+        nlohmann::json({{"session_id", "dictation-1"}, {"remaining_ms", 20000}}));
+    ASSERT_EQ(stopped.status, 200);
+    EXPECT_EQ(stopped.json["pieces"], nlohmann::json::array({"Hello"}));
+    EXPECT_EQ(stopped.raw.find("xai-secret"), std::string::npos);
+    provider.join();
+    ASSERT_EQ(provider.binary_messages().size(), 1U);
+    EXPECT_EQ(provider.binary_messages().front().size(), 3200U);
+    EXPECT_NE(provider.request().find("Authorization: Bearer xai-secret"), std::string::npos);
+    EXPECT_EQ(post("/api/cha/v1/voice-input/xai/cancel",
+        nlohmann::json::parse(R"({"session_id":"dictation-1"})")).status, 200);
+}
+
+TEST_F(ChaWebAdapterTest, VoiceRequestsRejectInvalidBodiesAndDoNotAcceptBrowserCredentials) {
+    EXPECT_EQ(post("/api/cha/v1/voice-input/connect",
+        nlohmann::json::parse(R"({"sdp":"offer","languages":[],"api_key":"secret"})")).status, 400);
+    EXPECT_EQ(post("/api/cha/v1/voice-input/xai/start",
+        nlohmann::json::parse(R"({"session_id":"dictation","languages":[4]})")).status, 400);
+    EXPECT_EQ(post("/api/cha/v1/voice-input/xai/audio",
+        nlohmann::json::parse(R"({"session_id":"../dictation","pcm_base64":"AAAA"})")).status, 400);
+    EXPECT_EQ(post("/api/cha/v1/voice-input/xai/stop",
+        nlohmann::json::parse(R"({"session_id":"dictation","remaining_ms":"later"})")).status, 400);
+    EXPECT_EQ(post("/api/cha/v1/voice-input/xai/cancel", nlohmann::json::array()).status, 400);
+    EXPECT_EQ(post("/api/cha/v1/voice-input/connect", nlohmann::json::object(), "text/plain").status, 415);
+    EXPECT_EQ(get("/api/cha/v1/voice-input/xai/start").status, 404);
 }
 
 TEST_F(ChaWebAdapterTest, CachedAudioIsAvailableWithoutVoiceConfiguration) {

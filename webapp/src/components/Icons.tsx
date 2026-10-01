@@ -165,7 +165,8 @@ export function SpeakerIcon(props: IconProps) {
 export function ClearAudioIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M3 10h3l4-3.5v11L6 14H3zM15 9l6 6M21 9l-6 6" {...stroke} />
+      <path d="M2 7v4M5 4v10M8 2v16M11 6v8M14 3v6M17 6v2" {...stroke} />
+      <path d="M13 12h9M16 12v-2h3v2M14 12l1 10h5l1-10M16.5 15v4M18.5 15v4" {...stroke} />
     </Icon>
   );
 }

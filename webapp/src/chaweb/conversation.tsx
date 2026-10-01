@@ -5,6 +5,7 @@ import { copyText } from './clipboard';
 import { Composer } from './composer';
 import { Transcript, type TranscriptEntry } from './transcript';
 import type { ReadAloud } from './useReadAloud';
+import type { VoiceInput } from './useVoiceInput';
 
 export function Conversation({
   entries,
@@ -30,6 +31,7 @@ export function Conversation({
   onRetry,
   onAllowSend,
   speech,
+  voice,
 }: {
   entries: readonly TranscriptEntry[];
   characters: ReadonlyArray<{ id: string; appearance: CharacterAppearance }>;
@@ -54,6 +56,7 @@ export function Conversation({
   onRetry?(): void;
   onAllowSend?(): void;
   speech?: ReadAloud;
+  voice?: VoiceInput;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const currentSession = useRef(sessionKey);
@@ -101,6 +104,7 @@ export function Conversation({
         sessionKey={sessionKey}
       />
       {speech?.error && <p className="chaweb-alert" role="alert">{speech.error}</p>}
+      {voice?.error && <p className="chaweb-alert" role="alert">{voice.error}</p>}
       {notice && <p className={deleting ? 'chaweb-status' : 'chaweb-alert'} role={deleting ? 'status' : 'alert'}>{notice}</p>}
       {copyStatus === 'copied' && <p className="chaweb-status" role="status">Copied to clipboard</p>}
       {copyStatus === 'failed' && (
@@ -121,7 +125,8 @@ export function Conversation({
         </div>
       )}
       <Composer
-        commandDisabled={commandDisabled}
+        voice={voice}
+        commandDisabled={commandDisabled || Boolean(voice?.finishing)}
         copied={copyStatus === 'copied'}
         copyDisabled={entries.length === 0 || deleting || copyStatus === 'copying'}
         deleteDisabled={deleteDisabled}

@@ -43,7 +43,7 @@ export class OpenAiVoiceInputSession {
     private readonly peer: RTCPeerConnection,
     private readonly events: RTCDataChannel,
     private readonly senders: Array<{ sender: RTCRtpSender; track: MediaStreamTrack }>,
-    private readonly onTranscription: (text: string) => void,
+    private readonly onTranscription: (text: string, provisional?: boolean) => void,
     private readonly onFailure: (failure: unknown) => void,
   ) {
     this.opened = new Promise((resolve, reject) => {
@@ -95,7 +95,7 @@ export class OpenAiVoiceInputSession {
 
   static async start(
     configuration: VoiceInputConfiguration,
-    onTranscription: (text: string) => void,
+    onTranscription: (text: string, provisional?: boolean) => void,
     onFailure: (failure: unknown) => void,
     nativeConnect: VoiceInputConnect,
     signal?: AbortSignal,
@@ -191,13 +191,12 @@ export class OpenAiVoiceInputSession {
     if (event.type === 'conversation.item.input_audio_transcription.delta'
         && 'delta' in event && typeof event.delta === 'string') {
       this.transcript += event.delta;
-      this.onTranscription(event.delta);
+      this.onTranscription(this.transcript, true);
     } else if (event.type === 'conversation.item.input_audio_transcription.completed') {
-      if ('transcript' in event && typeof event.transcript === 'string'
-          && event.transcript.startsWith(this.transcript)) {
-        const remainder = event.transcript.slice(this.transcript.length);
-        if (remainder) this.onTranscription(remainder);
-      }
+      this.onTranscription('', true);
+      this.onTranscription('transcript' in event && typeof event.transcript === 'string'
+        ? event.transcript : this.transcript);
+      this.transcript = '';
       this.transcriptCompleted = true;
       this.completeSession?.();
       this.completeSession = null;

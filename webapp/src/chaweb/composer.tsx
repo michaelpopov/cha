@@ -1,6 +1,7 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react';
 
-import { CheckIcon, ClearAudioIcon, CopyIcon, ForumsIcon, PaperPlaneIcon, SpeakerIcon, StopIcon, TrashIcon } from '../components/Icons';
+import { CheckIcon, ClearAudioIcon, CopyIcon, ForumsIcon, MicrophoneIcon, PaperPlaneIcon, SpeakerIcon, StopIcon, TrashIcon } from '../components/Icons';
+import type { VoiceInput } from './useVoiceInput';
 
 const compactHeight = 56;
 
@@ -53,6 +54,7 @@ export function Composer({
   commandDisabled,
   onSend,
   onStop,
+  voice,
 }: {
   value: string;
   onChange(value: string): void;
@@ -75,6 +77,7 @@ export function Composer({
   commandDisabled: boolean;
   onSend(): void;
   onStop(): void;
+  voice?: VoiceInput;
 }) {
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const composing = useRef(false);
@@ -99,7 +102,7 @@ export function Composer({
     if (native.isComposing || composing.current || native.keyCode === 229) return;
     if (event.ctrlKey) {
       event.preventDefault();
-      insertNewline(event.currentTarget);
+      if (!event.currentTarget.readOnly) insertNewline(event.currentTarget);
       return;
     }
     if (coarsePointer()) return;
@@ -160,6 +163,7 @@ export function Composer({
         onCompositionStart={() => { composing.current = true; }}
         onKeyDown={onKeyDown}
         ref={editorRef}
+        readOnly={voice?.enabled || voice?.finishing}
         rows={2}
         style={{ height }}
         value={value}
@@ -207,11 +211,31 @@ export function Composer({
         >
           {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
+        {voice?.available && (
+          <button
+            aria-label={voice.label}
+            aria-pressed={voice.enabled}
+            title={voice.label}
+            className="chaweb-icon-button"
+            disabled={deleting || voice.disabled}
+            onClick={() => {
+              editorRef.current?.blur();
+              voice.toggle();
+            }}
+            type="button"
+          >
+            <MicrophoneIcon />
+          </button>
+        )}
         <button
           aria-label={commandLabel}
           className="chaweb-icon-button"
           disabled={commandDisabled}
-          onClick={mode === 'stop' ? onStop : onSend}
+          onClick={() => {
+            editorRef.current?.blur();
+            if (mode === 'stop') onStop();
+            else onSend();
+          }}
           type="button"
         >
           {mode === 'stop' ? <StopIcon /> : <PaperPlaneIcon className="chaweb-send-icon" />}

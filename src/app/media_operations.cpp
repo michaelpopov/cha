@@ -614,7 +614,8 @@ std::shared_ptr<OperationReply> Application::start_xai_voice_input(
     std::string session_id,
     std::vector<std::string> languages,
     std::uint64_t epoch,
-    std::chrono::milliseconds deadline) {
+    std::chrono::milliseconds deadline,
+    std::chrono::milliseconds idle_timeout) {
     if (!valid_xai_session_id(session_id)) {
         throw ApplicationError(
             ErrorCode::invalid_argument, "The request was not valid.");
@@ -642,7 +643,8 @@ std::shared_ptr<OperationReply> Application::start_xai_voice_input(
         std::move(session_id),
         media::build_xai_stt_url(runtime->url, runtime->model, languages),
         "Authorization: Bearer " + *secret,
-        deadline);
+        deadline,
+        idle_timeout);
 }
 
 std::shared_ptr<OperationReply> Application::send_xai_voice_audio(

@@ -38,7 +38,7 @@ class FakeWorklet extends EventTarget {
   }
 }
 
-class FakeContext {
+class FakeContext extends EventTarget {
   static latest: FakeContext | null = null;
 
   sampleRate = 16000;
@@ -47,6 +47,7 @@ class FakeContext {
   closed = false;
 
   constructor() {
+    super();
     FakeContext.latest = this;
   }
 

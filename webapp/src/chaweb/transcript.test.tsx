@@ -43,7 +43,7 @@ function mockScroll(element: HTMLElement, scrollHeight: number, clientHeight: nu
 it('offers an audio icon beside the timestamp for completed replies and keeps cached audio playable', () => {
   const toggle = vi.fn();
   const speech = { available: true, entryId: null, state: 'loading' as const, error: null, toggle,
-    automatic: false, automaticDisabled: false, toggleAutomatic: vi.fn(),
+    automatic: false, automaticDisabled: false, toggleAutomatic: vi.fn(), busy: false,
     isCached: (entry: TranscriptEntry) => Boolean(entry.has_cached_audio),
     isDownloading: (entry: TranscriptEntry) => entry.id === 1,
     clearing: false, clearDisabled: false, clear: vi.fn(async () => undefined) };

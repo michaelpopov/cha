@@ -8,6 +8,7 @@ import type { TranscriptEntry } from './transcript';
 
 export interface ReadAloud {
   available: boolean;
+  busy: boolean;
   entryId: number | null;
   state: 'loading' | 'playing';
   error: string | null;
@@ -295,7 +296,13 @@ export function useReadAloud(
     }
   }
 
-  return { available: configuration !== null, entryId, state, error, toggle, clearing, clear, isCached, isDownloading,
+  // Hold capture as soon as a reply awaits automatic playback, before its
+  // download is admitted or the player is created.
+  const busy = entryId !== null || (automatic && !clearing && !deleting && Boolean(snapshot?.transcript
+    .some((entry) => canRead(entry) && !handledSpeech.current.has(entry.id)
+      && !downloads.status?.downloads.some((job) => job.entry_id === entry.id && job.state === 'failed'))));
+
+  return { available: configuration !== null, busy, entryId, state, error, toggle, clearing, clear, isCached, isDownloading,
     automatic, toggleAutomatic,
     automaticDisabled: !forum || !session || !vaultName || deleting || clearing
       || (!configuration && !automatic),

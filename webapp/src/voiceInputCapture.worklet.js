@@ -1,5 +1,3 @@
-const batchSamples = 1600;
-
 function clampSample(sample) {
   const clamped = Math.max(-1, Math.min(1, sample));
   const scaled = clamped < 0 ? clamped * 32768 : clamped * 32767;
@@ -7,9 +5,10 @@ function clampSample(sample) {
 }
 
 class ChaVoiceCaptureProcessor extends AudioWorkletProcessor {
-  constructor() {
-    super();
-    this.partial = new Int16Array(batchSamples);
+  constructor(options) {
+    super(options);
+    this.batchSamples = options?.processorOptions?.batchSamples ?? 1600;
+    this.partial = new Int16Array(this.batchSamples);
     this.count = 0;
     this.closed = false;
     this.port.onmessage = (event) => {
@@ -27,8 +26,8 @@ class ChaVoiceCaptureProcessor extends AudioWorkletProcessor {
   push(sample) {
     this.partial[this.count] = clampSample(sample);
     this.count += 1;
-    if (this.count < batchSamples) return;
-    const samples = this.partial.slice(0, batchSamples);
+    if (this.count < this.batchSamples) return;
+    const samples = this.partial.slice(0, this.batchSamples);
     this.count = 0;
     this.port.postMessage({ type: 'batch', samples }, [samples.buffer]);
   }

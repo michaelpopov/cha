@@ -27,6 +27,8 @@ struct Session {
     std::string connection_id;
     std::string session_id;
     std::chrono::milliseconds deadline{30000};
+    // HTTP dictation has no persistent UI connection to signal abandonment.
+    std::chrono::milliseconds idle_timeout{0};
     std::string url;
     std::string authorization;
 
@@ -133,6 +135,7 @@ void run_worker(
     bool audio_done_sent = false;
     bool got_done = false;
     bool failed = false;
+    bool idle_expired = false;
 
     const auto stopping = [&] {
         return job_cancel.load() || session->cancel.load();
@@ -169,8 +172,11 @@ void run_worker(
         if (stop_reply) delivered = stop_reply->fail(code, message) || delivered;
         // Nobody asks for the result of a cancelled dictation, so keep none.
         const bool cancelled = session->cancel.load() && !session->timed_out.load();
-        if (!start_completed || delivered || cancelled) finish(session, std::nullopt);
-        else finish(session, Terminal{code, std::move(message)});
+        if (!start_completed || delivered || cancelled || idle_expired) {
+            finish(session, std::nullopt);
+        } else {
+            finish(session, Terminal{code, std::move(message)});
+        }
         socket->close();
     };
     const auto throw_stopped = [&] {
@@ -259,6 +265,7 @@ void run_worker(
                 std::string(xai_operation_cancelled));
         }
 
+        auto last_audio = clock::now();
         while (!got_done) {
             throw_stopped();
             drain();
@@ -276,7 +283,14 @@ void run_worker(
                 }
                 if (session->stop) stop_deadline = session->stop->deadline;
             }
+            if (session->idle_timeout.count() > 0 && !stop_deadline
+                && pcm.empty() && clock::now() - last_audio >= session->idle_timeout) {
+                idle_expired = true;
+                throw XaiVoiceFailure(
+                    ErrorCode::command_timeout, std::string(xai_timed_out));
+            }
             if (!pcm.empty() && !audio_done_sent) {
+                last_audio = clock::now();
                 const auto send_deadline = clock::now()
                     + xai_deadline_budget(audio_deadline).audio_send;
                 socket->send(
@@ -404,12 +418,14 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::start(
     std::string session_id,
     std::string url,
     std::string authorization,
-    std::chrono::milliseconds deadline) {
+    std::chrono::milliseconds deadline,
+    std::chrono::milliseconds idle_timeout) {
     auto reply = std::make_shared<app::OperationReply>();
     auto session = std::make_shared<Session>();
     session->connection_id = connection_id;
     session->session_id = session_id;
     session->deadline = deadline;
+    session->idle_timeout = idle_timeout;
     session->url = std::move(url);
     session->authorization = std::move(authorization);
     session->start_reply = reply;

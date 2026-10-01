@@ -8,6 +8,7 @@ import { Conversation } from './conversation';
 import { SessionsView } from './sessions';
 import { useChaweb } from './useChaweb';
 import { useReadAloud } from './useReadAloud';
+import { useVoiceInput } from './useVoiceInput';
 import type { ChaWebClient } from './client';
 
 const emptyTranscript: [] = [];
@@ -18,6 +19,8 @@ export function App({ client }: { client: ChaWebClient }) {
   const speech = useReadAloud(client,
     model.screen === 'conversation' ? model.snapshot : null,
     model.bootstrap?.vault_name, model.deleting);
+  const voice = useVoiceInput(client, model.sessionKey, model.draft,
+    model.onDraft, model.send, model.voiceBlocked, speech.busy);
   const [expanded, setExpanded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{
     key: string; title: string; message: string;
@@ -73,6 +76,7 @@ export function App({ client }: { client: ChaWebClient }) {
       ) : (
         <Conversation
           speech={speech}
+          voice={voice}
           characters={model.snapshot?.characters ?? []}
           commandDisabled={model.commandDisabled}
           deleteDisabled={model.deleteDisabled}
@@ -98,7 +102,7 @@ export function App({ client }: { client: ChaWebClient }) {
           onExpanded={setExpanded}
           onRetry={model.retryConversation ?? undefined}
           onAllowSend={model.allowSend ?? undefined}
-          onSend={model.send}
+          onSend={voice.send}
           onSessions={model.showSessions}
           onStop={model.stop}
           pendingText={model.pendingText}
