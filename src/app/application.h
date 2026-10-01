@@ -392,6 +392,13 @@ public:
         EntryId entry_id,
         std::string_view vault_name,
         std::uint64_t epoch);
+    [[nodiscard]] std::optional<AudioChunk> audio_chunk(
+        std::string_view forum_id,
+        std::string_view session_id,
+        EntryId entry_id,
+        std::string_view vault_name,
+        std::uint64_t offset,
+        std::uint64_t epoch);
     void clear_audio_cache(
         std::string_view forum_id,
         std::string_view session_id,

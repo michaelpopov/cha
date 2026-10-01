@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -630,6 +631,7 @@ class ChaWebIntegration(DaemonHarness):
             "gzip_types                application/json;",
             "client_max_body_size      256k;",
             "include                   scgi_params;",
+            "scgi_param HTTP_X_CHA_AUDIO_OFFSET $http_x_cha_audio_offset;",
         ):
             self.assertIn(required, example)
         self.assertNotIn("location /v1/", example)
@@ -845,6 +847,43 @@ class ChaWebIntegration(DaemonHarness):
         snap = self.snapshot(created["id"])
         self.assertTrue(any("second note" in text for text in self.texts(snap)))
         self.assertEqual(self.exchange("GET", "/v1/models")[0], 404)
+
+    def test_audio_chunks_through_nginx(self):
+        self.use_provider()
+        created = self.create("Hello")
+        snapshot = self.wait_idle(created["id"])
+        entry = next(item for item in snapshot["transcript"]
+                     if item.get("text") == PROVIDER_REPLY)
+        audio = bytes(range(256)) * 280
+        with sqlite3.connect(self.directory / "alice-net" / "test.sqlite3") as database:
+            session_key = database.execute(
+                "SELECT session_key FROM sessions WHERE session_id = ?",
+                (created["id"],)).fetchone()[0]
+            database.execute(
+                "INSERT INTO entry_audio VALUES (?, ?, ?, ?)",
+                (session_key, entry["id"], audio, "audio/mpeg"))
+        path = self.session_path(created["id"]) + f"/entries/{entry['id']}/audio"
+
+        status, headers, first = self.exchange(
+            "GET", path, header_map={"X-CHA-Audio-Offset": "0"})
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["content-type"], "audio/mpeg")
+        self.assertEqual(headers["x-cha-audio-complete"], "0")
+        self.assertIn("no-store", headers["cache-control"])
+        self.assertEqual(len(first), 64 * 1024)
+        status, headers, last = self.exchange(
+            "GET", path, header_map={"X-CHA-Audio-Offset": str(len(first))})
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["x-cha-audio-complete"], "1")
+        self.assertEqual(first + last, audio)
+        status, headers, body = self.exchange(
+            "GET", path, header_map={"X-CHA-Audio-Offset": str(len(audio))})
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["x-cha-audio-complete"], "1")
+        self.assertEqual(body, b"")
+        self.assertEqual(self.exchange(
+            "GET", path, header_map={"X-CHA-Audio-Offset": "-1"})[0], 400)
+        self.assertEqual(self.exchange("GET", path)[2], audio)
 
     def test_first_input_lifecycle(self):
         self.use_provider()

@@ -162,6 +162,21 @@ TEST(Scgi, RejectsMalformedFraming) {
     }
 }
 
+TEST(Scgi, ReadsTheAudioOffsetAndRejectsDuplicateOffsets) {
+    for (const bool duplicate : {false, true}) {
+        auto sockets = make_pair();
+        std::vector<std::pair<std::string, std::string>> headers{{"HTTP_X_CHA_AUDIO_OFFSET", "65536"}};
+        if (duplicate) headers.emplace_back("HTTP_X_CHA_AUDIO_OFFSET", "0");
+        send_all(sockets.peer.get(), scgi_request("GET", "/api/cha/v1/audio", "", headers));
+        std::atomic<bool> stop{false};
+        const auto result = read_scgi(sockets.local.get(), stop);
+        EXPECT_EQ(result.status, duplicate ? ScgiReadStatus::bad_request : ScgiReadStatus::ok);
+        if (!duplicate) {
+            EXPECT_EQ(result.request.audio_offset, "65536");
+        }
+    }
+}
+
 TEST(Scgi, RejectsIntegerOverflowInNetstringLength) {
     auto sockets = make_pair();
     send_all(sockets.peer.get(), "18446744073709551616:ignored,");

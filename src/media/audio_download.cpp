@@ -254,6 +254,30 @@ std::shared_ptr<AudioStream> AudioDownloadManager::stream(
     return found->second->stream;
 }
 
+std::optional<AudioChunk> AudioDownloadManager::audio_chunk(
+    const FullSessionId& session, EntryId id, const std::string& vault, std::uint64_t offset) {
+    std::shared_ptr<AudioStream> stream;
+    {
+        std::lock_guard lock(mutex_);
+        check(session, vault);
+        if (const auto found = jobs_.find(key(session, id)); found != jobs_.end()) {
+            stream = found->second->stream;
+        }
+    }
+    if (stream) {
+        auto chunk = stream->read(offset);
+        if (!chunk) throw std::invalid_argument("Invalid audio offset.");
+        return chunk;
+    }
+    const auto cached = audio(session, id, vault);
+    if (!cached) return std::nullopt;
+    if (offset > cached->audio.size()) throw std::invalid_argument("Invalid audio offset.");
+    const auto start = static_cast<std::size_t>(offset);
+    const auto count = std::min<std::size_t>(64 * 1024, cached->audio.size() - start);
+    return AudioChunk{cached->content_type, cached->audio.substr(start, count),
+        start + count == cached->audio.size()};
+}
+
 void AudioDownloadManager::clear(const FullSessionId& session) {
     {
         std::lock_guard lock(mutex_);

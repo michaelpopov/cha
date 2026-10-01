@@ -268,6 +268,29 @@ TEST_F(ChaWebAdapterTest, CachedAudioIsAvailableWithoutVoiceConfiguration) {
     EXPECT_EQ(post(path + "/stop", nlohmann::json::object()).status, 204);
 }
 
+TEST_F(ChaWebAdapterTest, ReadsAudioChunksAndValidatesOffsets) {
+    const auto path = session_path("lobby", add_audio_entry(EntryStatus::complete, true));
+    const auto source = path + "/entries/1/audio";
+    auto read_chunk = [&](std::string offset) {
+        auto request = get_request(source);
+        request.audio_offset = std::move(offset);
+        return exchange(*application_, request);
+    };
+    const auto first = read_chunk("0");
+    ASSERT_EQ(first.status, 200);
+    EXPECT_NE(first.raw.find("X-CHA-Audio-Complete: 1\r\n"), std::string::npos);
+    EXPECT_EQ(first.raw.substr(first.raw.find("\r\n\r\n") + 4), std::string("audio\0bytes", 11));
+    const auto tail = read_chunk("5");
+    EXPECT_EQ(tail.raw.substr(tail.raw.find("\r\n\r\n") + 4), std::string("\0bytes", 6));
+    const auto end = read_chunk("11");
+    EXPECT_EQ(end.status, 200);
+    EXPECT_NE(end.raw.find("X-CHA-Audio-Complete: 1\r\n"), std::string::npos);
+    EXPECT_TRUE(end.raw.substr(end.raw.find("\r\n\r\n") + 4).empty());
+    for (const auto* offset : {"12", "-1", "1x", " 1", "18446744073709551616"}) {
+        EXPECT_EQ(read_chunk(offset).status, 400) << offset;
+    }
+}
+
 TEST_F(ChaWebAdapterTest, AudioRequestsValidateEntryVaultAndBody) {
     const auto path = session_path("lobby", add_audio_entry());
     const auto source = path + "/entries/1/audio";

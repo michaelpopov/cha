@@ -80,7 +80,7 @@ std::optional<std::string_view> next_token(
 }
 
 // Reads the NUL-separated name/value pairs. CONTENT_LENGTH must come first.
-// Variables other than the four that the daemon uses are ignored.
+// Variables that the daemon does not use are ignored.
 ScgiReadStatus parse_headers(
     std::string_view block, ScgiRequest& request, std::size_t& body_size) {
     std::optional<std::string_view> content_length;
@@ -88,6 +88,7 @@ ScgiReadStatus parse_headers(
     std::optional<std::string_view> method;
     std::optional<std::string_view> uri;
     std::optional<std::string_view> content_type;
+    std::optional<std::string_view> audio_offset;
     std::size_t offset = 0;
     while (offset < block.size()) {
         const auto name = next_token(block, offset);
@@ -102,6 +103,7 @@ ScgiReadStatus parse_headers(
         else if (*name == "REQUEST_METHOD") field = &method;
         else if (*name == "DOCUMENT_URI") field = &uri;
         else if (*name == "CONTENT_TYPE") field = &content_type;
+        else if (*name == "HTTP_X_CHA_AUDIO_OFFSET") field = &audio_offset;
         if (field == nullptr) continue;
         if (*field) return ScgiReadStatus::bad_request;
         *field = *value;
@@ -115,6 +117,7 @@ ScgiReadStatus parse_headers(
     request.method = std::string(*method);
     request.document_uri = std::string(*uri);
     if (content_type) request.content_type = std::string(*content_type);
+    if (audio_offset) request.audio_offset = std::string(*audio_offset);
     return ScgiReadStatus::ok;
 }
 
@@ -255,7 +258,8 @@ bool write_cgi(
     int status,
     std::string_view content_type,
     std::string_view body,
-    const std::atomic<bool>& stop) {
+    const std::atomic<bool>& stop,
+    std::string_view extra_headers) {
     std::string head = "Status: ";
     head += std::to_string(status);
     head += ' ';
@@ -266,6 +270,7 @@ bool write_cgi(
         head += content_type;
         head += "\r\n";
     }
+    head += extra_headers;
     head += "\r\n";
     if (status == 204) return write_bytes(fd, head, stop);
     return write_bytes(fd, head, stop) && write_bytes(fd, body, stop);

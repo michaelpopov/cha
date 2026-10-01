@@ -53,6 +53,7 @@ struct ScgiRequest {
     std::string document_uri;
     std::string body;
     std::string content_type;
+    std::string audio_offset;
 };
 
 enum class ScgiReadStatus {
@@ -78,6 +79,7 @@ bool write_cgi(
     int status,
     std::string_view content_type,
     std::string_view body,
-    const std::atomic<bool>& stop);
+    const std::atomic<bool>& stop,
+    std::string_view extra_headers = {});
 
 } // namespace cha::daemon

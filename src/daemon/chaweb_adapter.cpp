@@ -402,6 +402,29 @@ void serve_audio(
             route.forum_id, route.session_id, vault, epoch)), stop);
         return;
     }
+    if (!request.audio_offset.empty()) {
+        std::uint64_t offset{};
+        const auto* end = request.audio_offset.data() + request.audio_offset.size();
+        const auto [parsed, error] = std::from_chars(request.audio_offset.data(), end, offset);
+        if (error != std::errc{} || parsed != end) {
+            write_code(fd, ErrorCode::invalid_argument, stop);
+            return;
+        }
+        const auto chunk = application.audio_chunk(
+            route.forum_id, route.session_id, route.entry_id, vault, offset, epoch);
+        if (!chunk) {
+            write_code(fd, ErrorCode::not_found, stop, "Audio not found.");
+        } else if (chunk->failed) {
+            write_error(fd, 502, error_body(ErrorCode::internal_error,
+                "Audio generation failed. Try again."), stop);
+        } else if (chunk->body.empty() && !chunk->complete) {
+            write_cgi(fd, 204, {}, {}, stop);
+        } else {
+            write_cgi(fd, 200, chunk->mime_type, chunk->body, stop,
+                chunk->complete ? "X-CHA-Audio-Complete: 1\r\n" : "X-CHA-Audio-Complete: 0\r\n");
+        }
+        return;
+    }
     const auto audio = application.cached_audio(
         route.forum_id, route.session_id, route.entry_id, vault, epoch);
     if (!audio) {
