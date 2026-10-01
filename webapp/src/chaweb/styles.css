@@ -56,6 +56,10 @@ button:disabled {
   font-size: 0.85rem;
 }
 
+.chaweb-read-aloud.is-cached {
+  color: light-dark(rgb(24 128 61), rgb(112 218 146));
+}
+
 .chaweb-app {
   position: fixed;
   left: 0;
@@ -369,6 +373,11 @@ button:disabled {
 .chaweb-icon-button svg {
   width: 20px;
   height: 20px;
+}
+
+.chaweb-icon-button .chaweb-send-icon {
+  width: 24px;
+  height: 24px;
 }
 
 .chaweb-editor {

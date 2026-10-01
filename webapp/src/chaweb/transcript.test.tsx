@@ -43,6 +43,7 @@ function mockScroll(element: HTMLElement, scrollHeight: number, clientHeight: nu
 it('offers Read aloud only for completed character replies and keeps cached audio playable', () => {
   const toggle = vi.fn();
   const speech = { available: true, entryId: null, state: 'loading' as const, error: null, toggle,
+    isCached: (entry: TranscriptEntry) => Boolean(entry.has_cached_audio),
     clearing: false, clearDisabled: false, clear: vi.fn(async () => undefined) };
   const props = {
     characters: [], personas: [], layoutKey: 'compact', sessionKey: 'lobby/planning', speech,
@@ -51,7 +52,10 @@ it('offers Read aloud only for completed character replies and keeps cached audi
       entry({ id: 5, has_cached_audio: true })],
   };
   const { rerender } = render(<Transcript {...props} />);
-  expect(screen.getAllByRole('button', { name: 'Read aloud' })).toHaveLength(2);
+  const buttons = screen.getAllByRole('button', { name: 'Read aloud' });
+  expect(buttons).toHaveLength(2);
+  expect(buttons[0]).not.toHaveClass('is-cached');
+  expect(buttons[1]).toHaveClass('is-cached');
   fireEvent.click(screen.getAllByRole('button', { name: 'Read aloud' })[0]!);
   expect(toggle).toHaveBeenCalledWith(props.entries[0]);
   rerender(<Transcript {...props} speech={{ ...speech, entryId: 1 }} />);

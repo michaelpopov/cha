@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react';
 
-import { CheckIcon, ClearAudioIcon, CopyIcon, ForumsIcon, SendIcon, StopIcon, TrashIcon } from '../components/Icons';
+import { CheckIcon, ClearAudioIcon, CopyIcon, ForumsIcon, PaperPlaneIcon, StopIcon, TrashIcon } from '../components/Icons';
 
 const compactHeight = 56;
 
@@ -197,7 +197,7 @@ export function Composer({
           onClick={mode === 'stop' ? onStop : onSend}
           type="button"
         >
-          {mode === 'stop' ? <StopIcon /> : <SendIcon />}
+          {mode === 'stop' ? <StopIcon /> : <PaperPlaneIcon className="chaweb-send-icon" />}
         </button>
       </div>
     </div>

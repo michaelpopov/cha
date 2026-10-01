@@ -61,7 +61,7 @@ it('starts streaming immediately after acceptance without waiting for the cached
     null, undefined, 'Hello', expect.any(Function),
     { position: 0, onPositionChange: expect.any(Function) },
     '/api/cha/v1/forums/lobby/sessions/planning/entries/7/audio',
-    undefined, undefined, undefined, { streaming: true, onError: expect.any(Function) },
+    expect.any(Function), undefined, undefined, { streaming: true, onError: expect.any(Function) },
   );
   await act(async () => started());
   expect(result.current).toMatchObject({ entryId: 7, state: 'playing' });
@@ -87,6 +87,27 @@ it('uses cached acceptance immediately without polling', async () => {
   expect(play).toHaveBeenCalledOnce();
   expect(api.getAudioStatus).not.toHaveBeenCalled();
   expect(vi.mocked(TextToSpeechSession).mock.calls[0][9]?.streaming).toBe(false);
+  expect(result.current.isCached(entry)).toBe(true);
+});
+
+it('marks completed downloads as cached and resets the indicator when recordings are cleared', async () => {
+  const api = client();
+  const { result } = renderHook(() => useReadAloud(api, snapshotFixture, 'Personal', false));
+  expect(result.current.isCached(entry)).toBe(false);
+  expect(result.current.isCached({ ...entry, has_cached_audio: true })).toBe(true);
+  await act(async () => result.current.toggle(entry));
+  expect(result.current.isCached(entry)).toBe(false);
+  const completed = vi.mocked(TextToSpeechSession).mock.calls[0][6]!;
+  act(() => completed());
+  expect(result.current.isCached(entry)).toBe(true);
+  act(() => result.current.toggle(entry));
+  await act(async () => result.current.toggle(entry));
+  expect(api.startAudio).toHaveBeenCalledOnce();
+  await act(async () => result.current.clear());
+  expect(result.current.isCached(entry)).toBe(false);
+  expect(result.current.isCached({ ...entry, has_cached_audio: true })).toBe(false);
+  act(() => completed());
+  expect(result.current.isCached(entry)).toBe(false);
 });
 
 it('pauses a reply, resumes at its saved position, and restarts after it ends', async () => {

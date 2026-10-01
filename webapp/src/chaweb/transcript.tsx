@@ -83,6 +83,7 @@ export function Transcript({
       {visibleEntries.map((entry) => {
         const label = statusLabel[entry.status];
         const appearance = appearanceFor(entry, characters, personas);
+        const cached = speech?.isCached(entry) ?? false;
         return (
           <article
             className={`chaweb-entry is-${entry.kind}`}
@@ -95,9 +96,9 @@ export function Transcript({
             </div>
             {label && <div className="chaweb-entry-status">{label}</div>}
             {speech && entry.kind === 'character' && entry.status === 'complete'
-              && entry.text.trim() && (speech.available || entry.has_cached_audio) && (
+              && entry.text.trim() && (speech.available || cached) && (
               <button
-                className="chaweb-read-aloud"
+                className={`chaweb-read-aloud${cached ? ' is-cached' : ''}`}
                 disabled={deleting || speech.clearing}
                 onClick={() => speech.toggle(entry)}
                 type="button"

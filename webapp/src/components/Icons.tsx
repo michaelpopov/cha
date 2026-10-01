@@ -129,6 +129,14 @@ export function SendIcon(props: IconProps) {
   );
 }
 
+export function PaperPlaneIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m3 3 3 9-3 9 19-9ZM6 12h16" {...stroke} strokeWidth={2.8} />
+    </Icon>
+  );
+}
+
 export function StopIcon(props: IconProps) {
   return (
     <Icon {...props}>
