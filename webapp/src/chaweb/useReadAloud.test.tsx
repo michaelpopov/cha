@@ -38,9 +38,9 @@ beforeEach(() => {
   play.mockReset().mockResolvedValue(undefined);
   stop.mockReset();
   vi.mocked(TextToSpeechSession).mockReset().mockImplementation(function (
-    _configuration, _voice, _text, onEnded,
+    _configuration, _voice, _text, onEnded, playback,
   ) {
-    ended = onEnded;
+    ended = () => { playback?.onPositionChange(0); onEnded(); };
     return { play, stop } as unknown as TextToSpeechSession;
   });
 });
@@ -57,7 +57,8 @@ it('starts streaming immediately after acceptance without waiting for the cached
   expect(play).toHaveBeenCalledOnce();
   expect(api.getAudioStatus).not.toHaveBeenCalled();
   expect(TextToSpeechSession).toHaveBeenCalledWith(
-    null, undefined, 'Hello', expect.any(Function), undefined,
+    null, undefined, 'Hello', expect.any(Function),
+    { position: 0, onPositionChange: expect.any(Function) },
     '/api/cha/v1/forums/lobby/sessions/planning/entries/7/audio',
     undefined, undefined, undefined, { streaming: true, onError: expect.any(Function) },
   );
@@ -85,6 +86,81 @@ it('uses cached acceptance immediately without polling', async () => {
   expect(play).toHaveBeenCalledOnce();
   expect(api.getAudioStatus).not.toHaveBeenCalled();
   expect(vi.mocked(TextToSpeechSession).mock.calls[0][9]?.streaming).toBe(false);
+});
+
+it('pauses a reply, resumes at its saved position, and restarts after it ends', async () => {
+  const api = client();
+  const cached = { ...entry, has_cached_audio: true };
+  const { result } = renderHook(() => useReadAloud(api, snapshotFixture, 'Personal', false));
+  await act(async () => result.current.toggle(cached));
+  const first = vi.mocked(TextToSpeechSession).mock.calls[0][4]!;
+  stop.mockImplementationOnce(() => first.onPositionChange(12.5));
+  act(() => result.current.toggle(cached));
+  expect(result.current.entryId).toBeNull();
+  expect(play).toHaveBeenCalledOnce();
+  await act(async () => result.current.toggle(cached));
+  expect(vi.mocked(TextToSpeechSession).mock.calls[1][4]?.position).toBe(12.5);
+  expect(result.current.state).toBe('playing');
+  act(() => ended());
+  await act(async () => result.current.toggle(cached));
+  expect(vi.mocked(TextToSpeechSession).mock.calls[2][4]?.position).toBe(0);
+  expect(api.startAudio).not.toHaveBeenCalled();
+});
+
+it('keeps separate positions when switching between replies', async () => {
+  const api = client();
+  const firstEntry = { ...entry, has_cached_audio: true };
+  const secondEntry = { ...firstEntry, id: 8 };
+  const { result } = renderHook(() => useReadAloud(api, snapshotFixture, 'Personal', false));
+  await act(async () => result.current.toggle(firstEntry));
+  const first = vi.mocked(TextToSpeechSession).mock.calls[0][4]!;
+  stop.mockImplementationOnce(() => first.onPositionChange(12.5));
+  await act(async () => result.current.toggle(secondEntry));
+  const second = vi.mocked(TextToSpeechSession).mock.calls[1][4]!;
+  expect(second.position).toBe(0);
+  stop.mockImplementationOnce(() => second.onPositionChange(6.25));
+  await act(async () => result.current.toggle(firstEntry));
+  expect(vi.mocked(TextToSpeechSession).mock.calls[2][4]?.position).toBe(12.5);
+  await act(async () => result.current.toggle(secondEntry));
+  expect(vi.mocked(TextToSpeechSession).mock.calls[3][4]?.position).toBe(6.25);
+});
+
+it.each(['forum', 'session', 'vault'])('clears positions when the %s changes', async (change) => {
+  const api = client();
+  const cached = { ...entry, has_cached_audio: true };
+  const { result, rerender } = renderHook(
+    ({ snapshot, vault }) => useReadAloud(api, snapshot, vault, false),
+    { initialProps: { snapshot: snapshotFixture, vault: 'Personal' } },
+  );
+  await act(async () => result.current.toggle(cached));
+  const first = vi.mocked(TextToSpeechSession).mock.calls[0][4]!;
+  stop.mockImplementationOnce(() => first.onPositionChange(12.5));
+  rerender({
+    snapshot: change === 'forum' ? { ...snapshotFixture, forum: bootstrapFixture.forums[0]! }
+      : change === 'session' ? { ...snapshotFixture, session_id: 'other' } : snapshotFixture,
+    vault: change === 'vault' ? 'Projects' : 'Personal',
+  });
+  expect(stop).toHaveBeenCalledOnce();
+  await act(async () => result.current.toggle(cached));
+  expect(vi.mocked(TextToSpeechSession).mock.calls[1][4]?.position).toBe(0);
+});
+
+it('preserves the position when a resumed stream is cancelled before playback starts', async () => {
+  const api = client();
+  const { result } = renderHook(() => useReadAloud(api, snapshotFixture, 'Personal', false));
+  await act(async () => result.current.toggle(entry));
+  const first = vi.mocked(TextToSpeechSession).mock.calls[0][4]!;
+  stop.mockImplementationOnce(() => first.onPositionChange(12.5));
+  act(() => result.current.toggle(entry));
+  let resolve!: () => void;
+  play.mockImplementationOnce(() => new Promise<void>((done) => { resolve = done; }));
+  await act(async () => result.current.toggle(entry));
+  expect(result.current.state).toBe('loading');
+  act(() => result.current.toggle(entry));
+  await act(async () => resolve());
+  expect(result.current.entryId).toBeNull();
+  await act(async () => result.current.toggle(entry));
+  expect(vi.mocked(TextToSpeechSession).mock.calls[2][4]?.position).toBe(12.5);
 });
 
 it.each(['stop', 'switch', 'delete', 'unmount'])('ignores a late generation result after %s', async (action) => {
@@ -123,6 +199,8 @@ it('reports a failed stream after playback starts and allows a new attempt', asy
   await act(async () => result.current.toggle(entry));
   expect(result.current.state).toBe('playing');
   const options = vi.mocked(TextToSpeechSession).mock.calls[0][9]!;
+  const playback = vi.mocked(TextToSpeechSession).mock.calls[0][4]!;
+  stop.mockImplementationOnce(() => playback.onPositionChange(12.5));
   act(() => options.onError!(new TextToSpeechError('Audio generation failed. Try again.')));
   expect(result.current.entryId).toBeNull();
   expect(result.current.error).toBe('Audio generation failed. Try again.');
@@ -130,6 +208,7 @@ it('reports a failed stream after playback starts and allows a new attempt', asy
   expect(api.startAudio).toHaveBeenCalledTimes(2);
   expect(result.current.error).toBeNull();
   expect(play).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(TextToSpeechSession).mock.calls[1][4]?.position).toBe(0);
 });
 
 it('reports admission and autoplay failures without claiming playback started', async () => {

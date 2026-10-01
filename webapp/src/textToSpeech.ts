@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import CodecParser from 'codec-parser';
+import MSEAudioWrapper from 'mse-audio-wrapper';
 
 import type { ChaClient, VoiceUpdate } from './api/client';
 import { beginSpeechPlayback } from './speechPlayback';
@@ -206,8 +208,11 @@ export class TextToSpeechSession {
     }
   }
 
-  private createAudio(url: string): HTMLAudioElement {
-    const audio = new Audio(url);
+  private createAudio(url: string, managed = false): HTMLAudioElement {
+    const audio = new Audio();
+    // Safari needs this before attaching a ManagedMediaSource without an AirPlay URL.
+    if (managed) audio.disableRemotePlayback = true;
+    audio.src = url;
     this.audio = audio;
     audio.addEventListener('ended', () => this.finish(true), { once: true });
     audio.addEventListener('pause', () => {
@@ -249,9 +254,13 @@ export class TextToSpeechSession {
     const first = await chunks.next();
     if (first.done || this.stopped) return;
     const mime = first.value.type.split(';')[0].trim().toLowerCase();
-    // Other formats and engines without MP3 MSE retain complete-clip playback.
-    if (mime !== 'audio/mpeg' || typeof MediaSource === 'undefined'
-      || !MediaSource.isTypeSupported(mime) || (this.playback?.position ?? 0) > 0) {
+    const StreamingSource = (globalThis as typeof globalThis & {
+      ManagedMediaSource?: typeof MediaSource;
+    }).ManagedMediaSource ?? globalThis.MediaSource;
+    const mp4Mime = 'audio/mp4;codecs="mp3"';
+    const rawMp3 = mime === 'audio/mpeg' && StreamingSource?.isTypeSupported(mime);
+    const wrappedMp3 = mime === 'audio/mpeg' && !rawMp3 && StreamingSource?.isTypeSupported(mp4Mime);
+    if ((!rawMp3 && !wrappedMp3) || (this.playback?.position ?? 0) > 0) {
       const parts = [first.value.bytes];
       for await (const chunk of chunks) parts.push(chunk.bytes);
       if (this.stopped) return;
@@ -260,15 +269,23 @@ export class TextToSpeechSession {
       await this.startAudio(this.createAudio(this.objectUrl));
       return;
     }
-    const source = new MediaSource();
+    const source = new StreamingSource() as MediaSource & { readonly streaming?: boolean };
     const opened = waitForAudioEvent(source, 'sourceopen', signal);
     this.objectUrl = URL.createObjectURL(source);
-    const audio = this.createAudio(this.objectUrl);
+    const audio = this.createAudio(this.objectUrl, 'streaming' in source);
     await opened;
-    const buffer = source.addSourceBuffer(mime);
+    const buffer = source.addSourceBuffer(wrappedMp3 ? mp4Mime : mime);
+    if (wrappedMp3) buffer.mode = 'sequence';
+    // Firefox accepts MP3 frames inside MP4, but not the raw MP3 byte stream.
+    const parser = wrappedMp3 ? new CodecParser(mime, { enableFrameCRC32: false }) : null;
+    const wrapper = wrappedMp3 ? new MSEAudioWrapper(mime, {
+      codec: 'mpeg', minFramesPerSegment: 1, minBytesPerSegment: 1,
+    }) : null;
     const append = async (bytes: ArrayBuffer) => {
       if (bytes.byteLength === 0) return;
-      while (buffer.buffered.length && buffer.buffered.end(buffer.buffered.length - 1) - audio.currentTime > 30) {
+      // ManagedMediaSource lets Safari request data only when it needs more audio.
+      while (source.streaming === false
+        || (buffer.buffered.length && buffer.buffered.end(buffer.buffered.length - 1) - audio.currentTime > 30)) {
         await waitForAudio(signal);
       }
       if (buffer.buffered.length && audio.currentTime - buffer.buffered.start(0) > 20) {
@@ -276,9 +293,17 @@ export class TextToSpeechSession {
       }
       await waitForAudioEvent(buffer, 'updateend', signal, () => buffer.appendBuffer(bytes));
     };
+    const appendFrames = async (frames: IterableIterator<unknown>) => {
+      for (const segment of wrapper!.iterator([...frames])) await append(segment.buffer);
+    };
+    const appendChunk = async (bytes: ArrayBuffer) => {
+      if (parser) await appendFrames(parser.parseChunk(new Uint8Array(bytes)));
+      else await append(bytes);
+    };
     const transfer = (async () => {
-      await append(first.value.bytes);
-      for await (const chunk of chunks) await append(chunk.bytes);
+      await appendChunk(first.value.bytes);
+      for await (const chunk of chunks) await appendChunk(chunk.bytes);
+      if (parser) await appendFrames(parser.flush());
       if (this.stopped) return;
       source.endOfStream();
       this.onCached?.();

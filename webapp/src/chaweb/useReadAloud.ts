@@ -26,6 +26,7 @@ export function useReadAloud(
   const selected = useRef<number | null>(null);
   const attempt = useRef(0);
   const player = useRef<TextToSpeechSession | null>(null);
+  const positions = useRef(new Map<number, number>());
   const forum = snapshot?.forum.id;
   const session = snapshot?.session_id;
 
@@ -39,6 +40,7 @@ export function useReadAloud(
 
   useEffect(() => {
     setError(null);
+    positions.current.clear();
     return stop;
     // Each player and pending request belongs to one conversation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -59,6 +61,7 @@ export function useReadAloud(
     const failed = (failure: unknown) => {
       if (!active()) return;
       stop();
+      positions.current.delete(entry.id);
       setError(failure instanceof DOMException && failure.name === 'NotAllowedError'
         ? 'Playback was blocked. Click Read aloud to try again.'
         : failure instanceof TextToSpeechError
@@ -69,7 +72,14 @@ export function useReadAloud(
       const playback = new TextToSpeechSession(
         null, undefined, entry.text,
         () => { if (active()) stop(); },
-        undefined, audioUrl(forum!, session!, entry.id),
+        {
+          position: positions.current.get(entry.id) ?? 0,
+          onPositionChange: (position) => {
+            if (position > 0) positions.current.set(entry.id, position);
+            else positions.current.delete(entry.id);
+          },
+        },
+        audioUrl(forum!, session!, entry.id),
         undefined, undefined, undefined, { streaming, onError: failed },
       );
       player.current = playback;

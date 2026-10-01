@@ -17,9 +17,44 @@ namespace cha {
 namespace {
 using Json = nlohmann::json;
 
-std::string replace_paragraph_breaks(const std::string& text) {
+std::string prepare_speech_text(std::string_view source) {
+    std::string text = remove_url_references(source);
+    const auto multiline = std::regex::ECMAScript | std::regex::multiline;
+    static const std::regex line_prefix(
+        R"(^[ \t]*(#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+(\[[ xX]\][ \t]+)?|[0-9]{1,9}[.)][ \t]+))",
+        multiline);
+    static const std::regex fence(R"(^[ \t]*(`{3,}|~{3,})[^\r\n]*(\r?\n|$))", multiline);
+    static const std::regex rule(R"(^[ \t]*((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,}|=+)[ \t]*\r?$)", multiline);
+    static const std::regex heading_end(R"((^[ \t]*#{1,6}[ \t]+[^\r\n]*?)[ \t]+#+[ \t]*\r?$)", multiline);
+    static const std::regex link(R"(!?\[([^\]\r\n]*)\]\([^\r\n)]*\))");
+    static const std::regex reference_link(R"(\[([^\]\r\n]+)\]\[[^\]\r\n]*\])");
+    static const std::regex code(R"((`+)([\s\S]*?)\1)");
+    static const std::regex emphasis(R"((\*{1,3}|~~)(\S([\s\S]*?\S)?)\1)");
+    // Underscores inside identifiers such as snake_case are not formatting.
+    static const std::regex underscore_emphasis(
+        R"regex((^|[\s("'])(_{1,3})(\S([\s\S]*?\S)?)\2(?=$|[\s.,!?;:)"']))regex");
+    static const std::regex escape(R"(\\([\\`*_{}\[\]()#+.!>~-]))");
     static const std::regex paragraph_break(R"(\s*\n\s*\n\s*)");
-    return std::regex_replace(text, paragraph_break, " [long pause] ");
+    text = std::regex_replace(text, rule, "");
+    text = std::regex_replace(text, heading_end, "$1");
+    // Remove nested quote/list prefixes as well as headings.
+    for (;;) {
+        auto plain = std::regex_replace(text, line_prefix, "");
+        if (plain == text) break;
+        text = std::move(plain);
+    }
+    text = std::regex_replace(text, fence, "");
+    text = std::regex_replace(text, link, "$1");
+    text = std::regex_replace(text, reference_link, "$1");
+    text = std::regex_replace(text, code, "$2");
+    text = std::regex_replace(text, escape, "$1");
+    for (;;) {
+        auto plain = std::regex_replace(text, emphasis, "$2");
+        plain = std::regex_replace(plain, underscore_emphasis, "$1$3");
+        if (plain == text) break;
+        text = std::move(plain);
+    }
+    return std::regex_replace(std::string(trim_view(text)), paragraph_break, " [long pause] ");
 }
 
 bool valid_audio_type(std::string_view value) {
@@ -114,10 +149,7 @@ static std::optional<FishAudioResult> transfer_fish_audio(
     }
     char error_buffer[CURL_ERROR_SIZE]{};
     const auto require = [&](CURLcode result) { require_curl(result, error_buffer); };
-    auto payload = request.body;
-    auto& text = payload.at("text").get_ref<std::string&>();
-    text = replace_paragraph_breaks(text);
-    const std::string body = payload.dump();
+    const std::string body = request.body.dump();
     AudioReceiver receiver{curl.get(), {}, on_audio, {}};
     require(curl_easy_setopt(curl.get(), CURLOPT_ERRORBUFFER, error_buffer));
     require(curl_easy_setopt(curl.get(), CURLOPT_URL, output.url.c_str()));
@@ -226,9 +258,11 @@ FishAudioRequest make_fish_audio_request(
     for (const auto& name : synthesis.ignored_settings) {
         log_warn("Ignoring unsupported FishAudio voice setting: " + name);
     }
+    const auto spoken = prepare_speech_text(text);
+    if (spoken.empty()) throw std::invalid_argument("Missing speech text");
     FishAudioRequest request{
         .model = output.model,
-        .body = {{"text", text}, {"reference_id", *synthesis.reference_id}, {"format", output.output_format},
+        .body = {{"text", spoken}, {"reference_id", *synthesis.reference_id}, {"format", output.output_format},
             {"temperature", 0.5}, {"latency", "normal"}},
     };
     if (synthesis.settings.speed) {

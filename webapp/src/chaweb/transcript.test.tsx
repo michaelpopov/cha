@@ -55,6 +55,9 @@ it('offers Read aloud only for completed character replies and keeps cached audi
   expect(toggle).toHaveBeenCalledWith(props.entries[0]);
   rerender(<Transcript {...props} speech={{ ...speech, entryId: 1 }} />);
   expect(screen.getByRole('button', { name: 'Stop audio' })).toHaveTextContent('loading');
+  rerender(<Transcript {...props} speech={{ ...speech, entryId: 1, state: 'playing' }} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Pause audio' }));
+  expect(toggle).toHaveBeenLastCalledWith(props.entries[0]);
   rerender(<Transcript {...props} speech={{ ...speech, available: false }} />);
   expect(screen.getAllByRole('button', { name: 'Read aloud' })).toHaveLength(1);
   rerender(<Transcript {...props} deleting />);

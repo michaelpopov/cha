@@ -21,8 +21,10 @@
     "stage": "npm run build && node scripts/stage.mjs"
   },
   "dependencies": {
+    "codec-parser": "2.5.0",
     "dompurify": "3.4.13",
     "marked": "18.0.9",
+    "mse-audio-wrapper": "1.4.15",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

@@ -101,10 +101,12 @@ export function Transcript({
                 disabled={deleting}
                 onClick={() => speech.toggle(entry)}
                 type="button"
-                aria-label={speech.entryId === entry.id ? 'Stop audio' : 'Read aloud'}
+                aria-label={speech.entryId === entry.id
+                  ? speech.state === 'loading' ? 'Stop audio' : 'Pause audio'
+                  : 'Read aloud'}
               >
                 {speech.entryId === entry.id
-                  ? speech.state === 'loading' ? 'Stop audio (loading)' : 'Stop audio'
+                  ? speech.state === 'loading' ? 'Stop audio (loading)' : 'Pause audio'
                   : 'Read aloud'}
               </button>
             )}

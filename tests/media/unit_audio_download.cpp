@@ -70,14 +70,14 @@ protected:
 };
 
 TEST_F(AudioDownloads, StreamsCleanedReplyAndCachesAudioWithoutChangingTranscript) {
-    const std::string original = "Hello. ([source](https://example.com))\n\nNext paragraph.";
+    const std::string original = "**Hello.** ([source](https://example.com))\n\n# Next _paragraph_.";
     add_reply(original);
     std::atomic_int transfers{};
     std::atomic_bool release_audio{}, first_chunk{};
     auto downloads = make(
         [&](const auto&, const auto&, const auto& request, const auto& cancel,
             const AudioChunkCallback& emit) -> std::optional<EntryAudio> {
-            EXPECT_EQ(request.body.at("text"), "Hello.\n\nNext paragraph.");
+            EXPECT_EQ(request.body.at("text"), "Hello. [long pause] Next paragraph.");
             if (++transfers == 1) throw std::runtime_error("Retry FishAudio only");
             emit("audio/mpeg", "first");
             first_chunk = true;

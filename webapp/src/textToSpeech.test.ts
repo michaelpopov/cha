@@ -303,16 +303,19 @@ describe('playback position', () => {
 
 describe('streaming playback', () => {
   const appended: string[] = [];
+  const appendedBytes: Uint8Array[] = [];
   let source: TestMediaSource;
   class TestBuffer extends EventTarget {
     buffered = { length: 0 };
+    mode = 'segments';
     appendBuffer(bytes: ArrayBuffer) {
       appended.push(new TextDecoder().decode(bytes));
+      appendedBytes.push(new Uint8Array(bytes));
       queueMicrotask(() => this.dispatchEvent(new Event('updateend')));
     }
   }
   class TestMediaSource extends EventTarget {
-    static isTypeSupported = () => true;
+    static isTypeSupported = (_type: string) => true;
     endOfStream = vi.fn();
     constructor() {
       super();
@@ -334,6 +337,7 @@ describe('streaming playback', () => {
   };
   beforeEach(() => {
     appended.length = 0;
+    appendedBytes.length = 0;
     vi.stubGlobal('MediaSource', TestMediaSource);
   });
 
@@ -355,6 +359,99 @@ describe('streaming playback', () => {
     expect(appended).toEqual(['first', 'second']);
     expect(cached).toHaveBeenCalledOnce();
     session.stop();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it.each(['Firefox', 'Safari'])('wraps MP3 for %s before completion and flushes the final frame across packet boundaries', async (browser) => {
+    vi.spyOn(TestMediaSource, 'isTypeSupported').mockImplementation(
+      (type: string) => type === 'audio/mp4;codecs="mp3"',
+    );
+    if (browser === 'Safari') {
+      class ManagedSource extends TestMediaSource { streaming = true; }
+      vi.stubGlobal('MediaSource', undefined);
+      vi.stubGlobal('ManagedMediaSource', ManagedSource);
+    }
+    // Five MPEG-1 Layer III frames: mono, 44.1 kHz, 128 kbps.
+    const mp3 = new Uint8Array(5 * 417);
+    for (let index = 0; index < 5; index++) mp3.set([0xff, 0xfb, 0x90, 0xc0], index * 417);
+    const packet = (bytes: Uint8Array<ArrayBuffer>, complete: boolean) => new Response(bytes, {
+      headers: { 'Content-Type': 'audio/mpeg', 'X-CHA-Audio-Complete': complete ? '1' : '0' },
+    });
+    let finish!: (response: Response) => void;
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(packet(mp3.slice(0, 1000), false))
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const cached = vi.fn();
+    const { session } = start(cached);
+    await session.play();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    expect(source.addSourceBuffer).toHaveBeenCalledExactlyOnceWith('audio/mp4;codecs="mp3"');
+    expect(source.addSourceBuffer.mock.results[0].value.mode).toBe('sequence');
+    await vi.waitFor(() => expect(appendedBytes.length).toBeGreaterThan(1));
+    expect(appended[0]).toContain('ftyp');
+    expect(source.endOfStream).not.toHaveBeenCalled();
+    expect(cached).not.toHaveBeenCalled();
+    finish(packet(mp3.slice(1000), true));
+    await vi.waitFor(() => expect(source.endOfStream).toHaveBeenCalledOnce());
+    // Extract the mdat payloads and verify every original MP3 frame survived.
+    const frames = appendedBytes.slice(1).flatMap((fragment) => {
+      const moofSize = new DataView(fragment.buffer).getUint32(0);
+      expect(new TextDecoder().decode(fragment.subarray(moofSize + 4, moofSize + 8))).toBe('mdat');
+      return [...fragment.subarray(moofSize + 8)];
+    });
+    expect(new Uint8Array(frames)).toEqual(mp3);
+    expect(cached).toHaveBeenCalledOnce();
+    session.stop();
+  });
+
+  it('streams with only ManagedMediaSource, disables AirPlay before attachment, and follows Safari buffer demand', async () => {
+    class ManagedSource extends TestMediaSource { streaming = false; }
+    vi.stubGlobal('MediaSource', undefined);
+    vi.stubGlobal('ManagedMediaSource', ManagedSource);
+    const createAudio = vi.mocked(Audio).getMockImplementation()!;
+    vi.mocked(Audio).mockImplementationOnce(function () {
+      const audio = Reflect.construct(createAudio, []) as HTMLAudioElement;
+      Object.defineProperty(audio, 'src', {
+        set() { expect(audio.disableRemotePlayback).toBe(true); },
+      });
+      return audio;
+    });
+    let finish!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(response('first'))
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const { session } = start();
+    await session.play();
+    expect(appended).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    (source as ManagedSource).streaming = true;
+    source.dispatchEvent(new Event('startstreaming'));
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    expect(appended).toEqual(['first']);
+    (source as ManagedSource).streaming = false;
+    source.dispatchEvent(new Event('endstreaming'));
+    finish(response('last', true));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(appended).toEqual(['first']);
+    expect(source.endOfStream).not.toHaveBeenCalled();
+    (source as ManagedSource).streaming = true;
+    source.dispatchEvent(new Event('startstreaming'));
+    await vi.waitFor(() => expect(source.endOfStream).toHaveBeenCalledOnce());
+    expect(appended).toEqual(['first', 'last']);
+    session.stop();
+  });
+
+  it('cancels while waiting for Safari to request data', async () => {
+    class ManagedSource extends TestMediaSource { streaming = false; }
+    vi.stubGlobal('MediaSource', undefined);
+    vi.stubGlobal('ManagedMediaSource', ManagedSource);
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(response('first'));
+    const error = vi.fn();
+    const { session, release } = start(vi.fn(), error);
+    await session.play();
+    session.stop();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(appended).toEqual([]);
+    expect(error).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalledOnce();
   });
 

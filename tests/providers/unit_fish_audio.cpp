@@ -268,6 +268,64 @@ TEST(FishAudio, DecoderRetainsFailuresAndWarnsAboutIgnoredSettingsOnlyWhenConsum
     }
 }
 
+TEST(FishAudio, PreparesPlainSpeechAndParagraphPausesWithoutChangingSourceText) {
+    const WorkspaceVoiceOutput output{.model = "s2.1-pro", .output_format = "mp3"};
+    const std::vector<std::pair<std::string, std::string>> cases{
+        {"# Heading ###\n\n**Bold** and *italic*, __strong__ and _emphasis_.",
+            "Heading [long pause] Bold and italic, strong and emphasis."},
+        {"> **Quote**\n>\n> - First\n>   2) Second\n- [x] Done\n+ [ ] Pending",
+            "Quote [long pause] First\nSecond\nDone\nPending"},
+        {"Title\n=====\n\nParagraph\n---\nNext\n\n* * *\n\nEnd",
+            "Title [long pause] Paragraph [long pause] Next [long pause] End"},
+        {"Before\n```cpp\ncall();\n```\n\nUse `value` and ``another`value``.\n~~~text\nAfter\n~~~",
+            "Before\ncall(); [long pause] Use value and another`value.\nAfter"},
+        {"***Both***, **bold *and italic***, ~~old~~, and __strong _inside___!",
+            "Both, bold and italic, old, and strong inside!"},
+        {"Read [**the guide**](https://example.org/guide) and [section](#part). "
+            "([example.org](https://example.org))",
+            "Read the guide and section."},
+        {"Read [the guide][guide].\n\n[guide]: https://example.org/guide",
+            "Read the guide."},
+        {"  First\r\n \r\nSecond\n\n\nThird\n\t\n[soft] Last [long pause] end.  ",
+            "First [long pause] Second [long pause] Third [long pause] [soft] Last [long pause] end."},
+        {"**Привет**\n\n_世界_. Keep snake_case and one_two_three, C#, 2 * 3, and [soft] tags.",
+            "Привет [long pause] 世界. Keep snake_case and one_two_three, C#, 2 * 3, and [soft] tags."},
+        {"Escaped \\*word\\* and punctuation\\.", "Escaped word and punctuation."},
+    };
+    for (const auto& [original, expected] : cases) {
+        SCOPED_TRACE(original);
+        const auto source = original;
+        const auto request = make_fish_audio_request(output, source,
+            FishAudioSynthesis{.reference_id = "voice"});
+        EXPECT_EQ(request.body.at("text"), expected);
+        EXPECT_EQ(source, original);
+    }
+    EXPECT_THROW(make_fish_audio_request(output, " \n---\n```text\n``` ",
+        FishAudioSynthesis{.reference_id = "voice"}), std::invalid_argument);
+}
+
+TEST(FishAudio, PreviewSendsCleanedTextAndPauseMarkers) {
+    MockHttpServer server({
+        "HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nContent-Length: 5\r\nConnection: close\r\n\r\naudio",
+    });
+    server.start();
+    const WorkspaceVoiceOutput output{
+        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
+        .model = "s2.1-pro", .output_format = "mp3",
+    };
+    const auto request = make_fish_audio_request(output,
+        {{"text", "**Hello**\n\n> _World_."}, {"reference_id", "voice"}});
+    FishAudioProxy proxy;
+    const auto result = proxy.synthesize(output, "secret", request, [] { return false; });
+    server.join();
+    ASSERT_EQ(server.requests().size(), 1);
+    const auto& sent = server.requests()[0];
+    const auto body = Json::parse(sent.substr(sent.find("\r\n\r\n") + 4));
+    EXPECT_EQ(body.at("text"), "Hello [long pause] World.");
+    EXPECT_EQ(result.status, 200);
+    EXPECT_EQ(result.audio.audio, "audio");
+}
+
 TEST(FishAudio, ForwardsAuthenticationAndReturnsAudioBytes) {
     MockHttpServer server({
         "HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nContent-Length: 5\r\nConnection: close\r\n\r\naudio",
@@ -278,7 +336,7 @@ TEST(FishAudio, ForwardsAuthenticationAndReturnsAudioBytes) {
         .model = "custom/model", .output_format = "mp3",
     };
     const auto request = make_fish_audio_request(output, {
-        {"text", "Hello\n\nWorld\nSingle line\n\n\nThree\n\n\n\nFour\r\n\r\nCRLF\n \n[soft] Goodbye"},
+        {"text", "**Hello**\n\n# World\nSingle line\n\n\nThree\n\n\n\nFour\r\n\r\nCRLF\n \n[soft] Goodbye"},
         {"reference_id", "voice"},
     });
     const auto result = download_fish_audio(
@@ -291,6 +349,7 @@ TEST(FishAudio, ForwardsAuthenticationAndReturnsAudioBytes) {
     EXPECT_NE(sent.find("model: custom/model"), std::string::npos);
     auto expected_body = request.body;
     expected_body["text"] = "Hello [long pause] World\nSingle line [long pause] Three [long pause] Four [long pause] CRLF [long pause] [soft] Goodbye";
+    EXPECT_EQ(request.body, expected_body);
     EXPECT_NE(sent.find(expected_body.dump()), std::string::npos);
     ASSERT_TRUE(result);
     EXPECT_EQ(result->audio, "audio");
