@@ -47,6 +47,15 @@ button:disabled {
   opacity: 0.4;
 }
 
+.chaweb-read-aloud {
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-foreground);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
 .chaweb-app {
   position: fixed;
   left: 0;

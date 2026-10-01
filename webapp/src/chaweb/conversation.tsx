@@ -4,6 +4,7 @@ import type { CharacterAppearance } from '../api/client';
 import { copyText } from './clipboard';
 import { Composer } from './composer';
 import { Transcript, type TranscriptEntry } from './transcript';
+import type { ReadAloud } from './useReadAloud';
 
 export function Conversation({
   entries,
@@ -28,6 +29,7 @@ export function Conversation({
   pendingText = null,
   onRetry,
   onAllowSend,
+  speech,
 }: {
   entries: readonly TranscriptEntry[];
   characters: ReadonlyArray<{ id: string; appearance: CharacterAppearance }>;
@@ -51,6 +53,7 @@ export function Conversation({
   pendingText?: string | null;
   onRetry?(): void;
   onAllowSend?(): void;
+  speech?: ReadAloud;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const currentSession = useRef(sessionKey);
@@ -89,12 +92,15 @@ export function Conversation({
   return (
     <div className="chaweb-conversation" ref={root}>
       <Transcript
+        speech={speech}
+        deleting={deleting}
         characters={characters}
         entries={entries}
         layoutKey={`${expanded}:${viewportHeight}`}
         personas={personas}
         sessionKey={sessionKey}
       />
+      {speech?.error && <p className="chaweb-alert" role="alert">{speech.error}</p>}
       {notice && <p className={deleting ? 'chaweb-status' : 'chaweb-alert'} role={deleting ? 'status' : 'alert'}>{notice}</p>}
       {copyStatus === 'copied' && <p className="chaweb-status" role="status">Copied to clipboard</p>}
       {copyStatus === 'failed' && (

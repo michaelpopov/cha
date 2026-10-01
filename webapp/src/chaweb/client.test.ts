@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { bootstrapFixture, snapshotFixture } from '../test/fixtures';
-import { createChaWebClient } from './client';
+import { bootstrapFixture, snapshotFixture, voiceOutputRuntimeFixture } from '../test/fixtures';
+import { audioUrl, createChaWebClient } from './client';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -26,6 +26,32 @@ function installFetch(handler: (url: string, init?: RequestInit) => Promise<Resp
 }
 
 describe('ChaWeb HTTP client', () => {
+  it('loads voice settings and audio jobs and requests speech by stored entry ID', async () => {
+    const calls = installFetch((url, init) => {
+      if (url.endsWith('/voice-output')) return jsonResponse(voiceOutputRuntimeFixture);
+      if (init?.method === 'POST') return jsonResponse({ entry_id: 7, cached: false, state: 'queued' });
+      return jsonResponse({ cached_entry_ids: [2], downloads: [{ entry_id: 7, state: 'running' }] });
+    });
+    const client = createChaWebClient();
+    await expect(client.getVoiceOutputRuntime()).resolves.toEqual(voiceOutputRuntimeFixture);
+    await expect(client.startAudio('a/b', 'c d', 7, 'Personal')).resolves.toMatchObject({ state: 'queued' });
+    await expect(client.getAudioStatus('a/b', 'c d')).resolves.toMatchObject({ cached_entry_ids: [2] });
+    expect(calls.map(({ url }) => url)).toEqual([
+      '/api/cha/v1/voice-output', audioUrl('a/b', 'c d', 7), '/api/cha/v1/forums/a%2Fb/sessions/c%20d/audio',
+    ]);
+    expect(calls[1]?.init?.body).toBe(JSON.stringify({ vault_name: 'Personal' }));
+  });
+
+  it('accepts missing voice configuration and rejects mismatched audio acceptance and malformed jobs', async () => {
+    installFetch(() => jsonResponse(null));
+    await expect(createChaWebClient().getVoiceOutputRuntime()).resolves.toBeNull();
+    installFetch(() => jsonResponse({ entry_id: 8, cached: true }));
+    await expect(createChaWebClient().startAudio('lobby', 'planning', 7, 'Personal'))
+      .rejects.toMatchObject({ status: 200 });
+    installFetch(() => jsonResponse({ cached_entry_ids: [], downloads: [{ entry_id: 7, state: 'unknown' }] }));
+    await expect(createChaWebClient().getAudioStatus('lobby', 'planning')).rejects.toMatchObject({ status: 200 });
+  });
+
   it('deletes the specified session without a body and reports failures without retrying', async () => {
     const calls = installFetch(() => new Response(null, { status: 204 }));
     const client = createChaWebClient();

@@ -115,7 +115,21 @@ std::shared_ptr<AudioDownloadManager::Job> AudioDownloadManager::prepare_job(
         throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
     }
     job->key = credential->value;
-    job->request = make_fish_audio_request(job->output, entry_speech_text(entry), synthesis);
+    auto resolved = synthesis;
+    if (!resolved.reference_id) {
+        const auto* character = workspace->find_character(entry.participant_id);
+        const auto* voice = character && character->voice_id
+            ? workspace->find_voice(*character->voice_id) : nullptr;
+        if (voice) {
+            resolved.reference_id = voice->elevenlabs_voice_id;
+            resolved.settings = voice->settings;
+        } else if (const auto* fallback = workspace->find_voice_by_name(job->output.default_voice)) {
+            resolved.reference_id = fallback->elevenlabs_voice_id;
+        } else {
+            throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
+        }
+    }
+    job->request = make_fish_audio_request(job->output, entry_speech_text(entry), resolved);
     return job;
 }
 

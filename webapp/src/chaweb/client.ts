@@ -1,5 +1,11 @@
 import {
   ChaProtocolError,
+  isAudioAcceptance,
+  isAudioStatus,
+  isVoiceOutputRuntime,
+  type AudioDownloadAcceptance,
+  type AudioDownloadStatus,
+  type VoiceOutputRuntime,
   isSessionLabelResult,
   isSessionListingArray,
   isSessionSnapshot,
@@ -34,6 +40,9 @@ export function chaWebMessage(failure: unknown, fallback: string): string {
 }
 
 export interface ChaWebClient {
+  getVoiceOutputRuntime(): Promise<VoiceOutputRuntime | null>;
+  startAudio(forumId: string, sessionId: string, entryId: number, vaultName: string): Promise<AudioDownloadAcceptance>;
+  getAudioStatus(forumId: string, sessionId: string): Promise<AudioDownloadStatus>;
   getBootstrap(): Promise<Bootstrap>;
   listSessions(forumId: string): Promise<SessionListing[]>;
   createSession(forumId: string, text: string): Promise<CreateSessionResult>;
@@ -53,6 +62,10 @@ function sessionsPath(forumId: string): string {
 
 function sessionPath(forumId: string, sessionId: string): string {
   return `${sessionsPath(forumId)}/${segment(sessionId)}`;
+}
+
+export function audioUrl(forumId: string, sessionId: string, entryId: number): string {
+  return `${sessionPath(forumId, sessionId)}/entries/${entryId}/audio`;
 }
 
 function isJsonContentType(header: string | null): boolean {
@@ -142,6 +155,24 @@ async function readGuarded<T>(
 
 export function createChaWebClient(): ChaWebClient {
   return {
+    async getVoiceOutputRuntime() {
+      return exchange('GET', `${API}/voice-output`, 200,
+        (response) => readGuarded(response,
+          (value): value is VoiceOutputRuntime | null => value === null || isVoiceOutputRuntime(value)));
+    },
+
+    async startAudio(forumId, sessionId, entryId, vaultName) {
+      return exchange('POST', audioUrl(forumId, sessionId, entryId), 200,
+        (response) => readGuarded(response,
+          (value): value is AudioDownloadAcceptance => isAudioAcceptance(value) && value.entry_id === entryId),
+        { vault_name: vaultName });
+    },
+
+    async getAudioStatus(forumId, sessionId) {
+      return exchange('GET', `${sessionPath(forumId, sessionId)}/audio`, 200,
+        (response) => readGuarded(response, isAudioStatus));
+    },
+
     async getBootstrap() {
       return exchange('GET', `${API}/bootstrap`, 200, async (response) => {
         const payload = await readJson(response);

@@ -88,6 +88,9 @@ afterEach(() => {
 
 function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   return {
+    getVoiceOutputRuntime: vi.fn(async () => null),
+    startAudio: vi.fn(),
+    getAudioStatus: vi.fn(),
     getBootstrap: vi.fn(async () => boot()),
     listSessions: vi.fn(async (forumId: string) => (
       forumId === 'archive'

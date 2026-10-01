@@ -4,6 +4,7 @@
 #include "runtime/runtime_settings.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
+#include "storage/session_database.h"
 #include "workspace/builtins.h"
 
 #include <gtest/gtest.h>
@@ -139,7 +140,9 @@ CgiResponse exchange(
     const auto body_at = response.raw.find("\r\n\r\n");
     if (body_at != std::string::npos) {
         const std::string body = response.raw.substr(body_at + 4);
-        if (!body.empty()) response.json = nlohmann::json::parse(body);
+        if (!body.empty() && response.raw.find("Content-Type: application/json") != std::string::npos) {
+            response.json = nlohmann::json::parse(body);
+        }
     }
     return response;
 }
@@ -197,6 +200,29 @@ protected:
             forum, application_->context_epoch());
     }
 
+    std::string add_audio_entry(EntryStatus status = EntryStatus::complete, bool cached = false) {
+        application_.reset();
+        std::string session_id;
+        {
+            auto config = WorkspaceConfigStore::open(database_);
+            SessionRepository repository([&] { return config->snapshot(); }, database_,
+                config->workspace_path(), config->welcome_path(),
+                TemporarySessionSeed{{"temporary", "welcome"}, "Welcome"});
+            const auto session = repository.create("lobby", "Audio").identity;
+            session_id = session.session_id;
+            const auto prepared = repository.prepare(session);
+            SessionJournal journal(database_, prepared.session_key);
+            journal.record_entry(make_character_entry(1, "guide", "Guide", "Hello", status));
+            if (cached) {
+                const auto entry = repository.lookup_entry_audio(session, 1, false);
+                if (!entry) throw std::runtime_error("Entry was not saved");
+                repository.save_entry_audio(*entry, {std::string("audio\0bytes", 11), "audio/mpeg"});
+            }
+        }
+        application_ = Application::open(make_command(workspace_, database_));
+        return session_id;
+    }
+
     test::TestWorkspace workspace_;
     std::filesystem::path database_;
     std::unique_ptr<Application> application_;
@@ -220,6 +246,66 @@ TEST_F(ChaWebAdapterTest, BootstrapUsesExistingSerializer) {
     EXPECT_FALSE(response.json.contains("state"));
     EXPECT_FALSE(response.json.contains("context_epoch"));
     EXPECT_NE(response.raw.find("Content-Type: application/json"), std::string::npos);
+}
+
+TEST_F(ChaWebAdapterTest, CachedAudioIsAvailableWithoutVoiceConfiguration) {
+    EXPECT_TRUE(get("/api/cha/v1/voice-output").json.is_null());
+    const auto path = session_path("lobby", add_audio_entry(EntryStatus::complete, true));
+    const auto source = path + "/entries/1/audio";
+    const auto accepted = post(source, {{"vault_name", "Test"}});
+    ASSERT_EQ(accepted.status, 200) << accepted.raw;
+    EXPECT_EQ(accepted.json, (nlohmann::json{{"entry_id", 1}, {"cached", true}}));
+    EXPECT_EQ(post(source, {{"vault_name", "Test"}}).json, accepted.json);
+    const auto status = get(path + "/audio");
+    ASSERT_EQ(status.status, 200) << status.raw;
+    EXPECT_EQ(status.json.at("cached_entry_ids"), nlohmann::json::array({1}));
+    EXPECT_TRUE(status.json.at("downloads").empty());
+    EXPECT_TRUE(get(path).json.at("transcript").at(0).at("has_cached_audio").get<bool>());
+    const auto audio = get(source);
+    ASSERT_EQ(audio.status, 200) << audio.raw;
+    EXPECT_NE(audio.raw.find("Content-Type: audio/mpeg"), std::string::npos);
+    EXPECT_EQ(audio.raw.substr(audio.raw.find("\r\n\r\n") + 4), std::string("audio\0bytes", 11));
+    EXPECT_EQ(post(path + "/stop", nlohmann::json::object()).status, 204);
+}
+
+TEST_F(ChaWebAdapterTest, AudioRequestsValidateEntryVaultAndBody) {
+    const auto path = session_path("lobby", add_audio_entry());
+    const auto source = path + "/entries/1/audio";
+    EXPECT_EQ(get(source).status, 404);
+    EXPECT_EQ(post(source, {{"vault_name", "Test"}}).status, 404);
+    EXPECT_EQ(post(source, {{"vault_name", "Other"}}).status, 409);
+    EXPECT_EQ(post(source, {{"text", "arbitrary speech"}}).status, 400);
+    EXPECT_EQ(post(source, {{"vault_name", 1}}).status, 400);
+    EXPECT_EQ(post(source, {{"vault_name", "Test"}}, "text/plain").status, 415);
+    for (const auto* id : {"0", "-1", "1x", "9223372036854775808", "18446744073709551616"}) {
+        EXPECT_EQ(get(path + "/entries/" + id + "/audio").status, 404);
+    }
+    EXPECT_EQ(get(path + "/entries/1/audio/extra").status, 404);
+    EXPECT_EQ(get(session_path("lobby", "missing") + "/audio").status, 404);
+}
+
+TEST_F(ChaWebAdapterTest, AudioGenerationRejectsIncompleteAndHumanEntries) {
+    const auto path = session_path("lobby", add_audio_entry(EntryStatus::cancelled));
+    EXPECT_EQ(post(path + "/entries/1/audio", {{"vault_name", "Test"}}).status, 404);
+    const auto human_path = session_path("lobby", create_session());
+    const auto snapshot = get(human_path);
+    ASSERT_FALSE(snapshot.json.at("transcript").empty());
+    const auto id = snapshot.json.at("transcript").at(0).at("id").get<EntryId>();
+    EXPECT_EQ(post(human_path + "/entries/" + std::to_string(id) + "/audio",
+        {{"vault_name", "Test"}}).status, 400);
+}
+
+TEST_F(ChaWebAdapterTest, VoiceRuntimeDoesNotExposeCredentials) {
+    const auto epoch = application_->context_epoch();
+    const auto key = application_->create_api_key({.display_name = "Fish", .value = "fish-secret"}, epoch);
+    const auto voice = application_->create_voice({.display_name = "Reader", .elevenlabs_voice_id = "voice-ref"}, epoch);
+    (void)application_->save_voice_output_settings({.url = "https://api.fish.audio/v1/tts",
+        .model = "s2.1-pro", .api_key = key.id, .output_format = "mp3", .default_voice = voice.display_name}, epoch);
+    const auto runtime = get("/api/cha/v1/voice-output");
+    ASSERT_EQ(runtime.status, 200);
+    EXPECT_EQ(runtime.json.at("default_voice_id"), "voice-ref");
+    EXPECT_FALSE(runtime.json.contains("api_key"));
+    EXPECT_EQ(runtime.raw.find("fish-secret"), std::string::npos);
 }
 
 TEST_F(ChaWebAdapterTest, ListsSessionsAndRejectsUnknownForums) {

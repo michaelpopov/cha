@@ -7,6 +7,7 @@ import { visibleForums } from './route';
 import { Conversation } from './conversation';
 import { SessionsView } from './sessions';
 import { useChaweb } from './useChaweb';
+import { useReadAloud } from './useReadAloud';
 import type { ChaWebClient } from './client';
 
 const emptyTranscript: [] = [];
@@ -14,6 +15,9 @@ const emptyTranscript: [] = [];
 export function App({ client }: { client: ChaWebClient }) {
   const viewport = useVisualViewport();
   const model = useChaweb(client);
+  const speech = useReadAloud(client,
+    model.screen === 'conversation' ? model.snapshot : null,
+    model.bootstrap?.vault_name, model.deleting);
   const [expanded, setExpanded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{
     key: string; title: string; message: string;
@@ -68,6 +72,7 @@ export function App({ client }: { client: ChaWebClient }) {
         />
       ) : (
         <Conversation
+          speech={speech}
           characters={model.snapshot?.characters ?? []}
           commandDisabled={model.commandDisabled}
           deleteDisabled={model.deleteDisabled}

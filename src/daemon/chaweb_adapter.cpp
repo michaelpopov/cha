@@ -1,9 +1,13 @@
 #include "daemon/chaweb_adapter.h"
 
+#include "app/current_vault.h"
+#include "app/media_operations.h"
 #include "util/logging.h"
 #include "util/path_name.h"
 #include "util/text.h"
 
+#include <charconv>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -52,6 +56,10 @@ int status_for(ErrorCode code) noexcept {
     case ErrorCode::server_stopping:
     case ErrorCode::application_unavailable:
         return 503;
+    case ErrorCode::speech_busy:
+        return 503;
+    case ErrorCode::vault_changed:
+        return 409;
     default:
         return 500;
     }
@@ -162,16 +170,20 @@ bool prompt_allowed(
 enum class Route {
     unknown,
     bootstrap,
+    voice_output,
     sessions,
     session,
     input,
     stop,
+    audio_status,
+    entry_audio,
 };
 
 struct ParsedRoute {
     Route route{Route::unknown};
     std::string forum_id;
     std::string session_id;
+    EntryId entry_id{};
 };
 
 bool take_segment(std::string_view& rest, std::string_view& part) {
@@ -198,6 +210,10 @@ ParsedRoute parse_route(std::string_view uri) {
         if (!rest.empty()) return {};
         return {.route = Route::bootstrap};
     }
+    if (first == "voice-output") {
+        if (!rest.empty()) return {};
+        return {.route = Route::voice_output};
+    }
     if (first != "forums") return {};
     std::string_view forum;
     std::string_view sessions;
@@ -219,9 +235,24 @@ ParsedRoute parse_route(std::string_view uri) {
     };
     if (rest.empty()) return parsed;
     std::string_view action;
-    if (!take_segment(rest, action) || !rest.empty()) return {};
+    if (!take_segment(rest, action)) return {};
+    if (action == "entries") {
+        std::string_view entry;
+        std::string_view audio;
+        if (!take_segment(rest, entry) || !take_segment(rest, audio)
+            || audio != "audio" || !rest.empty()) return {};
+        const auto [end, error] = std::from_chars(
+            entry.data(), entry.data() + entry.size(), parsed.entry_id);
+        if (error != std::errc{} || end != entry.data() + entry.size()
+            || parsed.entry_id == 0
+            || parsed.entry_id > static_cast<EntryId>(std::numeric_limits<std::int64_t>::max())) return {};
+        parsed.route = Route::entry_audio;
+        return parsed;
+    }
+    if (!rest.empty()) return {};
     if (action == "input") parsed.route = Route::input;
     else if (action == "stop") parsed.route = Route::stop;
+    else if (action == "audio") parsed.route = Route::audio_status;
     else return {};
     return parsed;
 }
@@ -337,6 +368,47 @@ void serve_list(
     const std::uint64_t epoch = application.context_epoch();
     const auto listing = application.list_sessions(route.forum_id, epoch);
     write_json(fd, 200, listing, stop);
+}
+
+void serve_audio(
+    app::Application& application,
+    const ScgiRequest& request,
+    const ParsedRoute& route,
+    int fd,
+    const std::atomic<bool>& stop) {
+    const auto epoch = application.context_epoch();
+    if (const auto error = open_named(application, route.forum_id, route.session_id, epoch)) {
+        write_code(fd, *error, stop);
+        return;
+    }
+    if (request.method == "POST") {
+        if (!require_json_post(request, fd, stop)) return;
+        const auto body = parse_object(request.body, fd, stop);
+        if (!body) return;
+        if (body->size() != 1 || !body->contains("vault_name")
+            || !body->at("vault_name").is_string()) {
+            write_code(fd, ErrorCode::invalid_argument, stop);
+            return;
+        }
+        const auto accepted = application.start_audio(
+            route.forum_id, route.session_id, route.entry_id,
+            {body->at("vault_name").get<std::string>(), {}}, epoch);
+        write_json(fd, 200, app::audio_acceptance_json(accepted), stop);
+        return;
+    }
+    const auto vault = application.current_vault().get().name;
+    if (route.route == Route::audio_status) {
+        write_json(fd, 200, app::audio_status_json(application.audio_status(
+            route.forum_id, route.session_id, vault, epoch)), stop);
+        return;
+    }
+    const auto audio = application.cached_audio(
+        route.forum_id, route.session_id, route.entry_id, vault, epoch);
+    if (!audio) {
+        write_code(fd, ErrorCode::not_found, stop, "Cached audio not found.");
+        return;
+    }
+    write_cgi(fd, 200, audio->content_type, audio->audio, stop);
 }
 
 void serve_snapshot(
@@ -516,6 +588,17 @@ void handle_chaweb_request(
             serve_bootstrap(application, fd, stop);
             return;
         }
+        if (request.method == "GET" && route.route == Route::voice_output) {
+            const auto runtime = application.get_voice_output_runtime(application.context_epoch());
+            write_json(fd, 200, runtime ? nlohmann::json(*runtime) : nlohmann::json(nullptr), stop);
+            return;
+        }
+        if ((request.method == "GET"
+                && (route.route == Route::audio_status || route.route == Route::entry_audio))
+            || (request.method == "POST" && route.route == Route::entry_audio)) {
+            serve_audio(application, request, route, fd, stop);
+            return;
+        }
         if (request.method == "GET" && route.route == Route::sessions) {
             serve_list(application, route, fd, stop);
             return;
@@ -544,6 +627,8 @@ void handle_chaweb_request(
         write_code(fd, ErrorCode::not_found, stop, "The request was not found.");
     } catch (const app::ApplicationError& error) {
         write_error(fd, status_for(error.code), from_application(error), stop);
+    } catch (const std::invalid_argument&) {
+        write_code(fd, ErrorCode::invalid_argument, stop);
     } catch (const std::exception& error) {
         log_error(error.what());
         write_code(fd, ErrorCode::internal_error, stop);

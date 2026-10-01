@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 
 import { serifItalicVoice } from '../test/fixtures';
 import { Conversation } from './conversation';
@@ -39,6 +39,27 @@ function mockScroll(element: HTMLElement, scrollHeight: number, clientHeight: nu
     set scrollTop(value: number) { scrollTop = value; },
   };
 }
+
+it('offers Read aloud only for completed character replies and keeps cached audio playable', () => {
+  const toggle = vi.fn();
+  const speech = { available: true, entryId: null, state: 'loading' as const, error: null, toggle };
+  const props = {
+    characters: [], personas: [], layoutKey: 'compact', sessionKey: 'lobby/planning', speech,
+    entries: [entry({ id: 1 }), entry({ id: 2, status: 'streaming' }),
+      entry({ id: 3, kind: 'human' }), entry({ id: 4, text: ' ' }),
+      entry({ id: 5, has_cached_audio: true })],
+  };
+  const { rerender } = render(<Transcript {...props} />);
+  expect(screen.getAllByRole('button', { name: 'Read aloud' })).toHaveLength(2);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Read aloud' })[0]!);
+  expect(toggle).toHaveBeenCalledWith(props.entries[0]);
+  rerender(<Transcript {...props} speech={{ ...speech, entryId: 1 }} />);
+  expect(screen.getByRole('button', { name: 'Stop audio' })).toHaveTextContent('loading');
+  rerender(<Transcript {...props} speech={{ ...speech, available: false }} />);
+  expect(screen.getAllByRole('button', { name: 'Read aloud' })).toHaveLength(1);
+  rerender(<Transcript {...props} deleting />);
+  screen.getAllByRole('button', { name: 'Read aloud' }).forEach((button) => expect(button).toBeDisabled());
+});
 
 it('renders stored replies, sanitizes Markdown, and keeps a name the roster no longer has', () => {
   render(

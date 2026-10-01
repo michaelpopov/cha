@@ -448,6 +448,44 @@ TEST_F(AudioDownloads, DeletedKeyReportsNotConfiguredButCachedAudioStillWorks) {
     EXPECT_EQ(downloads->audio(session, 1, "Test")->audio, "cached");
     EXPECT_EQ(transfers, 0);
 }
+
+TEST_F(AudioDownloads, ResolvesCharacterVoiceAndSpeedWhenNoVoiceIsSupplied) {
+    const auto voice_id = config->create_voice("Guide voice", "", "guide-ref");
+    config->apply_voice_update(voice_id, "Guide voice", "", "guide-ref", {.speed = 1.15});
+    const auto workspace_snapshot = config->snapshot();
+    const auto* character = workspace_snapshot->find_character("guide");
+    ASSERT_NE(character, nullptr);
+    config->apply_character_settings("guide", character->provider_id.value_or(""), std::nullopt, voice_id);
+    auto downloads = make([](const auto&, const auto&, const auto& request, const auto&,
+        const AudioChunkCallback&) -> std::optional<EntryAudio> {
+        EXPECT_EQ(request.body.at("reference_id"), "guide-ref");
+        EXPECT_EQ(request.body.at("prosody").at("speed"), 1.15);
+        return EntryAudio{"audio", "audio/mpeg"};
+    });
+    downloads->submit(session, 1, {"Test", {}});
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
+}
+
+TEST_F(AudioDownloads, ResolvesDefaultVoiceAndDeduplicatesPendingRequests) {
+    std::atomic_int transfers{};
+    std::atomic_bool release{};
+    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel,
+        const AudioChunkCallback&) -> std::optional<EntryAudio> {
+        ++transfers;
+        EXPECT_EQ(request.body.at("reference_id"), "voice");
+        while (!release && !cancel()) std::this_thread::sleep_for(2ms);
+        return cancel() ? std::nullopt : std::optional<EntryAudio>{{"audio", "audio/mpeg"}};
+    });
+    ReleaseOnExit cleanup{release};
+    EXPECT_EQ(downloads->submit(session, 1, {"Test", {}}).kind, AudioAcceptanceKind::queued);
+    ASSERT_TRUE(eventually([&] { return transfers.load() == 1; }));
+    EXPECT_EQ(downloads->submit(session, 1, {"Test", {}}).kind, AudioAcceptanceKind::running);
+    EXPECT_EQ(downloads->status(session, "Test").downloads.size(), 1u);
+    release = true;
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
+    EXPECT_EQ(downloads->submit(session, 1, {"Test", {}}).kind, AudioAcceptanceKind::cached);
+    EXPECT_EQ(transfers, 1);
+}
 TEST_F(AudioDownloads, DisabledDownloadsReportEmptyStatusButRejectWork) {
     AudioDownloadManager downloads(
         *sessions, [this] { return vault->get().name; }, false);

@@ -4,6 +4,7 @@ import type { CharacterAppearance, SessionSnapshot } from '../api/client';
 import { voiceClasses } from '../components/characterAppearance';
 import { Markdown } from '../components/Markdown';
 import { formatTimestamp } from './time';
+import type { ReadAloud } from './useReadAloud';
 
 export type TranscriptEntry = SessionSnapshot['transcript'][number];
 
@@ -31,12 +32,16 @@ export function Transcript({
   personas,
   layoutKey,
   sessionKey,
+  speech,
+  deleting = false,
 }: {
   entries: readonly TranscriptEntry[];
   characters: ReadonlyArray<{ id: string; appearance: CharacterAppearance }>;
   personas: ReadonlyArray<{ id: string; appearance: CharacterAppearance }>;
   layoutKey: string;
   sessionKey: string;
+  speech?: ReadAloud;
+  deleting?: boolean;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -89,6 +94,20 @@ export function Transcript({
               <Markdown source={entry.text} />
             </div>
             {label && <div className="chaweb-entry-status">{label}</div>}
+            {speech && entry.kind === 'character' && entry.status === 'complete'
+              && entry.text.trim() && (speech.available || entry.has_cached_audio) && (
+              <button
+                className="chaweb-read-aloud"
+                disabled={deleting}
+                onClick={() => speech.toggle(entry)}
+                type="button"
+                aria-label={speech.entryId === entry.id ? 'Stop audio' : 'Read aloud'}
+              >
+                {speech.entryId === entry.id
+                  ? speech.state === 'loading' ? 'Stop audio (loading)' : 'Stop audio'
+                  : 'Read aloud'}
+              </button>
+            )}
             {entry.created_at !== null && (
               <time
                 className="chaweb-entry-time"
