@@ -130,6 +130,8 @@ export function Conversation({
         mode={mode}
         onChange={onDraft}
         onCopy={copyConversation}
+        onClearAudio={speech?.clear}
+        clearAudioDisabled={!speech || speech.clearDisabled}
         onDelete={onDelete}
         onExpanded={onExpanded}
         onSend={onSend}

@@ -98,7 +98,7 @@ export function Transcript({
               && entry.text.trim() && (speech.available || entry.has_cached_audio) && (
               <button
                 className="chaweb-read-aloud"
-                disabled={deleting}
+                disabled={deleting || speech.clearing}
                 onClick={() => speech.toggle(entry)}
                 type="button"
                 aria-label={speech.entryId === entry.id

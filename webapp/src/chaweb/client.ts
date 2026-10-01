@@ -43,6 +43,7 @@ export interface ChaWebClient {
   getVoiceOutputRuntime(): Promise<VoiceOutputRuntime | null>;
   startAudio(forumId: string, sessionId: string, entryId: number, vaultName: string): Promise<AudioDownloadAcceptance>;
   getAudioStatus(forumId: string, sessionId: string): Promise<AudioDownloadStatus>;
+  clearAudio(forumId: string, sessionId: string, vaultName: string): Promise<void>;
   getBootstrap(): Promise<Bootstrap>;
   listSessions(forumId: string): Promise<SessionListing[]>;
   createSession(forumId: string, text: string): Promise<CreateSessionResult>;
@@ -171,6 +172,11 @@ export function createChaWebClient(): ChaWebClient {
     async getAudioStatus(forumId, sessionId) {
       return exchange('GET', `${sessionPath(forumId, sessionId)}/audio`, 200,
         (response) => readGuarded(response, isAudioStatus));
+    },
+
+    async clearAudio(forumId, sessionId, vaultName) {
+      await exchange('DELETE', `${sessionPath(forumId, sessionId)}/audio`, 204,
+        async () => undefined, { vault_name: vaultName });
     },
 
     async getBootstrap() {

@@ -200,7 +200,7 @@ protected:
             forum, application_->context_epoch());
     }
 
-    std::string add_audio_entry(EntryStatus status = EntryStatus::complete, bool cached = false) {
+    std::string add_audio_entry(EntryStatus status = EntryStatus::complete, bool cached = false, EntryId count = 1) {
         application_.reset();
         std::string session_id;
         {
@@ -212,11 +212,13 @@ protected:
             session_id = session.session_id;
             const auto prepared = repository.prepare(session);
             SessionJournal journal(database_, prepared.session_key);
-            journal.record_entry(make_character_entry(1, "guide", "Guide", "Hello", status));
-            if (cached) {
-                const auto entry = repository.lookup_entry_audio(session, 1, false);
-                if (!entry) throw std::runtime_error("Entry was not saved");
-                repository.save_entry_audio(*entry, {std::string("audio\0bytes", 11), "audio/mpeg"});
+            for (EntryId id = 1; id <= count; ++id) {
+                journal.record_entry(make_character_entry(id, "guide", "Guide", "Hello", status));
+                if (cached) {
+                    const auto entry = repository.lookup_entry_audio(session, id, false);
+                    if (!entry) throw std::runtime_error("Entry was not saved");
+                    repository.save_entry_audio(*entry, {std::string("audio\0bytes", 11), "audio/mpeg"});
+                }
             }
         }
         application_ = Application::open(make_command(workspace_, database_));
@@ -289,6 +291,41 @@ TEST_F(ChaWebAdapterTest, ReadsAudioChunksAndValidatesOffsets) {
     for (const auto* offset : {"12", "-1", "1x", " 1", "18446744073709551616"}) {
         EXPECT_EQ(read_chunk(offset).status, 400) << offset;
     }
+}
+
+TEST_F(ChaWebAdapterTest, ClearsAllSessionAudioWithoutVoiceConfigurationOrChangingOtherSessions) {
+    const auto path = session_path("lobby", add_audio_entry(EntryStatus::complete, true, 2));
+    const auto other = session_path("lobby", add_audio_entry(EntryStatus::complete, true));
+    const auto transcript = get(path).json.at("transcript");
+    const auto clear = [&](const nlohmann::json& body, std::string type = std::string(json_type)) {
+        auto request = post_request(path + "/audio", body.dump(), std::move(type));
+        request.method = "DELETE";
+        return exchange(*application_, request);
+    };
+    EXPECT_EQ(clear({{"vault_name", "Other"}}).status, 409);
+    EXPECT_EQ(clear({{"vault_name", 1}}).status, 400);
+    EXPECT_EQ(clear(nlohmann::json::object()).status, 400);
+    EXPECT_EQ(clear({{"vault_name", "Test"}, {"entry_id", 1}}).status, 400);
+    EXPECT_EQ(clear({{"vault_name", "Test"}}, "text/plain").status, 415);
+    EXPECT_EQ(get(path + "/audio").json.at("cached_entry_ids"), nlohmann::json::array({1, 2}));
+    ASSERT_EQ(clear({{"vault_name", "Test"}}).status, 204);
+    EXPECT_TRUE(get(path + "/audio").json.at("cached_entry_ids").empty());
+    EXPECT_TRUE(get(path + "/audio").json.at("downloads").empty());
+    EXPECT_EQ(get(path + "/entries/1/audio").status, 404);
+    EXPECT_EQ(get(path + "/entries/2/audio").status, 404);
+    auto after = get(path).json.at("transcript");
+    ASSERT_EQ(after.size(), transcript.size());
+    for (std::size_t index = 0; index < after.size(); ++index) {
+        EXPECT_FALSE(after[index].at("has_cached_audio").get<bool>());
+        after[index]["has_cached_audio"] = true;
+    }
+    EXPECT_EQ(after, transcript);
+    EXPECT_EQ(get(other + "/entries/1/audio").status, 200);
+    EXPECT_EQ(get(other + "/audio").json.at("cached_entry_ids"), nlohmann::json::array({1}));
+    EXPECT_EQ(clear({{"vault_name", "Test"}}).status, 204);
+    auto missing = post_request(session_path("lobby", "missing") + "/audio", "{\"vault_name\":\"Test\"}");
+    missing.method = "DELETE";
+    EXPECT_EQ(exchange(*application_, missing).status, 404);
 }
 
 TEST_F(ChaWebAdapterTest, AudioRequestsValidateEntryVaultAndBody) {

@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react';
 
-import { CheckIcon, CopyIcon, ForumsIcon, SendIcon, StopIcon, TrashIcon } from '../components/Icons';
+import { CheckIcon, ClearAudioIcon, CopyIcon, ForumsIcon, SendIcon, StopIcon, TrashIcon } from '../components/Icons';
 
 const compactHeight = 56;
 
@@ -40,6 +40,8 @@ export function Composer({
   onSessions,
   onDelete,
   onCopy,
+  onClearAudio,
+  clearAudioDisabled,
   copyDisabled,
   copied,
   deleteDisabled,
@@ -57,6 +59,8 @@ export function Composer({
   onSessions(): void;
   onDelete(): void;
   onCopy(): void;
+  onClearAudio?(): void;
+  clearAudioDisabled?: boolean;
   copyDisabled: boolean;
   copied: boolean;
   deleteDisabled: boolean;
@@ -166,6 +170,16 @@ export function Composer({
           type="button"
         >
           <TrashIcon />
+        </button>
+        <button
+          aria-label="Clear audio recordings"
+          title="Clear audio recordings"
+          className="chaweb-icon-button"
+          disabled={deleting || clearAudioDisabled || !onClearAudio}
+          onClick={onClearAudio}
+          type="button"
+        >
+          <ClearAudioIcon />
         </button>
         <button
           aria-label={copied ? 'Copied conversation' : 'Copy conversation'}

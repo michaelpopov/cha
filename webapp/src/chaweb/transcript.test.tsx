@@ -42,7 +42,8 @@ function mockScroll(element: HTMLElement, scrollHeight: number, clientHeight: nu
 
 it('offers Read aloud only for completed character replies and keeps cached audio playable', () => {
   const toggle = vi.fn();
-  const speech = { available: true, entryId: null, state: 'loading' as const, error: null, toggle };
+  const speech = { available: true, entryId: null, state: 'loading' as const, error: null, toggle,
+    clearing: false, clearDisabled: false, clear: vi.fn(async () => undefined) };
   const props = {
     characters: [], personas: [], layoutKey: 'compact', sessionKey: 'lobby/planning', speech,
     entries: [entry({ id: 1 }), entry({ id: 2, status: 'streaming' }),
@@ -60,6 +61,8 @@ it('offers Read aloud only for completed character replies and keeps cached audi
   expect(toggle).toHaveBeenLastCalledWith(props.entries[0]);
   rerender(<Transcript {...props} speech={{ ...speech, available: false }} />);
   expect(screen.getAllByRole('button', { name: 'Read aloud' })).toHaveLength(1);
+  rerender(<Transcript {...props} speech={{ ...speech, clearing: true }} />);
+  screen.getAllByRole('button', { name: 'Read aloud' }).forEach((button) => expect(button).toBeDisabled());
   rerender(<Transcript {...props} deleting />);
   screen.getAllByRole('button', { name: 'Read aloud' }).forEach((button) => expect(button).toBeDisabled());
 });

@@ -91,6 +91,7 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
     getVoiceOutputRuntime: vi.fn(async () => null),
     startAudio: vi.fn(),
     getAudioStatus: vi.fn(),
+    clearAudio: vi.fn(async () => undefined),
     getBootstrap: vi.fn(async () => boot()),
     listSessions: vi.fn(async (forumId: string) => (
       forumId === 'archive'
@@ -127,6 +128,26 @@ async function openPlanning(api = client()) {
   return api;
 }
 
+it('clears recordings from the bottom icon button without deleting the session or draft', async () => {
+  const user = userEvent.setup();
+  const cleared = deferred<void>();
+  const api = await openPlanning(client({ clearAudio: vi.fn(() => cleared.promise) }));
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Unsent note');
+  const button = screen.getByRole('button', { name: 'Clear audio recordings' });
+  expect(button).toHaveClass('chaweb-icon-button');
+  expect(button.querySelector('svg')).not.toBeNull();
+  expect(button).toHaveTextContent('');
+  await user.click(button);
+  expect(api.clearAudio).toHaveBeenCalledExactlyOnceWith('lobby', 'planning', 'Personal');
+  expect(button).toBeDisabled();
+  await act(async () => cleared.resolve());
+  expect(button).toBeEnabled();
+  expect(screen.getByText('First note')).toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Unsent note');
+  expect(api.deleteSession).not.toHaveBeenCalled();
+  expect(window.location.hash).toContain('/planning');
+});
+
 it('confirms the named session, focuses Cancel, and preserves the conversation on cancellation', async () => {
   const user = userEvent.setup();
   const api = await openPlanning();
@@ -134,7 +155,7 @@ it('confirms the named session, focuses Cancel, and preserves the conversation o
   await user.type(box, 'Unsent note');
   const controls = screen.getByRole('button', { name: 'Delete session' }).parentElement!;
   expect(within(controls).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
-    .toEqual(['Sessions', 'Delete session', 'Copy conversation', 'Send']);
+    .toEqual(['Sessions', 'Delete session', 'Clear audio recordings', 'Copy conversation', 'Send']);
   await user.click(screen.getByRole('button', { name: 'Delete session' }));
   const dialog = screen.getByRole('dialog', { name: 'Delete session “planning”?' });
   expect(dialog).toHaveTextContent('The unsent prompt will also be discarded.');

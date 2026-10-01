@@ -105,7 +105,7 @@ bool is_json_content_type(std::string_view value) {
     return ascii_iequals(media, json_type);
 }
 
-bool require_json_post(
+bool require_json_body(
     const ScgiRequest& request, int fd, const std::atomic<bool>& stop) {
     if (is_json_content_type(request.content_type)) return true;
     write_error(
@@ -381,13 +381,22 @@ void serve_audio(
         write_code(fd, *error, stop);
         return;
     }
-    if (request.method == "POST") {
-        if (!require_json_post(request, fd, stop)) return;
+    if (request.method == "POST" || request.method == "DELETE") {
+        if (!require_json_body(request, fd, stop)) return;
         const auto body = parse_object(request.body, fd, stop);
         if (!body) return;
         if (body->size() != 1 || !body->contains("vault_name")
             || !body->at("vault_name").is_string()) {
             write_code(fd, ErrorCode::invalid_argument, stop);
+            return;
+        }
+        if (request.method == "DELETE") {
+            if (body->at("vault_name").get<std::string>() != application.current_vault().get().name) {
+                write_code(fd, ErrorCode::vault_changed, stop);
+                return;
+            }
+            application.clear_audio_cache(route.forum_id, route.session_id, epoch);
+            write_cgi(fd, 204, {}, {}, stop);
             return;
         }
         const auto accepted = application.start_audio(
@@ -474,7 +483,7 @@ void serve_input(
     const ParsedRoute& route,
     int fd,
     const std::atomic<bool>& stop) {
-    if (!require_json_post(request, fd, stop)) return;
+    if (!require_json_body(request, fd, stop)) return;
     const auto text = parse_text_object(request.body, fd, stop);
     if (!text) return;
     if (!prompt_allowed(application, *text, fd, stop)) return;
@@ -503,7 +512,7 @@ void serve_stop(
     const ParsedRoute& route,
     int fd,
     const std::atomic<bool>& stop) {
-    if (!require_json_post(request, fd, stop)) return;
+    if (!require_json_body(request, fd, stop)) return;
     if (!parse_empty_object(request.body, fd, stop)) return;
     const std::uint64_t epoch = application.context_epoch();
     if (const auto error = open_named(
@@ -527,7 +536,7 @@ void serve_create(
     int fd,
     const std::atomic<bool>& stop,
     ChaWebDeleteSession delete_session) {
-    if (!require_json_post(request, fd, stop)) return;
+    if (!require_json_body(request, fd, stop)) return;
     const auto text = parse_text_object(request.body, fd, stop);
     if (!text) return;
     if (!prompt_allowed(application, *text, fd, stop)) return;
@@ -618,7 +627,8 @@ void handle_chaweb_request(
         }
         if ((request.method == "GET"
                 && (route.route == Route::audio_status || route.route == Route::entry_audio))
-            || (request.method == "POST" && route.route == Route::entry_audio)) {
+            || (request.method == "POST" && route.route == Route::entry_audio)
+            || (request.method == "DELETE" && route.route == Route::audio_status)) {
             serve_audio(application, request, route, fd, stop);
             return;
         }

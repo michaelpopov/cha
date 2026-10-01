@@ -154,6 +154,14 @@ export function SpeakerIcon(props: IconProps) {
   );
 }
 
+export function ClearAudioIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 10h3l4-3.5v11L6 14H3zM15 9l6 6M21 9l-6 6" {...stroke} />
+    </Icon>
+  );
+}
+
 export function EyeIcon(props: IconProps) {
   return (
     <Icon {...props}>

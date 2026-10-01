@@ -29,6 +29,7 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
     getVoiceOutputRuntime: vi.fn(async () => voiceOutputRuntimeFixture),
     startAudio: vi.fn(async () => ({ entry_id: 7, cached: false, state: 'queued' as const })),
     getAudioStatus: vi.fn(async () => ({ cached_entry_ids: [7], downloads: [] })),
+    clearAudio: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -222,4 +223,62 @@ it('reports admission and autoplay failures without claiming playback started', 
   await act(async () => result.current.toggle(entry));
   expect(result.current.entryId).toBeNull();
   expect(result.current.error).toBe('Playback was blocked. Click Read aloud to try again.');
+});
+
+it('clears session recordings, stops playback, and regenerates stale cached entries from the beginning', async () => {
+  let finish!: () => void;
+  const api = client({ clearAudio: vi.fn(() => new Promise<void>((resolve) => { finish = resolve; })) });
+  const { result } = renderHook(() => useReadAloud(api, snapshotFixture, 'Personal', false));
+  const cached = { ...entry, has_cached_audio: true };
+  await act(async () => result.current.toggle(cached));
+  const playback = vi.mocked(TextToSpeechSession).mock.calls[0][4]!;
+  stop.mockImplementationOnce(() => playback.onPositionChange(12.5));
+  let clearing!: Promise<void>;
+  await act(async () => { clearing = result.current.clear(); });
+  expect(stop).toHaveBeenCalledOnce();
+  expect(result.current).toMatchObject({ clearing: true, clearDisabled: true, entryId: null });
+  expect(api.clearAudio).toHaveBeenCalledExactlyOnceWith('lobby', 'planning', 'Personal');
+  await act(async () => { void result.current.clear(); result.current.toggle(cached); });
+  expect(api.clearAudio).toHaveBeenCalledOnce();
+  expect(play).toHaveBeenCalledOnce();
+  await act(async () => { finish(); await clearing; });
+  expect(result.current.clearDisabled).toBe(false);
+  await act(async () => result.current.toggle(cached));
+  expect(api.startAudio).toHaveBeenCalledExactlyOnceWith('lobby', 'planning', 7, 'Personal');
+  expect(vi.mocked(TextToSpeechSession).mock.calls[1][4]?.position).toBe(0);
+  expect(snapshotFixture).toEqual({ ...baseSnapshot, forum: bootstrapFixture.forums[1]!, session_id: 'planning' });
+});
+
+it('waits for pending audio admissions before clearing and never plays their late responses', async () => {
+  let accept!: (value: { entry_id: number; cached: boolean }) => void;
+  const api = client({ startAudio: vi.fn(() => new Promise<{ entry_id: number; cached: boolean }>((resolve) => { accept = resolve; })) });
+  const { result } = renderHook(() => useReadAloud(api, snapshotFixture, 'Personal', false));
+  act(() => result.current.toggle(entry));
+  let clearing!: Promise<void>;
+  act(() => { clearing = result.current.clear(); });
+  expect(api.clearAudio).not.toHaveBeenCalled();
+  await act(async () => { accept({ entry_id: 7, cached: false }); await clearing; });
+  expect(api.clearAudio).toHaveBeenCalledOnce();
+  expect(play).not.toHaveBeenCalled();
+});
+
+it('reports a clear failure and allows retry without requiring voice configuration', async () => {
+  const api = client({
+    getVoiceOutputRuntime: vi.fn(async () => null),
+    clearAudio: vi.fn().mockRejectedValueOnce(new ChaWebError(503, 'Try again.')).mockResolvedValue(undefined),
+  });
+  const { result, rerender } = renderHook(
+    ({ snapshot }: { snapshot: SessionSnapshot | null }) => useReadAloud(api, snapshot, 'Personal', false),
+    { initialProps: { snapshot: snapshotFixture as SessionSnapshot | null } },
+  );
+  await act(async () => result.current.clear());
+  expect(result.current.error).toBe('Try again.');
+  expect(result.current.clearDisabled).toBe(false);
+  await act(async () => result.current.clear());
+  expect(api.clearAudio).toHaveBeenCalledTimes(2);
+  expect(result.current.error).toBeNull();
+  rerender({ snapshot: null });
+  expect(result.current.clearDisabled).toBe(true);
+  await act(async () => result.current.clear());
+  expect(api.clearAudio).toHaveBeenCalledTimes(2);
 });

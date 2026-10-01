@@ -26,6 +26,23 @@ function installFetch(handler: (url: string, init?: RequestInit) => Promise<Resp
 }
 
 describe('ChaWeb HTTP client', () => {
+  it('clears audio only for the named session and vault without retrying a failure', async () => {
+    const calls = installFetch(() => new Response(null, { status: 204 }));
+    await expect(createChaWebClient().clearAudio('a/b', 'c d', 'Personal')).resolves.toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      url: '/api/cha/v1/forums/a%2Fb/sessions/c%20d/audio',
+      init: { method: 'DELETE', body: JSON.stringify({ vault_name: 'Personal' }),
+        headers: { 'Content-Type': 'application/json' } },
+    });
+    const failed = installFetch(() => jsonResponse({
+      error: { code: 'vault_changed', message: 'The active vault changed.' },
+    }, 409));
+    await expect(createChaWebClient().clearAudio('lobby', 'planning', 'Personal'))
+      .rejects.toMatchObject({ status: 409, code: 'vault_changed' });
+    expect(failed).toHaveLength(1);
+  });
+
   it('loads voice settings and audio jobs and requests speech by stored entry ID', async () => {
     const calls = installFetch((url, init) => {
       if (url.endsWith('/voice-output')) return jsonResponse(voiceOutputRuntimeFixture);
