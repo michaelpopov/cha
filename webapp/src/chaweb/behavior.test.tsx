@@ -107,8 +107,13 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
 
 async function showList(api = client()) {
   render(<App client={api} />);
-  await screen.findByRole('combobox', { name: 'Forum' });
+  await screen.findByRole('button', { name: 'Forum' });
   return api;
+}
+
+function chooseForum(forum: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Forum' }));
+  fireEvent.click(screen.getByRole('button', { name: forum === 'lobby' ? 'The Lobby Guide' : 'Archive Guide' }));
 }
 
 async function openPlanning(api = client()) {
@@ -161,7 +166,7 @@ it('returns to the same forum after deletion, clears its URL and draft, and keep
   expect(screen.getByRole('button', { name: 'Delete session' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   await act(async () => deleted.resolve());
-  expect(await screen.findByRole('combobox', { name: 'Forum' })).toHaveValue('lobby');
+  expect(await screen.findByRole('button', { name: 'Forum' })).toHaveTextContent('The Lobby');
   await screen.findByRole('button', { name: /Older/ });
   expect(screen.queryByRole('button', { name: /Planning/ })).not.toBeInTheDocument();
   expect(window.location.hash).toBe('');
@@ -186,7 +191,7 @@ it('keeps the session and draft when deletion fails and permits an explicit retr
   await user.click(screen.getByRole('button', { name: 'Delete' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Try again.');
   expect(screen.getByRole('textbox')).toHaveValue('Keep this');
-  expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Forum' })).not.toBeInTheDocument();
   expect(window.location.hash).toContain('/planning');
   expect(screen.getByRole('button', { name: 'Delete session' })).toBeEnabled();
   expect(api.deleteSession).toHaveBeenCalledTimes(1);
@@ -242,7 +247,7 @@ it('warns about stopping an active reply and ignores an in-flight snapshot durin
     deleted.resolve();
     await vi.advanceTimersByTimeAsync(0);
   });
-  expect(screen.getByRole('combobox', { name: 'Forum' })).toHaveValue('lobby');
+  expect(screen.getByRole('button', { name: 'Forum' })).toHaveTextContent('The Lobby');
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
 });
 
@@ -260,7 +265,7 @@ it('does not leave another conversation when deletion finishes after browser nav
   await act(async () => deleted.resolve());
   expect(screen.getByRole('textbox')).toHaveValue('Other session draft');
   expect(window.location.hash).toContain('/older');
-  expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Forum' })).not.toBeInTheDocument();
 });
 
 it('treats a session already deleted elsewhere as deleted and closes stale confirmations on navigation', async () => {
@@ -277,7 +282,7 @@ it('treats a session already deleted elsewhere as deleted and closes stale confi
   expect(api.deleteSession).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Delete session' }));
   await user.click(screen.getByRole('button', { name: 'Delete' }));
-  await screen.findByRole('combobox', { name: 'Forum' });
+  await screen.findByRole('button', { name: 'Forum' });
   expect(api.deleteSession).toHaveBeenCalledExactlyOnceWith('lobby', 'older');
   expect(window.location.hash).toBe('');
 });
@@ -288,13 +293,15 @@ it('keeps one new draft per forum and does not create a session', async () => {
   await user.click(screen.getByRole('button', { name: 'New Session' }));
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Lobby draft');
   await user.click(screen.getByRole('button', { name: 'Sessions' }));
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Forum' }), 'archive');
+  await user.click(screen.getByRole('button', { name: 'Forum' }));
+  await user.click(screen.getByRole('button', { name: /^Archive / }));
   await user.click(screen.getByRole('button', { name: 'New Session' }));
   const archive = screen.getByRole('textbox', { name: 'Message' });
   expect(archive).toHaveValue('');
   await user.type(archive, 'Archive draft');
   await user.click(screen.getByRole('button', { name: 'Sessions' }));
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Forum' }), 'lobby');
+  await user.click(screen.getByRole('button', { name: 'Forum' }));
+  await user.click(screen.getByRole('button', { name: /^The Lobby / }));
   await user.click(screen.getByRole('button', { name: 'New Session' }));
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Lobby draft');
   expect(api.createSession).not.toHaveBeenCalled();
@@ -440,7 +447,8 @@ it('associates a late creation with its draft and leaves the other view', async 
   await user.click(screen.getByRole('button', { name: 'Send' }));
   fireEvent.change(box, { target: { value: '@Guide hello!' } });
   await user.click(screen.getByRole('button', { name: 'Sessions' }));
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Forum' }), 'archive');
+  await user.click(screen.getByRole('button', { name: 'Forum' }));
+  await user.click(screen.getByRole('button', { name: /^Archive / }));
   await user.click(screen.getByRole('button', { name: /Stored/ }));
   await screen.findByText('First note');
   const archiveBox = screen.getByRole('textbox', { name: 'Message' });
@@ -457,7 +465,8 @@ it('associates a late creation with its draft and leaves the other view', async 
   expect(api.createSession).toHaveBeenCalledTimes(1);
   expect(api.createSession).toHaveBeenCalledWith('lobby', '@Guide hello');
   await user.click(screen.getByRole('button', { name: 'Sessions' }));
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Forum' }), 'lobby');
+  await user.click(screen.getByRole('button', { name: 'Forum' }));
+  await user.click(screen.getByRole('button', { name: /^The Lobby / }));
   await user.click(await screen.findByRole('button', { name: /Fresh/ }));
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('@Guide hello!');
 });
@@ -944,13 +953,13 @@ it('keeps first Sends pending independently across forums', async () => {
   render(<App client={api} />);
   await act(() => vi.advanceTimersByTimeAsync(0));
   for (const forum of ['lobby', 'archive']) {
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: forum } });
+    chooseForum(forum);
     fireEvent.click(screen.getByRole('button', { name: 'New Session' }));
     fireEvent.change(screen.getByRole('textbox'), { target: { value: forum } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
   }
-  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'lobby' } });
+  chooseForum('lobby');
   fireEvent.click(screen.getByRole('button', { name: 'New Session' }));
   expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
@@ -1060,10 +1069,10 @@ it('clears rows on a forum switch and ignores an old list when returning', async
     .mockImplementationOnce(() => oldList.promise).mockImplementationOnce(() => newList.promise) });
   render(<App client={api} />);
   await act(() => vi.advanceTimersByTimeAsync(0));
-  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'archive' } });
+  chooseForum('archive');
   expect(screen.queryByRole('button', { name: /Planning/ })).not.toBeInTheDocument();
-  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'lobby' } });
-  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'archive' } });
+  chooseForum('lobby');
+  chooseForum('archive');
   await act(async () => oldList.resolve([{ id: 'old', label: 'Stale row', live: false, updated_at: 1 }]));
   expect(screen.queryByRole('button', { name: /Stale row/ })).not.toBeInTheDocument();
   await act(async () => newList.resolve([{ id: 'new', label: 'Current row', live: false, updated_at: 2 }]));
@@ -1163,7 +1172,7 @@ it('pauses startup retries while hidden and resumes on return', async () => {
   fireEvent(document, new Event('visibilitychange'));
   await act(() => vi.advanceTimersByTimeAsync(0));
   expect(api.getBootstrap).toHaveBeenCalledTimes(2);
-  expect(screen.getByRole('combobox')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Forum' })).toBeInTheDocument();
 });
 
 it('preserves edits in a new session opened before creation returns', async () => {

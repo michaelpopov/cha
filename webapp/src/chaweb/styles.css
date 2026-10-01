@@ -36,6 +36,7 @@ select {
 }
 
 button:focus-visible,
+summary:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
   outline: 2px solid var(--ring);
@@ -74,24 +75,114 @@ button:disabled {
   min-height: 0;
 }
 
-.chaweb-forum {
-  width: 100%;
-  min-height: 64px;
+.chaweb-forum-picker {
+  position: relative;
   flex: none;
   margin-bottom: 12px;
-  padding: 0 1rem;
+}
+
+.chaweb-forum {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  min-height: 84px;
+  padding: 14px 1rem;
   border: 0;
   border-bottom: 2px solid var(--accent-foreground);
   border-radius: 0;
   background: light-dark(rgb(233 244 255), rgb(33 48 63));
   color: inherit;
-  font-size: 20px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.chaweb-forum::-webkit-details-marker {
+  display: none;
+}
+
+.chaweb-forum-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chaweb-forum-name {
+  display: block;
+  font-size: 22px;
   font-weight: 600;
 }
 
-.chaweb-forum option {
+.chaweb-forum-characters {
+  display: block;
+  margin-top: 3px;
+  color: light-dark(rgb(26 28 31 / 58%), rgb(255 255 255 / 65%));
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.chaweb-forum-characters:empty {
+  display: none;
+}
+
+.chaweb-forum-chevron {
+  flex: none;
+  transform: rotate(90deg);
+}
+
+.chaweb-forum-picker[open] .chaweb-forum-chevron {
+  transform: rotate(-90deg);
+}
+
+.chaweb-forum-menu {
+  position: absolute;
+  z-index: 1;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: min(60dvh, 24rem);
+  overflow: auto;
+  border: 1px solid var(--border);
   background: var(--background);
-  color: var(--foreground);
+  box-shadow: 0 8px 16px light-dark(rgb(26 28 31 / 16%), rgb(0 0 0 / 40%));
+}
+
+.chaweb-forum-option {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 78px;
+  padding: 12px 1rem;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--background);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.chaweb-forum-option:last-child {
+  border-bottom: 0;
+}
+
+.chaweb-forum-option[aria-pressed='true'],
+.chaweb-forum-option:hover {
+  background: light-dark(rgb(233 244 255), rgb(33 48 63));
+}
+
+.chaweb-forum-option .chaweb-forum-name {
+  font-size: 20px;
+}
+
+.chaweb-forum-option svg {
+  flex: none;
+  color: var(--accent-foreground);
+}
+
+.chaweb-forum-option[aria-pressed='false'] svg {
+  visibility: hidden;
 }
 
 .chaweb-list {

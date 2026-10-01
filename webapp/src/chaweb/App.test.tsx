@@ -17,6 +17,10 @@ const archiveForum = {
   ...bootstrapFixture.forums[1],
   id: 'archive',
   display_name: 'Archive',
+  members: [
+    { ...bootstrapFixture.characters[0]!, id: 'editor', display_name: 'Editor' },
+    { ...bootstrapFixture.characters[1]!, id: 'critic', display_name: 'Critic' },
+  ],
 };
 
 function boot() {
@@ -95,15 +99,21 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
 
 async function showList(api = client()) {
   render(<App client={api} />);
-  await screen.findByRole('combobox', { name: 'Forum' });
+  await screen.findByRole('button', { name: 'Forum' });
   return api;
 }
 
 it('shows forums and recent sessions without opening Welcome or creating a session', async () => {
+  const user = userEvent.setup();
   const api = await showList();
-  expect(screen.queryByRole('option', { name: 'Entrance' })).not.toBeInTheDocument();
-  expect(screen.getByRole('option', { name: 'The Lobby' })).toBeInTheDocument();
-  expect(screen.getByRole('combobox', { name: 'Forum' })).toHaveValue('lobby');
+  const forum = screen.getByRole('button', { name: 'Forum' });
+  expect(forum).toHaveTextContent('The Lobby');
+  expect(forum).toHaveTextContent('Guide');
+  await user.click(forum);
+  expect(screen.queryByRole('button', { name: /Entrance/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'The Lobby Guide' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('button', { name: 'Archive Editor · Critic' })).toHaveAttribute('aria-pressed', 'false');
+  await user.keyboard('{Escape}');
   const planning = await screen.findByRole('button', { name: /Planning/ });
   const rows = within(screen.getByRole('list', { name: 'Sessions' })).getAllByRole('button');
   expect(rows[0]).toBe(planning);
@@ -160,7 +170,7 @@ it('keeps a forum draft, returns to it, and does not create a session', async ()
   await user.type(box, 'Local note');
   box.focus();
   await user.click(screen.getByRole('button', { name: 'Sessions' }));
-  expect(screen.getByRole('combobox', { name: 'Forum' })).toHaveValue('lobby');
+  expect(screen.getByRole('button', { name: 'Forum' })).toHaveTextContent('The Lobby');
   expect(box).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'New Session' }));
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Local note');
@@ -172,7 +182,14 @@ it('keeps a forum draft, returns to it, and does not create a session', async ()
 it('changes the list when the forum changes and does not open a session', async () => {
   const user = userEvent.setup();
   const api = await showList();
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Forum' }), 'archive');
+  await user.click(screen.getByRole('button', { name: 'Forum' }));
+  await user.click(screen.getByRole('button', { name: /^Archive / }));
+  const forum = screen.getByRole('button', { name: 'Forum' });
+  expect(forum).toHaveTextContent('Archive');
+  expect(forum).toHaveTextContent('Editor · Critic');
+  expect(forum).not.toHaveTextContent('Guide');
+  expect(forum).toHaveFocus();
+  expect(forum.closest('details')).not.toHaveAttribute('open');
   expect(await screen.findByRole('button', { name: /Stored/ })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Planning/ })).not.toBeInTheDocument();
   expect(api.getSession).not.toHaveBeenCalled();
@@ -200,7 +217,7 @@ it('refreshes navigation when a stored session is missing', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('Session not found.');
   expect(api.getSession).toHaveBeenCalledTimes(1);
   expect(api.listSessions).toHaveBeenCalledWith('lobby');
-  expect(screen.getByRole('combobox', { name: 'Forum' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Forum' })).toBeInTheDocument();
 });
 
 it('keeps the conversation and retries a failed read with a limit', async () => {
@@ -272,7 +289,7 @@ it('reports a bootstrap failure without the raw exception and retries', async ()
     screen.getByRole('button', { name: 'Retry' }).click();
     await vi.advanceTimersByTimeAsync(0);
   });
-  expect(screen.getByRole('combobox', { name: 'Forum' })).toHaveValue('lobby');
+  expect(screen.getByRole('button', { name: 'Forum' })).toHaveTextContent('The Lobby');
 });
 
 it('follows the visual viewport', async () => {
