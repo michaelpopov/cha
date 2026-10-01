@@ -1,8 +1,10 @@
-import { useLayoutEffect, useRef, type UIEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type UIEvent } from 'react';
 
 import type { CharacterAppearance, SessionSnapshot } from '../api/client';
 import { voiceClasses } from '../components/characterAppearance';
+import { CheckIcon, CopyIcon, SpeakerIcon, StopIcon } from '../components/Icons';
 import { Markdown } from '../components/Markdown';
+import { copyText } from './clipboard';
 import { formatTimestamp } from './time';
 import type { ReadAloud } from './useReadAloud';
 
@@ -24,6 +26,36 @@ function appearanceFor(
 ): CharacterAppearance | undefined {
   const roster = entry.kind === 'human' ? personas : entry.kind === 'character' ? characters : [];
   return roster.find((item) => item.id === entry.participant_id)?.appearance;
+}
+
+function CopyResponseButton({ text, disabled }: { text: string; disabled: boolean }) {
+  const [state, setState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
+  const label = state === 'copied' ? 'Copied to clipboard' : 'Copy response';
+
+  useEffect(() => {
+    if (state !== 'copied') return;
+    const timer = window.setTimeout(() => setState('idle'), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+
+  return (
+    <>
+      <button
+        aria-label={label}
+        className={`chaweb-copy-response${state === 'copied' ? ' is-copied' : ''}`}
+        disabled={disabled || state === 'copying'}
+        onClick={() => {
+          setState('copying');
+          void copyText(text).then(() => setState('copied'), () => setState('failed'));
+        }}
+        title={label}
+        type="button"
+      >
+        {state === 'copied' ? <CheckIcon /> : <CopyIcon />}
+      </button>
+      {state === 'failed' && <span role="alert">Could not copy the response. Try again.</span>}
+    </>
+  );
 }
 
 export function Transcript({
@@ -84,6 +116,14 @@ export function Transcript({
         const label = statusLabel[entry.status];
         const appearance = appearanceFor(entry, characters, personas);
         const cached = speech?.isCached(entry) ?? false;
+        const downloading = speech?.isDownloading(entry) ?? false;
+        const canRead = speech && entry.kind === 'character' && entry.status === 'complete'
+          && entry.text.trim() && (speech.available || cached);
+        const canCopy = entry.kind === 'character' && Boolean(entry.text.trim());
+        const selected = speech?.entryId === entry.id;
+        const speechLabel = selected
+          ? speech?.state === 'loading' ? 'Stop audio' : 'Pause audio'
+          : 'Read aloud';
         return (
           <article
             className={`chaweb-entry is-${entry.kind}`}
@@ -95,29 +135,36 @@ export function Transcript({
               <Markdown source={entry.text} />
             </div>
             {label && <div className="chaweb-entry-status">{label}</div>}
-            {speech && entry.kind === 'character' && entry.status === 'complete'
-              && entry.text.trim() && (speech.available || cached) && (
-              <button
-                className={`chaweb-read-aloud${cached ? ' is-cached' : ''}`}
-                disabled={deleting || speech.clearing}
-                onClick={() => speech.toggle(entry)}
-                type="button"
-                aria-label={speech.entryId === entry.id
-                  ? speech.state === 'loading' ? 'Stop audio' : 'Pause audio'
-                  : 'Read aloud'}
-              >
-                {speech.entryId === entry.id
-                  ? speech.state === 'loading' ? 'Stop audio (loading)' : 'Pause audio'
-                  : 'Read aloud'}
-              </button>
-            )}
-            {entry.created_at !== null && (
-              <time
-                className="chaweb-entry-time"
-                dateTime={new Date(entry.created_at * 1000).toISOString()}
-              >
-                {formatTimestamp(entry.created_at)}
-              </time>
+            {(entry.created_at !== null || canRead || canCopy) && (
+              <div className="chaweb-entry-meta">
+                {entry.created_at !== null && (
+                  <time
+                    className="chaweb-entry-time"
+                    dateTime={new Date(entry.created_at * 1000).toISOString()}
+                  >
+                    {formatTimestamp(entry.created_at)}
+                  </time>
+                )}
+                {canRead && (
+                  <button
+                    className={`chaweb-read-aloud${cached ? ' is-cached' : downloading ? ' is-downloading' : ''}`}
+                    disabled={deleting || speech.clearing}
+                    onClick={() => speech.toggle(entry)}
+                    type="button"
+                    aria-label={speechLabel}
+                    title={downloading ? `${speechLabel} (downloading)` : speechLabel}
+                  >
+                    {selected ? <StopIcon /> : <SpeakerIcon />}
+                  </button>
+                )}
+                {canCopy && (
+                  <CopyResponseButton
+                    disabled={deleting}
+                    key={`${sessionKey}:${entry.id}`}
+                    text={entry.text}
+                  />
+                )}
+              </div>
             )}
           </article>
         );

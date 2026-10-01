@@ -65,6 +65,7 @@ it('starts streaming immediately after acceptance without waiting for the cached
   await act(async () => result.current.toggle(entry));
   expect(api.startAudio).toHaveBeenCalledExactlyOnceWith('lobby', 'planning', 7, 'Personal');
   expect(result.current).toMatchObject({ entryId: 7, state: 'loading' });
+  expect(result.current.isDownloading(entry)).toBe(true);
   expect(play).toHaveBeenCalledOnce();
   expect(api.getAudioStatus).toHaveBeenCalledWith('lobby', 'planning');
   expect(TextToSpeechSession).toHaveBeenCalledWith(
@@ -75,6 +76,7 @@ it('starts streaming immediately after acceptance without waiting for the cached
   );
   await act(async () => started());
   expect(result.current).toMatchObject({ entryId: 7, state: 'playing' });
+  expect(result.current.isDownloading(entry)).toBe(true);
   act(() => ended());
   expect(result.current.entryId).toBeNull();
   expect(stop).toHaveBeenCalled();
@@ -253,7 +255,7 @@ it('reports admission and autoplay failures without claiming playback started', 
   play.mockRejectedValueOnce(new DOMException('Denied', 'NotAllowedError'));
   await act(async () => result.current.toggle(entry));
   expect(result.current.entryId).toBeNull();
-  expect(result.current.error).toBe('Playback was blocked. Click Read aloud to try again.');
+  expect(result.current.error).toBe('Playback was blocked. Click the audio icon to try again.');
 });
 
 it('clears session recordings, stops playback, and regenerates stale cached entries from the beginning', async () => {
@@ -339,16 +341,19 @@ it('submits existing replies as one batch without reading them and observes thei
   ]);
   expect(play).not.toHaveBeenCalled();
   expect(result.current.automatic).toBe(true);
+  expect(result.current.isDownloading(entry)).toBe(true);
   await act(async () => {
     for (const [id, resolve] of accepted) {
       audio.downloads.push({ entry_id: id, state: 'running' });
       resolve({ entry_id: id, cached: false, state: 'running' });
     }
   });
+  expect(result.current.isDownloading(entry)).toBe(true);
   audio.cached_entry_ids = [1, 7, 8, 9];
   audio.downloads = [];
   await act(async () => vi.advanceTimersByTimeAsync(1000));
   expect(result.current.isCached(entry)).toBe(true);
+  expect(result.current.isDownloading(entry)).toBe(false);
   rerender({ snapshot: { ...saved, transcript: [...saved.transcript] } });
   expect(api.startAudio).toHaveBeenCalledTimes(3);
   expect(play).not.toHaveBeenCalled();
@@ -482,7 +487,7 @@ it('disables automatic playback when the browser blocks it and retains manual pl
   play.mockRejectedValueOnce(new DOMException('Blocked', 'NotAllowedError'));
   await act(async () => rerender({ snapshot: { ...saved, transcript: [entry] } }));
   expect(result.current).toMatchObject({ automatic: false, entryId: null,
-    error: 'Playback was blocked. Click Read aloud to try again.' });
+    error: 'Playback was blocked. Click the audio icon to try again.' });
   await act(async () => result.current.toggle(entry));
   expect(result.current).toMatchObject({ state: 'playing', entryId: 7, error: null });
 });

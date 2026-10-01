@@ -47,17 +47,31 @@ button:disabled {
   opacity: 0.4;
 }
 
-.chaweb-read-aloud {
-  padding: 4px 0;
+.chaweb-read-aloud,
+.chaweb-copy-response {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
   border: 0;
   background: transparent;
-  color: var(--accent-foreground);
+  color: var(--muted-foreground);
   cursor: pointer;
-  font-size: 0.85rem;
 }
 
-.chaweb-read-aloud.is-cached {
-  color: light-dark(rgb(24 128 61), rgb(112 218 146));
+.chaweb-read-aloud svg,
+.chaweb-copy-response svg {
+  width: 16px;
+  height: 16px;
+}
+
+.chaweb-read-aloud.is-downloading {
+  color: light-dark(rgb(150 105 0), rgb(219 174 55));
+}
+
+.chaweb-read-aloud.is-cached,
+.chaweb-copy-response.is-copied {
+  color: var(--accent-foreground);
 }
 
 .chaweb-app {
@@ -269,6 +283,12 @@ button:disabled {
   min-width: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.chaweb-entry-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .chaweb-entry[data-status='failed'] .chaweb-entry-status,

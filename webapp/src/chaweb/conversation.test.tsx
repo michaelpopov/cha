@@ -46,6 +46,15 @@ it('copies speakers and messages without their timestamps, disables duplicate re
   expect(screen.getByRole('status')).toHaveTextContent('Copied to clipboard');
   expect(screen.getByRole('textbox')).toHaveValue('Unsent prompt');
   expect(props.onSend).not.toHaveBeenCalled();
+
+  const copyResponse = screen.getByRole('button', { name: 'Copy response' });
+  expect(copyResponse.textContent).toBe('');
+  await user.click(copyResponse);
+  expect(writeText).toHaveBeenLastCalledWith('Reply');
+  expect(copyResponse).toBeDisabled();
+  await act(async () => finish());
+  expect(copyResponse).toHaveAccessibleName('Copied to clipboard');
+  expect(screen.getByRole('textbox')).toHaveValue('Unsent prompt');
 });
 
 it('reports a failure and allows retry without changing the prompt', async () => {
@@ -61,6 +70,14 @@ it('reports a failure and allows retry without changing the prompt', async () =>
   expect(writeText).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent('Copied to clipboard');
+
+  writeText.mockRejectedValueOnce(new Error('Denied'));
+  await user.click(screen.getByRole('button', { name: 'Copy response' }));
+  expect(screen.getByRole('alert')).toHaveTextContent('Could not copy the response. Try again.');
+  await user.click(screen.getByRole('button', { name: 'Copy response' }));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(writeText).toHaveBeenLastCalledWith('Reply');
+  expect(screen.getByRole('button', { name: 'Copied to clipboard' })).toBeEnabled();
 });
 
 it('disables copying an empty conversation or one being deleted', () => {
@@ -68,6 +85,7 @@ it('disables copying an empty conversation or one being deleted', () => {
   expect(screen.getByRole('button', { name: 'Copy conversation' })).toBeDisabled();
   rerender(<Conversation {...props} deleting />);
   expect(screen.getByRole('button', { name: 'Copy conversation' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Copy response' })).toBeDisabled();
 });
 
 it('ignores clipboard completion after switching to another session', async () => {

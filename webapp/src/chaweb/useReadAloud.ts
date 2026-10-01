@@ -15,6 +15,7 @@ export interface ReadAloud {
   clearDisabled: boolean;
   clear(): Promise<void>;
   isCached(entry: TranscriptEntry): boolean;
+  isDownloading(entry: TranscriptEntry): boolean;
   toggle(entry: TranscriptEntry): void;
   automatic: boolean;
   automaticDisabled: boolean;
@@ -123,6 +124,11 @@ export function useReadAloud(
       || Boolean(entry.has_cached_audio && !cacheCleared.current);
   }
 
+  function isDownloading(entry: TranscriptEntry): boolean {
+    return !isCached(entry) && (entryId === entry.id || Boolean(downloads.status?.downloads
+      .some((job) => job.entry_id === entry.id && job.state !== 'failed')));
+  }
+
   function disableAutomatic() {
     modeAttempt.current += 1;
     automaticRef.current = false;
@@ -174,7 +180,7 @@ export function useReadAloud(
       stop();
       positions.current.delete(entry.id);
       setError(failure instanceof DOMException && failure.name === 'NotAllowedError'
-        ? 'Playback was blocked. Click Read aloud to try again.'
+        ? 'Playback was blocked. Click the audio icon to try again.'
         : failure instanceof TextToSpeechError
           ? failure.message : chaWebMessage(failure, 'Audio could not be played. Try again.'));
     };
@@ -289,7 +295,7 @@ export function useReadAloud(
     }
   }
 
-  return { available: configuration !== null, entryId, state, error, toggle, clearing, clear, isCached,
+  return { available: configuration !== null, entryId, state, error, toggle, clearing, clear, isCached, isDownloading,
     automatic, toggleAutomatic,
     automaticDisabled: !forum || !session || !vaultName || deleting || clearing
       || (!configuration && !automatic),
