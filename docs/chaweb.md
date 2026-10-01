@@ -1,8 +1,9 @@
 # ChaWeb design
 
-Status: proposed implementation with the stage 1 UI design accepted. This
-document specifies new work; it does not describe an already available browser
-application or API.
+Status: stage 1 is implemented. Voice support (stage 2) was added later and is
+not specified in this document. The OpenAI-compatible `/v1/` API, which this
+design kept next to ChaWeb, was removed later. `cha-daemon` now serves only
+`/api/cha/v1/`.
 
 ## 1. Purpose and stages
 
@@ -59,14 +60,12 @@ the Unix socket and activate the daemon on demand.
 
 This stage is for private use on a trusted network. ChaWeb has no API-key login:
 the listening port selects the user. Anyone who can reach a user's port can
-use that user's conversations. The existing OpenAI listener keeps its bearer
-API-key routing separately.
+use that user's conversations.
 
 `cha-daemon` adds a CHA-specific adapter under `/api/cha/v1/`. It translates
 requests into existing `app::Application` operations and returns JSON or an
 empty success response. The browser polls complete session snapshots while
-generation is active. The existing OpenAI adapter remains under `/v1/` with its
-current response behavior.
+generation is active.
 
 The daemon remains the authority for session identities, transcripts,
 participants, generation state, titles, and persistence. The browser owns
@@ -355,7 +354,6 @@ server even when its response cannot be read. A cross-origin request with
 `application/json` requires a successful CORS preflight. Keep `OPTIONS` an
 unsupported method returning `404`, without CORS permission headers. Same-origin
 ChaWeb requests need no preflight. See the [CORS request rules](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS).
-This rule applies to ChaWeb; the OpenAI adapter keeps its current behavior.
 
 ### Endpoint summary
 
@@ -430,9 +428,8 @@ and return `500`; do not promise that no session remains.
 These operations are not one transaction. Keep existing startup recovery for
 crashes and interrupted cleanup. A timeout or unexpected failure can leave the
 input outcome unknown; retain the session and use the failure/recovery rules
-below. Accepted input also keeps its session if later generation fails. This
-adapts the OpenAI adapter's create/submit/delete-on-rejection pattern without
-changing that adapter. ChaWeb needs no discard endpoint or navigation cleanup.
+below. Accepted input also keeps its session if later generation fails.
+ChaWeb needs no discard endpoint or navigation cleanup.
 
 ### Input
 
@@ -513,7 +510,7 @@ For `415`, use the existing `invalid_argument` error code with a safe message
 that the request must use `application/json`. It follows the ordinary error
 display behavior above and needs no new error-code enum value.
 
-The existing SCGI 16 MiB body-limit response stays `413`; it is outside the
+The SCGI 256 KiB body-limit response is `413`; it is outside the
 adapter's status mapping. nginx can also return `413`, `502`, or `504`, with
 non-JSON bodies. Check status and response content type before parsing. Use a
 generic failure message when no safe JSON message is available; never render
@@ -655,13 +652,13 @@ transcript text to claim an exact acknowledgement.
 
 ## 6. Serial daemon requests
 
-Keep the existing accept/read/handle/write/close loop. Route `/api/cha/v1/` to
-the new JSON adapter and `/v1/` to the existing OpenAI adapter. The handlers use
-public application methods and owning protocol values; controllers and SQLite
-remain behind the application boundary.
+Keep the existing accept/read/handle/write/close loop. Route every request to
+the JSON adapter, which returns `404` for paths outside `/api/cha/v1/`. The
+handlers use public application methods and owning protocol values; controllers
+and SQLite remain behind the application boundary.
 
-At the start of each request, capture `application.context_epoch()` once, as
-the OpenAI adapter does. Pass that value to all application operations in the
+At the start of each request, capture `application.context_epoch()` once.
+Pass that value to all application operations in the
 request, including creation, submission, and rejection cleanup. Keep existing
 application admission checks. The epoch stays internal to the daemon; it does
 not come from the browser. This daemon exposes no vault maintenance operation
@@ -675,15 +672,14 @@ under the existing runtime session limit.
 
 ### Bounds and shutdown
 
-Retain the existing SCGI header limits, global 16 MiB body limit, and application
-deadlines. nginx enforces the 256 KiB request-body limit for the ChaWeb API.
+Retain the existing SCGI header limit and application deadlines. The SCGI body
+limit is 256 KiB, the same as the nginx request-body limit for the ChaWeb API.
 After JSON decoding, the adapter still checks the application's input-byte
 limit. No per-route daemon body limits are needed.
 
 nginx is the daemon's only SCGI peer and buffers both ChaWeb requests and
 responses. Reuse the existing socket reads and writes, including shutdown
-cancellation, without adding daemon I/O deadlines. Preserve the existing
-OpenAI streaming response behavior.
+cancellation, without adding daemon I/O deadlines.
 
 Use the existing application open and command deadlines. If a ChaWeb caller
 disappears after a mutation was admitted, let the application settle it under
@@ -695,19 +691,6 @@ flag to cancel socket waits, and leave the current handler. Application calls
 retain their existing deadlines. Then request application shutdown and wait
 for the existing grace period. Keep the forced-exit fallback. There are no new
 connection workers or subscription cleanup to join before destruction.
-
-### OpenAI compatibility
-
-The OpenAI adapter and its wire behavior remain unchanged, including its
-disconnect-cancels-turn behavior. Both adapters are called by the same serial
-loop. ChaWeb does not consume a session's output subscription, so no new
-cross-adapter admission mechanism is required.
-
-A long OpenAI turn occupies the handler until it ends and delays every queued
-ChaWeb request, including Stop. Those requests can exceed browser or nginx
-timeouts. Concurrent use of the two clients for one user is outside stage 1;
-report ordinary request failures and apply the existing no-write-replay policy.
-Do not add an exclusive browser slot or a new adapter-conflict response.
 
 ## 7. nginx, SCGI, and deployment
 
@@ -728,9 +711,7 @@ configured vault. No user or port field is added to the API or SCGI protocol.
 
 These listeners are for the trusted private network. Port selection provides
 routing, not authentication or access isolation between people on that network.
-Keep the existing OpenAI listener, bearer-key map, and `/v1/` route unchanged
-in their separate configuration; the new ChaWeb listeners expose only the
-static application and `/api/cha/v1/`.
+The ChaWeb listeners expose only the static application and `/api/cha/v1/`.
 
 Use the same origin for static files and the API, including the assigned port.
 Use the default `fetch` credentials mode, `same-origin`, and reject redirects
@@ -800,8 +781,7 @@ server {
 
 nginx supports Unix-socket SCGI upstreams. Keep request and response buffering
 enabled for ChaWeb's complete JSON exchanges. The read timeout bounds the wait
-for a daemon response, including time spent behind another request. Keep
-buffering disabled on the existing OpenAI route for its streamed replies.
+for a daemon response, including time spent behind another request.
 See the [nginx SCGI module](https://nginx.org/en/docs/http/ngx_http_scgi_module.html).
 
 Enable gzip for `application/json` explicitly; nginx's default gzip content type
@@ -825,14 +805,14 @@ The standard nginx `scgi_params` include already supplies this parameter even
 with `scgi_pass_request_headers off`; no new nginx parameter is needed. See
 the [nginx parameter file](https://github.com/nginx/nginx/blob/master/conf/scgi_params).
 Permit a missing value in SCGI parsing; the ChaWeb POST handler enforces the
-requirement. GET and OpenAI requests keep their existing content-type behavior.
+requirement. GET requests have no content-type requirement.
 
 Stage 1 does not need query-string parameters or arbitrary request headers.
 Ignore unrelated SCGI environment variables. Validate duplicated recognized
 fields, including `CONTENT_TYPE`, netstring framing, content length, and the
 existing global body limit.
 Add proper CGI status phrases for `201`, `204`, `415`, `422`, and `503`.
-Retain existing statuses used by SCGI and OpenAI. Cache headers are set in
+Retain existing statuses used by SCGI. Cache headers are set in
 nginx; no extension to `write_cgi()` for extra headers is needed.
 
 Do not send HTTP chunk framing from the daemon. It writes CGI headers and body
@@ -881,7 +861,7 @@ used on the build/development machine.
 Preserve the installer's existing policy of keeping operator-owned nginx and
 systemd files. Supply the per-user ChaWeb server block in the template and
 clearly report the required port/socket configuration for existing installations.
-Do not silently overwrite existing OpenAI API-key maps, TLS setup, or listeners.
+Do not silently overwrite existing TLS setup or listeners.
 Validate with `nginx -t` before reloading.
 
 Deploy matching daemon and frontend versions together. Use a non-cached entry
@@ -920,7 +900,7 @@ Stage 1 makes these decisions now:
    route the six endpoints through the existing serial loop,
    capture SCGI `CONTENT_TYPE`, and enforce JSON content types on ChaWeb POSTs
    before application operations. Reuse existing SCGI I/O and shutdown
-   cancellation. Preserve the OpenAI adapter.
+   cancellation.
 2. **Text API.** Reuse existing serializers for bootstrap, lists, and snapshots.
    Implement creation with first input and cleanup on rejection, later input,
    and Stop. Use `open_session()` followed by the operation for every named
@@ -939,7 +919,6 @@ Stage 1 makes these decisions now:
 5. **Deployment and end-to-end validation.** Package assets, add per-user nginx
    listeners with fixed daemon sockets, extend the existing nginx/SCGI tests
    for the API and static files, and check the browser flow on an iPhone.
-   Verify preserved OpenAI-only behavior.
 
 Stage 1 is complete only when the full browser-to-nginx-to-daemon path works.
 A frontend backed solely by mocks or a direct development HTTP server is not
@@ -967,7 +946,7 @@ should not need paid provider calls.
 | Viewport layout | App height and top track visual viewport height and offset on initial load, resize, and scroll; the body stays unscrollable; transcript, list, and editor scroll internally; safe-area padding fits within the measured height; on an actual iPhone, controls remain visible through keyboard opening/dismissal, rotation, and Safari browser controls changing size. |
 | Composer keys and dictation | Desktop Enter sends and Ctrl+Enter inserts a newline; touch Enter inserts a newline and the Send icon submits; IME composition and dictation never send automatically; iPhone keyboard dictation enters editable draft text and survives polling without losing focus or caret position; no application microphone or audio endpoint is needed. |
 | Deployment | Automated checks use one daemon and one nginx Unix-socket HTTP listener for ChaWeb; `/` and generated assets return `200` with correct MIME types; nginx adds `no-store` to API successes and errors; nginx's 256 KiB body limit, gateway errors, and JSON compression work. Manual deployment checks confirm each user's port serves the frontend and its assigned daemon; startup needs no key entry, credential storage, or native host; daemon/frontend versions match. |
-| Compatibility | Existing OpenAI listener and API-key routing remain unchanged, with `/v1/` absent from the new ChaWeb listeners; existing OpenAI tests pass unchanged; a long OpenAI request queues ChaWeb requests; queued or timed-out writes are never automatically replayed. |
+| Compatibility | Paths outside `/api/cha/v1/`, including the former `/v1/` routes, return `404`; queued or timed-out writes are never automatically replayed. |
 
 Add an nginx/SCGI integration regression that posts otherwise valid creation
 JSON as `text/plain` and verifies `415`, no new session, and no provider call.

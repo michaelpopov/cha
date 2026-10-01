@@ -26,8 +26,6 @@ cha-linux-<version>/
   cha-daemon                  the daemon
   chaweb/                     static ChaWeb files: index.html and assets/
   nginx-chaweb.conf.example   per-user ChaWeb server block
-  nginx.conf.example          OpenAI listener example
-  nginx.conf.install          OpenAI listener that install.sh creates
   cha@.service, cha@.socket   systemd unit templates
   install.sh, add_user.sh     installation scripts
   cha-config.example/         example vault
@@ -57,17 +55,14 @@ The installer:
 - replaces `$CHA_DEPLOY_PATH/chaweb` with the packaged ChaWeb files, readable
   by all users;
 - installs the systemd unit templates only if they are absent;
-- creates the OpenAI nginx site `/etc/nginx/conf.d/cha.conf` and the empty
-  API-key map `/etc/nginx/cha-users.map` only if they are absent;
-- reloads systemd, runs `nginx -t`, and reloads nginx.
+- reloads systemd.
 
 It does not create ChaWeb listeners. You add them by hand (see below). After
 the installation, you can remove the extracted archive directory.
 
-The OpenAI site listens on `127.0.0.1:8086` by default. Set `CHA_LISTEN`
-before the first install if you need another address. Existing unit files and
-nginx configuration are kept; check their paths if you change the deployment
-directories later.
+Existing unit files and nginx configuration are kept; check their paths if
+you change the deployment directories later. `CHA_LISTEN` is obsolete and
+is ignored. Configure each user's listener as described below.
 
 ### Socket group
 
@@ -111,11 +106,9 @@ Export `CHA_DEPLOY_PATH` and `CHA_DATA_PATH` again, then run:
 ```
 
 This copies the example vault to `$CHA_DATA_PATH/alice/config`, owned by the
-installing user, adds a randomly generated OpenAI API key to nginx, and
-enables `cha@alice.socket`. The key is only for the OpenAI listener; ChaWeb
-does not use it. Save the printed key. Repeating the command keeps an existing
-user configuration and key. Each user's daemon starts on its first request
-through nginx.
+installing user, and enables `cha@alice.socket`. Repeating the command keeps
+an existing user configuration. Each user's daemon starts on its first
+request through nginx.
 
 To use an existing CHA vault, put its configuration directory at
 `$CHA_DATA_PATH/<user>/config` before you run `add_user.sh`. The daemon
@@ -162,7 +155,7 @@ one server block and replace:
 
 Keep the buffered SCGI settings, the 256 KiB body limit, JSON gzip, and
 `Cache-Control: no-store` in the API location. Do not add CORS headers or
-bearer-key routing to ChaWeb listeners. Keep the OpenAI listener separate.
+bearer-key routing to ChaWeb listeners.
 
 The enclosing `http` block must include `mime.types`, and nginx must have the
 standard `scgi_params` file; the default Debian and Fedora `nginx.conf` do
@@ -210,7 +203,7 @@ must match the daemon API. Extract the new archive and run `install.sh` with
 the same `CHA_DEPLOY_PATH` and `CHA_DATA_PATH`. The installer replaces the
 daemon, `add_user.sh`, the example vault, the ChaWeb files, and the ChaWeb
 example. It keeps the systemd units, nginx configuration, ChaWeb server
-blocks, TLS setup, OpenAI key map, port assignments, and user vaults. Then
+blocks, TLS setup, port assignments, and user vaults. Then
 restart the running daemons, so that they use the new binary:
 
 ```sh
@@ -223,13 +216,11 @@ you need. Reload browser tabs that were open during the upgrade. A reload
 loses unsent drafts, so finish or copy them first. Check bootstrap and a
 conversation after the upgrade.
 
-## OpenAI listener
-
-The OpenAI listener is unchanged. To reach the default localhost listener from
-another machine, use an SSH tunnel such as
-`ssh -L 8086:127.0.0.1:8086 SERVER`. Bearer API keys travel in plain text over
-HTTP, so use a trusted connection. A long OpenAI turn occupies the user's
-daemon, so ChaWeb requests for the same user wait until it ends.
+The daemon serves only the custom `/api/cha/v1` API. The former `/v1/models`
+and `/v1/chat/completions` endpoints return `404`. If an older installation
+has an OpenAI nginx site, remove that server block and its unused
+`/etc/nginx/cha-users.map` file, then validate and reload nginx. The installer
+keeps existing nginx configuration.
 
 ## Troubleshooting
 

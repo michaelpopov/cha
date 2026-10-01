@@ -230,15 +230,6 @@ protected:
     std::unique_ptr<Application> application_;
 };
 
-TEST(ChaWebAdapter, MatchesRoutePrefixAtItsBoundary) {
-    EXPECT_TRUE(is_chaweb_request("/api/cha/v1"));
-    EXPECT_TRUE(is_chaweb_request("/api/cha/v1/"));
-    EXPECT_TRUE(is_chaweb_request("/api/cha/v1/bootstrap"));
-    EXPECT_FALSE(is_chaweb_request("/api/cha/v1foo"));
-    EXPECT_FALSE(is_chaweb_request("/v1/models"));
-    EXPECT_FALSE(is_chaweb_request("/api/cha/v2/bootstrap"));
-}
-
 TEST_F(ChaWebAdapterTest, BootstrapUsesExistingSerializer) {
     const auto boot = application_->bootstrap();
     const CgiResponse response = get(std::string(bootstrap_path));
@@ -448,6 +439,10 @@ TEST_F(ChaWebAdapterTest, UnknownRoutesAndMethodsAreNotFoundWithoutCors) {
         {"GET", "/api/cha/v1"},
         {"GET", "/api/cha/v1/"},
         {"GET", "/api/cha/v1/unknown"},
+        {"GET", "/api/cha/v1foo"},
+        {"GET", "/api/cha/v2/bootstrap"},
+        {"GET", "/v1/models"},
+        {"POST", "/v1/chat/completions"},
         {"POST", "/api/cha/v1/bootstrap"},
         {"OPTIONS", "/api/cha/v1/bootstrap"},
         {"GET", "/api/cha/v1/forums/lobby/sessions/abc/input"},

@@ -630,10 +630,6 @@ void serve_create(
 
 } // namespace
 
-bool is_chaweb_request(std::string_view document_uri) noexcept {
-    return document_uri == base_path || document_uri.starts_with(base_prefix);
-}
-
 void handle_chaweb_request(
     app::Application& application,
     const ScgiRequest& request,

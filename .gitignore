@@ -12,6 +12,7 @@
 !/bin/start-cha.bat
 
 # Browser build and test output
+/node_modules/
 /webapp/node_modules/
 /webapp/dist/
 /webapp/dist-chaweb/
@@ -29,6 +30,9 @@ cmake_install.cmake
 CTestTestfile.cmake
 CPack*.cmake
 
+# Python bytecode
+__pycache__/
+
 # Editor / swap files
 *.swp
 *~
@@ -37,7 +41,6 @@ CPack*.cmake
 .DS_Store
 
 .env
-!/packaging/linux/import-seed/.env
 openai-auth.json
 *.sqlite3
 *.openai-auth.json

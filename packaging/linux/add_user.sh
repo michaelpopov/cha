@@ -29,8 +29,6 @@ fi
 [ -x "$CHA_DEPLOY_PATH/cha-daemon" ] || fail "run install.sh first"
 [ -d "$CHA_DEPLOY_PATH/cha-config.example/config" ] || fail "missing example vault"
 [ -f /etc/systemd/system/cha@.service ] || fail "run install.sh first"
-[ -f /etc/nginx/cha-users.map ] || fail "run install.sh first"
-[ -f /etc/nginx/conf.d/cha.conf ] || fail "run install.sh first"
 
 owner=$(sed -n 's/^User=//p' /etc/systemd/system/cha@.service | head -n 1)
 [ -n "$owner" ] && [ "$owner" != 'cha-%i' ] || \
@@ -52,18 +50,7 @@ runuser -u "$owner" -- test -x "$CHA_DEPLOY_PATH/cha-daemon" || \
 runuser -u "$owner" -- test -w "$config" || \
     fail "$owner cannot write its configuration directory"
 
-map=/etc/nginx/cha-users.map
-key=$(sed -n "s/^\"Bearer \([0-9a-f]\{64\}\)\"[[:space:]][[:space:]]*$name;[[:space:]]*$/\1/p" "$map" | head -n 1)
-if [ -z "$key" ]; then
-    key=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
-    printf '"Bearer %s" %s;\n' "$key" "$name" >> "$map"
-fi
-nginx -t
-if systemctl is-active --quiet nginx; then
-    systemctl reload nginx
-fi
 systemctl enable --now "cha@$name.socket"
-echo "OpenAI API key for $name: $key"
 echo "Ready: cha@$name.socket"
 echo "For ChaWeb, add a server block with a private port for /run/cha/$name.sock" \
     "from $CHA_DEPLOY_PATH/nginx-chaweb.conf.example"

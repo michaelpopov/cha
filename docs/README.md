@@ -10,11 +10,15 @@
 - [Editing workspace entities](editing.md): implementing an editing workflow
   across the store, application, bridge, and frontend.
 - [Headless daemon design](headless.md) and [tutorial](head-tutorial.html):
-  `cha-daemon`, an OpenAI-compatible SCGI server behind nginx, with systemd on
-  Linux and `scripts/run_daemon.py` on macOS.
+  `cha-daemon`, the SCGI server behind nginx that serves the ChaWeb API, with
+  systemd on Linux and `scripts/run_daemon.py` on macOS.
+- [ChaWeb design](chaweb.md): the browser application and its `/api/cha/v1/`
+  API.
 
-CHA is a native desktop application. Older HTTP/SSE server instructions and the
-removed `chaweb` executable are not part of the current operating workflow.
+The desktop application has no HTTP listener. Older HTTP/SSE server
+instructions and the removed `chaweb` server executable are not part of the
+current operating workflow. The current ChaWeb is a static browser application
+that nginx serves next to `cha-daemon`.
 
 [Users and shared sessions](users.md) is an archived, unimplemented proposal.
 [The older UI review](webui.review.txt) is historical review material. Neither

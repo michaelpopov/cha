@@ -520,8 +520,10 @@ TEST_F(AudioDownloads, ResolvesDefaultVoiceAndDeduplicatesPendingRequests) {
     EXPECT_EQ(downloads->submit(session, 1, {"Test", {}}).kind, AudioAcceptanceKind::running);
     EXPECT_EQ(downloads->status(session, "Test").downloads.size(), 1u);
     release = true;
-    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
-    EXPECT_EQ(downloads->submit(session, 1, {"Test", {}}).kind, AudioAcceptanceKind::cached);
+    // The worker saves the audio before it removes the finished job.
+    ASSERT_TRUE(eventually([&] {
+        return downloads->submit(session, 1, {"Test", {}}).kind == AudioAcceptanceKind::cached;
+    }));
     EXPECT_EQ(transfers, 1);
 }
 TEST_F(AudioDownloads, DisabledDownloadsReportEmptyStatusButRejectWork) {

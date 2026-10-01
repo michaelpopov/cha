@@ -107,9 +107,9 @@ std::string exchange_scgi(
         client.get(), std::chrono::steady_clock::now() + 15s);
 }
 
-// Sends GET /v1/models to a starting daemon and returns the raw response.
-std::string request_models(DaemonProcess& process) {
-    return exchange_scgi(process, "GET", "/v1/models");
+// Sends a bootstrap request to a starting daemon and returns the raw response.
+std::string request_bootstrap(DaemonProcess& process) {
+    return exchange_scgi(process, "GET", "/api/cha/v1/bootstrap");
 }
 
 nlohmann::json cgi_json(std::string_view raw) {
@@ -171,12 +171,13 @@ TEST_F(DaemonProcessTest, RejectsInvalidActivation) {
     }
 }
 
-TEST_F(DaemonProcessTest, ServesModelsAfterActivation) {
+TEST_F(DaemonProcessTest, ServesBootstrapAfterActivation) {
     DaemonProcess process(DaemonSpawn{.config_directory = config_});
-    const std::string raw = request_models(process);
+    const std::string raw = request_bootstrap(process);
     EXPECT_NE(raw.find("Status: 200 OK"), std::string::npos);
-    EXPECT_NE(raw.find("\"id\":\"The Lobby\""), std::string::npos);
-    EXPECT_EQ(raw.find("builtin-entrance"), std::string::npos);
+    EXPECT_NE(raw.find("\"display_name\":\"The Lobby\""), std::string::npos);
+    EXPECT_TRUE(cgi_json(raw).contains("entrance_forum_id"));
+    EXPECT_EQ(raw.find("Access-Control"), std::string::npos);
     process.send_signal(SIGTERM);
     EXPECT_EQ(process.wait_for_exit(5s), 0);
 }
@@ -229,95 +230,67 @@ TEST_F(DaemonProcessTest, ProtectedVaultReadsThePasswordFile) {
     // One trailing newline, as `echo` writes it, is not part of the password.
     write_file(password, "secret\n", private_mode);
     DaemonProcess process(DaemonSpawn{.config_directory = config_});
-    const std::string raw = request_models(process);
+    const std::string raw = request_bootstrap(process);
     EXPECT_NE(raw.find("Status: 200 OK"), std::string::npos) << raw;
-    EXPECT_NE(raw.find("\"id\":\"The Lobby\""), std::string::npos) << raw;
+    EXPECT_NE(raw.find("\"display_name\":\"The Lobby\""), std::string::npos) << raw;
     process.send_signal(SIGTERM);
     EXPECT_EQ(process.wait_for_exit(5s), 0);
 }
 
-TEST(DaemonProcess, StopsDuringGeneration) {
-    TestWorkspace workspace;
-    const auto session_dir = workspace.root() / "system/session";
-    std::filesystem::create_directories(session_dir);
-    std::ofstream(session_dir / "config.toml")
-        << "naming_provider = \"absent\"\n";
-    const std::string body =
-        R"({"choices":[{"message":{"content":"Finished"}}]})";
-    MockHttpServer server({http_response("application/json", body)});
-    server.pause_before_response(1);
-    workspace.write_provider(
-        "remote",
-        "host = \"127.0.0.1\"\nport = " + std::to_string(server.port())
-            + "\nhttps = false\nmode = \"net\"\nmodel = \"fake\"\n"
-              "api = \"chat_completions\"\nstream = false\ntimeout_s = 20\n");
-    workspace.write_character_config(
-        "display_name = \"Guide\"\nprovider = \"remote\"\n");
-    const auto database = import_test_database(workspace.root());
-    const auto config = write_config(workspace, database);
-    DaemonProcess process(DaemonSpawn{.config_directory = config});
-    server.start();
-
-    daemon::UniqueFd client;
-    const auto ready = std::chrono::steady_clock::now() + 5s;
-    while (std::chrono::steady_clock::now() < ready) {
-        try {
-            client = process.connect_client();
-            break;
-        } catch (const std::exception&) {
-            std::this_thread::sleep_for(20ms);
-        }
+TEST_F(DaemonProcessTest, RejectsOpenAiRoutes) {
+    DaemonProcess process(DaemonSpawn{.config_directory = config_});
+    const struct Case {
+        const char* method;
+        const char* uri;
+    } cases[]{
+        {"GET", "/v1/models"},
+        {"POST", "/v1/chat/completions"},
+        {"GET", "/api/cha/v1foo"},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.uri);
+        const std::string raw = exchange_scgi(process, item.method, item.uri);
+        EXPECT_NE(raw.find("Status: 404 Not Found"), std::string::npos) << raw;
+        const auto error = cgi_json(raw).at("error");
+        EXPECT_EQ(error.at("code"), "not_found");
+        EXPECT_FALSE(error.contains("type"));
     }
-    ASSERT_TRUE(client);
-    const std::string payload =
-        R"({"model":"lobby","stream":true,"messages":[{"role":"user","content":"Hello"}]})";
-    const std::string headers =
-        std::string("CONTENT_LENGTH") + '\0' + std::to_string(payload.size())
-        + '\0' + "SCGI" + '\0' + "1" + '\0' + "REQUEST_METHOD" + '\0' + "POST"
-        + '\0' + "DOCUMENT_URI" + '\0' + "/v1/chat/completions" + '\0';
-    const std::string request =
-        std::to_string(headers.size()) + ":" + headers + "," + payload;
-    std::atomic<bool> stop{false};
-    ASSERT_TRUE(daemon::write_bytes(client.get(), request, stop));
-
-    std::string raw;
-    const auto deadline = std::chrono::steady_clock::now() + 5s;
-    while (raw.find("text/event-stream") == std::string::npos
-        && std::chrono::steady_clock::now() < deadline) {
-        char buffer[1024];
-        const ssize_t count =
-            ::recv(client.get(), buffer, sizeof(buffer), MSG_DONTWAIT);
-        if (count > 0) raw.append(buffer, static_cast<std::size_t>(count));
-        else std::this_thread::sleep_for(10ms);
-    }
-    ASSERT_NE(raw.find("text/event-stream"), std::string::npos) << raw;
-    ASSERT_TRUE(server.wait_for_requests(1, 5s));
+    EXPECT_NE(request_bootstrap(process).find("Status: 200 OK"), std::string::npos);
     process.send_signal(SIGTERM);
-    server.resume_responses();
-    EXPECT_EQ(process.wait_for_exit(15s), 0);
-    server.join();
+    EXPECT_EQ(process.wait_for_exit(5s), 0);
 }
 
-TEST_F(DaemonProcessTest, ServesChaWebAndKeepsOpenAiRoutes) {
+TEST_F(DaemonProcessTest, ScgiErrorsUseChaWebFormat) {
     DaemonProcess process(DaemonSpawn{.config_directory = config_});
-    const std::string bootstrap =
-        exchange_scgi(process, "GET", "/api/cha/v1/bootstrap");
-    EXPECT_NE(bootstrap.find("Status: 200 OK"), std::string::npos) << bootstrap;
-    EXPECT_NE(bootstrap.find("\"entrance_forum_id\""), std::string::npos)
-        << bootstrap;
-    EXPECT_EQ(bootstrap.find("Access-Control"), std::string::npos);
-    const auto body = cgi_json(bootstrap);
-    EXPECT_FALSE(body.contains("type"));
-
-    const std::string models = request_models(process);
-    EXPECT_NE(models.find("Status: 200 OK"), std::string::npos) << models;
-    EXPECT_NE(models.find("\"id\":\"The Lobby\""), std::string::npos) << models;
-
-    const std::string other =
-        exchange_scgi(process, "GET", "/api/cha/v1foo");
-    EXPECT_NE(other.find("Status: 404 Not Found"), std::string::npos) << other;
-    EXPECT_NE(other.find("invalid_request_error"), std::string::npos) << other;
-
+    const std::string oversized_headers =
+        std::string("CONTENT_LENGTH") + '\0'
+        + std::to_string(daemon::scgi_body_limit + 1) + '\0'
+        + "SCGI" + '\0' + "1" + '\0'
+        + "REQUEST_METHOD" + '\0' + "POST" + '\0'
+        + "DOCUMENT_URI" + '\0' + "/api/cha/v1/forums/lobby/sessions" + '\0';
+    const struct Case {
+        std::string request;
+        const char* status;
+        const char* code;
+    } cases[]{
+        {"x", "Status: 400 Bad Request", "invalid_argument"},
+        {std::to_string(oversized_headers.size()) + ":" + oversized_headers + ",",
+         "Status: 413 Content Too Large", "prompt_too_large"},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.status);
+        daemon::UniqueFd client = connect_ready(process);
+        ASSERT_TRUE(client);
+        std::atomic<bool> stop{false};
+        ASSERT_TRUE(daemon::write_bytes(client.get(), item.request, stop));
+        const std::string raw = read_until_close(
+            client.get(), std::chrono::steady_clock::now() + 5s);
+        EXPECT_NE(raw.find(item.status), std::string::npos) << raw;
+        const auto error = cgi_json(raw).at("error");
+        EXPECT_EQ(error.at("code"), item.code);
+        EXPECT_FALSE(error.contains("type"));
+    }
+    EXPECT_NE(request_bootstrap(process).find("Status: 200 OK"), std::string::npos);
     process.send_signal(SIGTERM);
     EXPECT_EQ(process.wait_for_exit(5s), 0);
 }

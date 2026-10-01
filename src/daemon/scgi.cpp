@@ -131,6 +131,8 @@ std::string_view reason_phrase(int status) {
         return "Bad Request";
     case 404:
         return "Not Found";
+    case 409:
+        return "Conflict";
     case 413:
         return "Content Too Large";
     case 415:

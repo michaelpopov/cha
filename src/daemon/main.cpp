@@ -1,7 +1,6 @@
 #include "app/application.h"
 #include "app/application_config.h"
 #include "daemon/chaweb_adapter.h"
-#include "daemon/openai_adapter.h"
 #include "daemon/scgi.h"
 #include "util/logging.h"
 #include "util/path_name.h"
@@ -24,6 +23,8 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#include <nlohmann/json.hpp>
 
 namespace cha {
 namespace {
@@ -255,28 +256,21 @@ void run_accept_loop(app::Application& application) {
         const daemon::ScgiReadResult result =
             daemon::read_scgi(client.get(), stop_requested);
         if (result.status == ScgiReadStatus::bad_request) {
-            daemon::write_error(
-                client.get(),
-                {.status = 400,
-                 .message = "Malformed SCGI request",
-                 .code = "invalid_request"},
+            daemon::write_cgi(
+                client.get(), 400, "application/json",
+                nlohmann::json(Error{
+                    ErrorCode::invalid_argument, "Malformed SCGI request"}).dump(),
                 stop_requested);
         } else if (result.status == ScgiReadStatus::too_large) {
-            daemon::write_error(
-                client.get(),
-                {.status = 413,
-                 .message = "The request is too large",
-                 .code = "body_too_large"},
+            daemon::write_cgi(
+                client.get(), 413, "application/json",
+                nlohmann::json(Error{
+                    ErrorCode::prompt_too_large, "The request is too large"}).dump(),
                 stop_requested);
         } else if (result.status == ScgiReadStatus::ok
             && !stop_requested.load() && !daemon::peer_closed(client.get())) {
-            if (daemon::is_chaweb_request(result.request.document_uri)) {
-                daemon::handle_chaweb_request(
-                    application, result.request, client.get(), stop_requested);
-            } else {
-                daemon::handle_request(
-                    application, result.request, client.get(), stop_requested);
-            }
+            daemon::handle_chaweb_request(
+                application, result.request, client.get(), stop_requested);
         }
     }
 }

@@ -388,8 +388,6 @@ if(NOT WIN32)
         cha-daemon
         src/daemon/main.cpp
         src/daemon/scgi.cpp
-        src/daemon/session_tag.cpp
-        src/daemon/openai_adapter.cpp
         src/daemon/chaweb_adapter.cpp)
     target_compile_features(cha-daemon PUBLIC cxx_std_20)
     target_link_libraries(cha-daemon PRIVATE cha_lib)
@@ -652,15 +650,10 @@ if(BUILD_TESTING)
         add_executable(
             cha_daemon_tests
             tests/daemon/unit_scgi.cpp
-            tests/daemon/unit_session_tag.cpp
-            tests/daemon/unit_openai_adapter.cpp
-            tests/daemon/unit_openai_turns.cpp
             tests/daemon/unit_chaweb_adapter.cpp
             tests/daemon/unit_daemon_process.cpp
             tests/support/test_workspace.cpp
             src/daemon/scgi.cpp
-            src/daemon/session_tag.cpp
-            src/daemon/openai_adapter.cpp
             src/daemon/chaweb_adapter.cpp)
         target_link_libraries(
             cha_daemon_tests

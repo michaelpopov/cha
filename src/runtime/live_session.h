@@ -119,7 +119,6 @@ public:
     [[nodiscard]] LiveSessionState lifecycle() const noexcept {
         return state_.load();
     }
-    [[nodiscard]] bool naming() const noexcept { return naming_.load(); }
 
 private:
     friend class SessionRuntime;

@@ -103,11 +103,11 @@ from SQLite; new unnamed sessions remain out of Recent until naming finishes.
 | --- | --- |
 | `cha_lib` | All production sources: domain, storage, application operations, live sessions, DTOs, and the native request dispatcher. |
 | `cha_macos_runtime` / `cha_windows_app` | Production desktop hosts. |
-| `cha-daemon` | POSIX headless OpenAI-compatible SCGI server. Linux deployment; also builds on macOS. |
+| `cha-daemon` | POSIX headless ChaWeb SCGI server. Linux deployment; also builds on macOS. |
 | `cha_tests` | Core, session, and workspace unit/component tests. |
 | `cha_app_tests` | Application, live-session, protocol, and audio tests. |
 | `cha_bridge_tests` | Native envelope and dispatcher tests. |
-| `cha_daemon_tests` | SCGI, request parsing, session tags, and daemon process tests. |
+| `cha_daemon_tests` | SCGI, ChaWeb API, and daemon process tests. |
 | `itest` | Live-provider integration tests for the retained core stack. |
 
 The React UI has Vitest checks under `../webapp/`. Native host automation is

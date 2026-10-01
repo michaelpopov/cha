@@ -9,8 +9,6 @@
 
 namespace cha::daemon {
 
-[[nodiscard]] bool is_chaweb_request(std::string_view document_uri) noexcept;
-
 // Tests replace session deletion after a failed create.
 using ChaWebDeleteSession = std::optional<ErrorCode> (*)(
     app::Application& application,

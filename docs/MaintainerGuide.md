@@ -1533,7 +1533,7 @@ already built, use it directly instead of rebuilding.
 Before an upgrade, finish or stop active conversations and copy any unsent
 browser drafts. Stop both sockets and services before copying the databases;
 an active socket can start a stopped daemon again. Back up the application,
-data, nginx configuration, OpenAI key map, and systemd units:
+data, nginx configuration, and systemd units:
 
 ```sh
 export CHA_DEPLOY_PATH=/home/mpopov/opt/cha
@@ -1542,7 +1542,6 @@ backup_dir="$HOME/var/cha-deployment-backups/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
 sudo cp -a /etc/nginx/conf.d "$backup_dir/nginx-conf.d"
-sudo cp -a /etc/nginx/cha-users.map "$backup_dir/cha-users.map"
 sudo cp -a /etc/systemd/system/cha@.service \
   /etc/systemd/system/cha@.socket "$backup_dir/"
 sudo systemctl stop cha@michael.socket cha@annushka.socket \
@@ -1563,9 +1562,9 @@ sudo chown -R mpopov:mpopov "$CHA_DEPLOY_PATH" "$CHA_DATA_PATH"
 ```
 
 The installer replaces the daemon, static files, example vault, and helper
-scripts. It preserves existing systemd units, nginx sites, OpenAI API-key
-maps, and user vaults. It installs a ChaWeb nginx example but does not create
-the per-user listeners. Keep data and TLS keys outside the static root.
+scripts. It preserves existing systemd units, nginx sites, and user vaults. It
+installs a ChaWeb nginx example but does not create the per-user listeners.
+Keep data and TLS keys outside the static root.
 
 For existing users, start their sockets after installation:
 
@@ -1580,8 +1579,8 @@ and these deployment/data paths; existing units are not rewritten.
 
 For a new user, prepare its existing configuration directory and database,
 then run `"$CHA_DEPLOY_PATH/add_user.sh" USER` with the same exported paths.
-The script enables the socket and prints an OpenAI API key; that key is not
-used by ChaWeb. Configure working server provider credentials in the vault.
+The script enables the socket. Configure working server provider credentials
+in the vault.
 ChatGPT subscription providers are not supported by the daemon. For a
 protected vault, supply `config/password`, owned by `mpopov`, with mode `0600`.
 
@@ -1632,8 +1631,9 @@ Keep the template's 256 KiB request limit, buffered SCGI responses, JSON gzip,
 and `Cache-Control: no-store` on API successes and errors. The entry document
 uses `no-cache`; content-hashed assets use the immutable cache header. Include
 nginx's `mime.types` and standard `scgi_params`, which forwards `CONTENT_TYPE`.
-Keep `/etc/nginx/conf.d/cha.conf` and `/etc/nginx/cha-users.map` for the existing
-OpenAI listener; ChaWeb routes directly to fixed sockets.
+ChaWeb routes directly to fixed sockets. The daemon no longer serves the
+OpenAI-compatible `/v1/` API. If `/etc/nginx/conf.d/cha.conf` and
+`/etc/nginx/cha-users.map` remain from that listener, remove them.
 
 Validate before reloading:
 
@@ -1689,8 +1689,7 @@ both vaults have the same forum names. The ownership check must print nothing.
 
 Open each user's page in a browser. Send a short test message, wait for a
 complete reply, reload, and verify the saved conversation. Restart that user's
-service and reopen the same session to check persistence. Check the existing
-OpenAI `/v1/models` route with its saved key without printing the key. On an
+service and reopen the same session to check persistence. On an
 iPhone, check keyboard opening and dismissal, editor resizing, rotation, and
 keyboard dictation while replies are polled.
 

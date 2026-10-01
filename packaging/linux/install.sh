@@ -17,20 +17,15 @@ for path in "$CHA_DEPLOY_PATH" "$CHA_DATA_PATH"; do
     esac
 done
 
-need_site=0
-if [ ! -e /etc/nginx/conf.d/cha.conf ] && [ ! -L /etc/nginx/conf.d/cha.conf ]; then
-    need_site=1
-    CHA_LISTEN=${CHA_LISTEN:-127.0.0.1:8086}
-    case "$CHA_LISTEN" in
-        *[!0-9.:]*) fail "invalid CHA_LISTEN" ;;
-    esac
+if [ "${CHA_LISTEN+x}" = x ]; then
+    echo "Warning: ignoring obsolete CHA_LISTEN; configure each user's ChaWeb listener in nginx." >&2
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
     install_user=$(id -un)
     exec sudo env \
         CHA_DEPLOY_PATH="$CHA_DEPLOY_PATH" CHA_DATA_PATH="$CHA_DATA_PATH" \
-        CHA_LISTEN="${CHA_LISTEN-}" CHA_INSTALL_USER="$install_user" "$0"
+        CHA_INSTALL_USER="$install_user" "$0"
 fi
 install_user=${CHA_INSTALL_USER:-${SUDO_USER:-}}
 [ -n "$install_user" ] || fail "run install.sh from a regular user account"
@@ -49,9 +44,6 @@ for file in cha-daemon add_user.sh cha@.service cha@.socket \
 done
 [ -d "$source_dir/cha-config.example/config" ] || fail "missing example vault"
 [ -d "$source_dir/chaweb/assets" ] || fail "missing chaweb/assets from the extracted package"
-if [ "$need_site" -eq 1 ]; then
-    [ -f "$source_dir/nginx.conf.install" ] || fail "missing nginx.conf.install"
-fi
 command -v nginx >/dev/null 2>&1 || fail "nginx is required"
 
 mkdir -p -- "$CHA_DEPLOY_PATH" "$CHA_DATA_PATH"
@@ -78,11 +70,6 @@ sed -e "s|@CHA_DEPLOY_PATH@|$CHA_DEPLOY_PATH|g" \
     -e "s|@CHA_DATA_PATH@|$CHA_DATA_PATH|g" \
     -e "s|@CHA_INSTALL_USER@|$install_user|g" \
     "$source_dir/cha@.service" > "$temporary/cha@.service"
-if [ "$need_site" -eq 1 ]; then
-    sed -e "s|@CHA_LISTEN@|$CHA_LISTEN|g" \
-        "$source_dir/nginx.conf.install" > "$temporary/cha.conf"
-fi
-
 for unit in cha@.service cha@.socket; do
     destination="/etc/systemd/system/$unit"
     if [ -e "$destination" ] || [ -L "$destination" ]; then
@@ -100,19 +87,6 @@ for unit in cha@.service cha@.socket; do
     fi
 done
 systemctl daemon-reload
-
-if [ ! -e /etc/nginx/cha-users.map ]; then
-    install -m 600 /dev/null /etc/nginx/cha-users.map
-fi
-if [ "$need_site" -eq 0 ]; then
-    echo "Keeping existing /etc/nginx/conf.d/cha.conf"
-else
-    install -m 644 "$temporary/cha.conf" /etc/nginx/conf.d/cha.conf
-fi
-nginx -t
-if systemctl is-active --quiet nginx; then
-    systemctl reload nginx
-fi
 
 # nginx workers need search permission on every parent of the static root.
 nginx_user=$(nginx -T 2>/dev/null |

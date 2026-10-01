@@ -9,7 +9,8 @@
 namespace cha::daemon {
 
 inline constexpr std::size_t scgi_header_limit = 64 * 1024;
-inline constexpr std::size_t scgi_body_limit = 16 * 1024 * 1024;
+// The same as client_max_body_size in the ChaWeb nginx block.
+inline constexpr std::size_t scgi_body_limit = 256 * 1024;
 
 class UniqueFd {
 public:

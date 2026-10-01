@@ -80,27 +80,27 @@ void send_fragmented(int fd, std::string_view data) {
 TEST(Scgi, ReadsFragmentedHeadersAndBody) {
     auto sockets = make_pair();
     const std::string request = scgi_request(
-        "POST", "/v1/chat/completions", "{\"model\":\"lobby\"}");
+        "POST", "/api/cha/v1/forums/lobby/sessions", "{\"text\":\"Hello\"}");
     std::thread writer([&] { send_fragmented(sockets.peer.get(), request); });
     std::atomic<bool> stop{false};
     const ScgiReadResult result = read_scgi(sockets.local.get(), stop);
     writer.join();
     ASSERT_EQ(result.status, ScgiReadStatus::ok);
     EXPECT_EQ(result.request.method, "POST");
-    EXPECT_EQ(result.request.document_uri, "/v1/chat/completions");
-    EXPECT_EQ(result.request.body, "{\"model\":\"lobby\"}");
+    EXPECT_EQ(result.request.document_uri, "/api/cha/v1/forums/lobby/sessions");
+    EXPECT_EQ(result.request.body, "{\"text\":\"Hello\"}");
     EXPECT_TRUE(result.request.content_type.empty());
     EXPECT_FALSE(peer_closed(sockets.local.get()));
 }
 
 TEST(Scgi, RejectsMalformedFraming) {
-    const std::string valid = scgi_request("GET", "/v1/models", "");
+    const std::string valid = scgi_request("GET", "/api/cha/v1/bootstrap", "");
     struct Case {
         std::string name;
         std::string payload;
     };
     const Case cases[]{
-        {"missing colon digits", "GET /v1/models,"},
+        {"missing colon digits", "GET /api/cha/v1/bootstrap,"},
         {"empty length", ":" + valid.substr(valid.find(':') + 1)},
         {"broken pair", "7:CONTENT,"},
         {"content length not first",
@@ -108,14 +108,14 @@ TEST(Scgi, RejectsMalformedFraming) {
              {{"SCGI", "1"},
               {"CONTENT_LENGTH", "0"},
               {"REQUEST_METHOD", "GET"},
-              {"DOCUMENT_URI", "/v1/models"}},
+              {"DOCUMENT_URI", "/api/cha/v1/bootstrap"}},
              "")},
         {"duplicate method",
          scgi_block(
              {{"CONTENT_LENGTH", "0"},
               {"SCGI", "1"},
               {"REQUEST_METHOD", "GET"},
-              {"DOCUMENT_URI", "/v1/models"},
+              {"DOCUMENT_URI", "/api/cha/v1/bootstrap"},
               {"REQUEST_METHOD", "POST"}},
              "")},
         {"duplicate content type",
@@ -131,25 +131,25 @@ TEST(Scgi, RejectsMalformedFraming) {
          scgi_block(
              {{"CONTENT_LENGTH", "0"},
               {"REQUEST_METHOD", "GET"},
-              {"DOCUMENT_URI", "/v1/models"}},
+              {"DOCUMENT_URI", "/api/cha/v1/bootstrap"}},
              "")},
         {"scgi not one",
          scgi_block(
              {{"CONTENT_LENGTH", "0"},
               {"SCGI", "0"},
               {"REQUEST_METHOD", "GET"},
-              {"DOCUMENT_URI", "/v1/models"}},
+              {"DOCUMENT_URI", "/api/cha/v1/bootstrap"}},
              "")},
         {"non numeric content length",
          scgi_block(
              {{"CONTENT_LENGTH", "nope"},
               {"SCGI", "1"},
               {"REQUEST_METHOD", "GET"},
-              {"DOCUMENT_URI", "/v1/models"}},
+              {"DOCUMENT_URI", "/api/cha/v1/bootstrap"}},
              "")},
         {"missing comma", "4:abcdx"},
         {"bytes after body",
-         scgi_request("POST", "/v1/chat/completions", "{}") + "x"},
+         scgi_request("POST", "/api/cha/v1/forums/lobby/sessions", "{}") + "x"},
     };
     for (const auto& item : cases) {
         SCOPED_TRACE(item.name);
@@ -204,7 +204,7 @@ TEST(Scgi, RejectsHeaderAndBodySizeLimits) {
                 {{"CONTENT_LENGTH", std::to_string(scgi_body_limit + 1)},
                  {"SCGI", "1"},
                  {"REQUEST_METHOD", "POST"},
-                 {"DOCUMENT_URI", "/v1/chat/completions"}},
+                 {"DOCUMENT_URI", "/api/cha/v1/forums/lobby/sessions"}},
                 ""));
         std::atomic<bool> stop{false};
         const ScgiReadResult result = read_scgi(sockets.local.get(), stop);
@@ -225,7 +225,7 @@ TEST(Scgi, StopInterruptsABufferedRequest) {
     auto sockets = make_pair();
     send_all(
         sockets.peer.get(),
-        scgi_request("POST", "/v1/chat/completions", "{}"));
+        scgi_request("POST", "/api/cha/v1/forums/lobby/sessions", "{}"));
     std::atomic<bool> stop{true};
     const ScgiReadResult result = read_scgi(sockets.local.get(), stop);
     EXPECT_EQ(result.status, ScgiReadStatus::incomplete);
@@ -233,7 +233,7 @@ TEST(Scgi, StopInterruptsABufferedRequest) {
 
 TEST(Scgi, DetectsACompleteAbandonedRequest) {
     auto sockets = make_pair();
-    const std::string request = scgi_request("GET", "/v1/models", "");
+    const std::string request = scgi_request("GET", "/api/cha/v1/bootstrap", "");
     send_all(sockets.peer.get(), request);
     ASSERT_EQ(::shutdown(sockets.peer.get(), SHUT_WR), 0);
     std::atomic<bool> stop{false};
@@ -293,7 +293,7 @@ TEST(Scgi, IgnoresUnrelatedVariables) {
     auto sockets = make_pair();
     const std::string request = scgi_request(
         "GET",
-        "/v1/models",
+        "/api/cha/v1/bootstrap",
         "",
         {{"QUERY_STRING", "unused=1"}, {"SERVER_NAME", "nginx"}});
     send_all(sockets.peer.get(), request);
@@ -301,7 +301,7 @@ TEST(Scgi, IgnoresUnrelatedVariables) {
     const ScgiReadResult result = read_scgi(sockets.local.get(), stop);
     ASSERT_EQ(result.status, ScgiReadStatus::ok);
     EXPECT_EQ(result.request.method, "GET");
-    EXPECT_EQ(result.request.document_uri, "/v1/models");
+    EXPECT_EQ(result.request.document_uri, "/api/cha/v1/bootstrap");
     EXPECT_TRUE(result.request.content_type.empty());
 }
 
@@ -329,6 +329,7 @@ TEST(Scgi, WritesAddedStatusPhrasesAndBodylessNoContent) {
     const Case cases[]{
         {201, "Created", false},
         {204, "No Content", true},
+        {409, "Conflict", false},
         {415, "Unsupported Media Type", false},
         {422, "Unprocessable Entity", false},
         {503, "Service Unavailable", false},
