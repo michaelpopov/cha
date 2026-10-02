@@ -70,6 +70,7 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
         test::import_test_database(
             workspace.root(), workspace.root() / "workspace copy.sqlite3");
     const std::filesystem::path vault = write_vault(database);
+    std::ofstream(vault, std::ios::app) << "parent = \"Base\"\n";
 #ifndef _WIN32
     std::filesystem::permissions(vault, std::filesystem::perms::owner_read
         | std::filesystem::perms::owner_write);
@@ -102,6 +103,7 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
     // its path.
     const toml::table uploaded = toml::parse(request_body(vault_request));
     EXPECT_EQ(uploaded["vault_name"].value<std::string>(), "Test");
+    EXPECT_EQ(uploaded["parent"].value<std::string>(), "Base");
     EXPECT_EQ(uploaded["data"].value<std::string>(), "workspace copy.sqlite3");
     EXPECT_EQ(uploaded["r2_etag"].value<std::string>(), "database-etag");
     EXPECT_NE(file_bytes(vault), local_vault);
@@ -383,7 +385,8 @@ TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
     const std::string remote_vault =
         "vault_name = \"Test\"\n"
         "data = \"/another/computer/workspace.sqlite3\"\n"
-        "r2_etag = \"stale-companion-etag\"\n";
+        "r2_etag = \"stale-companion-etag\"\n"
+        "parent = \"Base\"\n";
     std::filesystem::path database_backup = local;
     database_backup += ".bac";
     std::filesystem::path vault_backup = vault;
@@ -409,6 +412,7 @@ TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
     EXPECT_EQ(downloaded.name, "Test");
     EXPECT_EQ(downloaded.data, std::filesystem::weakly_canonical(local));
     EXPECT_EQ(downloaded.r2_etag, "remote-etag");
+    EXPECT_EQ(downloaded.parent, "Base");
     EXPECT_EQ(file_bytes(database_backup), local_bytes);
     EXPECT_EQ(file_bytes(vault_backup), local_vault);
     EXPECT_EQ(

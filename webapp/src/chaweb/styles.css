@@ -340,7 +340,7 @@ button:disabled {
 }
 
 .chaweb-controls {
-  justify-content: space-between;
+  justify-content: space-evenly;
 }
 
 .chaweb-icon-button {

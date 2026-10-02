@@ -2,6 +2,7 @@
 
 #include "app/current_vault.h"
 #include "app/media_operations.h"
+#include "app/r2_database_transfer.h"
 #include "bridge/bridge_protocol.h"
 #include "util/logging.h"
 #include "util/path_name.h"
@@ -165,6 +166,7 @@ enum class Route {
     stop,
     audio_status,
     entry_audio,
+    merge_parent,
 };
 
 struct ParsedRoute {
@@ -197,6 +199,9 @@ ParsedRoute parse_route(std::string_view uri) {
     if (first == "bootstrap") {
         if (!rest.empty()) return {};
         return {.route = Route::bootstrap};
+    }
+    if (first == "vault" && rest == "merge-parent") {
+        return {.route = Route::merge_parent};
     }
     if (first == "voice-output") {
         if (!rest.empty()) return {};
@@ -726,6 +731,26 @@ void handle_chaweb_request(
     try {
         if (stop.load()) return;
         const ParsedRoute route = parse_route(request.document_uri);
+        if (request.method == "POST" && route.route == Route::merge_parent) {
+            if (!require_json_body(request, fd, stop)) return;
+            const auto body = parse_object(request.body, fd, stop);
+            if (!body) return;
+            if (body->size() > 1 || (!body->empty()
+                && (!body->contains("password") || !body->at("password").is_string()))) {
+                write_code(fd, ErrorCode::invalid_argument, stop);
+                return;
+            }
+            try {
+                const auto merged = application.merge_parent_vault(
+                    body->value("password", std::string{}), application.context_epoch(),
+                    [&stop] { return stop.load(); });
+                write_json(fd, 200, {{"context_epoch", merged.context_epoch}}, stop);
+            } catch (const app::ApplicationError& error) {
+                if (error.code != ErrorCode::invalid_argument) throw;
+                write_code(fd, error.code, stop, error.what());
+            }
+            return;
+        }
         if (request.method == "GET" && route.route == Route::bootstrap) {
             serve_bootstrap(application, fd, stop);
             return;
@@ -785,6 +810,16 @@ void handle_chaweb_request(
         write_error(fd, status_for(error.code), from_application(error), stop);
     } catch (const std::invalid_argument&) {
         write_code(fd, ErrorCode::invalid_argument, stop);
+    } catch (const UnknownVaultError&) {
+        write_code(fd, ErrorCode::not_found, stop);
+    } catch (const VaultPasswordError&) {
+        write_error(fd, 401, error_body(ErrorCode::source_vault_password_required), stop);
+    } catch (const WorkspaceRestartRequiredError& error) {
+        log_error(error.what());
+        write_code(fd, ErrorCode::application_unavailable, stop);
+    } catch (const R2HttpStatusError& error) {
+        log_error(error.what());
+        write_code(fd, ErrorCode::invalid_argument, stop, error.what());
     } catch (const std::exception& error) {
         log_error(error.what());
         write_code(fd, ErrorCode::internal_error, stop);

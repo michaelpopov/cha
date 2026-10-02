@@ -424,6 +424,36 @@ TEST_F(ApplicationConfigTest, LoadsR2EtagWithoutAnUnusedFieldWarning) {
         }));
 }
 
+TEST_F(ApplicationConfigTest, LoadsOptionalParentAndWarnsWhenItIsMissing) {
+    EXPECT_FALSE(load_configuration_directory(config_).vaults.front().parent);
+    write_vault("base.toml", "Base", "../data/base.sqlite3");
+    write_vault("personal.toml", "Personal", "../data/workspace.sqlite3",
+        "parent = \"Base\"\n");
+    auto loaded = load_configuration_directory(config_);
+    EXPECT_EQ(find_vault(loaded.vaults, "Personal")->parent, "Base");
+    EXPECT_TRUE(std::ranges::none_of(loaded.warnings, [](const std::string& warning) {
+        return warning.find("parent") != std::string::npos;
+    }));
+
+    std::filesystem::remove(config_ / "base.toml");
+    loaded = load_configuration_directory(config_);
+    EXPECT_EQ(loaded.vaults.front().parent, "Base");
+    EXPECT_TRUE(std::ranges::any_of(loaded.warnings, [](const std::string& warning) {
+        return warning.find("parent 'Base' was not found") != std::string::npos;
+    }));
+}
+
+TEST_F(ApplicationConfigTest, IgnoresEmptyOrMalformedUnusedParent) {
+    for (const auto extra : {"parent = \"\"\n", "parent = 42\n"}) {
+        write_vault("personal.toml", "Personal", "../data/workspace.sqlite3", extra);
+        const auto loaded = load_configuration_directory(config_);
+        EXPECT_FALSE(loaded.vaults.front().parent);
+        EXPECT_TRUE(std::ranges::any_of(loaded.warnings, [](const std::string& warning) {
+            return warning.find("'parent'") != std::string::npos;
+        }));
+    }
+}
+
 TEST_F(ApplicationConfigTest, AcceptsUnicodeAndEntranceVaultNames) {
     write_app(
         "vault = \"Café\"\n"

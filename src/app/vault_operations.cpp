@@ -53,6 +53,7 @@ toml::table vault_definition_table(const VaultDefinition& vault) {
     table.insert("data", utf8_path(vault.data));
     table.insert("protected", vault.password_protected);
     if (vault.r2_etag) table.insert("r2_etag", *vault.r2_etag);
+    if (vault.parent) table.insert("parent", *vault.parent);
     return table;
 }
 
@@ -459,6 +460,7 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
         .name = std::move(create.display_name),
         .password_protected = !create.password.empty(),
         .source = vault::next_vault_file(app.command.config_directory),
+        .parent = copied ? std::optional<std::string>(copied->name) : std::nullopt,
     };
     try {
         validate_public_name(candidate.name, "vault_name", candidate.source);
@@ -835,32 +837,79 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
     std::string_view source_name,
     std::string password,
     std::uint64_t epoch) {
+    return merge(source_name, std::move(password), epoch, false, {});
+}
+
+MaintenanceResult Application::Impl::VaultMaintenance::merge_parent_vault(
+    std::string password,
+    std::uint64_t epoch,
+    const std::function<bool()>& cancelled) {
+    return merge({}, std::move(password), epoch, true, cancelled);
+}
+
+MaintenanceResult Application::Impl::VaultMaintenance::merge(
+    std::string_view source_name,
+    std::string password,
+    std::uint64_t epoch,
+    bool download_parent,
+    const std::function<bool()>& cancelled) {
     Impl::PendingContextNotice notice;
     MaintenanceResult result;
     try {
         const std::lock_guard lifecycle(app.lifecycle_mutex);
         app.require_admitted(epoch);
+        const auto current = app.current_vault_.get();
+        if (download_parent) {
+            if (!current.parent) {
+                throw ApplicationError(
+                    ErrorCode::invalid_argument, "The current vault has no parent");
+            }
+            source_name = *current.parent;
+        }
         const VaultDefinition* const source =
             find_vault(app.command.vaults, source_name);
         if (source == nullptr) {
             throw UnknownVaultError(
                 "Unknown vault '" + std::string(source_name) + "'");
         }
-        if (same_vault_name(app.current_vault_.get().name, source->name)) {
+        if (same_vault_name(current.name, source->name)) {
             throw std::invalid_argument("Cannot merge a vault into itself");
         }
         if (source->password_protected && password.empty()) {
             throw VaultPasswordError("Password required to open this vault");
         }
 
-        const VaultDefinition selected = *source;
+        VaultDefinition selected = *source;
         SessionLease source_lease = SessionLease::acquire(
             selected.data,
             "Database already in use: '" + utf8_path(selected.data) + "'");
+        if (download_parent) {
+            const auto r2 = app.api_keys->r2();
+            if (!r2) {
+                throw ApplicationError(
+                    ErrorCode::invalid_argument, "The current vault has no R2 key");
+            }
+            (void)download_database_from_r2(
+                selected.data, selected.source, *r2,
+                R2DatabaseLease::already_held, password,
+                [this, &cancelled] {
+                    return app.stopping_flag.load() || (cancelled && cancelled());
+                });
+            selected = load_vault_definition_file(
+                app.command.config_directory, selected.source);
+            vault::assign_vault_paths(selected, app.command);
+            for (auto& configured : app.command.vaults) {
+                if (configured.source == selected.source) configured = selected;
+            }
+            publish_vault_names();
+        }
         if (selected.password_protected) {
             require_openable_protected_database(selected.data, password);
         }
 
+        if (cancelled && cancelled()) {
+            throw ApplicationError(ErrorCode::operation_cancelled, "Parent merge was cancelled");
+        }
         if (!drain_for_maintenance(notice)) {
             throw std::runtime_error(
                 "Could not pause active sessions for database maintenance");

@@ -116,7 +116,8 @@ void warn_unknown_vault_fields(
     for (const auto& [key, value] : table) {
         (void)value;
         if (key.str() == "vault_name" || key.str() == "data"
-            || key.str() == "protected" || key.str() == "r2_etag") continue;
+            || key.str() == "protected" || key.str() == "r2_etag"
+            || key.str() == "parent") continue;
         warnings.push_back(
             "Vault definition '" + utf8_path(source) + "' field '"
             + std::string(key.str()) + "' is unused and was ignored.");
@@ -244,6 +245,16 @@ LoadedVault load_vault_definition(
     loaded.source = source;
     loaded.definition.name = name;
     loaded.definition.source = source;
+    if (root.contains("parent")) {
+        const auto parent = root["parent"].value<std::string>();
+        if (parent && !parent->empty()) {
+            loaded.definition.parent = *parent;
+        } else {
+            warnings.push_back(
+                "Vault definition '" + utf8_path(source)
+                + "' field 'parent' is not a non-empty string and was ignored.");
+        }
+    }
     loaded.definition.data =
         resolve_config_path(directory, source, "data", data, kind);
     if (root.contains("protected")) {
@@ -563,6 +574,14 @@ ConfigurationDirectory load_configuration_directory(
         [](const VaultDefinition& left, const VaultDefinition& right) {
             return fold_ascii(left.name) < fold_ascii(right.name);
         });
+
+    for (const VaultDefinition& vault : vaults) {
+        if (vault.parent && find_vault(vaults, *vault.parent) == nullptr) {
+            warnings.push_back(
+                "Vault '" + vault.name + "' parent '" + *vault.parent
+                + "' was not found.");
+        }
+    }
 
     const VaultDefinition* const startup = find_vault(vaults, configured_vault);
     if (startup == nullptr) {

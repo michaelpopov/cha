@@ -4,6 +4,7 @@
 #include "storage/session_repository.h"
 #include "storage/sqlite_storage.h"
 #include "support/test_transcript.h"
+#include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "util/toml_file.h"
 #include "app/current_vault.h"
@@ -84,6 +85,26 @@ struct TwoVaults {
     std::filesystem::path database_b;
     ApplicationCommand command;
 };
+
+std::string file_contents(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+void set_parent(TwoVaults& pair, std::string name = "B") {
+    pair.command.vault.parent = name;
+    pair.command.vaults.front().parent = std::move(name);
+    write_toml_file(pair.command.vault.source, vault::vault_definition_table(pair.command.vault));
+}
+
+void set_r2(Application& application, int port) {
+    (void)application.save_r2_storage({
+        .display_name = "Backups",
+        .url = "http://127.0.0.1:" + std::to_string(port) + "/bucket/",
+        .access_key_id = "test-access-key",
+        .secret_key = std::string("test-secret-key"),
+    }, application.context_epoch());
+}
 
 TEST(ApplicationVault, ExportReplacesPreviousContentsAndCanBeRepeated) {
     TwoVaults pair;
@@ -267,6 +288,7 @@ TEST(ApplicationVault, MaintenanceRejectsAStaleVaultEpochUnderTheLifecycleLock) 
     });
     expect_stale([&] { (void)application->check_database_upload(stale_epoch); });
     expect_stale([&] { (void)application->download_database(stale_epoch); });
+    expect_stale([&] { (void)application->merge_parent_vault({}, stale_epoch); });
     expect_stale([&] { (void)application->import_configuration(stale_epoch); });
     expect_stale([&] { (void)application->export_configuration(stale_epoch); });
     EXPECT_EQ(application->current_vault().get().name, "B");
@@ -337,6 +359,154 @@ TEST(ApplicationVault, MergeUsesMaintenanceAndRetiresLiveSessions) {
     EXPECT_EQ(std::get<ErrorCode>(snapshot), ErrorCode::session_not_live);
 }
 
+TEST(ApplicationVault, ParentMergeDownloadsFreshConfigurationAndPreservesChildIdentityAndSessions) {
+    TwoVaults pair;
+    set_parent(pair);
+    test::TestWorkspace remote;
+    remote.add_persona("remote", "Remote");
+    const auto remote_database = test::import_test_database(remote.root());
+    MockHttpServer server({
+        http_response("application/toml", "vault_name = \"B\"\ndata = \"b.sqlite3\"\n"),
+        http_response("application/vnd.sqlite3", file_contents(remote_database)),
+    });
+    auto application = Application::open(pair.command);
+    set_r2(*application, server.port());
+    const auto created = application->create_session("lobby", "Child note", application->context_epoch());
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        application->open_session("lobby", created.id, application->context_epoch())));
+    const auto old_epoch = application->context_epoch();
+    const auto child_definition = file_contents(pair.command.vault.source);
+    server.start();
+    const auto result = application->merge_parent_vault({}, old_epoch);
+    server.join();
+
+    EXPECT_GT(result.context_epoch, old_epoch);
+    EXPECT_EQ(result.state, ApplicationState::running);
+    EXPECT_EQ(application->current_vault().get().name, "A");
+    EXPECT_EQ(application->current_vault().get().parent, "B");
+    EXPECT_EQ(file_contents(pair.command.vault.source), child_definition);
+    EXPECT_EQ(application->get_persona("remote", result.context_epoch).summary.display_name, "Remote");
+    EXPECT_EQ(application->get_persona("alpha", result.context_epoch).summary.display_name, "Alpha");
+    const auto sessions = application->list_sessions("lobby", result.context_epoch);
+    EXPECT_TRUE(std::ranges::any_of(sessions, [&](const auto& session) { return session.id == created.id; }));
+    const auto snapshot = application->snapshot("lobby", created.id, result.context_epoch);
+    EXPECT_EQ(std::get<ErrorCode>(snapshot), ErrorCode::session_not_live);
+    EXPECT_EQ(application->check_context(old_epoch), ErrorCode::vault_changed);
+    EXPECT_EQ(file_contents(pair.database_b), file_contents(remote_database));
+    ASSERT_EQ(server.requests().size(), 2U);
+    EXPECT_TRUE(server.requests()[0].starts_with("GET /bucket/b.sqlite3.toml HTTP/1.1"));
+    EXPECT_TRUE(server.requests()[1].starts_with("GET /bucket/b.sqlite3 HTTP/1.1"));
+}
+
+TEST(ApplicationVault, ParentDownloadFailuresLeaveChildAndLiveSessionsUnchanged) {
+    for (const std::string failure : {"missing", "invalid", "wrong-name"}) {
+        SCOPED_TRACE(failure);
+        TwoVaults pair;
+        set_parent(pair);
+        const auto parent_before = file_contents(pair.database_b);
+        const auto parent_definition = file_contents(pair.command.vaults.back().source);
+        const auto response = failure == "missing"
+            ? "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            : http_response("application/toml", "vault_name = \""
+                + std::string(failure == "wrong-name" ? "Other" : "B") + "\"\ndata = \"b.sqlite3\"\n");
+        MockHttpServer server(failure == "missing" ? std::vector<std::string>{response}
+            : std::vector<std::string>{response, http_response("application/vnd.sqlite3",
+                failure == "invalid" ? "invalid database" : parent_before)});
+        auto application = Application::open(pair.command);
+        set_r2(*application, server.port());
+        const auto created = application->create_session("lobby", "Child note", application->context_epoch());
+        ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+            application->open_session("lobby", created.id, application->context_epoch())));
+        const auto epoch = application->context_epoch();
+        server.start();
+        EXPECT_THROW((void)application->merge_parent_vault({}, epoch), std::runtime_error);
+        server.join();
+        EXPECT_EQ(application->context_epoch(), epoch);
+        EXPECT_EQ(application->state(), ApplicationState::running);
+        EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(application->snapshot("lobby", created.id, epoch)));
+        EXPECT_EQ(application->get_persona("alpha", epoch).summary.display_name, "Alpha");
+        EXPECT_EQ(file_contents(pair.database_b), parent_before);
+        EXPECT_EQ(file_contents(pair.command.vaults.back().source), parent_definition);
+    }
+}
+
+TEST(ApplicationVault, ParentMergeDownloadsAProtectedParentWithItsPassword) {
+    TwoVaults pair;
+    set_parent(pair);
+    auto application = Application::open(pair.command);
+    (void)application->update_vault("B", {.display_name = "B", .password = "secret"},
+        application->context_epoch());
+    MockHttpServer server({
+        http_response("application/toml", "vault_name = \"B\"\ndata = \"b.sqlite3\"\nprotected = true\n"),
+        http_response("application/vnd.sqlite3", file_contents(pair.database_b)),
+    });
+    set_r2(*application, server.port());
+    server.start();
+    const auto result = application->merge_parent_vault("secret", application->context_epoch());
+    server.join();
+    EXPECT_EQ(result.state, ApplicationState::running);
+    EXPECT_EQ(application->get_persona("beta", result.context_epoch).summary.display_name, "Beta");
+    EXPECT_EQ(application->current_vault().get().parent, "B");
+    EXPECT_FALSE(application->current_vault().get().password_protected);
+}
+
+TEST(ApplicationVault, CancellingAStalledParentDownloadPreservesTheCurrentContext) {
+    TwoVaults pair;
+    set_parent(pair);
+    MockHttpServer server({http_response("application/toml",
+        "vault_name = \"B\"\ndata = \"b.sqlite3\"\n")});
+    server.pause_before_response(1);
+    auto application = Application::open(pair.command);
+    set_r2(*application, server.port());
+    const auto epoch = application->context_epoch();
+    const auto before = file_contents(pair.database_b);
+    std::atomic<bool> cancelled{false};
+    server.start();
+    auto download = std::async(std::launch::async, [&] {
+        return application->merge_parent_vault({}, epoch, [&] { return cancelled.load(); });
+    });
+    EXPECT_TRUE(server.wait_for_requests(1, 2s));
+    cancelled = true;
+    const auto finished = download.wait_for(2s);
+    server.resume_responses();
+    EXPECT_EQ(finished, std::future_status::ready);
+    EXPECT_THROW((void)download.get(), std::runtime_error);
+    server.join();
+    EXPECT_EQ(application->context_epoch(), epoch);
+    EXPECT_EQ(application->state(), ApplicationState::running);
+    EXPECT_EQ(file_contents(pair.database_b), before);
+}
+
+TEST(ApplicationVault, ParentMergeRejectsMissingParentSelfParentAndMissingR2WithoutStoppingSessions) {
+    for (const std::string parent : {"", "Missing", "A", "B"}) {
+        SCOPED_TRACE(parent);
+        TwoVaults pair;
+        if (!parent.empty()) set_parent(pair, parent);
+        auto application = Application::open(pair.command);
+        const auto epoch = application->context_epoch();
+        const auto created = application->create_session("lobby", "Child note", epoch);
+        ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+            application->open_session("lobby", created.id, epoch)));
+        if (parent == "Missing") {
+            EXPECT_THROW((void)application->merge_parent_vault({}, epoch), UnknownVaultError);
+        } else if (parent == "A") {
+            EXPECT_THROW((void)application->merge_parent_vault({}, epoch), std::invalid_argument);
+        } else {
+            try {
+                (void)application->merge_parent_vault({}, epoch);
+                FAIL() << "Expected a parent merge configuration error";
+            } catch (const ApplicationError& error) {
+                EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+                EXPECT_EQ(std::string(error.what()), parent.empty()
+                    ? "The current vault has no parent" : "The current vault has no R2 key");
+            }
+        }
+        EXPECT_EQ(application->context_epoch(), epoch);
+        EXPECT_EQ(application->state(), ApplicationState::running);
+        EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(application->snapshot("lobby", created.id, epoch)));
+    }
+}
+
 TEST(ApplicationVault, MergeSynchronizationFailureMarksApplicationUnavailable) {
     TwoVaults pair;
     auto application = Application::open(pair.command);
@@ -394,12 +564,30 @@ TEST(ApplicationVault, CreateListAndSameVaultSwitch) {
         .password = {},
     }, application->context_epoch());
     EXPECT_EQ(created.name, "Copied");
+    EXPECT_EQ(created.parent, "A");
+    EXPECT_EQ(read_toml_file(created.source, "vault")["parent"].value<std::string>(), "A");
     const auto snapshot = application->vault_snapshot();
     EXPECT_GE(snapshot.vaults.size(), 3U);
     const auto epoch = application->context_epoch();
     const auto same = application->switch_vault("a", {}, application->context_epoch());
     EXPECT_EQ(same.context_epoch, epoch);
     EXPECT_EQ(application->current_vault().get().name, "A");
+}
+
+TEST(ApplicationVault, NewVaultHasNoParentAndRenamingPreservesExistingParentReferences) {
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    const auto fresh = application->create_vault({.display_name = "Fresh"}, application->context_epoch());
+    EXPECT_FALSE(fresh.parent);
+    EXPECT_FALSE(read_toml_file(fresh.source, "vault").contains("parent"));
+    const auto child = application->create_vault({.display_name = "Child", .copy_from = "B"},
+        application->context_epoch());
+    (void)application->update_vault("Child", {.display_name = "Renamed child"}, application->context_epoch());
+    EXPECT_EQ(read_toml_file(child.source, "vault")["parent"].value<std::string>(), "B");
+    (void)application->update_vault("B", {.display_name = "Renamed base"}, application->context_epoch());
+    EXPECT_EQ(read_toml_file(child.source, "vault")["parent"].value<std::string>(), "B");
+    const auto registry = application->vault_snapshot();
+    EXPECT_EQ(find_vault(registry.vaults, "Renamed child")->parent, "B");
 }
 
 TEST(ApplicationVault, SaveFileRejectsStaleEpochAndReplacesAtomically) {

@@ -27,6 +27,7 @@ struct VaultDefinition {
     std::optional<std::filesystem::path> mirror;
     std::optional<std::filesystem::path> modify;
     std::filesystem::path source;
+    std::optional<std::string> parent;
 };
 
 struct ConfigurationDirectory {

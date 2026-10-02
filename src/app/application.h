@@ -507,6 +507,10 @@ public:
         std::string_view source_name,
         std::string password,
         std::uint64_t epoch);
+    [[nodiscard]] MaintenanceResult merge_parent_vault(
+        std::string password,
+        std::uint64_t epoch,
+        const std::function<bool()>& cancelled = {});
     [[nodiscard]] std::vector<std::string> list_r2_vaults(
         std::uint64_t epoch) const;
     [[nodiscard]] VaultDefinition download_r2_vault(

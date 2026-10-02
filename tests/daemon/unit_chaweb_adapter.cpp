@@ -1,4 +1,5 @@
 #include "app/application.h"
+#include "app/current_vault.h"
 #include "daemon/chaweb_adapter.h"
 #include "daemon/scgi.h"
 #include "runtime/runtime_settings.h"
@@ -18,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -558,6 +560,108 @@ TEST_F(ChaWebAdapterTest, UnknownRoutesAndMethodsAreNotFoundWithoutCors) {
         EXPECT_EQ(response.raw.find("Access-Control"), std::string::npos);
         EXPECT_FALSE(response.json.contains("type"));
     }
+}
+
+TEST_F(ChaWebAdapterTest, DownloadsAndMergesTheParentIntoTheCurrentVault) {
+    const auto child = application_->create_vault(
+        {.display_name = "Child", .copy_from = "Test"}, application_->context_epoch());
+    (void)application_->switch_vault(child.name, {}, application_->context_epoch());
+    test::TestWorkspace remote;
+    remote.add_persona("parent_persona", "Parent persona");
+    const auto remote_database = test::import_test_database(remote.root());
+    std::ifstream input(remote_database, std::ios::binary);
+    const std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    input.close();
+    MockHttpServer server({
+        http_response("application/toml", "vault_name = \"Test\"\ndata = \"remote.sqlite3\"\n"),
+        http_response("application/vnd.sqlite3", bytes),
+    });
+    (void)application_->save_r2_storage({
+        .display_name = "Backups",
+        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/bucket/",
+        .access_key_id = "test-access-key",
+        .secret_key = std::string("test-secret-key"),
+    }, application_->context_epoch());
+    const auto epoch = application_->context_epoch();
+    server.start();
+    const auto response = post("/api/cha/v1/vault/merge-parent", nlohmann::json::object());
+    server.join();
+    ASSERT_EQ(response.status, 200) << response.raw;
+    EXPECT_GT(response.json.at("context_epoch").get<std::uint64_t>(), epoch);
+    EXPECT_EQ(application_->current_vault().get().name, "Child");
+    EXPECT_EQ(application_->current_vault().get().parent, "Test");
+    EXPECT_EQ(application_->get_persona("parent_persona", application_->context_epoch()).summary.display_name,
+        "Parent persona");
+    ASSERT_EQ(server.requests().size(), 2U);
+    EXPECT_TRUE(server.requests()[1].starts_with("GET /bucket/" + database_.filename().string() + " HTTP/1.1"));
+}
+
+TEST_F(ChaWebAdapterTest, ParentMergeValidatesRequestsAndReportsMissingParent) {
+    const std::string path = "/api/cha/v1/vault/merge-parent";
+    EXPECT_EQ(get(path).status, 404);
+    EXPECT_EQ(post(path, nlohmann::json::object(), "text/plain").status, 415);
+    for (const nlohmann::json& body : {
+            nlohmann::json{{"unknown", "value"}}, nlohmann::json{{"password", 42}},
+            nlohmann::json{{"password", "secret"}, {"extra", true}},
+            nlohmann::json::array()}) {
+        EXPECT_EQ(post(path, body).status, 400);
+    }
+    const auto response = post(path, nlohmann::json::object());
+    EXPECT_EQ(response.status, 400);
+    EXPECT_EQ(response.json["error"]["code"], "invalid_argument");
+    EXPECT_EQ(response.json["error"]["message"], "The current vault has no parent");
+}
+
+TEST_F(ChaWebAdapterTest, ParentMergeReportsMissingR2Key) {
+    const auto child = application_->create_vault(
+        {.display_name = "Child", .copy_from = "Test"}, application_->context_epoch());
+    (void)application_->switch_vault(child.name, {}, application_->context_epoch());
+    const auto response = post("/api/cha/v1/vault/merge-parent", nlohmann::json::object());
+    EXPECT_EQ(response.status, 400);
+    EXPECT_EQ(response.json["error"]["code"], "invalid_argument");
+    EXPECT_EQ(response.json["error"]["message"], "The current vault has no R2 key");
+}
+
+TEST_F(ChaWebAdapterTest, ParentMergeReportsR2HttpFailures) {
+    const auto child = application_->create_vault(
+        {.display_name = "Child", .copy_from = "Test"}, application_->context_epoch());
+    (void)application_->switch_vault(child.name, {}, application_->context_epoch());
+    const std::string missing = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    for (const bool missing_definition : {true, false}) {
+        SCOPED_TRACE(missing_definition);
+        MockHttpServer server(missing_definition ? std::vector<std::string>{missing}
+            : std::vector<std::string>{http_response("application/toml",
+                "vault_name = \"Test\"\ndata = \"remote.sqlite3\"\n"), missing});
+        (void)application_->save_r2_storage({
+            .display_name = "Backups",
+            .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/bucket/",
+            .access_key_id = "test-access-key",
+            .secret_key = std::string("test-secret-key"),
+        }, application_->context_epoch());
+        const auto epoch = application_->context_epoch();
+        server.start();
+        const auto response = post("/api/cha/v1/vault/merge-parent", nlohmann::json::object());
+        server.join();
+        EXPECT_EQ(response.status, 400) << response.raw;
+        EXPECT_EQ(response.json["error"]["code"], "invalid_argument");
+        EXPECT_EQ(response.json["error"]["message"], missing_definition
+            ? "R2 vault definition was not found. The bucket may contain a legacy database-only upload; "
+                "upload with the current CHA version before downloading."
+            : "R2 download failed with HTTP status 404");
+        EXPECT_EQ(application_->context_epoch(), epoch);
+        EXPECT_EQ(application_->current_vault().get().name, "Child");
+    }
+}
+
+TEST_F(ChaWebAdapterTest, ParentMergeRequiresTheProtectedParentsPassword) {
+    const auto child = application_->create_vault(
+        {.display_name = "Child", .copy_from = "Test"}, application_->context_epoch());
+    (void)application_->switch_vault(child.name, {}, application_->context_epoch());
+    (void)application_->update_vault("Test", {.display_name = "Test", .password = "secret"},
+        application_->context_epoch());
+    const auto response = post("/api/cha/v1/vault/merge-parent", nlohmann::json::object());
+    EXPECT_EQ(response.status, 401);
+    EXPECT_EQ(response.json["error"]["code"], "source_vault_password_required");
 }
 
 TEST_F(ChaWebAdapterTest, DeletesOnlyTheNamedSession) {
