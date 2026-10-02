@@ -390,8 +390,8 @@ export function ChatScreen({
   voiceLanguage.current = transliteration.enabled ? 'ru' : 'en';
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const textToSpeechSession = useRef<TextToSpeechSession | null>(null);
-  const [speechCacheEnabled, setSpeechCacheEnabled] = useState(false);
-  const [speechCacheSubmitting, setSpeechCacheSubmitting] = useState(false);
+  const [autoAudioEnabled, setAutoAudioEnabled] = useState(false);
+  const [autoAudioSubmitting, setAutoAudioSubmitting] = useState(false);
   const handledAudioEntries = useRef(new Set<number>());
   const handledSpeechEntries = useRef(new Set<number>());
   const automaticSpeech = useRef(false);
@@ -545,11 +545,11 @@ export function ChatScreen({
       audioCacheContext.current = { key: audioConversationKey, clearCount: state.audioCacheClearCount };
       handledAudioEntries.current.clear();
       handledSpeechEntries.current = new Set(snapshot?.transcript.map((entry) => entry.id));
-      setSpeechCacheEnabled(false);
+      setAutoAudioEnabled(false);
       return;
     }
-    if (downloads.unavailable) { setSpeechCacheEnabled(false); return; }
-    if (!speechCacheEnabled || speechCacheSubmitting || !textToSpeechConfiguration || !downloads.status) return;
+    if (downloads.unavailable) { setAutoAudioEnabled(false); return; }
+    if (!autoAudioEnabled || autoAudioSubmitting || !textToSpeechConfiguration || !downloads.status) return;
     const entries: AudioDownloadBatchEntry[] = [];
     for (const { entry } of transcriptEntries) {
       if (handledAudioEntries.current.has(entry.id) || !canReadEntry(entry)) continue;
@@ -560,29 +560,33 @@ export function ChatScreen({
     if (entries.length === 0) return;
     // One short acceptance request for the batch. The core owns the queue,
     // three concurrent downloads and retries; no browser transfer is awaited.
-    setSpeechCacheSubmitting(true);
+    setAutoAudioSubmitting(true);
     void downloads.submitBatch({ vault_name: state.bootstrap!.vault_name, entries })
       ?.catch((failure: unknown) => {
-        setSpeechCacheEnabled(false);
+        setAutoAudioEnabled(false);
         setActionError(actionMessage(failure));
       })
-      .finally(() => setSpeechCacheSubmitting(false));
-  }, [audioConversationKey, state.audioCacheClearCount, speechCacheEnabled, speechCacheSubmitting,
+      .finally(() => setAutoAudioSubmitting(false));
+  }, [audioConversationKey, state.audioCacheClearCount, autoAudioEnabled, autoAudioSubmitting,
     textToSpeechConfiguration, transcriptEntries, cachedAudioIds, audioJobs, downloads.status,
     downloads.unavailable, downloads.submitBatch, speechRequest, state.bootstrap?.vault_name]);
 
-  function toggleSpeechCache() {
+  function toggleAutoAudio() {
     setActionError(null);
-    if (!speechCacheEnabled) {
-      handledAudioEntries.current.clear();
-      // Cache old messages too, but only read replies completed after enabling.
-      handledSpeechEntries.current = new Set(snapshot?.transcript
-        .filter((entry) => entry.status !== 'streaming').map((entry) => entry.id));
+    if (!autoAudioEnabled) {
+      // Only replies completed after enabling need automatic audio.
+      const pastEntries = snapshot?.transcript
+        .filter((entry) => entry.status !== 'streaming').map((entry) => entry.id);
+      handledAudioEntries.current = new Set(pastEntries);
+      handledSpeechEntries.current = new Set(pastEntries);
       missingAudioRetry.current = null;
     } else if (automaticSpeech.current) {
       stopSpeech();
     }
-    setSpeechCacheEnabled(!speechCacheEnabled);
+    setAutoAudioEnabled(!autoAudioEnabled);
+    if (voiceInputAvailable && voiceInputState !== 'finishing' && voiceInputActive === autoAudioEnabled) {
+      void toggleVoiceInput();
+    }
   }
 
   function toggleSpeech(entry: SessionSnapshot['transcript'][number]) {
@@ -704,7 +708,7 @@ export function ChatScreen({
   // Preserve transcript order while the first reply is still being generated.
   useEffect(() => {
     // Download failures disable future playback without interrupting current audio.
-    if (!speechCacheEnabled || speechCacheSubmitting || downloads.unavailable) return;
+    if (!autoAudioEnabled || autoAudioSubmitting || downloads.unavailable) return;
     if (speechSelection.current !== null || textToSpeechSession.current) return;
     for (const { entry } of transcriptEntries) {
       const id = entry.id;
@@ -1314,12 +1318,12 @@ export function ChatScreen({
               : (character?.display_name ?? 'Unknown character')}</span>
           {textToSpeechConfiguration && (
             <button
-              aria-label="Cache audio and play new responses automatically"
-              aria-pressed={speechCacheEnabled}
+              aria-label="Auto audio response"
+              aria-pressed={autoAudioEnabled}
               className="cha-speech-cache-toggle"
-              disabled={!snapshot || !downloads.status || downloads.unavailable !== null}
-              onClick={toggleSpeechCache}
-              title={downloads.unavailable ?? "Cache audio and play new responses automatically"}
+              disabled={!sessionAvailable || downloads.unavailable !== null}
+              onClick={toggleAutoAudio}
+              title={downloads.unavailable ?? "Auto audio response"}
               type="button"
             >
               <SpeakerIcon />

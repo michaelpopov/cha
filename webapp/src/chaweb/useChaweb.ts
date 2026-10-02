@@ -141,6 +141,7 @@ export function useChaweb(client: ChaWebClient) {
   const [screen, setScreen] = useState<'list' | 'conversation'>('list');
   const [forumId, setForumId] = useState('');
   const [conversation, setConversation] = useState<ConversationRef | null>(null);
+  const [audioKey, setAudioKey] = useState('');
   const [drafts, setDrafts] = useState<DraftMap>({});
   const [sessions, setSessions] = useState<SessionListing[]>([]);
   const [listError, setListError] = useState<string | null>(null);
@@ -580,6 +581,7 @@ export function useChaweb(client: ChaWebClient) {
     screenRef.current = 'conversation';
     forumRef.current = forum;
     setConversation(next);
+    setAudioKey(sessionDraftKey(forum, session));
     setScreen('conversation');
     setForumId(forum);
     patchStatus((state) => ({ ...state, awaitingKey: sessionDraftKey(forum, session) }));
@@ -645,6 +647,7 @@ export function useChaweb(client: ChaWebClient) {
     conversationRef.current = next;
     screenRef.current = 'conversation';
     setConversation(next);
+    setAudioKey(newDraftKey(forum));
     setScreen('conversation');
     setListError(null);
     retarget('');
@@ -1179,6 +1182,8 @@ export function useChaweb(client: ChaWebClient) {
     allowSend: status.holds[activeKey]?.inspected ? allowSend : null,
     retryConversation: status.blockedKey === activeKey && !status.reconnecting ? retryRead : null,
     sessionKey: activeKey || 'none',
+    // A new draft keeps its audio selection when its first Send creates the session.
+    audioKey: active ? audioKey : '',
     currentSessionId: conversation?.kind === 'session' && conversation.forumId === forumId
       ? conversation.sessionId
       : null,

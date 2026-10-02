@@ -164,15 +164,16 @@ export function useVoiceInput(
     current.current.onSend(current.current.draft);
   }
 
-  function toggle() {
-    if (enabled) {
+  function setListening(next: boolean) {
+    if (next === enabled) return;
+    if (!next) {
       setEnabled(false);
       if (startup.current) cancel();
       else void finish();
       return;
     }
-    if (!available || blocked || speechBusy || playing || phase !== 'idle') return;
-    // Unlock once in the microphone tap, then reuse this context after replies.
+    if (!available) return;
+    // Unlock in the user's click, then reuse this context after replies.
     if (runtime?.provider === 'xai') {
       try {
         captureContext.current ??= new AudioContext({ sampleRate: 16_000 });
@@ -184,6 +185,11 @@ export function useVoiceInput(
     }
     setEnabled(true);
     void start();
+  }
+
+  function toggle() {
+    if (!enabled && (blocked || speechBusy || playing || phase !== 'idle')) return;
+    setListening(!enabled);
   }
 
   useEffect(() => {
@@ -249,6 +255,7 @@ export function useVoiceInput(
     finishing: phase === 'finishing',
     error,
     toggle,
+    setListening,
     send: () => { void send(); },
   };
 }

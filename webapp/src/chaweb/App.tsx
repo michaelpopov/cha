@@ -18,7 +18,7 @@ export function App({ client }: { client: ChaWebClient }) {
   const model = useChaweb(client);
   const speech = useReadAloud(client,
     model.screen === 'conversation' ? model.snapshot : null,
-    model.bootstrap?.vault_name, model.deleting);
+    model.bootstrap?.vault_name, model.deleting, model.audioKey);
   const voice = useVoiceInput(client, model.sessionKey, model.draft,
     model.onDraft, model.send, model.voiceBlocked, speech.busy);
   const [expanded, setExpanded] = useState(false);
@@ -28,6 +28,12 @@ export function App({ client }: { client: ChaWebClient }) {
   useEffect(() => {
     setConfirmDelete(null);
   }, [model.screen, model.sessionKey]);
+  function toggleAutomaticAudio() {
+    const enabled = !speech.automatic;
+    speech.toggleAutomatic();
+    voice.setListening(enabled);
+  }
+
   const frame = {
     top: viewport.offsetTop,
     height: viewport.height,
@@ -75,7 +81,7 @@ export function App({ client }: { client: ChaWebClient }) {
         />
       ) : (
         <Conversation
-          speech={speech}
+          speech={{ ...speech, toggleAutomatic: toggleAutomaticAudio }}
           voice={voice}
           characters={model.snapshot?.characters ?? []}
           commandDisabled={model.commandDisabled}

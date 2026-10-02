@@ -192,9 +192,9 @@ export function Composer({
           <ClearAudioIcon />
         </button>
         <button
-          aria-label="Cache audio and play new responses automatically"
+          aria-label="Auto audio response"
           aria-pressed={automaticAudio}
-          title="Cache audio and play new responses automatically"
+          title="Auto audio response"
           className="chaweb-icon-button"
           disabled={deleting || automaticAudioDisabled || !onAutomaticAudio}
           onClick={onAutomaticAudio}

@@ -1,10 +1,12 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import type { SessionListing, SessionSnapshot } from '../api/client';
 import { ChaProtocolError } from '../api/client';
 import { bootstrapFixture, plainVoice, snapshotFixture, voiceOutputRuntimeFixture } from '../test/fixtures';
+import { TextToSpeechSession } from '../textToSpeech';
+import { VoiceInputSession, type VoiceInputTransport } from '../voiceInput';
 import { App } from './App';
 import { ChaWebError, type ChaWebClient } from './client';
 import { unknownSendNotice } from './outcome';
@@ -81,7 +83,10 @@ function deferred<T>() {
 }
 
 afterEach(() => {
+  cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   Reflect.deleteProperty(document, 'visibilityState');
   Reflect.deleteProperty(window, 'visualViewport');
 });
@@ -159,7 +164,7 @@ it('toggles automatic audio from the speaker icon and turns it off when clearing
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   const api = await openPlanning(client({ getVoiceOutputRuntime: vi.fn(async () => voiceOutputRuntimeFixture) }));
-  const toggle = screen.getByRole('button', { name: 'Cache audio and play new responses automatically' });
+  const toggle = screen.getByRole('button', { name: 'Auto audio response' });
   expect(toggle.querySelector('svg')).not.toBeNull();
   expect(toggle).toHaveAttribute('aria-pressed', 'false');
   fireEvent.click(toggle);
@@ -173,6 +178,157 @@ it('toggles automatic audio from the speaker icon and turns it off when clearing
   expect(api.clearAudio).toHaveBeenCalledExactlyOnceWith('lobby', 'planning', 'Personal');
 });
 
+it('sets microphone mode from the auto audio toggle and keeps microphone clicks independent', async () => {
+  vi.stubGlobal('isSecureContext', true);
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+  const captures: Array<{ stop: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn> }> = [];
+  const start = vi.spyOn(VoiceInputSession, 'start').mockImplementation(async () => {
+    const capture = { stop: vi.fn(async () => {}), cancel: vi.fn() };
+    captures.push(capture);
+    return capture;
+  });
+  await showList(client({
+    getVoiceOutputRuntime: vi.fn(async () => voiceOutputRuntimeFixture),
+    getVoiceInputRuntime: vi.fn<ChaWebClient['getVoiceInputRuntime']>(async () => ({ provider: 'openai', url: 'https://example.test/stt',
+      model: 'test', delay: 'low', prompt: '', send_phrase: 'over to you' })),
+  }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'New Session' }));
+  const auto = screen.getByRole('button', { name: 'Auto audio response' });
+  await screen.findByRole('button', { name: 'Start voice input' });
+  await act(async () => fireEvent.click(auto));
+  expect(auto).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('button', { name: 'Stop voice input' })).toHaveAttribute('aria-pressed', 'true');
+  expect(start).toHaveBeenCalledOnce();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Stop voice input' })));
+  expect(auto).toHaveAttribute('aria-pressed', 'true');
+  expect(captures[0].stop).toHaveBeenCalledOnce();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Start voice input' })));
+  expect(auto).toHaveAttribute('aria-pressed', 'true');
+  await act(async () => fireEvent.click(auto));
+  expect(auto).toHaveAttribute('aria-pressed', 'false');
+  expect(screen.getByRole('button', { name: 'Start voice input' })).toHaveAttribute('aria-pressed', 'false');
+  expect(captures[1].stop).toHaveBeenCalledOnce();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Start voice input' })));
+  expect(auto).toHaveAttribute('aria-pressed', 'false');
+  await act(async () => fireEvent.click(auto));
+  expect(auto).toHaveAttribute('aria-pressed', 'true');
+  expect(start).toHaveBeenCalledTimes(3);
+  await act(async () => fireEvent.click(auto));
+  expect(captures[2].stop).toHaveBeenCalledOnce();
+  expect(auto).toHaveAttribute('aria-pressed', 'false');
+});
+
+it.each(['resume', 'disable'] as const)('arms the microphone during generation and handles %s after auto audio is turned on', async (action) => {
+  vi.stubGlobal('isSecureContext', true);
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+  const start = vi.spyOn(VoiceInputSession, 'start').mockResolvedValue({ stop: vi.fn(async () => {}), cancel: vi.fn() });
+  let generating = true;
+  await openPlanning(client({
+    getVoiceOutputRuntime: vi.fn(async () => voiceOutputRuntimeFixture),
+    getVoiceInputRuntime: vi.fn<ChaWebClient['getVoiceInputRuntime']>(async () => ({ provider: 'openai', url: 'https://example.test/stt',
+      model: 'test', delay: 'low', prompt: '', send_phrase: 'over to you' })),
+    getSession: vi.fn(async () => snapshot('planning', { generation: generation(generating) })),
+  }));
+  await screen.findByRole('button', { name: 'Start voice input' });
+  vi.useFakeTimers();
+  const auto = screen.getByRole('button', { name: 'Auto audio response' });
+  await act(async () => fireEvent.click(auto));
+  expect(screen.getByRole('button', { name: 'Stop voice input' })).toHaveAttribute('aria-pressed', 'true');
+  expect(start).not.toHaveBeenCalled();
+  if (action === 'disable') await act(async () => fireEvent.click(auto));
+  generating = false;
+  // Trigger a fresh session read without waiting for the existing poll timer.
+  await act(async () => fireEvent(document, new Event('visibilitychange')));
+  expect(start).toHaveBeenCalledTimes(action === 'resume' ? 1 : 0);
+  expect(auto).toHaveAttribute('aria-pressed', action === 'resume' ? 'true' : 'false');
+});
+
+it('keeps auto audio on when microphone permission fails and cancels pending setup when switched off', async () => {
+  vi.stubGlobal('isSecureContext', true);
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+  const startup = deferred<VoiceInputTransport>();
+  vi.spyOn(VoiceInputSession, 'start').mockRejectedValueOnce(new Error('Microphone permission denied.'))
+    .mockImplementationOnce(() => startup.promise);
+  await showList(client({
+    getVoiceOutputRuntime: vi.fn(async () => voiceOutputRuntimeFixture),
+    getVoiceInputRuntime: vi.fn<ChaWebClient['getVoiceInputRuntime']>(async () => ({ provider: 'openai', url: 'https://example.test/stt',
+      model: 'test', delay: 'low', prompt: '', send_phrase: 'over to you' })),
+  }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'New Session' }));
+  await screen.findByRole('button', { name: 'Start voice input' });
+  const auto = screen.getByRole('button', { name: 'Auto audio response' });
+  await act(async () => fireEvent.click(auto));
+  expect(auto).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('alert')).toHaveTextContent('Microphone permission denied.');
+  expect(screen.getByRole('button', { name: 'Start voice input' })).toHaveAttribute('aria-pressed', 'false');
+  fireEvent.click(auto);
+  await act(async () => fireEvent.click(auto));
+  expect(screen.getByRole('button', { name: 'Cancel voice input setup' })).toHaveAttribute('aria-pressed', 'true');
+  await act(async () => fireEvent.click(auto));
+  const capture = { stop: vi.fn(async () => {}), cancel: vi.fn() };
+  await act(async () => startup.resolve(capture));
+  expect(capture.cancel).toHaveBeenCalledOnce();
+  expect(auto).toHaveAttribute('aria-pressed', 'false');
+  expect(screen.getByRole('button', { name: 'Start voice input' })).toHaveAttribute('aria-pressed', 'false');
+});
+
+it.each(['list', 'stored session'] as const)('enables automatic audio before the first Send from %s and plays the first reply', async (from) => {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue(undefined);
+  const created = deferred<{ id: string; label: string }>();
+  const loaded = deferred<SessionSnapshot>();
+  const cached: number[] = [];
+  const api = client({
+    getVoiceOutputRuntime: vi.fn(async () => voiceOutputRuntimeFixture),
+    createSession: vi.fn(() => created.promise),
+    getSession: vi.fn(async (_forum, id) => id === 'fresh' ? loaded.promise : snapshot(id)),
+    getAudioStatus: vi.fn(async () => ({ cached_entry_ids: [...cached], downloads: [] })),
+    startAudioBatch: vi.fn(async (_forum: string, _session: string, ids: number[]) => {
+      cached.push(...ids);
+      return { entries: ids.map((entry_id) => ({ entry_id, cached: true })) };
+    }),
+  });
+  if (from === 'stored session') {
+    await openPlanning(api);
+    fireEvent.click(screen.getByRole('button', { name: 'Auto audio response' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+  } else await showList(api);
+  await userEvent.setup().click(screen.getByRole('button', { name: 'New Session' }));
+  const toggle = screen.getByRole('button', { name: 'Auto audio response' });
+  await waitFor(() => expect(toggle).toBeEnabled());
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  expect(screen.queryByText('First note')).not.toBeInTheDocument();
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  expect(api.createSession).not.toHaveBeenCalled();
+  expect(api.startAudioBatch).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Hello' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await act(async () => created.resolve({ id: 'fresh', label: 'Fresh' }));
+  expect(toggle).toBeEnabled();
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  expect(api.startAudioBatch).not.toHaveBeenCalled();
+  // The first session read can already contain a completed reply.
+  await act(async () => loaded.resolve(snapshot('fresh', { transcript: [{
+    id: 2, kind: 'character', participant_id: 'guide', display_name: 'Guide',
+    addressed_to: '', addressed_to_name: '', text: 'First reply', status: 'complete', created_at: 1,
+  }] })));
+  await waitFor(() => expect(play).toHaveBeenCalledOnce());
+  expect(api.startAudioBatch).toHaveBeenCalledExactlyOnceWith('lobby', 'fresh', [2], 'Personal');
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'New Session' }));
+  expect(screen.getByRole('button', { name: 'Auto audio response' })).toHaveAttribute('aria-pressed', 'false');
+});
+
 it('confirms the named session, focuses Cancel, and preserves the conversation on cancellation', async () => {
   const user = userEvent.setup();
   const api = await openPlanning();
@@ -181,7 +337,7 @@ it('confirms the named session, focuses Cancel, and preserves the conversation o
   const controls = screen.getByRole('button', { name: 'Delete session' }).parentElement!;
   expect(within(controls).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
     .toEqual(['Sessions', 'Delete session', 'Clear audio recordings',
-      'Cache audio and play new responses automatically', 'Copy conversation', 'Send']);
+      'Auto audio response', 'Copy conversation', 'Send']);
   await user.click(screen.getByRole('button', { name: 'Delete session' }));
   const dialog = screen.getByRole('dialog', { name: 'Delete session “planning”?' });
   expect(dialog).toHaveTextContent('The unsent prompt will also be discarded.');

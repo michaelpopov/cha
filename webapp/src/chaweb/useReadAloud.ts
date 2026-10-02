@@ -35,6 +35,7 @@ export function useReadAloud(
   snapshot: SessionSnapshot | null,
   vaultName: string | undefined,
   deleting: boolean,
+  conversationKey = snapshot ? `${snapshot.forum.id}/${snapshot.session_id}` : '',
 ): ReadAloud {
   const configuration = useTextToSpeechConfiguration(client);
   const [entryId, setEntryId] = useState<number | null>(null);
@@ -118,7 +119,7 @@ export function useReadAloud(
     };
     // Each player and pending request belongs to one conversation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, forum, session, vaultName, deleting]);
+  }, [client, conversationKey, vaultName, deleting]);
 
   function isCached(entry: TranscriptEntry): boolean {
     return downloaded.has(entry.id) || Boolean(downloads.status?.cached_entry_ids.includes(entry.id))
@@ -140,13 +141,14 @@ export function useReadAloud(
 
   function toggleAutomatic() {
     if (automaticRef.current) { disableAutomatic(); return; }
-    if (!forum || !session || !vaultName || deleting || clearingRef.current || !configuration) return;
+    if (!conversationKey || !vaultName || deleting || clearingRef.current || !configuration) return;
     setError(null);
     modeAttempt.current += 1;
-    handledDownloads.current.clear();
-    // Old completed replies are cached; only replies completed from now on are played.
-    handledSpeech.current = new Set(snapshot?.transcript
-      .filter((entry) => entry.status !== 'streaming').map((entry) => entry.id));
+    // Only replies completed after enabling need automatic audio.
+    const pastEntries = snapshot?.transcript
+      .filter((entry) => entry.status !== 'streaming').map((entry) => entry.id);
+    handledDownloads.current = new Set(pastEntries);
+    handledSpeech.current = new Set(pastEntries);
     if (!automaticAudio.current) {
       const audio = new Audio();
       automaticAudio.current = audio;
@@ -304,7 +306,7 @@ export function useReadAloud(
 
   return { available: configuration !== null, busy, entryId, state, error, toggle, clearing, clear, isCached, isDownloading,
     automatic, toggleAutomatic,
-    automaticDisabled: !forum || !session || !vaultName || deleting || clearing
+    automaticDisabled: !conversationKey || !vaultName || deleting || clearing
       || (!configuration && !automatic),
     clearDisabled: !forum || !session || !vaultName || deleting || clearing };
 }
