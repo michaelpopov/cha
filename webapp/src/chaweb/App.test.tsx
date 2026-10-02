@@ -227,7 +227,7 @@ it('refreshes navigation when a stored session is missing', async () => {
   render(<App client={api} />);
   expect(await screen.findByRole('alert')).toHaveTextContent('Session not found.');
   expect(api.getSession).toHaveBeenCalledTimes(1);
-  expect(api.listSessions).toHaveBeenCalledWith('lobby');
+  await waitFor(() => expect(api.listSessions).toHaveBeenCalledWith('lobby'));
   expect(screen.getByRole('button', { name: 'Forum' })).toBeInTheDocument();
 });
 

@@ -1546,6 +1546,7 @@ select:disabled {
 
 .cha-settings-card {
   display: grid;
+  flex-shrink: 0;
   gap: 0;
   overflow: hidden;
   border: 1px solid var(--border);

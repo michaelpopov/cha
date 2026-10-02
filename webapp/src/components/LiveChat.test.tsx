@@ -1271,6 +1271,7 @@ describe('live chat', () => {
   });
 
   it('turns automatic audio off after a rejected batch and downloads only new replies when re-enabled', async () => {
+    const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
     const jobs: Array<{ entry_id: number; state: 'queued' }> = [];
     const startAudioDownloadBatch = vi.fn(async (_forum: string, _session: string, request: AudioDownloadBatchRequest) => {
       const entries = request.entries.map(({ entry_id }) => ({ entry_id, cached: false, state: 'queued' as const }));
@@ -1293,6 +1294,7 @@ describe('live chat', () => {
     act(() => events.handlers[0].onSnapshot(snapshot));
     expect(await screen.findByRole('alert')).toHaveTextContent('Audio downloads are temporarily unavailable.');
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(play).not.toHaveBeenCalled();
     expect(startAudioDownloadBatch.mock.calls[0][2].entries.map((item) => item.entry_id)).toEqual([1, 2]);
     const updated = { ...snapshot, transcript: [...snapshot.transcript, { ...entry, id: 3, text: 'New answer' }] };
     act(() => events.handlers[0].onSnapshot(updated));
@@ -1306,6 +1308,7 @@ describe('live chat', () => {
     await waitFor(() => expect(startAudioDownloadBatch).toHaveBeenCalledTimes(2));
     expect(startAudioDownloadBatch.mock.lastCall?.[2].entries.map((item) => item.entry_id)).toEqual([4]);
     expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(play).toHaveBeenCalledOnce());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 

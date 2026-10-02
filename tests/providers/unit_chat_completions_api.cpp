@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -48,6 +49,51 @@ constexpr std::string_view two_part_stream =
     "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"
     "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n"
     "data: [DONE]\n\n";
+
+TEST(ChatCompletionsApi, OmitsUnsupportedReasoningForDirectMistralLarge) {
+    GenerationRequest request;
+    request.history = std::make_shared<const ModelHistory>();
+    request.run.prompt_text = "Hi";
+    ModelBackendConfig config;
+    for (const char* host : {"api.mistral.ai", "API.MISTRAL.AI."}) {
+        SCOPED_TRACE(host);
+        config.host = host;
+        for (const char* model : {"mistral-large", "mistral-large-latest", "mistral-large-2411"}) {
+            SCOPED_TRACE(model);
+            config.model = model;
+            for (const char* effort : {"none", "high"}) {
+                SCOPED_TRACE(effort);
+                config.reasoning_effort = effort;
+                const auto body = nlohmann::json::parse(build_chat_completions_request_body(
+                    request, config, ""));
+                EXPECT_EQ(body["model"], model);
+                EXPECT_FALSE(body.contains("reasoning_effort"));
+            }
+        }
+    }
+}
+
+TEST(ChatCompletionsApi, PreservesReasoningForOtherModelsAndHosts) {
+    GenerationRequest request;
+    request.history = std::make_shared<const ModelHistory>();
+    request.run.prompt_text = "Hi";
+    ModelBackendConfig config;
+    for (const auto& [host, model] : {
+             std::pair{"api.mistral.ai", "magistral-medium-latest"},
+             std::pair{"openrouter.ai", "mistralai/mistral-large"},
+             std::pair{"localhost", "mistral-large-latest"}}) {
+        SCOPED_TRACE(host);
+        config.host = host;
+        config.model = model;
+        for (const char* effort : {"none", "high"}) {
+            SCOPED_TRACE(effort);
+            config.reasoning_effort = effort;
+            const auto body = nlohmann::json::parse(build_chat_completions_request_body(
+                request, config, ""));
+            EXPECT_EQ(body["reasoning_effort"], effort);
+        }
+    }
+}
 
 TEST(ChatCompletionsApi, IgnoresOpenRouterProcessingHeartbeats) {
     Output output;

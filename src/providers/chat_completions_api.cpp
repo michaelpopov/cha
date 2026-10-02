@@ -1,6 +1,8 @@
 #include "providers/chat_completions_api.h"
 
 #include "util/json_serialization.h"
+#include "util/logging.h"
+#include "util/text.h"
 #include "providers/tool_calls.h"
 
 #include <nlohmann/json.hpp>
@@ -162,7 +164,15 @@ std::string build_chat_completions_request_body(
         body["stream_options"] = Json{{"include_usage", true}};
     }
     if (!config.reasoning_effort.empty()) {
-        body["reasoning_effort"] = config.reasoning_effort;
+        std::string_view host = config.host;
+        if (host.ends_with('.')) host.remove_suffix(1);
+        if (ascii_iequals(host, "api.mistral.ai")
+            && (config.model == "mistral-large" || config.model.starts_with("mistral-large-"))) {
+            log_warn("Ignoring reasoning_effort for non-reasoning Mistral model "
+                + config.model);
+        } else {
+            body["reasoning_effort"] = config.reasoning_effort;
+        }
     }
     if (!config.openrouter_targets.empty()) {
         if (!valid_openrouter_targets(config)) {
