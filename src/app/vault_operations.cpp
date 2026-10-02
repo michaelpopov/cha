@@ -406,7 +406,7 @@ auto Application::Impl::VaultMaintenance::maintain_database(
             database.close();
             bool reopened = false;
             try {
-                result = operation();
+                result.emplace(operation());
                 reopen(database, repository);
                 reopened = true;
                 end_maintenance_locked(true, notice);
@@ -968,34 +968,34 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge(
 R2DatabaseTransfer Application::Impl::VaultMaintenance::upload_database(
     std::optional<std::string> expected_etag,
     std::uint64_t epoch) {
-    return maintain_database(epoch, [this, &expected_etag] {
+    VaultDefinition vault;
+    R2StorageKey storage;
+    auto upload = maintain_database(epoch, [&] {
         const std::optional<R2StorageKey> r2 = app.api_keys->r2();
         if (!r2) throw ApplicationError(
             ErrorCode::invalid_argument, "The active vault has no R2 key");
-        const VaultDefinition vault = app.current_vault_.get();
-        R2DatabaseTransfer transferred = upload_database_to_r2(
-            vault.data,
-            vault.source,
-            *r2,
-            R2DatabaseLease::already_held,
-            app.active_password, [this] { return app.stopping_flag.load(); },
-            expected_etag.value_or(""));
-        VaultDefinition uploaded = vault;
-        uploaded.r2_etag = transferred.etag;
-        const auto configured = std::find_if(
-            app.command.vaults.begin(), app.command.vaults.end(),
-            [&](const VaultDefinition& candidate) {
-                return candidate.source == vault.source;
-            });
-        if (configured == app.command.vaults.end()) {
-            throw std::runtime_error(
-                "The uploaded active vault is not in the vault registry");
-        }
-        *configured = uploaded;
-        app.command.vault = uploaded;
-        publish_vault(uploaded);
-        return transferred;
+        vault = app.current_vault_.get();
+        storage = *r2;
+        return R2DatabaseUpload(vault.data, vault.source, app.active_password);
     }, false);
+    return upload.upload(
+        storage, [this] { return app.stopping_flag.load(); },
+        expected_etag.value_or(""), [this, &vault](std::string_view etag) {
+            const std::lock_guard lifecycle(app.lifecycle_mutex);
+            const auto configured = std::find_if(
+                app.command.vaults.begin(), app.command.vaults.end(),
+                [&](const VaultDefinition& candidate) {
+                    return candidate.source == vault.source;
+                });
+            // The user may switch, edit, or delete a vault during the upload.
+            if (configured == app.command.vaults.end()) return;
+            save_r2_vault_etag(vault.source, etag);
+            configured->r2_etag = std::string(etag);
+            if (app.current_vault_.get().source == vault.source) {
+                app.command.vault = *configured;
+                publish_vault(*configured);
+            }
+        });
 }
 
 R2UploadCheck

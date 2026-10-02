@@ -106,6 +106,84 @@ void set_r2(Application& application, int port) {
     }, application.context_epoch());
 }
 
+TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndCanFinishAfterAVaultSwitch) {
+    TwoVaults pair;
+    const std::string response = "HTTP/1.1 200 OK\r\nETag: \"uploaded-etag\"\r\n"
+        "Content-Length: 0\r\nConnection: close\r\n\r\n";
+    MockHttpServer server({response, response});
+    server.pause_before_response(1);
+    auto application = Application::open(pair.command);
+    set_r2(*application, server.port());
+    const auto epoch = application->context_epoch();
+    std::atomic<std::uint64_t> notified_epoch{0};
+    application->set_context_changed([&](std::uint64_t next, ApplicationState) {
+        notified_epoch.store(next);
+    });
+    server.start();
+    auto upload = std::async(std::launch::async, [&] {
+        return application->upload_database({}, epoch);
+    });
+    EXPECT_TRUE(server.wait_for_requests(1, 2s));
+    EXPECT_EQ(application->state(), ApplicationState::running);
+    EXPECT_GT(application->context_epoch(), epoch);
+    EXPECT_EQ(notified_epoch.load(), application->context_epoch());
+    auto use_vault = std::async(std::launch::async, [&] {
+        const auto session = application->create_session(
+            "lobby", "Created during upload", application->context_epoch());
+        EXPECT_FALSE(session.id.empty());
+        return application->switch_vault("B", {}, application->context_epoch());
+    });
+    const auto usable = use_vault.wait_for(2s);
+    server.resume_responses();
+    EXPECT_EQ(usable, std::future_status::ready);
+    EXPECT_EQ(use_vault.get().state, ApplicationState::running);
+    EXPECT_EQ(upload.get().etag, "uploaded-etag");
+    server.join();
+    EXPECT_EQ(application->current_vault().get().name, "B");
+    EXPECT_FALSE(application->current_vault().get().r2_etag);
+    const auto registry = application->vault_snapshot();
+    EXPECT_EQ(registry.vaults.front().r2_etag, "uploaded-etag");
+    EXPECT_EQ(read_toml_file(pair.command.vault.source, "vault")["r2_etag"].value<std::string>(),
+        "uploaded-etag");
+    const auto copy_path = pair.workspace_a.root() / "uploaded.sqlite3";
+    std::ofstream(copy_path, std::ios::binary) << request_body(server.requests().front());
+    storage::SqliteDatabase copy(copy_path, storage::SqliteDatabase::Mode::read_only);
+    auto session = copy.prepare("SELECT count(*) FROM sessions WHERE label = 'Created during upload'");
+    ASSERT_TRUE(session.step());
+    EXPECT_EQ(session.integer(0), 0);
+}
+
+TEST(ApplicationVault, FailedCompanionUploadKeepsTheVaultUsableAndRemembersTheDatabaseEtag) {
+    TwoVaults pair;
+    MockHttpServer server({
+        "HTTP/1.1 200 OK\r\nETag: \"uploaded-etag\"\r\n"
+            "Content-Length: 0\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+            "Connection: close\r\n\r\n",
+    });
+    auto application = Application::open(pair.command);
+    set_r2(*application, server.port());
+    server.start();
+    EXPECT_THROW((void)application->upload_database({}, application->context_epoch()), R2HttpStatusError);
+    server.join();
+    EXPECT_EQ(application->state(), ApplicationState::running);
+    EXPECT_EQ(application->current_vault().get().r2_etag, "uploaded-etag");
+    EXPECT_EQ(read_toml_file(pair.command.vault.source, "vault")["r2_etag"].value<std::string>(),
+        "uploaded-etag");
+    EXPECT_NO_THROW((void)application->create_session(
+        "lobby", "After upload failure", application->context_epoch()));
+    for (const auto& directory : {pair.workspace_a.root(), pair.command.config_directory}) {
+        for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+            EXPECT_EQ(entry.path().filename().string().find(".upload."), std::string::npos);
+        }
+    }
+#ifndef _WIN32
+    EXPECT_EQ(std::filesystem::status(pair.command.vault.source).permissions()
+        & std::filesystem::perms::all,
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
+#endif
+}
+
 TEST(ApplicationVault, ExportReplacesPreviousContentsAndCanBeRepeated) {
     TwoVaults pair;
     const auto destination = pair.workspace_a.root() / "export";

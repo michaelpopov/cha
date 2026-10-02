@@ -914,50 +914,96 @@ std::optional<std::string> get_r2_database_etag(
     return response.etag;
 }
 
-R2DatabaseTransfer upload_database_to_r2(
+void save_r2_vault_etag(
+    const std::filesystem::path& vault_definition_path,
+    std::string_view etag) {
+    toml::table local = read_toml_file(vault_definition_path, "vault definition");
+    local.insert_or_assign("r2_etag", std::string(etag));
+    std::ostringstream contents;
+    contents << local << '\n';
+    create_private_file(vault_definition_path, contents.str());
+}
+
+R2DatabaseUpload::R2DatabaseUpload(
     const std::filesystem::path& database_path,
     const std::filesystem::path& vault_definition_path,
-    const R2StorageKey& storage,
-    R2DatabaseLease lease_mode,
-    std::string_view database_password,
-    const std::function<bool()>& cancelled,
-    std::string_view expected_etag) {
-    const std::filesystem::path database = normalize_database_path(database_path);
-    const std::filesystem::path vault =
-        std::filesystem::absolute(vault_definition_path).lexically_normal();
-    std::optional<SessionLease> lease;
-    if (lease_mode == R2DatabaseLease::acquire) {
-        lease.emplace(SessionLease::acquire(database, busy_message(database)));
-    }
-
-    secure_workspace_session_database_files(database);
-    checkpoint_workspace_session_database(database, database_password);
-    if (inspect_workspace_session_database(database, database_password)
+    std::string_view database_password)
+    : database_(normalize_database_path(database_path)),
+      vault_(std::filesystem::absolute(vault_definition_path).lexically_normal()),
+      password_(database_password) {
+    secure_workspace_session_database_files(database_);
+    checkpoint_workspace_session_database(database_, database_password);
+    if (inspect_workspace_session_database(database_, database_password)
         != WorkspaceDatabaseState::valid_v2) {
         throw std::runtime_error(
-            "Cannot upload invalid CHA database '" + utf8_path(database) + "'");
+            "Cannot upload invalid CHA database '" + utf8_path(database_) + "'");
     }
-    (void)require_matching_vault(database, vault);
+    (void)require_matching_vault(database_, vault_);
 
-    const std::string database_name = utf8_path(database.filename());
+    std::ostringstream contents;
+    contents << read_toml_file(vault_, "vault definition");
+    vault_contents_ = contents.str();
+    TemporaryPath temporary(unique_sibling(database_, "upload"));
+    create_private_file(temporary.get(), {});
+    std::filesystem::copy_file(
+        database_, temporary.get(), std::filesystem::copy_options::overwrite_existing);
+    secure_workspace_session_database_files(temporary.get());
+    copy_ = temporary.get();
+    temporary.release();
+}
+
+R2DatabaseUpload::~R2DatabaseUpload() {
+    if (!copy_.empty()) {
+        TemporaryPath cleanup(std::move(copy_));
+    }
+}
+
+R2DatabaseUpload::R2DatabaseUpload(R2DatabaseUpload&& other) noexcept
+    : database_(std::move(other.database_)),
+      vault_(std::move(other.vault_)),
+      copy_(std::exchange(other.copy_, {})),
+      vault_contents_(std::move(other.vault_contents_)),
+      password_(std::move(other.password_)) {}
+
+R2DatabaseTransfer R2DatabaseUpload::upload(
+    const R2StorageKey& storage,
+    const std::function<bool()>& cancelled,
+    std::string_view expected_etag,
+    const std::function<void(std::string_view)>& save_etag) {
+    if (cancelled && cancelled()) throw std::runtime_error("R2 upload cancelled");
+    {
+        storage::SqliteDatabase database(
+            copy_, storage::SqliteDatabase::Mode::read_write, password_);
+        // Older vaults can lack this optional cache table.
+        create_entry_audio_table(database);
+        database.execute("DELETE FROM entry_audio");
+        database.execute("VACUUM");
+    }
+    checkpoint_workspace_session_database(copy_, password_);
+    if (inspect_workspace_session_database(copy_, password_)
+        != WorkspaceDatabaseState::valid_v2) {
+        throw std::runtime_error("Cannot upload invalid CHA database copy");
+    }
+
+    const std::string database_name = utf8_path(database_.filename());
     // This machine's absolute path means nothing elsewhere; a bare file name
     // resolves beside the definition, so a manually copied pair still opens.
-    toml::table portable = read_toml_file(vault, "vault definition");
+    toml::table portable = toml::parse(vault_contents_);
     portable.insert_or_assign("data", database_name);
     const R2DatabaseTransfer database_upload = upload_file(
-        database, database_name, "application/vnd.sqlite3", storage, cancelled,
+        copy_, database_name, "application/vnd.sqlite3", storage, cancelled,
         expected_etag);
     if (database_upload.etag.empty()) {
         throw std::runtime_error("R2 upload response did not include an ETag");
     }
     // The database is already in R2, even if the companion upload fails.
-    toml::table local = read_toml_file(vault, "vault definition");
-    local.insert_or_assign("r2_etag", database_upload.etag);
-    std::ostringstream local_contents;
-    local_contents << local << '\n';
-    create_private_file(vault, local_contents.str());
+    if (save_etag) {
+        save_etag(database_upload.etag);
+    } else {
+        save_r2_vault_etag(vault_, database_upload.etag);
+    }
     portable.insert_or_assign("r2_etag", database_upload.etag);
-    TemporaryPath vault_upload(unique_sibling(vault, "upload"));
+    TemporaryPath vault_upload(unique_sibling(vault_, "upload"));
     write_toml_file(vault_upload.get(), portable);
     const R2DatabaseTransfer vault_upload_result = upload_file(
         vault_upload.get(), database_name + ".toml", "application/toml",
@@ -967,6 +1013,23 @@ R2DatabaseTransfer upload_database_to_r2(
             + vault_upload_result.byte_count,
         .etag = database_upload.etag,
     };
+}
+
+R2DatabaseTransfer upload_database_to_r2(
+    const std::filesystem::path& database_path,
+    const std::filesystem::path& vault_definition_path,
+    const R2StorageKey& storage,
+    R2DatabaseLease lease_mode,
+    std::string_view database_password,
+    const std::function<bool()>& cancelled,
+    std::string_view expected_etag) {
+    const std::filesystem::path database = normalize_database_path(database_path);
+    std::optional<SessionLease> lease;
+    if (lease_mode == R2DatabaseLease::acquire) {
+        lease.emplace(SessionLease::acquire(database, busy_message(database)));
+    }
+    R2DatabaseUpload upload(database, vault_definition_path, database_password);
+    return upload.upload(storage, cancelled, expected_etag);
 }
 
 R2DatabaseTransfer download_database_from_r2(

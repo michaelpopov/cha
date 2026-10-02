@@ -95,7 +95,7 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
     const std::string& vault_request = server.requests()[1];
     EXPECT_EQ(
         result.byte_count,
-        expected_database.size() + request_body(vault_request).size());
+        request_body(database_request).size() + request_body(vault_request).size());
     EXPECT_TRUE(vault_request.starts_with(
         "PUT /cha-backups/workspace%20copy.sqlite3.toml HTTP/1.1"));
     // The uploaded definition names its database by file name alone, so it
@@ -134,7 +134,108 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
         database_request.find("x-amz-content-sha256:"),
         std::string::npos);
     EXPECT_NE(database_request.find("x-amz-date:"), std::string::npos);
-    EXPECT_EQ(request_body(database_request), expected_database);
+    EXPECT_EQ(file_bytes(database), expected_database);
+    const auto uploaded_database = workspace.root() / "uploaded.sqlite3";
+    write_bytes(uploaded_database, request_body(database_request));
+    EXPECT_EQ(inspect_workspace_session_database(uploaded_database),
+        WorkspaceDatabaseState::valid_v2);
+    storage::SqliteDatabase source(database, storage::SqliteDatabase::Mode::read_only);
+    storage::SqliteDatabase copy(uploaded_database, storage::SqliteDatabase::Mode::read_only);
+    EXPECT_EQ(read_workspace_config_files(source), read_workspace_config_files(copy));
+}
+
+TEST(R2DatabaseTransfer, UploadOmitsAudioCompactsTheCopyAndPreservesTheOriginal) {
+    for (const std::string password : {"", "secret"}) {
+        SCOPED_TRACE(password.empty() ? "plain" : "protected");
+        test::TestWorkspace workspace;
+        const auto database = test::import_test_database(workspace.root());
+        const auto vault = write_vault(database);
+        const std::string audio(2 * 1024 * 1024, 'a');
+        {
+            storage::SqliteDatabase source(database, storage::SqliteDatabase::Mode::read_write);
+            source.execute(R"sql(
+                INSERT INTO forums (forum_key, forum_id) VALUES (1000, 'audio-test');
+                INSERT INTO sessions (session_key, forum_key, session_id, label,
+                    updated_at, history_epoch, next_entry_id, next_request_id)
+                    VALUES (1000, 1000, 'saved', 'Saved session', 1, 1, 2, 1);
+                INSERT INTO entries (session_key, entry_id, epoch, kind,
+                    participant_id, display_name, text, status)
+                    VALUES (1000, 1, 1, 2, '', 'You', 'Keep this transcript', 0);
+            )sql");
+            auto insert = source.prepare("INSERT INTO entry_audio VALUES (1000, 1, ?1, 'audio/mpeg')");
+            insert.bind_blob(1, audio);
+            insert.run();
+        }
+        if (!password.empty()) {
+            protect_workspace_session_database(database, password);
+            std::ofstream(vault, std::ios::app) << "protected = true\n";
+        }
+        checkpoint_workspace_session_database(database, password);
+        const auto original = file_bytes(database);
+        MockHttpServer server({
+            etag_response("application/xml", "", "database-etag"),
+            etag_response("application/xml", "", "vault-etag"),
+        });
+        server.start();
+        const auto transferred = upload_database_to_r2(
+            database, vault, storage(mock_url(server.port())),
+            R2DatabaseLease::acquire, password);
+        server.join();
+        EXPECT_EQ(file_bytes(database), original);
+        ASSERT_EQ(server.requests().size(), 2U);
+        const auto uploaded_bytes = request_body(server.requests()[0]);
+        EXPECT_LT(uploaded_bytes.size(), original.size() / 2);
+        EXPECT_EQ(transferred.byte_count,
+            uploaded_bytes.size() + request_body(server.requests()[1]).size());
+        EXPECT_TRUE(server.requests()[0].starts_with("PUT /cha-backups/workspace.sqlite3 HTTP/1.1"));
+        const auto copy_path = workspace.root() / "uploaded.sqlite3";
+        write_bytes(copy_path, uploaded_bytes);
+        EXPECT_EQ(inspect_workspace_session_database(copy_path, password),
+            WorkspaceDatabaseState::valid_v2);
+        if (!password.empty()) {
+            EXPECT_NE(inspect_workspace_session_database(copy_path),
+                WorkspaceDatabaseState::valid_v2);
+        }
+        storage::SqliteDatabase source(database, storage::SqliteDatabase::Mode::read_only, password);
+        storage::SqliteDatabase copy(copy_path, storage::SqliteDatabase::Mode::read_only, password);
+        EXPECT_EQ(read_workspace_config_files(copy), read_workspace_config_files(source));
+        auto cached = source.prepare("SELECT audio FROM entry_audio");
+        ASSERT_TRUE(cached.step());
+        EXPECT_EQ(cached.blob(0), audio);
+        auto audio_count = copy.prepare("SELECT count(*) FROM entry_audio");
+        ASSERT_TRUE(audio_count.step());
+        EXPECT_EQ(audio_count.integer(0), 0);
+        auto transcript = copy.prepare("SELECT text FROM entries WHERE session_key = 1000");
+        ASSERT_TRUE(transcript.step());
+        EXPECT_EQ(transcript.text(0), "Keep this transcript");
+        auto session = copy.prepare("SELECT label FROM sessions WHERE session_key = 1000");
+        ASSERT_TRUE(session.step());
+        EXPECT_EQ(session.text(0), "Saved session");
+        for (const auto& entry : std::filesystem::directory_iterator(workspace.root())) {
+            EXPECT_EQ(entry.path().filename().string().find(".upload."), std::string::npos);
+        }
+    }
+}
+
+TEST(R2DatabaseTransfer, UploadSupportsVaultsWithoutTheOptionalAudioTable) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    const auto vault = write_vault(database);
+    {
+        storage::SqliteDatabase source(database, storage::SqliteDatabase::Mode::read_write);
+        source.execute("DROP TABLE entry_audio");
+    }
+    MockHttpServer server({
+        etag_response("application/xml", "", "database-etag"),
+        etag_response("application/xml", "", "vault-etag"),
+    });
+    server.start();
+    EXPECT_NO_THROW((void)upload_database_to_r2(database, vault, storage(mock_url(server.port()))));
+    server.join();
+    const auto copy_path = workspace.root() / "uploaded.sqlite3";
+    ASSERT_EQ(server.requests().size(), 2U);
+    write_bytes(copy_path, request_body(server.requests()[0]));
+    EXPECT_EQ(inspect_workspace_session_database(copy_path), WorkspaceDatabaseState::valid_v2);
 }
 
 TEST(R2DatabaseTransfer, ListsRootSqliteDatabasesAcrossPages) {
@@ -195,6 +296,9 @@ TEST(R2DatabaseTransfer, ChangedRemoteUploadLeavesStoredEtagAndCompanionUntouche
     server.join();
 
     EXPECT_EQ(file_bytes(vault), original_vault);
+    for (const auto& entry : std::filesystem::directory_iterator(workspace.root())) {
+        EXPECT_EQ(entry.path().filename().string().find(".upload."), std::string::npos);
+    }
     ASSERT_EQ(server.requests().size(), 1U);
     EXPECT_TRUE(server.requests()[0].starts_with(
         "PUT /cha-backups/workspace.sqlite3 HTTP/1.1"));

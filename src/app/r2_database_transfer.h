@@ -39,9 +39,41 @@ enum class R2DatabaseLease {
     already_held,
 };
 
+// A private copy made while the original database is closed. Audio removal and
+// transfer happen later, after the application has reopened the original.
+class R2DatabaseUpload {
+public:
+    R2DatabaseUpload(
+        const std::filesystem::path& database_path,
+        const std::filesystem::path& vault_definition_path,
+        std::string_view database_password = {});
+    ~R2DatabaseUpload();
+    R2DatabaseUpload(R2DatabaseUpload&& other) noexcept;
+    R2DatabaseUpload(const R2DatabaseUpload&) = delete;
+    R2DatabaseUpload& operator=(const R2DatabaseUpload&) = delete;
+
+    R2DatabaseTransfer upload(
+        const R2StorageKey& storage,
+        const std::function<bool()>& cancelled = {},
+        std::string_view expected_etag = {},
+        const std::function<void(std::string_view)>& save_etag = {});
+
+private:
+    std::filesystem::path database_;
+    std::filesystem::path vault_;
+    std::filesystem::path copy_;
+    std::string vault_contents_;
+    std::string password_;
+};
+
+void save_r2_vault_etag(
+    const std::filesystem::path& vault_definition_path,
+    std::string_view etag);
+
 // Transfers of the configured workspace database. By default each operation
 // acquires CHA's database lease. The in-process runtime instead closes SQLite
-// while keeping its existing lease throughout. R2 object location and S3 API
+// to create an R2DatabaseUpload, then reopens it before uploading. Cached audio
+// is omitted from uploads. R2 object location and S3 API
 // credentials come from the active vault's type="R2" key.
 R2DatabaseTransfer upload_database_to_r2(
     const std::filesystem::path& database_path,
