@@ -167,6 +167,9 @@ enum class Route {
     audio_status,
     entry_audio,
     merge_parent,
+    upload_check,
+    upload,
+    download,
 };
 
 struct ParsedRoute {
@@ -200,8 +203,12 @@ ParsedRoute parse_route(std::string_view uri) {
         if (!rest.empty()) return {};
         return {.route = Route::bootstrap};
     }
-    if (first == "vault" && rest == "merge-parent") {
-        return {.route = Route::merge_parent};
+    if (first == "vault") {
+        if (rest == "merge-parent") return {.route = Route::merge_parent};
+        if (rest == "upload-check") return {.route = Route::upload_check};
+        if (rest == "upload") return {.route = Route::upload};
+        if (rest == "download") return {.route = Route::download};
+        return {};
     }
     if (first == "voice-output") {
         if (!rest.empty()) return {};
@@ -450,7 +457,12 @@ void serve_bootstrap(
         write_code(fd, ErrorCode::application_unavailable, stop);
         return;
     }
-    write_json(fd, 200, boot.presentation, stop);
+    nlohmann::json body = boot.presentation;
+    const auto parent = application.current_vault().get().parent;
+    body["vault_parent"] = parent ? nlohmann::json(*parent) : nlohmann::json(nullptr);
+    body["capabilities"] = {{"can_modify", boot.capabilities.can_modify},
+        {"can_transfer_r2", boot.capabilities.can_transfer_r2}};
+    write_json(fd, 200, body, stop);
 }
 
 void serve_list(
@@ -731,6 +743,45 @@ void handle_chaweb_request(
     try {
         if (stop.load()) return;
         const ParsedRoute route = parse_route(request.document_uri);
+        if (request.method == "POST" && (route.route == Route::upload_check
+                || route.route == Route::upload || route.route == Route::download)) {
+            if (!require_json_body(request, fd, stop)) return;
+            const auto body = parse_object(request.body, fd, stop);
+            if (!body) return;
+            const auto epoch = application.context_epoch();
+            if (route.route == Route::upload) {
+                if (body->size() != 2 || !body->contains("etag")
+                    || !(body->at("etag").is_null() || body->at("etag").is_string())
+                    || !body->contains("context_epoch")
+                    || !body->at("context_epoch").is_number_unsigned()) {
+                    write_code(fd, ErrorCode::invalid_argument, stop);
+                    return;
+                }
+                const auto expected_etag = body->at("etag").is_null()
+                    ? std::optional<std::string>{}
+                    : std::optional<std::string>{body->at("etag").get<std::string>()};
+                const auto transferred = application.upload_database(
+                    expected_etag, body->at("context_epoch").get<std::uint64_t>());
+                write_json(fd, 200, {{"byte_count", transferred.byte_count}}, stop);
+            } else {
+                if (!body->empty()) {
+                    write_code(fd, ErrorCode::invalid_argument, stop);
+                    return;
+                }
+                if (route.route == Route::upload_check) {
+                    const auto check = application.check_database_upload(epoch);
+                    write_json(fd, 200, {
+                        {"etag", check.etag ? nlohmann::json(*check.etag) : nlohmann::json(nullptr)},
+                        {"status", check.status == R2EtagStatus::match ? "match"
+                            : check.status == R2EtagStatus::mismatch ? "mismatch" : "missing"},
+                        {"context_epoch", epoch}}, stop);
+                } else {
+                    const auto transferred = application.download_database(epoch);
+                    write_json(fd, 200, {{"byte_count", transferred.byte_count}}, stop);
+                }
+            }
+            return;
+        }
         if (request.method == "POST" && route.route == Route::merge_parent) {
             if (!require_json_body(request, fd, stop)) return;
             const auto body = parse_object(request.body, fd, stop);

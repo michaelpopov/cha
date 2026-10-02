@@ -87,6 +87,14 @@ export function DatabaseIcon(props: IconProps) {
   );
 }
 
+export function MergeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M7 21V3m-4 4 4-4 4 4M17 21v-5c0-4-10-3-10-9" {...stroke} />
+    </Icon>
+  );
+}
+
 export function MessageIcon(props: IconProps) {
   return (
     <Icon {...props}>

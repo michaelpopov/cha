@@ -7,7 +7,7 @@ import {
   type SessionListing,
   type SessionSnapshot,
 } from '../api/client';
-import { chaWebMessage, type ChaWebClient } from './client';
+import { chaWebMessage, type ChaWebBootstrap, type ChaWebClient } from './client';
 import {
   applyAcknowledgement,
   classifyReadFailure,
@@ -141,7 +141,7 @@ function buildCommand(
 }
 
 export function useChaweb(client: ChaWebClient) {
-  const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
+  const [bootstrap, setBootstrap] = useState<ChaWebBootstrap | null>(null);
   const [loading, setLoading] = useState(true);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [startupCanRetry, setStartupCanRetry] = useState(false);
@@ -519,6 +519,24 @@ export function useChaweb(client: ChaWebClient) {
       forumRef.current = next;
       return next;
     });
+  }
+
+  async function refreshVault() {
+    invalidateList();
+    retarget('');
+    screenRef.current = 'list';
+    setScreen('list');
+    conversationRef.current = null;
+    snapshotRef.current = null;
+    setConversation(null);
+    setSnapshot(null);
+    setSessions([]);
+    setListError(null);
+    patchStatus(() => emptyStatus);
+    appliedHash.current = '';
+    window.history.replaceState(null, '', locationUrl());
+    await reloadBootstrap();
+    refreshList(forumRef.current);
   }
 
   function noteAck(key: string) {
@@ -1116,6 +1134,10 @@ export function useChaweb(client: ChaWebClient) {
     openSession,
     newSession,
     showSessions,
+    refreshVault,
+    vaultBlocked: Object.values(status.conversations).some((current) => (
+      current.sending || current.stopPending || current.deleting
+    )),
     onDraft,
     send,
     stop,

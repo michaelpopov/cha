@@ -6,11 +6,13 @@ export function PasswordDialog({
   name,
   onCancel,
   onSubmit,
+  className = 'cha-dialog',
 }: {
   error: string | null;
   name: string;
   onCancel(): void;
   onSubmit(password: string): void;
+  className?: string;
 }) {
   const dialog = useRef<HTMLDialogElement | null>(null);
   const [password, setPassword] = useState('');
@@ -29,7 +31,7 @@ export function PasswordDialog({
   }
 
   return createPortal(
-    <dialog className="cha-dialog" onCancel={onCancel} ref={dialog}>
+    <dialog aria-label={`Open ${name}`} className={className} onCancel={onCancel} ref={dialog}>
       <form onSubmit={submit}>
         <h2>Open {name}</h2>
         <label>

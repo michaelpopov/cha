@@ -17,6 +17,7 @@ import {
   isSessionListingArray,
   isSessionSnapshot,
   type Bootstrap,
+  type VaultUploadCheck,
   type CreateSessionResult,
   type SessionListing,
   type SessionSnapshot,
@@ -46,7 +47,13 @@ export function chaWebMessage(failure: unknown, fallback: string): string {
   return fallback;
 }
 
+export type ChaWebBootstrap = Bootstrap & { vault_parent?: string | null };
+
 export interface ChaWebClient {
+  checkVaultUpload(): Promise<VaultUploadCheck>;
+  uploadVault(check: VaultUploadCheck): Promise<number>;
+  downloadVault(): Promise<number>;
+  mergeParentVault(password?: string): Promise<void>;
   getVoiceInputRuntime(): Promise<NativeVoiceInputRuntime | null>;
   connectVoiceInput(sdp: string, languages: string[], signal: AbortSignal): Promise<string>;
   startXaiVoiceInput(sessionId: string, languages: string[], signal: AbortSignal): Promise<XaiVoiceStartResult>;
@@ -58,7 +65,7 @@ export interface ChaWebClient {
   startAudioBatch(forumId: string, sessionId: string, entryIds: number[], vaultName: string): Promise<AudioDownloadBatchAcceptance>;
   getAudioStatus(forumId: string, sessionId: string): Promise<AudioDownloadStatus>;
   clearAudio(forumId: string, sessionId: string, vaultName: string): Promise<void>;
-  getBootstrap(): Promise<Bootstrap>;
+  getBootstrap(): Promise<ChaWebBootstrap>;
   listSessions(forumId: string): Promise<SessionListing[]>;
   createSession(forumId: string, text: string): Promise<CreateSessionResult>;
   getSession(forumId: string, sessionId: string): Promise<SessionSnapshot>;
@@ -156,8 +163,42 @@ async function readGuarded<T>(
   return payload;
 }
 
+function isVaultTransfer(value: unknown): value is { byte_count: number } {
+  return isRecord(value) && Number.isSafeInteger(value.byte_count)
+    && (value.byte_count as number) >= 0;
+}
+
 export function createChaWebClient(): ChaWebClient {
   return {
+    async checkVaultUpload() {
+      return exchange('POST', `${API}/vault/upload-check`, 200,
+        (response) => readGuarded(response,
+          (value): value is VaultUploadCheck => isRecord(value)
+            && (value.etag === null || typeof value.etag === 'string')
+            && ['match', 'mismatch', 'missing'].includes(value.status as string)
+            && Number.isSafeInteger(value.context_epoch) && (value.context_epoch as number) > 0), {});
+    },
+
+    async uploadVault(check) {
+      const result = await exchange('POST', `${API}/vault/upload`, 200,
+        (response) => readGuarded(response, isVaultTransfer),
+        { etag: check.etag, context_epoch: check.context_epoch });
+      return result.byte_count;
+    },
+
+    async downloadVault() {
+      const result = await exchange('POST', `${API}/vault/download`, 200,
+        (response) => readGuarded(response, isVaultTransfer), {});
+      return result.byte_count;
+    },
+
+    async mergeParentVault(password) {
+      await exchange('POST', `${API}/vault/merge-parent`, 200,
+        (response) => readGuarded(response,
+          (value): value is { context_epoch: number } => isRecord(value)
+            && Number.isSafeInteger(value.context_epoch) && (value.context_epoch as number) > 0),
+        password ? { password } : {});
+    },
     async getVoiceInputRuntime() {
       return exchange('GET', `${API}/voice-input`, 200,
         (response) => readGuarded(response,
@@ -233,7 +274,10 @@ export function createChaWebClient(): ChaWebClient {
       return exchange('GET', `${API}/bootstrap`, 200, async (response) => {
         const payload = await readJson(response);
         try {
-          return validateBootstrap(payload);
+          const bootstrap = validateBootstrap(payload) as ChaWebBootstrap;
+          if (bootstrap.vault_parent !== undefined && bootstrap.vault_parent !== null
+              && typeof bootstrap.vault_parent !== 'string') throw new ChaProtocolError();
+          return bootstrap;
         } catch {
           throw new ChaProtocolError();
         }

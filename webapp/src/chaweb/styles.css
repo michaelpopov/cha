@@ -265,6 +265,14 @@ button:disabled {
   border-top: 1px solid var(--border);
 }
 
+.chaweb-vault-actions {
+  display: flex;
+  flex: none;
+  justify-content: space-evenly;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+}
+
 .chaweb-transcript {
   flex: 1 1 0;
   min-height: 0;
@@ -396,6 +404,26 @@ button:disabled {
   border-radius: 6px;
   background: var(--secondary);
   color: inherit;
+}
+
+.chaweb-delete-dialog label {
+  display: block;
+  margin: 1rem 0;
+}
+
+.chaweb-delete-dialog input {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--secondary);
+  color: inherit;
+}
+
+.chaweb-delete-dialog .cha-error-message {
+  color: light-dark(rgb(174 45 36), rgb(255 145 136));
 }
 
 .chaweb-delete-dialog .cha-button-danger {

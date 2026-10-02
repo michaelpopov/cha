@@ -82,6 +82,10 @@ afterEach(() => {
 
 function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   return {
+    checkVaultUpload: vi.fn(),
+    uploadVault: vi.fn(),
+    downloadVault: vi.fn(),
+    mergeParentVault: vi.fn(),
     getVoiceInputRuntime: vi.fn(async () => null),
     connectVoiceInput: vi.fn(),
     startXaiVoiceInput: vi.fn(),
@@ -113,6 +117,113 @@ async function showList(api = client()) {
   await screen.findByRole('button', { name: 'Forum' });
   return api;
 }
+
+function vaultBoot(parent: string | null = 'Parent') {
+  return { ...boot(), vault_parent: parent,
+    capabilities: { can_modify: false, can_transfer_r2: true } };
+}
+
+it('disables Parent merge without a parent and all transfers without R2 storage', async () => {
+  const api = client({ getBootstrap: vi.fn(async () => vaultBoot(null)) });
+  const view = render(<App client={api} />);
+  expect(await screen.findByRole('button', { name: 'Parent merge' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+  view.unmount();
+  await showList();
+  for (const name of ['Upload', 'Download', 'Parent merge']) {
+    expect(screen.getByRole('button', { name })).toBeDisabled();
+  }
+});
+
+it('uploads a matching R2 version immediately and disables navigation during the upload', async () => {
+  const user = userEvent.setup();
+  const check = { etag: 'version', status: 'match' as const, context_epoch: 4 };
+  let finish!: (bytes: number) => void;
+  const api = client({ getBootstrap: vi.fn(async () => vaultBoot()),
+    checkVaultUpload: vi.fn(async () => check),
+    uploadVault: vi.fn(() => new Promise<number>((resolve) => { finish = resolve; })),
+  });
+  await showList(api);
+  await user.click(screen.getByRole('button', { name: 'Upload' }));
+  expect(api.uploadVault).toHaveBeenCalledExactlyOnceWith(check);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'New Session' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Download' })).toBeDisabled();
+  expect(screen.getByRole('status')).toHaveTextContent('Uploading');
+  await act(async () => finish(42));
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'New Session' })).toBeEnabled();
+});
+
+it.each(['mismatch', 'missing'] as const)('confirms uploads when the R2 version is %s', async (status) => {
+  const user = userEvent.setup();
+  const check = { etag: status === 'missing' ? null : 'changed', status, context_epoch: 4 };
+  const api = client({ getBootstrap: vi.fn(async () => vaultBoot()),
+    checkVaultUpload: vi.fn(async () => check), uploadVault: vi.fn(async () => 42) });
+  await showList(api);
+  await user.click(screen.getByRole('button', { name: 'Upload' }));
+  const dialog = await screen.findByRole('dialog');
+  expect(api.uploadVault).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  expect(api.uploadVault).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Upload' }));
+  await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Upload' }));
+  expect(api.uploadVault).toHaveBeenCalledExactlyOnceWith(check);
+});
+
+it.each(['Download', 'Parent merge'])('refreshes the vault and session list after %s', async (name) => {
+  const user = userEvent.setup();
+  let changed = false;
+  const updatedBoot = { ...vaultBoot(), forums: [boot().forums[0], archiveForum] };
+  const api = client({
+    getBootstrap: vi.fn(async () => changed ? updatedBoot : vaultBoot()),
+    listSessions: vi.fn(async () => changed
+      ? [{ id: 'remote', label: 'Remote session', live: false, updated_at: 100 }] : lobbySessions),
+    downloadVault: vi.fn(async () => { changed = true; return 42; }),
+    mergeParentVault: vi.fn(async () => { changed = true; }),
+  });
+  await showList(api);
+  await screen.findByRole('button', { name: /Planning/ });
+  await user.click(screen.getByRole('button', { name }));
+  if (name === 'Download') {
+    expect(api.downloadVault).not.toHaveBeenCalled();
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Download' }));
+  }
+  expect(await screen.findByRole('button', { name: /Remote session/ })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Planning/ })).not.toBeInTheDocument();
+  expect(api.getBootstrap).toHaveBeenCalledTimes(2);
+  expect(api.listSessions).toHaveBeenLastCalledWith('archive');
+  expect(screen.getByRole('button', { name: 'New Session' })).toBeEnabled();
+});
+
+it('requests the parent password and retries the merge with it', async () => {
+  const user = userEvent.setup();
+  const api = client({ getBootstrap: vi.fn(async () => vaultBoot()),
+    mergeParentVault: vi.fn().mockRejectedValueOnce(
+      new ChaWebError(401, 'Password required.', 'source_vault_password_required'),
+    ).mockResolvedValueOnce(undefined),
+  });
+  await showList(api);
+  await user.click(screen.getByRole('button', { name: 'Parent merge' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Open Parent' });
+  await user.type(within(dialog).getByLabelText('Password'), 'secret');
+  await user.click(within(dialog).getByRole('button', { name: 'Open vault' }));
+  expect(api.mergeParentVault).toHaveBeenLastCalledWith('secret');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Parent merge' })).toBeEnabled());
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+});
+
+it('shows a transfer failure and permits another action', async () => {
+  const user = userEvent.setup();
+  const api = client({ getBootstrap: vi.fn(async () => vaultBoot()),
+    checkVaultUpload: vi.fn(async () => { throw new ChaWebError(400, 'R2 rejected the request.'); }) });
+  await showList(api);
+  await user.click(screen.getByRole('button', { name: 'Upload' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('R2 rejected the request.');
+  expect(api.uploadVault).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+});
 
 it('shows forums and recent sessions without opening Welcome or creating a session', async () => {
   const user = userEvent.setup();

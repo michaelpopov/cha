@@ -27,6 +27,42 @@ function installFetch(handler: (url: string, init?: RequestInit) => Promise<Resp
 }
 
 describe('ChaWeb HTTP client', () => {
+  it('checks and uploads the current vault with the checked ETag and epoch', async () => {
+    const check = { etag: 'version', status: 'match', context_epoch: 4 };
+    const calls = installFetch((url) => jsonResponse(url.endsWith('/upload-check')
+      ? check : { byte_count: 42 }));
+    const client = createChaWebClient();
+    const result = await client.checkVaultUpload();
+    await expect(client.uploadVault(result)).resolves.toBe(42);
+    expect(calls.map((call) => [call.url, call.init?.method, JSON.parse(call.init?.body as string)]))
+      .toEqual([
+        ['/api/cha/v1/vault/upload-check', 'POST', {}],
+        ['/api/cha/v1/vault/upload', 'POST', { etag: 'version', context_epoch: 4 }],
+      ]);
+  });
+
+  it('downloads the current vault and merges the parent with an optional password', async () => {
+    const calls = installFetch((url) => jsonResponse(url.endsWith('/download')
+      ? { byte_count: 42 } : { context_epoch: 5 }));
+    const client = createChaWebClient();
+    await expect(client.downloadVault()).resolves.toBe(42);
+    await client.mergeParentVault();
+    await client.mergeParentVault('secret');
+    expect(calls.map((call) => [call.url, JSON.parse(call.init?.body as string)]))
+      .toEqual([
+        ['/api/cha/v1/vault/download', {}],
+        ['/api/cha/v1/vault/merge-parent', {}],
+        ['/api/cha/v1/vault/merge-parent', { password: 'secret' }],
+      ]);
+  });
+
+  it('keeps parent and transfer capabilities in the web bootstrap', async () => {
+    const payload = { ...bootstrapFixture, vault_parent: 'Parent',
+      capabilities: { can_modify: false, can_transfer_r2: true } };
+    installFetch(() => jsonResponse(payload));
+    await expect(createChaWebClient().getBootstrap()).resolves.toMatchObject(payload);
+  });
+
   it('connects voice input and sends xAI audio through the same origin without provider keys', async () => {
     const calls = installFetch((url) => {
       if (url.endsWith('/voice-input')) return jsonResponse({

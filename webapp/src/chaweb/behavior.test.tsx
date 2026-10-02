@@ -93,6 +93,10 @@ afterEach(() => {
 
 function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   return {
+    checkVaultUpload: vi.fn(),
+    uploadVault: vi.fn(),
+    downloadVault: vi.fn(),
+    mergeParentVault: vi.fn(),
     getVoiceInputRuntime: vi.fn(async () => null),
     connectVoiceInput: vi.fn(),
     startXaiVoiceInput: vi.fn(),

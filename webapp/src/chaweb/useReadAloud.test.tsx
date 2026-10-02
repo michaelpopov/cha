@@ -30,6 +30,7 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   const startAudio = overrides.startAudio
     ?? vi.fn(async (_forum: string, _session: string, id: number) => ({ entry_id: id, cached: false, state: 'queued' as const }));
   return {
+    checkVaultUpload: vi.fn(), uploadVault: vi.fn(), downloadVault: vi.fn(), mergeParentVault: vi.fn(),
     getBootstrap: vi.fn(), listSessions: vi.fn(), createSession: vi.fn(), getSession: vi.fn(),
     submitInput: vi.fn(), stopSession: vi.fn(), deleteSession: vi.fn(),
     getVoiceInputRuntime: vi.fn(async () => null),

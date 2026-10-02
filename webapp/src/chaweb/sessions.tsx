@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 
 import type { ForumSummary, SessionListing } from '../api/client';
 import { CheckIcon, ChevronRightIcon } from '../components/Icons';
@@ -21,6 +21,8 @@ export function SessionsView({
   onOpen,
   onNewSession,
   onRetry,
+  disabled = false,
+  vaultActions,
 }: {
   forums: ForumSummary[];
   forumId: string;
@@ -31,6 +33,8 @@ export function SessionsView({
   onOpen(sessionId: string): void;
   onNewSession(): void;
   onRetry?(): void;
+  disabled?: boolean;
+  vaultActions?: ReactNode;
 }) {
   const picker = useRef<HTMLDetailsElement>(null);
   const selectedForum = forums.find((forum) => forum.id === forumId);
@@ -57,6 +61,7 @@ export function SessionsView({
   return (
     <div className="chaweb-sessions">
       <details
+        inert={disabled}
         className="chaweb-forum-picker"
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
@@ -111,7 +116,7 @@ export function SessionsView({
       </details>
       {error && <p className="chaweb-alert" role="alert">{error}</p>}
       {onRetry && (
-        <button className="chaweb-new-session" onClick={onRetry} type="button">Retry</button>
+        <button className="chaweb-new-session" disabled={disabled} onClick={onRetry} type="button">Retry</button>
       )}
       <ul aria-label="Sessions" className="chaweb-list">
         {rows.map((session) => {
@@ -121,6 +126,7 @@ export function SessionsView({
               <button
                 aria-current={current ? 'true' : undefined}
                 className="chaweb-session"
+                disabled={disabled}
                 onClick={() => onOpen(session.id)}
                 type="button"
               >
@@ -137,9 +143,10 @@ export function SessionsView({
           );
         })}
       </ul>
-      <button className="chaweb-new-session" onClick={onNewSession} type="button">
+      <button className="chaweb-new-session" disabled={disabled} onClick={onNewSession} type="button">
         New Session
       </button>
+      {vaultActions}
     </div>
   );
 }

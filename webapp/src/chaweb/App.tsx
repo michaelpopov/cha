@@ -10,6 +10,7 @@ import { useChaweb } from './useChaweb';
 import { useReadAloud } from './useReadAloud';
 import { useVoiceInput } from './useVoiceInput';
 import type { ChaWebClient } from './client';
+import { VaultActions } from './vaultActions';
 
 const emptyTranscript: [] = [];
 
@@ -22,6 +23,7 @@ export function App({ client }: { client: ChaWebClient }) {
   const voice = useVoiceInput(client, model.sessionKey, model.draft,
     model.onDraft, model.send, model.voiceBlocked, speech.busy);
   const [expanded, setExpanded] = useState(false);
+  const [vaultBusy, setVaultBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{
     key: string; title: string; message: string;
   } | null>(null);
@@ -69,6 +71,7 @@ export function App({ client }: { client: ChaWebClient }) {
     <div className="chaweb-app" style={frame}>
       {model.screen === 'list' ? (
         <SessionsView
+          disabled={vaultBusy}
           currentSessionId={model.currentSessionId}
           error={model.listError}
           forumId={model.forumId}
@@ -78,6 +81,13 @@ export function App({ client }: { client: ChaWebClient }) {
           onOpen={model.openSession}
           onRetry={model.listCanRetry ? model.retryList : undefined}
           sessions={model.sessions}
+          vaultActions={<VaultActions
+            blocked={model.vaultBlocked}
+            bootstrap={model.bootstrap}
+            client={client}
+            onBusy={setVaultBusy}
+            onRefresh={model.refreshVault}
+          />}
         />
       ) : (
         <Conversation
