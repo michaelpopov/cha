@@ -152,6 +152,15 @@ export function Composer({
   return (
     <div className="chaweb-composer">
       <div className="chaweb-size-row">
+        {voice?.status && (
+          <div
+            className={`chaweb-voice-status is-${voice.status}`}
+            role="status"
+          >
+            {voice.status === 'starting' ? 'Microphone starting…'
+              : voice.status === 'recording' ? 'Speak now' : 'Microphone paused'}
+          </div>
+        )}
         <button
           aria-label={expanded ? 'Shrink editor' : 'Expand editor'}
           className="chaweb-icon-button"

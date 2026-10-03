@@ -213,6 +213,24 @@ describe('playback position', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('audio'));
   });
 
+  it.each([0, 12.5])('resets reused media before playback and applies position %s using the new metadata', async (position) => {
+    const audio = new Audio();
+    // Replacing src can leave the old clip's metadata visible until load runs.
+    Object.assign(audio, { currentTime: 3, duration: 10, readyState: 1 });
+    vi.mocked(audio.load).mockImplementation(() => {
+      Object.assign(audio, { currentTime: 0, duration: NaN, readyState: 0 });
+    });
+    const session = new TextToSpeechSession(null, undefined, '', vi.fn(),
+      { position, onPositionChange: vi.fn() }, '/media/new-reply',
+      undefined, undefined, undefined, { audio });
+    await session.play();
+    expect(audio.currentTime).toBe(0);
+    Object.assign(audio, { duration: 60, readyState: 1 });
+    audio.dispatchEvent(new Event('loadedmetadata'));
+    expect(audio.currentTime).toBe(position);
+    session.stop();
+  });
+
   it('reuses a browser-unlocked audio element and removes the previous reply listeners', async () => {
     const audio = new Audio();
     const firstEnded = vi.fn();

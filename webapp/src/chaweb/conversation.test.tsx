@@ -55,6 +55,15 @@ it('copies speakers and messages without their timestamps, disables duplicate re
   await act(async () => finish());
   expect(copyResponse).toHaveAccessibleName('Copied to clipboard');
   expect(screen.getByRole('textbox')).toHaveValue('Unsent prompt');
+
+  const copyPrompt = screen.getByRole('button', { name: 'Copy prompt' });
+  expect(copyPrompt.textContent).toBe('');
+  await user.click(copyPrompt);
+  expect(writeText).toHaveBeenLastCalledWith('Question');
+  expect(copyPrompt).toBeDisabled();
+  await act(async () => finish());
+  expect(copyPrompt).toHaveAccessibleName('Copied to clipboard');
+  expect(screen.getByRole('textbox')).toHaveValue('Unsent prompt');
 });
 
 it('reports a failure and allows retry without changing the prompt', async () => {
@@ -78,6 +87,14 @@ it('reports a failure and allows retry without changing the prompt', async () =>
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(writeText).toHaveBeenLastCalledWith('Reply');
   expect(screen.getByRole('button', { name: 'Copied to clipboard' })).toBeEnabled();
+
+  writeText.mockRejectedValueOnce(new Error('Denied'));
+  await user.click(screen.getByRole('button', { name: 'Copy prompt' }));
+  expect(screen.getByRole('alert')).toHaveTextContent('Could not copy the prompt. Try again.');
+  await user.click(screen.getByRole('button', { name: 'Copy prompt' }));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(writeText).toHaveBeenLastCalledWith('Question');
+  expect(screen.getByRole('textbox')).toHaveValue('Unsent prompt');
 });
 
 it('disables copying an empty conversation or one being deleted', () => {
@@ -86,6 +103,7 @@ it('disables copying an empty conversation or one being deleted', () => {
   rerender(<Conversation {...props} deleting />);
   expect(screen.getByRole('button', { name: 'Copy conversation' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Copy response' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Copy prompt' })).toBeDisabled();
 });
 
 it('ignores clipboard completion after switching to another session', async () => {

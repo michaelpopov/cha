@@ -246,9 +246,14 @@ export function useVoiceInput(
     };
   }, []);
 
+  const status: 'starting' | 'recording' | 'paused' | null = !enabled ? null
+    : blocked || speechBusy || playing || phase === 'finishing' ? 'paused'
+    : phase === 'recording' ? 'recording' : 'starting';
+
   return {
     available,
     enabled,
+    status,
     label: phase === 'starting' ? 'Cancel voice input setup'
       : enabled ? 'Stop voice input' : 'Start voice input',
     disabled: phase === 'finishing' || (!enabled && (blocked || speechBusy || playing)),

@@ -48,7 +48,7 @@ button:disabled {
 }
 
 .chaweb-read-aloud,
-.chaweb-copy-response {
+.chaweb-copy-entry {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -60,7 +60,7 @@ button:disabled {
 }
 
 .chaweb-read-aloud svg,
-.chaweb-copy-response svg {
+.chaweb-copy-entry svg {
   width: 16px;
   height: 16px;
 }
@@ -70,7 +70,7 @@ button:disabled {
 }
 
 .chaweb-read-aloud.is-cached,
-.chaweb-copy-response.is-copied {
+.chaweb-copy-entry.is-copied {
   color: var(--accent-foreground);
 }
 
@@ -344,7 +344,56 @@ button:disabled {
 }
 
 .chaweb-size-row {
-  justify-content: center;
+  justify-content: flex-end;
+}
+
+.chaweb-voice-status {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--border);
+  color: var(--muted-foreground);
+  font-weight: 600;
+}
+
+.chaweb-voice-status::before {
+  content: '';
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.chaweb-voice-status.is-starting {
+  background: light-dark(rgb(255 237 190), rgb(82 59 12));
+  color: light-dark(rgb(125 79 0), rgb(255 213 115));
+}
+
+.chaweb-voice-status.is-starting::before {
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  background: transparent;
+  animation: chaweb-microphone-spin 0.8s linear infinite;
+}
+
+.chaweb-voice-status.is-recording {
+  background: light-dark(rgb(208 244 221), rgb(20 65 38));
+  color: light-dark(rgb(16 103 48), rgb(132 239 166));
+}
+
+@keyframes chaweb-microphone-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chaweb-voice-status.is-starting::before {
+    animation: none;
+  }
 }
 
 .chaweb-controls {

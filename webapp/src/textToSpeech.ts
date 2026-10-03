@@ -213,6 +213,8 @@ export class TextToSpeechSession {
     // Safari needs this before attaching a ManagedMediaSource without an AirPlay URL.
     if (managed) audio.disableRemotePlayback = true;
     audio.src = url;
+    // Reset the reused Safari player before playback or checking resume metadata.
+    audio.load();
     this.audio = audio;
     const signal = this.request.signal;
     audio.addEventListener('ended', () => this.finish(true), { once: true, signal });

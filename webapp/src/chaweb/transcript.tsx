@@ -28,9 +28,13 @@ function appearanceFor(
   return roster.find((item) => item.id === entry.participant_id)?.appearance;
 }
 
-function CopyResponseButton({ text, disabled }: { text: string; disabled: boolean }) {
+function CopyEntryButton({ text, item, disabled }: {
+  text: string;
+  item: 'prompt' | 'response';
+  disabled: boolean;
+}) {
   const [state, setState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
-  const label = state === 'copied' ? 'Copied to clipboard' : 'Copy response';
+  const label = state === 'copied' ? 'Copied to clipboard' : `Copy ${item}`;
 
   useEffect(() => {
     if (state !== 'copied') return;
@@ -42,7 +46,7 @@ function CopyResponseButton({ text, disabled }: { text: string; disabled: boolea
     <>
       <button
         aria-label={label}
-        className={`chaweb-copy-response${state === 'copied' ? ' is-copied' : ''}`}
+        className={`chaweb-copy-entry${state === 'copied' ? ' is-copied' : ''}`}
         disabled={disabled || state === 'copying'}
         onClick={() => {
           setState('copying');
@@ -53,7 +57,7 @@ function CopyResponseButton({ text, disabled }: { text: string; disabled: boolea
       >
         {state === 'copied' ? <CheckIcon /> : <CopyIcon />}
       </button>
-      {state === 'failed' && <span role="alert">Could not copy the response. Try again.</span>}
+      {state === 'failed' && <span role="alert">Could not copy the {item}. Try again.</span>}
     </>
   );
 }
@@ -119,7 +123,8 @@ export function Transcript({
         const downloading = speech?.isDownloading(entry) ?? false;
         const canRead = speech && entry.kind === 'character' && entry.status === 'complete'
           && entry.text.trim() && (speech.available || cached);
-        const canCopy = entry.kind === 'character' && Boolean(entry.text.trim());
+        const canCopy = (entry.kind === 'human' || entry.kind === 'character')
+          && Boolean(entry.text.trim());
         const selected = speech?.entryId === entry.id;
         const speechLabel = selected
           ? speech?.state === 'loading' ? 'Stop audio' : 'Pause audio'
@@ -158,8 +163,9 @@ export function Transcript({
                   </button>
                 )}
                 {canCopy && (
-                  <CopyResponseButton
+                  <CopyEntryButton
                     disabled={deleting}
+                    item={entry.kind === 'human' ? 'prompt' : 'response'}
                     key={`${sessionKey}:${entry.id}`}
                     text={entry.text}
                   />

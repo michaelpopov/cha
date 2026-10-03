@@ -64,6 +64,53 @@ async function listen() {
   await screen.findByRole('button', { name: 'Stop voice input' });
 }
 
+it('shows starting until the connection is ready and hides the indicator when setup is cancelled', async () => {
+  let ready!: (transport: VoiceInputTransport) => void;
+  vi.mocked(VoiceInputSession.start).mockImplementation(() => new Promise((resolve) => { ready = resolve; }));
+  render(<Harness />);
+  const mic = await screen.findByRole('button', { name: 'Start voice input' });
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  fireEvent.click(mic);
+  expect(screen.getByRole('status')).toHaveTextContent('Microphone starting…');
+  expect(screen.queryByText('Speak now')).not.toBeInTheDocument();
+  const transport = { stop: vi.fn(async () => {}), cancel: vi.fn() };
+  await act(async () => ready(transport));
+  expect(screen.getByRole('status')).toHaveTextContent('Speak now');
+  await act(async () => fireEvent.click(mic));
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  fireEvent.click(mic);
+  expect(screen.getByRole('status')).toHaveTextContent('Microphone starting…');
+  fireEvent.click(mic);
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  await act(async () => ready(transport));
+  expect(transport.cancel).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+});
+
+it('shows paused during generation, audio loading, playback and the echo delay, then waits for reconnection', async () => {
+  const view = render(<Harness />);
+  await listen();
+  expect(screen.getByRole('status')).toHaveTextContent('Speak now');
+  view.rerender(<Harness blocked />);
+  expect(screen.getByRole('status')).toHaveTextContent('Microphone paused');
+  view.rerender(<Harness speechBusy />);
+  expect(screen.getByRole('status')).toHaveTextContent('Microphone paused');
+  let endPlayback!: () => void;
+  act(() => { endPlayback = beginSpeechPlayback(); });
+  view.rerender(<Harness />);
+  expect(screen.getByRole('status')).toHaveTextContent('Microphone paused');
+  let ready!: (transport: VoiceInputTransport) => void;
+  vi.mocked(VoiceInputSession.start).mockImplementation(() => new Promise((resolve) => { ready = resolve; }));
+  vi.useFakeTimers();
+  act(() => endPlayback());
+  await act(async () => { await vi.advanceTimersByTimeAsync(399); });
+  expect(screen.getByRole('status')).toHaveTextContent('Microphone paused');
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(screen.getByRole('status')).toHaveTextContent('Microphone starting…');
+  await act(async () => ready({ stop: vi.fn(async () => {}), cancel: vi.fn() }));
+  expect(screen.getByRole('status')).toHaveTextContent('Speak now');
+});
+
 it.each(['Enter', 'Send'])('submits typed text with %s during playback and the echo delay', async (control) => {
   render(<Harness />);
   await screen.findByRole('button', { name: 'Start voice input' });
