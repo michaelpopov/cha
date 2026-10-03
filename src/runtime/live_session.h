@@ -137,7 +137,8 @@ private:
     [[nodiscard]] bool retirement_requested() const noexcept;
     [[nodiscard]] bool shutdown_requested() const noexcept;
     [[nodiscard]] ShutdownReason shutdown_reason() const noexcept;
-    void settle_submission();
+    void persist_default_character(CommandResult& outcome);
+    void settle_submission(ControllerUpdate& update);
     std::chrono::steady_clock::time_point next_deadline() const;
     void fail_current(std::shared_ptr<CommandReply> reply = {});
     void finalize(ShutdownReason reason) noexcept;

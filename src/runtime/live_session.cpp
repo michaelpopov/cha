@@ -291,19 +291,8 @@ void LiveSession::execute(OwnerCommand command) {
     }, command.command);
     naming_.store(controller.is_naming());
 
-    if (outcome.persist_default_character_id && persist_default_character_) {
-        try {
-            persist_default_character_(*outcome.persist_default_character_id);
-        } catch (const std::bad_alloc&) {
-            throw;
-        } catch (const std::exception& error) {
-            log_warn(session_log(
-                identity_, "default_character_not_saved " + std::string(error.what())));
-            outcome.session.notice =
-                outcome.session.notice.value_or(std::string()) + " (not saved)";
-            outcome.persist_default_character_id.reset();
-        }
-    }
+    persist_default_character(outcome);
+    settle_submission(outcome.session);
     const bool presentation_changed = apply_notice(outcome.session.notice);
     publish_update(std::move(outcome.session.state), presentation_changed);
     mirror_if_changed();
@@ -314,15 +303,31 @@ void LiveSession::execute(OwnerCommand command) {
     } else {
         (void)command.reply->complete(std::move(outcome));
     }
-    settle_submission();
     if (session_ended) request_shutdown(ShutdownReason::session_closed);
+}
+
+void LiveSession::persist_default_character(CommandResult& outcome) {
+    if (outcome.persist_default_character_id && persist_default_character_) {
+        try {
+            persist_default_character_(*outcome.persist_default_character_id);
+        } catch (const std::bad_alloc&) {
+            throw;
+        } catch (const std::exception& error) {
+            log_warn(session_log(
+                identity_, "default_character_not_saved " + std::string(error.what())));
+            outcome.session.notice = outcome.session.notice && !outcome.session.notice->empty()
+                ? *outcome.session.notice + " (not saved)"
+                : "Default character was not saved.";
+            outcome.persist_default_character_id.reset();
+        }
+    }
 }
 
 bool LiveSession::receive_events(std::size_t batch_size) {
     ControllerEventBatch events = controller_->receive_events(batch_size);
     naming_.store(controller_->is_naming());
     if (events.update.session_label) label_ = std::move(*events.update.session_label);
-    settle_submission();
+    settle_submission(events.update);
     generating_.store(controller_->is_generating());
     const bool presentation_changed = apply_notice(events.update.notice);
     publish_update(std::move(events.update.state), presentation_changed);
@@ -332,7 +337,7 @@ bool LiveSession::receive_events(std::size_t batch_size) {
     return events.full;
 }
 
-void LiveSession::settle_submission() {
+void LiveSession::settle_submission(ControllerUpdate& update) {
     auto result = controller_->take_submission_result();
     if (!result || !deferred_submit_) return;
     auto reply = std::exchange(deferred_submit_, {});
@@ -343,9 +348,14 @@ void LiveSession::settle_submission() {
         (void)reply->complete(CommandFailure{ErrorCode::invalid_argument,
             result->update.notice.value_or("The prompt could not be dispatched.")});
     } else {
-        (void)reply->complete(CommandResult{
+        CommandResult outcome{
             .session = std::move(result->update),
-            .clear_input = result->outcome == Outcome::accepted});
+            .clear_input = result->outcome == Outcome::accepted,
+            .persist_default_character_id = std::move(result->persist_default_character_id)};
+        const auto notice = outcome.session.notice;
+        persist_default_character(outcome);
+        if (outcome.session.notice != notice) update.notice = outcome.session.notice;
+        (void)reply->complete(std::move(outcome));
     }
 }
 

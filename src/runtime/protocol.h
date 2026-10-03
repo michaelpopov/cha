@@ -185,7 +185,7 @@ struct CommandResult {
     // exposes only clear_input and session.notice to the browser.
     ControllerUpdate session;
     bool clear_input{};
-    // A successful default-character command also carries the canonical ID so
+    // A successful character selection also carries the canonical ID so
     // the session owner can update the forum configuration before publishing.
     std::optional<CharacterId> persist_default_character_id;
 };

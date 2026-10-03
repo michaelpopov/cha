@@ -276,6 +276,17 @@ protected:
         auto pending = std::exchange(workers, {});
         for (auto& worker : pending) worker();
     }
+    void use_runtime_providers(JevResult result) {
+        controller.reset();
+        providers = std::make_shared<Providers>(
+            [](SharedCharacterDefinition definition) {
+                auto backend = test::scripted_backend(std::make_shared<test::BackendControls>(),
+                    definition->character.id, definition->character.display_name);
+                return std::make_unique<test::RequestBackendFacade>(
+                    std::make_shared<test::RequestBackendFacade::Slot>(std::move(backend)));
+            }, ProviderThreadLauncher{},
+            [result](const auto&, const auto&) { return result; });
+    }
     void finish() {
         for (int i = 0; i < 5 && controller->is_generating(); ++i) {
             run_workers(); (void)controller->receive_events(100);
@@ -1165,7 +1176,10 @@ TEST_F(JevRouting, SpecificDecisionsUpdateCurrentTargetAndUndefinedKeepsIt) {
     (void)controller->receive_events(100);
     EXPECT_EQ(controller->view().default_character_id, "marcus");
     EXPECT_EQ(controller->view().transcript.entries.front().addressed_to, "marcus");
-    ASSERT_TRUE(controller->take_submission_result()->update.input_consumed);
+    const auto selected = controller->take_submission_result();
+    ASSERT_TRUE(selected);
+    EXPECT_TRUE(selected->update.input_consumed);
+    EXPECT_EQ(selected->persist_default_character_id, "marcus");
     EXPECT_EQ(store->snapshot()->find_forum("lobby")->default_character_id, "guide");
     finish();
     decision = {JevOutcome::success, "all_characters"};
@@ -1173,17 +1187,96 @@ TEST_F(JevRouting, SpecificDecisionsUpdateCurrentTargetAndUndefinedKeepsIt) {
     run_workers(); (void)controller->receive_events(100);
     EXPECT_EQ(controller->view().default_character_id, "*");
     EXPECT_EQ(workers.size(), 2u);
+    EXPECT_FALSE(controller->take_submission_result()->persist_default_character_id);
     finish();
     decision = {JevOutcome::success, "undefined"};
     (void)send("Explain further");
     run_workers(); (void)controller->receive_events(100);
     EXPECT_EQ(controller->view().default_character_id, "*");
     EXPECT_EQ(workers.size(), 2u);
+    EXPECT_FALSE(controller->take_submission_result()->persist_default_character_id);
     finish();
     EXPECT_EQ(classified.size(), 3u);
     controller.reset();
     controller = make_controller(notifier);
     EXPECT_EQ(controller->view().default_character_id, "guide");
+}
+
+TEST_F(JevRouting, RuntimeSavesIdentifiedCharacterForForumAndReopensWithIt) {
+    use_runtime_providers({JevOutcome::success, "character_2"});
+    const auto opener = [&](const FullSessionId&, auto wake) {
+        return OpenedSession{.label = "Original",
+            .controller = SessionController::from_workspace_for_testing(
+                [this] { return store->snapshot(); },
+                store->snapshot()->find_forum("lobby")->default_character_id,
+                "reader", journal.path(), providers, wake, {}, {}, {"lobby", "session"}),
+            .persist_default_character = [&](auto id) {
+                (void)store->apply_forum_default_character("lobby", id);
+            }};
+    };
+    {
+        LiveSessionManager manager({}, opener);
+        ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open({"lobby", "session"}, 2s)));
+        auto session = manager.lookup({"lobby", "session"});
+        const auto reply = session->submit(RawCommand{"Marcus, please answer"}, 2s);
+        ASSERT_TRUE(std::holds_alternative<CommandResult>(reply));
+        EXPECT_TRUE(std::get<CommandResult>(reply).clear_input);
+        EXPECT_EQ(store->snapshot()->find_forum("lobby")->default_character_id, "marcus");
+        const auto snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
+        EXPECT_EQ(snapshot.default_character_id, "marcus");
+        EXPECT_EQ(snapshot.forum.default_character_id, "marcus");
+    }
+    LiveSessionManager reopened({}, opener);
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(reopened.open({"lobby", "session"}, 2s)));
+    const auto snapshot = std::get<SessionSnapshot>(
+        reopened.lookup({"lobby", "session"})->snapshot(2s));
+    EXPECT_EQ(snapshot.default_character_id, "marcus");
+}
+
+TEST_F(JevRouting, RuntimeDoesNotSaveMarkersFallbacksOrExplicitRecipients) {
+    controller.reset();
+    for (const auto& result : {JevResult{JevOutcome::success, "all_characters"},
+             JevResult{JevOutcome::success, "undefined"},
+             JevResult{JevOutcome::failure, {}, "Unavailable"},
+             JevResult{JevOutcome::success, "character_2"}}) {
+        SCOPED_TRACE(result.choice);
+        test::TemporarySessionFile file{"jev_unsaved", {"lobby", "session"}};
+        use_runtime_providers(result);
+        int saved = 0;
+        LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+            return OpenedSession{.label = "Original",
+                .controller = SessionController::from_workspace_for_testing(
+                    [this] { return store->snapshot(); }, "guide", "reader", file.path(),
+                    providers, wake, {}, {}, {"lobby", "session"}),
+                .persist_default_character = [&](auto) { ++saved; }};
+        });
+        ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open({"lobby", "session"}, 2s)));
+        const auto reply = manager.lookup({"lobby", "session"})->submit(
+            RawCommand{result.choice == "character_2" ? "@Guide question" : "Question"}, 2s);
+        ASSERT_TRUE(std::holds_alternative<CommandResult>(reply));
+        EXPECT_TRUE(std::get<CommandResult>(reply).clear_input);
+        EXPECT_EQ(saved, 0);
+    }
+}
+
+TEST_F(JevRouting, RuntimeKeepsIdentifiedCharacterWhenForumSettingsCannotBeSaved) {
+    use_runtime_providers({JevOutcome::success, "character_2"});
+    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+        return OpenedSession{.label = "Original", .controller = make_controller(wake),
+            .persist_default_character = [](auto) { throw std::runtime_error("Read-only workspace"); }};
+    });
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open({"lobby", "session"}, 2s)));
+    auto session = manager.lookup({"lobby", "session"});
+    const auto reply = session->submit(RawCommand{"Marcus, please answer"}, 2s);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(reply));
+    EXPECT_TRUE(std::get<CommandResult>(reply).clear_input);
+    ASSERT_TRUE(std::get<CommandResult>(reply).session.notice);
+    EXPECT_NE(std::get<CommandResult>(reply).session.notice->find("not saved"), std::string::npos);
+    const auto snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
+    EXPECT_EQ(snapshot.default_character_id, "marcus");
+    ASSERT_TRUE(snapshot.notice);
+    EXPECT_NE(snapshot.notice->find("not saved"), std::string::npos);
+    EXPECT_EQ(store->snapshot()->find_forum("lobby")->default_character_id, "guide");
 }
 
 TEST_F(JevRouting, SettingsAreCapturedAndFailuresFallbackWithNotice) {

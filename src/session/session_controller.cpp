@@ -645,6 +645,10 @@ ControllerUpdate SessionController::finish_classification() {
     save_name_after_acceptance();
     submission_result_ = SubmissionResult{
         update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed, update};
+    if (update.input_consumed && !failed && result.choice != "undefined"
+        && target != all_characters_target) {
+        submission_result_->persist_default_character_id = target;
+    }
     // Dispatch errors are delivered through the submission reply.
     if (!update.input_consumed) update.notice.reset();
     return update;

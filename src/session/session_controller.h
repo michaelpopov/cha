@@ -111,7 +111,11 @@ public:
     [[nodiscard]] bool classification_pending() const noexcept { return pending_classification_.has_value(); }
     [[nodiscard]] std::chrono::steady_clock::time_point next_deadline() const noexcept;
     enum class SubmissionOutcome { accepted, cancelled, expired, failed };
-    struct SubmissionResult { SubmissionOutcome outcome; ControllerUpdate update; };
+    struct SubmissionResult {
+        SubmissionOutcome outcome;
+        ControllerUpdate update;
+        std::optional<CharacterId> persist_default_character_id;
+    };
     std::optional<SubmissionResult> take_submission_result();
 
 private:
