@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Blob as NodeBlob } from 'node:buffer';
+import CodecParser from 'codec-parser';
 
 import { TextToSpeechSession } from './textToSpeech';
 import { onSpeechPlaybackChange } from './speechPlayback';
@@ -15,6 +17,33 @@ type TestAudio = EventTarget & {
 };
 
 const audios: TestAudio[] = [];
+
+function mp3Frames(header = [0xff, 0xfa, 0x90, 0xc0], length = 417): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(5 * length);
+  for (let index = 0; index < 5; index++) {
+    bytes.set(header, index * length);
+    bytes[(index + 1) * length - 1] = index + 1;
+  }
+  return bytes;
+}
+
+function checkSilentPrefix(bytes: Uint8Array, reply: Uint8Array, length = 417) {
+  const prefix = bytes.subarray(0, bytes.length - reply.length);
+  expect(bytes.subarray(prefix.length)).toEqual(reply);
+  const parser = new CodecParser('audio/mpeg');
+  const frames = [...parser.parseChunk(prefix), ...parser.flush()];
+  const duration = frames.reduce((sum, frame) => sum + frame.duration, 0) / 1000;
+  expect(duration).toBeGreaterThanOrEqual(2);
+  expect(duration).toBeLessThan(2.06);
+  expect(frames.length * length).toBe(prefix.length);
+  for (const frame of frames) {
+    const header = reply.slice(0, 4);
+    header[1] |= 1;
+    expect(frame.data.subarray(0, 4)).toEqual(header);
+    expect(frame.data.subarray(4).every(byte => byte === 0)).toBe(true);
+  }
+  return duration;
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -337,6 +366,60 @@ describe('playback position', () => {
   });
 });
 
+describe('automatic reply silence', () => {
+  beforeEach(() => { vi.stubGlobal('Blob', NodeBlob); });
+
+  it.each([
+    { header: [0xff, 0xfa, 0x90, 0xc0], length: 417 }, // MPEG-1, 44.1 kHz, CRC.
+    { header: [0xff, 0xf2, 0x80, 0xc0], length: 208 }, // MPEG-2, 22.05 kHz, CRC.
+    { header: [0xff, 0xe2, 0x80, 0xc0], length: 417 }, // MPEG-2.5, 11.025 kHz, CRC.
+  ])('pads cached MP3 with valid silence matching $header', async ({ header, length }) => {
+    const reply = mp3Frames(header, length);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(reply, {
+      headers: { 'Content-Type': 'audio/mpeg' },
+    }));
+    const position = vi.fn();
+    const session = new TextToSpeechSession(null, undefined, '', vi.fn(),
+      { position: 0, onPositionChange: position }, '/media/reply', undefined, undefined, undefined,
+      { leadingSilence: true });
+    await session.play();
+    const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
+    const duration = checkSilentPrefix(new Uint8Array(await blob.arrayBuffer()), reply, length);
+    audios[0].currentTime = duration + 0.75;
+    session.stop();
+    expect(position).toHaveBeenCalledWith(expect.closeTo(0.75, 5));
+  });
+
+  it.each([0, 1])('keeps manual or resumed audio at speech position %s without padding', async (position) => {
+    const reply = mp3Frames();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(reply, {
+      headers: { 'Content-Type': 'audio/mpeg' },
+    }));
+    const session = new TextToSpeechSession(null, undefined, '', vi.fn(),
+      { position, onPositionChange() {} }, '/media/reply', undefined, undefined, undefined,
+      { leadingSilence: position > 0 });
+    await session.play();
+    const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(reply);
+    expect(audios[0].currentTime).toBe(position);
+    session.stop();
+  });
+
+  it('saves zero when cancelled during silence', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(mp3Frames(), {
+      headers: { 'Content-Type': 'audio/mpeg' },
+    }));
+    const position = vi.fn();
+    const session = new TextToSpeechSession(null, undefined, '', vi.fn(),
+      { position: 0, onPositionChange: position }, '/media/reply', undefined, undefined, undefined,
+      { leadingSilence: true });
+    await session.play();
+    audios[0].currentTime = 1;
+    session.stop();
+    expect(position).toHaveBeenCalledExactlyOnceWith(0);
+  });
+});
+
 describe('streaming playback', () => {
   const appended: string[] = [];
   const appendedBytes: Uint8Array[] = [];
@@ -375,6 +458,41 @@ describe('streaming playback', () => {
     appended.length = 0;
     appendedBytes.length = 0;
     vi.stubGlobal('MediaSource', TestMediaSource);
+  });
+
+  it.each(['raw MP3', 'Safari MP4', 'complete fallback'])('pads automatic %s once across split headers', async (path) => {
+    vi.stubGlobal('Blob', NodeBlob);
+    if (path === 'Safari MP4') {
+      vi.spyOn(TestMediaSource, 'isTypeSupported').mockImplementation(type => type === 'audio/mp4;codecs="mp3"');
+      class ManagedSource extends TestMediaSource { streaming = true; }
+      vi.stubGlobal('MediaSource', undefined);
+      vi.stubGlobal('ManagedMediaSource', ManagedSource);
+    } else if (path === 'complete fallback') vi.stubGlobal('MediaSource', undefined);
+    const reply = mp3Frames();
+    const packet = (bytes: Uint8Array<ArrayBuffer>, complete: boolean) => new Response(bytes, {
+      headers: { 'Content-Type': 'audio/mpeg', 'X-CHA-Audio-Complete': complete ? '1' : '0' },
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(packet(reply.slice(0, 2), false))
+      .mockResolvedValueOnce(packet(reply.slice(2, 1000), false))
+      .mockResolvedValueOnce(packet(reply.slice(1000), true));
+    const cached = vi.fn();
+    const session = new TextToSpeechSession(null, undefined, '', vi.fn(), undefined,
+      '/media/reply', cached, undefined, undefined, { streaming: true, leadingSilence: true });
+    await session.play();
+    await vi.waitFor(() => expect(cached).toHaveBeenCalledOnce());
+    let bytes: Uint8Array;
+    if (path === 'complete fallback') {
+      const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
+      bytes = new Uint8Array(await blob.arrayBuffer());
+    } else if (path === 'Safari MP4') {
+      bytes = new Uint8Array(appendedBytes.slice(1).flatMap(fragment => {
+        const moofSize = new DataView(fragment.buffer).getUint32(0);
+        return [...fragment.subarray(moofSize + 8)];
+      }));
+    } else bytes = new Uint8Array(appendedBytes.flatMap(part => [...part]));
+    checkSilentPrefix(bytes, reply);
+    expect(audios[0].play).toHaveBeenCalledOnce();
+    session.stop();
   });
 
   it('starts before the final bytes and marks the cache only on successful completion', async () => {

@@ -463,16 +463,18 @@ it('streams new replies once in transcript order, including a reply in progress 
     { ...entry, id: 9 }, { ...entry, id: 10, kind: 'human' }] };
   await act(async () => rerender({ snapshot: complete }));
   expect(result.current).toMatchObject({ entryId: 8, state: 'playing' });
-  expect(vi.mocked(TextToSpeechSession).mock.calls[0][9]).toMatchObject({ streaming: true });
+  expect(vi.mocked(TextToSpeechSession).mock.calls[0][9]).toMatchObject({ streaming: true, leadingSilence: true });
   const audioElement = vi.mocked(TextToSpeechSession).mock.calls[0][9]?.audio;
   expect(audioElement).toBeDefined();
   await act(async () => ended());
   expect(result.current.entryId).toBe(9);
-  expect(vi.mocked(TextToSpeechSession).mock.calls[1][9]).toMatchObject({ streaming: false, audio: audioElement });
+  expect(vi.mocked(TextToSpeechSession).mock.calls[1][9]).toMatchObject({ streaming: false, audio: audioElement, leadingSilence: true });
   await act(async () => ended());
   rerender({ snapshot: { ...complete, transcript: [...complete.transcript] } });
   expect(play).toHaveBeenCalledTimes(2);
   expect(vi.mocked(api.startAudio).mock.calls.map((call) => call[2])).toEqual([9, 8]);
+  await act(async () => result.current.toggle(entry));
+  expect(vi.mocked(TextToSpeechSession).mock.calls[2][9]?.leadingSilence).toBeUndefined();
 });
 
 it('turns automatic playback off without cancelling accepted downloads or replaying old replies', async () => {

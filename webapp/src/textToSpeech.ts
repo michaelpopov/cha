@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import CodecParser from 'codec-parser';
+import CodecParser, { type CodecFrame } from 'codec-parser';
 import MSEAudioWrapper from 'mse-audio-wrapper';
 
 import type { ChaClient, VoiceUpdate } from './api/client';
@@ -150,6 +150,7 @@ export class TextToSpeechSession {
   private nativeResourceId: string | null = null;
   private endPlayback: (() => void) | null = null;
   private playbackWaitTimer: ReturnType<typeof setTimeout> | undefined;
+  private leadingSilenceSeconds = 0;
 
   constructor(
     _configuration: TextToSpeechConfiguration | null,
@@ -164,7 +165,9 @@ export class TextToSpeechSession {
     private readonly onCached?: () => void,
     private readonly nativeSpeech?: NativeSpeech,
     private readonly onDispose?: () => void,
-    private readonly options?: { streaming?: boolean; onError?(error: Error): void; audio?: HTMLAudioElement },
+    private readonly options?: {
+      streaming?: boolean; onError?(error: Error): void; audio?: HTMLAudioElement; leadingSilence?: boolean;
+    },
   ) {}
 
   async play(): Promise<void> {
@@ -186,14 +189,34 @@ export class TextToSpeechSession {
     }
     if (this.cachedUrl) this.onCached?.();
 
-    this.objectUrl = URL.createObjectURL(blob);
-    if (this.stopped) {
-      this.releaseObjectUrl();
-      this.releaseNative();
-      this.onDispose?.();
-      return;
+    const audio = await this.createBlobAudio(blob);
+    if (audio) await this.startAudio(audio);
+  }
+
+  private silentFrames(frame: CodecFrame): Uint8Array<ArrayBuffer> {
+    if (!this.options?.leadingSilence || this.leadingSilenceSeconds > 0
+      || (this.playback?.position ?? 0) > 0 || frame.header.layer !== 'Layer III') return new Uint8Array();
+    const count = Math.ceil(2000 / frame.duration);
+    const silence = new Uint8Array(count * frame.data.length);
+    for (let offset = 0; offset < silence.length; offset += frame.data.length) {
+      silence.set(frame.data.subarray(0, 4), offset);
+      silence[offset + 1] |= 1; // No CRC; zero side information and payload decode as silence.
     }
-    await this.startAudio(this.createAudio(this.objectUrl));
+    this.leadingSilenceSeconds = count * frame.duration / 1000;
+    return silence;
+  }
+
+  private async createBlobAudio(blob: Blob): Promise<HTMLAudioElement | null> {
+    if (this.options?.leadingSilence && blob.type.split(';')[0] === 'audio/mpeg'
+      && (this.playback?.position ?? 0) === 0) {
+      const parser = new CodecParser('audio/mpeg', { enableFrameCRC32: false });
+      const first = parser.parseChunk(new Uint8Array(await blob.arrayBuffer())).next().value
+        ?? parser.flush().next().value;
+      if (first) blob = new Blob([this.silentFrames(first).buffer, blob], { type: blob.type });
+    }
+    if (this.stopped) return null;
+    this.objectUrl = URL.createObjectURL(blob);
+    return this.createAudio(this.objectUrl);
   }
 
   private async startAudio(audio: HTMLAudioElement): Promise<void> {
@@ -268,8 +291,8 @@ export class TextToSpeechSession {
       for await (const chunk of chunks) parts.push(chunk.bytes);
       if (this.stopped) return;
       this.onCached?.();
-      this.objectUrl = URL.createObjectURL(new Blob(parts, { type: first.value.type }));
-      await this.startAudio(this.createAudio(this.objectUrl));
+      const audio = await this.createBlobAudio(new Blob(parts, { type: first.value.type }));
+      if (audio) await this.startAudio(audio);
       return;
     }
     const source = new StreamingSource() as MediaSource & { readonly streaming?: boolean };
@@ -280,7 +303,8 @@ export class TextToSpeechSession {
     const buffer = source.addSourceBuffer(wrappedMp3 ? mp4Mime : mime);
     if (wrappedMp3) buffer.mode = 'sequence';
     // Firefox accepts MP3 frames inside MP4, but not the raw MP3 byte stream.
-    const parser = wrappedMp3 ? new CodecParser(mime, { enableFrameCRC32: false }) : null;
+    const parser = wrappedMp3 || this.options?.leadingSilence
+      ? new CodecParser(mime, { enableFrameCRC32: false }) : null;
     const wrapper = wrappedMp3 ? new MSEAudioWrapper(mime, {
       codec: 'mpeg', minFramesPerSegment: 1, minBytesPerSegment: 1,
     }) : null;
@@ -296,8 +320,23 @@ export class TextToSpeechSession {
       }
       await waitForAudioEvent(buffer, 'updateend', signal, () => buffer.appendBuffer(bytes));
     };
-    const appendFrames = async (frames: IterableIterator<unknown>) => {
-      for (const segment of wrapper!.iterator([...frames])) await append(segment.buffer);
+    const appendFrames = async (frames: IterableIterator<CodecFrame>) => {
+      const parsed = [...frames];
+      if (!parsed.length) return;
+      const silence = this.silentFrames(parsed[0]);
+      if (wrapper) {
+        if (silence.length) {
+          const silenceParser = new CodecParser(mime, { enableFrameCRC32: false });
+          parsed.unshift(...silenceParser.parseChunk(silence), ...silenceParser.flush());
+        }
+        for (const segment of wrapper.iterator(parsed)) await append(segment.buffer);
+      } else {
+        const bytes = new Uint8Array(silence.length + parsed.reduce((sum, frame) => sum + frame.data.length, 0));
+        bytes.set(silence);
+        let offset = silence.length;
+        for (const frame of parsed) { bytes.set(frame.data, offset); offset += frame.data.length; }
+        await append(bytes.buffer);
+      }
     };
     const appendChunk = async (bytes: ArrayBuffer) => {
       if (parser) await appendFrames(parser.parseChunk(new Uint8Array(bytes)));
@@ -333,7 +372,7 @@ export class TextToSpeechSession {
     if (this.playback && this.audio) {
       if (resetPosition) this.playback.onPositionChange(0);
       else if (this.audio.readyState >= 1 && Number.isFinite(this.audio.currentTime)) {
-        this.playback.onPositionChange(this.audio.currentTime);
+        this.playback.onPositionChange(Math.max(0, this.audio.currentTime - this.leadingSilenceSeconds));
       }
     }
     this.audio?.removeAttribute('src');

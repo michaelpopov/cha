@@ -202,6 +202,7 @@ export function useReadAloud(
         audioUrl(forum!, session!, entry.id),
         markCached,
         undefined, undefined, { streaming, onError: failed,
+          ...(automatically ? { leadingSilence: true } : {}),
           ...(automaticAudio.current ? { audio: automaticAudio.current } : {}) },
       );
       player.current = playback;

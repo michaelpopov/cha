@@ -1,8 +1,13 @@
 declare module 'codec-parser' {
+  export interface CodecFrame {
+    data: Uint8Array<ArrayBuffer>;
+    duration: number;
+    header: { layer: string };
+  }
   export default class CodecParser {
     constructor(mimeType: string, options?: { enableFrameCRC32?: boolean });
-    parseChunk(bytes: Uint8Array): IterableIterator<unknown>;
-    flush(): IterableIterator<unknown>;
+    parseChunk(bytes: Uint8Array): IterableIterator<CodecFrame>;
+    flush(): IterableIterator<CodecFrame>;
   }
 }
 
