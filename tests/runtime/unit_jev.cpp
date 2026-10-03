@@ -46,7 +46,7 @@ TEST(JevProtocol, SendsOnlyPromptAndOptionsAndValidatesExactChoice) {
     EXPECT_EQ(body["model"], "typesafe/jev-1.13");
     EXPECT_EQ(body["state"].size(), 1u);
     EXPECT_EQ(body["state"]["prompt"], input.prompt);
-    EXPECT_EQ(body["questions"]["recipient"]["criteria"].size(), 4u);
+    EXPECT_EQ(body["questions"]["recipient"]["criteria"].size(), 5u);
     EXPECT_EQ(body["questions"]["web_search"]["type"], "choice");
     EXPECT_EQ(body["questions"]["web_search"]["criteria"].size(), 3u);
     const auto response = [](std::string recipient, std::string search = "no_search") {
@@ -54,7 +54,7 @@ TEST(JevProtocol, SendsOnlyPromptAndOptionsAndValidatesExactChoice) {
             {"recipient", {{"type", "choice"}, {"choice", recipient}}},
             {"web_search", {{"type", "choice"}, {"choice", search}}}}}};
     };
-    for (const std::string choice : {"character_1", "character_2", "undefined", "all_characters"}) {
+    for (const std::string choice : {"character_1", "character_2", "undefined", "all_characters", "self_note"}) {
         EXPECT_EQ(parse_jev_result(response(choice), input).choice, choice);
     }
     for (const std::string choice : {"Seneca", " character_1", "character_1 extra", "character_9"}) {
@@ -85,7 +85,7 @@ TEST(JevProtocol, SendsOnlyPromptAndOptionsAndValidatesExactChoice) {
     EXPECT_EQ(parse_jev_result({{"answers", {{"recipient", {{"type", "text"}, {"choice", "character_1"}}}}}}, input).outcome, JevOutcome::failure);
     EXPECT_EQ(parse_jev_result(nullptr, input).outcome, JevOutcome::failure);
     input.characters = {{"character_1", "a", "Undefined"}, {"character_2", "b", "Undefined"}};
-    EXPECT_EQ(make_jev_body(input)["questions"]["recipient"]["criteria"].size(), 4u);
+    EXPECT_EQ(make_jev_body(input)["questions"]["recipient"]["criteria"].size(), 5u);
 }
 
 TEST(JevConfiguration, ValidatesAtomicallyRoundTripsAndDisablesWithoutDeletingKey) {
@@ -441,6 +441,28 @@ TEST_F(SessionNaming, UsesConfiguredProviderAndEffort) {
     EXPECT_EQ(title_definitions[0]->provider.config.reasoning_effort, "high");
 }
 
+TEST_F(SessionNaming, IdentifiedSelfNoteIsNamedAndSavedWithoutACharacterReply) {
+    decision = {JevOutcome::success, "self_note", {}, JevSearch::rewrite};
+    (void)send("Note to self: buy milk.");
+    run_workers();
+    const auto update = controller->receive_events(100).update;
+    const auto result = controller->take_submission_result();
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
+    EXPECT_TRUE(result->update.input_consumed);
+    EXPECT_FALSE(result->persist_default_character_id);
+    EXPECT_EQ(controller->view().default_character_id, "-");
+    EXPECT_EQ(update.session_label, title);
+    EXPECT_FALSE(controller->is_generating());
+    EXPECT_FALSE(controller->recent_pending());
+    EXPECT_TRUE(workers.empty());
+    const auto restored = load_session_state(journal.path());
+    ASSERT_EQ(restored.entries.size(), 1u);
+    EXPECT_EQ(restored.entries.front().addressed_to, "-");
+    EXPECT_EQ(restored.entries.front().text, "Note to self: buy milk.");
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
+}
+
 TEST_F(SessionNaming, WorksWithoutJevAndLimitsTheNameToSixWords) {
     store->apply_jev_update(std::nullopt);
     title = "  Один два три четыре пять шесть семь восемь  ";
@@ -649,12 +671,13 @@ TEST_P(SessionNamingRetry, FirstNoteGetsTimestampWhenNamingFails) {
     controller = make_controller(notifier, load_session_state(journal.path()));
     controller->enable_auto_naming(read_session_database_metadata(journal.path()).label);
     (void)controller->set_default_character_by_id("-");
-    EXPECT_TRUE(send("Another note").clear_input);
+    EXPECT_EQ(send("Another note").clear_input, !GetParam());
+    finish();
     EXPECT_TRUE(workers.empty());
     EXPECT_EQ(title_inputs.size(), 1u);
     EXPECT_EQ(read_session_database_metadata(journal.path()).label, *update.session_label);
     EXPECT_EQ(controller->view().transcript.entries.size(), 2u);
-    EXPECT_TRUE(classified.empty());
+    EXPECT_EQ(classified.size(), GetParam() ? 1u : 0u);
     EXPECT_FALSE(controller->is_generating());
 
     (void)controller->set_default_character_by_id("guide");
@@ -1064,7 +1087,7 @@ TEST_F(JevRouting, MissingQueryProviderDoesNotBlockChat) {
     EXPECT_TRUE(searched.empty());
 }
 
-TEST_F(JevRouting, ClassifiesModelPromptsButSkipsEmptyAndSelfNotes) {
+TEST_F(JevRouting, ClassifiesPromptsButSkipsEmptyAndExplicitSelfNotes) {
     for (const std::string text : {"", " \t\n", "\n"}) {
         EXPECT_FALSE(send(text).clear_input);
         EXPECT_FALSE(controller->submit_prompt("reader", text).input_consumed);
@@ -1072,11 +1095,12 @@ TEST_F(JevRouting, ClassifiesModelPromptsButSkipsEmptyAndSelfNotes) {
     EXPECT_TRUE(workers.empty());
     EXPECT_TRUE(controller->view().transcript.entries.empty());
     (void)controller->set_default_character_by_id("-");
-    EXPECT_TRUE(send("Marcus, please answer").clear_input);
+    EXPECT_FALSE(send("Another note").clear_input);
+    finish();
     EXPECT_TRUE(workers.empty());
     EXPECT_FALSE(send("@Guide Explicit override").clear_input);
     run_workers(); (void)controller->receive_events(100);
-    ASSERT_EQ(classified.size(), 1u);
+    ASSERT_EQ(classified.size(), 2u);
     EXPECT_EQ(classified.back().prompt, "Explicit override");
     EXPECT_FALSE(classified.back().ask_web_search);
     finish();
@@ -1089,7 +1113,7 @@ TEST_F(JevRouting, ClassifiesModelPromptsButSkipsEmptyAndSelfNotes) {
     (void)send("/mcast @Guide only Guide");
     EXPECT_TRUE(controller->classification_pending());
     run_workers(); (void)controller->receive_events(100);
-    ASSERT_EQ(classified.size(), 2u);
+    ASSERT_EQ(classified.size(), 3u);
     EXPECT_EQ(classified.back().prompt, "only Guide");
     EXPECT_TRUE(classified.back().ask_web_search);
     finish();
@@ -1103,7 +1127,122 @@ TEST_F(JevRouting, ClassifiesModelPromptsButSkipsEmptyAndSelfNotes) {
     (void)controller->set_default_character_by_id("guide");
     EXPECT_TRUE(send("Plain question").clear_input);
     finish();
-    EXPECT_EQ(classified.size(), 2u);
+    EXPECT_EQ(classified.size(), 3u);
+}
+
+TEST_F(JevRouting, IdentifiedSelfNotesStayActiveUntilAnotherRecipientIsIdentified) {
+    store->apply_web_search_update({true, "brave", config.api_key_id, "query"});
+    for (const auto& [target, search] : {
+             std::pair{"guide", JevSearch::none},
+             std::pair{"marcus", JevSearch::direct},
+             std::pair{"*", JevSearch::rewrite}}) {
+        (void)controller->set_default_character_by_id(target);
+        decision = {JevOutcome::success, "self_note", {}, search};
+        EXPECT_FALSE(send("Note to self: read Marcus tomorrow.").clear_input);
+        EXPECT_TRUE(controller->classification_pending());
+        run_workers();
+        const auto update = controller->receive_events(100).update;
+        const auto result = controller->take_submission_result();
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
+        EXPECT_TRUE(result->update.input_consumed);
+        EXPECT_TRUE(requires_snapshot(update));
+        EXPECT_FALSE(result->persist_default_character_id);
+        EXPECT_EQ(controller->view().default_character_id, "-");
+        EXPECT_FALSE(controller->is_generating());
+        EXPECT_TRUE(workers.empty());
+        EXPECT_TRUE(called_providers.empty());
+        EXPECT_TRUE(searched.empty());
+        EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, "-");
+        decision = {JevOutcome::success, "undefined", {}, search};
+        EXPECT_FALSE(send("Also buy milk.").clear_input);
+        EXPECT_TRUE(controller->classification_pending());
+        finish();
+        const auto continued = controller->take_submission_result();
+        ASSERT_TRUE(continued);
+        EXPECT_EQ(continued->outcome, SessionController::SubmissionOutcome::accepted);
+        EXPECT_EQ(controller->view().default_character_id, "-");
+        EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, "-");
+        EXPECT_TRUE(workers.empty());
+        EXPECT_TRUE(called_providers.empty());
+        EXPECT_TRUE(searched.empty());
+    }
+    const auto restored = load_session_state(journal.path());
+    ASSERT_EQ(restored.entries.size(), 6u);
+    for (const auto& entry : restored.entries) {
+        EXPECT_EQ(entry.kind, EntryKind::human);
+        EXPECT_EQ(entry.addressed_to, "-");
+    }
+    EXPECT_EQ(store->snapshot()->find_forum("lobby")->default_character_id, "guide");
+    decision = {JevOutcome::success, "character_2"};
+    EXPECT_FALSE(send("Marcus, please answer.").clear_input);
+    EXPECT_TRUE(controller->classification_pending());
+    run_workers();
+    (void)controller->receive_events(100);
+    EXPECT_EQ(classified.size(), 7u);
+    EXPECT_EQ(controller->view().default_character_id, "marcus");
+    EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, "marcus");
+    EXPECT_EQ(workers.size(), 1u);
+    finish();
+}
+
+TEST_F(JevRouting, FailedClassificationKeepsTheNotesTarget) {
+    (void)controller->set_default_character_by_id("-");
+    decision = {JevOutcome::failure, {}, "Unavailable"};
+    EXPECT_FALSE(send("Another note.").clear_input);
+    run_workers();
+    const auto update = controller->receive_events(100).update;
+    const auto result = controller->take_submission_result();
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
+    EXPECT_TRUE(result->update.input_consumed);
+    EXPECT_FALSE(result->persist_default_character_id);
+    EXPECT_EQ(update.notice, "Recipient detection failed. Saved as a self-note.");
+    EXPECT_EQ(controller->view().default_character_id, "-");
+    EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, "-");
+    EXPECT_FALSE(controller->is_generating());
+    EXPECT_TRUE(workers.empty());
+    EXPECT_TRUE(called_providers.empty());
+}
+
+TEST_F(JevRouting, ExplicitRecipientsOverrideSelfNoteDecisions) {
+    decision = {JevOutcome::success, "self_note"};
+    for (const auto* prompt : {"@Guide Note to self: buy milk.", "/mcast @Guide Note to self: buy milk."}) {
+        (void)send(prompt);
+        run_workers();
+        (void)controller->receive_events(100);
+        const auto result = controller->take_submission_result();
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
+        EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, "guide");
+        EXPECT_EQ(workers.size(), 1u);
+        finish();
+    }
+}
+
+TEST_F(JevRouting, RuntimeAcceptsSelfNotesWithoutSavingADefaultCharacter) {
+    use_runtime_providers({JevOutcome::success, "self_note", {}, JevSearch::direct});
+    int saved = 0;
+    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+        return OpenedSession{.label = "Original", .controller = make_controller(wake),
+            .persist_default_character = [&](auto) { ++saved; }};
+    });
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open({"lobby", "session"}, 2s)));
+    auto session = manager.lookup({"lobby", "session"});
+    const auto reply = session->submit(RawCommand{"Note to self: buy milk."}, 2s);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(reply));
+    EXPECT_TRUE(std::get<CommandResult>(reply).clear_input);
+    EXPECT_EQ(saved, 0);
+    const auto continuation = session->submit(RawCommand{"Also buy milk."}, 2s);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(continuation));
+    EXPECT_TRUE(std::get<CommandResult>(continuation).clear_input);
+    EXPECT_EQ(saved, 0);
+    const auto snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
+    EXPECT_EQ(snapshot.default_character_id, "-");
+    EXPECT_FALSE(snapshot.generation.active);
+    ASSERT_EQ(snapshot.transcript.size(), 2u);
+    EXPECT_EQ(snapshot.transcript.front().addressed_to, "-");
+    EXPECT_EQ(snapshot.transcript.back().addressed_to, "-");
 }
 
 TEST_F(JevRouting, ExplicitTargetsIgnoreJevRecipientDecisionsAndFailures) {
@@ -1335,6 +1474,7 @@ TEST_F(JevRouting, StopExpiryAndShutdownPreventLateDispatch) {
 }
 
 TEST_F(JevRouting, ExpiredDeadlineAndInvalidFallbackNeverDispatch) {
+    decision = {JevOutcome::success, "self_note"};
     auto submission = std::make_shared<SubmissionState>();
     (void)controller->submit_prompt("reader", "Question", {}, submission);
     run_workers();

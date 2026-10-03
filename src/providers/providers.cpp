@@ -348,6 +348,7 @@ std::shared_ptr<JevRequest> Providers::make_jev_request(
         std::unordered_set<std::string> keys, ids;
         for (const auto& option : request->input_.characters) {
             if (option.key.empty() || option.key == "undefined" || option.key == "all_characters"
+                || option.key == "self_note"
                 || option.character_id.empty() || option.character_id == "*" || option.character_id == "-"
                 || option.display_name.empty() || !keys.insert(option.key).second
                 || !ids.insert(option.character_id).second) {

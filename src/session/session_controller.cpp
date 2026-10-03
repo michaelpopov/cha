@@ -421,10 +421,6 @@ ControllerUpdate SessionController::submit_prompt(
     const std::shared_ptr<const Workspace> current = workspace();
     const CharacterMetadata* target = nullptr;
     if (handle.empty()) {
-        if (default_character_id_ == null_agent_handle) {
-            record_monologue(author_id, std::move(text), update);
-            return update;
-        }
         if (current->jev()) {
             return start_classification(author_id, std::move(text),
                 {}, std::move(submission));
@@ -474,6 +470,11 @@ ControllerUpdate SessionController::submit_prompt(
 
 ControllerUpdate SessionController::dispatch_target(
     std::string_view author, std::string text, std::string_view target_id, JevSearch search) {
+    if (target_id == null_agent_handle) {
+        ControllerUpdate update;
+        record_monologue(author, std::move(text), update);
+        return update;
+    }
     const auto current = workspace();
     if (target_id == all_characters_target) {
         return start_resolved_multicast(author, std::move(text), forum_characters(*current), search);
@@ -576,7 +577,9 @@ ControllerUpdate SessionController::finish_classification() {
         submission_result_ = SubmissionResult{SubmissionOutcome::cancelled, update};
         return update;
     }
-    const auto search = result.outcome == JevOutcome::success
+    const bool self_note = result.outcome == JevOutcome::success
+        && result.choice == "self_note" && input.fixed_targets.empty();
+    const auto search = result.outcome == JevOutcome::success && !self_note
         ? result.search_choice.value_or(JevSearch::none) : JevSearch::none;
     log_debug("Jev classification finished: forum_id=" + identity_.forum_id
         + " session_id=" + identity_.session_id
@@ -613,6 +616,7 @@ ControllerUpdate SessionController::finish_classification() {
     std::string target = input.fallback;
     bool failed = result.outcome == JevOutcome::failure;
     if (!failed && result.choice == "all_characters") target = std::string(all_characters_target);
+    else if (self_note) target = std::string(null_agent_handle);
     else if (!failed && result.choice != "undefined") {
         const auto selected = std::ranges::find(input.options, result.choice, &JevOption::key);
         if (selected == input.options.end()
@@ -633,10 +637,14 @@ ControllerUpdate SessionController::finish_classification() {
     auto dispatched = dispatch_target(input.author, std::move(input.text), target, search);
     if (dispatched.input_consumed) {
         if (failed) {
-            dispatched.notice = target == all_characters_target
-                ? "Recipient detection failed. Sent to all characters."
-                : "Recipient detection failed. Sent to "
+            if (target == all_characters_target) {
+                dispatched.notice = "Recipient detection failed. Sent to all characters.";
+            } else if (target == null_agent_handle) {
+                dispatched.notice = "Recipient detection failed. Saved as a self-note.";
+            } else {
+                dispatched.notice = "Recipient detection failed. Sent to "
                     + active_->character_display_name + ".";
+            }
         }
     } else {
         default_character_id_ = previous_target;
@@ -646,7 +654,7 @@ ControllerUpdate SessionController::finish_classification() {
     submission_result_ = SubmissionResult{
         update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed, update};
     if (update.input_consumed && !failed && result.choice != "undefined"
-        && target != all_characters_target) {
+        && target != all_characters_target && target != null_agent_handle) {
         submission_result_->persist_default_character_id = target;
     }
     // Dispatch errors are delivered through the submission reply.
