@@ -70,7 +70,11 @@ if(APPLE OR NOT CURL_FOUND)
     set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
     set(BUILD_MISC_DOCS OFF CACHE BOOL "" FORCE)
     set(ENABLE_CURL_MANUAL OFF CACHE BOOL "" FORCE)
-    set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+    # HTTP_ONLY also disables WebSockets in current curl releases.
+    set(HTTP_ONLY OFF CACHE BOOL "" FORCE)
+    foreach(protocol DICT FILE FTP GOPHER IMAP IPFS LDAP LDAPS MQTT POP3 RTSP SMTP TELNET TFTP)
+        set(CURL_DISABLE_${protocol} ON CACHE BOOL "" FORCE)
+    endforeach()
     set(CURL_DISABLE_WEBSOCKETS OFF CACHE BOOL "" FORCE)
     set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
     # CHA does not need HTTP/2, international domain names, or SSH transfers.
@@ -79,16 +83,15 @@ if(APPLE OR NOT CURL_FOUND)
     set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
     if(WIN32)
         set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
-    elseif(APPLE)
-        # This backend is supported by our pinned curl 8.14.1; upgrading to
-        # 8.15 or later requires choosing another TLS backend.
-        set(CURL_USE_SECTRANSP ON CACHE BOOL "" FORCE)
-        set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
-        # curl 8.14.1's symbol check detects pipe2 in newer SDKs even when
-        # deploying to macOS versions before its introduction in macOS 27.
-        set(HAVE_PIPE2 0 CACHE INTERNAL "Use curl's portable pipe fallback" FORCE)
     else()
         set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+        if(APPLE)
+            # Use OpenSSL for TLS and the macOS trust store for certificates.
+            unset(CURL_USE_SECTRANSP CACHE)
+            set(USE_APPLE_SECTRUST ON CACHE BOOL "" FORCE)
+            set(CURL_CA_BUNDLE "none" CACHE STRING "" FORCE)
+            set(CURL_CA_PATH "none" CACHE STRING "" FORCE)
+        endif()
     endif()
     set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
     set(CURL_BROTLI OFF CACHE BOOL "" FORCE)
@@ -96,7 +99,8 @@ if(APPLE OR NOT CURL_FOUND)
 
     FetchContent_Declare(
         curl
-        URL https://github.com/curl/curl/archive/refs/tags/curl-8_14_1.zip
+        URL https://curl.se/download/curl-8.22.0.tar.xz
+        URL_HASH SHA256=f7ef3ae8a22e521f289803fe93543eb64c329b58aa73a9e224dfd915a2a5f4f7
     )
     FetchContent_MakeAvailable(curl)
 endif()
@@ -168,6 +172,8 @@ FetchContent_Declare(
     URL_HASH SHA256=d56767702c5b383a78ee9124dd7bdf684f14c681f725117c3f865637a7152cba
 )
 FetchContent_MakeAvailable(libuv)
+
+include(cmake/patch_dependency_warnings.cmake)
 
 FetchContent_Declare(
     sqlcipher_source

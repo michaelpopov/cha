@@ -40,6 +40,28 @@ TEST(JevProtocol, OmitsSearchQuestionWhenWebSearchIsDisabled) {
     EXPECT_FALSE(result.search_choice);
 }
 
+TEST(JevProtocol, DistinguishesSearchDiscoveryFromAvailablePageReading) {
+    auto input = jev_input();
+    input.prompt = "Mr.Feyman, get the most important story on theregister.com and explain it to me.";
+    for (bool available : {false, true}) {
+        input.page_reader_available = available;
+        const auto body = make_jev_body(input);
+        EXPECT_EQ(body["state"]["prompt"], input.prompt);
+        const auto& question = body["questions"]["web_search"];
+        const auto instructions = question["instructions"].get<std::string>();
+        const auto no_search = question["criteria"]["no_search"].get<std::string>();
+        EXPECT_NE(instructions.find("automatic search-engine query"), std::string::npos);
+        if (available) {
+            EXPECT_NE(instructions.find("theregister.com"), std::string::npos);
+            EXPECT_NE(instructions.find("choose no_search"), std::string::npos);
+            EXPECT_NE(no_search.find("even if its content is current news"), std::string::npos);
+        } else {
+            EXPECT_NE(instructions.find("Direct page reading is unavailable"), std::string::npos);
+            EXPECT_EQ(no_search.find("reading the supplied URL"), std::string::npos);
+        }
+    }
+}
+
 TEST(JevProtocol, SendsOnlyPromptAndOptionsAndValidatesExactChoice) {
     auto input = jev_input();
     const auto body = make_jev_body(input);
@@ -124,6 +146,37 @@ TEST(JevConfiguration, ValidatesAtomicallyRoundTripsAndDisablesWithoutDeletingKe
     store->apply_jev_update(settings);
     keys.remove(key.id);
     EXPECT_TRUE(store->snapshot()->jev());
+}
+
+TEST(WebReadConfiguration, PersistsReaderAndBothKeysAcrossReloadAndExport) {
+    test::TestWorkspace fixture;
+    const auto database = test::import_test_database(fixture.root());
+    auto store = WorkspaceConfigStore::open(database);
+    WorkspaceWebSearch settings;
+    settings.read_provider = "firecrawl";
+    {
+        ApiKeyStore keys(*store);
+        settings.firecrawl_api_key_id = keys.create("Firecrawl", "fc-secret").id;
+        settings.jina_api_key_id = keys.create("Jina", "jina-secret").id;
+    }
+    store->apply_web_search_update(settings);
+    store.reset();
+    auto reloaded = WorkspaceConfigStore::open(database);
+    EXPECT_EQ(reloaded->snapshot()->web_search().read_provider, "firecrawl");
+    EXPECT_EQ(reloaded->snapshot()->web_search().firecrawl_api_key_id, settings.firecrawl_api_key_id);
+    EXPECT_EQ(reloaded->snapshot()->web_search().jina_api_key_id, settings.jina_api_key_id);
+    const auto exported = fixture.root() / "exported";
+    (void)export_workspace_configuration(database, exported, WorkspaceConfigLease::already_held);
+    const auto copy = Workspace::load(exported).web_search();
+    EXPECT_EQ(copy.read_provider, "firecrawl");
+    EXPECT_EQ(copy.firecrawl_api_key_id, settings.firecrawl_api_key_id);
+    EXPECT_EQ(copy.jina_api_key_id, settings.jina_api_key_id);
+    // Unknown reader settings do not disable a valid search configuration.
+    const auto path = exported / "system/web-search/config.toml";
+    std::ofstream(path) << "provider='brave'\ntool_enabled=true\nread_provider='old-reader'\n";
+    const auto obsolete = Workspace::load(exported).web_search();
+    EXPECT_TRUE(obsolete.tool_enabled);
+    EXPECT_EQ(obsolete.read_provider, "off");
 }
 
 TEST(JevConfiguration, UnknownFieldsAreIgnoredAndTargetMarkersAreNotSavedDefaults) {
@@ -799,6 +852,109 @@ TEST_F(SessionNaming, NamingTimeoutUsesTimestampAndAllowsTheReply) {
         EXPECT_EQ(label[separator], '-');
     }
     EXPECT_EQ(title_inputs.size(), 1u);
+}
+
+TEST_F(JevRouting, ClassificationKnowsWhetherRecipientsCanReadPages) {
+    ApiKeyStore keys(*store);
+    const auto reader_key = keys.create("Reader", "reader-secret").id;
+    WorkspaceWebSearch settings{true, "brave", config.api_key_id, "query"};
+    settings.firecrawl_api_key_id = reader_key;
+    settings.jina_api_key_id = reader_key;
+    decision = {JevOutcome::success, "undefined", {}, JevSearch::none};
+    for (const auto* reader : {"off", "firecrawl", "jina"}) {
+        settings.read_provider = reader;
+        store->apply_web_search_update(settings);
+        (void)send("Get the most important story on theregister.com and explain it.");
+        finish();
+        ASSERT_FALSE(classified.empty());
+        EXPECT_TRUE(classified.back().ask_web_search);
+        EXPECT_EQ(classified.back().page_reader_available, std::string_view(reader) != "off");
+        EXPECT_TRUE(searched.empty());
+    }
+    store->apply_character_settings("marcus", "test", std::nullopt, std::nullopt,
+        std::nullopt, std::nullopt, false);
+    (void)send("Read the front page");
+    finish();
+    EXPECT_FALSE(classified.back().page_reader_available);
+    store->apply_character_settings("marcus", "test", std::nullopt, std::nullopt,
+        std::nullopt, std::nullopt, std::nullopt);
+    keys.remove(reader_key);
+    (void)send("Read with a missing reader key");
+    finish();
+    EXPECT_FALSE(classified.back().page_reader_available);
+}
+
+TEST_F(JevRouting, PageReadingWorksWithSearchDisabledAndMarksWebUse) {
+    struct ReadBackend final : ModelBackend {
+        explicit ReadBackend(bool& offered) : offered(offered) {}
+        RequestPayload prepare(const GenerationRequest& input) override {
+            EXPECT_FALSE(input.web_search_tool);
+            read = input.web_read_tool;
+            offered = static_cast<bool>(read);
+            return {};
+        }
+        GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink,
+            const std::atomic_bool& cancelled) override {
+            if (read) EXPECT_EQ(read("https://example.org", cancelled), "Page content");
+            sink({GenerationDeltaKind::answer, "Answer"});
+            return {};
+        }
+        bool& offered;
+        std::function<std::string(std::string_view, const std::atomic_bool&)> read;
+    };
+    controller.reset();
+    providers->shutdown();
+    store->apply_jev_update(std::nullopt);
+    bool offered = false;
+    int reads = 0;
+    providers = std::make_shared<Providers>(
+        [&](SharedCharacterDefinition) { return std::make_unique<ReadBackend>(offered); },
+        [this](auto worker) { workers.push_back(std::move(worker)); }, JevExecutor{}, WebSearchExecutor{},
+        [&](const WorkspaceWebSearch& settings, std::string_view url, const auto&) {
+            EXPECT_EQ(url, "https://example.org");
+            EXPECT_NE(settings.read_provider, "off");
+            ++reads;
+            return "Page content";
+        });
+    controller = make_controller(notifier);
+    for (const auto* reader : {"firecrawl", "jina", "off"}) {
+        WorkspaceWebSearch settings;
+        settings.read_provider = reader;
+        settings.firecrawl_api_key_id = config.api_key_id;
+        settings.jina_api_key_id = config.api_key_id;
+        store->apply_web_search_update(settings);
+        (void)send("Read this page");
+        finish();
+        EXPECT_EQ(offered, std::string_view(reader) != "off");
+        EXPECT_EQ(controller->view().transcript.entries.back().web_search_used, offered);
+        EXPECT_EQ(controller->view().transcript.entries.back().text, "Answer");
+    }
+    EXPECT_EQ(reads, 2);
+    EXPECT_TRUE(classified.empty());
+    // A character override must disable reading without blocking generation.
+    WorkspaceWebSearch settings;
+    settings.read_provider = "firecrawl";
+    settings.firecrawl_api_key_id = config.api_key_id;
+    store->apply_web_search_update(settings);
+    store->apply_character_settings("guide", "test", std::nullopt, std::nullopt,
+        std::nullopt, std::nullopt, false);
+    (void)send("Read with web tools disabled for this character");
+    finish();
+    EXPECT_FALSE(offered);
+    EXPECT_EQ(reads, 2);
+    EXPECT_FALSE(controller->view().transcript.entries.back().web_search_used);
+    EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
+    EXPECT_EQ(controller->view().transcript.entries.back().text, "Answer");
+    store->apply_character_settings("guide", "test", std::nullopt, std::nullopt,
+        std::nullopt, std::nullopt, std::nullopt);
+    // A removed key must disable reading without blocking generation.
+    ApiKeyStore keys(*store);
+    keys.remove(config.api_key_id);
+    (void)send("Read with a missing key");
+    finish();
+    EXPECT_FALSE(offered);
+    EXPECT_EQ(reads, 2);
+    EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
 }
 
 TEST_F(JevRouting, OnDemandSearchUsesWorkspaceDefaultAndCharacterOverrideWithoutRecipientDetection) {

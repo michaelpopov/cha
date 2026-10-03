@@ -512,11 +512,22 @@ ControllerUpdate SessionController::start_classification(
     }
     const auto deadline = std::min(submission->deadline,
         std::chrono::steady_clock::now() + jev_request_timeout);
+    const auto& web = current->web_search();
+    const auto can_read = [&](std::string_view id) {
+        const auto* character = current->find_character(id);
+        return !character || character->web_search_tool.value_or(true);
+    };
+    // The recipient is unresolved, so only promise reading when all possible targets allow it.
+    const bool page_reader_available = (web.read_provider == "firecrawl" || web.read_provider == "jina")
+        && current->find_api_key(web.read_provider == "firecrawl" ? web.firecrawl_api_key_id : web.jina_api_key_id)
+        && can_read(default_character_id_)
+        && std::all_of(options.begin(), options.end(), [&](const JevOption& option) { return can_read(option.character_id); });
     log_debug("Jev classification started: forum_id=" + identity_.forum_id
         + " session_id=" + identity_.session_id
-        + " ask_web_search=" + (current->web_search().enabled ? "true" : "false"));
+        + " ask_web_search=" + (web.enabled ? "true" : "false")
+        + " page_reader_available=" + (page_reader_available ? "true" : "false"));
     auto request = providers_.make_jev_request(
-        {*current->jev(), text, options, deadline, current->web_search().enabled}, notifier_);
+        {*current->jev(), text, options, deadline, web.enabled, page_reader_available}, notifier_);
     pending_classification_ = PendingClassification{
         std::string(author), std::move(text), default_character_id_,
         std::move(options), std::move(fixed_targets), std::move(submission),
@@ -731,6 +742,14 @@ void SessionController::start_generation(
         if (tool_requested && !tool_enabled) {
             log_warn("On-demand web search is unavailable: no search API key is configured");
         }
+        const auto& web = current->web_search();
+        const bool web_tools_allowed = character && character->web_search_tool.value_or(true);
+        const bool read_requested = web_tools_allowed
+            && (web.read_provider == "firecrawl" || web.read_provider == "jina");
+        const bool read_enabled = read_requested && current->find_api_key(
+            web.read_provider == "firecrawl" ? web.firecrawl_api_key_id : web.jina_api_key_id);
+        if (read_requested && !read_enabled)
+            log_warn("Page reading is unavailable: no reader API key is configured");
         const std::string cache_key = prompt_cache_key(identity_, target.id);
         inputs.push_back({
             .character = std::move(definition),
@@ -749,6 +768,7 @@ void SessionController::start_generation(
             .web_search = search_context,
             .web_search_tool = tool_enabled
                 ? std::optional<WorkspaceWebSearch>(current->web_search()) : std::nullopt,
+            .web_read_tool = read_enabled ? std::optional<WorkspaceWebSearch>(web) : std::nullopt,
         });
     }
 

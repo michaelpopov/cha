@@ -2234,6 +2234,7 @@ export function SessionSettingsScreen({ client, dispatch }: SettingsScreenProps)
 
 const defaultWebSearch: WebSearchSettings = {
   enabled: false, provider: 'brave', api_key: '', query_provider: '', tool_enabled: false,
+  read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
 };
 
 export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProps) {
@@ -2262,7 +2263,10 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
   }, [client]);
 
   const dirty = saved !== null && (
-    settings.tool_enabled !== saved.tool_enabled
+    settings.read_provider !== saved.read_provider
+    || settings.firecrawl_api_key !== saved.firecrawl_api_key
+    || settings.jina_api_key !== saved.jina_api_key
+    || settings.tool_enabled !== saved.tool_enabled
     || settings.enabled !== saved.enabled
     || settings.provider !== saved.provider
     || settings.api_key !== saved.api_key
@@ -2310,11 +2314,33 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
         <option value="">Select API key</option>
         {keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}
       </select></label>
+      <label>Page reading provider<select className="cha-form-control" disabled={pending}
+        value={settings.read_provider}
+        onChange={(event) => setSettings({ ...settings,
+          read_provider: event.target.value as WebSearchSettings['read_provider'] })}>
+        <option value="off">Off</option>
+        <option value="firecrawl">Firecrawl</option>
+        <option value="jina">Jina Reader</option>
+      </select></label>
+      {settings.read_provider === 'firecrawl' && <label>Firecrawl API key<select className="cha-form-control" disabled={pending}
+        value={settings.firecrawl_api_key}
+        onChange={(event) => setSettings({ ...settings, firecrawl_api_key: event.target.value })}>
+        <option value="">Select API key</option>
+        {keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}
+      </select></label>}
+      {settings.read_provider === 'jina' && <label>Jina API key<select className="cha-form-control" disabled={pending}
+        value={settings.jina_api_key}
+        onChange={(event) => setSettings({ ...settings, jina_api_key: event.target.value })}>
+        <option value="">Select API key</option>
+        {keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}
+      </select></label>}
       <div className="cha-settings-form-actions">
         <button className="cha-button cha-button-primary" type="submit"
           disabled={!dirty || pending
             || ((settings.enabled || settings.tool_enabled) && !keys.some((key) => key.id === settings.api_key))
-            || (settings.enabled && !providers.some((provider) => provider.id === settings.query_provider))}>
+            || (settings.enabled && !providers.some((provider) => provider.id === settings.query_provider))
+            || (settings.read_provider !== 'off' && !keys.some((key) => key.id ===
+              (settings.read_provider === 'firecrawl' ? settings.firecrawl_api_key : settings.jina_api_key)))}>
           Save
         </button>
       </div>

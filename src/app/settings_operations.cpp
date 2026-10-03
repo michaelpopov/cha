@@ -272,6 +272,11 @@ ApiKeyDetail api_key_detail(
         && key.id == workspace.web_search().api_key_id) {
         used_by.emplace_back("Search API");
     }
+    const auto& web = workspace.web_search();
+    if ((web.read_provider == "firecrawl" && key.id == web.firecrawl_api_key_id)
+        || (web.read_provider == "jina" && key.id == web.jina_api_key_id)) {
+        used_by.emplace_back("Page reading");
+    }
     return {
         .id = key.id,
         .display_name = key.display_name,
@@ -680,7 +685,8 @@ SessionNamingSettings save_session_naming_settings(
 WebSearchSettings get_web_search_settings(const Workspace& workspace) {
     const auto& settings = workspace.web_search();
     return {settings.enabled, settings.provider, settings.api_key_id,
-        settings.query_provider_id, settings.tool_enabled};
+        settings.query_provider_id, settings.tool_enabled, settings.read_provider,
+        settings.firecrawl_api_key_id, settings.jina_api_key_id};
 }
 
 WebSearchSettings save_web_search_settings(
@@ -688,7 +694,8 @@ WebSearchSettings save_web_search_settings(
     return with_settings_edit([&] {
         store.apply_web_search_update(
             WorkspaceWebSearch{update.enabled, update.provider, update.api_key,
-                update.query_provider, update.tool_enabled});
+                update.query_provider, update.tool_enabled, update.read_provider,
+                update.firecrawl_api_key, update.jina_api_key});
         return get_web_search_settings(*store.snapshot());
     });
 }

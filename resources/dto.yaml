@@ -693,8 +693,15 @@ components:
     WebSearchSettings:
       type: object
       additionalProperties: false
-      required: [enabled, provider, api_key, query_provider, tool_enabled]
+      required: [enabled, provider, api_key, query_provider, tool_enabled, read_provider, firecrawl_api_key, jina_api_key]
       properties:
+        read_provider:
+          type: string
+          enum: [off, firecrawl, jina]
+        firecrawl_api_key:
+          type: string
+        jina_api_key:
+          type: string
         tool_enabled:
           type: boolean
         enabled:

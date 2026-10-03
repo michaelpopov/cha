@@ -227,11 +227,18 @@ These provider-hosted settings are separate from Settings → **Search API**:
 - **On-demand web search** lets the answering model call CHA's `web_search`
   function through Responses or Chat Completions. It does not require Jev.
   Characters can override the workspace default with `web_search_tool = true`
-  or `false`. Each answer allows up to four tool-call attempts.
+  or `false`. Each answer allows up to four web tool-call attempts, or eight
+  shared between search and reading when page reading is enabled.
 
-Save the search service key in API Keys, then select it in Search API. Raw
-search results and tool calls stay outside transcript history; replies show a
-web-search indicator. See the [maintainer guide](docs/MaintainerGuide.md#recipient-detection-and-search-api)
+**Page reading provider** selects Firecrawl or Jina Reader for the model's
+`web_read` tool, which returns page content as Markdown. Select the service's
+saved API key in Search API, or choose Off to disable reading. Page reading
+works independently of Brave/Tavily search; `web_search_tool = false` disables
+both on-demand tools for a character.
+
+Save the search or reading service key in API Keys, then select it in Search API.
+Search results, page content, and tool calls stay outside transcript history;
+replies show a web-source indicator. See the [maintainer guide](docs/MaintainerGuide.md#recipient-detection-and-search-api)
 for exported settings and failure behavior.
 
 Provider secrets are managed on the Settings > API Keys screen and stored in
@@ -357,8 +364,9 @@ application from starting; the reported error names that forum and its source.
 
 Native configuration requires OpenSSL development headers and libraries on all
 platforms. Windows needs static OpenSSL built for the matching MSVC runtime;
-the package uses the static CRT. macOS uses bundled curl 8.14.1 with WebSocket
-support; other platforms use curl 8.14 or newer, or the bundled fallback.
+the package uses the static CRT. macOS uses bundled curl 8.22.0 with OpenSSL,
+WebSocket support, and Apple SecTrust certificate verification; other platforms
+use curl 8.14 or newer, or the bundled fallback.
 CMake fetches other vendored dependencies when needed.
 
 ```sh

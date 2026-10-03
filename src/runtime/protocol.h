@@ -428,6 +428,9 @@ struct WebSearchSettings {
     std::string api_key;
     std::string query_provider;
     bool tool_enabled{false};
+    std::string read_provider{"off"};
+    std::string firecrawl_api_key;
+    std::string jina_api_key;
 };
 
 struct VoiceInputSettings {

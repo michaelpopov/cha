@@ -205,6 +205,7 @@ std::string build_chat_completions_request_body(
     }
 
     if (input.web_search_tool) add_web_search_tool(body, config.api);
+    if (input.web_read_tool) add_web_read_tool(body, config.api);
     return dump_json(body, "Model request");
 }
 

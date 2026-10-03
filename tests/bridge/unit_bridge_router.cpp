@@ -266,11 +266,51 @@ TEST_F(BridgeRouterTest, SavesSessionNamingSettings) {
     EXPECT_EQ(call("sessionNaming.get")["result"], settings);
 }
 
+TEST_F(BridgeRouterTest, PageReadingSettingsRetainBothKeysAndAreIndependentOfSearch) {
+    bootstrap_epoch();
+    auto settings = call("webSearch.get")["result"];
+    const auto firecrawl = call("apiKey.create", {{"display_name", "Firecrawl"}, {"value", "fc-secret"}});
+    const auto jina = call("apiKey.create", {{"display_name", "Jina"}, {"value", "jina-secret"}});
+    ASSERT_TRUE(firecrawl["ok"]);
+    ASSERT_TRUE(jina["ok"]);
+    settings["read_provider"] = "firecrawl";
+    EXPECT_FALSE(call("webSearch.save", settings)["ok"]);
+    settings["firecrawl_api_key"] = firecrawl["result"]["id"];
+    settings["jina_api_key"] = jina["result"]["id"];
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"], settings);
+    auto keys = call("apiKey.list")["result"];
+    EXPECT_EQ(keys[0]["used_by"], nlohmann::json::array({"Page reading"}));
+    EXPECT_TRUE(keys[1]["used_by"].empty());
+    settings["read_provider"] = "jina";
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"], settings);
+    keys = call("apiKey.list")["result"];
+    EXPECT_TRUE(keys[0]["used_by"].empty());
+    EXPECT_EQ(keys[1]["used_by"], nlohmann::json::array({"Page reading"}));
+    settings["firecrawl_api_key"] = "obsolete-key";
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    settings["read_provider"] = "off";
+    settings["jina_api_key"] = "obsolete-key";
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"], settings);
+    settings["read_provider"] = "obsolete-reader";
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"]["read_provider"], "off");
+    // Older clients can still save search settings without reader fields.
+    settings.erase("read_provider");
+    settings.erase("firecrawl_api_key");
+    settings.erase("jina_api_key");
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"]["read_provider"], "off");
+}
+
 TEST_F(BridgeRouterTest, WebSearchSettingsRoundTripAndRequireKeyWhenEnabled) {
     bootstrap_epoch();
     const nlohmann::json disabled = {
         {"enabled", false}, {"provider", "brave"}, {"api_key", ""},
-        {"query_provider", ""}, {"tool_enabled", false}};
+        {"query_provider", ""}, {"tool_enabled", false},
+        {"read_provider", "off"}, {"firecrawl_api_key", ""}, {"jina_api_key", ""}};
     EXPECT_EQ(call("webSearch.get")["result"], disabled);
     auto obsolete = disabled;
     obsolete["provider"] = "google";
@@ -295,7 +335,8 @@ TEST_F(BridgeRouterTest, WebSearchSettingsRoundTripAndRequireKeyWhenEnabled) {
     EXPECT_FALSE(call("webSearch.save", unknown_provider)["ok"]);
     const nlohmann::json enabled = {
         {"enabled", true}, {"provider", "tavily"}, {"api_key", key_id},
-        {"query_provider", "test"}, {"tool_enabled", false}};
+        {"query_provider", "test"}, {"tool_enabled", false},
+        {"read_provider", "off"}, {"firecrawl_api_key", ""}, {"jina_api_key", ""}};
     ASSERT_TRUE(call("webSearch.save", enabled)["ok"]);
     EXPECT_EQ(call("webSearch.get")["result"], enabled);
     const auto query_provider = call("provider.get", {{"provider_id", "test"}});

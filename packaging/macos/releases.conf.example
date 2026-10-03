@@ -1,0 +1,6 @@
+# Copy to ~/.config/cha/releases.conf on each Mac, then chmod 600 that file.
+# This is a shell file. Use the bucket URL from Settings > API Keys > R2 storage.
+# Use upload credentials on the build Mac and read-only credentials on others.
+CHA_RELEASE_BUCKET_URL='https://ACCOUNT_ID.r2.cloudflarestorage.com/BUCKET'
+CHA_RELEASE_ACCESS_KEY_ID='YOUR_ACCESS_KEY_ID'
+CHA_RELEASE_SECRET_KEY='YOUR_SECRET_KEY'

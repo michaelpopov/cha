@@ -1,4 +1,4 @@
-.PHONY: build package-linux package-macos package-windows web-check web-stage test itest itest-local itest-daemon run-native-dev clean-san
+.PHONY: build package package-linux package-macos package-windows web-check web-stage test itest itest-local itest-daemon run-native-dev clean-san
 
 ifeq ($(package),linux)
 .DEFAULT_GOAL := package-linux
@@ -7,6 +7,12 @@ endif
 build:
 	cmake --preset ninja
 	cmake --build --preset ninja
+
+package:
+	$(if $(strip $(VERSION)),,$(error usage: make package VERSION=<version>))
+	./packaging/macos/release.sh check
+	$(MAKE) package-macos VERSION="$(VERSION)"
+	./packaging/macos/release.sh upload "$(VERSION)" "packages/CHA-macos-$(VERSION).tar.gz"
 
 package-linux:
 	$(if $(strip $(VERSION)),,$(error usage: make package-linux VERSION=<version>))

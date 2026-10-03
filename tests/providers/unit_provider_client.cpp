@@ -4,6 +4,7 @@
 #include "chat/transcript.h"
 #include "providers/api_key_store.h"
 #include "providers/openai_oauth.h"
+#include "providers/web_search.h"
 #include "support/mock_http_server.h"
 #include "support/test_transcript.h"
 #include "util/logging.h"
@@ -1903,6 +1904,163 @@ ProviderHttpResponse tool_reply(ProviderApi api, bool stream, Json calls,
     return {200, "text/event-stream", events + "data: [DONE]\n\n"};
 }
 
+TEST(ProviderClientTools, SearchesThenReadsAndSupportsReadingWithoutSearch) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        for (bool stream : {false, true}) {
+            for (bool search_enabled : {false, true}) {
+                auto definition = network_definition(80, stream);
+                definition.provider.config.api = api;
+                std::vector<Json> requests;
+                ProviderClient client(shared_definition(definition), nullptr,
+                    [&](const ProviderHttpRequest& request, const auto&) {
+                        requests.push_back(Json::parse(request.body));
+                        const auto round = requests.size();
+                        if (search_enabled && round == 1) return tool_reply(api, stream,
+                            Json::array({search_call(api, "search")}));
+                        if (round == (search_enabled ? 2u : 1u)) return tool_reply(api, stream,
+                            Json::array({search_call(api, "read", R"({"url":"https://example.org/page"})", "web_read")}));
+                        return tool_reply(api, stream, Json::array(), "Answer from page.");
+                    });
+                Transcript transcript;
+                auto input = client_request(transcript, 1, "Read the page");
+                int searches = 0, reads = 0;
+                if (search_enabled) input.web_search_tool = [&](auto, const auto&) {
+                    ++searches;
+                    return R"({"url":"https://example.org/page"})";
+                };
+                input.web_read_tool = [&](std::string_view url, const auto&) {
+                    EXPECT_EQ(url, "https://example.org/page");
+                    ++reads;
+                    return R"({"markdown":"# Page\nEvidence"})";
+                };
+                std::string answer;
+                const auto result = client.perform(client.prepare(input), [&](GenerationDelta delta) {
+                    if (delta.kind == GenerationDeltaKind::answer) answer += delta.text;
+                }, std::atomic_bool{false});
+                EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+                EXPECT_EQ(searches, search_enabled ? 1 : 0);
+                EXPECT_EQ(reads, 1);
+                EXPECT_EQ(answer, "Answer from page.");
+                ASSERT_EQ(requests.size(), search_enabled ? 3u : 2u);
+                const auto& tools = requests.front()["tools"];
+                ASSERT_EQ(tools.size(), search_enabled ? 2u : 1u);
+                const auto& reader = api == ProviderApi::responses ? tools.back() : tools.back()["function"];
+                EXPECT_EQ(reader["name"], "web_read");
+                EXPECT_EQ(reader["parameters"]["required"], Json::array({"url"}));
+                const auto& messages = requests.back()[api == ProviderApi::responses ? "input" : "messages"];
+                const auto output = Json::parse(messages.back()[api == ProviderApi::responses ? "output" : "content"].get<std::string>());
+                EXPECT_EQ(output["markdown"], "# Page\nEvidence");
+                EXPECT_EQ(result.usage.input_tokens, requests.size() * 10u);
+            }
+        }
+    }
+}
+
+TEST(ProviderClientTools, ReadingReturnsErrorsAndStopsOnCancellation) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        for (bool cancel : {false, true}) {
+            auto definition = network_definition(80, false);
+            definition.provider.config.api = api;
+            int rounds = 0, reads = 0;
+            ProviderClient client(shared_definition(definition), nullptr,
+                [&](const ProviderHttpRequest& request, const auto&) {
+                    if (++rounds == 1) return tool_reply(api, false, Json::array({
+                        search_call(api, "bad", R"({"url":42})", "web_read"),
+                        search_call(api, "unavailable"),
+                        search_call(api, "read", R"({"url":"https://example.org"})", "web_read")}));
+                    const auto body = Json::parse(request.body);
+                    const auto& messages = body[api == ProviderApi::responses ? "input" : "messages"];
+                    for (std::size_t i = messages.size() - 3; i < messages.size(); ++i) {
+                        const auto output = Json::parse(messages[i][api == ProviderApi::responses ? "output" : "content"].get<std::string>());
+                        EXPECT_TRUE(output.contains("error"));
+                        EXPECT_EQ(output.dump().find("private-key"), std::string::npos);
+                    }
+                    return tool_reply(api, false, Json::array(), "Unavailable.");
+                });
+            Transcript transcript;
+            auto input = client_request(transcript, 1, "Read");
+            std::atomic_bool cancelled{false};
+            input.web_read_tool = [&](auto, const auto&) -> std::string {
+                ++reads;
+                if (cancel) { cancelled.store(true); return {}; }
+                throw std::runtime_error("private-key");
+            };
+            const auto result = client.perform(client.prepare(input), [](auto) {}, cancelled);
+            EXPECT_EQ(reads, 1);
+            EXPECT_EQ(rounds, cancel ? 1 : 2);
+            EXPECT_EQ(result.outcome, cancel ? GenerationOutcome::cancelled : GenerationOutcome::completed);
+        }
+    }
+}
+
+TEST(ProviderClientTools, ReadingReportsJinaBalanceFailureWithoutExposingResponseBodies) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        const auto body = Json{{"code", 402}, {"name", "InsufficientBalanceError"},
+            {"message", "Account balance not enough (uid: private-account-id)"}}.dump();
+        MockHttpServer server({"HTTP/1.1 402 Payment Required\r\nContent-Type: application/json\r\n"
+            "Content-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body});
+        server.start();
+        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+        auto definition = network_definition(80, false);
+        definition.provider.config.api = api;
+        int rounds = 0;
+        ProviderClient client(shared_definition(definition), nullptr,
+            [&](const ProviderHttpRequest& request, const auto&) {
+                if (++rounds == 1) return tool_reply(api, false, Json::array({
+                    search_call(api, "read", R"({"url":"https://example.org"})", "web_read")}));
+                const auto sent = Json::parse(request.body);
+                const auto& message = sent[api == ProviderApi::responses ? "input" : "messages"].back();
+                const auto output = Json::parse(message[api == ProviderApi::responses ? "output" : "content"].get<std::string>());
+                EXPECT_EQ(output["error"], "Jina page reading HTTP 402: Insufficient token balance for this API key. Check the key's balance in Jina.");
+                EXPECT_EQ(output.dump().find("private-account-id"), std::string::npos);
+                EXPECT_EQ(output.dump().find("private-key"), std::string::npos);
+                return tool_reply(api, false, Json::array(), "The Reader account needs credit.");
+            });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Read");
+        input.web_read_tool = [&](std::string_view url, const std::atomic_bool& cancelled) {
+            return read_jina(url, "private-key", cancelled, endpoint);
+        };
+        const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
+        server.join();
+        EXPECT_EQ(rounds, 2);
+        EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    }
+}
+
+TEST(ProviderClientTools, ReadingStopsAtTheSharedWebToolLimit) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        auto definition = network_definition(80, false);
+        definition.provider.config.api = api;
+        int rounds = 0, reads = 0;
+        ProviderClient client(shared_definition(definition), nullptr,
+            [&](const ProviderHttpRequest& request, const auto&) {
+                if (++rounds == 1) {
+                    auto calls = Json::array();
+                    for (int i = 0; i < 10; ++i) calls.push_back(search_call(api,
+                        "read" + std::to_string(i), R"({"url":"https://example.org"})", "web_read"));
+                    return tool_reply(api, false, calls);
+                }
+                const auto body = Json::parse(request.body);
+                EXPECT_FALSE(body.contains("tools"));
+                const auto& messages = body[api == ProviderApi::responses ? "input" : "messages"];
+                int outputs = 0;
+                for (const auto& message : messages)
+                    if (api == ProviderApi::responses ? message.value("type", "") == "function_call_output"
+                        : message.value("role", "") == "tool") ++outputs;
+                EXPECT_EQ(outputs, 10);
+                return tool_reply(api, false, Json::array(), "Done.");
+            });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Read");
+        input.web_read_tool = [&](auto, const auto&) { ++reads; return "{}"; };
+        const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
+        EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+        EXPECT_EQ(reads, 8);
+        EXPECT_EQ(rounds, 2);
+    }
+}
+
 TEST(ProviderClientTools, SearchesAndContinuesBothProtocolsWithStreamingAndTokenTotals) {
     for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
         for (bool stream : {false, true}) {
@@ -2216,7 +2374,7 @@ TEST(ProviderClientTools, ReturnsAnOutputForEveryCallWhenBatchExceedsSearchLimit
                     EXPECT_EQ(output[api == ProviderApi::responses ? "call_id" : "tool_call_id"],
                         "call" + std::to_string(i));
                     if (i >= 4) {
-                        EXPECT_NE(output.dump().find("Search limit reached"), std::string::npos);
+                        EXPECT_NE(output.dump().find("Web tool limit reached"), std::string::npos);
                     }
                 }
                 // A provider that still requests tools must not create an endless loop.

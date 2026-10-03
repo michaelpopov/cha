@@ -3,7 +3,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__APPLE__)
-#include <CoreFoundation/CoreFoundation.h>
+#include <CoreFoundation/CFString.h>
 #include <mach-o/dyld.h>
 #else
 #include <cerrno>

@@ -118,7 +118,8 @@ void ProviderRequest::fail(std::string_view message) noexcept {
 
 void ProviderRequest::execute(
     const ProviderClientFactory& client_factory,
-    const WebSearchExecutor& web_search_executor) noexcept {
+    const WebSearchExecutor& web_search_executor,
+    const WebReadExecutor& web_read_executor) noexcept {
     const RequestId request_id = input_.generation.run.request_id;
     const auto started = std::chrono::steady_clock::now();
     std::string fields;
@@ -152,6 +153,13 @@ void ProviderRequest::execute(
         }
 
         bool web_search_used = !generation.web_search_context.empty();
+        const auto mark_web_used = [&] {
+            if (web_search_used) return;
+            web_search_used = true;
+            (void)events_.push(GenerationEventDelta{
+                request_id, GenerationDeltaKind::answer, {}, true});
+            notifier_->wake();
+        };
         if (input_.web_search_tool && web_search_executor) {
             generation.web_search_tool = [&, config = *input_.web_search_tool](
                 std::string_view query, const std::atomic_bool& cancelled) {
@@ -161,13 +169,20 @@ void ProviderRequest::execute(
                     log_info("Web search completed: trigger=model_tool query_bytes=" + std::to_string(query.size())
                         + " result_bytes=" + std::to_string(results.size()));
                 }
-                if (!cancelled.load() && !web_search_used) {
-                    web_search_used = true;
-                    (void)events_.push(GenerationEventDelta{
-                        request_id, GenerationDeltaKind::answer, {}, true});
-                    notifier_->wake();
-                }
+                if (!cancelled.load()) mark_web_used();
                 return results;
+            };
+        }
+        if (input_.web_read_tool && web_read_executor) {
+            generation.web_read_tool = [&, config = *input_.web_read_tool](
+                std::string_view url, const std::atomic_bool& cancelled) {
+                log_info("Page reading initiated: trigger=model_tool provider=" + config.read_provider);
+                auto result = web_read_executor(config, url, cancelled);
+                if (!cancelled.load()) {
+                    log_info("Page reading completed: result_bytes=" + std::to_string(result.size()));
+                    mark_web_used();
+                }
+                return result;
             };
         }
         RequestPayload payload = backend->prepare(generation);
@@ -238,9 +253,11 @@ Providers::Providers(
     ProviderClientFactory client_factory,
     ProviderThreadLauncher thread_launcher,
     JevExecutor jev_executor,
-    WebSearchExecutor web_search_executor)
+    WebSearchExecutor web_search_executor,
+    WebReadExecutor web_read_executor)
     : jev_executor_(std::move(jev_executor)),
       web_search_executor_(std::move(web_search_executor)),
+      web_read_executor_(std::move(web_read_executor)),
       client_factory_(client_factory ? std::move(client_factory)
                                     : ProviderClientFactory(default_client_factory)),
       thread_launcher_(thread_launcher ? std::move(thread_launcher)
@@ -269,6 +286,7 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
     const std::shared_ptr<Registry> registry = registry_;
     ProviderClientFactory client_factory = client_factory_;
     WebSearchExecutor web_search_executor = web_search_executor_;
+    WebReadExecutor web_read_executor = web_read_executor_;
 
     std::unique_lock lock(registry->mutex);
     if (!registry->admitting) {
@@ -301,13 +319,14 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
         log_info("Provider request admitted: "
             + request->log_fields()
             + " active_count=" + std::to_string(active_count));
-        thread_launcher_([registry, request, client_factory, web_search_executor, token]() mutable {
-            request->execute(client_factory, web_search_executor);
+        thread_launcher_([registry, request, client_factory, web_search_executor, web_read_executor, token]() mutable {
+            request->execute(client_factory, web_search_executor, web_read_executor);
             // The closure's factory copy may own test or transport support
             // state. Release it before unregistering so the detached tail
             // contains only its request, registry, and scalar token.
             client_factory = nullptr;
             web_search_executor = nullptr;
+            web_read_executor = nullptr;
 
             std::size_t active_count;
             {

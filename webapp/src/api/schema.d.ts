@@ -299,6 +299,10 @@ export interface components {
             reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh";
         };
         WebSearchSettings: {
+            /** @enum {string} */
+            read_provider: "off" | "firecrawl" | "jina";
+            firecrawl_api_key: string;
+            jina_api_key: string;
             tool_enabled: boolean;
             enabled: boolean;
             /** @enum {string} */

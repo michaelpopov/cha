@@ -22,6 +22,7 @@ struct ProviderRequestInput {
     GenerationRequest generation;
     std::shared_ptr<WebSearchContext> web_search;
     std::optional<WorkspaceWebSearch> web_search_tool;
+    std::optional<WorkspaceWebSearch> web_read_tool;
 };
 
 // Launches one detached provider worker. Tests can replace this only to make
@@ -46,7 +47,8 @@ private:
     [[nodiscard]] std::string log_fields() const;
     void set_token(std::uint64_t token) noexcept;
     void execute(const ProviderClientFactory& client_factory,
-        const WebSearchExecutor& web_search_executor) noexcept;
+        const WebSearchExecutor& web_search_executor,
+        const WebReadExecutor& web_read_executor) noexcept;
     void fail(std::string_view message) noexcept;
     void close_with(GenerationEvent event) noexcept;
 
@@ -65,7 +67,8 @@ public:
         ProviderClientFactory client_factory = {},
         ProviderThreadLauncher thread_launcher = {},
         JevExecutor jev_executor = {},
-        WebSearchExecutor web_search_executor = {});
+        WebSearchExecutor web_search_executor = {},
+        WebReadExecutor web_read_executor = {});
     ~Providers();
 
     Providers(const Providers&) = delete;
@@ -85,6 +88,7 @@ private:
 
     JevExecutor jev_executor_;
     WebSearchExecutor web_search_executor_;
+    WebReadExecutor web_read_executor_;
     ProviderClientFactory client_factory_;
     ProviderThreadLauncher thread_launcher_;
     std::shared_ptr<Registry> registry_;

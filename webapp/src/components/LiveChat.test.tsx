@@ -250,7 +250,7 @@ describe('live chat', () => {
     expect(totals[1].getAttribute('title')).toBe('50,000 input + 4,000 output tokens for this response');
   });
 
-  it('marks only responses whose requests included web search data', async () => {
+  it('marks only responses whose requests included web source data', async () => {
     const events = drivableEvents();
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
     await attachInitial(events, {
@@ -262,8 +262,8 @@ describe('live chat', () => {
       })),
     });
 
-    const indicator = screen.getByRole('img', { name: 'Request included web search data' });
-    expect(indicator).toHaveAttribute('title', 'Request included web search data');
+    const indicator = screen.getByRole('img', { name: 'Request included web source data' });
+    expect(indicator).toHaveAttribute('title', 'Request included web source data');
     expect(indicator.closest('article')).toHaveTextContent('Answer 1');
     expect(document.querySelectorAll('.cha-message-web-search')).toHaveLength(1);
     expect(indicator.closest('.cha-message-meta')).not.toBeNull();

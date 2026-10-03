@@ -1316,7 +1316,8 @@ WorkspaceWebSearch load_web_search_settings(
     try {
         const auto table = read_toml(source, path, "web search config");
         static constexpr std::string_view fields[]{
-            "enabled", "provider", "api_key", "query_provider", "tool_enabled"};
+            "enabled", "provider", "api_key", "query_provider", "tool_enabled",
+            "read_provider", "firecrawl_api_key", "jina_api_key"};
         for (const auto& [key, value] : table) {
             (void)value;
             if (std::ranges::find(fields, key.str()) == std::end(fields))
@@ -1328,12 +1329,20 @@ WorkspaceWebSearch load_web_search_settings(
             .api_key_id = table["api_key"].value_or(std::string{}),
             .query_provider_id = table["query_provider"].value_or(std::string{}),
             .tool_enabled = table["tool_enabled"].value_or(false),
+            .read_provider = table["read_provider"].value_or(std::string("off")),
+            .firecrawl_api_key_id = table["firecrawl_api_key"].value_or(std::string{}),
+            .jina_api_key_id = table["jina_api_key"].value_or(std::string{}),
         };
         if (result.provider != "brave" && result.provider != "tavily") {
             log_warn("Ignoring unsupported web search provider; using Brave Search API");
             result.provider = "brave";
             result.enabled = false;
             result.tool_enabled = false;
+        }
+        if (result.read_provider != "off" && result.read_provider != "firecrawl"
+            && result.read_provider != "jina") {
+            log_warn("Ignoring unsupported page reading provider; disabling page reading");
+            result.read_provider = "off";
         }
         return result;
     } catch (const std::exception& error) {
@@ -2507,6 +2516,18 @@ void WorkspaceConfigEditor::write_web_search(const WorkspaceWebSearch& settings)
     table.insert("provider", provider);
     table.insert("api_key", settings.api_key_id);
     table.insert("query_provider", settings.query_provider_id);
+    std::string reader = settings.read_provider;
+    if (reader != "off" && reader != "firecrawl" && reader != "jina") {
+        log_warn("Ignoring unsupported page reading provider; disabling page reading");
+        reader = "off";
+    }
+    if (reader != "off" && !workspace_.find_api_key(reader == "firecrawl"
+            ? settings.firecrawl_api_key_id : settings.jina_api_key_id)) {
+        throw std::invalid_argument("Select an existing API key for page reading.");
+    }
+    table.insert("read_provider", reader);
+    table.insert("firecrawl_api_key", settings.firecrawl_api_key_id);
+    table.insert("jina_api_key", settings.jina_api_key_id);
     write_toml(workspace_.root_ / "system" / "web-search" / "config.toml", table);
 }
 

@@ -516,7 +516,10 @@ export function isWebSearchSettings(value: unknown): value is WebSearchSettings 
     && typeof value.tool_enabled === 'boolean'
     && isOneOf(value.provider, ['brave', 'tavily'])
     && typeof value.api_key === 'string'
-    && typeof value.query_provider === 'string';
+    && typeof value.query_provider === 'string'
+    && isOneOf(value.read_provider, ['off', 'firecrawl', 'jina'])
+    && typeof value.firecrawl_api_key === 'string'
+    && typeof value.jina_api_key === 'string';
 }
 
 export function isVoiceOutputSettings(value: unknown): value is VoiceOutputSettings {

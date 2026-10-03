@@ -182,7 +182,7 @@ function TranscriptMessage({
   const [copied, setCopied] = useState(false);
   const displayedText = visibleEntryText(entry.kind, entry.text);
   const canRead = canReadEntry(entry);
-  const usedWebSearch = entry.kind === 'character' && entry.web_search_used;
+  const usedWebSources = entry.kind === 'character' && entry.web_search_used;
   const canCopy = (entry.kind === 'human' || entry.kind === 'character')
     && displayedText.length > 0;
   const requestTokens = entry.kind === 'character'
@@ -234,7 +234,7 @@ function TranscriptMessage({
       </div>
       {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
       {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
-      {(entry.created_at !== null || requestTokens !== null || usedWebSearch || canCopy) && (
+      {(entry.created_at !== null || requestTokens !== null || usedWebSources || canCopy) && (
         <div className="cha-message-meta">
           {entry.created_at !== null && (
             <time
@@ -253,12 +253,12 @@ function TranscriptMessage({
               {formatTokenUsage(requestTokens)}
             </span>
           )}
-          {usedWebSearch && (
+          {usedWebSources && (
             <span
-              aria-label="Request included web search data"
+              aria-label="Request included web source data"
               className="cha-message-web-search"
               role="img"
-              title="Request included web search data"
+              title="Request included web source data"
             >
               <GlobeIcon />
             </span>

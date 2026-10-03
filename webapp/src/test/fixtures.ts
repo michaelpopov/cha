@@ -305,6 +305,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     disableJev: async () => {},
     getWebSearchSettings: async () => ({
       enabled: false, provider: 'brave', api_key: '', query_provider: '', tool_enabled: false,
+      read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
     }),
     saveWebSearchSettings: async (settings) => settings,
     getVoiceOutputSettings: async () => null,

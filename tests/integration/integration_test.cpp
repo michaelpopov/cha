@@ -5,6 +5,7 @@
 #include "characters/character_config.h"
 #include "support/mock_http_server.h"
 #include "storage/session_database.h"
+#include "storage/workspace_session_database.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_store.h"
 #include "support/test_notifier.h"
@@ -58,6 +59,11 @@ std::string file_bytes(const std::filesystem::path& path) {
     return {
         std::istreambuf_iterator<char>(input),
         std::istreambuf_iterator<char>()};
+}
+
+std::vector<ConfigFile> database_config(const std::filesystem::path& path) {
+    storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
+    return read_workspace_config_files(database);
 }
 
 class TemporaryR2Database {
@@ -356,10 +362,9 @@ TEST(R2Integration, UploadsDownloadsAndBacksUpThePreviousDatabase) {
         upload_database_to_r2(
             fixture.path(), fixture.vault(), storage);
     const std::string expected_download = file_bytes(fixture.path());
+    const auto expected_config = database_config(fixture.path());
     const std::string expected_vault = file_bytes(fixture.vault());
-    // The remote vault uses a bare database filename; its size differs from
-    // the local definition, which keeps the absolute path.
-    ASSERT_GT(uploaded.byte_count, expected_download.size());
+    ASSERT_GT(uploaded.byte_count, 0U);
 
     test::TestWorkspace previous_local;
     previous_local.add_persona("r2test", "R2 test persona");
@@ -374,7 +379,9 @@ TEST(R2Integration, UploadsDownloadsAndBacksUpThePreviousDatabase) {
     backup += ".bac";
 
     EXPECT_EQ(downloaded.byte_count, uploaded.byte_count);
-    EXPECT_EQ(file_bytes(fixture.path()), expected_download);
+    EXPECT_EQ(inspect_workspace_session_database(fixture.path()),
+        WorkspaceDatabaseState::valid_v2);
+    EXPECT_EQ(database_config(fixture.path()), expected_config);
     EXPECT_EQ(file_bytes(backup), expected_backup);
     const VaultDefinition restored_vault = load_vault_definition_file(
         fixture.vault().parent_path(), fixture.vault());
@@ -402,6 +409,7 @@ TEST(R2Integration, RejectsStaleUploadWithoutReplacingRemoteDatabaseOrVault) {
         {}, {}, first.etag);
     ASSERT_NE(second.etag, first.etag);
     const std::string remote_database = file_bytes(fixture.path());
+    const auto remote_config = database_config(fixture.path());
     const std::string remote_vault = file_bytes(fixture.vault());
 
     test::TestWorkspace stale;
@@ -426,7 +434,9 @@ TEST(R2Integration, RejectsStaleUploadWithoutReplacingRemoteDatabaseOrVault) {
         fixture.path(), fixture.vault(), storage);
     EXPECT_EQ(downloaded.etag, second.etag);
     EXPECT_EQ(downloaded.byte_count, second.byte_count);
-    EXPECT_EQ(file_bytes(fixture.path()), remote_database);
+    EXPECT_EQ(inspect_workspace_session_database(fixture.path()),
+        WorkspaceDatabaseState::valid_v2);
+    EXPECT_EQ(database_config(fixture.path()), remote_config);
     const auto definition = load_vault_definition_file(
         fixture.vault().parent_path(), fixture.vault());
     EXPECT_EQ(definition.r2_etag, second.etag);

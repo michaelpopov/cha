@@ -7,6 +7,7 @@
 #include "providers/chat_completions_api.h"
 #include "providers/openai_oauth.h"
 #include "providers/responses_api.h"
+#include "providers/web_search.h"
 #include "util/curl.h"
 #include "util/logging.h"
 #include "util/text.h"
@@ -513,6 +514,7 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
                 &text_sizes),
             .text_sizes = text_sizes,
             .web_search_tool = input.web_search_tool,
+            .web_read_tool = input.web_read_tool,
         };
     case ProviderApi::responses:
         return {
@@ -528,6 +530,7 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
                 : std::nullopt,
             .text_sizes = text_sizes,
             .web_search_tool = input.web_search_tool,
+            .web_read_tool = input.web_read_tool,
         };
     }
     throw std::logic_error("Unknown provider API");
@@ -537,8 +540,8 @@ GenerationResult ProviderClient::perform(
     RequestPayload payload,
     const GenerationDeltaSink& on_delta,
     const std::atomic_bool& cancellation) {
-    constexpr int max_searches = 4;
-    int attempts = 0;
+    const int max_tool_calls = payload.web_read_tool ? 8 : 4;
+    int tool_calls_used = 0;
     int round = 0;
     GenerationTokenUsage total;
     const auto add = [](auto& sum, const auto& count) {
@@ -550,8 +553,8 @@ GenerationResult ProviderClient::perform(
     for (;;) {
         log_debug("Model round started: provider_id=" + definition_->provider.id
             + " round=" + std::to_string(++round)
-            + " searches_used=" + std::to_string(attempts)
-            + " search_limit=" + std::to_string(max_searches));
+            + " tool_calls_used=" + std::to_string(tool_calls_used)
+            + " tool_call_limit=" + std::to_string(max_tool_calls));
         bool round_received_answer = false;
         auto result = perform_once(payload, [&](GenerationDelta delta) {
             if (delta.kind == GenerationDeltaKind::answer && !delta.text.empty()) {
@@ -573,13 +576,14 @@ GenerationResult ProviderClient::perform(
             + " received_answer=" + (round_received_answer ? "true" : "false"));
         if (result.outcome != GenerationOutcome::completed || result.tool_calls.empty())
             return result;
-        if (!payload.web_search_tool) {
+        if (!payload.web_search_tool && !payload.web_read_tool) {
             return {GenerationOutcome::protocol_error,
                 "Model requested a tool when tools were unavailable", total};
         }
-        if (attempts >= max_searches) {
+        if (tool_calls_used >= max_tool_calls) {
             return {GenerationOutcome::protocol_error,
-                "Model kept requesting web search after the search limit", total};
+                payload.web_read_tool ? "Model kept requesting tools after the web tool limit"
+                    : "Model kept requesting web search after the search limit", total};
         }
         if (body.is_null()) body = Json::parse(payload.bytes);
         auto& messages = body[responses ? "input" : "messages"];
@@ -593,22 +597,31 @@ GenerationResult ProviderClient::perform(
             if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
             std::string output;
             const auto arguments = Json::parse(call.arguments, nullptr, false);
-            if (attempts >= max_searches) {
-                output = R"({"error":"Search limit reached. Answer using the available results."})";
+            if (tool_calls_used >= max_tool_calls) {
+                output = R"({"error":"Web tool limit reached. Answer using the available results."})";
             } else {
-                ++attempts;
-                if (call.name != "web_search") {
-                    output = R"({"error":"Unknown tool. Use web_search."})";
+                ++tool_calls_used;
+                const bool read = call.name == "web_read";
+                const auto& execute = read ? payload.web_read_tool : payload.web_search_tool;
+                const char* argument = read ? "url" : "query";
+                if ((call.name != "web_search" && !read) || !execute) {
+                    output = R"({"error":"Unknown or unavailable web tool."})";
                 } else if (!arguments.is_object() || arguments.size() != 1
-                    || !arguments.contains("query") || !arguments["query"].is_string()
-                    || trim_view(arguments["query"].get_ref<const std::string&>()).empty()) {
-                    output = R"({"error":"web_search requires one non-empty string argument: query."})";
+                    || !arguments.contains(argument) || !arguments[argument].is_string()
+                    || trim_view(arguments[argument].get_ref<const std::string&>()).empty()) {
+                    output = read
+                        ? R"({"error":"web_read requires one non-empty string argument: url."})"
+                        : R"({"error":"web_search requires one non-empty string argument: query."})";
                 } else {
                     try {
-                        output = payload.web_search_tool(arguments["query"].get_ref<const std::string&>(), cancellation);
+                        output = execute(arguments[argument].get_ref<const std::string&>(), cancellation);
+                    } catch (const WebToolError& error) {
+                        output = Json{{"error", error.what()}}.dump();
                     } catch (const std::exception&) {
-                        log_warn("On-demand web search failed");
-                        output = R"({"error":"Web search failed. Continue without it or try another query."})";
+                        log_warn(read ? "On-demand page reading failed" : "On-demand web search failed");
+                        output = read
+                            ? R"({"error":"Page reading failed. Continue without it or try another URL."})"
+                            : R"({"error":"Web search failed. Continue without it or try another query."})";
                     }
                 }
             }
@@ -623,13 +636,13 @@ GenerationResult ProviderClient::perform(
         }
         // Required provider-hosted search must not force another search forever.
         body["tool_choice"] = "auto";
-        if (attempts >= max_searches) {
+        if (tool_calls_used >= max_tool_calls) {
             // Some providers still request calls when tool definitions remain.
-            log_debug("Web search limit reached: requesting final answer without tools");
+            log_debug("Web tool limit reached: requesting final answer without tools");
             body.erase("tools");
             body.erase("tool_choice");
             messages.push_back({{"role", "user"}, {"content",
-                "Web search is now unavailable because the search limit was reached. "
+                "Web tools are now unavailable because the tool limit was reached. "
                 "Answer the original request using the results already collected. "
                 "State clearly if those results are insufficient to verify any requested information. "
                 "Do not invent missing facts or request more tools."}});
@@ -683,7 +696,7 @@ GenerationResult ProviderClient::perform_once(
     }
 
     const std::string& request_body = payload.bytes;
-    const bool collect_tool_calls = static_cast<bool>(payload.web_search_tool);
+    const bool collect_tool_calls = payload.web_search_tool || payload.web_read_tool;
     std::unique_ptr<StreamingResponseDecoder> decoder;
     if (config.stream) {
         switch (config.api) {
