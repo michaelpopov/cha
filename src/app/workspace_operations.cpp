@@ -180,11 +180,12 @@ PersonaSummary persona_summary(const WorkspacePersona& persona) {
 PersonaDetail persona_detail(
     const Workspace& workspace,
     const WorkspacePersona& persona) {
+    const bool writable = workspace.persona_is_writable(persona.id);
     PersonaDetail detail{
         .summary = persona_summary(persona),
-        .persona_markdown = persona.prompt,
+        .persona_markdown = writable ? persona.prompt_template : persona.prompt,
         .style = persona.style_id,
-        .writable = workspace.persona_is_writable(persona.id),
+        .writable = writable,
     };
     for (const WorkspaceStyle& style : workspace.styles()) {
         detail.available_styles.push_back(
@@ -524,13 +525,13 @@ PersonaDetail update_persona(
     const std::string& display_name = update.display_name
         ? *update.display_name : persona->display_name;
     const std::string& markdown = update.persona_markdown
-        ? *update.persona_markdown : persona->prompt;
+        ? *update.persona_markdown : persona->prompt_template;
     const std::optional<std::string> style = update.style
         ? *update.style : persona->style_id;
     const std::optional<std::string> voice = update.voice
         ? *update.voice : persona->voice_id;
     const bool restart = display_name != persona->display_name
-        || markdown != persona->prompt;
+        || markdown != persona->prompt_template;
     const bool changed = restart || style != persona->style_id
         || voice != persona->voice_id;
     return with_workspace_edit([&] {

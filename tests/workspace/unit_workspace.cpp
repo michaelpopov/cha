@@ -183,6 +183,75 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
         "<character_profile>\nIntrinsic Guide.\n</character_profile>\n");
 }
 
+TEST(Workspace, PersonaTemplatesExpandNestedAndSharedFilesWithVariables) {
+    test::TestWorkspace fixture;
+    const auto personas = fixture.root() / "personas";
+    const auto reader = personas / "reader";
+    std::ofstream(reader / "persona.toml")
+        << "display_name = 'Reader'\n"
+           "[prompt]\n"
+           "greeting = 'Hello'\n"
+           "'persona.id' = 'shadow'\n"
+           "'persona.display_name' = 'Shadow'\n";
+    const std::string prompt_template =
+        "$${greeting}, I am $${persona.display_name} ($${persona.id}).\n"
+        "$$(profile/BIO.md)$$(../shared.md)\n$${greeting}\n";
+    std::ofstream(reader / "PERSONA.md") << prompt_template;
+    std::filesystem::create_directories(reader / "profile");
+    std::ofstream(reader / "profile" / "config.toml")
+        << "[prompt]\ngreeting = 'Welcome'\n";
+    std::ofstream(reader / "profile" / "BIO.md") << "$$(DETAILS.md)";
+    std::ofstream(reader / "profile" / "DETAILS.md")
+        << "$${greeting}, $${persona.display_name}.\n";
+    std::ofstream(personas / "shared.md") << "Shared background.";
+    std::ofstream(reader / "NOTES.md") << "$$(unused.md)";
+
+    const Workspace workspace = Workspace::load(fixture.root());
+    const auto* persona = workspace.find_persona("reader");
+    ASSERT_NE(persona, nullptr);
+    EXPECT_EQ(persona->prompt,
+        "Hello, I am Reader (reader).\nWelcome, Reader.\nShared background.\nHello\n");
+    EXPECT_EQ(persona->prompt_template, prompt_template);
+}
+
+TEST(Workspace, PersonaPromptsRemainOptionalAndSupportPlainTextAndEscapes) {
+    test::TestWorkspace fixture;
+    const auto path = fixture.root() / "personas" / "reader" / "PERSONA.md";
+    std::ofstream(path) << "Plain text with $5 and $$math.\n";
+    EXPECT_EQ(Workspace::load(fixture.root()).find_persona("reader")->prompt,
+        "Plain text with $5 and $$math.\n");
+    std::ofstream(path) << "$$${literal} $$$(file.md)\n";
+    EXPECT_EQ(Workspace::load(fixture.root()).find_persona("reader")->prompt,
+        "$${literal} $$(file.md)\n");
+    std::filesystem::remove(path);
+    const Workspace workspace = Workspace::load(fixture.root());
+    EXPECT_TRUE(workspace.find_persona("reader")->prompt.empty());
+    EXPECT_TRUE(workspace.find_persona("reader")->prompt_template.empty());
+}
+
+TEST(Workspace, PersonaTemplateErrorsReportIncludesAndEnforceContainment) {
+    test::TestWorkspace fixture;
+    const auto reader = fixture.root() / "personas" / "reader";
+    std::ofstream(reader / "PERSONA.md") << "$$(BIO.md)";
+    std::ofstream(reader / "BIO.md") << "$${missing}";
+    try {
+        (void)Workspace::load(fixture.root());
+        FAIL() << "Expected an unknown variable error";
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("unknown variable 'missing'"), std::string::npos);
+        EXPECT_NE(message.find("reader/BIO.md:1:1"), std::string::npos);
+        EXPECT_NE(message.find("included from reader/PERSONA.md:1:1"), std::string::npos);
+    }
+    std::ofstream(reader / "BIO.md") << "$$(PERSONA.md)";
+    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+    std::ofstream(reader / "PERSONA.md") << "$$(missing.md)";
+    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+    std::ofstream(fixture.root() / "outside.md") << "Outside personas.";
+    std::ofstream(reader / "PERSONA.md") << "$$(../../outside.md)";
+    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+}
+
 TEST(Workspace, LoadsAMinimalVoice) {
     test::TestWorkspace fixture;
     fixture.write_voice(

@@ -100,6 +100,32 @@ TEST(Application, StartsWithoutAListenerAndBootstraps) {
     EXPECT_TRUE(persona.available_voices.empty());
 }
 
+TEST(Application, PersonaSettingsPreserveTemplatesWhenEditingMetadata) {
+    test::TestWorkspace workspace;
+    const auto reader = workspace.root() / "personas" / "reader";
+    const std::string prompt_template = "$${persona.display_name}: $$(BIO.md)";
+    std::ofstream(reader / "PERSONA.md") << prompt_template;
+    std::ofstream(reader / "BIO.md") << "Enjoys reading.";
+    auto application = Application::open(make_command(
+        workspace, test::import_test_database(workspace.root())));
+    const auto epoch = application->context_epoch();
+
+    EXPECT_EQ(application->store().snapshot()->find_persona("reader")->prompt,
+        "Reader: Enjoys reading.");
+    EXPECT_EQ(application->get_persona("reader", epoch).persona_markdown,
+        prompt_template);
+    const auto updated = application->update_persona(
+        "reader", {.display_name = "Writer"}, epoch);
+    EXPECT_EQ(updated.persona_markdown, prompt_template);
+    EXPECT_EQ(application->store().snapshot()->find_persona("reader")->prompt,
+        "Writer: Enjoys reading.");
+    const auto saved = application->update_persona(
+        "reader", {.persona_markdown = prompt_template}, epoch);
+    EXPECT_EQ(saved.persona_markdown, prompt_template);
+    EXPECT_EQ(application->store().snapshot()->find_persona("reader")->prompt,
+        "Writer: Enjoys reading.");
+}
+
 TEST(Application, IndependentOwnersKeepWorkspaceSessionsAndCredentialsIsolated) {
     test::TestWorkspace first_fixture;
     first_fixture.write_character_config(

@@ -343,7 +343,7 @@ std::filesystem::path resolve_include_path(
             "cannot read included file '" + std::string(raw_path) + "'");
     }
     if (!path_is_under(state.root_canonical, canonical)) {
-        throw_expansion_error(state, "include path escapes the forum");
+        throw_expansion_error(state, "include path escapes containment root");
     }
     std::error_code status_error;
     const std::filesystem::file_status status =
@@ -533,7 +533,7 @@ void expand_path(
             state,
             state.stack.empty()
                 ? "template path escapes containment root"
-                : "include path escapes the forum");
+                : "include path escapes containment root");
     }
 
     for (const SourceLocation& frame : state.stack) {

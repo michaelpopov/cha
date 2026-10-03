@@ -363,7 +363,7 @@ TEST(TextTemplate, RejectsMissingAbsoluteEscapingAndDirectoryTargets) {
             FAIL();
         } catch (const std::runtime_error& error) {
             EXPECT_NE(
-                std::string(error.what()).find("include path escapes the forum"),
+                std::string(error.what()).find("include path escapes containment root"),
                 std::string::npos);
         }
         std::filesystem::remove(root.path().parent_path() / "outside.md");
@@ -400,7 +400,7 @@ TEST(TextTemplate, RejectsSiblingForumAndPrefixSiblingNames) {
         FAIL();
     } catch (const std::runtime_error& error) {
         EXPECT_NE(
-            std::string(error.what()).find("escapes the forum"),
+            std::string(error.what()).find("escapes containment root"),
             std::string::npos);
     }
     try {
@@ -408,7 +408,7 @@ TEST(TextTemplate, RejectsSiblingForumAndPrefixSiblingNames) {
         FAIL();
     } catch (const std::runtime_error& error) {
         EXPECT_NE(
-            std::string(error.what()).find("escapes the forum"),
+            std::string(error.what()).find("escapes containment root"),
             std::string::npos);
     }
 }
@@ -438,7 +438,7 @@ TEST(TextTemplate, RejectsSymlinkEscape) {
         FAIL();
     } catch (const std::runtime_error& error) {
         EXPECT_NE(
-            std::string(error.what()).find("escapes the forum"),
+            std::string(error.what()).find("escapes containment root"),
             std::string::npos);
     }
 }

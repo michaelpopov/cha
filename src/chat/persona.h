@@ -13,6 +13,7 @@ struct Persona {
     std::string id;
     std::string display_name;
     std::string prompt;
+    std::string prompt_template; // Unexpanded PERSONA.md for editing.
     std::optional<std::string> description;
     std::optional<std::string> style_id;
     std::optional<std::string> voice_id;

@@ -1077,6 +1077,33 @@ TEST_F(
         before.at("system/keys/api_key_2/config.toml"));
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, PersonaTemplatesPersistAndRollBackInvalidEdits) {
+    const std::string prompt_template = "$${persona.display_name}: $$(BIO.md)";
+    std::ofstream(source() / "forums" / "lobby" / "config.toml", std::ios::app)
+        << "default_persona = 'reader'\n";
+    write_bytes(source() / "personas" / "reader" / "PERSONA.md", prompt_template);
+    write_bytes(source() / "personas" / "reader" / "BIO.md", "Enjoys reading.");
+    (void)import_workspace_configuration(source(), database());
+    const auto store = open_store();
+    // Expansion must use the stored files after the source directory is gone.
+    std::filesystem::remove_all(source());
+    EXPECT_EQ(store->snapshot()->find_persona("reader")->prompt,
+        "Reader: Enjoys reading.");
+    const auto updated = store->apply_persona_update(
+        "reader", "Bookworm", prompt_template, std::nullopt, std::nullopt);
+    EXPECT_EQ(updated.affected_forum_ids, std::vector<std::string>{"lobby"});
+    EXPECT_EQ(store->snapshot()->find_persona("reader")->prompt,
+        "Bookworm: Enjoys reading.");
+    EXPECT_EQ(config_contents(database()).at("personas/reader/PERSONA.md"), prompt_template);
+    const auto before = config_contents(database());
+    EXPECT_THROW(store->apply_persona_update(
+        "reader", "Bookworm", "$$(missing.md)", std::nullopt, std::nullopt),
+        WorkspaceConfigValidationError);
+    EXPECT_EQ(config_contents(database()), before);
+    EXPECT_EQ(store->snapshot()->find_persona("reader")->prompt,
+        "Bookworm: Enjoys reading.");
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, CharacterFileEditsPersistOnlyTheSelectedFile) {
     const auto store = open_store();
     const auto before = config_contents(database());

@@ -685,7 +685,8 @@ bool is_reserved_participant(std::string_view name) {
 
 WorkspacePersona load_persona(
     const TextSource& source,
-    const std::filesystem::path& directory) {
+    const std::filesystem::path& directory,
+    const std::filesystem::path& personas_directory) {
     const std::string id = utf8_path(directory.filename());
     if (!is_persona_id(id) || is_reserved_participant(id)) {
         throw std::runtime_error("Invalid or reserved persona ID '" + id + "'");
@@ -693,7 +694,7 @@ WorkspacePersona load_persona(
     const std::filesystem::path config_path = directory / "persona.toml";
     const toml::table table = read_toml(source, config_path, "persona config");
     static constexpr std::string_view fields[]{
-        "display_name", "description", "style", "voice"};
+        "display_name", "description", "style", "voice", "prompt"};
     reject_unknown_fields(table, config_path, fields, "Persona config");
     const std::string display_name = required_string(table, config_path, "display_name");
     validate_public_name(display_name, "Persona name", config_path, true);
@@ -711,19 +712,31 @@ WorkspacePersona load_persona(
     }
     if (style_id) require_path_component(*style_id, config_path);
     const std::filesystem::path prompt_path = directory / "PERSONA.md";
+    const TemplateOptions options{
+        .containment_root = personas_directory,
+        .reserved = {
+            {"persona.id", id},
+            {"persona.display_name", display_name},
+        },
+        .initial_scope = template_scope_from_toml(table, "prompt", utf8_path(config_path)),
+        .source = &source,
+    };
     std::string prompt;
+    std::string prompt_template;
     if (source.exists(prompt_path)) {
         if (!source.is_regular_file(prompt_path)) {
             throw std::runtime_error(
                 "Persona prompt '" + utf8_path(prompt_path)
                 + "' is not a regular file");
         }
-        prompt = read_text(source, prompt_path, "persona prompt");
+        prompt_template = read_text(source, prompt_path, "persona prompt");
+        prompt = expand_template_file(prompt_path, options);
     }
     return {
         .id = id,
         .display_name = display_name,
         .prompt = std::move(prompt),
+        .prompt_template = std::move(prompt_template),
         .description = description,
         .style_id = style_id,
     };
@@ -1341,7 +1354,7 @@ LoadedPersonas load_personas(
     const std::filesystem::path personas_directory = workspace.root() / "personas";
     for (const std::filesystem::path& directory : recursive_definition_directories(source,
              personas_directory, "persona.toml", "PERSONA.md")) {
-        WorkspacePersona persona = load_persona(source, directory);
+        WorkspacePersona persona = load_persona(source, directory, personas_directory);
         if (persona.style_id) {
             const WorkspaceStyle* style = workspace.find_style(*persona.style_id);
             if (style == nullptr) {
