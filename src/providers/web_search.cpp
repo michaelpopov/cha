@@ -458,49 +458,4 @@ std::string read_jina(std::string_view url, std::string_view key,
         data.value("content", std::string{}), warning);
 }
 
-const std::string& WebSearchContext::get(const ProviderClientFactory& factory,
-    const WebSearchExecutor& search, const std::atomic_bool& cancelled) {
-    std::call_once(once_, [&] {
-        try {
-            if (cancelled.load()) return;
-            if (!search) throw std::runtime_error("Web search executor unavailable");
-            std::string text = query.run.prompt_text;
-            log_debug("Jev search preparation: forum_id=" + query.run.session.forum_id
-                + " session_id=" + query.run.session.session_id
-                + " rewrite=" + (rewriter ? "true" : "false"));
-            if (rewriter) {
-                auto backend = factory(rewriter);
-                if (!backend) throw std::runtime_error("Query provider unavailable");
-                std::string rewritten;
-                const auto result = backend->perform(backend->prepare(query),
-                    [&](GenerationDelta delta) {
-                        if (delta.kind == GenerationDeltaKind::answer) {
-                            if (rewritten.empty())
-                                delta.text.erase(0, delta.text.find_first_not_of(" \t\r\n\f\v"));
-                            // Keep one byte past the largest provider limit (600 bytes)
-                            // so limit_query can distinguish a complete last word from a cut one.
-                            rewritten.append(delta.text, 0, 601 - rewritten.size());
-                        }
-                    }, cancelled);
-                if (cancelled.load() || result.outcome == GenerationOutcome::cancelled) return;
-                if (result.outcome != GenerationOutcome::completed || trim_view(rewritten).empty())
-                    throw std::runtime_error("Web search query rewrite failed");
-                text = trim_view(rewritten);
-            }
-            if (!cancelled.load()) {
-                log_info("Web search initiated: trigger=jev query_bytes=" + std::to_string(text.size()));
-                context_ = search(config, text, cancelled);
-                if (!cancelled.load()) {
-                    log_info("Web search completed: trigger=jev query_bytes=" + std::to_string(text.size())
-                        + " result_bytes=" + std::to_string(context_.size()));
-                }
-            }
-        } catch (...) {
-            // Provider errors and credential lookups can contain secrets.
-            if (!cancelled.load()) log_warn("Web search failed; continuing without search results");
-        }
-    });
-    return context_;
-}
-
 } // namespace cha

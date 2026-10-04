@@ -512,11 +512,9 @@ export function isSessionNamingSettings(value: unknown): value is SessionNamingS
 }
 
 export function isWebSearchSettings(value: unknown): value is WebSearchSettings {
-  return isRecord(value) && typeof value.enabled === 'boolean'
-    && typeof value.tool_enabled === 'boolean'
+  return isRecord(value) && typeof value.tool_enabled === 'boolean'
     && isOneOf(value.provider, ['brave', 'tavily'])
     && typeof value.api_key === 'string'
-    && typeof value.query_provider === 'string'
     && isOneOf(value.read_provider, ['off', 'firecrawl', 'jina'])
     && typeof value.firecrawl_api_key === 'string'
     && typeof value.jina_api_key === 'string';

@@ -23,43 +23,7 @@ using namespace std::chrono_literals;
 JevRequestInput jev_input() {
     JevRequestInput input{{.api_key_id = "key-1"}, "Marcus, do you agree with Seneca?",
         {{"character_1", "seneca", "Seneca"}, {"character_2", "marcus", "Marcus"}}};
-    input.ask_web_search = true;
     return input;
-}
-
-TEST(JevProtocol, OmitsSearchQuestionWhenWebSearchIsDisabled) {
-    auto input = jev_input();
-    input.ask_web_search = false;
-    const auto body = make_jev_body(input);
-    EXPECT_EQ(body["questions"].size(), 1u);
-    EXPECT_FALSE(body["questions"].contains("web_search"));
-    const auto result = parse_jev_result({{"answers", {
-        {"recipient", {{"type", "choice"}, {"choice", "character_2"}}},
-        {"web_search", {{"type", "choice"}, {"choice", "search_direct"}}}}}}, input);
-    EXPECT_EQ(result.outcome, JevOutcome::success);
-    EXPECT_FALSE(result.search_choice);
-}
-
-TEST(JevProtocol, DistinguishesSearchDiscoveryFromAvailablePageReading) {
-    auto input = jev_input();
-    input.prompt = "Mr.Feyman, get the most important story on theregister.com and explain it to me.";
-    for (bool available : {false, true}) {
-        input.page_reader_available = available;
-        const auto body = make_jev_body(input);
-        EXPECT_EQ(body["state"]["prompt"], input.prompt);
-        const auto& question = body["questions"]["web_search"];
-        const auto instructions = question["instructions"].get<std::string>();
-        const auto no_search = question["criteria"]["no_search"].get<std::string>();
-        EXPECT_NE(instructions.find("automatic search-engine query"), std::string::npos);
-        if (available) {
-            EXPECT_NE(instructions.find("theregister.com"), std::string::npos);
-            EXPECT_NE(instructions.find("choose no_search"), std::string::npos);
-            EXPECT_NE(no_search.find("even if its content is current news"), std::string::npos);
-        } else {
-            EXPECT_NE(instructions.find("Direct page reading is unavailable"), std::string::npos);
-            EXPECT_EQ(no_search.find("reading the supplied URL"), std::string::npos);
-        }
-    }
 }
 
 TEST(JevProtocol, SendsOnlyPromptAndOptionsAndValidatesExactChoice) {
@@ -69,12 +33,11 @@ TEST(JevProtocol, SendsOnlyPromptAndOptionsAndValidatesExactChoice) {
     EXPECT_EQ(body["state"].size(), 1u);
     EXPECT_EQ(body["state"]["prompt"], input.prompt);
     EXPECT_EQ(body["questions"]["recipient"]["criteria"].size(), 5u);
-    EXPECT_EQ(body["questions"]["web_search"]["type"], "choice");
-    EXPECT_EQ(body["questions"]["web_search"]["criteria"].size(), 3u);
-    const auto response = [](std::string recipient, std::string search = "no_search") {
+    EXPECT_EQ(body["questions"].size(), 1u);
+    EXPECT_FALSE(body["questions"].contains("web_search"));
+    const auto response = [](std::string recipient) {
         return nlohmann::json{{"answers", {
-            {"recipient", {{"type", "choice"}, {"choice", recipient}}},
-            {"web_search", {{"type", "choice"}, {"choice", search}}}}}};
+            {"recipient", {{"type", "choice"}, {"choice", recipient}}}}}};
     };
     for (const std::string choice : {"character_1", "character_2", "undefined", "all_characters", "self_note"}) {
         EXPECT_EQ(parse_jev_result(response(choice), input).choice, choice);
@@ -82,32 +45,18 @@ TEST(JevProtocol, SendsOnlyPromptAndOptionsAndValidatesExactChoice) {
     for (const std::string choice : {"Seneca", " character_1", "character_1 extra", "character_9"}) {
         EXPECT_EQ(parse_jev_result(response(choice), input).outcome, JevOutcome::failure);
     }
-    for (const auto& [search, expected] : {
-        std::pair{"no_search", JevSearch::none},
-        std::pair{"search_direct", JevSearch::direct},
-        std::pair{"search_rewrite", JevSearch::rewrite}}) {
-        const auto result = parse_jev_result(response("character_1", search), input);
-        EXPECT_EQ(result.outcome, JevOutcome::success);
-        EXPECT_EQ(result.search_choice, expected);
-    }
-    for (const auto& missing_search : {
-        response("character_1", "unknown"),
-        nlohmann::json{{"answers", {{"recipient", {{"type", "choice"}, {"choice", "character_1"}}}}}},
-        nlohmann::json{{"answers", {
-            {"recipient", {{"type", "choice"}, {"choice", "character_1"}}},
-            {"web_search", {{"type", "text"}, {"choice", "search_direct"}}}}}}}) {
-        const auto result = parse_jev_result(missing_search, input);
-        EXPECT_EQ(result.outcome, JevOutcome::success);
-        EXPECT_EQ(result.choice, "character_1");
-        EXPECT_FALSE(result.search_choice);
-    }
-    const auto bad_recipient = parse_jev_result(response("character_9", "search_direct"), input);
-    EXPECT_EQ(bad_recipient.outcome, JevOutcome::failure);
-    EXPECT_EQ(bad_recipient.search_choice, JevSearch::direct);
     EXPECT_EQ(parse_jev_result({{"answers", {{"recipient", {{"type", "text"}, {"choice", "character_1"}}}}}}, input).outcome, JevOutcome::failure);
     EXPECT_EQ(parse_jev_result(nullptr, input).outcome, JevOutcome::failure);
     input.characters = {{"character_1", "a", "Undefined"}, {"character_2", "b", "Undefined"}};
     EXPECT_EQ(make_jev_body(input)["questions"]["recipient"]["criteria"].size(), 5u);
+}
+
+TEST(JevProtocol, IgnoresObsoleteSearchAnswer) {
+    const auto response = nlohmann::json::parse(
+        R"({"answers":{"recipient":{"type":"choice","choice":"character_2"},"web_search":{"type":"choice","choice":"search_direct"}}})");
+    const auto result = parse_jev_result(response, jev_input());
+    EXPECT_EQ(result.outcome, JevOutcome::success);
+    EXPECT_EQ(result.choice, "character_2");
 }
 
 TEST(JevConfiguration, ValidatesAtomicallyRoundTripsAndDisablesWithoutDeletingKey) {
@@ -221,7 +170,7 @@ TEST(JevConfiguration, InvalidOptionalConfigurationDoesNotPreventWorkspaceLoad) 
 }
 
 TEST(JevProtocol, DecisionsTransportUsesFullEndpointAndSavedKey) {
-    const std::string body = R"({"answers":{"recipient":{"type":"choice","choice":"character_2"},"web_search":{"type":"choice","choice":"search_direct"}}})";
+    const std::string body = R"({"answers":{"recipient":{"type":"choice","choice":"character_2"}}})";
     MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
         + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body});
     auto input = jev_input();
@@ -233,7 +182,6 @@ TEST(JevProtocol, DecisionsTransportUsesFullEndpointAndSavedKey) {
     server.join();
     EXPECT_EQ(result.outcome, JevOutcome::success);
     EXPECT_EQ(result.choice, "character_2");
-    EXPECT_EQ(result.search_choice, JevSearch::direct);
     ASSERT_EQ(server.requests().size(), 1u);
     EXPECT_NE(server.requests()[0].find("POST /api/alpha/decisions "), std::string::npos);
     EXPECT_NE(server.requests()[0].find("Authorization: Bearer test-secret"), std::string::npos);
@@ -245,7 +193,7 @@ TEST(JevProtocol, DebugLogsQuestionsAndRawDecisionsWithoutCredentials) {
         test::TestWorkspace fixture;
         const auto path = fixture.root() / "jev-debug.log";
         initialize_diagnostic_logging(path, level);
-        const std::string body = R"({"echo":"secret-jev-key","answers":{"recipient":{"type":"choice","choice":"character_2"},"web_search":{"type":"choice","choice":"search_rewrite"}}})";
+        const std::string body = R"({"echo":"secret-jev-key","trace":"raw-marker","answers":{"recipient":{"type":"choice","choice":"character_2"}}})";
         MockHttpServer server({http_response("application/json", body)});
         auto input = jev_input();
         input.config.url = "http://127.0.0.1:" + std::to_string(server.port()) + "/decisions";
@@ -254,7 +202,7 @@ TEST(JevProtocol, DebugLogsQuestionsAndRawDecisionsWithoutCredentials) {
         const auto result = classify_jev(input.config, "secret-jev-key", input, std::atomic_bool{false});
         server.join();
         shutdown_diagnostic_logging();
-        EXPECT_EQ(result.search_choice, JevSearch::rewrite);
+        EXPECT_EQ(result.choice, "character_2");
         std::ifstream file(path);
         const std::string output{std::istreambuf_iterator<char>(file), {}};
         EXPECT_EQ(output.find("secret-jev-key"), std::string::npos);
@@ -263,12 +211,12 @@ TEST(JevProtocol, DebugLogsQuestionsAndRawDecisionsWithoutCredentials) {
             EXPECT_NE(output.find(input.prompt), std::string::npos);
             EXPECT_NE(output.find("Jev request body"), std::string::npos);
             EXPECT_NE(output.find("Jev raw response"), std::string::npos);
-            EXPECT_NE(output.find("search_rewrite"), std::string::npos);
+            EXPECT_NE(output.find("raw-marker"), std::string::npos);
             EXPECT_NE(output.find("[REDACTED]"), std::string::npos);
             EXPECT_NE(output.find("duration_ms="), std::string::npos);
         } else {
             EXPECT_EQ(output.find(input.prompt), std::string::npos);
-            EXPECT_EQ(output.find("search_rewrite"), std::string::npos);
+            EXPECT_EQ(output.find("raw-marker"), std::string::npos);
         }
     }
 }
@@ -283,14 +231,12 @@ protected:
     std::vector<JevRequestInput> classified;
     std::vector<std::string> called_providers;
     std::vector<std::string> searched;
-    bool fail_search{};
     std::string search_context = R"({"results":[{"title":"Python release","url":"https://python.org/","description":"Latest release"}]})";
     std::string search(const WorkspaceWebSearch& settings, std::string_view query,
         const std::atomic_bool&) {
         EXPECT_EQ(settings.provider, "brave");
         EXPECT_EQ(settings.api_key_id, config.api_key_id);
         searched.emplace_back(query);
-        if (fail_search) throw std::runtime_error("secret transport failure");
         return search_context;
     }
     JevResult decision{JevOutcome::success, "undefined"};
@@ -495,7 +441,7 @@ TEST_F(SessionNaming, UsesConfiguredProviderAndEffort) {
 }
 
 TEST_F(SessionNaming, IdentifiedSelfNoteIsNamedAndSavedWithoutACharacterReply) {
-    decision = {JevOutcome::success, "self_note", {}, JevSearch::rewrite};
+    decision = {JevOutcome::success, "self_note", {}};
     (void)send("Note to self: buy milk.");
     run_workers();
     const auto update = controller->receive_events(100).update;
@@ -854,36 +800,6 @@ TEST_F(SessionNaming, NamingTimeoutUsesTimestampAndAllowsTheReply) {
     EXPECT_EQ(title_inputs.size(), 1u);
 }
 
-TEST_F(JevRouting, ClassificationKnowsWhetherRecipientsCanReadPages) {
-    ApiKeyStore keys(*store);
-    const auto reader_key = keys.create("Reader", "reader-secret").id;
-    WorkspaceWebSearch settings{true, "brave", config.api_key_id, "query"};
-    settings.firecrawl_api_key_id = reader_key;
-    settings.jina_api_key_id = reader_key;
-    decision = {JevOutcome::success, "undefined", {}, JevSearch::none};
-    for (const auto* reader : {"off", "firecrawl", "jina"}) {
-        settings.read_provider = reader;
-        store->apply_web_search_update(settings);
-        (void)send("Get the most important story on theregister.com and explain it.");
-        finish();
-        ASSERT_FALSE(classified.empty());
-        EXPECT_TRUE(classified.back().ask_web_search);
-        EXPECT_EQ(classified.back().page_reader_available, std::string_view(reader) != "off");
-        EXPECT_TRUE(searched.empty());
-    }
-    store->apply_character_settings("marcus", "test", std::nullopt, std::nullopt,
-        std::nullopt, std::nullopt, false);
-    (void)send("Read the front page");
-    finish();
-    EXPECT_FALSE(classified.back().page_reader_available);
-    store->apply_character_settings("marcus", "test", std::nullopt, std::nullopt,
-        std::nullopt, std::nullopt, std::nullopt);
-    keys.remove(reader_key);
-    (void)send("Read with a missing reader key");
-    finish();
-    EXPECT_FALSE(classified.back().page_reader_available);
-}
-
 TEST_F(JevRouting, PageReadingWorksWithSearchDisabledAndMarksWebUse) {
     struct ReadBackend final : ModelBackend {
         explicit ReadBackend(bool& offered) : offered(offered) {}
@@ -988,7 +904,7 @@ TEST_F(JevRouting, OnDemandSearchUsesWorkspaceDefaultAndCharacterOverrideWithout
         });
     controller = make_controller(notifier);
     for (bool workspace_default : {false, true}) {
-        store->apply_web_search_update({false, "brave", config.api_key_id, "obsolete-query-provider", workspace_default});
+        store->apply_web_search_update({"brave", config.api_key_id, workspace_default});
         EXPECT_EQ(store->snapshot()->web_search().tool_enabled, workspace_default);
         for (std::optional<bool> override : {std::optional<bool>{}, std::optional<bool>{false}, std::optional<bool>{true}}) {
             store->apply_character_settings("guide", "test", std::nullopt, std::nullopt,
@@ -1008,7 +924,7 @@ TEST_F(JevRouting, OnDemandSearchUsesWorkspaceDefaultAndCharacterOverrideWithout
     store->apply_character_settings("guide", "test", std::nullopt, std::nullopt,
         std::nullopt, std::nullopt, true);
     for (const std::string key : {"", "missing-key"}) {
-        store->apply_web_search_update({false, "brave", key, "", false});
+        store->apply_web_search_update({"brave", key, false});
         const auto count = searched.size();
         (void)send("Answer without search");
         finish();
@@ -1019,10 +935,59 @@ TEST_F(JevRouting, OnDemandSearchUsesWorkspaceDefaultAndCharacterOverrideWithout
     }
 }
 
-TEST_F(JevRouting, OnDemandSearchSupplementsSearchBeforeGeneration) {
-    struct SearchBackend final : ModelBackend {
+TEST_F(JevRouting, ConfiguredWebToolsDoNotRetrieveBeforeOrWithoutAModelCall) {
+    const std::string prompt = "Get the most important story on theregister.com and explain it.";
+    struct CapturingBackend final : ModelBackend {
+        explicit CapturingBackend(std::vector<GenerationRequest>& requests) : requests(requests) {}
         RequestPayload prepare(const GenerationRequest& input) override {
-            EXPECT_FALSE(input.web_search_context.empty());
+            requests.push_back(input);
+            EXPECT_TRUE(input.web_search_tool);
+            EXPECT_TRUE(input.web_read_tool);
+            return {};
+        }
+        GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink,
+            const std::atomic_bool&) override {
+            sink({GenerationDeltaKind::answer, "Answer"});
+            return {};
+        }
+        std::vector<GenerationRequest>& requests;
+    };
+    controller.reset();
+    providers->shutdown();
+    std::vector<GenerationRequest> requests;
+    int reads = 0;
+    providers = std::make_shared<Providers>(
+        [&](SharedCharacterDefinition definition) {
+            called_providers.push_back(definition->provider.id);
+            return std::make_unique<CapturingBackend>(requests);
+        },
+        [this](auto worker) { workers.push_back(std::move(worker)); },
+        [this](const auto& input, const auto&) { classified.push_back(input); return decision; },
+        [this](const auto& settings, auto query, const auto& cancelled) {
+            return search(settings, query, cancelled);
+        },
+        [&](const auto&, auto, const auto&) { ++reads; return "Page content"; });
+    store->apply_web_search_update({"brave", config.api_key_id, true, "firecrawl", config.api_key_id});
+    controller = make_controller(notifier);
+    (void)send(prompt);
+    finish();
+    ASSERT_EQ(classified.size(), 1u);
+    EXPECT_EQ(make_jev_body(classified.front())["questions"].size(), 1u);
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_EQ(requests.front().run.prompt_text, prompt);
+    EXPECT_EQ(called_providers, (std::vector<std::string>{"test"}));
+    EXPECT_TRUE(searched.empty());
+    EXPECT_EQ(reads, 0);
+    EXPECT_FALSE(controller->view().transcript.entries.back().web_search_used);
+}
+
+TEST_F(JevRouting, OnDemandSearchRunsOnlyWhenTheModelCallsIt) {
+    struct SearchBackend final : ModelBackend {
+        explicit SearchBackend(const std::vector<std::string>& calls) : calls(calls) {}
+        const std::vector<std::string>& calls;
+        RequestPayload prepare(const GenerationRequest& input) override {
+            EXPECT_TRUE(calls.empty());
+            EXPECT_EQ(input.run.prompt_text, "Original query");
             EXPECT_TRUE(input.web_search_tool);
             search = input.web_search_tool;
             return {};
@@ -1038,212 +1003,22 @@ TEST_F(JevRouting, OnDemandSearchSupplementsSearchBeforeGeneration) {
     controller.reset();
     providers->shutdown();
     providers = std::make_shared<Providers>(
-        [](SharedCharacterDefinition) { return std::make_unique<SearchBackend>(); },
+        [this](SharedCharacterDefinition) { return std::make_unique<SearchBackend>(searched); },
         [this](auto worker) { workers.push_back(std::move(worker)); },
         [this](const auto&, const auto&) { return decision; },
         [this](const auto& settings, auto query, const auto& cancelled) {
             return search(settings, query, cancelled);
         });
-    store->apply_web_search_update({true, "brave", config.api_key_id, "query", true});
+    store->apply_web_search_update({"brave", config.api_key_id, true});
     controller = make_controller(notifier);
-    decision = {JevOutcome::success, "undefined", {}, JevSearch::direct};
+    decision = {JevOutcome::success, "undefined", {}};
     (void)send("Original query");
     finish();
-    EXPECT_EQ(searched, (std::vector<std::string>{"Original query", "follow-up query"}));
+    EXPECT_EQ(searched, (std::vector<std::string>{"follow-up query"}));
     EXPECT_TRUE(controller->view().transcript.entries.back().web_search_used);
 }
 
-TEST_F(JevRouting, RewriteChoiceSearchesBeforeChatAndAddsResultsToModelContext) {
-    struct CapturingBackend final : ModelBackend {
-        CapturingBackend(std::vector<GenerationRequest>& captured, std::string character_id)
-            : captured(captured), character_id(std::move(character_id)) {}
-        RequestPayload prepare(const GenerationRequest& request) override {
-            captured.push_back(request);
-            return {.bytes = request.run.prompt_text};
-        }
-        GenerationResult perform(RequestPayload, const GenerationDeltaSink& on_delta,
-            const std::atomic_bool&) override {
-            on_delta({GenerationDeltaKind::answer,
-                character_id == "web-search-query" ? "rewritten query" : "chat reply"});
-            return {};
-        }
-        std::vector<GenerationRequest>& captured;
-        std::string character_id;
-    };
-
-    controller.reset();
-    providers->shutdown();
-    std::vector<SharedCharacterDefinition> definitions;
-    std::vector<GenerationRequest> requests;
-    providers = std::make_shared<Providers>(
-        [&](SharedCharacterDefinition definition) -> std::unique_ptr<ModelBackend> {
-            const auto character_id = definition->character.id;
-            definitions.push_back(std::move(definition));
-            return std::make_unique<CapturingBackend>(requests, character_id);
-        },
-        [this](auto worker) { workers.push_back(std::move(worker)); },
-        [this](const auto& input, const auto&) { classified.push_back(input); return decision; },
-        [this](const auto& settings, auto query, const auto& cancelled) {
-            return search(settings, query, cancelled);
-        });
-    controller = make_controller(notifier);
-    store->apply_web_search_update({true, "brave", config.api_key_id, "query"});
-
-    (void)send("Tell me about Python.");
-    finish();
-    definitions.clear();
-    requests.clear();
-
-    decision = {JevOutcome::success, "undefined", {}, JevSearch::rewrite};
-    const std::string prompt = "What is the latest version of it?";
-    const auto started_at = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    (void)send(prompt);
-    run_workers();
-    (void)controller->receive_events(100);
-    ASSERT_EQ(workers.size(), 1u);
-    run_workers();
-    (void)controller->receive_events(1);
-    EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::streaming);
-    EXPECT_TRUE(controller->view().transcript.entries.back().web_search_used);
-    (void)controller->receive_events(100);
-    ASSERT_EQ(definitions.size(), 2u);
-    ASSERT_EQ(requests.size(), 2u);
-    EXPECT_EQ(definitions.front()->provider.id, "query");
-    EXPECT_EQ(definitions.front()->provider.config.model, "query-model");
-    EXPECT_EQ(definitions.front()->provider.config.web_search, WebSearchMode::off);
-    EXPECT_NE(definitions.front()->system_prompt.find("web search query"), std::string::npos);
-    EXPECT_EQ(requests.front().run.prompt_text, prompt);
-    EXPECT_GE(requests.front().run.created_at, started_at);
-    EXPECT_LE(requests.front().run.created_at, std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count());
-    const auto& history = requests.front().history->entries;
-    ASSERT_EQ(history.size(), 2u);
-    EXPECT_EQ(history.front().text, "Tell me about Python.");
-    EXPECT_EQ(history.back().text, "chat reply");
-    const auto messages = project_model_context(requests.front(), definitions.front()->system_prompt);
-    EXPECT_TRUE(messages.back().content.starts_with("from User at "));
-    EXPECT_TRUE(std::ranges::any_of(messages, [](const auto& message) {
-        return message.content.find("Tell me about Python.") != std::string::npos;
-    }));
-    EXPECT_EQ(std::ranges::count_if(messages, [&](const auto& message) {
-        return message.content.find(prompt) != std::string::npos;
-    }), 1);
-    EXPECT_EQ(controller->view().transcript.entries.size(), 4u);
-    EXPECT_EQ(controller->view().transcript.entries.back().text, "chat reply");
-    EXPECT_EQ(searched, (std::vector<std::string>{"rewritten query"}));
-    EXPECT_TRUE(requests.front().web_search_context.empty());
-    EXPECT_EQ(requests.back().web_search_context, search_context);
-    EXPECT_EQ(requests.back().run.prompt_text, prompt);
-    EXPECT_TRUE(controller->view().transcript.entries.back().web_search_used);
-    controller.reset();
-    controller = make_controller(notifier, load_session_state(journal.path()));
-    ASSERT_EQ(controller->view().transcript.entries.size(), 4u);
-    EXPECT_TRUE(controller->view().transcript.entries.back().web_search_used);
-    EXPECT_FALSE(controller->view().transcript.entries[1].web_search_used);
-    const auto chat_messages = project_model_context(requests.back(), definitions.back()->system_prompt);
-    ASSERT_GE(chat_messages.size(), 2u);
-    EXPECT_NE(chat_messages[chat_messages.size() - 2].content.find(search_context), std::string::npos);
-    EXPECT_EQ(chat_messages[chat_messages.size() - 2].role, ModelRole::user);
-    EXPECT_NE(chat_messages.back().content.find(prompt), std::string::npos);
-
-    const auto query_count = [&] {
-        return std::ranges::count_if(definitions, [](const auto& definition) {
-            return definition->provider.id == "query";
-        });
-    };
-    for (const auto choice : {JevSearch::direct, JevSearch::none}) {
-        decision.search_choice = choice;
-        (void)send("Current topic");
-        run_workers();
-        (void)controller->receive_events(100);
-        run_workers();
-        (void)controller->receive_events(100);
-        EXPECT_EQ(query_count(), 1);
-        EXPECT_EQ(searched.size(), 2u);
-        EXPECT_EQ(searched.back(), "Current topic");
-        EXPECT_EQ(requests.back().web_search_context,
-            choice == JevSearch::direct ? search_context : "");
-        EXPECT_EQ(controller->view().transcript.entries.back().web_search_used,
-            choice == JevSearch::direct);
-    }
-
-    decision = {JevOutcome::success, "all_characters", {}, JevSearch::rewrite};
-    (void)send("Latest Python news");
-    finish();
-    EXPECT_EQ(searched.size(), 3u);
-    EXPECT_EQ(query_count(), 2);
-    EXPECT_EQ(requests[requests.size() - 2].web_search_context, search_context);
-    EXPECT_EQ(requests.back().web_search_context, search_context);
-    const auto entries = controller->view().transcript.entries;
-    ASSERT_GE(entries.size(), 4u);
-    for (const auto index : {entries.size() - 3, entries.size() - 1}) {
-        EXPECT_EQ(entries[index].kind, EntryKind::character);
-        EXPECT_TRUE(entries[index].web_search_used);
-    }
-
-    fail_search = true;
-    decision = {JevOutcome::success, "undefined", {}, JevSearch::direct};
-    (void)send("Search service is unavailable");
-    finish();
-    EXPECT_EQ(searched.size(), 4u);
-    EXPECT_TRUE(requests.back().web_search_context.empty());
-    EXPECT_FALSE(controller->view().transcript.entries.back().web_search_used);
-    EXPECT_EQ(controller->view().transcript.entries.back().text, "chat reply");
-
-    fail_search = false;
-    search_context.clear();
-    (void)send("Search has no data");
-    finish();
-    EXPECT_TRUE(requests.back().web_search_context.empty());
-    EXPECT_FALSE(controller->view().transcript.entries.back().web_search_used);
-}
-
-TEST_F(JevRouting, FailedRecipientDecisionDoesNotRewriteEvenWithSearchChoice) {
-    store->apply_web_search_update({true, "brave", config.api_key_id, "query"});
-    decision = {JevOutcome::failure, {}, "Invalid recipient decision", JevSearch::rewrite};
-    (void)send("What happened today?");
-    finish();
-    EXPECT_EQ(called_providers, (std::vector<std::string>{"test"}));
-    EXPECT_FALSE(controller->is_generating());
-    EXPECT_EQ(controller->view().transcript.entries.size(), 2u);
-    EXPECT_TRUE(searched.empty());
-}
-
-TEST_F(JevRouting, DisabledWebSearchDoesNotRewrite) {
-    store->apply_web_search_update({false, "brave", config.api_key_id, "query"});
-    decision = {JevOutcome::success, "undefined", {}, JevSearch::rewrite};
-    (void)send("What happened today?");
-    finish();
-    EXPECT_EQ(called_providers, (std::vector<std::string>{"test"}));
-    EXPECT_FALSE(controller->is_generating());
-    EXPECT_EQ(controller->view().transcript.entries.size(), 2u);
-    EXPECT_TRUE(searched.empty());
-}
-
-TEST_F(JevRouting, MissingQueryProviderDoesNotBlockChat) {
-    store->apply_web_search_update({true, "brave", config.api_key_id, "query"});
-    const auto exported = fixture.root() / "missing-query";
-    (void)export_workspace_configuration(
-        store->database_path(), exported, WorkspaceConfigLease::already_held);
-    std::filesystem::remove_all(exported / "system/providers/query");
-    const auto current = std::make_shared<const Workspace>(Workspace::load(exported));
-    ASSERT_TRUE(current->web_search().enabled);
-    ASSERT_EQ(current->find_provider(current->web_search().query_provider_id), nullptr);
-    controller.reset();
-    controller = SessionController::from_workspace_for_testing(
-        [current] { return current; }, "guide", "reader", journal.path(),
-        providers, notifier, {}, {}, {"lobby", "session"});
-    decision = {JevOutcome::success, "undefined", {}, JevSearch::rewrite};
-    (void)send("What happened today?");
-    finish();
-    EXPECT_EQ(called_providers, (std::vector<std::string>{"test"}));
-    EXPECT_FALSE(controller->is_generating());
-    EXPECT_EQ(controller->view().transcript.entries.size(), 2u);
-    EXPECT_TRUE(searched.empty());
-}
-
-TEST_F(JevRouting, ClassifiesPromptsButSkipsEmptyAndExplicitSelfNotes) {
+TEST_F(JevRouting, ClassifiesImplicitPromptsButSkipsEmptyAndExplicitTargets) {
     for (const std::string text : {"", " \t\n", "\n"}) {
         EXPECT_FALSE(send(text).clear_input);
         EXPECT_FALSE(controller->submit_prompt("reader", text).input_consumed);
@@ -1254,24 +1029,18 @@ TEST_F(JevRouting, ClassifiesPromptsButSkipsEmptyAndExplicitSelfNotes) {
     EXPECT_FALSE(send("Another note").clear_input);
     finish();
     EXPECT_TRUE(workers.empty());
-    EXPECT_FALSE(send("@Guide Explicit override").clear_input);
+    EXPECT_TRUE(send("@Guide Explicit override").clear_input);
     run_workers(); (void)controller->receive_events(100);
-    ASSERT_EQ(classified.size(), 2u);
-    EXPECT_EQ(classified.back().prompt, "Explicit override");
-    EXPECT_FALSE(classified.back().ask_web_search);
     finish();
     EXPECT_EQ(controller->view().transcript.entries[1].addressed_to, "guide");
     EXPECT_EQ(controller->view().default_character_id, "-");
     (void)controller->set_default_character_by_id("*");
     EXPECT_EQ(controller->view().default_character_id, "*");
     EXPECT_TRUE(send("@- Private note").clear_input);
-    store->apply_web_search_update({true, "brave", config.api_key_id, "test"});
+    store->apply_web_search_update({"brave", config.api_key_id, true});
     (void)send("/mcast @Guide only Guide");
-    EXPECT_TRUE(controller->classification_pending());
-    run_workers(); (void)controller->receive_events(100);
-    ASSERT_EQ(classified.size(), 3u);
-    EXPECT_EQ(classified.back().prompt, "only Guide");
-    EXPECT_TRUE(classified.back().ask_web_search);
+    EXPECT_FALSE(controller->classification_pending());
+    EXPECT_EQ(classified.size(), 1u);
     finish();
     EXPECT_FALSE(send("@unknown Wrong handle").clear_input);
     EXPECT_FALSE(controller->classification_pending());
@@ -1283,17 +1052,14 @@ TEST_F(JevRouting, ClassifiesPromptsButSkipsEmptyAndExplicitSelfNotes) {
     (void)controller->set_default_character_by_id("guide");
     EXPECT_TRUE(send("Plain question").clear_input);
     finish();
-    EXPECT_EQ(classified.size(), 3u);
+    EXPECT_EQ(classified.size(), 1u);
 }
 
 TEST_F(JevRouting, IdentifiedSelfNotesStayActiveUntilAnotherRecipientIsIdentified) {
-    store->apply_web_search_update({true, "brave", config.api_key_id, "query"});
-    for (const auto& [target, search] : {
-             std::pair{"guide", JevSearch::none},
-             std::pair{"marcus", JevSearch::direct},
-             std::pair{"*", JevSearch::rewrite}}) {
+    store->apply_web_search_update({"brave", config.api_key_id, true});
+    for (const auto* target : {"guide", "marcus", "*"}) {
         (void)controller->set_default_character_by_id(target);
-        decision = {JevOutcome::success, "self_note", {}, search};
+        decision = {JevOutcome::success, "self_note"};
         EXPECT_FALSE(send("Note to self: read Marcus tomorrow.").clear_input);
         EXPECT_TRUE(controller->classification_pending());
         run_workers();
@@ -1310,7 +1076,7 @@ TEST_F(JevRouting, IdentifiedSelfNotesStayActiveUntilAnotherRecipientIsIdentifie
         EXPECT_TRUE(called_providers.empty());
         EXPECT_TRUE(searched.empty());
         EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, "-");
-        decision = {JevOutcome::success, "undefined", {}, search};
+        decision = {JevOutcome::success, "undefined"};
         EXPECT_FALSE(send("Also buy milk.").clear_input);
         EXPECT_TRUE(controller->classification_pending());
         finish();
@@ -1361,23 +1127,8 @@ TEST_F(JevRouting, FailedClassificationKeepsTheNotesTarget) {
     EXPECT_TRUE(called_providers.empty());
 }
 
-TEST_F(JevRouting, ExplicitRecipientsOverrideSelfNoteDecisions) {
-    decision = {JevOutcome::success, "self_note"};
-    for (const auto* prompt : {"@Guide Note to self: buy milk.", "/mcast @Guide Note to self: buy milk."}) {
-        (void)send(prompt);
-        run_workers();
-        (void)controller->receive_events(100);
-        const auto result = controller->take_submission_result();
-        ASSERT_TRUE(result);
-        EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
-        EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, "guide");
-        EXPECT_EQ(workers.size(), 1u);
-        finish();
-    }
-}
-
 TEST_F(JevRouting, RuntimeAcceptsSelfNotesWithoutSavingADefaultCharacter) {
-    use_runtime_providers({JevOutcome::success, "self_note", {}, JevSearch::direct});
+    use_runtime_providers({JevOutcome::success, "self_note", {}});
     int saved = 0;
     LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
         return OpenedSession{.label = "Original", .controller = make_controller(wake),
@@ -1401,19 +1152,14 @@ TEST_F(JevRouting, RuntimeAcceptsSelfNotesWithoutSavingADefaultCharacter) {
     EXPECT_EQ(snapshot.transcript.back().addressed_to, "-");
 }
 
-TEST_F(JevRouting, ExplicitTargetsIgnoreJevRecipientDecisionsAndFailures) {
+TEST_F(JevRouting, ExplicitTargetsSkipJevAndPreserveTheDefaultRecipient) {
     (void)controller->set_default_character_by_id("marcus");
-    decision = {JevOutcome::success, "all_characters", {}, JevSearch::direct};
+    decision = {JevOutcome::failure, {}, "Jev unavailable"};
     for (const auto* prompt : {"@Guide question", "/mcast @Guide question"}) {
         const auto before = controller->view().transcript.entries.size();
-        (void)send(prompt);
-        EXPECT_TRUE(controller->classification_pending());
-        run_workers();
-        (void)controller->receive_events(100);
-        const auto result = controller->take_submission_result();
-        ASSERT_TRUE(result);
-        EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
-        EXPECT_TRUE(result->update.input_consumed);
+        EXPECT_TRUE(send(prompt).clear_input);
+        EXPECT_FALSE(controller->classification_pending());
+        EXPECT_TRUE(classified.empty());
         EXPECT_EQ(controller->view().default_character_id, "marcus");
         EXPECT_EQ(workers.size(), 1u);
         ASSERT_GT(controller->view().transcript.entries.size(), before);
@@ -1422,35 +1168,6 @@ TEST_F(JevRouting, ExplicitTargetsIgnoreJevRecipientDecisionsAndFailures) {
         ASSERT_GT(controller->view().transcript.entries.size(), before + 1);
         EXPECT_EQ(controller->view().transcript.entries[before + 1].participant_id, "guide");
     }
-
-    decision = {JevOutcome::failure, {}, "Jev unavailable"};
-    (void)send("@Guide question after failure");
-    run_workers();
-    (void)controller->receive_events(100);
-    const auto failure = controller->take_submission_result();
-    ASSERT_TRUE(failure);
-    EXPECT_EQ(failure->outcome, SessionController::SubmissionOutcome::accepted);
-    EXPECT_TRUE(failure->update.input_consumed);
-    EXPECT_TRUE(!failure->update.notice || failure->update.notice->empty());
-    EXPECT_EQ(controller->view().default_character_id, "marcus");
-    EXPECT_EQ(workers.size(), 1u);
-    EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, "guide");
-    finish();
-
-    decision = {JevOutcome::success, "all_characters", {}, JevSearch::direct};
-    const auto before = controller->view().transcript.entries.size();
-    (void)send("@Guide question after removal");
-    store->apply_forum_members_and_persona("lobby", std::vector<std::string>{"marcus"}, "reader");
-    run_workers();
-    (void)controller->receive_events(100);
-    const auto removed = controller->take_submission_result();
-    ASSERT_TRUE(removed);
-    EXPECT_EQ(removed->outcome, SessionController::SubmissionOutcome::failed);
-    ASSERT_TRUE(removed->update.notice);
-    EXPECT_NE(removed->update.notice->find("no longer in this forum"), std::string::npos);
-    EXPECT_EQ(controller->view().default_character_id, "marcus");
-    EXPECT_EQ(controller->view().transcript.entries.size(), before);
-    EXPECT_TRUE(workers.empty());
 }
 
 TEST_F(JevRouting, SpecificDecisionsUpdateCurrentTargetAndUndefinedKeepsIt) {

@@ -423,10 +423,8 @@ struct SessionNamingSettings {
 };
 
 struct WebSearchSettings {
-    bool enabled{false};
     std::string provider{"brave"};
     std::string api_key;
-    std::string query_provider;
     bool tool_enabled{false};
     std::string read_provider{"off"};
     std::string firecrawl_api_key;

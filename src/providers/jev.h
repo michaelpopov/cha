@@ -24,17 +24,12 @@ struct JevRequestInput {
     std::vector<JevOption> characters;
     std::chrono::steady_clock::time_point deadline{
         std::chrono::steady_clock::time_point::max()};
-    bool ask_web_search{false};
-    bool page_reader_available{false};
 };
 enum class JevOutcome { success, cancelled, failure };
-enum class JevSearch { none, direct, rewrite };
-const char* jev_search_name(JevSearch search) noexcept;
 struct JevResult {
     JevOutcome outcome{JevOutcome::failure};
     std::string choice;
     std::string message;
-    std::optional<JevSearch> search_choice;
 };
 using JevExecutor = std::function<JevResult(const JevRequestInput&, const std::atomic_bool&)>;
 

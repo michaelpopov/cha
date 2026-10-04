@@ -43,10 +43,6 @@ std::vector<std::string> provider_uses(
             result.push_back(character.character.display_name);
         }
     }
-    if (workspace.web_search().enabled
-        && workspace.web_search().query_provider_id == provider_id) {
-        result.emplace_back("Search API");
-    }
     if (workspace.session_naming().provider_id == provider_id) {
         result.emplace_back("Session naming");
     }
@@ -265,7 +261,7 @@ ApiKeyDetail api_key_detail(
     if (workspace.jev() && key.id == workspace.jev()->api_key_id) {
         used_by.emplace_back("Recipient detection");
     }
-    if ((workspace.web_search().enabled || workspace.web_search().tool_enabled
+    if ((workspace.web_search().tool_enabled
             || std::ranges::any_of(workspace.characters(), [](const auto& character) {
                 return character.web_search_tool.value_or(false);
             }))
@@ -684,8 +680,7 @@ SessionNamingSettings save_session_naming_settings(
 
 WebSearchSettings get_web_search_settings(const Workspace& workspace) {
     const auto& settings = workspace.web_search();
-    return {settings.enabled, settings.provider, settings.api_key_id,
-        settings.query_provider_id, settings.tool_enabled, settings.read_provider,
+    return {settings.provider, settings.api_key_id, settings.tool_enabled, settings.read_provider,
         settings.firecrawl_api_key_id, settings.jina_api_key_id};
 }
 
@@ -693,8 +688,7 @@ WebSearchSettings save_web_search_settings(
     WorkspaceConfigStore& store, const WebSearchSettings& update) {
     return with_settings_edit([&] {
         store.apply_web_search_update(
-            WorkspaceWebSearch{update.enabled, update.provider, update.api_key,
-                update.query_provider, update.tool_enabled, update.read_provider,
+            WorkspaceWebSearch{update.provider, update.api_key, update.tool_enabled, update.read_provider,
                 update.firecrawl_api_key, update.jina_api_key});
         return get_web_search_settings(*store.snapshot());
     });

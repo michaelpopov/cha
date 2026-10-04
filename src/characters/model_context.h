@@ -41,7 +41,6 @@ struct RunSpec {
 struct GenerationRequest {
     SharedModelHistory history;
     RunSpec run;
-    std::string web_search_context;
     std::function<std::string(std::string_view, const std::atomic_bool&)> web_search_tool;
     std::function<std::string(std::string_view, const std::atomic_bool&)> web_read_tool;
 };

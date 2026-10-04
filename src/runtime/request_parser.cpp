@@ -488,15 +488,12 @@ WebSearchSettings parse_web_search_settings(const nlohmann::json& json) {
     if (!json.is_object()) throw std::invalid_argument("Invalid web search settings");
     for (const auto& [key, value] : json.items()) {
         (void)value;
-        if (key != "enabled" && key != "provider" && key != "api_key"
-            && key != "query_provider" && key != "tool_enabled"
+        if (key != "provider" && key != "api_key" && key != "tool_enabled"
             && key != "read_provider" && key != "firecrawl_api_key" && key != "jina_api_key")
             log_warn("Ignoring unused web search field: " + key);
     }
-    return {required_field<bool>(json, "enabled"),
-        required_field<std::string>(json, "provider"),
+    return {required_field<std::string>(json, "provider"),
         required_field<std::string>(json, "api_key"),
-        required_field<std::string>(json, "query_provider"),
         required_field<bool>(json, "tool_enabled"),
         json.contains("read_provider") ? required_field<std::string>(json, "read_provider") : "off",
         json.contains("firecrawl_api_key") ? required_field<std::string>(json, "firecrawl_api_key") : "",

@@ -697,7 +697,7 @@ TEST(WebProtocol, RequiresExplicitToolSettingsOnSave) {
     character["web_search_tool"] = "true";
     EXPECT_THROW((void)parse_character_settings_update(character), std::invalid_argument);
 
-    nlohmann::json search{{"enabled", false}, {"provider", "brave"}, {"api_key", ""}, {"query_provider", ""}};
+    nlohmann::json search{{"provider", "brave"}, {"api_key", ""}};
     EXPECT_THROW((void)parse_web_search_settings(search), std::invalid_argument);
     for (bool value : {false, true}) {
         search["tool_enabled"] = value;

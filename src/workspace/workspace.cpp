@@ -1316,7 +1316,7 @@ WorkspaceWebSearch load_web_search_settings(
     try {
         const auto table = read_toml(source, path, "web search config");
         static constexpr std::string_view fields[]{
-            "enabled", "provider", "api_key", "query_provider", "tool_enabled",
+            "provider", "api_key", "tool_enabled",
             "read_provider", "firecrawl_api_key", "jina_api_key"};
         for (const auto& [key, value] : table) {
             (void)value;
@@ -1324,10 +1324,8 @@ WorkspaceWebSearch load_web_search_settings(
                 log_warn("Ignoring unused web search field: " + std::string(key.str()));
         }
         WorkspaceWebSearch result{
-            .enabled = table["enabled"].value_or(false),
             .provider = table["provider"].value_or(std::string("brave")),
             .api_key_id = table["api_key"].value_or(std::string{}),
-            .query_provider_id = table["query_provider"].value_or(std::string{}),
             .tool_enabled = table["tool_enabled"].value_or(false),
             .read_provider = table["read_provider"].value_or(std::string("off")),
             .firecrawl_api_key_id = table["firecrawl_api_key"].value_or(std::string{}),
@@ -1336,7 +1334,6 @@ WorkspaceWebSearch load_web_search_settings(
         if (result.provider != "brave" && result.provider != "tavily") {
             log_warn("Ignoring unsupported web search provider; using Brave Search API");
             result.provider = "brave";
-            result.enabled = false;
             result.tool_enabled = false;
         }
         if (result.read_provider != "off" && result.read_provider != "firecrawl"
@@ -2284,10 +2281,6 @@ void WorkspaceConfigEditor::delete_provider(std::string_view provider_id) {
             throw std::invalid_argument("Provider is in use");
         }
     }
-    if (workspace_.web_search_.enabled
-        && workspace_.web_search_.query_provider_id == provider_id) {
-        throw std::invalid_argument("Provider is in use");
-    }
     if (workspace_.session_naming_.provider_id == provider_id) {
         throw std::invalid_argument("Provider is in use");
     }
@@ -2494,28 +2487,21 @@ void WorkspaceConfigEditor::write_session_naming(const WorkspaceSessionNaming& s
 void WorkspaceConfigEditor::write_web_search(const WorkspaceWebSearch& settings) {
     std::string provider = settings.provider;
     if (provider != "brave" && provider != "tavily") {
-        if (settings.enabled || settings.tool_enabled) {
+        if (settings.tool_enabled) {
             throw std::invalid_argument("Select a web search provider.");
         }
         log_warn("Ignoring unsupported web search provider; using Brave Search API");
         provider = "brave";
     }
-    if (settings.enabled || settings.tool_enabled) {
+    if (settings.tool_enabled) {
         if (!workspace_.find_api_key(settings.api_key_id)) {
             throw std::invalid_argument("Select an existing API key for web search.");
         }
     }
-    if (settings.enabled) {
-        if (!workspace_.find_provider(settings.query_provider_id)) {
-            throw std::invalid_argument("Select a query provider for web search.");
-        }
-    }
     toml::table table;
-    table.insert("enabled", settings.enabled);
     table.insert("tool_enabled", settings.tool_enabled);
     table.insert("provider", provider);
     table.insert("api_key", settings.api_key_id);
-    table.insert("query_provider", settings.query_provider_id);
     std::string reader = settings.read_provider;
     if (reader != "off" && reader != "firecrawl" && reader != "jina") {
         log_warn("Ignoring unsupported page reading provider; disabling page reading");

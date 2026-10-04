@@ -2233,7 +2233,7 @@ export function SessionSettingsScreen({ client, dispatch }: SettingsScreenProps)
 }
 
 const defaultWebSearch: WebSearchSettings = {
-  enabled: false, provider: 'brave', api_key: '', query_provider: '', tool_enabled: false,
+  provider: 'brave', api_key: '', tool_enabled: false,
   read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
 };
 
@@ -2241,18 +2241,17 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
   const [settings, setSettings] = useState<WebSearchSettings>(defaultWebSearch);
   const [saved, setSaved] = useState<WebSearchSettings | null>(null);
   const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
-  const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let current = true;
     void Promise.all([
-      client.getWebSearchSettings(), client.listApiKeys(), client.listProviders(),
+      client.getWebSearchSettings(), client.listApiKeys(),
     ]).then(
-      ([config, apiKeys, modelProviders]) => {
+      ([config, apiKeys]) => {
         if (current) {
-          setSaved(config); setSettings(config); setKeys(apiKeys); setProviders(modelProviders);
+          setSaved(config); setSettings(config); setKeys(apiKeys);
         }
       },
       (failure: unknown) => {
@@ -2267,10 +2266,8 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
     || settings.firecrawl_api_key !== saved.firecrawl_api_key
     || settings.jina_api_key !== saved.jina_api_key
     || settings.tool_enabled !== saved.tool_enabled
-    || settings.enabled !== saved.enabled
     || settings.provider !== saved.provider
     || settings.api_key !== saved.api_key
-    || settings.query_provider !== saved.query_provider
   );
 
   async function save(event: FormEvent) {
@@ -2288,11 +2285,7 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
   return <section className="cha-screen cha-navigation" aria-label="Search API">
     <BackToSettings dispatch={dispatch} />
     {error && <p className="cha-error-message" role="alert">{error}</p>}
-    {keys && providers && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
-      <label className="cha-checkbox-row"><input checked={settings.enabled} disabled={pending}
-        onChange={(event) => setSettings({ ...settings, enabled: event.target.checked })}
-        type="checkbox" />Search before generation</label>
-      <p className="cha-settings-note">Search before generation requires recipient detection to be enabled.</p>
+    {keys && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
       <label className="cha-checkbox-row"><input checked={settings.tool_enabled} disabled={pending}
         onChange={(event) => setSettings({ ...settings, tool_enabled: event.target.checked })}
         type="checkbox" />On-demand web search</label>
@@ -2301,12 +2294,6 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
         onChange={(event) => setSettings({ ...settings, provider: event.target.value as WebSearchSettings['provider'] })}>
         <option value="brave">Brave Search API</option>
         <option value="tavily">Tavily</option>
-      </select></label>
-      <label>Query provider<select className="cha-form-control" disabled={pending}
-        value={settings.query_provider}
-        onChange={(event) => setSettings({ ...settings, query_provider: event.target.value })}>
-        <option value="">Select provider</option>
-        {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}
       </select></label>
       <label>API key<select className="cha-form-control" disabled={pending}
         value={settings.api_key}
@@ -2337,8 +2324,7 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
       <div className="cha-settings-form-actions">
         <button className="cha-button cha-button-primary" type="submit"
           disabled={!dirty || pending
-            || ((settings.enabled || settings.tool_enabled) && !keys.some((key) => key.id === settings.api_key))
-            || (settings.enabled && !providers.some((provider) => provider.id === settings.query_provider))
+            || (settings.tool_enabled && !keys.some((key) => key.id === settings.api_key))
             || (settings.read_provider !== 'off' && !keys.some((key) => key.id ===
               (settings.read_provider === 'firecrawl' ? settings.firecrawl_api_key : settings.jina_api_key)))}>
           Save

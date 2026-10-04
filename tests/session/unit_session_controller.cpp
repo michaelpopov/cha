@@ -2254,6 +2254,38 @@ CharacterDefinition provider_test_definition(
     };
 }
 
+TEST(SessionController, CancelledSubmissionsDoNotLaunchOrdinaryOrMulticastWorkers) {
+    TemporaryJournal temporary;
+    int worker_starts = 0;
+    auto controller = test::from_test_workspace(
+        {provider_test_definition("guide-id", "Guide")},
+        temporary.path,
+        notifier(),
+        {},
+        std::nullopt,
+        [&worker_starts](std::function<void()>) {
+            ++worker_starts;
+            throw std::runtime_error("Unexpected worker launch");
+        });
+    auto submission = std::make_shared<SubmissionState>();
+    submission->cancelled.store(true);
+
+    const ControllerUpdate ordinary =
+        controller->submit_prompt("operator", "Question", {}, submission);
+    EXPECT_EQ(ordinary.notice, "Submission expired");
+    EXPECT_FALSE(ordinary.input_consumed);
+    EXPECT_EQ(worker_starts, 0);
+    EXPECT_FALSE(controller->is_generating());
+
+    const ControllerUpdate multicast =
+        controller->start_multicast("operator", "Question", {"Guide"}, submission);
+    EXPECT_EQ(multicast.notice, "Submission expired");
+    EXPECT_FALSE(multicast.input_consumed);
+    EXPECT_EQ(worker_starts, 0);
+    EXPECT_FALSE(controller->is_generating());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
+}
+
 TEST(SessionController, ThreadLaunchFailureClosesTheCommittedTurn) {
     TemporaryJournal temporary;
     auto controller = test::from_test_workspace(

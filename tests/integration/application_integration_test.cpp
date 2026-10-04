@@ -198,8 +198,8 @@ protected:
             "http://127.0.0.1:" + std::to_string(port) + "/search");
         const auto key = call("apiKey.create",
             {{"display_name", "Search"}, {"value", "integration-search-key"}});
-        (void)call("webSearch.save", {{"enabled", false}, {"tool_enabled", true},
-            {"provider", "brave"}, {"api_key", key.at("id")}, {"query_provider", ""}});
+        (void)call("webSearch.save", {{"tool_enabled", true},
+            {"provider", "brave"}, {"api_key", key.at("id")}});
     }
 
     void submit(const Json& identity, std::string_view prompt) {

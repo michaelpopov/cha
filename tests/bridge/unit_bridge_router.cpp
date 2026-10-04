@@ -305,72 +305,55 @@ TEST_F(BridgeRouterTest, PageReadingSettingsRetainBothKeysAndAreIndependentOfSea
     EXPECT_EQ(call("webSearch.get")["result"]["read_provider"], "off");
 }
 
-TEST_F(BridgeRouterTest, WebSearchSettingsRoundTripAndRequireKeyWhenEnabled) {
+TEST_F(BridgeRouterTest, WebSearchSettingsRoundTripAndIgnoreObsoletePreliminarySearchSettings) {
     bootstrap_epoch();
     const nlohmann::json disabled = {
-        {"enabled", false}, {"provider", "brave"}, {"api_key", ""},
-        {"query_provider", ""}, {"tool_enabled", false},
+        {"provider", "brave"}, {"api_key", ""}, {"tool_enabled", false},
         {"read_provider", "off"}, {"firecrawl_api_key", ""}, {"jina_api_key", ""}};
     EXPECT_EQ(call("webSearch.get")["result"], disabled);
     auto obsolete = disabled;
+    obsolete["enabled"] = true;
+    obsolete["query_provider"] = 123;
+    ASSERT_TRUE(call("webSearch.save", obsolete)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"], disabled);
     obsolete["provider"] = "google";
     ASSERT_TRUE(call("webSearch.save", obsolete)["ok"]);
     EXPECT_EQ(call("webSearch.get")["result"], disabled);
 
-    auto invalid = disabled;
-    invalid["enabled"] = true;
-    EXPECT_FALSE(call("webSearch.save", invalid)["ok"]);
+    auto enabled = disabled;
+    enabled["tool_enabled"] = true;
+    EXPECT_FALSE(call("webSearch.save", enabled)["ok"]);
     EXPECT_EQ(call("webSearch.get")["result"], disabled);
-
     const auto key = call("apiKey.create", {
         {"display_name", "Search"}, {"value", "test-secret"}});
     ASSERT_TRUE(key["ok"]);
-    const std::string key_id = key["result"]["id"];
-    auto missing_provider = invalid;
-    missing_provider["api_key"] = key_id;
-    EXPECT_FALSE(call("webSearch.save", missing_provider)["ok"]);
-    auto unknown_provider = missing_provider;
-    unknown_provider["provider"] = "google";
-    unknown_provider["query_provider"] = "test";
-    EXPECT_FALSE(call("webSearch.save", unknown_provider)["ok"]);
-    const nlohmann::json enabled = {
-        {"enabled", true}, {"provider", "tavily"}, {"api_key", key_id},
-        {"query_provider", "test"}, {"tool_enabled", false},
-        {"read_provider", "off"}, {"firecrawl_api_key", ""}, {"jina_api_key", ""}};
+    enabled["api_key"] = key["result"]["id"];
+    enabled["provider"] = "tavily";
     ASSERT_TRUE(call("webSearch.save", enabled)["ok"]);
     EXPECT_EQ(call("webSearch.get")["result"], enabled);
-    const auto query_provider = call("provider.get", {{"provider_id", "test"}});
-    ASSERT_TRUE(query_provider["ok"]);
-    EXPECT_NE(std::ranges::find(query_provider["result"]["used_by"], "Search API"),
-        query_provider["result"]["used_by"].end());
-    auto keys = call("apiKey.list")["result"];
-    ASSERT_EQ(keys.size(), 1u);
-    EXPECT_EQ(keys[0]["used_by"], nlohmann::json::array({"Search API"}));
+    auto invalid = enabled;
+    invalid["provider"] = "google";
+    EXPECT_FALSE(call("webSearch.save", invalid)["ok"]);
+    auto api_keys = call("apiKey.list")["result"];
+    ASSERT_EQ(api_keys.size(), 1u);
+    EXPECT_EQ(api_keys[0]["used_by"], nlohmann::json::array({"Search API"}));
+    const auto provider = call("provider.get", {{"provider_id", "test"}});
+    ASSERT_TRUE(provider["ok"]);
+    EXPECT_EQ(std::ranges::find(provider["result"]["used_by"], "Search API"),
+        provider["result"]["used_by"].end());
 
     auto turned_off = enabled;
-    turned_off["enabled"] = false;
+    turned_off["tool_enabled"] = false;
     ASSERT_TRUE(call("webSearch.save", turned_off)["ok"]);
     EXPECT_EQ(call("webSearch.get")["result"], turned_off);
-    keys = call("apiKey.list")["result"];
-    EXPECT_EQ(keys[0]["used_by"], nlohmann::json::array());
-    const auto unused_provider = call("provider.get", {{"provider_id", "test"}});
-    ASSERT_TRUE(unused_provider["ok"]);
-    EXPECT_EQ(std::ranges::find(unused_provider["result"]["used_by"], "Search API"),
-        unused_provider["result"]["used_by"].end());
-    auto tool_only = turned_off;
-    tool_only["query_provider"] = "obsolete";
-    tool_only["tool_enabled"] = true;
-    ASSERT_TRUE(call("webSearch.save", tool_only)["ok"]);
-    EXPECT_EQ(call("webSearch.get")["result"], tool_only);
-    auto old_request = tool_only;
-    old_request.erase("tool_enabled");
-    EXPECT_FALSE(call("webSearch.save", old_request)["ok"]);
-    EXPECT_EQ(call("webSearch.get")["result"], tool_only);
-    keys = call("apiKey.list")["result"];
-    EXPECT_EQ(keys[0]["used_by"], nlohmann::json::array({"Search API"}));
-    tool_only["api_key"] = "missing";
-    EXPECT_FALSE(call("webSearch.save", tool_only)["ok"]);
-
+    api_keys = call("apiKey.list")["result"];
+    EXPECT_EQ(api_keys[0]["used_by"], nlohmann::json::array());
+    auto missing_tool_setting = enabled;
+    missing_tool_setting.erase("tool_enabled");
+    EXPECT_FALSE(call("webSearch.save", missing_tool_setting)["ok"]);
+    invalid = enabled;
+    invalid["api_key"] = "missing";
+    EXPECT_FALSE(call("webSearch.save", invalid)["ok"]);
 }
 
 TEST_F(BridgeRouterTest, BootstrapIncludesVersionAndCapabilities) {

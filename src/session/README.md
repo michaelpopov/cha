@@ -36,11 +36,11 @@ durable turn using existing partial-response rules.
 
 ## Submission and session naming
 
-A configured Jev request classifies recipients before a turn is committed. Its
-five-second deadline and `SubmissionState` preserve cancellation and expiry;
-explicit mentions and multicast targets cannot be changed by classification.
-Self-notes bypass classification. Optional pre-generation search is shared by
-all targets, while each target may have its own on-demand search tool.
+A configured Jev request classifies recipients before a turn is committed. It
+has a five-second deadline. Explicit mentions, including `@-` self-notes, and
+multicast targets skip classification. Every submission checks `SubmissionState` for
+cancellation and expiry before dispatch. Each target may have its own
+on-demand search tool.
 
 A new `New session` starts with durable `recent_pending` and `discardable`
 flags. An accepted submission retains it. Its first human entry starts a

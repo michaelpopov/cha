@@ -2047,53 +2047,38 @@ describe('Settings screens', () => {
 });
 
 describe('web search settings', () => {
-  it('saves the query provider and search API settings, and keeps them when disabled', async () => {
+  it('saves model search settings without a preliminary search or query provider', async () => {
     const user = userEvent.setup();
     const saveWebSearchSettings = vi.fn(async (settings) => settings);
+    const listProviders = vi.fn(async () => { throw new Error('Not needed'); });
     render(<WebSearchSettingsScreen client={fixtureClient({
-      getWebSearchSettings: async () => ({
-        enabled: false, provider: 'brave', api_key: '', query_provider: '', tool_enabled: false,
-        read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
-      }),
       listApiKeys: async () => [{ id: 'key-1', display_name: 'Search key', has_value: true, used_by: [] }],
-      listProviders: async () => [{ id: 'model-1', display_name: 'Query model', model: 'model', host: 'localhost' }],
+      listProviders,
       saveWebSearchSettings,
     })} dispatch={vi.fn()} state={initialAppState} />);
 
-    const enabled = await screen.findByRole('checkbox', { name: 'Search before generation' });
-    expect(screen.getByText('Search before generation requires recipient detection to be enabled.')).toBeInTheDocument();
+    const enabled = await screen.findByRole('checkbox', { name: 'On-demand web search' });
     expect(enabled).not.toBeChecked();
+    expect(screen.queryByRole('checkbox', { name: 'Search before generation' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Query provider')).not.toBeInTheDocument();
+    expect(listProviders).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    await user.selectOptions(screen.getByLabelText('API provider'), 'tavily');
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-    await user.selectOptions(screen.getByLabelText('API provider'), 'brave');
+    await user.click(enabled);
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.selectOptions(screen.getByLabelText('API provider'), 'tavily');
     await user.selectOptions(screen.getByLabelText('API key'), 'key-1');
-    await user.click(enabled);
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    await user.selectOptions(screen.getByLabelText('Query provider'), 'model-1');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
-      enabled: true, provider: 'tavily', api_key: 'key-1', query_provider: 'model-1', tool_enabled: false,
-      read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
-    });
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    await user.selectOptions(screen.getByLabelText('API provider'), 'brave');
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
-      enabled: true, provider: 'brave', api_key: 'key-1', query_provider: 'model-1', tool_enabled: false,
+      provider: 'tavily', api_key: 'key-1', tool_enabled: true,
       read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
     });
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.click(enabled);
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
-      enabled: false, provider: 'brave', api_key: 'key-1', query_provider: 'model-1', tool_enabled: false,
+      provider: 'tavily', api_key: 'key-1', tool_enabled: false,
       read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
     });
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 
   it('saves page reading independently and retains both service keys', async () => {
@@ -2121,7 +2106,7 @@ describe('web search settings', () => {
     await user.selectOptions(screen.getByLabelText('Jina API key'), 'jina');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
-      enabled: false, tool_enabled: false, provider: 'brave', api_key: '', query_provider: '',
+      tool_enabled: false, provider: 'brave', api_key: '',
       read_provider: 'jina', firecrawl_api_key: 'fc', jina_api_key: 'jina',
     });
     expect(screen.getByRole('checkbox', { name: 'On-demand web search' })).not.toBeChecked();
@@ -2150,7 +2135,7 @@ describe('web search settings', () => {
     await user.selectOptions(screen.getByLabelText('API key'), 'key-1');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenCalledWith({
-      enabled: false, tool_enabled: true, provider: 'brave', api_key: 'key-1', query_provider: '',
+      tool_enabled: true, provider: 'brave', api_key: 'key-1',
       read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
     });
   });
@@ -2159,7 +2144,7 @@ describe('web search settings', () => {
     const user = userEvent.setup();
     render(<WebSearchSettingsScreen client={fixtureClient({
       getWebSearchSettings: async () => ({
-        enabled: false, provider: 'brave', api_key: '', query_provider: '', tool_enabled: false,
+        provider: 'brave', api_key: '', tool_enabled: false,
         read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
       }),
       saveWebSearchSettings: async () => {

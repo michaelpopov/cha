@@ -89,10 +89,8 @@ struct WorkspaceSessionNaming {
 void validate_jev_config(const WorkspaceJev& config);
 
 struct WorkspaceWebSearch {
-    bool enabled{false};
     std::string provider{"brave"};
     std::string api_key_id;
-    std::string query_provider_id;
     bool tool_enabled{false};
     std::string read_provider{"off"};
     std::string firecrawl_api_key_id;

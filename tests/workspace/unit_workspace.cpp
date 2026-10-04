@@ -444,27 +444,26 @@ TEST(Workspace, OmitsAnInvalidUnusedProvider) {
 TEST(Workspace, WebSearchSettingsLoadDefaultsAndIgnoreInvalidFiles) {
     test::TestWorkspace fixture;
     const auto defaults = Workspace::load(fixture.root()).web_search();
-    EXPECT_FALSE(defaults.enabled);
+    EXPECT_FALSE(defaults.tool_enabled);
     EXPECT_EQ(defaults.provider, "brave");
 
     const auto path = fixture.root() / "system" / "web-search" / "config.toml";
     std::filesystem::create_directories(path.parent_path());
-    std::ofstream(path) << "enabled = true\nprovider = 'tavily'\n"
+    std::ofstream(path) << "enabled = true\ntool_enabled = true\nprovider = 'tavily'\n"
                            "api_key = 'search-key'\nquery_provider = 'test'\n";
     const auto configured = Workspace::load(fixture.root()).web_search();
-    EXPECT_TRUE(configured.enabled);
+    EXPECT_TRUE(configured.tool_enabled);
     EXPECT_EQ(configured.provider, "tavily");
     EXPECT_EQ(configured.api_key_id, "search-key");
-    EXPECT_EQ(configured.query_provider_id, "test");
 
     std::ofstream(path) << "enabled = true\nprovider = 'google'\n";
     const auto unsupported = Workspace::load(fixture.root()).web_search();
-    EXPECT_FALSE(unsupported.enabled);
+    EXPECT_FALSE(unsupported.tool_enabled);
     EXPECT_EQ(unsupported.provider, "brave");
 
     std::ofstream(path) << "enabled = [\n";
     const auto broken = Workspace::load(fixture.root()).web_search();
-    EXPECT_FALSE(broken.enabled);
+    EXPECT_FALSE(broken.tool_enabled);
     EXPECT_EQ(broken.provider, "brave");
 }
 
@@ -479,23 +478,17 @@ TEST(Workspace, MissingSessionNamingProviderFallsBackToAssistant) {
     EXPECT_EQ(workspace.session_naming().reasoning_effort, "high");
 }
 
-TEST(Workspace, ActiveSearchApiPreventsDeletingItsQueryProvider) {
+TEST(Workspace, ObsoleteSearchSettingsDoNotPreventDeletingAQueryProvider) {
     test::TestWorkspace fixture;
     fixture.write_provider("query", "host = 'test'\nport = 1\nmode = 'test'\nmodel = 'fake'\n");
     const auto path = fixture.root() / "system" / "web-search" / "config.toml";
     std::filesystem::create_directories(path.parent_path());
-    std::ofstream(path) << "enabled = true\nprovider = 'brave'\n"
+    std::ofstream(path) << "enabled = true\ntool_enabled = true\nprovider = 'brave'\n"
                            "api_key = 'search-key'\nquery_provider = 'query'\n";
     const Workspace active = Workspace::load(fixture.root());
+    ASSERT_TRUE(active.web_search().tool_enabled);
     ASSERT_NE(active.find_provider("query"), nullptr);
-    EXPECT_THROW(edit_fixture(active, [&](WorkspaceConfigEditor& editor) {
-        editor.delete_provider("query");
-    }), std::invalid_argument);
-
-    std::ofstream(path) << "enabled = false\nprovider = 'brave'\n"
-                           "api_key = 'search-key'\nquery_provider = 'query'\n";
-    const Workspace disabled = Workspace::load(fixture.root());
-    edit_fixture(disabled, [&](WorkspaceConfigEditor& editor) {
+    edit_fixture(active, [&](WorkspaceConfigEditor& editor) {
         editor.delete_provider("query");
     });
     EXPECT_EQ(Workspace::load(fixture.root()).find_provider("query"), nullptr);

@@ -20,7 +20,6 @@ namespace cha {
 struct ProviderRequestInput {
     SharedCharacterDefinition character;
     GenerationRequest generation;
-    std::shared_ptr<WebSearchContext> web_search;
     std::optional<WorkspaceWebSearch> web_search_tool;
     std::optional<WorkspaceWebSearch> web_read_tool;
 };

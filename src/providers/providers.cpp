@@ -134,14 +134,6 @@ void ProviderRequest::execute(
 
         log_info("Provider request started: " + fields);
         auto generation = input_.generation;
-        if (input_.web_search) {
-            generation.web_search_context = input_.web_search->get(
-                client_factory, web_search_executor, cancellation_);
-        }
-        if (cancellation_.load(std::memory_order_acquire)) {
-            close_with(GenerationCancelled{request_id});
-            return;
-        }
         std::unique_ptr<ModelBackend> backend = client_factory(input_.character);
         if (!backend) {
             throw std::runtime_error("Provider client factory returned a null model backend");
@@ -152,7 +144,7 @@ void ProviderRequest::execute(
             return;
         }
 
-        bool web_search_used = !generation.web_search_context.empty();
+        bool web_search_used = false;
         const auto mark_web_used = [&] {
             if (web_search_used) return;
             web_search_used = true;

@@ -526,10 +526,6 @@ TEST(BraveSearch, LogsSafeFailureReasonsWithoutSecrets) {
             "http://127.0.0.1:" + std::to_string(server.port())), std::runtime_error);
         server.join();
     }
-    WebSearchContext context;
-    EXPECT_TRUE(context.get({}, [](const auto&, auto, const auto&) -> std::string {
-        throw std::runtime_error("private-provider-error");
-    }, cancelled).empty());
     shutdown_diagnostic_logging();
     std::ifstream log(path);
     const std::string warnings{std::istreambuf_iterator<char>(log), {}};
@@ -537,8 +533,7 @@ TEST(BraveSearch, LogsSafeFailureReasonsWithoutSecrets) {
         "Invalid web search response", "Invalid web search results"}) {
         EXPECT_NE(warnings.find(std::string("Brave web search failed: ") + reason), std::string::npos);
     }
-    EXPECT_NE(warnings.find("Web search failed; continuing without search results"), std::string::npos);
-    for (const auto* secret : {"private-query", "private-key", "private-response-body", "private-provider-error"})
+    for (const auto* secret : {"private-query", "private-key", "private-response-body"})
         EXPECT_EQ(warnings.find(secret), std::string::npos);
 }
 
@@ -926,100 +921,6 @@ TEST(TavilySearch, CancelsAnInFlightTransfer) {
     EXPECT_EQ(result.wait_for(1s), std::future_status::ready);
     EXPECT_TRUE(result.get().empty());
     server.join();
-}
-
-TEST(WebSearchContext, ConcurrentRecipientsShareOneSearch) {
-    WebSearchContext context;
-    context.query.run.prompt_text = "latest news";
-    std::atomic_bool cancelled{};
-    std::atomic_int calls{};
-    std::promise<void> entered;
-    std::promise<void> release;
-    auto ready = release.get_future().share();
-    WebSearchExecutor search = [&](const auto&, auto query, const auto&) {
-        EXPECT_EQ(query, "latest news");
-        ++calls;
-        entered.set_value();
-        ready.wait();
-        return "source context";
-    };
-    auto first = std::async(std::launch::async, [&] { return context.get({}, search, cancelled); });
-    entered.get_future().wait();
-    auto second = std::async(std::launch::async, [&] { return context.get({}, search, cancelled); });
-    release.set_value();
-    EXPECT_EQ(first.get(), "source context");
-    EXPECT_EQ(second.get(), "source context");
-    EXPECT_EQ(calls, 1);
-}
-
-TEST(WebSearchContext, FailedSearchIsNotRepeatedByAnotherRecipient) {
-    WebSearchContext context;
-    std::atomic_bool cancelled{};
-    int calls{};
-    WebSearchExecutor search = [&](const auto&, auto, const auto&) -> std::string {
-        ++calls;
-        throw std::runtime_error("private credential error");
-    };
-    EXPECT_TRUE(context.get({}, search, cancelled).empty());
-    EXPECT_TRUE(context.get({}, search, cancelled).empty());
-    EXPECT_EQ(calls, 1);
-}
-
-TEST(WebSearchContext, EmptyOrFailedRewriteDoesNotSearch) {
-    struct Backend : ModelBackend {
-        explicit Backend(bool fail) : fail(fail) {}
-        bool fail;
-        RequestPayload prepare(const GenerationRequest&) override { return {}; }
-        GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink,
-            const std::atomic_bool&) override {
-            sink({GenerationDeltaKind::reasoning, "not a search query"});
-            sink({GenerationDeltaKind::answer, fail ? "partial query" : "  \n"});
-            return {fail ? GenerationOutcome::transport_error : GenerationOutcome::completed};
-        }
-    };
-    for (const bool fail : {false, true}) {
-        WebSearchContext context;
-        context.rewriter = std::make_shared<CharacterDefinition>();
-        std::atomic_bool cancelled{};
-        int calls{};
-        EXPECT_TRUE(context.get([=](auto) { return std::make_unique<Backend>(fail); },
-            [&](const auto&, auto, const auto&) { ++calls; return "unexpected"; }, cancelled).empty());
-        EXPECT_EQ(calls, 0);
-    }
-}
-
-TEST(WebSearchContext, LongStreamedRewriteStillSearchesWithWholeWords) {
-    struct Backend : ModelBackend {
-        RequestPayload prepare(const GenerationRequest&) override { return {}; }
-        GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink,
-            const std::atomic_bool&) override {
-            sink({GenerationDeltaKind::answer, "  \n"});
-            for (int i = 0; i < 2000; ++i)
-                sink({GenerationDeltaKind::answer, "  café"});
-            return {};
-        }
-    };
-    MockHttpServer server({http_response("application/json", R"({"web":{"results":[]}})")});
-    server.start();
-    WebSearchContext context;
-    context.rewriter = std::make_shared<CharacterDefinition>();
-    std::atomic_bool cancelled{};
-    const auto result = context.get([](auto) { return std::make_unique<Backend>(); },
-        [&](const auto&, auto query, const auto& cancel) {
-            return search_brave(query, "key", cancel,
-                "http://127.0.0.1:" + std::to_string(server.port()));
-        }, cancelled);
-    server.join();
-    ASSERT_FALSE(result.empty());
-    std::string encoded;
-    for (int i = 0; i < 75; ++i) {
-        if (i > 0) encoded += "%20%20";
-        encoded += "caf%C3%A9";
-    }
-    EXPECT_EQ(nlohmann::json::parse(result), nlohmann::json::parse(R"({"web":{"results":[]}})"));
-    ASSERT_EQ(server.requests().size(), 1u);
-    EXPECT_TRUE(server.requests().front().starts_with("GET /?q=" + encoded
-            + "&count=10&extra_snippets=true&text_decorations=false&result_filter=web,news,discussions,faq,infobox,query HTTP/1.1\r\n"));
 }
 
 } // namespace

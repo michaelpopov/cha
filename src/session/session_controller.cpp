@@ -407,6 +407,7 @@ ControllerUpdate SessionController::submit_prompt(
     std::string text,
     std::string handle,
     std::shared_ptr<SubmissionState> submission) {
+    if (submission && submission->expired()) return {.notice = "Submission expired"};
     if (shutdown_) {
         return {.notice = "Request could not be dispatched"};
     }
@@ -422,8 +423,7 @@ ControllerUpdate SessionController::submit_prompt(
     const CharacterMetadata* target = nullptr;
     if (handle.empty()) {
         if (current->jev()) {
-            return start_classification(author_id, std::move(text),
-                {}, std::move(submission));
+            return start_classification(author_id, std::move(text), std::move(submission));
         }
         return dispatch_target(author_id, std::move(text), default_character_id_);
     } else {
@@ -448,10 +448,6 @@ ControllerUpdate SessionController::submit_prompt(
         return update;
     }
 
-    if (current->jev()) {
-        return start_classification(author_id, std::move(text),
-            {target->id}, std::move(submission));
-    }
     std::optional<EntryIdentity> author = resolve_author(author_id, update);
     if (!author) return update;
 
@@ -469,7 +465,7 @@ ControllerUpdate SessionController::submit_prompt(
 }
 
 ControllerUpdate SessionController::dispatch_target(
-    std::string_view author, std::string text, std::string_view target_id, JevSearch search) {
+    std::string_view author, std::string text, std::string_view target_id) {
     if (target_id == null_agent_handle) {
         ControllerUpdate update;
         record_monologue(author, std::move(text), update);
@@ -477,11 +473,11 @@ ControllerUpdate SessionController::dispatch_target(
     }
     const auto current = workspace();
     if (target_id == all_characters_target) {
-        return start_resolved_multicast(author, std::move(text), forum_characters(*current), search);
+        return start_resolved_multicast(author, std::move(text), forum_characters(*current));
     }
     const auto* target = current->find_forum_character(identity_.forum_id, target_id);
     if (!target) return {.notice = "The selected recipient is no longer in this forum. Choose a target and send again."};
-    return start_resolved_multicast(author, std::move(text), {*target}, search);
+    return start_resolved_multicast(author, std::move(text), {*target});
 }
 
 std::vector<CharacterMetadata> SessionController::forum_characters(const Workspace& current) const {
@@ -498,7 +494,6 @@ std::vector<CharacterMetadata> SessionController::forum_characters(const Workspa
 
 ControllerUpdate SessionController::start_classification(
     std::string_view author, std::string text,
-    std::vector<std::string> fixed_targets,
     std::shared_ptr<SubmissionState> submission) {
     ControllerUpdate update;
     if (!resolve_author(author, update)) return update;
@@ -512,25 +507,13 @@ ControllerUpdate SessionController::start_classification(
     }
     const auto deadline = std::min(submission->deadline,
         std::chrono::steady_clock::now() + jev_request_timeout);
-    const auto& web = current->web_search();
-    const auto can_read = [&](std::string_view id) {
-        const auto* character = current->find_character(id);
-        return !character || character->web_search_tool.value_or(true);
-    };
-    // The recipient is unresolved, so only promise reading when all possible targets allow it.
-    const bool page_reader_available = (web.read_provider == "firecrawl" || web.read_provider == "jina")
-        && current->find_api_key(web.read_provider == "firecrawl" ? web.firecrawl_api_key_id : web.jina_api_key_id)
-        && can_read(default_character_id_)
-        && std::all_of(options.begin(), options.end(), [&](const JevOption& option) { return can_read(option.character_id); });
     log_debug("Jev classification started: forum_id=" + identity_.forum_id
-        + " session_id=" + identity_.session_id
-        + " ask_web_search=" + (web.enabled ? "true" : "false")
-        + " page_reader_available=" + (page_reader_available ? "true" : "false"));
+        + " session_id=" + identity_.session_id);
     auto request = providers_.make_jev_request(
-        {*current->jev(), text, options, deadline, web.enabled, page_reader_available}, notifier_);
+        {*current->jev(), text, options, deadline}, notifier_);
     pending_classification_ = PendingClassification{
         std::string(author), std::move(text), default_character_id_,
-        std::move(options), std::move(fixed_targets), std::move(submission),
+        std::move(options), std::move(submission),
         deadline, std::move(request)};
     update.state = SnapshotRequired{};
     update.notice = "";
@@ -589,41 +572,12 @@ ControllerUpdate SessionController::finish_classification() {
         return update;
     }
     const bool self_note = result.outcome == JevOutcome::success
-        && result.choice == "self_note" && input.fixed_targets.empty();
-    const auto search = result.outcome == JevOutcome::success && !self_note
-        ? result.search_choice.value_or(JevSearch::none) : JevSearch::none;
+        && result.choice == "self_note";
     log_debug("Jev classification finished: forum_id=" + identity_.forum_id
         + " session_id=" + identity_.session_id
-        + " success=" + (result.outcome == JevOutcome::success ? "true" : "false")
-        + " search_decision=" + (result.search_choice
-            ? jev_search_name(*result.search_choice) : "unreported")
-        + " effective_search=" + jev_search_name(search));
+        + " success=" + (result.outcome == JevOutcome::success ? "true" : "false"));
     log_debug_payload("Jev recipient decision", result.choice);
     log_debug_payload("Jev classification diagnostic", result.message);
-    if (!input.fixed_targets.empty()) {
-        if (result.outcome == JevOutcome::failure)
-            log_warn("Jev classification failed; using explicit recipients: " + result.message);
-        std::vector<CharacterMetadata> targets;
-        const auto current = workspace();
-        for (const auto& id : input.fixed_targets) {
-            const auto* character = current->find_forum_character(identity_.forum_id, id);
-            if (!character) {
-                ready_name_.reset();
-                submission_result_ = SubmissionResult{SubmissionOutcome::failed,
-                    {.notice = "The selected recipient is no longer in this forum. Choose a target and send again."}};
-                return update;
-            }
-            targets.push_back(*character);
-        }
-        auto dispatched = start_resolved_multicast(input.author,
-            std::move(input.text), std::move(targets), search);
-        merge(update, std::move(dispatched));
-        save_name_after_acceptance();
-        submission_result_ = SubmissionResult{
-            update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed, update};
-        if (!update.input_consumed) update.notice.reset();
-        return update;
-    }
     std::string target = input.fallback;
     bool failed = result.outcome == JevOutcome::failure;
     if (!failed && result.choice == "all_characters") target = std::string(all_characters_target);
@@ -645,7 +599,7 @@ ControllerUpdate SessionController::finish_classification() {
     // One owner-thread handoff: no idle publication and no classifier re-entry.
     const auto previous_target = default_character_id_;
     if (!failed && result.choice != "undefined") default_character_id_ = target;
-    auto dispatched = dispatch_target(input.author, std::move(input.text), target, search);
+    auto dispatched = dispatch_target(input.author, std::move(input.text), target);
     if (dispatched.input_consumed) {
         if (failed) {
             if (target == all_characters_target) {
@@ -673,59 +627,16 @@ ControllerUpdate SessionController::finish_classification() {
     return update;
 }
 
-std::shared_ptr<WebSearchContext> SessionController::make_web_search(
-    JevSearch choice, std::string_view prompt, SharedModelHistory history) {
-    const auto current = workspace();
-    const auto& search = current->web_search();
-    if (!search.enabled || choice == JevSearch::none) return {};
-    auto context = std::make_shared<WebSearchContext>();
-    context->config = search;
-    const CharacterMetadata rewriter{"web-search-query", "Web search query"};
-    context->query = {
-        .history = std::move(history),
-        .run = {
-            .session = identity_,
-            .target = rewriter,
-            .author = {"", "User"},
-            .prompt_text = std::string(prompt),
-            .created_at = unix_now(),
-        },
-    };
-    if (choice == JevSearch::rewrite) {
-        const auto* provider = current->find_provider(search.query_provider_id);
-        if (!provider) {
-            log_warn("Web search query provider is unavailable; skipping web search");
-            return {};
-        }
-        auto config = provider->config;
-        config.web_search = WebSearchMode::off;
-        context->rewriter = std::make_shared<const CharacterDefinition>(CharacterDefinition{
-            .character = rewriter,
-            .provider = {provider->id, std::move(config)},
-            .system_prompt = "Convert the user's prompt into one concise, standalone web search query. "
-                "Use the conversation history to resolve references in the prompt. "
-                "Use neutral, factual words. Do not copy loaded or partisan framing from the prompt; "
-                "preserve identifying names and titles. If the topic has a known original source, "
-                "such as a law, court ruling, official report, dataset, filing, or study, name that "
-                "source in the query. Do not invent source names or citations. "
-                "Use at most 400 characters and 75 words. Return only the query string.",
-        });
-    }
-    return context;
-}
-
 void SessionController::start_generation(
     EntryIdentity author,
     std::string text,
     std::vector<CharacterMetadata> targets,
     SharedModelHistory history,
-    ControllerUpdate& update,
-    JevSearch search) {
+    ControllerUpdate& update) {
     if (!history || targets.empty()) {
         throw std::invalid_argument(
             "Generation requires history and at least one target");
     }
-    auto search_context = make_web_search(search, text, history);
     std::vector<ProviderRequestInput> inputs;
     inputs.reserve(targets.size());
     for (CharacterMetadata& target : targets) {
@@ -765,7 +676,6 @@ void SessionController::start_generation(
                     .created_at = unix_now(),
                 },
             },
-            .web_search = search_context,
             .web_search_tool = tool_enabled
                 ? std::optional<WorkspaceWebSearch>(current->web_search()) : std::nullopt,
             .web_read_tool = read_enabled ? std::optional<WorkspaceWebSearch>(web) : std::nullopt,
@@ -940,6 +850,7 @@ ControllerUpdate SessionController::start_multicast(
     std::string text,
     std::vector<std::string> handles,
     std::shared_ptr<SubmissionState> submission) {
+    if (submission && submission->expired()) return {.notice = "Submission expired"};
     if (shutdown_) {
         return {.notice = "Request could not be dispatched"};
     }
@@ -972,20 +883,13 @@ ControllerUpdate SessionController::start_multicast(
             targets.push_back(*resolution.character);
         }
     }
-    if (current->jev() && !trim_view(text).empty() && !targets.empty()) {
-        std::vector<std::string> ids;
-        for (const auto& target : targets) ids.push_back(target.id);
-        return start_classification(author_id, std::move(text),
-            std::move(ids), std::move(submission));
-    }
     return start_resolved_multicast(author_id, std::move(text), std::move(targets));
 }
 
 ControllerUpdate SessionController::start_resolved_multicast(
     std::string_view author_id,
     std::string text,
-    std::vector<CharacterMetadata> targets,
-    JevSearch search) {
+    std::vector<CharacterMetadata> targets) {
     if (trim_view(text).empty()) {
         return {.notice = "Multicast prompt is empty"};
     }
@@ -1008,8 +912,7 @@ ControllerUpdate SessionController::start_resolved_multicast(
         std::move(text),
         std::move(targets),
         std::move(history),
-        update,
-        search);
+        update);
     return update;
 }
 

@@ -304,11 +304,9 @@ export interface components {
             firecrawl_api_key: string;
             jina_api_key: string;
             tool_enabled: boolean;
-            enabled: boolean;
             /** @enum {string} */
             provider: "brave" | "tavily";
             api_key: string;
-            query_provider: string;
         };
         VoiceInputSettings: {
             /** @enum {string} */

@@ -220,10 +220,6 @@ web search.
 
 These provider-hosted settings are separate from Settings → **Search API**:
 
-- **Search before generation** uses **Recipient detection** (Jev) to decide
-  whether to search with Brave or Tavily before answering. A selected query
-  provider rewrites conversational questions when needed. Multicast recipients
-  share the search result.
 - **On-demand web search** lets the answering model call CHA's `web_search`
   function through Responses or Chat Completions. It does not require Jev.
   Characters can override the workspace default with `web_search_tool = true`

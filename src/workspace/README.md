@@ -51,9 +51,10 @@ copies the provider config and applies them when it constructs the request's
 `CharacterDefinition`.
 
 Optional services live in `system/voice-input`, `system/voice-output`,
-`system/jev`, and `system/web-search`. Search-before-generation and on-demand
-search have separate toggles. Character `web_search_tool` overrides the latter;
-provider `web_search` still selects provider-hosted search. Obsolete voice
+`system/jev`, and `system/web-search`. Web search `tool_enabled` turns on
+on-demand search, and character `web_search_tool` overrides it. Obsolete
+`enabled` and `query_provider` web search fields warn and are removed on save.
+Provider `web_search` still selects provider-hosted search. Obsolete voice
 instrumentation fields warn and are removed on save. Voice input stores the
 hands-free `send_phrase`. Unused or obsolete service fields warn instead of
 blocking unrelated operations.
