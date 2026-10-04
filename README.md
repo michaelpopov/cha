@@ -226,7 +226,7 @@ These provider-hosted settings are separate from Settings → **Search API**:
   or `false`. Each answer allows up to four web tool-call attempts, or eight
   shared between search and reading when page reading is enabled.
 
-**Page reading provider** selects Firecrawl or Jina Reader for the model's
+**Page reading provider** selects Firecrawl for the model's
 `web_read` tool, which returns page content as Markdown. Select the service's
 saved API key in Search API, or choose Off to disable reading. Page reading
 works independently of Brave/Tavily search; `web_search_tool = false` disables

@@ -15,43 +15,31 @@ namespace cha {
 namespace {
 using namespace std::chrono_literals;
 
-TEST(WebRead, RequestsMarkdownAndNormalizesBothProviders) {
+TEST(WebRead, RequestsMarkdownAndNormalizesFirecrawl) {
     using Json = nlohmann::json;
     const std::string markdown = "# Heading\n\n- Item\n\n```cpp\nint x = 1;\n```";
-    for (bool firecrawl : {true, false}) {
-        const Json body = firecrawl
-            ? Json{{"success", true}, {"data", {{"markdown", markdown},
-                {"metadata", {{"title", "Page"}, {"statusCode", 200}}}}}}
-            : Json{{"code", 200}, {"data", {{"title", "Page"}, {"content", markdown}}}};
-        MockHttpServer server({http_response("application/json", body.dump())});
-        server.start();
-        const std::string endpoint = "http://127.0.0.1:" + std::to_string(server.port()) + "/read";
-        const std::string url = "https://example.org/docs?q=a&b=2#/intro";
-        const auto output = Json::parse(firecrawl
-            ? read_firecrawl(url, "read-secret", std::atomic_bool{false}, endpoint)
-            : read_jina(url, "read-secret", std::atomic_bool{false}, endpoint));
-        server.join();
-        EXPECT_EQ(output, (Json{{"url", url}, {"title", "Page"},
-            {"markdown", markdown}, {"truncated", false}}));
-        ASSERT_EQ(server.requests().size(), 1u);
-        const auto& request = server.requests()[0];
-        EXPECT_TRUE(request.starts_with("POST /read HTTP/1.1\r\n"));
-        EXPECT_NE(request.find("Authorization: Bearer read-secret\r\n"), std::string::npos);
-        EXPECT_NE(request.find("Accept: application/json\r\n"), std::string::npos);
-        const auto sent = Json::parse(request.substr(request.find("\r\n\r\n") + 4));
-        EXPECT_EQ(sent["url"], url);
-        if (firecrawl) {
-            EXPECT_EQ(sent["formats"], Json::array({"markdown"}));
-            EXPECT_EQ(sent["onlyMainContent"], true);
-            EXPECT_EQ(sent["skipTlsVerification"], false);
-            EXPECT_EQ(sent["excludeTags"], Json::array({
-                "img", "picture", "video", "audio", "source", "iframe", "svg", "canvas"}));
-        } else {
-            EXPECT_EQ(sent.size(), 1u);
-            EXPECT_NE(request.find("X-Retain-Images: none\r\n"), std::string::npos);
-            EXPECT_NE(request.find("X-Retain-Media: none\r\n"), std::string::npos);
-        }
-    }
+    const Json body{{"success", true}, {"data", {{"markdown", markdown},
+        {"metadata", {{"title", "Page"}, {"statusCode", 200}}}}}};
+    MockHttpServer server({http_response("application/json", body.dump())});
+    server.start();
+    const std::string endpoint = "http://127.0.0.1:" + std::to_string(server.port()) + "/read";
+    const std::string url = "https://example.org/docs?q=a&b=2#/intro";
+    const auto output = Json::parse(read_firecrawl(url, "read-secret", std::atomic_bool{false}, endpoint));
+    server.join();
+    EXPECT_EQ(output, (Json{{"url", url}, {"title", "Page"},
+        {"markdown", markdown}, {"truncated", false}}));
+    ASSERT_EQ(server.requests().size(), 1u);
+    const auto& request = server.requests()[0];
+    EXPECT_TRUE(request.starts_with("POST /read HTTP/1.1\r\n"));
+    EXPECT_NE(request.find("Authorization: Bearer read-secret\r\n"), std::string::npos);
+    EXPECT_NE(request.find("Accept: application/json\r\n"), std::string::npos);
+    const auto sent = Json::parse(request.substr(request.find("\r\n\r\n") + 4));
+    EXPECT_EQ(sent["url"], url);
+    EXPECT_EQ(sent["formats"], Json::array({"markdown"}));
+    EXPECT_EQ(sent["onlyMainContent"], true);
+    EXPECT_EQ(sent["skipTlsVerification"], false);
+    EXPECT_EQ(sent["excludeTags"], Json::array({
+        "img", "picture", "video", "audio", "source", "iframe", "svg", "canvas"}));
 }
 
 TEST(WebRead, RemovesImagesBeforeLimitingContentAndPreservesArticleLinksAndCode) {
@@ -69,27 +57,22 @@ TEST(WebRead, RemovesImagesBeforeLimitingContentAndPreservesArticleLinksAndCode)
         "\\![Escaped literal](https://example.org/example.png)";
     markdown += code;
     ASSERT_GT(markdown.size(), 64u * 1024);
-    for (bool firecrawl : {true, false}) {
-        const Json body = firecrawl ? Json{{"success", true}, {"data", {{"markdown", markdown}}}}
-            : Json{{"code", 200}, {"data", {{"content", markdown}}}};
-        MockHttpServer server({http_response("application/json", body.dump())});
-        server.start();
-        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-        const auto raw = firecrawl
-            ? read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint)
-            : read_jina("https://example.org", "key", std::atomic_bool{false}, endpoint);
-        server.join();
-        const auto page = Json::parse(raw);
-        const auto content = page["markdown"].get<std::string>();
-        EXPECT_LE(raw.size(), 64u * 1024);
-        EXPECT_EQ(page["truncated"], false);
-        EXPECT_EQ(content.find("thumbnail"), std::string::npos);
-        EXPECT_EQ(content.find("image("), std::string::npos);
-        EXPECT_EQ(content.find("full-photo"), std::string::npos);
-        EXPECT_NE(content.find("**Story 299**"), std::string::npos);
-        EXPECT_NE(content.find("https://example.org/story/299"), std::string::npos);
-        EXPECT_TRUE(content.ends_with(code));
-    }
+    const Json body{{"success", true}, {"data", {{"markdown", markdown}}}};
+    MockHttpServer server({http_response("application/json", body.dump())});
+    server.start();
+    const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+    const auto raw = read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint);
+    server.join();
+    const auto page = Json::parse(raw);
+    const auto content = page["markdown"].get<std::string>();
+    EXPECT_LE(raw.size(), 64u * 1024);
+    EXPECT_EQ(page["truncated"], false);
+    EXPECT_EQ(content.find("thumbnail"), std::string::npos);
+    EXPECT_EQ(content.find("image("), std::string::npos);
+    EXPECT_EQ(content.find("full-photo"), std::string::npos);
+    EXPECT_NE(content.find("**Story 299**"), std::string::npos);
+    EXPECT_NE(content.find("https://example.org/story/299"), std::string::npos);
+    EXPECT_TRUE(content.ends_with(code));
 }
 
 TEST(WebRead, TruncatesAtTextBoundariesAndKeepsMultilineLinksAndCodeTogether) {
@@ -101,81 +84,29 @@ TEST(WebRead, TruncatesAtTextBoundariesAndKeepsMultilineLinksAndCodeTogether) {
         "\n\n[Headline\n\n" + std::string(40000, 'b') + "](https://example.org/article)",
         "\n\n```text\n" + std::string(40000, 'b') + "\n```",
     };
-    for (bool firecrawl : {true, false}) {
-        for (const auto& tail : tails) {
-            const Json body = firecrawl
-                ? Json{{"success", true}, {"data", {{"markdown", first + tail}}}}
-                : Json{{"code", 200}, {"data", {{"content", first + tail}}}};
-            MockHttpServer server({http_response("application/json", body.dump())});
-            server.start();
-            const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-            const auto raw = firecrawl
-                ? read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint)
-                : read_jina("https://example.org", "key", std::atomic_bool{false}, endpoint);
-            server.join();
-            const auto page = Json::parse(raw);
-            EXPECT_LE(raw.size(), 64u * 1024);
-            EXPECT_EQ(page["markdown"], first);
-            EXPECT_EQ(page["truncated"], true);
-        }
+    for (const auto& tail : tails) {
+        const Json body{{"success", true}, {"data", {{"markdown", first + tail}}}};
+        MockHttpServer server({http_response("application/json", body.dump())});
+        server.start();
+        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+        const auto raw = read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint);
+        server.join();
+        const auto page = Json::parse(raw);
+        EXPECT_LE(raw.size(), 64u * 1024);
+        EXPECT_EQ(page["markdown"], first);
+        EXPECT_EQ(page["truncated"], true);
     }
 }
 
 TEST(WebRead, RejectsPagesContainingOnlyImages) {
     using Json = nlohmann::json;
     const std::string markdown = "![Photo](https://example.org/photo.png)\n\n";
-    for (bool firecrawl : {true, false}) {
-        const Json body = firecrawl ? Json{{"success", true}, {"data", {{"markdown", markdown}}}}
-            : Json{{"code", 200}, {"data", {{"content", markdown}}}};
-        MockHttpServer server({http_response("application/json", body.dump())});
-        server.start();
-        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-        if (firecrawl)
-            EXPECT_THROW(read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint), std::runtime_error);
-        else
-            EXPECT_THROW(read_jina("https://example.org", "key", std::atomic_bool{false}, endpoint), std::runtime_error);
-        server.join();
-    }
-}
-
-TEST(WebRead, JinaPreservesTargetPageAndContentWarnings) {
-    using Json = nlohmann::json;
-    for (const auto* warning : {"Target URL returned error 404: Not Found",
-             "This page maybe requiring CAPTCHA, please make sure you are authorized to access this page."}) {
-        const Json body{{"code", 200}, {"data", {{"title", "Page"},
-            {"content", "Navigation and site footer"}, {"warning", warning}}}};
-        MockHttpServer server({http_response("application/json", body.dump())});
-        server.start();
-        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-        const auto output = Json::parse(read_jina("https://example.org", "key",
-            std::atomic_bool{false}, endpoint));
-        server.join();
-        EXPECT_EQ(output.value("warning", ""), warning);
-        EXPECT_EQ(output["markdown"], "Navigation and site footer");
-        EXPECT_EQ(output["truncated"], false);
-    }
-}
-
-TEST(WebRead, BoundsJinaWarningsTogetherWithMarkdown) {
-    using Json = nlohmann::json;
-    std::string warning = "Target URL returned error 404: ";
-    for (int i = 0; i < 40000; ++i) warning += "é\n\"";
-    const std::string markdown(64 * 1024, 'x');
-    const Json body{{"code", 200}, {"data", {{"content", markdown}, {"warning", warning}}}};
+    const Json body{{"success", true}, {"data", {{"markdown", markdown}}}};
     MockHttpServer server({http_response("application/json", body.dump())});
     server.start();
     const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-    const auto raw = read_jina("https://example.org", "key", std::atomic_bool{false}, endpoint);
+    EXPECT_THROW(read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint), std::runtime_error);
     server.join();
-    EXPECT_LE(raw.size(), 64u * 1024);
-    const auto output = Json::parse(raw);
-    const auto retained_warning = output.value("warning", "");
-    EXPECT_TRUE(retained_warning.starts_with("Target URL returned error 404:"));
-    EXPECT_TRUE(warning.starts_with(retained_warning));
-    EXPECT_EQ(output["truncated"], true);
-    const auto content = output["markdown"].get<std::string>();
-    EXPECT_GT(content.size(), 1000u);
-    EXPECT_TRUE(markdown.starts_with(content));
 }
 
 TEST(WebRead, FirecrawlToleratesUnexpectedOptionalMetadataTypes) {
@@ -215,155 +146,127 @@ TEST(WebRead, BoundsSerializedOutputWithoutSplittingUtf8) {
     using Json = nlohmann::json;
     std::string markdown;
     for (int i = 0; i < 40000; ++i) markdown += "é\n\"";
-    for (bool firecrawl : {true, false}) {
-        const Json body = firecrawl ? Json{{"success", true}, {"data", {{"markdown", markdown}}}}
-            : Json{{"code", 200}, {"data", {{"content", markdown}}}};
-        MockHttpServer server({http_response("application/json", body.dump())});
-        server.start();
-        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-        const auto raw = firecrawl
-            ? read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint)
-            : read_jina("https://example.org", "key", std::atomic_bool{false}, endpoint);
-        server.join();
-        EXPECT_LE(raw.size(), 64u * 1024);
-        const auto result = Json::parse(raw);
-        EXPECT_EQ(result["truncated"], true);
-        EXPECT_TRUE(result.contains("truncation_reason"));
-        const auto text = result["markdown"].get<std::string>();
-        EXPECT_GT(text.size(), 1000u);
-        EXPECT_TRUE(markdown.starts_with(text));
-        // A truncated two-byte é must not leave its first byte at the end.
-        EXPECT_NE(static_cast<unsigned char>(text.back()), 0xc3);
-    }
+    const Json body{{"success", true}, {"data", {{"markdown", markdown}}}};
+    MockHttpServer server({http_response("application/json", body.dump())});
+    server.start();
+    const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+    const auto raw = read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint);
+    server.join();
+    EXPECT_LE(raw.size(), 64u * 1024);
+    const auto result = Json::parse(raw);
+    EXPECT_EQ(result["truncated"], true);
+    EXPECT_TRUE(result.contains("truncation_reason"));
+    const auto text = result["markdown"].get<std::string>();
+    EXPECT_GT(text.size(), 1000u);
+    EXPECT_TRUE(markdown.starts_with(text));
+    // A truncated two-byte é must not leave its first byte at the end.
+    EXPECT_NE(static_cast<unsigned char>(text.back()), 0xc3);
 }
 
 TEST(WebRead, AcceptsLargeResponsesThroughEightMiBAndTruncatesMarkdown) {
     using Json = nlohmann::json;
-    for (bool firecrawl : {true, false}) {
-        for (std::size_t size : {2u * 1024 * 1024, 8u * 1024 * 1024}) {
-            Json body = firecrawl
-                ? Json{{"success", true}, {"data", {{"markdown", ""},
-                    {"metadata", {{"title", "Large page"}}}}}}
-                : Json{{"code", 200}, {"data", {{"content", ""}, {"title", "Large page"}}}};
-            const std::string markdown(size - body.dump().size(), 'x');
-            body["data"][firecrawl ? "markdown" : "content"] = markdown;
-            const auto response = body.dump();
-            ASSERT_EQ(response.size(), size);
-            MockHttpServer server({http_response("application/json", response)});
-            server.start();
-            const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-            const auto output = firecrawl
-                ? read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint)
-                : read_jina("https://example.org", "key", std::atomic_bool{false}, endpoint);
-            server.join();
-            EXPECT_LE(output.size(), 64u * 1024);
-            const auto page = Json::parse(output);
-            EXPECT_EQ(page["title"], "Large page");
-            EXPECT_EQ(page["truncated"], true);
-            const auto text = page["markdown"].get<std::string>();
-            EXPECT_GT(text.size(), 1000u);
-            EXPECT_TRUE(markdown.starts_with(text));
-        }
+    for (std::size_t size : {2u * 1024 * 1024, 8u * 1024 * 1024}) {
+        Json body{{"success", true}, {"data", {{"markdown", ""},
+            {"metadata", {{"title", "Large page"}}}}}};
+        const std::string markdown(size - body.dump().size(), 'x');
+        body["data"]["markdown"] = markdown;
+        const auto response = body.dump();
+        ASSERT_EQ(response.size(), size);
+        MockHttpServer server({http_response("application/json", response)});
+        server.start();
+        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+        const auto output = read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint);
+        server.join();
+        EXPECT_LE(output.size(), 64u * 1024);
+        const auto page = Json::parse(output);
+        EXPECT_EQ(page["title"], "Large page");
+        EXPECT_EQ(page["truncated"], true);
+        const auto text = page["markdown"].get<std::string>();
+        EXPECT_GT(text.size(), 1000u);
+        EXPECT_TRUE(markdown.starts_with(text));
     }
 }
 
 TEST(WebRead, KeepsSearchAtOneMiBAndRejectsPageResponsesAboveEightMiB) {
-    for (bool reading : {false, true}) {
-        for (bool first_provider : {false, true}) {
-            const auto limit = (reading ? 8u : 1u) * 1024 * 1024;
-            const std::string body = "{\"padding\":\"" + std::string(limit, 'x') + "\"}";
-            MockHttpServer server({http_response("application/json", body)});
-            server.start();
-            const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-            try {
-                if (reading) {
-                    if (first_provider) read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint);
-                    else read_jina("https://example.org", "key", std::atomic_bool{false}, endpoint);
-                } else {
-                    if (first_provider) search_brave("query", "key", std::atomic_bool{false}, endpoint);
-                    else search_tavily("query", "key", std::atomic_bool{false}, endpoint);
-                }
-                ADD_FAILURE() << "Expected response size limit failure";
-            } catch (const std::runtime_error& error) {
-                EXPECT_STREQ(error.what(), reading
-                    ? "Page reading response size limit exceeded"
-                    : "Web search response size limit exceeded");
-            }
-            server.join();
+    for (const std::string_view provider : {"firecrawl", "brave", "tavily"}) {
+        const bool reading = provider == "firecrawl";
+        const auto limit = (reading ? 8u : 1u) * 1024 * 1024;
+        const std::string body = "{\"padding\":\"" + std::string(limit, 'x') + "\"}";
+        MockHttpServer server({http_response("application/json", body)});
+        server.start();
+        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+        try {
+            if (reading) read_firecrawl("https://example.org", "key", std::atomic_bool{false}, endpoint);
+            else if (provider == "brave") search_brave("query", "key", std::atomic_bool{false}, endpoint);
+            else search_tavily("query", "key", std::atomic_bool{false}, endpoint);
+            ADD_FAILURE() << "Expected response size limit failure";
+        } catch (const std::runtime_error& error) {
+            EXPECT_STREQ(error.what(), reading
+                ? "Page reading response size limit exceeded"
+                : "Web search response size limit exceeded");
         }
+        server.join();
     }
 }
 
 TEST(WebRead, RejectsBadUrlsAndCredentialsBeforeConnecting) {
-    for (bool firecrawl : {true, false}) {
-        const auto read = [&](std::string_view url, std::string_view key) {
-            return firecrawl ? read_firecrawl(url, key, std::atomic_bool{false})
-                : read_jina(url, key, std::atomic_bool{false});
-        };
-        for (const auto* url : {"", "relative", "file:///tmp/file", "ftp://example.org",
-            "https://", "https://example.org/a b", "https://user:password@example.org"})
-            EXPECT_THROW(read(url, "key"), std::runtime_error);
-        EXPECT_THROW(read("https://example.org", ""), std::runtime_error);
-        EXPECT_THROW(read("https://example.org", "key\r\nInjected: true"), std::runtime_error);
-        EXPECT_TRUE(firecrawl ? read_firecrawl("", "", std::atomic_bool{true}).empty()
-            : read_jina("", "", std::atomic_bool{true}).empty());
-    }
+    const auto read = [&](std::string_view url, std::string_view key) {
+        return read_firecrawl(url, key, std::atomic_bool{false});
+    };
+    for (const auto* url : {"", "relative", "file:///tmp/file", "ftp://example.org",
+        "https://", "https://example.org/a b", "https://user:password@example.org"})
+        EXPECT_THROW(read(url, "key"), std::runtime_error);
+    EXPECT_THROW(read("https://example.org", ""), std::runtime_error);
+    EXPECT_THROW(read("https://example.org", "key\r\nInjected: true"), std::runtime_error);
+    EXPECT_TRUE(read_firecrawl("", "", std::atomic_bool{true}).empty());
 }
 
 TEST(WebRead, RejectsProviderAndTargetFailuresWithoutExposingResponseBodies) {
-    for (bool firecrawl : {true, false}) {
-        const std::vector<std::string> bodies = firecrawl
-            ? std::vector<std::string>{"broken", "{}", R"({"success":false,"error":"private-body"})",
-                R"({"success":true,"data":{"markdown":""}})",
-                R"({"success":true,"data":{"markdown":"private-body","metadata":{"statusCode":403}}})",
-                R"({"success":true,"data":{"markdown":"private-body","metadata":{"title":[],"statusCode":403.0}}})"}
-            : std::vector<std::string>{"broken", "{}", R"({"code":402,"data":{"content":"private-body"}})",
-                R"({"code":200,"data":{"content":"  "}})"};
-        auto responses = std::vector<std::string>{};
-        for (const auto& body : bodies) responses.push_back(http_response("application/json", body));
-        responses.push_back("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-        responses.push_back("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-        for (const auto& response : responses) {
-            MockHttpServer server({response});
-            server.start();
-            const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-            try {
-                if (firecrawl) read_firecrawl("https://example.org", "private-key", std::atomic_bool{false}, endpoint);
-                else read_jina("https://example.org", "private-key", std::atomic_bool{false}, endpoint);
-                ADD_FAILURE() << "Expected page reading failure";
-            } catch (const std::runtime_error& error) {
-                EXPECT_EQ(std::string(error.what()).find("private-body"), std::string::npos);
-                EXPECT_EQ(std::string(error.what()).find("private-key"), std::string::npos);
-                if (response.starts_with("HTTP/1.1 401"))
-                    EXPECT_STREQ(error.what(), "Page reading HTTP 401");
-                if (response == http_response("application/json", "broken"))
-                    EXPECT_STREQ(error.what(), "Invalid page reading response");
-            }
-            server.join();
-            EXPECT_EQ(server.requests().size(), 1u);
+    const std::vector<std::string> bodies{"broken", "{}", R"({"success":false,"error":"private-body"})",
+        R"({"success":true,"data":{"markdown":""}})",
+        R"({"success":true,"data":{"markdown":"  "}})",
+        R"({"success":true,"data":{"markdown":"private-body","metadata":{"statusCode":403}}})",
+        R"({"success":true,"data":{"markdown":"private-body","metadata":{"title":[],"statusCode":403.0}}})"};
+    auto responses = std::vector<std::string>{};
+    for (const auto& body : bodies) responses.push_back(http_response("application/json", body));
+    responses.push_back("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    responses.push_back("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    for (const auto& response : responses) {
+        MockHttpServer server({response});
+        server.start();
+        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+        try {
+            read_firecrawl("https://example.org", "private-key", std::atomic_bool{false}, endpoint);
+            ADD_FAILURE() << "Expected page reading failure";
+        } catch (const std::runtime_error& error) {
+            EXPECT_EQ(std::string(error.what()).find("private-body"), std::string::npos);
+            EXPECT_EQ(std::string(error.what()).find("private-key"), std::string::npos);
+            if (response.starts_with("HTTP/1.1 401"))
+                EXPECT_STREQ(error.what(), "Page reading HTTP 401");
+            if (response == http_response("application/json", "broken"))
+                EXPECT_STREQ(error.what(), "Invalid page reading response");
         }
+        server.join();
+        EXPECT_EQ(server.requests().size(), 1u);
     }
 }
 
-TEST(WebRead, CancelsPendingTransfersForBothProviders) {
-    for (bool firecrawl : {true, false}) {
-        MockHttpServer server({http_response("application/json", "{}")});
-        server.pause_before_response(1);
-        server.start();
-        std::atomic_bool cancelled{false};
-        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-        auto pending = std::async(std::launch::async, [&] {
-            return firecrawl ? read_firecrawl("https://example.org", "key", cancelled, endpoint)
-                : read_jina("https://example.org", "key", cancelled, endpoint);
-        });
-        const bool requested = server.wait_for_requests(1, 2s);
-        EXPECT_TRUE(requested);
-        cancelled.store(true);
-        EXPECT_EQ(pending.wait_for(2s), std::future_status::ready);
-        server.resume_responses();
-        EXPECT_TRUE(pending.get().empty());
-        server.join();
-    }
+TEST(WebRead, CancelsPendingTransfers) {
+    MockHttpServer server({http_response("application/json", "{}")});
+    server.pause_before_response(1);
+    server.start();
+    std::atomic_bool cancelled{false};
+    const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+    auto pending = std::async(std::launch::async, [&] {
+        return read_firecrawl("https://example.org", "key", cancelled, endpoint);
+    });
+    const bool requested = server.wait_for_requests(1, 2s);
+    EXPECT_TRUE(requested);
+    cancelled.store(true);
+    EXPECT_EQ(pending.wait_for(2s), std::future_status::ready);
+    server.resume_responses();
+    EXPECT_TRUE(pending.get().empty());
+    server.join();
 }
 
 TEST(BraveSearch, RequestsExtraPlainTextSnippetsAndPreservesTheResponse) {

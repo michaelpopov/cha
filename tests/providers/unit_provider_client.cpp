@@ -1993,10 +1993,10 @@ TEST(ProviderClientTools, ReadingReturnsErrorsAndStopsOnCancellation) {
     }
 }
 
-TEST(ProviderClientTools, ReadingReportsJinaBalanceFailureWithoutExposingResponseBodies) {
+TEST(ProviderClientTools, ReadingReportsPaymentFailureWithoutExposingResponseBodies) {
     for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
-        const auto body = Json{{"code", 402}, {"name", "InsufficientBalanceError"},
-            {"message", "Account balance not enough (uid: private-account-id)"}}.dump();
+        const auto body = Json{{"success", false},
+            {"error", "Account balance not enough (uid: private-account-id)"}}.dump();
         MockHttpServer server({"HTTP/1.1 402 Payment Required\r\nContent-Type: application/json\r\n"
             "Content-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body});
         server.start();
@@ -2011,15 +2011,15 @@ TEST(ProviderClientTools, ReadingReportsJinaBalanceFailureWithoutExposingRespons
                 const auto sent = Json::parse(request.body);
                 const auto& message = sent[api == ProviderApi::responses ? "input" : "messages"].back();
                 const auto output = Json::parse(message[api == ProviderApi::responses ? "output" : "content"].get<std::string>());
-                EXPECT_EQ(output["error"], "Jina page reading HTTP 402: Insufficient token balance for this API key. Check the key's balance in Jina.");
+                EXPECT_EQ(output["error"], "Page reading HTTP 402");
                 EXPECT_EQ(output.dump().find("private-account-id"), std::string::npos);
                 EXPECT_EQ(output.dump().find("private-key"), std::string::npos);
-                return tool_reply(api, false, Json::array(), "The Reader account needs credit.");
+                return tool_reply(api, false, Json::array(), "The page reading account needs credit.");
             });
         Transcript transcript;
         auto input = client_request(transcript, 1, "Read");
         input.web_read_tool = [&](std::string_view url, const std::atomic_bool& cancelled) {
-            return read_jina(url, "private-key", cancelled, endpoint);
+            return read_firecrawl(url, "private-key", cancelled, endpoint);
         };
         const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
         server.join();

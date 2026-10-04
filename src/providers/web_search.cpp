@@ -167,8 +167,6 @@ nlohmann::ordered_json request_web_json(std::string_view provider, CurlHandle& c
     if (buffer.too_large) fail_web(provider, subject, subject + " response size limit exceeded");
     if (completed->data.result != CURLE_OK)
         fail_web(provider, subject, subject + " connection failed: " + std::string(curl_easy_strerror(completed->data.result)));
-    if (status == 402 && provider == "Jina")
-        fail_web(provider, subject, "Jina page reading HTTP 402: Insufficient token balance for this API key. Check the key's balance in Jina.");
     if (status != 200)
         fail_web(provider, subject, subject + " HTTP " + std::to_string(status));
 
@@ -318,14 +316,13 @@ std::string page_prefix(std::string_view markdown, std::size_t byte_limit) {
 }
 
 std::string page_output(std::string_view provider, std::string_view url,
-    std::string_view title, std::string_view markdown, std::string_view warning = {}) {
+    std::string_view title, std::string_view markdown) {
     const auto text = without_page_images(markdown);
     markdown = text;
     if (trim_view(markdown).empty()) fail_web(provider, "Page reading", "Page returned no readable content");
     constexpr std::size_t byte_limit = 64 * 1024;
     nlohmann::ordered_json result{{"url", url}, {"title", utf8_prefix(title, 1024)},
         {"markdown", utf8_prefix(markdown, byte_limit)}, {"truncated", false}};
-    if (!warning.empty()) result["warning"] = utf8_prefix(warning, 1024);
     if (markdown.size() <= byte_limit && result.dump().size() <= byte_limit) return result.dump();
     result["truncated"] = true;
     result["truncation_reason"] = "Page content exceeded the output size limit; only the beginning is included.";
@@ -430,32 +427,6 @@ std::string read_firecrawl(std::string_view url, std::string_view key,
         ? metadata["title"].get<std::string>() : std::string{};
     return page_output("Firecrawl", target, title,
         data.value("markdown", std::string{}));
-}
-
-std::string read_jina(std::string_view url, std::string_view key,
-    const std::atomic_bool& cancelled, std::string_view endpoint) {
-    if (cancelled.load()) return {};
-    const auto target = read_url("Jina", url, key);
-    CurlHandle curl;
-    CurlHeaders headers;
-    headers.append("Accept: application/json");
-    headers.append("Content-Type: application/json");
-    headers.append("Authorization: Bearer " + std::string(key));
-    headers.append("X-Retain-Images: none");
-    headers.append("X-Retain-Media: none");
-    // Default Reader output applies content extraction and preserves Markdown.
-    const auto response = request_web_json("Jina", curl, headers, std::string(endpoint),
-        nlohmann::json{{"url", target}}.dump(), cancelled, key, "Page reading", 60000L, 8 * 1024 * 1024);
-    if (response.is_null()) return {};
-    if (!response.contains("code") || response["code"] != 200
-        || !response.contains("data") || !response["data"].is_object())
-        fail_web("Jina", "Page reading", "Invalid page reading response");
-    const auto& data = response["data"];
-    // Jina can report target-page failures as warnings in a successful API response.
-    const auto warning = data.contains("warning") && data["warning"].is_string()
-        ? data["warning"].get<std::string>() : std::string{};
-    return page_output("Jina", target, data.value("title", std::string{}),
-        data.value("content", std::string{}), warning);
 }
 
 } // namespace cha

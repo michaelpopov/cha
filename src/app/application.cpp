@@ -260,8 +260,6 @@ Application::Impl::Impl(
               if (cancelled.load()) return std::string{};
               if (config.read_provider == "firecrawl")
                   return read_firecrawl(url, keys->value(config.firecrawl_api_key_id), cancelled);
-              if (config.read_provider == "jina")
-                  return read_jina(url, keys->value(config.jina_api_key_id), cancelled);
               throw std::runtime_error("Unsupported page reading provider");
           }) {
     vault_maintenance.publish_vault_names();

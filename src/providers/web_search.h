@@ -34,8 +34,5 @@ using WebReadExecutor = std::function<std::string(
 std::string read_firecrawl(std::string_view url, std::string_view key,
     const std::atomic_bool& cancelled,
     std::string_view endpoint = "https://api.firecrawl.dev/v2/scrape");
-std::string read_jina(std::string_view url, std::string_view key,
-    const std::atomic_bool& cancelled,
-    std::string_view endpoint = "https://r.jina.ai/");
 
 } // namespace cha

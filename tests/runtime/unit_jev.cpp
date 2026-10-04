@@ -97,7 +97,7 @@ TEST(JevConfiguration, ValidatesAtomicallyRoundTripsAndDisablesWithoutDeletingKe
     EXPECT_TRUE(store->snapshot()->jev());
 }
 
-TEST(WebReadConfiguration, PersistsReaderAndBothKeysAcrossReloadAndExport) {
+TEST(WebReadConfiguration, PersistsReaderAndKeyAcrossReloadAndExport) {
     test::TestWorkspace fixture;
     const auto database = test::import_test_database(fixture.root());
     auto store = WorkspaceConfigStore::open(database);
@@ -106,23 +106,20 @@ TEST(WebReadConfiguration, PersistsReaderAndBothKeysAcrossReloadAndExport) {
     {
         ApiKeyStore keys(*store);
         settings.firecrawl_api_key_id = keys.create("Firecrawl", "fc-secret").id;
-        settings.jina_api_key_id = keys.create("Jina", "jina-secret").id;
     }
     store->apply_web_search_update(settings);
     store.reset();
     auto reloaded = WorkspaceConfigStore::open(database);
     EXPECT_EQ(reloaded->snapshot()->web_search().read_provider, "firecrawl");
     EXPECT_EQ(reloaded->snapshot()->web_search().firecrawl_api_key_id, settings.firecrawl_api_key_id);
-    EXPECT_EQ(reloaded->snapshot()->web_search().jina_api_key_id, settings.jina_api_key_id);
     const auto exported = fixture.root() / "exported";
     (void)export_workspace_configuration(database, exported, WorkspaceConfigLease::already_held);
     const auto copy = Workspace::load(exported).web_search();
     EXPECT_EQ(copy.read_provider, "firecrawl");
     EXPECT_EQ(copy.firecrawl_api_key_id, settings.firecrawl_api_key_id);
-    EXPECT_EQ(copy.jina_api_key_id, settings.jina_api_key_id);
     // Unknown reader settings do not disable a valid search configuration.
     const auto path = exported / "system/web-search/config.toml";
-    std::ofstream(path) << "provider='brave'\ntool_enabled=true\nread_provider='old-reader'\n";
+    std::ofstream(path) << "provider='brave'\ntool_enabled=true\nread_provider='jina'\njina_api_key=123\n";
     const auto obsolete = Workspace::load(exported).web_search();
     EXPECT_TRUE(obsolete.tool_enabled);
     EXPECT_EQ(obsolete.read_provider, "off");
@@ -833,11 +830,10 @@ TEST_F(JevRouting, PageReadingWorksWithSearchDisabledAndMarksWebUse) {
             return "Page content";
         });
     controller = make_controller(notifier);
-    for (const auto* reader : {"firecrawl", "jina", "off"}) {
+    for (const auto* reader : {"firecrawl", "off"}) {
         WorkspaceWebSearch settings;
         settings.read_provider = reader;
         settings.firecrawl_api_key_id = config.api_key_id;
-        settings.jina_api_key_id = config.api_key_id;
         store->apply_web_search_update(settings);
         (void)send("Read this page");
         finish();
@@ -845,7 +841,7 @@ TEST_F(JevRouting, PageReadingWorksWithSearchDisabledAndMarksWebUse) {
         EXPECT_EQ(controller->view().transcript.entries.back().web_search_used, offered);
         EXPECT_EQ(controller->view().transcript.entries.back().text, "Answer");
     }
-    EXPECT_EQ(reads, 2);
+    EXPECT_EQ(reads, 1);
     EXPECT_TRUE(classified.empty());
     // A character override must disable reading without blocking generation.
     WorkspaceWebSearch settings;
@@ -857,7 +853,7 @@ TEST_F(JevRouting, PageReadingWorksWithSearchDisabledAndMarksWebUse) {
     (void)send("Read with web tools disabled for this character");
     finish();
     EXPECT_FALSE(offered);
-    EXPECT_EQ(reads, 2);
+    EXPECT_EQ(reads, 1);
     EXPECT_FALSE(controller->view().transcript.entries.back().web_search_used);
     EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
     EXPECT_EQ(controller->view().transcript.entries.back().text, "Answer");
@@ -869,7 +865,7 @@ TEST_F(JevRouting, PageReadingWorksWithSearchDisabledAndMarksWebUse) {
     (void)send("Read with a missing key");
     finish();
     EXPECT_FALSE(offered);
-    EXPECT_EQ(reads, 2);
+    EXPECT_EQ(reads, 1);
     EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
 }
 

@@ -2070,56 +2070,49 @@ describe('web search settings', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
       provider: 'tavily', api_key: 'key-1', tool_enabled: true,
-      read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
+      read_provider: 'off', firecrawl_api_key: '',
     });
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.click(enabled);
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
       provider: 'tavily', api_key: 'key-1', tool_enabled: false,
-      read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
+      read_provider: 'off', firecrawl_api_key: '',
     });
   });
 
-  it('saves page reading independently and retains both service keys', async () => {
+  it('saves page reading independently and retains the Firecrawl key when disabled', async () => {
     const user = userEvent.setup();
     const saveWebSearchSettings = vi.fn(async (settings) => settings);
     render(<WebSearchSettingsScreen client={fixtureClient({
       listApiKeys: async () => [
         { id: 'fc', display_name: 'Firecrawl key', has_value: true, used_by: [] },
-        { id: 'jina', display_name: 'Jina key', has_value: true, used_by: [] },
       ],
       listProviders: async () => [],
       saveWebSearchSettings,
     })} dispatch={vi.fn()} state={initialAppState} />);
     const reader = await screen.findByLabelText('Page reading provider');
+    expect(Array.from((reader as HTMLSelectElement).options, (option) => option.value))
+      .toEqual(['off', 'firecrawl']);
     expect(screen.queryByLabelText('Firecrawl API key')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Jina API key')).not.toBeInTheDocument();
     await user.selectOptions(reader, 'firecrawl');
-    expect(screen.queryByLabelText('Jina API key')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.selectOptions(screen.getByLabelText('Firecrawl API key'), 'fc');
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-    await user.selectOptions(screen.getByLabelText('Page reading provider'), 'jina');
-    expect(screen.queryByLabelText('Firecrawl API key')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    await user.selectOptions(screen.getByLabelText('Jina API key'), 'jina');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
       tool_enabled: false, provider: 'brave', api_key: '',
-      read_provider: 'jina', firecrawl_api_key: 'fc', jina_api_key: 'jina',
+      read_provider: 'firecrawl', firecrawl_api_key: 'fc',
     });
     expect(screen.getByRole('checkbox', { name: 'On-demand web search' })).not.toBeChecked();
-    await user.selectOptions(screen.getByLabelText('Page reading provider'), 'firecrawl');
-    expect(screen.getByLabelText('Firecrawl API key')).toHaveValue('fc');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    await user.selectOptions(screen.getByLabelText('Page reading provider'), 'off');
+    await user.selectOptions(reader, 'off');
     expect(screen.queryByLabelText('Firecrawl API key')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Jina API key')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith(expect.objectContaining({
-      read_provider: 'off', firecrawl_api_key: 'fc', jina_api_key: 'jina',
+      read_provider: 'off', firecrawl_api_key: 'fc',
     }));
+    await user.selectOptions(reader, 'firecrawl');
+    expect(screen.getByLabelText('Firecrawl API key')).toHaveValue('fc');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
 
   it('enables on-demand search without a query provider or pre-search', async () => {
@@ -2136,7 +2129,7 @@ describe('web search settings', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenCalledWith({
       tool_enabled: true, provider: 'brave', api_key: 'key-1',
-      read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
+      read_provider: 'off', firecrawl_api_key: '',
     });
   });
 
@@ -2145,7 +2138,7 @@ describe('web search settings', () => {
     render(<WebSearchSettingsScreen client={fixtureClient({
       getWebSearchSettings: async () => ({
         provider: 'brave', api_key: '', tool_enabled: false,
-        read_provider: 'off', firecrawl_api_key: '', jina_api_key: '',
+        read_provider: 'off', firecrawl_api_key: '',
       }),
       saveWebSearchSettings: async () => {
         throw new ChaError('invalid_argument', 'Search settings could not be saved.');

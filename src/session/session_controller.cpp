@@ -656,9 +656,9 @@ void SessionController::start_generation(
         const auto& web = current->web_search();
         const bool web_tools_allowed = character && character->web_search_tool.value_or(true);
         const bool read_requested = web_tools_allowed
-            && (web.read_provider == "firecrawl" || web.read_provider == "jina");
+            && web.read_provider == "firecrawl";
         const bool read_enabled = read_requested && current->find_api_key(
-            web.read_provider == "firecrawl" ? web.firecrawl_api_key_id : web.jina_api_key_id);
+            web.firecrawl_api_key_id);
         if (read_requested && !read_enabled)
             log_warn("Page reading is unavailable: no reader API key is configured");
         const std::string cache_key = prompt_cache_key(identity_, target.id);
