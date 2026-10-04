@@ -660,7 +660,7 @@ export function ChatScreen({
         resourceId
           ? () => { void client.releaseResource(resourceId); }
           : undefined,
-        { streaming, onError: (failure) => {
+        { streaming, leadingSilence: automaticSpeech.current, onError: (failure) => {
           if (textToSpeechSession.current === session) setActionError(failure.message);
         } },
       );
