@@ -18,9 +18,11 @@
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -425,6 +427,161 @@ ControllerUpdate receive_until_idle(SessionController& controller) {
         }
     }
     return combined;
+}
+
+std::vector<SharedCharacterDefinition> capture_session_definitions(
+    std::shared_ptr<const Workspace> workspace,
+    std::string session_id) {
+    TemporaryJournal journal;
+    std::vector<SharedCharacterDefinition> definitions;
+    auto slot = std::make_shared<test::RequestBackendFacade::Slot>(
+        std::make_unique<ScriptedBackend>(GenerationResult{},
+            std::vector<std::string>{"Answer"}));
+    auto providers = std::make_shared<Providers>(
+        [&definitions, slot](SharedCharacterDefinition definition) {
+            definitions.push_back(std::move(definition));
+            return std::make_unique<test::RequestBackendFacade>(slot);
+        });
+    auto controller = SessionController::from_workspace_for_testing(
+        [workspace] { return workspace; }, "guide", "reader", journal.path,
+        providers, std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
+        {}, {}, {"lobby", std::move(session_id)});
+    for (const auto* prompt : {"First", "Second"}) {
+        (void)controller->submit_prompt("reader", prompt);
+        (void)receive_until_idle(*controller);
+    }
+    return definitions;
+}
+
+TEST(SessionController, SelectsOneCharacterVariantPerCategoryForEachSession) {
+    test::TestWorkspace fixture;
+    const auto directory = fixture.root() / "characters" / "guide";
+    std::ofstream(directory / "CHARACTER.md")
+        << "Base $${character.display_name} in $${forum.display_name}.";
+    const std::vector<std::pair<std::string, std::string>> files{
+        {"_1_1.md", "CATEGORY_ONE_A"}, {"_1_2.md", "CATEGORY_ONE_B"},
+        {"_2_1.md", "CATEGORY_TWO_A"}, {"_2_2.md", "CATEGORY_TWO_B"},
+        {"_2_3.md", "CATEGORY_TWO_C"}, {"_10_7.md", " \nCATEGORY_TEN\n\n"},
+        {"NOTES.md", "IGNORED"}, {"1_1.md", "IGNORED"},
+        {"_1_x.md", "IGNORED"}, {"_x_1.md", "IGNORED"},
+        {"_1_2_extra.md", "IGNORED"}, {"_1_.md", "IGNORED"},
+        {"__1.md", "IGNORED"}, {"_99999999999999999999_1.md", "IGNORED"},
+    };
+    for (const auto& [filename, text] : files) std::ofstream(directory / filename) << text;
+    std::filesystem::create_directory(directory / "nested");
+    std::ofstream(directory / "nested" / "_3_1.md") << "IGNORED";
+    const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
+    std::set<std::string> selected_variants;
+    std::set<std::string> selected_combinations;
+    for (int session = 0; session < 32; ++session) {
+        const auto session_id = "variants-" + std::to_string(session);
+        const auto definitions = capture_session_definitions(workspace, session_id);
+        ASSERT_EQ(definitions.size(), 2U);
+        const auto& definition = *definitions.front();
+        const std::string suffix = definition.character_prompt.substr(
+            std::string("Base Guide in The Lobby.").size());
+        const auto category_one_end = suffix.find("\n\n", 2);
+        ASSERT_NE(category_one_end, std::string::npos);
+        const auto one = suffix.substr(2, category_one_end - 2);
+        const auto category_two_end = suffix.find("\n\n", category_one_end + 2);
+        ASSERT_NE(category_two_end, std::string::npos);
+        const auto two = suffix.substr(category_one_end + 2,
+            category_two_end - category_one_end - 2);
+        EXPECT_TRUE(one == "CATEGORY_ONE_A" || one == "CATEGORY_ONE_B");
+        EXPECT_TRUE(two == "CATEGORY_TWO_A" || two == "CATEGORY_TWO_B" || two == "CATEGORY_TWO_C");
+        EXPECT_EQ(suffix.substr(category_two_end), "\n\nCATEGORY_TEN");
+        EXPECT_EQ(definition.character_description, "Base Guide in The Lobby." + suffix);
+        EXPECT_TRUE(definition.system_prompt.starts_with(
+            "Base Guide in The Lobby." + suffix + "\n\nForum instructions\n"));
+        EXPECT_EQ(definition.system_prompt.find("IGNORED"), std::string::npos);
+        EXPECT_EQ(definitions[1]->system_prompt, definition.system_prompt);
+        const auto reopened = capture_session_definitions(workspace, session_id);
+        ASSERT_EQ(reopened.size(), 2U);
+        EXPECT_EQ(reopened.front()->system_prompt, definition.system_prompt);
+        selected_variants.insert(one);
+        selected_variants.insert(two);
+        selected_combinations.insert(suffix);
+    }
+    EXPECT_EQ(selected_variants.size(), 5U);
+    EXPECT_GT(selected_combinations.size(), 1U);
+    EXPECT_EQ(workspace->find_character("guide")->markdown, "Base Guide in .");
+    EXPECT_EQ(workspace->find_forum_member("lobby", "guide")->character_prompt,
+        "Base Guide in The Lobby.");
+}
+
+TEST(SessionController, InsertsCharacterVariantsBeforeLastProfileClosingTag) {
+    test::TestWorkspace fixture;
+    const auto directory = fixture.root() / "characters" / "guide";
+    std::ofstream(directory.parent_path() / "character-voice.md") << "Character voice.";
+    std::ofstream(directory / "PROFILE.md") << "Base profile.";
+    std::ofstream(directory / "_1_1.md") << "Variant trait.";
+    const std::vector<std::pair<std::string, std::string>> cases{
+        {
+            "$$(../character-voice.md)\n\n<character_profile>\n"
+            "$$(PROFILE.md)\n</character_profile>\nAfter profile.",
+            "Character voice.\n\n<character_profile>\nBase profile.\n\n"
+            "Variant trait.\n</character_profile>\nAfter profile.",
+        },
+        {
+            "<character_profile>Earlier profile.</character_profile>\n"
+            "<character_profile>$$(PROFILE.md)</character_profile>",
+            "<character_profile>Earlier profile.</character_profile>\n"
+            "<character_profile>Base profile.\n\nVariant trait.\n</character_profile>",
+        },
+    };
+    for (const auto& [prompt, expected] : cases) {
+        std::ofstream(directory / "CHARACTER.md") << prompt;
+        const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
+        const auto definitions = capture_session_definitions(workspace, "tagged-variants");
+        ASSERT_EQ(definitions.size(), 2U);
+        for (const auto& definition : definitions) {
+            EXPECT_EQ(definition->character_prompt, expected);
+            EXPECT_TRUE(definition->system_prompt.starts_with(
+                expected + "\n\nForum instructions\n"));
+            EXPECT_EQ(definition->character_description,
+                workspace->find_character("guide")->markdown + "\n\nVariant trait.");
+        }
+    }
+}
+
+TEST(SessionController, PreservesCharacterPromptsWithoutVariantFiles) {
+    test::TestWorkspace fixture;
+    std::ofstream(fixture.root() / "characters" / "guide" / "NOTES.md") << "Unused notes";
+    const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
+    const auto expected = workspace->character_definition("lobby", "guide");
+    const auto definitions = capture_session_definitions(workspace, "no-variants");
+    ASSERT_EQ(definitions.size(), 2U);
+    for (const auto& definition : definitions) {
+        EXPECT_EQ(definition->character_prompt, expected.character_prompt);
+        EXPECT_EQ(definition->character_description, expected.character_description);
+        EXPECT_EQ(definition->system_prompt, expected.system_prompt);
+    }
+}
+
+TEST(SessionController, CombinesBaseForumAndVariantDescriptionsInsideProfile) {
+    test::TestWorkspace fixture;
+    const auto character = fixture.root() / "characters" / "guide";
+    const auto member = fixture.root() / "forums" / "lobby" / "members" / "guide";
+    std::ofstream(character / "CHARACTER.md")
+        << "Character voice.\n<character_profile>$$(PROFILE.md)</character_profile>\n";
+    std::ofstream(character / "PROFILE.md") << "Base profile.\n\n";
+    std::ofstream(character / "_1_1.md") << "\n\nVariant trait.\n\n";
+    std::ofstream(member / "CHARACTER.md")
+        << "<character_profile>$$(PROFILE.md)</character_profile>";
+    std::ofstream(member / "PROFILE.md") << "\nForum trait for $${forum.display_name}.\n\n";
+    const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
+    const auto definitions = capture_session_definitions(workspace, "combined-profile");
+    ASSERT_EQ(definitions.size(), 2U);
+    const std::string expected =
+        "Character voice.\n<character_profile>Base profile.\n\n"
+        "Forum trait for The Lobby.\n\nVariant trait.\n</character_profile>\n";
+    for (const auto& definition : definitions) {
+        EXPECT_EQ(definition->character_prompt, expected);
+        EXPECT_TRUE(definition->system_prompt.starts_with(expected + "\n\nForum instructions\n"));
+        EXPECT_EQ(definition->character_description,
+            "Base profile.\n\nForum trait for The Lobby.\n\nVariant trait.");
+    }
+    EXPECT_EQ(workspace->find_character("guide")->markdown, "Base profile.");
 }
 
 TEST(SessionController, BuildsStablePerCharacterPromptCacheKeys) {

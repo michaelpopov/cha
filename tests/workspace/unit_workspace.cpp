@@ -73,6 +73,31 @@ Workspace workspace_with_characters(
     return Workspace::load(fixture.root());
 }
 
+TEST(Workspace, CharacterProfileAdditionsNormalizeBoundaryWhitespace) {
+    struct Case {
+        std::string prompt;
+        std::string addition;
+        std::string expected;
+    };
+    const std::vector<Case> cases{
+        {"Base.\n\n \t", " \nExtra.\r\n", "Base.\n\nExtra."},
+        {"Voice.\n<character_profile>Base.\n\n</character_profile>\nTail.",
+         "\nExtra.\n\n", "Voice.\n<character_profile>Base.\n\nExtra.\n</character_profile>\nTail."},
+        {"Base.\n\n", " \t\n", "Base.\n\n"},
+        {"", " \nExtra.\n", "Extra."},
+        {" \n\t", "Extra.", "Extra."},
+    };
+    for (const auto& entry : cases) {
+        auto prompt = entry.prompt;
+        add_to_character_profile(prompt, entry.addition);
+        EXPECT_EQ(prompt, entry.expected);
+    }
+    std::string prompt = "<character_profile>Base.\n</character_profile>";
+    add_to_character_profile(prompt, "\nForum.\n");
+    add_to_character_profile(prompt, "\nVariant.\n");
+    EXPECT_EQ(prompt, "<character_profile>Base.\n\nForum.\n\nVariant.\n</character_profile>");
+}
+
 TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
     test::TestWorkspace fixture;
     fixture.write_style("serif", "font = \"serif\"\nweight = \"bold\"\n");
@@ -874,7 +899,7 @@ TEST(Workspace, AllowsCharacterChatWebSearchOnlyForOpenRouter) {
     }
 }
 
-TEST(Workspace, ResolvesForumMemberOverridesAndDefaultPersonaPrompt) {
+TEST(Workspace, AddsForumMemberPromptAndResolvesVariableOverridesAndDefaultPersona) {
     test::TestWorkspace fixture;
     fixture.add_persona("author", "Author", "AUTHOR_ONLY_BODY");
     fixture.add_persona("reader", "Reader", "READER_ONLY_BODY");
@@ -884,6 +909,8 @@ TEST(Workspace, ResolvesForumMemberOverridesAndDefaultPersonaPrompt) {
     fixture.write_character_config(
         "display_name = \"Guide\"\nprovider = \"test\"\n"
         "[prompt]\nvoice = \"definition\"\n");
+    std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
+        << "Base prompt: $${voice}\n";
     fixture.write_character_defaults("[prompt]\nvoice = \"default\"\n");
     std::ofstream(
         fixture.root() / "forums" / "lobby" / "members" / "guide"
@@ -899,7 +926,10 @@ TEST(Workspace, ResolvesForumMemberOverridesAndDefaultPersonaPrompt) {
     const WorkspaceForumMember* const member =
         workspace.find_forum_member("lobby", "guide");
     ASSERT_NE(member, nullptr);
-    EXPECT_EQ(member->character_prompt, "Member prompt: member\n");
+    EXPECT_EQ(member->character_prompt, "Base prompt: member\n\nMember prompt: member");
+    EXPECT_TRUE(member->system_prompt.starts_with(
+        member->character_prompt + "\n\nForum instructions\n"));
+    EXPECT_EQ(workspace.find_character("guide")->markdown, "Base prompt: definition\n");
     EXPECT_NE(member->system_prompt.find("READER_ONLY_BODY"), std::string::npos);
     EXPECT_EQ(member->system_prompt.find("AUTHOR_ONLY_BODY"), std::string::npos);
     EXPECT_NE(
@@ -1124,13 +1154,14 @@ TEST(Workspace, CharacterVoiceMatchesLegacyIncludesAfterMovingTheCharacter) {
 
     // Forum member templates can use the same shared file and their own includes.
     const auto member = fixture.root() / "forums" / "lobby" / "members" / "guide";
-    std::ofstream(member / "PROFILE.md", std::ios::binary) << "Override profile.\n";
+    std::ofstream(member / "PROFILE.md", std::ios::binary) << "Forum profile.\n";
     std::ofstream(member / "CHARACTER.md", std::ios::binary)
         << "$${CHARACTER_VOICE}\n$$(PROFILE.md)";
-    const Workspace overridden = Workspace::load(fixture.root());
+    const Workspace supplemented = Workspace::load(fixture.root());
     EXPECT_EQ(
-        overridden.find_forum_member("lobby", "guide")->character_prompt,
-        "Portray Guide in The Lobby.\n\nOverride profile.\n");
+        supplemented.find_forum_member("lobby", "guide")->character_prompt,
+        "Portray Guide in The Lobby.\n\n<character_profile>\nGuide profile.\n\n"
+        "Portray Guide in The Lobby.\n\nForum profile.\n</character_profile>\n");
 }
 
 TEST(Workspace, ForumDefinitionExpandsSharedAndLocalFilesForEachMember) {

@@ -8,10 +8,13 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <ctime>
 #include <exception>
 #include <limits>
+#include <map>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
@@ -23,6 +26,55 @@ namespace {
 
 constexpr std::string_view generation_stopped_notice = "Generation stopped";
 constexpr auto session_naming_timeout = std::chrono::seconds{10};
+
+std::optional<int> variant_category(std::string_view filename) {
+    if (!filename.starts_with('_') || !filename.ends_with(".md")) return {};
+    filename.remove_prefix(1);
+    filename.remove_suffix(3);
+    const auto separator = filename.find('_');
+    if (separator == std::string_view::npos) return {};
+    const auto category_text = filename.substr(0, separator);
+    const auto variant_text = filename.substr(separator + 1);
+    int category{}, variant{};
+    const auto category_result = std::from_chars(
+        category_text.data(), category_text.data() + category_text.size(), category);
+    const auto variant_result = std::from_chars(
+        variant_text.data(), variant_text.data() + variant_text.size(), variant);
+    if (category_result.ec != std::errc{}
+        || category_result.ptr != category_text.data() + category_text.size()
+        || variant_result.ec != std::errc{}
+        || variant_result.ptr != variant_text.data() + variant_text.size()) return {};
+    return category;
+}
+
+std::string character_variants(
+    const WorkspaceCharacter& character,
+    const FullSessionId& identity) {
+    std::map<int, std::vector<std::string_view>> categories;
+    for (const auto& [filename, text] : character.markdown_files) {
+        if (const auto category = variant_category(filename)) {
+            categories[*category].push_back(text);
+        }
+    }
+    std::string result;
+    for (const auto& [category, variants] : categories) {
+        // Seed each category separately so the selection survives reopening a
+        // session and does not depend on other characters or categories.
+        const auto digest = sha256_digest(identity.forum_id + "/"
+            + identity.session_id + "/" + character.character.id + "/"
+            + std::to_string(category));
+        std::seed_seq seed(digest.begin(), digest.end());
+        std::mt19937 random(seed);
+        const auto index = std::uniform_int_distribution<std::size_t>(
+            0, variants.size() - 1)(random);
+        const auto text = trim_view(variants[index]);
+        if (!text.empty()) {
+            if (!result.empty()) result += "\n\n";
+            result += text;
+        }
+    }
+    return result;
+}
 
 enum class TimestampPrefixResult {
     incomplete,
@@ -313,8 +365,23 @@ SharedCharacterDefinition SessionController::definition_for(
     const WorkspaceForumMember* const member =
         current->find_forum_member(identity_.forum_id, id);
     if (member == nullptr) return {};
-    return std::make_shared<const CharacterDefinition>(
-        current->character_definition(identity_.forum_id, id));
+    CharacterDefinition definition = current->character_definition(identity_.forum_id, id);
+    const std::string variants = character_variants(*current->find_character(id), identity_);
+    if (variants.empty()) {
+        return std::make_shared<const CharacterDefinition>(std::move(definition));
+    }
+    // Workspace prefixes the system prompt with the character prompt. Replace
+    // that prefix after adding variants so forum instructions stay unchanged.
+    if (!definition.system_prompt.starts_with(definition.character_prompt)) {
+        log_warn("Skipping character variants for '" + std::string(id)
+            + "': system prompt does not start with the character prompt");
+        return std::make_shared<const CharacterDefinition>(std::move(definition));
+    }
+    const auto prefix_size = definition.character_prompt.size();
+    add_to_character_profile(definition.character_prompt, variants);
+    add_to_character_profile(definition.character_description, variants);
+    definition.system_prompt.replace(0, prefix_size, definition.character_prompt);
+    return std::make_shared<const CharacterDefinition>(std::move(definition));
 }
 
 ControllerGenerationView SessionController::generation_view() const noexcept {

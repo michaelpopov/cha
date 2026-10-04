@@ -27,6 +27,9 @@ inline constexpr std::string_view workspace_entrance_id = "builtin-entrance";
 using WorkspacePromptVariables =
     std::map<std::string, std::string, std::less<>>;
 
+// Adds trimmed text before the last profile closing tag, or at the end.
+void add_to_character_profile(std::string& prompt, std::string_view addition);
+
 // One complete provider configuration. Defaults have already been applied.
 struct WorkspaceProvider {
     std::string id;
@@ -128,7 +131,6 @@ struct WorkspaceCharacter {
 struct WorkspaceForumMember {
     std::string character_id;
     WorkspacePromptVariables prompt_variables;
-    std::optional<std::string> prompt_override;
     std::string character_prompt;
     std::string system_prompt;
 };

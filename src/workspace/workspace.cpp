@@ -1686,19 +1686,16 @@ LoadedForums load_forums(
                     variables,
                     load_character_config(source, member_config_path, false).prompt_variables);
             }
-            const std::filesystem::path override_path = member_directory / "CHARACTER.md";
-            std::optional<std::string> prompt_override;
+            const std::filesystem::path member_prompt_path = member_directory / "CHARACTER.md";
+            const bool has_member_prompt = source.exists(member_prompt_path);
             std::string character_prompt;
-            if (source.exists(override_path)) {
-                if (!source.is_regular_file(override_path)) {
-                    throw std::runtime_error(
-                        "Forum member prompt '" + utf8_path(override_path)
-                        + "' is not a regular file");
-                }
-                prompt_override = read_text(source, override_path, "forum member prompt");
+            if (has_member_prompt && !source.is_regular_file(member_prompt_path)) {
+                throw std::runtime_error(
+                    "Forum member prompt '" + utf8_path(member_prompt_path)
+                    + "' is not a regular file");
             }
             TemplateOptions options{
-                .containment_root = prompt_override ? directory : characters_directory,
+                .containment_root = characters_directory,
                 .character_voice_directory = characters_directory,
                 .scope_table_name = "prompt",
                 .reserved = {
@@ -1710,13 +1707,16 @@ LoadedForums load_forums(
                 .initial_scope = variables,
                 .source = &source,
             };
-            if (prompt_override) {
-                character_prompt = expand_template_file(override_path, options);
-            } else if (member_id == workspace_assistant_id) {
+            if (member_id == workspace_assistant_id) {
                 character_prompt = character.prompt_template;
             } else {
                 character_prompt = expand_template_file(
                     character_directories.at(member_id) / "CHARACTER.md", options);
+            }
+            if (has_member_prompt) {
+                options.containment_root = directory;
+                add_to_character_profile(character_prompt, character_description(
+                    expand_template_file(member_prompt_path, options)));
             }
             // Forum prompts may also use CHARACTER_VOICE for the current member.
             options.containment_root = directory;
@@ -1725,7 +1725,6 @@ LoadedForums load_forums(
             forum.members.push_back({
                 .character_id = member_id,
                 .prompt_variables = std::move(variables),
-                .prompt_override = std::move(prompt_override),
                 .character_prompt = character_prompt,
                 .system_prompt = std::move(character_prompt) + "\n\n"
                     + std::move(forum_prompt),
@@ -1772,6 +1771,19 @@ WorkspaceForum build_entrance(const Workspace& workspace) {
 }
 
 } // namespace
+
+void add_to_character_profile(std::string& prompt, std::string_view addition) {
+    addition = trim_view(addition);
+    if (addition.empty()) return;
+    const auto closing = prompt.rfind("</character_profile>");
+    const auto position = closing == std::string::npos ? prompt.size() : closing;
+    auto end = position;
+    while (end > 0 && is_space(prompt[end - 1])) --end;
+    std::string text = end > 0 ? "\n\n" : "";
+    text += addition;
+    if (closing != std::string::npos) text += '\n';
+    prompt.replace(end, position - end, text);
+}
 
 void validate_jev_config(const WorkspaceJev& config) {
     const auto invalid = [] { throw std::invalid_argument(
@@ -2070,7 +2082,7 @@ CharacterDefinition Workspace::character_definition(
             .config = std::move(provider_config),
         },
         .character_prompt = member->character_prompt,
-        .character_description = character->markdown,
+        .character_description = character_description(member->character_prompt),
         .system_prompt = member->system_prompt,
     };
 }
