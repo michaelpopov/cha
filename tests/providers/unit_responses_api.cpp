@@ -114,7 +114,9 @@ TEST(ResponsesApi, BuildsRequestFieldsAndMapsRoles) {
         EXPECT_FALSE(body["store"]);
         EXPECT_DOUBLE_EQ(body["temperature"].get<double>(), 0.5);
         EXPECT_EQ(body["max_output_tokens"], 16);
-        EXPECT_EQ(body["instructions"], "System prompt");
+        EXPECT_TRUE(body["instructions"].get<std::string>().starts_with("System prompt\n\n"));
+        EXPECT_NE(body["instructions"].get<std::string>().find(
+            "Web search is available for this request."), std::string::npos);
         EXPECT_EQ(body["reasoning"]["effort"], "none");
         EXPECT_FALSE(body.contains("reasoning_effort"));
         EXPECT_EQ(body["tools"], Json::array({Json{{"type", item.tool}}}));
@@ -156,10 +158,12 @@ TEST(ResponsesApi, SubscriptionBodyUsesFallbackInstructionsAndOmitsExtras) {
     EXPECT_EQ(body["model"], "test-model");
     EXPECT_TRUE(body["stream"]);
     EXPECT_FALSE(body["store"]);
-    EXPECT_EQ(body["instructions"], "You are a helpful assistant.");
+    const auto instructions = body["instructions"].get<std::string>();
+    EXPECT_TRUE(instructions.starts_with("You are a helpful assistant.\n\n"));
+    EXPECT_NE(instructions.find("Web search is unavailable for this request."), std::string::npos);
     EXPECT_EQ(
         text_sizes.system_prompt_bytes,
-        std::string("You are a helpful assistant.").size());
+        instructions.size());
     EXPECT_FALSE(body.contains("temperature"));
     EXPECT_FALSE(body.contains("max_output_tokens"));
     EXPECT_FALSE(body.contains("tools"));
@@ -173,7 +177,7 @@ TEST(ResponsesApi, SubscriptionBodyUsesFallbackInstructionsAndOmitsExtras) {
     }));
 }
 
-TEST(ResponsesApi, DefaultsToNoneReasoningAndOmitsEmptyInstructionsAndSearchFields) {
+TEST(ResponsesApi, DefaultsToNoneReasoningAndAddsToolInstructionsWithoutSystemPrompt) {
     Transcript transcript;
     const GenerationRequest request = make_request(transcript, "Hi");
     ModelBackendConfig config = responses_config();
@@ -181,7 +185,7 @@ TEST(ResponsesApi, DefaultsToNoneReasoningAndOmitsEmptyInstructionsAndSearchFiel
     const Json body = Json::parse(build_responses_request_body(
         request, config, ""));
 
-    EXPECT_FALSE(body.contains("instructions"));
+    EXPECT_TRUE(body["instructions"].get<std::string>().starts_with("<tool_availability>\n"));
     EXPECT_EQ(body["reasoning"]["effort"], "none");
     EXPECT_FALSE(body.contains("temperature"));
     EXPECT_FALSE(body.contains("max_output_tokens"));

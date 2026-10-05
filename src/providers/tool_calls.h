@@ -9,6 +9,8 @@ namespace cha {
 
 void add_web_search_tool(nlohmann::json& body, ProviderApi api);
 void add_web_read_tool(nlohmann::json& body, ProviderApi api);
+void update_tool_instructions(nlohmann::json& body, ProviderApi api,
+    RequestTextSizes* text_sizes = nullptr);
 GenerationResult tool_call_result(const nlohmann::json& continuation,
     ProviderApi api, bool received_answer, GenerationTokenUsage usage, bool collect_tool_calls,
     std::string_view no_answer_message = "Response completed without answer content",

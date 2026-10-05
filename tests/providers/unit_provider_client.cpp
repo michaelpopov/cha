@@ -261,8 +261,9 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     EXPECT_DOUBLE_EQ(body["temperature"], 0.25);
     EXPECT_EQ(body["max_tokens"], 200);
     EXPECT_EQ(body["reasoning_effort"], "medium");
+    EXPECT_TRUE(body["messages"][0]["content"].get<std::string>().starts_with("Be concise.\n\n"));
     EXPECT_EQ(body["messages"], Json::array({
-        {{"role", "system"}, {"content", "Be concise."}},
+        {{"role", "system"}, {"content", body["messages"][0]["content"]}},
         {{"role", "user"}, {"content", "from You:\nEarlier question"}},
         {{"role", "assistant"}, {"content", "Earlier answer"}},
         {{"role", "user"},
@@ -275,7 +276,7 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
         "/v1/chat/completions"));
 }
 
-TEST(ProviderClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
+TEST(ProviderClient, AddsToolInstructionsToEmptySystemPromptAndEscapesTranscriptContent) {
     MockHttpServer mock({http_response(
         "application/json", R"({"choices":[{"message":{"content":"Answer"}}]})")});
     mock.start();
@@ -294,9 +295,11 @@ TEST(ProviderClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
     EXPECT_FALSE(body.contains("temperature"));
     EXPECT_FALSE(body.contains("max_tokens"));
     EXPECT_FALSE(body.contains("provider"));
-    ASSERT_EQ(body["messages"].size(), 1U);
-    EXPECT_EQ(body["messages"][0]["role"], "user");
-    EXPECT_EQ(body["messages"][0]["content"], "from You:\n" + prompt);
+    ASSERT_EQ(body["messages"].size(), 2U);
+    EXPECT_EQ(body["messages"][0]["role"], "system");
+    EXPECT_TRUE(body["messages"][0]["content"].get<std::string>().starts_with("<tool_availability>\n"));
+    EXPECT_EQ(body["messages"][1]["role"], "user");
+    EXPECT_EQ(body["messages"][1]["content"], "from You:\n" + prompt);
 }
 
 TEST(ProviderClient, RestrictsOpenRouterTargetsForBothApiFormats) {
@@ -347,14 +350,105 @@ TEST(ProviderClient, ReportsSystemPromptAndConversationTextSizes) {
         ProviderClient client(shared_definition(definition));
         const RequestPayload payload = client.prepare(request);
         ASSERT_TRUE(payload.text_sizes);
+        const auto body = Json::parse(payload.bytes);
+        const auto instructions = (api == ProviderApi::responses ? body["instructions"]
+            : body["messages"][0]["content"]).get<std::string>();
         EXPECT_EQ(
             payload.text_sizes->system_prompt_bytes,
-            definition.system_prompt.size());
+            instructions.size());
         EXPECT_EQ(
             payload.text_sizes->conversation_bytes,
             std::string("from You:\nEarlier question").size()
                 + std::string("Earlier answer").size()
                 + std::string("from You:\nCurrent question").size());
+    }
+}
+
+TEST(ProviderClient, ToolInstructionsMatchCapabilitiesAttachedToEachRequest) {
+    for (const auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        for (const auto hosted : {WebSearchMode::off, WebSearchMode::automatic, WebSearchMode::required}) {
+            auto definition = network_definition(443, false);
+            definition.provider.config.api = api;
+            definition.provider.config.host = "openrouter.ai";
+            definition.provider.config.web_search = hosted;
+            definition.system_prompt = "Original instructions.";
+            ProviderClient client(shared_definition(definition));
+            for (const bool search : {false, true}) {
+                for (const bool read : {false, true}) {
+                    SCOPED_TRACE(static_cast<int>(api));
+                    SCOPED_TRACE(static_cast<int>(hosted));
+                    SCOPED_TRACE(search);
+                    SCOPED_TRACE(read);
+                    Transcript transcript;
+                    auto request = client_request(transcript, 1, "Verify this");
+                    if (search) request.web_search_tool = [](auto, const auto&) { return "[]"; };
+                    if (read) request.web_read_tool = [](auto, const auto&) { return "Page text"; };
+                    const auto payload = client.prepare(request);
+                    const auto body = Json::parse(payload.bytes);
+                    const auto instructions = (api == ProviderApi::responses ? body["instructions"]
+                        : body["messages"][0]["content"]).get<std::string>();
+                    EXPECT_TRUE(instructions.starts_with("Original instructions.\n\n<tool_availability>\n"));
+                    EXPECT_NE(instructions.find(search || hosted != WebSearchMode::off
+                        ? "Web search is available for this request."
+                        : "Web search is unavailable for this request."), std::string::npos);
+                    EXPECT_NE(instructions.find(read
+                        ? "Web page reading is available for this request."
+                        : "Web page reading is unavailable for this request."), std::string::npos);
+                    EXPECT_NE(instructions.find("state material uncertainty"), std::string::npos);
+                    EXPECT_NE(instructions.find("unless you actually did"), std::string::npos);
+                    const auto tool_count = (hosted != WebSearchMode::off) + search + read;
+                    if (tool_count) EXPECT_EQ(body["tools"].size(), tool_count);
+                    else EXPECT_FALSE(body.contains("tools"));
+                    ASSERT_TRUE(payload.text_sizes);
+                    EXPECT_EQ(payload.text_sizes->system_prompt_bytes, instructions.size());
+                    if (api == ProviderApi::chat_completions) {
+                        ASSERT_EQ(body["messages"].size(), 2U);
+                        EXPECT_EQ(body["messages"][0]["role"], "system");
+                        EXPECT_EQ(body["messages"][1]["role"], "user");
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST(ProviderClient, PreservesToolAvailabilityTagsInsidePromptDocuments) {
+    const std::string original =
+        "Character instructions with an example:\n<tool_availability>\n"
+        "Example capability text.\n</tool_availability>\n\n"
+        "<forum_instructions>Keep the forum rules.</forum_instructions>\n\n"
+        "<participant_profile>Keep the participant context.</participant_profile>";
+    for (const auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        auto definition = network_definition(443, false);
+        definition.provider.config.api = api;
+        definition.system_prompt = original;
+        ProviderClient client(shared_definition(definition));
+        Transcript transcript;
+        const auto body = Json::parse(client.prepare(client_request(transcript, 1, "Hello")).bytes);
+        const auto instructions = (api == ProviderApi::responses ? body["instructions"]
+            : body["messages"][0]["content"]).get<std::string>();
+        EXPECT_TRUE(instructions.starts_with(original + "\n\n<tool_availability>\n"));
+        EXPECT_NE(instructions.find("Web search is unavailable for this request."), std::string::npos);
+    }
+}
+
+TEST(ProviderClient, AuxiliaryRequestsKeepTheirSystemInstructions) {
+    for (const auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        auto definition = network_definition(443, false);
+        definition.provider.config.api = api;
+        definition.system_prompt = "Return only a short session name.";
+        ProviderClient client(shared_definition(definition));
+        Transcript transcript;
+        auto request = client_request(transcript, 1, "Plan a garden");
+        request.include_tool_instructions = false;
+        const auto payload = client.prepare(request);
+        const auto body = Json::parse(payload.bytes);
+        const auto instructions = (api == ProviderApi::responses ? body["instructions"]
+            : body["messages"][0]["content"]).get<std::string>();
+        EXPECT_EQ(instructions, definition.system_prompt);
+        ASSERT_TRUE(payload.text_sizes);
+        EXPECT_EQ(payload.text_sizes->system_prompt_bytes, definition.system_prompt.size());
+        EXPECT_FALSE(body.contains("tools"));
     }
 }
 
@@ -1077,7 +1171,7 @@ TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
     EXPECT_FALSE(body.contains("include"));
     EXPECT_EQ(body["tools"], Json::array({Json{{"type", "web_search"}}}));
     EXPECT_EQ(body["tool_choice"], "auto");
-    EXPECT_EQ(body["instructions"], "Be concise.");
+    EXPECT_TRUE(body["instructions"].get<std::string>().starts_with("Be concise.\n\n"));
     EXPECT_EQ(body["input"], Json::array({
         {{"role", "user"}, {"content", "from You:\nEarlier question"}},
         {{"role", "assistant"}, {"content", "Earlier answer"}},
@@ -1576,7 +1670,7 @@ TEST(ProviderClient, StreamsSubscriptionRequestWithChaIdentity) {
     EXPECT_EQ(body["service_tier"], "priority");
     EXPECT_TRUE(body["stream"]);
     EXPECT_FALSE(body["store"]);
-    EXPECT_EQ(body["instructions"], "You are a helpful assistant.");
+    EXPECT_TRUE(body["instructions"].get<std::string>().starts_with("You are a helpful assistant.\n\n"));
     EXPECT_FALSE(body.contains("temperature"));
     EXPECT_FALSE(body.contains("max_output_tokens"));
     EXPECT_FALSE(body.contains("tools"));
@@ -2043,6 +2137,12 @@ TEST(ProviderClientTools, ReadingStopsAtTheSharedWebToolLimit) {
                 }
                 const auto body = Json::parse(request.body);
                 EXPECT_FALSE(body.contains("tools"));
+                const auto instructions = (api == ProviderApi::responses ? body["instructions"]
+                    : body["messages"][0]["content"]).get<std::string>();
+                EXPECT_NE(instructions.find("Web page reading is unavailable for this request."),
+                    std::string::npos);
+                EXPECT_EQ(instructions.find("Web page reading is available for this request."),
+                    std::string::npos);
                 const auto& messages = body[api == ProviderApi::responses ? "input" : "messages"];
                 int outputs = 0;
                 for (const auto& message : messages)
@@ -2268,6 +2368,14 @@ TEST(ProviderClientTools, RemovesToolsAndRequestsAnAnswerWhenSearchLimitIsReache
                     if (body.contains("tools"))
                         return tool_reply(api, stream, Json::array({search_call(api, "again")}));
                     EXPECT_FALSE(body.contains("tool_choice"));
+                    const auto instructions = (api == ProviderApi::responses ? body["instructions"]
+                        : body["messages"][0]["content"]).get<std::string>();
+                    EXPECT_NE(instructions.find("Web search is unavailable for this request."),
+                        std::string::npos);
+                    EXPECT_EQ(instructions.find("Web search is available for this request."),
+                        std::string::npos);
+                    EXPECT_EQ(instructions.find("<tool_availability>"),
+                        instructions.rfind("<tool_availability>"));
                     const auto& messages = body[api == ProviderApi::responses ? "input" : "messages"];
                     EXPECT_EQ(messages.back()["role"], "user");
                     EXPECT_NE(messages.back()["content"].get<std::string>().find("Answer"), std::string::npos);

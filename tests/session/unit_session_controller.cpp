@@ -491,8 +491,11 @@ TEST(SessionController, SelectsOneCharacterVariantPerCategoryForEachSession) {
         EXPECT_TRUE(two == "CATEGORY_TWO_A" || two == "CATEGORY_TWO_B" || two == "CATEGORY_TWO_C");
         EXPECT_EQ(suffix.substr(category_two_end), "\n\nCATEGORY_TEN");
         EXPECT_EQ(definition.character_description, "Base Guide in The Lobby." + suffix);
-        EXPECT_TRUE(definition.system_prompt.starts_with(
-            "Base Guide in The Lobby." + suffix + "\n\nForum instructions\n"));
+        EXPECT_TRUE(definition.system_prompt.starts_with("# Conversation protocol\n"));
+        EXPECT_NE(definition.system_prompt.find(
+            "<character_instructions>\nBase Guide in The Lobby." + suffix
+            + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
+            std::string::npos);
         EXPECT_EQ(definition.system_prompt.find("IGNORED"), std::string::npos);
         EXPECT_EQ(definitions[1]->system_prompt, definition.system_prompt);
         const auto reopened = capture_session_definitions(workspace, session_id);
@@ -536,8 +539,11 @@ TEST(SessionController, InsertsCharacterVariantsBeforeLastProfileClosingTag) {
         ASSERT_EQ(definitions.size(), 2U);
         for (const auto& definition : definitions) {
             EXPECT_EQ(definition->character_prompt, expected);
-            EXPECT_TRUE(definition->system_prompt.starts_with(
-                expected + "\n\nForum instructions\n"));
+            EXPECT_TRUE(definition->system_prompt.starts_with("# Conversation protocol\n"));
+            EXPECT_NE(definition->system_prompt.find(
+                "<character_instructions>\n" + expected
+                + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
+                std::string::npos);
             EXPECT_EQ(definition->character_description,
                 workspace->find_character("guide")->markdown + "\n\nVariant trait.");
         }
@@ -577,7 +583,11 @@ TEST(SessionController, CombinesBaseForumAndVariantDescriptionsInsideProfile) {
         "Forum trait for The Lobby.\n\nVariant trait.\n</character_profile>\n";
     for (const auto& definition : definitions) {
         EXPECT_EQ(definition->character_prompt, expected);
-        EXPECT_TRUE(definition->system_prompt.starts_with(expected + "\n\nForum instructions\n"));
+        EXPECT_TRUE(definition->system_prompt.starts_with("# Conversation protocol\n"));
+        EXPECT_NE(definition->system_prompt.find(
+            "<character_instructions>\n" + expected
+            + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
+            std::string::npos);
         EXPECT_EQ(definition->character_description,
             "Base profile.\n\nForum trait for The Lobby.\n\nVariant trait.");
     }

@@ -370,17 +370,21 @@ SharedCharacterDefinition SessionController::definition_for(
     if (variants.empty()) {
         return std::make_shared<const CharacterDefinition>(std::move(definition));
     }
-    // Workspace prefixes the system prompt with the character prompt. Replace
-    // that prefix after adding variants so forum instructions stay unchanged.
-    if (!definition.system_prompt.starts_with(definition.character_prompt)) {
+    // Replace the character document inside its boundary after adding variants.
+    constexpr std::string_view opening = "<character_instructions>\n";
+    const auto opening_at = definition.system_prompt.find(opening);
+    if (opening_at == std::string::npos || definition.system_prompt.compare(
+            opening_at + opening.size(), definition.character_prompt.size(),
+            definition.character_prompt) != 0) {
         log_warn("Skipping character variants for '" + std::string(id)
-            + "': system prompt does not start with the character prompt");
+            + "': system prompt does not contain the expected character instructions");
         return std::make_shared<const CharacterDefinition>(std::move(definition));
     }
-    const auto prefix_size = definition.character_prompt.size();
+    const auto prompt_size = definition.character_prompt.size();
     add_to_character_profile(definition.character_prompt, variants);
     add_to_character_profile(definition.character_description, variants);
-    definition.system_prompt.replace(0, prefix_size, definition.character_prompt);
+    definition.system_prompt.replace(
+        opening_at + opening.size(), prompt_size, definition.character_prompt);
     return std::make_shared<const CharacterDefinition>(std::move(definition));
 }
 
@@ -1123,6 +1127,7 @@ void SessionController::start_session_name(ControllerUpdate& update, std::string
                     .author = {"", "User"},
                     .prompt_text = std::string(prompt),
                 },
+                .include_tool_instructions = false,
             },
         }, notifier_);
         name_deadline_ = std::chrono::steady_clock::now() + session_naming_timeout;

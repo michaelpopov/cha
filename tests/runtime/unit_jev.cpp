@@ -395,6 +395,7 @@ TEST_F(SessionNaming, StartsWithJevAndWaitsForBothBeforeTheReply) {
     EXPECT_EQ(title_inputs[0].run.prompt_text, "How should I plan a small garden?");
     EXPECT_TRUE(title_inputs[0].history->entries.empty());
     EXPECT_FALSE(title_inputs[0].web_search_tool);
+    EXPECT_FALSE(title_inputs[0].include_tool_instructions);
     ASSERT_EQ(title_definitions.size(), 1u);
     EXPECT_EQ(title_definitions[0]->provider.id, "query");
     EXPECT_EQ(title_definitions[0]->provider.config.model, "query-model");

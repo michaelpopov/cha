@@ -35,6 +35,17 @@ TEST(Builtins, WorkspacePublishesGuestAssistantAndEntrance) {
         entrance->members.front().system_prompt.find(
             "Workspace inventory reference data"),
         std::string::npos);
+    const auto& prompt = entrance->members.front().system_prompt;
+    EXPECT_TRUE(prompt.starts_with("# Conversation protocol\n"));
+    EXPECT_NE(prompt.find("<character_instructions>\n" + assistant->prompt_template
+        + "\n</character_instructions>"), std::string::npos);
+    EXPECT_NE(prompt.find("<workspace_inventory>\nWorkspace inventory reference data"),
+        std::string::npos);
+    EXPECT_NE(prompt.find("</workspace_inventory>\n\n<forum_instructions>\n"
+        "Entrance instructions:"), std::string::npos);
+    EXPECT_NE(prompt.find("</forum_instructions>\n\n## Participants\n\n"
+        "<participant_profile>\n### Guest\n" + guest->prompt
+        + "\n</participant_profile>"), std::string::npos);
 }
 
 } // namespace

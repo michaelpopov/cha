@@ -54,6 +54,59 @@ void add_web_read_tool(nlohmann::json& body, ProviderApi api) {
     });
 }
 
+void update_tool_instructions(nlohmann::json& body, ProviderApi api,
+    RequestTextSizes* text_sizes) {
+    bool search_available = false;
+    bool read_available = false;
+    if (const auto tools = body.find("tools"); tools != body.end()) {
+        for (const auto& tool : *tools) {
+            const auto type = tool.value("type", "");
+            if (type == "web_search" || type == "openrouter:web_search") {
+                search_available = true;
+            } else if (type == "function") {
+                const auto& function = api == ProviderApi::responses ? tool : tool.at("function");
+                const auto name = function.value("name", "");
+                search_available |= name == "web_search";
+                read_available |= name == "web_read";
+            }
+        }
+    }
+
+    nlohmann::json* instructions;
+    if (api == ProviderApi::responses) {
+        instructions = &body["instructions"];
+    } else {
+        auto& messages = body["messages"];
+        if (messages.empty() || messages.front().value("role", "") != "system") {
+            messages.insert(messages.begin(),
+                nlohmann::json{{"role", "system"}, {"content", ""}});
+        }
+        instructions = &messages.front()["content"];
+    }
+    std::string text = instructions->is_string() ? instructions->get<std::string>() : "";
+    // Replace our trailing block when a continuation removes tools.
+    constexpr std::string_view opening = "<tool_availability>\n";
+    if (auto position = text.rfind(opening);
+        position != std::string::npos && text.ends_with("</tool_availability>")) {
+        if (position >= 2 && text.compare(position - 2, 2, "\n\n") == 0) position -= 2;
+        text.erase(position);
+    }
+    if (!text.empty()) text += "\n\n";
+    text += opening;
+    text += search_available ? "Web search is available for this request.\n"
+                             : "Web search is unavailable for this request.\n";
+    text += read_available ? "Web page reading is available for this request.\n"
+                           : "Web page reading is unavailable for this request.\n";
+    text += "Search and page-reading requirements in character and forum instructions apply "
+        "only when the corresponding capability is available. Use available tools when "
+        "verification is needed. If verification is unavailable, fails, or yields insufficient "
+        "evidence, answer using the information already available and state material uncertainty. "
+        "Do not invent missing facts or claim to have searched, read a page, or verified a claim "
+        "unless you actually did.\n</tool_availability>";
+    if (text_sizes) text_sizes->system_prompt_bytes = text.size();
+    *instructions = std::move(text);
+}
+
 GenerationResult tool_call_result(const nlohmann::json& continuation,
     ProviderApi api, bool received_answer, GenerationTokenUsage usage, bool collect_tool_calls,
     std::string_view no_answer_message, std::string_view finish_reason) {

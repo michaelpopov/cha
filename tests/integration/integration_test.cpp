@@ -592,6 +592,23 @@ Json messages_without_timestamps(Json messages) {
     return messages;
 }
 
+void expect_request_messages(const Json& body, std::string_view system_prompt,
+    const Json& conversation) {
+    Json messages = messages_without_timestamps(body.at("messages"));
+    ASSERT_FALSE(messages.empty());
+    ASSERT_EQ(messages.front().at("role"), "system");
+    const auto instructions = messages.front().at("content").get<std::string>();
+    // These local fixtures have no web tools. Request preparation appends their
+    // availability after the complete workspace prompt.
+    EXPECT_FALSE(body.contains("tools"));
+    EXPECT_TRUE(instructions.starts_with(std::string(system_prompt) + "\n\n<tool_availability>\n"));
+    EXPECT_NE(instructions.find("Web search is unavailable for this request."), std::string::npos);
+    EXPECT_NE(instructions.find("Web page reading is unavailable for this request."), std::string::npos);
+    EXPECT_TRUE(instructions.ends_with("</tool_availability>"));
+    messages.erase(messages.begin());
+    EXPECT_EQ(messages, conversation);
+}
+
 std::string streamed_answer(
     std::string_view reasoning,
     std::string_view answer_text) {
@@ -730,8 +747,7 @@ TEST(CoverIntegration, OmitsCoveredTurnsFromTheSerializedNextRequest) {
     ASSERT_EQ(server.requests().size(), 3U);
     const Json current_body =
         Json::parse(request_body(server.requests().back()));
-    EXPECT_EQ(messages_without_timestamps(current_body["messages"]), Json::array({
-        Json{{"role", "system"}, {"content", system_prompt}},
+    expect_request_messages(current_body, system_prompt, Json::array({
         Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nCurrent question"}},
     }));
 
@@ -791,16 +807,14 @@ TEST(MultiCharacterIntegration, RoutesEachPromptToItsOwnCharacterOverItsOwnTrans
     ASSERT_EQ(ismael_server.requests().size(), 1U);
 
     const Json first = body_of(cheburashka_server);
-    EXPECT_EQ(messages_without_timestamps(first["messages"]), Json::array({
-        Json{{"role", "system"}, {"content", cheburashka_prompt}},
+    expect_request_messages(first, cheburashka_prompt, Json::array({
         Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWho are you?"}},
     }));
 
     // Ismael's own system prompt, and Cheburashka's answer attributed as
     // user-role forum context.
     const Json second = body_of(ismael_server);
-    EXPECT_EQ(messages_without_timestamps(second["messages"]), Json::array({
-        Json{{"role", "system"}, {"content", ismael_prompt}},
+    expect_request_messages(second, ismael_prompt, Json::array({
         Json{{"role", "user"},
              {"content",
               "Shared chat history (JSONL):\n"
@@ -862,18 +876,14 @@ TEST(MultiCharacterIntegration, MulticastSendsIndependentBodiesAndRestoresHistor
 
     ASSERT_EQ(cheburashka_server.requests().size(), 2U);
     ASSERT_EQ(ismael_server.requests().size(), 1U);
-    EXPECT_EQ(
-        messages_without_timestamps(
-            Json::parse(request_body(cheburashka_server.requests()[0]))["messages"]),
+    expect_request_messages(
+        Json::parse(request_body(cheburashka_server.requests()[0])), cheburashka_prompt,
         Json::array({
-            Json{{"role", "system"}, {"content", cheburashka_prompt}},
-        Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWhat time is it?"}},
+            Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWhat time is it?"}},
         }));
-    EXPECT_EQ(
-        messages_without_timestamps(body_of(ismael_server)["messages"]),
+    expect_request_messages(body_of(ismael_server), ismael_prompt,
         Json::array({
-            Json{{"role", "system"}, {"content", ismael_prompt}},
-        Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWhat time is it?"}},
+            Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nWhat time is it?"}},
         }));
 
     const std::string follow_up =
@@ -940,8 +950,7 @@ TEST(MultiCharacterIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneCharact
 
     ASSERT_EQ(ismael_server.requests().size(), 2U);
     const Json body = Json::parse(request_body(ismael_server.requests().back()));
-    EXPECT_EQ(messages_without_timestamps(body["messages"]), Json::array({
-        Json{{"role", "system"}, {"content", ismael_prompt}},
+    expect_request_messages(body, ismael_prompt, Json::array({
         Json{{"role", "user"},
              {"content",
               "Shared chat history (JSONL):\n"

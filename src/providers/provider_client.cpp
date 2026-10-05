@@ -8,6 +8,7 @@
 #include "providers/openai_oauth.h"
 #include "providers/responses_api.h"
 #include "providers/web_search.h"
+#include "providers/tool_calls.h"
 #include "util/curl.h"
 #include "util/logging.h"
 #include "util/text.h"
@@ -641,6 +642,7 @@ GenerationResult ProviderClient::perform(
             log_debug("Web tool limit reached: requesting final answer without tools");
             body.erase("tools");
             body.erase("tool_choice");
+            update_tool_instructions(body, definition_->provider.config.api);
             messages.push_back({{"role", "user"}, {"content",
                 "Web tools are now unavailable because the tool limit was reached. "
                 "Answer the original request using the results already collected. "

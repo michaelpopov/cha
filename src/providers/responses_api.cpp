@@ -185,6 +185,7 @@ std::string build_responses_request_body(
 
     if (input.web_search_tool) add_web_search_tool(body, config.api);
     if (input.web_read_tool) add_web_read_tool(body, config.api);
+    if (input.include_tool_instructions) update_tool_instructions(body, config.api, text_sizes);
     return dump_json(body, "Model request");
 }
 

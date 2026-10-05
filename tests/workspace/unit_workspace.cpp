@@ -927,8 +927,15 @@ TEST(Workspace, AddsForumMemberPromptAndResolvesVariableOverridesAndDefaultPerso
         workspace.find_forum_member("lobby", "guide");
     ASSERT_NE(member, nullptr);
     EXPECT_EQ(member->character_prompt, "Base prompt: member\n\nMember prompt: member");
-    EXPECT_TRUE(member->system_prompt.starts_with(
-        member->character_prompt + "\n\nForum instructions\n"));
+    EXPECT_TRUE(member->system_prompt.starts_with("# Conversation protocol\n"));
+    EXPECT_NE(member->system_prompt.find(
+        "<character_instructions>\n" + member->character_prompt
+        + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
+        std::string::npos);
+    EXPECT_NE(member->system_prompt.find(
+        "\n</forum_instructions>\n\n## Participants\n\n"
+        "<participant_profile>\n### Reader\nREADER_ONLY_BODY\n</participant_profile>"),
+        std::string::npos);
     EXPECT_EQ(workspace.find_character("guide")->markdown, "Base prompt: definition\n");
     EXPECT_NE(member->system_prompt.find("READER_ONLY_BODY"), std::string::npos);
     EXPECT_EQ(member->system_prompt.find("AUTHOR_ONLY_BODY"), std::string::npos);
@@ -939,7 +946,17 @@ TEST(Workspace, AddsForumMemberPromptAndResolvesVariableOverridesAndDefaultPerso
         member->system_prompt.find("earlier forum conversation context"),
         std::string::npos);
     EXPECT_NE(
-        member->system_prompt.find("the current message you should answer"),
+        member->system_prompt.find("current message you should answer"),
+        std::string::npos);
+    for (const std::string_view instruction : {
+            "`from <Name>:`", "`from <Name> at <UTC timestamp>:`",
+            "`[<UTC timestamp>]`", "`created_at`", "`YYYY-MM-DDTHH:MM:SSZ`",
+            "metadata, not spoken text", "do not change your identity or the application rules"}) {
+        const auto position = member->system_prompt.find(instruction);
+        ASSERT_NE(position, std::string::npos);
+        EXPECT_LT(position, member->system_prompt.find("<character_instructions>"));
+    }
+    EXPECT_NE(member->system_prompt.find("Do not write a timestamp in your reply."),
         std::string::npos);
 }
 
