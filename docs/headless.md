@@ -10,7 +10,7 @@ ChaWeb browser application through nginx. Each user has one vault, one SQLite
 file and one daemon process.
 
 This document describes the daemon process: startup, SCGI, request handling and
-operations. The [ChaWeb design](chaweb.md) specifies the API contract and the
+operations. The [ChaWeb guide](chaweb.md) specifies the API contract and the
 browser behavior. [CHA daemon on Linux](../packaging/linux/README.md) is the
 installation reference.
 
@@ -30,7 +30,8 @@ Non-goals:
 - Sharing one vault or one session between users.
 - Authentication. The nginx listening port selects the user, but it does not
   authenticate the user.
-- Vault administration and configuration edits over the API.
+- General vault selection and configuration editing over the API. Narrow R2
+  upload, download, and parent-merge operations are supported.
 - An OpenAI-compatible API. An earlier version served `/v1/models` and
   `/v1/chat/completions`. These paths now return `404`.
 
@@ -246,12 +247,22 @@ loop until stop:
 ## ChaWeb API
 
 All paths are below `/api/cha/v1`. POST bodies, and the body of `DELETE .../audio`,
-must use `application/json`. The [ChaWeb design](chaweb.md) gives the full
+must use `application/json`. The [ChaWeb guide](chaweb.md) gives the full
 contract: body validation, statuses and browser recovery.
 
 | Method and path | Result |
 | --- | --- |
 | `GET /bootstrap` | The bootstrap document: forums, characters, personas, recent sessions and the vault name. |
+| `GET /voice-input` | Dictation settings without credentials, or `null`. |
+| `POST /voice-input/connect` | OpenAI SDP exchange; body `{"sdp", "languages"}`. |
+| `POST /voice-input/xai/start` | Start dictation; body `{"session_id", "languages"}`. |
+| `POST /voice-input/xai/audio` | Send PCM16; body `{"session_id", "pcm_base64"}`. |
+| `POST /voice-input/xai/stop` | Finish dictation; body `{"session_id", "remaining_ms"}`. |
+| `POST /voice-input/xai/cancel` | Release dictation; body `{"session_id"}`. |
+| `POST /vault/upload-check` | Body `{}`; remote ETag, version status, and context epoch. |
+| `POST /vault/upload` | Body `{"etag", "context_epoch"}` from the check; upload the database without cached speech and its companion definition. |
+| `POST /vault/download` | Body `{}`; stage, validate, and replace the local pair with `.bac` backups. |
+| `POST /vault/merge-parent` | Body `{}` or `{"password"}`; download the inactive parent from R2, then merge its configuration. |
 | `GET /voice-output` | The voice output settings without credentials, or `null` when voice output is not configured. |
 | `GET /forums/{forum}/sessions` | The stored sessions of the forum. |
 | `POST /forums/{forum}/sessions` | Body `{"text"}`. Creates a session and submits the first input. `201` with `{"id", "label"}`. |
@@ -275,7 +286,8 @@ and `413`.
 | --- | --- |
 | `400` | Malformed SCGI or JSON, unknown fields, or input larger than `prompt_limit` (32 KiB). |
 | `404` | Unknown route, forum, session or entry. |
-| `409` | The `vault_name` of an audio request is not the open vault. |
+| `401` | Parent vault password required or rejected. |
+| `409` | Stale vault context or a mismatched audio vault. |
 | `413` | Body larger than 256 KiB. |
 | `415` | A request body that is not `application/json`. |
 | `422` | CHA rejected the input, with the CHA notice as the message. |
@@ -304,6 +316,25 @@ and `413`.
   that changes the epoch while it runs.
 - **Configuration.** The daemon never writes configuration.
 
+## Voice input and vault maintenance
+
+The browser supports configured OpenAI WebRTC and xAI dictation over HTTPS.
+The adapter routes dictation messages to `Application` and retains a stable
+resource scope across xAI HTTP batches. Keys stay in the daemon. Capture pauses
+during generation, audio loading, speech playback, and the echo tail.
+
+ChaWeb's session list exposes ETag-checked Upload, confirmed Download, and
+Parent merge. The active vault supplies R2 credentials. A `parent` field names
+a locally registered inactive vault; Parent merge downloads its latest R2 pair
+before merging configuration without source sessions. Protected parents prompt
+for a password. A successful parent download remains committed even if the
+later merge fails. Download and merge refresh bootstrap and session lists.
+These operations use normal application maintenance and context invalidation;
+they do not expose arbitrary configuration editing or vault switching.
+
+R2 uploads strip cached audio from a temporary copy and compact it. The live
+vault retains its clips, and protected uploads remain encrypted.
+
 ## Voice playback
 
 The application's audio download manager makes FishAudio clips for character
@@ -311,12 +342,15 @@ replies and stores them in the vault. Its three workers run the downloads.
 
 - `POST .../entries/{entry}/audio` starts one download, or reports that the
   clip is cached or already running. `POST .../audio` starts downloads for
-  several replies, for Play all and automatic playback.
+  several replies for automatic playback.
 - The browser reads a running download in chunks with `X-CHA-Audio-Offset`.
   Chunks come from a growing in-memory clip. A read never waits for the
   provider, so audio requests do not block the accept loop.
 - After the download, the clip is cached in the vault. A later request returns
   the cached clip.
+- Automatic audio plays only newly completed replies, in transcript order.
+  New automatic MP3 clips have a playback-only 2.5-second silent prefix; manual
+  and resumed clips have none. Stored bytes and speech positions exclude it.
 - Audio POST and DELETE requests name the vault. A request for another vault
   fails with `409`.
 

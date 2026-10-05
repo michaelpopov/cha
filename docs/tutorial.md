@@ -278,7 +278,11 @@ The other utilities support important boundaries:
 - `path_name.*` keeps UTF-8 filesystem paths and identifiers explicit.
 - `public_name.*` centralizes visible-name validation.
 - `text_template.*` expands `$$(relative/file)` includes and `$${variable}`
-  substitutions with containment and cycle/resource limits.
+  substitutions with containment and cycle/resource limits. Persona prompts
+  use `persona.id`, `persona.display_name`, and their own `[prompt]` variables;
+  editors retain unexpanded source. Character member prompts add to the global
+  profile, and numbered `_<category>_<variant>.md` files supply stable choices
+  per session. See the maintainer guide for composition boundaries and examples.
 - `logging.*` owns the process logging lifetime.
 
 Checkpoint: locate one caller of each utility and state whether it is a domain
@@ -444,13 +448,19 @@ and idle timeouts, and treats a completed provider response as success.
 
 ### 8.4 Prompt construction
 
-`Workspace::load()` combines:
+`Workspace::load()` begins with the generated Conversation protocol, then
+wraps character and forum instructions separately in `<character_instructions>`
+and `<forum_instructions>`. The expanded persona follows in
+`<participant_profile>`. A member's `CHARACTER.md` adds to the global profile;
+it does not replace it. `SessionController::definition_for()` adds one stable
+numbered variation per category when building that session's effective
+character. The catalog profile remains unchanged.
 
-- the character definition prompt;
-- forum prompt/context;
-- the forum's default persona and its `PERSONA.md` prompt;
-- standard generated context;
-- effective model backend settings.
+Request encoding appends `<tool_availability>` based on the actual attached
+search/read tools. It changes when a continuation removes tools, and naming
+requests omit it. The conversation protocol defines shared JSONL history and
+UTC timestamps as metadata rather than reply text. Effective model settings
+are resolved separately from these instruction documents.
 
 `FORUM.md` has two audiences. It is the forum prompt above, and
 `Workspace` also reads it verbatim and serves it through
@@ -663,30 +673,32 @@ Checkpoint: describe what happens if a streaming response contains reasoning
 but no answer, and identify which layer detects it and which layer converts it
 into a transcript error.
 
-### 10.5 Recipient detection and web search
+### 10.5 Recipient detection and web tools
 
 [providers/jev.cpp](../src/providers/jev.cpp) owns the Jev request and parser.
 The controller holds a pending classification with a five-second deadline and
 shared submission cancellation state. It does not commit a human turn until
-dispatch. A successful decision can select one recipient or all characters;
-undefined/failure uses the captured target. Explicit mention and multicast
-recipients stay fixed, while Self-notes bypass classification.
+dispatch. A successful decision can select one character, all characters, or
+Self. Accepted decisions change the session's active target; the runtime
+persists only single-character decisions as the forum default. Undefined or
+failed decisions use the captured target. Explicit mention and multicast
+recipients stay fixed, while an already selected Self target bypasses Jev.
 
-With Search API pre-generation search enabled, Jev also chooses no search,
-direct search, or query rewriting. [providers/web_search.cpp](../src/providers/web_search.cpp)
-creates a shared, once-prepared context for all multicast recipients. An
-optional query provider resolves conversational references before Brave or
-Tavily retrieval. Failure logs a warning and allows generation without results.
+Search before generation and query rewriting were removed. Generation input
+instead carries optional callbacks for on-demand `web_search` and `web_read`.
+[providers/web_search.cpp](../src/providers/web_search.cpp) calls Brave or
+Tavily for search and Firecrawl for page Markdown. Search and reading have
+separate saved keys and availability checks. Jina Reader is not supported.
 
-The independent on-demand path passes a search callback into generation input.
-`tool_calls.*` encodes a `web_search` function for both APIs and validates the
-returned calls. `ProviderClient::perform()` runs tool continuations and sums
-usage across model rounds. Responses continuations preserve reasoning items;
-Chat Completions preserves assistant tool-call messages. After four attempts,
-CHA removes tools and asks for a final answer. Interim tool-round text is held
-back, so only the answer reaches the normal transcript stream. Retrieved JSON
-is capped at 32 KiB and stripped of media metadata; neither raw results nor
-function-call bookkeeping enter persistent model history.
+`tool_calls.*` encodes functions for both APIs and validates returned calls.
+`ProviderClient::perform()` runs continuations and sums usage across model
+rounds. Responses preserves reasoning items; Chat Completions preserves
+assistant tool-call messages. After four shared search/read attempts, CHA
+removes tools and asks for a final answer. Interim text is held back so only
+the final answer reaches the normal transcript stream. Search JSON is capped
+at 32 KiB and page-reading JSON at 64 KiB. Raw results and calls do not enter
+persistent model history. `<tool_availability>` reflects the attached tools
+and is updated for the final continuation without tools.
 
 Provider-hosted `web_search` remains separate. Read the
 [maintainer guide](MaintainerGuide.md#recipient-detection-and-search-api) for
@@ -695,7 +707,8 @@ settings, defaults, and their different compatibility rules.
 ### 10.6 Automatic session names and request diagnostics
 
 The first stored human message starts a separate naming request through
-Assistant's provider, with low effort, no web search, and a 30-second maximum.
+the configured naming provider, or Assistant's provider by default, with the
+configured effort (low by default), no web tools, and a 10-second maximum.
 It runs alongside the reply. A successful name is limited to six words; both
 success and failure make the session visible in Recent. Manual rename cancels
 the naming request. Naming failure never fails the conversation itself.
@@ -1052,6 +1065,15 @@ and removed when output settings are saved.
 
 ### 12.8 Dictation and hands-free input
 
+Both native and ChaWeb automatic replies use the shared `textToSpeech.ts`
+player. At a clip's beginning it adds 2.5 seconds of valid MP3 silence for the
+output device to start. Cached bytes stay unchanged, manual and resumed clips
+are not padded, and saved positions exclude the prefix. Native MediaSource,
+Safari ManagedMediaSource, and MP3-in-MP4 wrapping support growing playback.
+Automatic playback starts only for replies completed after enabling it and
+preserves transcript order. Capture pauses through generation, audio loading,
+playback, and a 400 ms echo tail.
+
 [voiceInput.ts](../webapp/src/voiceInput.ts) selects OpenAI WebRTC or xAI.
 OpenAI connection setup makes its authenticated call in native code. xAI uses
 an AudioWorklet to capture 16 kHz mono PCM16, then bounded audio messages cross
@@ -1065,7 +1087,8 @@ words. [the xAI fixture README](../tests/fixtures/xai/README.md) separates the
 recorded provider evidence from current preview behavior. `dictationText.ts`
 applies spoken punctuation to finalized pieces. The composer recognizes a
 configurable trailing send phrase, waits one second and until generation is
-idle, removes the phrase, and sends while retaining the microphone session.
+idle, removes the phrase, finalizes dictation, and sends while keeping voice mode
+enabled for reconnection.
 `speechPlayback.ts` pauses capture during speech output to prevent feedback.
 
 ## 13. End-to-end workflow traces
@@ -1121,7 +1144,9 @@ still blocked. A timeout does not undo shutdown already requested for a session.
 
 Import replaces configuration from the derived modify directory; Export writes
 that directory. Upload and Download transfer the database and companion vault
-TOML through R2. Download validates staged files before replacing the local
+TOML through R2. Upload removes `entry_audio` from a temporary copy and runs
+`VACUUM`; the live database keeps its cached audio. Download validates staged
+files before replacing the local
 pair, keeping `.bac` backups. Upload cannot atomically replace both remote
 objects and must be retried after a partial failure.
 
@@ -1135,7 +1160,12 @@ requires restart; it must not resume with missing storage.
 Settings → Vaults can also create, rename, protect, remove definitions, download
 an inactive vault, and merge configuration. Merge overlays configuration and
 keys, not source sessions, and validates the combined workspace before commit.
-See the maintainer guide for each operation's file and backup behavior.
+Creating a full copy records its source as `parent`. ChaWeb's Parent merge
+first downloads that inactive parent's database/definition using the active
+vault's R2 key, then merges configuration without source conversations.
+ChaWeb also exposes ETag-checked Upload and confirmed Download. Successful
+replacement or merge refreshes bootstrap and session lists. See the maintainer
+guide for each operation's file and backup behavior.
 
 ## 14. State machines to keep in your head
 

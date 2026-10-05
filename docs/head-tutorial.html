@@ -507,6 +507,13 @@ X-CHA-Audio-Complete: 0\r\n
 <tr><th>Method and path</th><th>Result</th></tr>
 <tr><td><code>GET /bootstrap</code></td><td>Forums, characters, personas, recent sessions and the vault name.</td></tr>
 <tr><td><code>GET /voice-output</code></td><td>Voice output settings without credentials, or <code>null</code>.</td></tr>
+<tr><td><code>GET /voice-input</code></td><td>Dictation settings without credentials, or <code>null</code>.</td></tr>
+<tr><td><code>POST /voice-input/connect</code></td><td>OpenAI WebRTC SDP exchange; body <code>{"sdp", "languages"}</code>.</td></tr>
+<tr><td><code>POST /voice-input/xai/start</code>, <code>audio</code>, <code>stop</code>, <code>cancel</code></td><td>Dictation messages with a stable <code>session_id</code>; see the <a href="chaweb.md">ChaWeb API contract</a> for each body.</td></tr>
+<tr><td><code>POST /vault/upload-check</code></td><td>Body <code>{}</code>; remote ETag, version status, and context epoch.</td></tr>
+<tr><td><code>POST /vault/upload</code></td><td>Body <code>{"etag", "context_epoch"}</code> from the check; upload configuration and conversations without cached audio.</td></tr>
+<tr><td><code>POST /vault/download</code></td><td>Body <code>{}</code>; validated replacement with <code>.bac</code> backups.</td></tr>
+<tr><td><code>POST /vault/merge-parent</code></td><td>Body <code>{}</code> or <code>{"password"}</code>; download the inactive parent and merge its configuration.</td></tr>
 <tr><td><code>GET /forums/{forum}/sessions</code></td><td>The stored sessions of the forum.</td></tr>
 <tr><td><code>POST /forums/{forum}/sessions</code></td><td>Body <code>{"text"}</code>. Creates a session with its first input. <code>201</code>.</td></tr>
 <tr><td><code>GET /forums/{forum}/sessions/{session}</code></td><td>The session snapshot.</td></tr>
@@ -638,7 +645,7 @@ void run_accept_loop(app::Application&amp; application) {
 </ul>
 
 <h3>Route parsing</h3>
-<p><code>parse_route()</code> takes the path apart segment by segment and returns a <code>ParsedRoute</code>: a <code>Route</code> value (<code>bootstrap</code>, <code>voice_output</code>, <code>sessions</code>, <code>session</code>, <code>input</code>, <code>stop</code>, <code>audio_status</code>, <code>entry_audio</code> or <code>unknown</code>), the forum ID, the session ID and the entry ID.</p>
+<p><code>parse_route()</code> takes the path apart segment by segment and returns a <code>ParsedRoute</code>: a <code>Route</code> value for bootstrap, sessions, input, Stop, audio, dictation, or R2 vault maintenance (or <code>unknown</code>), the forum ID, the session ID and the entry ID.</p>
 <ul>
   <li>Forum and session IDs must be URL-safe identifiers (<code>is_url_safe_identifier()</code>). So an ID never contains <code>/</code>, <code>..</code> or spaces.</li>
   <li>An entry ID must be a decimal number from 1 to 2<sup>63</sup>−1.</li>
@@ -672,7 +679,7 @@ void run_accept_loop(app::Application&amp; application) {
 </table></div>
 
 <h3>The context epoch and the session open</h3>
-<p>Each handler reads <code>application.context_epoch()</code> once and passes the value to every application call of that request. A call with an old epoch fails instead of acting on another vault context. The daemon has no operation that changes the epoch while it runs, but the rule keeps the calls consistent with the desktop host.</p>
+<p>Each handler reads <code>application.context_epoch()</code> once and passes the value to every application call of that request. A call with an old epoch fails instead of acting on another vault context. Download and Parent merge can change the epoch while the daemon runs. Upload uses the epoch returned by the browser’s preceding upload check, so an old check cannot overwrite a new context.</p>
 <p>Each request that names a session first calls <code>open_named()</code>, which calls <code>Application::open_session()</code>. This selects the session in the live-session manager and waits up to the 10 s open deadline. The runtime retires a previously selected session when it is idle. At most 8 sessions are live at the same time, so several sessions can still generate after the user moves to another one.</p>
 
 <h3>Did CHA accept the input?</h3>
@@ -740,6 +747,11 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
   -H 'Content-Type: text/plain' -d '{"text":"Hello"}'
 <span class="c"># 415: not JSON, nothing changes</span></code></pre>
 
+<h3>Dictation and vault operations</h3>
+<p>ChaWeb supports configured OpenAI WebRTC and xAI microphone input over HTTPS. OpenAI SDP setup runs through the adapter; xAI PCM16 batches cross HTTP to a native WebSocket. <code>serve_voice_input()</code> gives xAI a stable resource scope across requests and releases it on cancellation or failure. Keys remain in native code. Capture pauses during generation, audio loading, playback, and the echo tail.</p>
+<p>The session list exposes Upload, Download, and Parent merge when R2 is configured. A vault’s optional <code>parent</code> names another locally registered inactive vault. Parent merge downloads that parent’s database and companion TOML with the active vault’s R2 key, then merges configuration without parent conversations. A protected parent requires its password. The parent download keeps <code>.bac</code> backups and is not rolled back if a later merge fails. Download and merge refresh the browser’s bootstrap and session lists.</p>
+<p>Upload removes <code>entry_audio</code> from a temporary database copy and compacts it with <code>VACUUM</code>. Local audio remains intact; protected uploads remain encrypted. Uploaded vaults need fresh speech generation after download.</p>
+
 <!-- ============================================================ -->
 <h2 id="audio">Voice playback</h2>
 <p class="file">src/daemon/chaweb_adapter.cpp — serve_audio(); src/media/audio_download.cpp; src/media/audio_stream.h</p>
@@ -748,9 +760,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
 
 <div class="table-wrap"><table>
 <tr><th>Request</th><th>Handler call</th><th>Result</th></tr>
-<tr><td><code>GET /voice-output</code></td><td><code>get_voice_output_runtime()</code></td><td>Voice settings without credentials, or <code>null</code>. ChaWeb shows audio controls only when voice output is configured.</td></tr>
+<tr><td><code>GET /voice-output</code></td><td><code>get_voice_output_runtime()</code></td><td>Voice settings without credentials, or <code>null</code>. Cached clips can also be played without configured synthesis.</td></tr>
 <tr><td><code>POST …/entries/{entry}/audio</code></td><td><code>start_audio()</code></td><td>Acceptance: <code>cached</code>, <code>queued</code> or <code>running</code>.</td></tr>
-<tr><td><code>POST …/audio</code> with <code>entry_ids</code></td><td><code>start_audio_batch()</code></td><td>One acceptance per entry, for Play all and automatic playback.</td></tr>
+<tr><td><code>POST …/audio</code> with <code>entry_ids</code></td><td><code>start_audio_batch()</code></td><td>One acceptance per entry for automatic playback.</td></tr>
 <tr><td><code>GET …/audio</code></td><td><code>audio_status()</code></td><td>Cached entry IDs and running downloads.</td></tr>
 <tr><td><code>GET …/entries/{entry}/audio</code> with <code>X-CHA-Audio-Offset</code></td><td><code>audio_chunk()</code></td><td>The next chunk of at most 64 KiB, with <code>X-CHA-Audio-Complete: 0</code> or <code>1</code>; <code>204</code> when no new bytes are ready; <code>502</code> when the download failed.</td></tr>
 <tr><td><code>GET …/entries/{entry}/audio</code> without the header</td><td><code>cached_audio()</code></td><td>The complete cached clip, or <code>404</code>.</td></tr>
@@ -773,6 +785,7 @@ std::optional&lt;AudioChunk&gt; read(std::uint64_t offset, std::size_t limit = 6
   <p>A chunk read takes the bytes that are already there and returns. When no new bytes exist, the daemon returns <code>204</code>, and the browser asks again after 100 ms. So audio playback never holds the single accept loop while FishAudio works.</p>
 </div>
 
+<p>Auto audio response skips replies already complete when enabled, then plays new replies once in transcript order. It also enables configured microphone input. New automatic MP3 clips receive 2.5 seconds of playback-only silence so the device can start without losing speech. Manual and resumed clips are not padded; stored clips and saved positions exclude the silence. Clearing audio cancels pending session jobs and disables automatic playback without changing messages.</p>
 <p>Audio POST and DELETE requests carry <code>vault_name</code>. If it is not the open vault, the request fails with <code>409 vault_changed</code>. Clips exist only for complete character replies; a request for another entry fails with <code>400</code> or <code>404</code>.</p>
 
 <!-- ============================================================ -->

@@ -1314,7 +1314,7 @@ select:disabled {
   color: var(--muted-foreground);
 }
 
-.cha-voice-input:hover:not(:disabled) {
+.cha-voice-input:hover:not(:disabled, .is-active, .is-starting) {
   color: var(--accent-foreground);
   background: var(--accent);
 }
@@ -1322,6 +1322,11 @@ select:disabled {
 .cha-voice-input.is-active {
   color: var(--primary-foreground);
   background: light-dark(rgb(202 57 45), rgb(255 116 105));
+}
+
+.cha-voice-input.is-starting {
+  color: rgb(26 28 31);
+  background: rgb(255 213 115);
 }
 
 .cha-voice-input:disabled {

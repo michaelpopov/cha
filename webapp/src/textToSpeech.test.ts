@@ -33,8 +33,8 @@ function checkSilentPrefix(bytes: Uint8Array, reply: Uint8Array, length = 417) {
   const parser = new CodecParser('audio/mpeg');
   const frames = [...parser.parseChunk(prefix), ...parser.flush()];
   const duration = frames.reduce((sum, frame) => sum + frame.duration, 0) / 1000;
-  expect(duration).toBeGreaterThanOrEqual(2);
-  expect(duration).toBeLessThan(2.06);
+  expect(duration).toBeGreaterThanOrEqual(2.5);
+  expect(duration).toBeLessThan(2.56);
   expect(frames.length * length).toBe(prefix.length);
   for (const frame of frames) {
     const header = reply.slice(0, 4);

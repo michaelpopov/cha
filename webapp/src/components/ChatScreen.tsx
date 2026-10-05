@@ -1282,7 +1282,7 @@ export function ChatScreen({
                 <button
                   aria-label={voiceInputLabel}
                   aria-pressed={voiceInputActive}
-                  className={`cha-composer-action cha-voice-input${voiceInputActive ? ' is-active' : ''}`}
+                  className={`cha-composer-action cha-voice-input${voiceInputState === 'starting' ? ' is-starting' : voiceInputActive ? ' is-active' : ''}`}
                   disabled={!sessionAvailable
                     || actionPending
                     || voiceInputState === 'finishing'}

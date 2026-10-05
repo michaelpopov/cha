@@ -101,6 +101,7 @@ level = "info"
 vault_name = "Personal"
 data = "/absolute/path/workspace.sqlite3"
 protected = false
+parent = "Main" # optional name of another locally registered vault
 ```
 
 The optional `mirror` and `modify` values belong to `app.toml` and name base
@@ -140,7 +141,10 @@ database filename from the display name. With no copy source, CHA carries the
 active vault's workspace configuration into the new database without its
 sessions. Choosing an existing vault as the source copies its full database,
 including sessions. A protected source can be copied only while it is active.
-Neither choice makes the new vault active.
+Copying an existing vault also records that vault's name as `parent` in the
+new definition. Neither choice makes the new vault active. A missing parent
+or an invalid unused `parent` value produces a warning rather than blocking
+startup.
 
 The editable name on the vault's detail screen renames it; the database path
 stays fixed, while existing derived mirror and modify directories move with the name. Settings can
@@ -229,11 +233,32 @@ no saved sessions and contains the built-in Assistant with a ChatGPT OAuth
 provider. A nonempty configuration directory is not bootstrapped. When the
 workspace loads, the macOS main window title is `CHA: <Vault name>`.
 
+### Parent vaults and ChaWeb maintenance
+
+A vault definition can contain `parent = "Main"`, where `Main` is the display
+name of another vault registered in the same configuration directory. The
+parent must be inactive for a merge. This field is outside workspace imports.
+
+ChaWeb's session list provides Upload, Download, and Parent merge when the
+active vault has R2 credentials. Parent merge first downloads and validates
+the parent's database and companion definition from R2, using the active
+vault's R2 key. It then merges the refreshed parent's configuration into the
+active vault using the ordinary merge rules above. It does not copy parent
+conversations or switch vaults. A protected parent prompts for its password.
+The parent download keeps `.bac` backups; a later merge failure does not undo
+that successful download. After Download or Parent merge, ChaWeb reloads its
+bootstrap and session lists. There is no browser vault selector or general
+settings editor.
+
 ### R2 database transfer
 
 The active vault's R2 record under `system/keys/` enables Upload and Download
 under Settings → Vaults → the active vault. Upload validates the vault
-definition and schema-v2 database, then writes `<database-filename>` followed
+definition and schema-v2 database. It makes a temporary database copy, removes
+all `entry_audio` rows from that copy, and runs `VACUUM` before transfer. Local
+cached speech remains intact; uploaded vaults contain configuration and
+conversations but no cached audio. Protected copies remain encrypted.
+It then writes `<database-filename>` followed
 by `<database-filename>.toml` at the bucket root. The companion uses the bare
 database filename so its path is portable. The local vault definition records
 `r2_etag` after the database upload, even if companion upload subsequently fails.
@@ -387,6 +412,13 @@ display_name = "Michael"                         # required
 description = "A programmer living in Redmond." # optional, one line
 style = "serif"                                # optional style ID
 ```
+
+`persona.toml` also accepts a `[prompt]` table of scalar template variables.
+`PERSONA.md` supports `$${variable}` substitutions and `$$(relative/file.md)`
+includes. Reserved `$${persona.id}` and `$${persona.display_name}` values
+cannot be overridden. Includes must remain within `personas/`; nested
+persona definitions can share fragments there. The editor reads and saves the
+unexpanded source, while model requests receive its expanded text.
 
 Unknown fields are rejected. `PERSONA.md`, when present, describes the user to
 the forum's characters. It can contain substantial first-person context and
@@ -655,7 +687,9 @@ if any character selects it, workspace loading fails with the provider error.
 Do not leave knowingly malformed unused provider directories behind.
 
 Direct OpenAI Responses requests omit reasoning settings for non-reasoning
-models, with a warning. Reasoning content is not shown in chat or stored in the
+models, with a warning. Direct Mistral Chat Completions also omits
+`reasoning_effort` for `mistral-large` and `mistral-large-*` models on
+`api.mistral.ai`, with a warning rather than a failed request. Reasoning content is not shown in chat or stored in the
 transcript. Completed character entries retain reported input/output token
 counts; the UI shows a total when both are available. Diagnostic logs also
 report cache usage and system-prompt size. Debug logs include conversation
@@ -836,8 +870,10 @@ api_key = "api_key_1"
 The saved key ID must identify an API key in this vault. Disable removes this
 file. Invalid saved configuration is ignored with a warning. Jev classifies
 the prompt's intended recipient, not which character is best qualified to
-answer. It can choose one member or all characters; an undefined decision
-keeps the current target. Failure or the five-second timeout also uses the
+answer. It can choose one member, all characters, or Self. An accepted decision
+updates the session's active target. A single-character decision also saves
+that forum's default character; All and Self remain session targets only.
+An undefined decision keeps the current target. Failure or the five-second timeout also uses the
 captured target and reports a notice. Explicit mentions and `/mcast` recipients
 stay fixed; Self-notes bypass classification.
 
@@ -845,35 +881,39 @@ Settings → Search API is separate from provider-hosted `web_search`. Its file
 is `system/web-search/config.toml`:
 
 ```toml
-enabled = true                   # Search before generation; requires Jev
 provider = "brave"                # brave | tavily
 api_key = "api_key_2"             # saved search-service key
-query_provider = "query-model"   # existing model provider for query rewriting
 tool_enabled = true              # workspace default for on-demand search
+read_provider = "firecrawl"      # off | firecrawl
+firecrawl_api_key = "api_key_3"   # saved Firecrawl key
 ```
 
-Search before generation asks Jev whether to skip search, send the prompt
-directly, or rewrite it into a standalone query using conversation history.
-Enabling it requires a saved search key and an existing query provider.
-Multicast recipients share one retrieved context. A failed search or rewrite
-logs a warning and continues without search context.
-
 On-demand search exposes CHA's `web_search` function to the answering model.
-It needs a search key but not Jev or a query provider. It works through both
-Responses and Chat Completions, including subscription Responses, subject to
-the model supporting function calls. A character's optional
-`web_search_tool = true` or `false` overrides `tool_enabled`; omission inherits
-it. This does not relax the separate provider-hosted search restrictions above.
-An unavailable saved search key disables the tool with a warning.
+It needs a search key and does not require Jev. It works through Responses
+and Chat Completions, including subscription Responses, when the model
+supports function calls. A character's optional `web_search_tool = true` or
+`false` overrides `tool_enabled`; omission inherits it. Provider-hosted search
+has its own compatibility rules and is not controlled by this setting.
 
-The model can make up to four tool attempts per answer. Search errors return
-tool error JSON so the model can continue. At the limit CHA removes tools and
-asks for a final answer. Intermediate tool-round content is not shown as the
-answer. Brave/Tavily result JSON is stripped of media metadata and capped at
-32 KiB. Raw results and tool calls do not become transcript entries; replies
-retain a search-use marker and aggregate model token usage across rounds.
-Unknown service fields warn; disabled services do not require usable unused
-key or query-provider settings.
+Page reading exposes `web_read` for a URL supplied by the user or found by
+search. Select Firecrawl and its saved key independently of the search switch.
+A character with `web_search_tool = false` receives neither CHA web tool;
+omitting the override allows configured page reading even when the workspace
+search default is off. An unavailable saved key disables the corresponding
+tool with a warning. Jina Reader is no longer supported.
+
+Each answer allows up to four function-call attempts shared by search and
+reading. Errors return tool error JSON so the model can continue. At the limit
+CHA removes tools and asks for a final answer. Intermediate tool-round content
+is not shown as the answer. Brave/Tavily result JSON is stripped of media
+metadata and capped at 32 KiB. Firecrawl returns title, URL, and Markdown capped
+at 64 KiB. Tool descriptions instruct the model to name sources in plain words
+without links. Raw results and calls do not become transcript entries; replies
+retain a web-use marker and aggregate token usage across rounds.
+
+Search before generation and query rewriting were removed. Old `enabled`,
+`query_provider`, and Jina fields are ignored with warning logs. Unused obsolete
+settings do not prevent startup or otherwise valid saves.
 
 ### Add a provider
 
@@ -1052,7 +1092,8 @@ is a replaceable preview; only finalized word-timed text is committed.
 
 Audio is stored in SQLite's `entry_audio` table as one audio BLOB and MIME type
 per `(session_key, entry_id)`. Saved-session clips survive page reloads and
-application restarts and travel with complete database copies and R2 backups.
+application restarts and travel with direct complete database copies. R2
+uploads exclude cached audio from their temporary copy.
 Welcome uses its temporary session database, so its audio is not durable across
 application restarts. Cached clips can be played without a working synthesis
 configuration; playback obtains a native resource handle for the stored bytes.
@@ -1070,14 +1111,22 @@ reads and keep the connection/context lifetime checks.
 Failed entries expose a retry control. Stopping playback preserves its position
 in document memory; replay resumes there until the clip finishes or the page reloads.
 
-The speaker toggle before `Rus` enables automatic conversation caching. It
-submits one batch for uncached, nonempty completed character responses in
-the displayed transcript, including covered entries. Later completed entries
-are submitted while the toggle remains enabled. A batch is fully validated
-before new jobs are admitted.
+The speaker toggle before `Rus` enables automatic audio responses and, when
+voice input is available, toggles the microphone with it. Replies completed
+before enabling are skipped. New nonempty completed character replies are
+submitted in batches and played once in transcript order, even if downloads
+finish out of order. A batch is fully validated before new jobs are admitted.
 
-Disabling the toggle stops future submissions. Changing sessions also turns it
-off, but accepted jobs continue independently of the displayed screen or document connection.
+Automatic MP3 playback at the beginning of a clip adds 2.5 seconds of silence
+to let the output device start without losing the first spoken samples. This
+padding is generated for playback and is not saved in the cached clip. Manual
+playback and resumed clips have no padding. Saved playback positions exclude
+the silence. Microphone capture pauses during generation, speech loading,
+playback, and a 400 ms echo tail, then reconnects when voice mode is enabled.
+
+Disabling automatic audio stops its current playback and future submissions.
+Changing sessions and clearing cached audio also turn it off, but accepted
+jobs continue independently of the displayed screen or document connection.
 Jobs and failure state are in memory and do not resume after an application
 restart. Vault switching, configuration import, and database replacement cancel
 jobs so stale results cannot enter another vault. Other maintenance pauses
@@ -1108,7 +1157,7 @@ reserved `assistant` or `entrance` IDs.
 
 ## 10. Prompt templates and overrides
 
-CHA expands two macro forms in character and forum prompts:
+CHA expands two macro forms in character, forum, and persona prompts:
 
 ```text
 $$(relative/file.md)   include another file
@@ -1181,30 +1230,44 @@ scope: it can override the initial values inside that file/include subtree but
 does not leak back to its caller. Prefer the three explicit layers above unless
 local include reuse actually requires this behavior.
 
-### Forum-specific character prompt override
+### Forum-specific character additions and session variations
 
-If this file exists:
+`forums/<forum>/members/<character-id>/CHARACTER.md` adds to the global
+character prompt. It no longer replaces the global `CHARACTER.md`. When it
+contains `<character_profile>`, CHA extracts that profile's text for the
+addition. It inserts the addition before the global profile's closing tag,
+or appends it if there is no profile boundary. Global includes remain within
+`characters/`; includes in the member addition remain within that forum.
+Do not include the global character again in the member addition.
 
-```text
-forums/<forum>/members/<character-id>/CHARACTER.md
-```
-
-it completely replaces the character's global `CHARACTER.md` for that forum.
-It does not append to it automatically. Add an explicit include if reuse is
-desired. Includes from a forum-specific override must remain within that forum
-directory; they cannot escape into `characters/`.
+A global character directory can also contain Markdown files named
+`_<category>_<variant>.md`, for example `_1_1.md`, `_1_2.md`, and `_2_1.md`.
+Both filename components must parse as integers. CHA chooses one file per
+category, in category order, and adds its trimmed text to the effective profile
+and character description. Selection is seeded by forum ID, session ID,
+character ID, and category. Reopening the same session with unchanged files
+keeps the same selection; adding another category does not change existing
+category choices. Variation text is read literally, without template expansion. Variations are session-specific and do not change the global
+catalog description.
 
 ### Final system-prompt composition
 
 For each forum member, CHA constructs the system prompt in this order:
 
-1. expanded global `CHARACTER.md`, or the forum member's replacement
-   `CHARACTER.md`;
-2. expanded forum `FORUM.md`;
-3. a generated Participants section containing the selected default persona's
-   `PERSONA.md` (or the built-in Guest text);
-4. generated forum context naming the current and other characters and
-   explaining shared conversation history.
+1. generated Conversation protocol naming the character and other members,
+   defining shared JSONL history and timestamp metadata;
+2. `<character_instructions>` containing the expanded global character,
+   forum-member additions, and session variations;
+3. `<forum_instructions>` containing expanded `FORUM.md`;
+4. Participants containing the expanded persona in `<participant_profile>`.
+
+Entrance also wraps its inventory in `<workspace_inventory>` as reference data.
+When encoding a generation request, CHA appends `<tool_availability>` that
+reports the web capabilities actually attached to that request. Continuations
+update it when tools are removed. This lets a character continue with available
+information and state uncertainty when verification is unavailable or fails.
+Session naming omits this tool block. Message timestamps are metadata and
+must not be spoken or written as part of the answer.
 
 This explains where a change belongs:
 
@@ -1212,7 +1275,8 @@ This explains where a change belongs:
 - behavior shared by every character in one forum: `FORUM.md`;
 - information about the human participant: `PERSONA.md`;
 - shared forum variables: `character_defaults.toml`;
-- one character's behavior or variables in one forum: member override files.
+- one character's additional behavior or variables in one forum: member files;
+- session-specific character traits: numbered variation files.
 
 ## 11. Command recipes
 
@@ -1369,7 +1433,8 @@ stop/import/restart sequence. If storage cannot be reopened, the application
 becomes unavailable and must be restarted.
 
 Workspace export contains configuration only, not conversations or cached audio.
-Use a full database backup or the active vault's Upload action for those. Never
+Use a full database backup for conversations and cached audio. The active
+vault's Upload action includes conversations but excludes cached audio. Never
 copy a live SQLite database file without accounting for its WAL and sidecars.
 
 ### Files deliberately outside workspace export
@@ -1413,7 +1478,8 @@ New session opens immediately under the label `New session`, without a naming
 form. It is initially absent from Recent and can be discarded on navigation.
 A nonempty submission retains it, including a submission rejected before a
 turn is stored. Its first stored human message starts a title request using
-Assistant's provider, low effort, no search, and at most 30 seconds. The reply
+the configured naming provider, or Assistant's provider by default, the
+configured effort (low by default), no web tools, and at most 10 seconds. The reply
 and naming request run independently. Naming publishes the session in Recent
 whether it succeeds or fails. Manual rename cancels naming and keeps the
 session. Startup/maintenance recovery removes empty pending sessions and

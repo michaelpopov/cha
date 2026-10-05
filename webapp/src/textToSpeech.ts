@@ -196,7 +196,7 @@ export class TextToSpeechSession {
   private silentFrames(frame: CodecFrame): Uint8Array<ArrayBuffer> {
     if (!this.options?.leadingSilence || this.leadingSilenceSeconds > 0
       || (this.playback?.position ?? 0) > 0 || frame.header.layer !== 'Layer III') return new Uint8Array();
-    const count = Math.ceil(2000 / frame.duration);
+    const count = Math.ceil(2500 / frame.duration);
     const silence = new Uint8Array(count * frame.data.length);
     for (let offset = 0; offset < silence.length; offset += frame.data.length) {
       silence.set(frame.data.subarray(0, 4), offset);

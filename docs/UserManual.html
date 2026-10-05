@@ -744,9 +744,11 @@
         <h3>Detect the recipient from your words</h3>
         <p>
           Settings → <strong>Recipient detection</strong> can use Jev to select
-          the character you address, or all characters. Save an OpenRouter API
+          the character you address, all characters, or Self. Save an OpenRouter API
           key, then select it with the endpoint and model in that screen.
-          If the decision is unclear, CHA keeps the selected target. A failed
+          An accepted decision becomes the active session target. A single
+          character also becomes the forum's saved default; All and Self are
+          session-only choices. If the decision is unclear, CHA keeps the selected target. A failed
           decision also uses that target and shows a notice. Explicit
           <code>@Name</code> and <code>/mcast</code> recipients take precedence;
           Self-notes never call recipient detection.
@@ -806,15 +808,21 @@
         </p>
         <p>
           A second speaker button appears below the message box, immediately to the
-          left of the <strong>Rus</strong> switch. Select it to cache audio for all
-          completed AI responses shown in the current session,
-          including covered messages, and for later messages as they complete.
- CHA downloads up to three clips
-          at once in the background. The pressed button shows that automatic
-          caching remains enabled. Select it again to stop submitting new work.
-          Switching sessions also turns it off. Accepted downloads continue even
-          when you leave the session, and do not play automatically.
+          left of the <strong>Rus</strong> switch.           Select it to enable automatic audio responses for new AI replies.
+          Existing completed replies are skipped. CHA downloads up to three clips
+          at once and plays new replies in transcript order, starting a streamed
+          MP3 before the complete download when supported. The toggle also controls
+          the microphone when voice input is available. Select it again to stop
+          automatic playback and future submissions. Switching sessions and
+          clearing cached audio also turn it off. Accepted downloads continue
+          when you leave the session.
         </p>
+        <p>
+          Automatic playback adds 2.5 seconds of silence at the start of each
+          new MP3 clip so the first spoken words are not lost. Manual playback
+          and resumed clips start at their normal speech position.
+        </p>
+
         <p>
           Audio for saved sessions is kept in the vault database and survives page
           reloads and application restarts. Replaying a cached message does not
@@ -1004,6 +1012,18 @@
           restart CHA before continuing.
         </p>
 
+        <h3>Parent vaults and browser maintenance</h3>
+        <p>
+          A vault copied from another vault records its source as its parent.
+          In ChaWeb's session list, <strong>Upload</strong> and <strong>Download</strong>
+          use the active vault's R2 settings. <strong>Parent merge</strong> downloads
+          the configured inactive parent's current R2 copy, then merges its
+          configuration into your active vault. It keeps your conversations and
+          does not copy the parent's conversations. Enter the parent password if
+          asked. Download and Parent merge refresh the browser's session list.
+          Parent merge requires a locally registered parent and R2 credentials.
+        </p>
+
         <h3>Download another vault from R2</h3>
         <p>
           When the active vault has R2 storage configured, select
@@ -1025,8 +1045,9 @@
           (the initial value is <code>s2.1-pro</code>), a saved FishAudio API key,
           output format <code>mp3</code>, <code>wav</code>, or <code>opus</code>,
           and a default voice. Save the key under <strong>Settings → API Keys</strong>
-          first. Assign voices in character and persona Settings to customize
-          their speech; otherwise they use the default voice.
+          first. Assign voices in character Settings to customize
+          their speech; otherwise they use the default voice. Human persona
+          messages do not have speech output.
         </p>
         <p>
           ElevenLabs output is no longer supported. Replace old output settings
@@ -1067,25 +1088,28 @@
           CHA removes the phrase and sends after a short pause once the current
           reply is finished. The microphone stays active for your next message.
           Clear the phrase in Voice settings to disable this behavior. Manual
-          Send finishes dictation first. Microphone capture pauses while CHA
-          plays speech so the application does not transcribe its own output.
+          Send finishes dictation first. Microphone capture pauses during generation, audio loading,
+          playback, and a short echo delay. It reconnects for your next message.
+          You can still send typed text while audio is playing.
         </p>
 
         <h3>Configure Search API</h3>
         <p>
-          Open Settings → <strong>Search API</strong>, choose Brave Search API
-          or Tavily, and select a key saved in API Keys.
-          <strong>Search before generation</strong> requires Recipient detection
-          and a <strong>Query provider</strong> to rewrite questions when needed.
-          Jev decides whether each prompt needs retrieval. Search failure lets
-          the reply continue without those results.
+          Open Settings → <strong>Search API</strong>, enable <strong>On-demand
+          web search</strong>, choose Brave Search API or Tavily, and select a
+          saved API key. The answering model can request searches as needed.
+          Each character can inherit this default or turn the CHA web tools On
+          or Off. Provider web search is a separate setting.
         </p>
         <p>
-          <strong>On-demand web search</strong> lets the answering model request
-          searches while preparing its answer. It does not require Recipient
-          detection or a Query provider. Each character can override this
-          workspace default, and each answer allows up to four tool attempts.
-          These choices are separate from the character's Provider web search.
+          To read pages, select <strong>Firecrawl</strong> as the <strong>Page
+          reading provider</strong> and select its saved key. Reading works
+          independently of the search switch; setting a character's on-demand
+          web search to Off disables both CHA tools for that character.
+          Search and page reading share a limit of four tool attempts per answer.
+          If a tool fails, the model can continue with the available information.
+          Search before generation, Query provider, and Jina Reader are no longer
+          used. Recipient detection is not required for these tools.
         </p>
 
         <h3>Configure a model connection</h3>
@@ -1184,7 +1208,7 @@
         <h2>11. Backing up and editing CHA data</h2>
         <p class="lead">
           Settings → Vaults → the active vault offers Export and Import for workspace
-          configuration, plus Upload and Download for the complete database. These
+          configuration, plus Upload and Download for configuration and conversations. These
           operations run inside the current CHA process; the application does
           not restart or launch a separate console program.
         </p>
@@ -1250,7 +1274,7 @@
           </p>
         </div>
 
-        <h3>Upload or download the complete database</h3>
+        <h3>Upload or download a vault</h3>
         <p>
           Upload and Download use Cloudflare R2 through its S3-compatible API.
           Open Settings → <strong>API Keys</strong> → <strong>R2 storage</strong>
@@ -1261,7 +1285,9 @@
         <ul>
           <li>
             <strong>Upload</strong> in the active vault's settings validates and uploads the current
-            database and then its vault definition. CHA checks the remote version
+            database and then its vault definition. Upload removes cached speech
+            from a temporary copy; local audio stays intact. Downloaded copies
+            therefore need fresh audio generation. CHA checks the remote version
             before upload and asks before overwriting an unknown or changed copy.
             The bucket receives two objects:
             the database filename and that filename followed by
@@ -1334,8 +1360,8 @@ Then choose one small act and do it completely.</code></pre>
             those files yourself when you no longer need them.
           </li>
           <li>
-            If you use Upload in the active vault's settings, the complete database is copied to the
-            configured R2 bucket. An ordinary vault depends on that account's
+            If you use Upload in the active vault's settings, configuration and conversations are copied to the
+            configured R2 bucket. Cached speech is excluded. An ordinary vault depends on that account's
             access controls; a protected vault remains encrypted in R2.
           </li>
           <li>

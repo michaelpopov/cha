@@ -649,8 +649,10 @@ second configuration language.
   present. Supported effort values currently are `none`, `low`, `medium`,
   `high`, and `xhigh`; legacy `minimal` normalizes to `low`.
 - Provider-hosted `web_search` (`off`, `auto`, `required`), service
-  `enabled` (search before generation), service `tool_enabled` (on-demand
-  search), and character `web_search_tool` are different controls.
+  `tool_enabled` (on-demand search), Firecrawl `read_provider` and
+  `firecrawl_api_key`, and character `web_search_tool` are distinct controls.
+  Character Off disables both CHA web tools. Search before generation and
+  query rewriting were removed; their obsolete fields warn and are ignored.
 - Provider `api_key` is a saved key ID, not a secret. Legacy `api_key_env`
   resolves a saved key by display name, never an environment variable.
   Missing keys can pass workspace loading and still prevent requests. A batch

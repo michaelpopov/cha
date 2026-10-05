@@ -60,8 +60,11 @@ belongs on the shared `SessionRuntime` thread, never on the editor's caller.
 
 Optional service settings follow the same store path. Validate enabled
 features, but ignore unused or obsolete settings with warning logs. Keep
-provider-hosted `web_search`, Search API `enabled`/`tool_enabled`, and character
-`web_search_tool` overrides distinct. Voice input and output save independently.
+provider-hosted `web_search`, Search API `tool_enabled`, Firecrawl page reading,
+and character `web_search_tool` overrides distinct. Pre-generation search and
+query rewriting are removed; obsolete fields warn and have no runtime effect.
+Voice input and output save independently. Persona prompt reads and writes
+retain raw template source; model context uses the expanded prompt.
 
 ## Keep the native contract synchronized
 
