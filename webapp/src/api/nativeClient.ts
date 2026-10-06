@@ -597,6 +597,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
         entry_id: entryId,
         vault_name: request.vault_name,
         reference_id: request.reference_id,
+        provider: request.provider,
         settings: request.settings,
       },
       isAudioAcceptance,
@@ -616,9 +617,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
       },
       isMediaResource,
     ),
-    previewSpeech: (text, referenceId, settings, signal) => bridge.invoke(
+    previewSpeech: (text, referenceId, settings, signal, provider) => bridge.invoke(
       'speech.start',
-      { text, reference_id: referenceId, settings: settings ?? {} },
+      { text, reference_id: referenceId, settings: settings ?? {}, provider },
       { signal, cancelMethod: 'speech.cancel' },
     ).then((value) => {
       if (!isMediaResource(value)) throw new ChaProtocolError();

@@ -73,6 +73,7 @@ const loadVaults = (client: ChaClient) => client.listVaults();
 const loadProviders = (client: ChaClient) => client.listProviders();
 const loadStyles = (client: ChaClient) => client.listStyles();
 const loadVoices = (client: ChaClient) => client.listVoices();
+const loadVoiceOutput = (client: ChaClient) => client.getVoiceOutputSettings();
 const loadApiKeys = (client: ChaClient) => client.listApiKeys();
 
 function formatBytes(bytes: number): string {
@@ -1481,6 +1482,16 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
   const [savedOutput, setSavedOutput] =
     useState<VoiceOutputSettings | null | undefined>(undefined);
   const [output, setOutput] = useState<VoiceOutputSettings>(defaultVoiceOutput([]));
+  const [outputProvider, setOutputProvider] = useState<'fishaudio' | 'elevenlabs'>('fishaudio');
+  const elevenLabsDefaults = { url: 'https://api.elevenlabs.io/v1/text-to-speech',
+    model: 'eleven_multilingual_v2', api_key: '', output_format: 'mp3_44100_128' };
+  const providerOutput = outputProvider === 'elevenlabs'
+    ? output.elevenlabs ?? elevenLabsDefaults : output;
+  function changeOutput(field: 'url' | 'model' | 'api_key' | 'output_format', value: string) {
+    setOutput((current) => outputProvider === 'elevenlabs'
+      ? { ...current, elevenlabs: { ...(current.elevenlabs ?? elevenLabsDefaults), [field]: value } }
+      : { ...current, [field]: value });
+  }
   const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
   const [voices, setVoices] = useState<VoiceDetail[] | null>(null);
   const [savingInput, setSavingInput] = useState(false);
@@ -1511,6 +1522,8 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
         setInput(inputSettings ?? defaultVoiceInput);
         setSavedOutput(outputSettings);
         setOutput(outputSettings ?? defaultVoiceOutput(loadedVoices));
+        setOutputProvider(outputSettings?.api_key || !outputSettings?.elevenlabs?.api_key
+          ? 'fishaudio' : 'elevenlabs');
         setKeys(loadedKeys);
         setVoices(loadedVoices);
       },
@@ -1536,11 +1549,14 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     || output.model !== outputBaseline.model
     || output.api_key !== outputBaseline.api_key
     || output.output_format !== outputBaseline.output_format
-    || output.default_voice !== outputBaseline.default_voice;
+    || output.default_voice !== outputBaseline.default_voice
+    || JSON.stringify(output.elevenlabs) !== JSON.stringify(outputBaseline.elevenlabs);
   const inputReady = Boolean(input.url.trim() && input.model.trim() && input.api_key);
   const outputReady = Boolean(
-    output.url.trim() && output.model.trim() && output.api_key
-    && output.output_format.trim() && output.default_voice,
+    ((output.url.trim() && output.model.trim() && output.api_key && output.output_format.trim())
+      || (output.elevenlabs?.url.trim() && output.elevenlabs.model.trim()
+        && output.elevenlabs.api_key && output.elevenlabs.output_format.trim()))
+    && output.default_voice,
   );
 
   function chooseInputProvider(provider: VoiceInputSettings['provider']) {
@@ -1592,8 +1608,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
 
   async function saveOutput(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!output.url.trim() || !output.model.trim() || !output.api_key
-      || !output.output_format.trim() || !output.default_voice || savingOutput) return;
+    if (!outputReady || savingOutput) return;
     setOutputError(null);
     setOutputMessage(null);
     setSavingOutput(true);
@@ -1604,6 +1619,10 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
         api_key: output.api_key,
         output_format: output.output_format.trim(),
         default_voice: output.default_voice,
+        ...(output.elevenlabs?.api_key ? { elevenlabs: {
+          url: output.elevenlabs.url, model: output.elevenlabs.model,
+          api_key: output.elevenlabs.api_key, output_format: output.elevenlabs.output_format,
+        } } : {}),
       });
       setSavedOutput(updatedOutput);
       setOutput(updatedOutput);
@@ -1640,10 +1659,11 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
             <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!inputDirty || savingInput} onClick={() => { setInput(inputBaseline); setInputMessage(null); setInputError(null); }} type="button">Reset voice input</button><button className="cha-button cha-button-primary" disabled={!inputDirty || !inputReady || savingInput} type="submit">{savingInput ? 'Saving…' : 'Save voice input'}</button></div>
           </form>
           <form className="cha-settings-form" onSubmit={(event) => void saveOutput(event)}>
-            <label>Output URL endpoint<input className="cha-form-control" onChange={(event) => setOutput({ ...output, url: event.target.value })} type="url" value={output.url} /></label>
-            <label>Output model name<input className="cha-form-control" onChange={(event) => setOutput({ ...output, model: event.target.value })} value={output.model} /></label>
-            <label>Output API key name<select className="cha-form-control" onChange={(event) => setOutput({ ...output, api_key: event.target.value })} value={output.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
-            <label>Output format<input className="cha-form-control" onChange={(event) => setOutput({ ...output, output_format: event.target.value })} value={output.output_format} /></label>
+            <label>Output provider<select className="cha-form-control" value={outputProvider} onChange={(event) => setOutputProvider(event.target.value as typeof outputProvider)}><option value="fishaudio">FishAudio</option><option value="elevenlabs">ElevenLabs</option></select></label>
+            <label>Output URL endpoint<input className="cha-form-control" onChange={(event) => changeOutput('url', event.target.value)} type="url" value={providerOutput.url} /></label>
+            <label>Output model name<input className="cha-form-control" onChange={(event) => changeOutput('model', event.target.value)} value={providerOutput.model} /></label>
+            <label>Output API key name<select className="cha-form-control" onChange={(event) => changeOutput('api_key', event.target.value)} value={providerOutput.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
+            <label>Output format<input className="cha-form-control" onChange={(event) => changeOutput('output_format', event.target.value)} value={providerOutput.output_format} /></label>
             <label>Default voice<select className="cha-form-control" onChange={(event) => setOutput({ ...output, default_voice: event.target.value })} value={output.default_voice}><option value="">Select a voice</option>{voices.map((voice) => <option key={voice.id} value={voice.display_name}>{voice.display_name}</option>)}</select></label>
             {voices.length === 0 && <p className="cha-error-message" role="alert">Add a voice before configuring voice output.</p>}
             {outputMessage && <p className="cha-state-message" role="status">{outputMessage}</p>}
@@ -1660,6 +1680,7 @@ export function NewVoiceScreen({ client, dispatch }: SettingsScreenProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [voiceReferenceId, setVoiceReferenceId] = useState('');
+  const [provider, setProvider] = useState<'fishaudio' | 'elevenlabs'>('fishaudio');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1673,6 +1694,7 @@ export function NewVoiceScreen({ client, dispatch }: SettingsScreenProps) {
         display_name: name.trim(),
         description: description.trim(),
         elevenlabs_voice_id: voiceReferenceId.trim(),
+        provider,
       });
       dispatch({
         type: 'inspect-voice',
@@ -1691,6 +1713,7 @@ export function NewVoiceScreen({ client, dispatch }: SettingsScreenProps) {
       <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
         <TransliteratingInput autoFocus className="cha-form-control" disabled={saving} id="cha-new-voice-name" label="Name" onValueChange={setName} placeholder="e.g. Brian" value={name} />
         <label htmlFor="cha-new-voice-description">Description<textarea className="cha-form-control cha-voice-description" disabled={saving} id="cha-new-voice-description" onChange={(event) => setDescription(event.target.value)} placeholder="Describe how this voice sounds" value={description} /></label>
+        <label>Provider<select className="cha-form-control" disabled={saving} value={provider} onChange={(event) => setProvider(event.target.value as typeof provider)}><option value="fishaudio">FishAudio</option><option value="elevenlabs">ElevenLabs</option></select></label>
         <label htmlFor="cha-new-voice-reference-id">Voice ID<input className="cha-form-control" disabled={saving} id="cha-new-voice-reference-id" onChange={(event) => setVoiceReferenceId(event.target.value)} value={voiceReferenceId} /></label>
         {error && <p className="cha-error-message" role="alert">{error}</p>}
         <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-voices' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !description.trim() || !voiceReferenceId.trim() || saving} type="submit">{saving ? 'Registering…' : 'Register voice'}</button></div>
@@ -1728,6 +1751,9 @@ export function VoiceScreen({
   const [revision, setRevision] = useState(0);
   const preview = useRef<TextToSpeechSession | null>(null);
   const speechConfiguration = useTextToSpeechConfiguration(client);
+  const { data: voiceOutput, error: voiceOutputError, retry: retryVoiceOutput } = useLoad(
+    client, loadVoiceOutput, 'Voice output settings could not be loaded.',
+  );
 
   useEffect(() => () => preview.current?.stop(), []);
   useEffect(() => {
@@ -1837,6 +1863,7 @@ export function VoiceScreen({
   const dirty = detail && draft
     && JSON.stringify(voiceUpdate(detail)) !== JSON.stringify(draft);
   const disabled = saving || deleting || !detail?.writable;
+  const supportsSpeed = draft?.provider !== 'elevenlabs' || voiceOutput?.elevenlabs?.supports_speed !== false;
   return (
     <section className="cha-screen cha-navigation" aria-label="Voice settings">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
@@ -1864,11 +1891,18 @@ export function VoiceScreen({
       {detail && draft && (
         <form className="cha-settings-form cha-voice-settings-form" onSubmit={(event) => void save(event)}>
           <label htmlFor="cha-voice-description">Description<textarea className="cha-form-control cha-voice-description" disabled={disabled} id="cha-voice-description" onChange={(event) => change('description', event.target.value)} value={draft.description} /></label>
+          <label>Provider<select className="cha-form-control" disabled={disabled} value={draft.provider ?? 'fishaudio'} onChange={(event) => change('provider', event.target.value as VoiceUpdate['provider'])}><option value="fishaudio">FishAudio</option><option value="elevenlabs">ElevenLabs</option></select></label>
           <label htmlFor="cha-voice-reference-id">Voice ID<input className="cha-form-control" disabled={disabled} id="cha-voice-reference-id" onChange={(event) => change('elevenlabs_voice_id', event.target.value)} value={draft.elevenlabs_voice_id} /></label>
-          <h2 className="cha-settings-section-title">Delivery</h2>
-          <div className="cha-settings-form-grid">
-            <label>Speed <span>0.7–1.2</span><input className="cha-form-control" disabled={disabled} max="1.2" min="0.7" onChange={(event) => change('speed', optionalNumber(event.target.value))} step="0.01" type="number" value={draft.speed ?? ''} /></label>
-          </div>
+          {draft.provider === 'elevenlabs' && voiceOutputError
+            && <LoadFailure message={voiceOutputError} retry={retryVoiceOutput} />}
+          {supportsSpeed && (
+            <>
+              <h2 className="cha-settings-section-title">Delivery</h2>
+              <div className="cha-settings-form-grid">
+                <label>Speed <span>0.7–1.2</span><input className="cha-form-control" disabled={disabled} max="1.2" min="0.7" onChange={(event) => change('speed', optionalNumber(event.target.value))} step="0.01" type="number" value={draft.speed ?? ''} /></label>
+              </div>
+            </>
+          )}
           <h2 className="cha-settings-section-title">Preview</h2>
           <label htmlFor="cha-voice-preview-text">Text to speak<textarea className="cha-form-control cha-voice-preview-text" id="cha-voice-preview-text" onChange={(event) => setPreviewText(event.target.value)} value={previewText} /></label>
           {previewError && <p className="cha-error-message" role="alert">{previewError}</p>}

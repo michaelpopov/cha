@@ -8,7 +8,7 @@
 #include "storage/not_found_error.h"
 #include "app/application_config.h"
 #include "media/audio_download.h"
-#include "providers/fish_audio.h"
+#include "providers/voice_output.h"
 #include "runtime/request_parser.h"
 #include "runtime/live_session.h"
 #include "util/logging.h"
@@ -71,8 +71,8 @@ std::uint64_t require_safe_id(const nlohmann::json& params, std::string_view key
     return *value;
 }
 
-FishAudioSynthesis parse_synthesis_fields(const nlohmann::json& params) {
-    return decode_fish_audio_synthesis(params);
+VoiceSynthesis parse_synthesis_fields(const nlohmann::json& params) {
+    return decode_voice_synthesis(params);
 }
 
 bool deadline_exempt(Method method) noexcept {
@@ -1152,7 +1152,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 }
                 for (const auto& [name, value] : params.items()) {
                     if (name != "text" && name != "reference_id"
-                        && name != "settings") {
+                        && name != "settings" && name != "provider") {
                         throw std::invalid_argument("The request was not valid.");
                     }
                 }
@@ -1202,7 +1202,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 for (const auto& [name, value] : params.items()) {
                     if (name != "forum_id" && name != "session_id"
                         && name != "entry_id" && name != "vault_name"
-                        && name != "reference_id" && name != "settings") {
+                        && name != "reference_id" && name != "settings" && name != "provider") {
                         throw std::invalid_argument("The request was not valid.");
                     }
                 }
@@ -1227,13 +1227,12 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 request.vault_name = require_string(params, "vault_name");
                 std::set<EntryId> ids;
                 for (const auto& entry : params["entries"]) {
-                    if (!entry.is_object() || !entry.contains("entry_id")
-                        || !entry.contains("reference_id")) {
+                    if (!entry.is_object() || !entry.contains("entry_id")) {
                         throw std::invalid_argument("The request was not valid.");
                     }
                     for (const auto& [name, value] : entry.items()) {
                         if (name != "entry_id" && name != "reference_id"
-                            && name != "settings") {
+                            && name != "settings" && name != "provider") {
                             throw std::invalid_argument("The request was not valid.");
                         }
                     }

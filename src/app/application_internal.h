@@ -146,7 +146,7 @@ struct Application::Impl {
     Providers providers;
     std::unique_ptr<LiveSessionManager> live_sessions;
     std::unique_ptr<AudioDownloadManager> audio_downloads;
-    FishAudioProxy speech_proxy;
+    VoiceOutputProxy speech_proxy;
     MediaResources media_resources;
     std::optional<std::string> speech_url_override;
     PendingMediaRegistry pending_media{media_resources};

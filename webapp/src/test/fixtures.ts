@@ -336,7 +336,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     startAudioDownloadBatch: async (forum, session, request) => {
       const entries = [];
       for (const entry of request.entries) entries.push(await client.startAudioDownload(forum, session, entry.entry_id,
-        { vault_name: request.vault_name, reference_id: entry.reference_id, settings: entry.settings }));
+        { vault_name: request.vault_name, reference_id: entry.reference_id, settings: entry.settings, provider: entry.provider }));
       return { entries };
     },
     getAudioDownloads: async (forum, session) => ({

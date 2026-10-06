@@ -1,4 +1,6 @@
 #include "app/settings_operations.h"
+#include "providers/voice_output.h"
+#include "providers/voice_output_config.h"
 
 #include "app/application.h"
 #include "app/workspace_operations.h"
@@ -157,12 +159,15 @@ VoiceInputSettings voice_input_settings(
 
 VoiceOutputSettings voice_output_settings(
     const WorkspaceVoiceOutput& settings) {
+    const auto fish = settings.fishaudio.value_or(WorkspaceVoiceProviderOutput{.output_format = "mp3"});
     return {
-        .url = settings.url,
-        .model = settings.model,
-        .api_key = settings.api_key_id,
-        .output_format = settings.output_format,
-        .default_voice = settings.default_voice,
+        .url = fish.url, .model = fish.model, .api_key = fish.api_key_id,
+        .output_format = fish.output_format, .default_voice = settings.default_voice,
+        .elevenlabs = settings.elevenlabs ? std::optional<ElevenLabsOutputSettings>({
+            .url = settings.elevenlabs->url, .model = settings.elevenlabs->model,
+            .api_key = settings.elevenlabs->api_key_id, .output_format = settings.elevenlabs->output_format,
+            .supports_speed = elevenlabs_supports_speed(settings.elevenlabs->model),
+        }) : std::nullopt,
     };
 }
 
@@ -243,6 +248,7 @@ VoiceDetail voice_detail(
         .speed = voice.settings.speed,
         .writable = writable,
         .used_by = std::move(used_by),
+        .provider = voice.provider,
     };
 }
 
@@ -254,8 +260,12 @@ ApiKeyDetail api_key_detail(
         && key.id == workspace.voice_input()->api_key_id) {
         used_by.emplace_back("Voice input");
     }
-    if (workspace.voice_output()
-        && key.id == workspace.voice_output()->api_key_id) {
+    if (workspace.voice_output() && workspace.voice_output()->elevenlabs
+        && key.id == workspace.voice_output()->elevenlabs->api_key_id) {
+        used_by.emplace_back("ElevenLabs voice output");
+    }
+    if (workspace.voice_output() && workspace.voice_output()->fishaudio
+        && key.id == workspace.voice_output()->fishaudio->api_key_id) {
         used_by.emplace_back("Voice output");
     }
     if (workspace.jev() && key.id == workspace.jev()->api_key_id) {
@@ -571,7 +581,7 @@ VoiceDetail create_voice(
             id = store.create_voice(
                 create.display_name,
                 create.description,
-                create.elevenlabs_voice_id);
+                create.elevenlabs_voice_id, create.provider);
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid voice.");
         }
@@ -592,15 +602,21 @@ VoiceDetail update_voice(
     LiveSessionManager& live_sessions,
     std::string_view id,
     const VoiceUpdate& update) {
-    require_voice(*store.snapshot(), id, true);
+    const auto workspace = store.snapshot();
+    const auto& previous = require_voice(*workspace, id, true);
     return with_settings_edit([&] {
+        if (workspace->voice_output()
+            && workspace->voice_output()->default_voice == previous.label
+            && previous.provider != update.provider) {
+            (void)select_voice_output(*workspace->voice_output(), update.provider);
+        }
         try {
             const WorkspaceConfigEditResult edited = store.apply_voice_update(
                 id,
                 update.display_name,
                 update.description,
                 update.elevenlabs_voice_id,
-                VoiceSettings{.speed = update.settings.speed});
+                VoiceSettings{.speed = update.settings.speed}, update.provider);
             workspace::refresh_affected_sessions(
                 live_sessions, edited.affected_forum_ids);
         } catch (const std::invalid_argument&) {
@@ -772,19 +788,29 @@ VoiceOutputSettings save_voice_output_settings(
     const ApiKeyStore& api_keys,
     const VoiceOutputSettings& update) {
     const auto workspace = store.snapshot();
-    if (!api_keys.find(update.api_key)
+    if ((!update.api_key.empty() && !api_keys.find(update.api_key))
+        || (update.elevenlabs && !api_keys.find(update.elevenlabs->api_key))
+        || (update.api_key.empty() && !update.elevenlabs)
         || !workspace->find_voice_by_name(update.default_voice)) {
         fail(ErrorCode::invalid_argument, "Invalid voice output settings.");
     }
-    WorkspaceVoiceOutput settings{
-        .url = update.url,
-        .model = update.model,
-        .api_key_id = update.api_key,
-        .output_format = update.output_format,
-        .default_voice = update.default_voice,
-    };
+    WorkspaceVoiceOutput settings{.default_voice = update.default_voice};
+    if (!update.api_key.empty()) {
+        settings.fishaudio = WorkspaceVoiceProviderOutput{
+            .url = update.url, .model = update.model, .api_key_id = update.api_key,
+            .output_format = update.output_format,
+        };
+    }
+    if (update.elevenlabs) {
+        const auto& eleven = *update.elevenlabs;
+        settings.elevenlabs = WorkspaceVoiceProviderOutput{
+            .url = eleven.url, .model = eleven.model, .api_key_id = eleven.api_key,
+            .output_format = eleven.output_format,
+        };
+    }
     return with_settings_edit([&] {
         try {
+            (void)select_voice_output(settings, workspace->find_voice_by_name(update.default_voice)->provider);
             store.apply_voice_output_update(settings);
         } catch (const std::invalid_argument& error) {
             fail(ErrorCode::invalid_argument, error.what());
@@ -797,19 +823,17 @@ std::optional<VoiceOutputRuntime> get_voice_output_runtime(
     const Workspace& workspace,
     const ApiKeyStore& api_keys,
     bool voice_enabled) {
-    const WorkspaceVoiceOutput* const output =
-        workspace.voice_output() ? &*workspace.voice_output() : nullptr;
-    const WorkspaceVoice* const default_voice = output
-        ? workspace.find_voice_by_name(output->default_voice) : nullptr;
-    if (!voice_enabled || !output || !default_voice
-        || !api_keys.find(output->api_key_id)) {
-        return std::nullopt;
-    }
+    if (!voice_enabled || !workspace.voice_output()) return std::nullopt;
+    const auto& configured = *workspace.voice_output();
+    const auto* default_voice = workspace.find_voice_by_name(configured.default_voice);
+    if (!default_voice) return std::nullopt;
+    WorkspaceVoiceProviderOutput output;
+    try { output = select_voice_output(configured, default_voice->provider); }
+    catch (const std::invalid_argument&) { return std::nullopt; }
+    if (!api_keys.find(output.api_key_id)) return std::nullopt;
     return VoiceOutputRuntime{
-        .url = output->url,
-        .model = output->model,
-        .output_format = output->output_format,
-        .default_voice_id = default_voice->elevenlabs_voice_id,
+        .url = output.url, .model = output.model, .output_format = output.output_format,
+        .default_voice_id = default_voice->elevenlabs_voice_id, .provider = default_voice->provider,
     };
 }
 

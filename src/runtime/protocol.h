@@ -58,6 +58,7 @@ struct SpeechVoice {
     std::string display_name;
     std::string elevenlabs_voice_id;
     SpeechVoiceSettings settings;
+    std::string provider{"fishaudio"};
 
     bool operator==(const SpeechVoice&) const = default;
 };
@@ -396,6 +397,7 @@ struct VoiceDetail {
     std::optional<double> speed;
     bool writable{};
     std::vector<std::string> used_by;
+    std::string provider{"fishaudio"};
 };
 
 struct VoiceUpdate {
@@ -403,12 +405,14 @@ struct VoiceUpdate {
     std::string description;
     std::string elevenlabs_voice_id;
     SpeechVoiceSettings settings;
+    std::string provider{"fishaudio"};
 };
 
 struct CreateVoiceRequest {
     std::string display_name;
     std::string description;
     std::string elevenlabs_voice_id;
+    std::string provider{"fishaudio"};
 };
 
 struct JevSettings {
@@ -450,12 +454,21 @@ struct VoiceInputRuntime {
     std::string send_phrase{"over to you"};
 };
 
+struct ElevenLabsOutputSettings {
+    std::string url;
+    std::string model;
+    std::string api_key;
+    std::string output_format;
+    bool supports_speed{true};
+};
+
 struct VoiceOutputSettings {
     std::string url;
     std::string model;
     std::string api_key;
     std::string output_format;
     std::string default_voice;
+    std::optional<ElevenLabsOutputSettings> elevenlabs;
 };
 
 struct VoiceOutputRuntime {
@@ -463,6 +476,7 @@ struct VoiceOutputRuntime {
     std::string model;
     std::string output_format;
     std::string default_voice_id;
+    std::string provider{"fishaudio"};
 };
 
 struct ApiKeyDetail {

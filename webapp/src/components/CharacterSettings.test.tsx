@@ -159,6 +159,7 @@ describe('character settings screen', () => {
       voiceDetailFixture.elevenlabs_voice_id,
       { speed: 0.95 },
       expect.any(AbortSignal),
+      'fishaudio',
     ));
     expect(fetchMock).toHaveBeenCalledWith('/media/preview', expect.any(Object));
   });

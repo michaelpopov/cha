@@ -6,7 +6,7 @@
 #include "app/application_config.h"
 #include "media/audio_download.h"
 #include "runtime/command_queue.h"
-#include "providers/fish_audio.h"
+#include "providers/voice_output.h"
 #include "runtime/live_session_manager.h"
 #include "runtime/protocol.h"
 #include "app/r2_database_transfer.h"
@@ -352,7 +352,7 @@ public:
         std::string_view connection_id,
         std::uint64_t request_id,
         std::string text,
-        FishAudioSynthesis synthesis,
+        VoiceSynthesis synthesis,
         std::uint64_t epoch);
     void cancel_speech(
         std::string_view connection_id,

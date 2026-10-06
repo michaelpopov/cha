@@ -86,6 +86,7 @@ nlohmann::json speech_voice_json(const SpeechVoice& value) {
         {"id", value.id},
         {"display_name", value.display_name},
         {"elevenlabs_voice_id", value.elevenlabs_voice_id},
+        {"provider", value.provider},
         {"settings", std::move(settings)},
     };
 }
@@ -435,6 +436,7 @@ void to_json(nlohmann::json& json, const VoiceDetail& value) {
         {"display_name", value.display_name},
         {"description", value.description},
         {"elevenlabs_voice_id", value.elevenlabs_voice_id},
+        {"provider", value.provider},
         {"speed", value.speed ? nlohmann::json(*value.speed) : nlohmann::json(nullptr)},
         {"writable", value.writable},
         {"used_by", value.used_by},
@@ -486,6 +488,12 @@ void to_json(nlohmann::json& json, const VoiceOutputSettings& value) {
         {"output_format", value.output_format},
         {"default_voice", value.default_voice},
     };
+    if (value.elevenlabs) {
+        const auto& eleven = *value.elevenlabs;
+        json["elevenlabs"] = {{"url", eleven.url}, {"model", eleven.model},
+            {"api_key", eleven.api_key}, {"output_format", eleven.output_format},
+            {"supports_speed", eleven.supports_speed}};
+    }
 }
 
 void to_json(nlohmann::json& json, const VoiceOutputRuntime& value) {
@@ -494,6 +502,7 @@ void to_json(nlohmann::json& json, const VoiceOutputRuntime& value) {
         {"model", value.model},
         {"output_format", value.output_format},
         {"default_voice_id", value.default_voice_id},
+        {"provider", value.provider},
     };
 }
 

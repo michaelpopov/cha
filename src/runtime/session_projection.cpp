@@ -25,6 +25,7 @@ std::optional<SpeechVoice> resolve_speech_voice_id(
         .settings = {
             .speed = voice->settings.speed,
         },
+        .provider = voice->provider,
     };
 }
 

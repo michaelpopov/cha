@@ -1,4 +1,4 @@
-#include "providers/fish_audio.h"
+#include "providers/voice_output.h"
 #include "util/logging.h"
 #include "providers/voice_output_config.h"
 #include "providers/api_key_store.h"
@@ -70,12 +70,12 @@ public:
     }
 
     std::optional<EntryAudio> download(const std::function<bool()>& cancelled) {
-        return download_fish_audio(output_, "secret", make_fish_audio_request(output_, {
+        return download_voice_output(output_, "secret", make_fish_audio_request(output_, {
             {"text", "Hello"}, {"reference_id", "voice"},
         }), cancelled);
     }
 
-    FishAudioTransfer synthesize(const std::function<bool()>& cancelled) {
+    VoiceOutputTransfer synthesize(const std::function<bool()>& cancelled) {
         return proxy_.synthesize(output_, "secret", make_fish_audio_request(output_, {
             {"text", "Hello"}, {"reference_id", "voice"},
         }), cancelled);
@@ -86,8 +86,8 @@ public:
     std::atomic_int disconnected{0};
 
 private:
-    FishAudioProxy proxy_;
-    WorkspaceVoiceOutput output_;
+    VoiceOutputProxy proxy_;
+    WorkspaceVoiceProviderOutput output_;
     httplib::Server upstream_;
     std::thread upstream_thread_;
     std::atomic_bool finish_{false};
@@ -119,18 +119,18 @@ TEST(FishAudio, BackgroundCancellationStopsStalledTransferWithoutIncomingHttpReq
 
 TEST(FishAudio, FullSynthesisCapacityRejectsOverflow) {
     SlowFishAudioServer server;
-    std::vector<std::future<FishAudioTransfer>> in_flight;
-    for (std::size_t i = 0; i < fish_audio_concurrency; ++i) {
+    std::vector<std::future<VoiceOutputTransfer>> in_flight;
+    for (std::size_t i = 0; i < voice_output_concurrency; ++i) {
         in_flight.push_back(std::async(std::launch::async, [&] {
             return server.synthesize([] { return false; });
         }));
     }
     ASSERT_TRUE(wait_until([&] {
-        return server.started == static_cast<int>(fish_audio_concurrency);
+        return server.started == static_cast<int>(voice_output_concurrency);
     }));
     const auto overflow = server.synthesize([] { return false; });
     EXPECT_TRUE(overflow.busy);
-    EXPECT_EQ(server.started, static_cast<int>(fish_audio_concurrency));
+    EXPECT_EQ(server.started, static_cast<int>(voice_output_concurrency));
     server.shutdown();
     for (auto& pending : in_flight) {
         EXPECT_EQ(pending.wait_for(10s), std::future_status::ready);
@@ -139,7 +139,7 @@ TEST(FishAudio, FullSynthesisCapacityRejectsOverflow) {
 }
 
 TEST(FishAudio, IgnoresObsoleteVoiceSettingsWithoutChangingConfiguredModel) {
-    const WorkspaceVoiceOutput output{
+    const WorkspaceVoiceProviderOutput output{
         .model = "s2.1-pro", .output_format = "mp3",
     };
     const auto request = make_fish_audio_request(output, {
@@ -147,7 +147,7 @@ TEST(FishAudio, IgnoresObsoleteVoiceSettingsWithoutChangingConfiguredModel) {
         {"settings", {{"speed", 0.9}, {"stability", 0.5}, {"use_speaker_boost", true}}},
     });
     const auto typed = make_fish_audio_request(output, "Hello",
-        FishAudioSynthesis{.reference_id = "fish-voice", .settings = {.speed = 0.9}});
+        VoiceSynthesis{.reference_id = "fish-voice", .settings = {.speed = 0.9}});
     EXPECT_EQ(typed.model, request.model);
     EXPECT_EQ(typed.body, request.body);
     EXPECT_EQ(request.model, "s2.1-pro");
@@ -160,7 +160,7 @@ TEST(FishAudio, IgnoresObsoleteVoiceSettingsWithoutChangingConfiguredModel) {
 
 TEST(FishAudio, PreservesExplicitFishAudioModelAndFormat) {
     for (const std::string format : {"mp3", "wav", "opus"}) {
-        const WorkspaceVoiceOutput output{
+        const WorkspaceVoiceProviderOutput output{
             .model = "s2.1-pro-free", .output_format = format,
         };
         const auto request = make_fish_audio_request(output, {
@@ -176,7 +176,7 @@ TEST(FishAudio, PreservesExplicitFishAudioModelAndFormat) {
 
 TEST(FishAudio, TrimsModelsAndPreservesExplicitValues) {
     for (const std::string model : {"s2.1-pro", "custom/model", "obsolete model"}) {
-        const WorkspaceVoiceOutput output{
+        const WorkspaceVoiceProviderOutput output{
             .model = normalize_voice_output_model(" \t" + model + " \n"), .output_format = "mp3",
         };
         EXPECT_EQ(make_fish_audio_request(output, {
@@ -203,7 +203,7 @@ TEST(FishAudio, NormalizesEndpointSpellingsAndDefaultPorts) {
 }
 
 TEST(FishAudio, RejectsMalformedSynthesisInput) {
-    const WorkspaceVoiceOutput output{
+    const WorkspaceVoiceProviderOutput output{
         .model = "s2.1-pro", .output_format = "mp3",
     };
     for (const Json& input : {
@@ -219,11 +219,11 @@ TEST(FishAudio, RejectsMalformedSynthesisInput) {
 }
 
 TEST(FishAudio, TypedBuilderChecksIdentityAndSpeedLimits) {
-    const WorkspaceVoiceOutput output{.model = "s2.1-pro", .output_format = "mp3"};
+    const WorkspaceVoiceProviderOutput output{.model = "s2.1-pro", .output_format = "mp3"};
     const std::optional<std::string> reference{"voice"};
     for (const double speed : {0.5, 2.0}) {
         const auto typed = make_fish_audio_request(output, "Hello",
-            FishAudioSynthesis{.reference_id = reference, .settings = {.speed = speed}});
+            VoiceSynthesis{.reference_id = reference, .settings = {.speed = speed}});
         const auto adapted = make_fish_audio_request(output,
             {{"text", "Hello"}, {"reference_id", "voice"}, {"settings", {{"speed", speed}}}});
         EXPECT_EQ(typed.body, adapted.body);
@@ -232,13 +232,13 @@ TEST(FishAudio, TypedBuilderChecksIdentityAndSpeedLimits) {
     for (const double speed : {0.49, 2.01, std::numeric_limits<double>::infinity(),
              std::numeric_limits<double>::quiet_NaN()}) {
         EXPECT_THROW(make_fish_audio_request(output, "Hello",
-            FishAudioSynthesis{.reference_id = reference, .settings = {.speed = speed}}),
+            VoiceSynthesis{.reference_id = reference, .settings = {.speed = speed}}),
             std::invalid_argument);
     }
-    EXPECT_THROW(make_fish_audio_request(output, "Hello", FishAudioSynthesis{}), std::invalid_argument);
-    EXPECT_THROW(make_fish_audio_request(output, "Hello", FishAudioSynthesis{.reference_id = ""}),
+    EXPECT_THROW(make_fish_audio_request(output, "Hello", VoiceSynthesis{}), std::invalid_argument);
+    EXPECT_THROW(make_fish_audio_request(output, "Hello", VoiceSynthesis{.reference_id = ""}),
         std::invalid_argument);
-    EXPECT_THROW(make_fish_audio_request(output, "", FishAudioSynthesis{.reference_id = reference}), std::invalid_argument);
+    EXPECT_THROW(make_fish_audio_request(output, "", VoiceSynthesis{.reference_id = reference}), std::invalid_argument);
 }
 
 TEST(FishAudio, DecoderRetainsFailuresAndWarnsAboutIgnoredSettingsOnlyWhenConsumed) {
@@ -250,8 +250,8 @@ TEST(FishAudio, DecoderRetainsFailuresAndWarnsAboutIgnoredSettingsOnlyWhenConsum
         std::ifstream input(log_file);
         return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
     };
-    const WorkspaceVoiceOutput output{.model = "s2.1-pro", .output_format = "mp3"};
-    const auto synthesis = decode_fish_audio_synthesis({{"reference_id", "voice"},
+    const WorkspaceVoiceProviderOutput output{.model = "s2.1-pro", .output_format = "mp3"};
+    const auto synthesis = decode_voice_synthesis({{"reference_id", "voice"},
         {"settings", {{"speed", 0.9}, {"stability", 0.5}, {"use_speaker_boost", true}}}});
     EXPECT_EQ(synthesis.settings.speed, 0.9);
     EXPECT_EQ(synthesis.ignored_settings, (std::vector<std::string>{"stability", "use_speaker_boost"}));
@@ -262,14 +262,14 @@ TEST(FishAudio, DecoderRetainsFailuresAndWarnsAboutIgnoredSettingsOnlyWhenConsum
     EXPECT_NE(contents().find("Ignoring unsupported FishAudio voice setting: stability"), std::string::npos);
     EXPECT_NE(contents().find("Ignoring unsupported FishAudio voice setting: use_speaker_boost"), std::string::npos);
     for (const Json& settings : {Json(nullptr), Json{{"speed", "fast"}}}) {
-        const auto malformed = decode_fish_audio_synthesis({{"reference_id", "voice"}, {"settings", settings}});
+        const auto malformed = decode_voice_synthesis({{"reference_id", "voice"}, {"settings", settings}});
         ASSERT_TRUE(malformed.decoding_failure);
         EXPECT_THROW(make_fish_audio_request(output, "Hello", malformed), std::invalid_argument);
     }
 }
 
 TEST(FishAudio, PreparesPlainSpeechAndParagraphPausesWithoutChangingSourceText) {
-    const WorkspaceVoiceOutput output{.model = "s2.1-pro", .output_format = "mp3"};
+    const WorkspaceVoiceProviderOutput output{.model = "s2.1-pro", .output_format = "mp3"};
     const std::vector<std::pair<std::string, std::string>> cases{
         {"# Heading ###\n\n**Bold** and *italic*, __strong__ and _emphasis_.",
             "Heading [long pause] Bold and italic, strong and emphasis."},
@@ -296,12 +296,12 @@ TEST(FishAudio, PreparesPlainSpeechAndParagraphPausesWithoutChangingSourceText) 
         SCOPED_TRACE(original);
         const auto source = original;
         const auto request = make_fish_audio_request(output, source,
-            FishAudioSynthesis{.reference_id = "voice"});
+            VoiceSynthesis{.reference_id = "voice"});
         EXPECT_EQ(request.body.at("text"), expected);
         EXPECT_EQ(source, original);
     }
     EXPECT_THROW(make_fish_audio_request(output, " \n---\n```text\n``` ",
-        FishAudioSynthesis{.reference_id = "voice"}), std::invalid_argument);
+        VoiceSynthesis{.reference_id = "voice"}), std::invalid_argument);
 }
 
 TEST(FishAudio, PreviewSendsCleanedTextAndPauseMarkers) {
@@ -309,13 +309,13 @@ TEST(FishAudio, PreviewSendsCleanedTextAndPauseMarkers) {
         "HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nContent-Length: 5\r\nConnection: close\r\n\r\naudio",
     });
     server.start();
-    const WorkspaceVoiceOutput output{
+    const WorkspaceVoiceProviderOutput output{
         .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
         .model = "s2.1-pro", .output_format = "mp3",
     };
     const auto request = make_fish_audio_request(output,
         {{"text", "**Hello**\n\n> _World_."}, {"reference_id", "voice"}});
-    FishAudioProxy proxy;
+    VoiceOutputProxy proxy;
     const auto result = proxy.synthesize(output, "secret", request, [] { return false; });
     server.join();
     ASSERT_EQ(server.requests().size(), 1);
@@ -331,7 +331,7 @@ TEST(FishAudio, ForwardsAuthenticationAndReturnsAudioBytes) {
         "HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nContent-Length: 5\r\nConnection: close\r\n\r\naudio",
     });
     server.start();
-    const WorkspaceVoiceOutput output{
+    const WorkspaceVoiceProviderOutput output{
         .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
         .model = "custom/model", .output_format = "mp3",
     };
@@ -339,7 +339,7 @@ TEST(FishAudio, ForwardsAuthenticationAndReturnsAudioBytes) {
         {"text", "**Hello**\n\n# World\nSingle line\n\n\nThree\n\n\n\nFour\r\n\r\nCRLF\n \n[soft] Goodbye"},
         {"reference_id", "voice"},
     });
-    const auto result = download_fish_audio(
+    const auto result = download_voice_output(
         output, "fish-secret", request, [] { return false; });
     server.join();
     ASSERT_EQ(server.requests().size(), 1);
@@ -362,10 +362,10 @@ TEST(FishAudio, NeverStreamsProviderErrorsOrInvalidAudioTypes) {
         MockHttpServer server({"HTTP/1.1 " + std::to_string(status) + " Response\r\nContent-Type: "
             + type + "\r\nContent-Length: 5\r\nConnection: close\r\n\r\nerror"});
         server.start();
-        const WorkspaceVoiceOutput output{.url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
+        const WorkspaceVoiceProviderOutput output{.url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
             .model = "s2.1-pro", .output_format = "mp3"};
         bool emitted = false;
-        EXPECT_THROW(download_fish_audio(output, "secret", make_fish_audio_request(output,
+        EXPECT_THROW(download_voice_output(output, "secret", make_fish_audio_request(output,
             {{"text", "Hello"}, {"reference_id", "voice"}}), [] { return false; },
             [&](auto, auto) { emitted = true; }), std::runtime_error);
         EXPECT_FALSE(emitted);
@@ -379,9 +379,9 @@ TEST(FishAudio, BackgroundDownloadAcceptsAudioSubtypesAndParameters) {
         MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Type: " + type
             + "\r\nContent-Length: 5\r\nConnection: close\r\n\r\naudio"});
         server.start();
-        const WorkspaceVoiceOutput output{.url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
+        const WorkspaceVoiceProviderOutput output{.url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
             .model = "s2.1-pro", .output_format = "opus"};
-        const auto result = download_fish_audio(output, "secret", make_fish_audio_request(output,
+        const auto result = download_voice_output(output, "secret", make_fish_audio_request(output,
             {{"text", "Hello"}, {"reference_id", "voice"}}), [] { return false; });
         server.join();
         ASSERT_TRUE(result);
@@ -401,12 +401,12 @@ TEST(FishAudio, PreservesUpstreamErrors) {
         + std::to_string(error.size()) + "\r\nConnection: close\r\n\r\n" + error,
     });
     server.start();
-    const WorkspaceVoiceOutput output{
+    const WorkspaceVoiceProviderOutput output{
         .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
         .model = "s2.1-pro", .output_format = "mp3",
     };
     EXPECT_THROW(
-        (void)download_fish_audio(
+        (void)download_voice_output(
             output, "fish-secret",
             make_fish_audio_request(output, {
                 {"text", "Hello"}, {"reference_id", "voice"},
@@ -414,7 +414,7 @@ TEST(FishAudio, PreservesUpstreamErrors) {
             [] { return false; }),
         std::runtime_error);
     server.join();
-    EXPECT_EQ(fish_audio_http_error_message(402), "Insufficient FishAudio credits.");
+    EXPECT_EQ(voice_output_http_error_message("fishaudio", 402), "Insufficient FishAudio credits.");
 }
 
 TEST(FishAudio, SuppliesUsefulErrorsWhenUpstreamBodyIsEmpty) {
@@ -427,12 +427,12 @@ TEST(FishAudio, SuppliesUsefulErrorsWhenUpstreamBodyIsEmpty) {
             + " Error\r\nContent-Length: 2\r\nConnection: close\r\n\r\n  ",
         });
         server.start();
-        const WorkspaceVoiceOutput output{
+        const WorkspaceVoiceProviderOutput output{
             .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
             .model = "s2.1-pro", .output_format = "mp3",
         };
         EXPECT_THROW(
-            (void)download_fish_audio(
+            (void)download_voice_output(
                 output, "fish-secret",
                 make_fish_audio_request(output, {
                     {"text", "Hello"}, {"reference_id", "voice"},
@@ -440,19 +440,19 @@ TEST(FishAudio, SuppliesUsefulErrorsWhenUpstreamBodyIsEmpty) {
                 [] { return false; }),
             std::runtime_error);
         server.join();
-        EXPECT_EQ(fish_audio_http_error_message(status), message);
+        EXPECT_EQ(voice_output_http_error_message("fishaudio", status), message);
     }
 }
 
 TEST(FishAudio, IncludesCurlCodeAndDiagnosticsForTransportFailures) {
     MockHttpServer server({""}); // Close after reading the request, without sending HTTP headers.
     server.start();
-    const WorkspaceVoiceOutput output{
+    const WorkspaceVoiceProviderOutput output{
         .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
         .model = "s2.1-pro", .output_format = "mp3",
     };
     try {
-        (void)download_fish_audio(
+        (void)download_voice_output(
             output, "fish-secret",
             make_fish_audio_request(output, {
                 {"text", "Hello"}, {"reference_id", "voice"},
@@ -495,5 +495,125 @@ TEST(FishAudio, EntrySpeechTextOmitsEmptyAndMetadataOnlyEntries) {
     ASSERT_TRUE(metadata);
     EXPECT_TRUE(entry_speech_text(*metadata).empty());
 }
+
+TEST(ElevenLabs, EncodesVoiceAndUsesItsModelSettingsAndAuthentication) {
+    MockHttpServer server({
+        "HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nContent-Length: 5\r\nConnection: close\r\n\r\naudio",
+    });
+    server.start();
+    const WorkspaceVoiceProviderOutput output{
+        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/text-to-speech",
+        .model = "eleven_multilingual_v2", .output_format = "mp3_44100_128",
+    };
+    const auto request = make_voice_output_request(output, "**Hello**\n\nWorld", {
+        .reference_id = "voice/id ?", .settings = {.speed = 0.9}, .provider = "elevenlabs",
+    });
+    EXPECT_EQ(request.body, (Json{{"text", "Hello\n\nWorld"}, {"model_id", "eleven_multilingual_v2"},
+        {"voice_settings", {{"speed", 0.9}}}}));
+    const auto result = download_voice_output(output, "eleven-secret", request, [] { return false; });
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->audio, "audio");
+    const auto received = server.requests();
+    ASSERT_EQ(received.size(), 1U);
+    EXPECT_NE(received[0].find("/v1/text-to-speech/voice%2Fid%20%3F/stream?output_format=mp3_44100_128"), std::string::npos);
+    EXPECT_NE(received[0].find("xi-api-key: eleven-secret"), std::string::npos);
+    EXPECT_EQ(received[0].find("Authorization:"), std::string::npos);
+    EXPECT_EQ(received[0].find("\r\nmodel:"), std::string::npos);
+}
+
+TEST(ElevenLabs, ValidatesEndpointAndKeepsFishAudioIndependent) {
+    EXPECT_EQ(parse_voice_output_endpoint("https://API.ELEVENLABS.IO/", "elevenlabs"),
+        "https://api.elevenlabs.io/v1/text-to-speech");
+    for (const auto* url : {"http://api.elevenlabs.io/v1/text-to-speech", "https://other.example/v1/text-to-speech",
+             "https://api.elevenlabs.io/v1/text-to-speech?api_key=secret"})
+        EXPECT_THROW(parse_voice_output_endpoint(url, "elevenlabs"), std::invalid_argument);
+    EXPECT_EQ(decode_voice_synthesis({{"reference_id", "legacy"}}).provider, "fishaudio");
+    EXPECT_THROW(select_voice_output({}, "elevenlabs"), std::invalid_argument);
+    EXPECT_THROW(select_voice_output({}, "unknown"), std::invalid_argument);
+    const WorkspaceVoiceProviderOutput output{.model = "eleven_multilingual_v2", .output_format = "mp3_44100_128"};
+    EXPECT_THROW(make_voice_output_request(output, "Hello", {
+        .reference_id = "voice", .settings = {.speed = 2.0}, .provider = "elevenlabs"}), std::invalid_argument);
+}
+
+TEST(ElevenLabs, IgnoresSavedSpeedForModelsWithoutSpeedControl) {
+    test::TestWorkspace workspace;
+    const auto log_file = workspace.root() / "elevenlabs.log";
+    initialize_diagnostic_logging(log_file, "warn");
+    struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop;
+    for (const auto* model : {"eleven_v3", "eleven_v4", "eleven_v4_turbo"}) {
+        const WorkspaceVoiceProviderOutput output{.model = model, .output_format = "mp3_44100_128"};
+        for (const double speed : {0.7, 1.1, 2.0}) {
+            const auto request = make_voice_output_request(output, "Hello", {
+                .reference_id = "voice", .settings = {.speed = speed}, .provider = "elevenlabs",
+            });
+            EXPECT_EQ(request.body["model_id"], model);
+            EXPECT_FALSE(request.body.contains("voice_settings"));
+        }
+        std::ifstream input(log_file);
+        const std::string contents{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        EXPECT_EQ(contents.find("Ignoring unsupported ElevenLabs voice setting: speed"), std::string::npos);
+    }
+}
+
+
+TEST(ElevenLabs, ReportsTheProviderErrorInsteadOfDiscardingItsBody) {
+    const Json error = {{"detail", {{"type", "authentication_error"}, {"code", "invalid_api_key"},
+        {"message", "API key ID used as API key - only valid API keys can be used."},
+        {"status", "api_key_id_used_as_api_key"}}}};
+    const std::string body = error.dump();
+    MockHttpServer server({"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: "
+        + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body});
+    server.start();
+    const WorkspaceVoiceProviderOutput output{
+        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/text-to-speech",
+        .model = "eleven_multilingual_v2", .output_format = "mp3_44100_128",
+    };
+    bool streamed = false;
+    try {
+        (void)download_voice_output(output, "key-id", make_voice_output_request(output, "Hello", {
+            .reference_id = "voice-id", .provider = "elevenlabs"}), [] { return false; },
+            [&](auto, auto) { streamed = true; });
+        FAIL() << "Expected provider error";
+    } catch (const std::runtime_error& error) {
+        EXPECT_EQ(std::string(error.what()), "ElevenLabs (HTTP 400): "
+            "API key ID used as API key - only valid API keys can be used.");
+    }
+    EXPECT_FALSE(streamed);
+    EXPECT_EQ(voice_output_http_error_message("elevenlabs", 401, "<html>Unauthorized</html>"),
+        "Authentication failed. Check the ElevenLabs API key.");
+    EXPECT_EQ(voice_output_http_error_message("fishaudio", 402, Json{{"message", "Insufficient credits"}}.dump()),
+        "FishAudio (HTTP 402): Insufficient credits");
+}
+
+TEST(VoiceOutput, ProviderErrorsRemainValidUtf8AtTheMessageLimit) {
+    for (const auto* character : {"é", "€", "😀"}) {
+        const std::string codepoint(character);
+        for (std::size_t offset = 1; offset < codepoint.size(); ++offset) {
+            const std::string prefix(1024 - offset, 'a');
+            const Json body = {{"detail", {{"message", prefix + codepoint + "more"}}}};
+            const auto message = voice_output_http_error_message("elevenlabs", 400, body.dump());
+            EXPECT_EQ(message, "ElevenLabs (HTTP 400): " + prefix);
+            EXPECT_NO_THROW(((void)Json{{"message", message}}.dump()));
+        }
+        const std::string complete(1024 - codepoint.size(), 'a');
+        EXPECT_EQ(voice_output_http_error_message("elevenlabs", 400,
+            Json{{"detail", {{"message", complete + codepoint + "more"}}}}.dump()),
+            "ElevenLabs (HTTP 400): " + complete + codepoint);
+    }
+}
+
+TEST(VoiceOutput, DecoderReportsInvalidProvidersWithoutNamingFishAudio) {
+    for (const Json& provider : {Json(1), Json(nullptr), Json::object(), Json("eleven")}) {
+        const auto synthesis = decode_voice_synthesis({{"provider", provider}});
+        ASSERT_TRUE(synthesis.decoding_failure);
+        try {
+            std::rethrow_exception(synthesis.decoding_failure);
+            FAIL() << "Expected invalid provider";
+        } catch (const std::invalid_argument& error) {
+            EXPECT_EQ(std::string(error.what()).find("FishAudio"), std::string::npos);
+        }
+    }
+}
+
 }
 }

@@ -35,8 +35,8 @@ protected:
         keys = std::make_unique<ApiKeyStore>(*config);
         const auto api = keys->create("FishAudio", "secret");
         config->create_voice("Reader", "", "voice");
-        config->apply_voice_output_update({.url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
-            .api_key_id = api.id, .output_format = "mp3", .default_voice = "Reader"});
+        config->apply_voice_output_update({.fishaudio = WorkspaceVoiceProviderOutput{.url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
+            .api_key_id = api.id, .output_format = "mp3"}, .default_voice = "Reader"});
         sessions = std::make_unique<SessionRepository>(
             [this] { return config->snapshot(); }, path, config->workspace_path(), config->welcome_path(),
             TemporarySessionSeed{{"temporary", "welcome"}, "Welcome"});
@@ -448,8 +448,8 @@ TEST_F(AudioDownloads, RetryWaitDoesNotConsumeQueueWakeup) {
 }
 
 TEST_F(AudioDownloads, OpusAudioWithParametersIsSavedWithoutRetry) {
-    config->apply_voice_output_update({.url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
-        .api_key_id = config->snapshot()->voice_output()->api_key_id, .output_format = "opus", .default_voice = "Reader"});
+    config->apply_voice_output_update({.fishaudio = WorkspaceVoiceProviderOutput{.url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
+        .api_key_id = config->snapshot()->voice_output()->fishaudio->api_key_id, .output_format = "opus"}, .default_voice = "Reader"});
     std::atomic_int attempts{};
     auto downloads = make([&](const auto&, const auto&, const auto& request, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         ++attempts;
@@ -470,7 +470,7 @@ TEST_F(AudioDownloads, DeletedKeyReportsNotConfiguredButCachedAudioStillWorks) {
         ++transfers;
         return EntryAudio{"audio", "audio/mpeg"};
     });
-    keys->remove(config->snapshot()->voice_output()->api_key_id);
+    keys->remove(config->snapshot()->voice_output()->fishaudio->api_key_id);
     try {
         downloads->submit(session, 1, input());
         FAIL() << "An uncached entry needs a configured API key";
@@ -711,5 +711,68 @@ TEST_F(AudioDownloads, CachedAudioReadRejectsChangedGenerationEvenAfterSwitching
     EXPECT_EQ(read.get(), 409);
     EXPECT_EQ(downloads->audio(session, 1, "Test")->audio, "saved");
 }
+
+TEST_F(AudioDownloads, UncachedAudioRejectsInvalidProviders) {
+    auto downloads = make([](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&)
+        -> std::optional<EntryAudio> { throw std::runtime_error("Invalid input must not reach transport"); });
+    for (const Json& provider : {Json(1), Json(nullptr), Json("eleven")}) {
+        const auto synthesis = decode_voice_synthesis({{"provider", provider}});
+        EXPECT_THROW(downloads->submit(session, 1, {"Test", synthesis}), std::invalid_argument);
+        EXPECT_THROW(downloads->submit_batch(session, {"Test", {{1, synthesis}}}), std::invalid_argument);
+    }
+}
+
+TEST_F(AudioDownloads, DefaultVoiceSettingsApplyWhenNoVoiceIsRequested) {
+    const auto output = config->snapshot()->voice_output();
+    ASSERT_TRUE(output);
+    const auto* voice = config->snapshot()->find_voice_by_name(output->default_voice);
+    ASSERT_NE(voice, nullptr);
+    config->apply_voice_update(voice->id, voice->label, voice->description, voice->elevenlabs_voice_id,
+        {.speed = 0.8}, voice->provider);
+    auto downloads = make([](const auto&, const auto&, const auto& request, const auto&,
+        const AudioChunkCallback&) -> std::optional<EntryAudio> {
+        EXPECT_EQ(request.body.at("prosody").at("speed"), 0.8);
+        return EntryAudio{"audio", "audio/mpeg"};
+    });
+    downloads->submit_batch(session, {"Test", {{1, {}}, {2, {}}}});
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).size() == 2; }));
+}
+
+TEST_F(AudioDownloads, SelectsTheCharacterProviderBeforeItsCredentialAndKeepsFishAudioVoices) {
+    const auto eleven_key = keys->create("ElevenLabs", "eleven-secret");
+    auto output = *config->snapshot()->voice_output();
+    output.elevenlabs = WorkspaceVoiceProviderOutput{.url = "https://api.elevenlabs.io/v1/text-to-speech",
+        .model = "eleven_multilingual_v2", .api_key_id = eleven_key.id, .output_format = "mp3_44100_128"};
+    config->apply_voice_output_update(output);
+    const auto voice = config->create_voice("Eleven Guide", "", "eleven-ref", "elevenlabs");
+    config->apply_voice_update(voice, "Eleven Guide", "", "eleven-ref", {.speed = 0.85}, "elevenlabs");
+    const auto snapshot = config->snapshot();
+    config->apply_character_settings("guide", snapshot->find_character("guide")->provider_id.value_or(""),
+        std::nullopt, voice);
+    auto downloads = make([](const auto& selected, const auto& key, const auto& request, const auto&,
+        const AudioChunkCallback&) -> std::optional<EntryAudio> {
+        EXPECT_EQ(request.provider, "elevenlabs");
+        EXPECT_EQ(key, "eleven-secret");
+        EXPECT_EQ(selected.model, "eleven_multilingual_v2");
+        EXPECT_NE(request.url.find("/eleven-ref/stream?"), std::string::npos);
+        EXPECT_EQ(request.body.at("voice_settings").at("speed"), 0.85);
+        EXPECT_FALSE(request.body.contains("reference_id"));
+        return EntryAudio{"eleven-audio", "audio/mpeg"};
+    });
+    downloads->submit(session, 1, {"Test", {}});
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
+    EXPECT_EQ(downloads->audio(session, 1, "Test")->audio, "eleven-audio");
+    // An explicit FishAudio voice still uses the original key and request format.
+    auto fish = make([](const auto&, const auto& key, const auto& request, const auto&,
+        const AudioChunkCallback&) -> std::optional<EntryAudio> {
+        EXPECT_EQ(request.provider, "fishaudio");
+        EXPECT_EQ(key, "secret");
+        EXPECT_EQ(request.body.at("reference_id"), "voice");
+        return EntryAudio{"fish-audio", "audio/mpeg"};
+    });
+    fish->submit(session, 2, input());
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(2); }));
+}
+
 }
 }

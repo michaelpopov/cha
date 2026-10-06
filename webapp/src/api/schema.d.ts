@@ -76,9 +76,14 @@ export interface components {
             speed?: number;
         };
         SpeechVoice: {
+            /**
+             * @description Defaults to fishaudio when omitted.
+             * @enum {string}
+             */
+            provider?: "fishaudio" | "elevenlabs";
             id: components["schemas"]["Identifier"];
             display_name: string;
-            /** @description FishAudio reference ID; field name retained for compatibility. */
+            /** @description Provider voice ID; field name retained for compatibility. */
             elevenlabs_voice_id: string;
             settings: components["schemas"]["SpeechVoiceSettings"];
         };
@@ -266,23 +271,38 @@ export interface components {
             used_by: string[];
         };
         VoiceUpdate: {
+            /**
+             * @description Defaults to fishaudio when omitted.
+             * @enum {string}
+             */
+            provider?: "fishaudio" | "elevenlabs";
             display_name: string;
             description: string;
-            /** @description FishAudio reference ID; field name retained for compatibility. */
+            /** @description Provider voice ID; field name retained for compatibility. */
             elevenlabs_voice_id: string;
             speed: number | null;
         };
         CreateVoiceRequest: {
+            /**
+             * @description Defaults to fishaudio when omitted.
+             * @enum {string}
+             */
+            provider?: "fishaudio" | "elevenlabs";
             display_name: string;
             description: string;
-            /** @description FishAudio reference ID; field name retained for compatibility. */
+            /** @description Provider voice ID; field name retained for compatibility. */
             elevenlabs_voice_id: string;
         };
         VoiceDetail: {
+            /**
+             * @description Defaults to fishaudio when omitted.
+             * @enum {string}
+             */
+            provider?: "fishaudio" | "elevenlabs";
             id: components["schemas"]["Identifier"];
             display_name: string;
             description: string;
-            /** @description FishAudio reference ID; field name retained for compatibility. */
+            /** @description Provider voice ID; field name retained for compatibility. */
             elevenlabs_voice_id: string;
             speed: number | null;
             writable: boolean;
@@ -337,14 +357,27 @@ export interface components {
             pieces: string[];
             preview?: string;
         };
-        VoiceOutputSettings: {
+        ElevenLabsOutputSettings: {
             url: string;
             model: string;
             api_key: components["schemas"]["Identifier"];
             output_format: string;
+            readonly supports_speed?: boolean;
+        };
+        VoiceOutputSettings: {
+            elevenlabs?: components["schemas"]["ElevenLabsOutputSettings"];
+            url: string;
+            model: string;
+            api_key: string;
+            output_format: string;
             default_voice: string;
         };
         VoiceOutputRuntime: {
+            /**
+             * @description Defaults to fishaudio when omitted.
+             * @enum {string}
+             */
+            provider?: "fishaudio" | "elevenlabs";
             url: string;
             model: string;
             output_format: string;
@@ -601,15 +634,25 @@ export interface components {
             seq: components["schemas"]["UnsignedInteger"];
         };
         AudioDownloadRequest: {
+            /**
+             * @description Defaults to fishaudio when omitted.
+             * @enum {string}
+             */
+            provider?: "fishaudio" | "elevenlabs";
             vault_name: string;
-            reference_id: string;
+            reference_id?: string;
             settings?: {
                 speed?: number;
             };
         };
         AudioDownloadBatchEntry: {
+            /**
+             * @description Defaults to fishaudio when omitted.
+             * @enum {string}
+             */
+            provider?: "fishaudio" | "elevenlabs";
             entry_id: number;
-            reference_id: string;
+            reference_id?: string;
             settings?: {
                 speed?: number;
             };

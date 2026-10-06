@@ -220,6 +220,7 @@ export interface ChaClient {
     referenceId: string | undefined,
     settings: { speed?: number } | undefined,
     signal?: AbortSignal,
+    provider?: 'fishaudio' | 'elevenlabs',
   ): Promise<MediaResource>;
   releaseResource(resourceId: string): Promise<void>;
   connectVoiceInput(
@@ -289,6 +290,7 @@ function isOptionalBoundedNumber(value: unknown, minimum: number, maximum: numbe
 function isSpeechVoice(value: unknown): value is SpeechVoice {
   return isRecord(value)
     && hasIdentity(value)
+    && (value.provider === undefined || isOneOf(value.provider, ['fishaudio', 'elevenlabs']))
     && typeof value.elevenlabs_voice_id === 'string'
     && value.elevenlabs_voice_id.length > 0
     && isRecord(value.settings)
@@ -427,6 +429,7 @@ function isNullableBoundedNumber(
 export function isVoiceDetail(value: unknown): value is VoiceDetail {
   return isRecord(value) && hasIdentity(value)
     && typeof value.description === 'string'
+    && (value.provider === undefined || isOneOf(value.provider, ['fishaudio', 'elevenlabs']))
     && typeof value.elevenlabs_voice_id === 'string'
     && value.elevenlabs_voice_id.length > 0
     && isNullableBoundedNumber(value.speed, 0.7, 1.2)
@@ -520,16 +523,21 @@ export function isWebSearchSettings(value: unknown): value is WebSearchSettings 
 }
 
 export function isVoiceOutputSettings(value: unknown): value is VoiceOutputSettings {
-  return isRecord(value)
-    && typeof value.url === 'string' && value.url.length > 0
-    && typeof value.model === 'string' && value.model.length > 0
-    && typeof value.api_key === 'string' && value.api_key.length > 0
-    && typeof value.output_format === 'string' && value.output_format.length > 0
-    && typeof value.default_voice === 'string' && value.default_voice.length > 0;
+  if (!isRecord(value) || typeof value.url !== 'string' || typeof value.model !== 'string'
+    || typeof value.api_key !== 'string' || typeof value.output_format !== 'string'
+    || typeof value.default_voice !== 'string' || !value.default_voice) return false;
+  const eleven = value.elevenlabs;
+  return eleven === undefined || (isRecord(eleven)
+    && typeof eleven.url === 'string' && eleven.url.length > 0
+    && typeof eleven.model === 'string' && eleven.model.length > 0
+    && typeof eleven.api_key === 'string' && eleven.api_key.length > 0
+    && typeof eleven.output_format === 'string' && eleven.output_format.length > 0
+    && (eleven.supports_speed === undefined || typeof eleven.supports_speed === 'boolean'));
 }
 
 export function isVoiceOutputRuntime(value: unknown): value is VoiceOutputRuntime {
   return isRecord(value)
+    && (value.provider === undefined || isOneOf(value.provider, ['fishaudio', 'elevenlabs']))
     && typeof value.url === 'string' && value.url.length > 0
     && typeof value.model === 'string' && value.model.length > 0
     && typeof value.output_format === 'string' && value.output_format.length > 0

@@ -1571,7 +1571,8 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_update(
     std::string_view display_name,
     std::string_view description,
     std::string_view elevenlabs_voice_id,
-    const VoiceSettings& settings) {
+    const VoiceSettings& settings,
+    std::string_view provider) {
     return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         std::vector<std::string> affected =
             forums_using_voice(workspace, voice_id);
@@ -1579,8 +1580,8 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_update(
         const bool default_voice = previous && workspace.voice_output()
             && workspace.voice_output()->default_voice == previous->label;
         editor.write_voice(
-            voice_id, display_name, description, elevenlabs_voice_id, settings);
-        if (default_voice) {
+            voice_id, display_name, description, elevenlabs_voice_id, settings, provider);
+        if (default_voice && previous->label != display_name) {
             WorkspaceVoiceOutput output = *workspace.voice_output();
             output.default_voice = std::string(display_name);
             editor.write_voice_output(output);
@@ -1592,7 +1593,8 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_update(
 std::string WorkspaceConfigStore::create_voice(
     std::string_view display_name,
     std::string_view description,
-    std::string_view elevenlabs_voice_id) {
+    std::string_view elevenlabs_voice_id,
+    std::string_view provider) {
     std::string voice_id;
     (void)impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         for (std::size_t suffix = 1;; ++suffix) {
@@ -1606,7 +1608,7 @@ std::string WorkspaceConfigStore::create_voice(
             }
         }
         editor.create_voice(
-            voice_id, display_name, description, elevenlabs_voice_id);
+            voice_id, display_name, description, elevenlabs_voice_id, provider);
         return std::vector<std::string>{};
     });
     return voice_id;

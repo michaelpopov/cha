@@ -436,20 +436,29 @@ StyleUpdate parse_style_update(const nlohmann::json& json) {
 }
 
 CreateVoiceRequest parse_create_voice_request(const nlohmann::json& json) {
-    if (!json.is_object() || json.size() != 3) {
+    if (!json.is_object() || (json.size() != 3 && json.size() != 4)) {
         throw std::invalid_argument("Invalid voice");
+    }
+    for (const auto& [name, value] : json.items()) {
+        if (name != "display_name" && name != "description" && name != "elevenlabs_voice_id"
+            && name != "provider") throw std::invalid_argument("Invalid voice");
     }
     return {
         .display_name = required_field<std::string>(json, "display_name"),
         .description = required_field<std::string>(json, "description"),
         .elevenlabs_voice_id =
             required_field<std::string>(json, "elevenlabs_voice_id"),
+        .provider = json.contains("provider") ? required_field<std::string>(json, "provider") : "fishaudio",
     };
 }
 
 VoiceUpdate parse_voice_update(const nlohmann::json& json) {
-    if (!json.is_object() || json.size() != 4) {
+    if (!json.is_object() || (json.size() != 4 && json.size() != 5)) {
         throw std::invalid_argument("Invalid voice");
+    }
+    for (const auto& [name, value] : json.items()) {
+        if (name != "display_name" && name != "description" && name != "elevenlabs_voice_id"
+            && name != "provider" && name != "speed") throw std::invalid_argument("Invalid voice");
     }
     return {
         .display_name = required_field<std::string>(json, "display_name"),
@@ -459,6 +468,7 @@ VoiceUpdate parse_voice_update(const nlohmann::json& json) {
         .settings = {
             .speed = settings_nullable_double(json, "speed"),
         },
+        .provider = json.contains("provider") ? required_field<std::string>(json, "provider") : "fishaudio",
     };
 }
 
@@ -519,14 +529,33 @@ VoiceInputSettings parse_voice_input_settings(const nlohmann::json& json) {
 }
 
 VoiceOutputSettings parse_voice_output_settings(const nlohmann::json& json) {
-    exact_keys(json, {"url", "model", "api_key", "output_format", "default_voice"});
-    return {
+    if (json.contains("elevenlabs"))
+        exact_keys(json, {"url", "model", "api_key", "output_format", "default_voice", "elevenlabs"});
+    else
+        exact_keys(json, {"url", "model", "api_key", "output_format", "default_voice"});
+    VoiceOutputSettings settings{
         .url = required_field<std::string>(json, "url"),
         .model = required_field<std::string>(json, "model"),
         .api_key = required_field<std::string>(json, "api_key"),
         .output_format = required_field<std::string>(json, "output_format"),
         .default_voice = required_field<std::string>(json, "default_voice"),
     };
+    if (json.contains("elevenlabs") && !json["elevenlabs"].is_null()) {
+        const auto& eleven = json["elevenlabs"];
+        if (eleven.contains("supports_speed")) {
+            exact_keys(eleven, {"url", "model", "api_key", "output_format", "supports_speed"});
+            (void)required_field<bool>(eleven, "supports_speed");
+        } else {
+            exact_keys(eleven, {"url", "model", "api_key", "output_format"});
+        }
+        settings.elevenlabs = ElevenLabsOutputSettings{
+            .url = required_field<std::string>(eleven, "url"),
+            .model = required_field<std::string>(eleven, "model"),
+            .api_key = required_field<std::string>(eleven, "api_key"),
+            .output_format = required_field<std::string>(eleven, "output_format"),
+        };
+    }
+    return settings;
 }
 
 CreateApiKeyRequest parse_create_api_key_request(const nlohmann::json& json) {

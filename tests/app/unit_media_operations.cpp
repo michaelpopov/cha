@@ -360,5 +360,65 @@ TEST(ApplicationMedia, RejectsUnknownAudioSourcesAndClearsConnectionResources) {
     (void)application->join_shutdown(2s);
 }
 
+
+TEST(ApplicationMedia, DefaultElevenLabsVoiceUsesItsCredentialAndStreamsAudio) {
+    MockHttpServer server({http_response("audio/mpeg", "ELEVEN")});
+    server.start();
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    const auto key = application->create_api_key({.display_name = "Eleven", .value = "eleven-secret"}, epoch);
+    const auto voice = application->create_voice({.display_name = "Eleven Reader", .elevenlabs_voice_id = "eleven-ref",
+        .provider = "elevenlabs"}, epoch);
+    (void)application->save_voice_output_settings({.output_format = "mp3", .default_voice = voice.display_name,
+        .elevenlabs = ElevenLabsOutputSettings{.url = "https://api.elevenlabs.io/v1/text-to-speech",
+            .model = "eleven_multilingual_v2", .api_key = key.id, .output_format = "mp3_44100_128"}}, epoch);
+    application->set_speech_url_override("http://127.0.0.1:" + std::to_string(server.port()) + "/v1/text-to-speech");
+    const auto result = wait_reply(application->start_speech("view-1", 7, "Hello", {}, epoch));
+    EXPECT_EQ(result["streaming"], true);
+    const auto body = wait_resource(*application, result["resource_id"].get<std::string>());
+    ASSERT_TRUE(body);
+    EXPECT_EQ(body->body, "ELEVEN");
+    server.join();
+    const auto requests = server.requests();
+    ASSERT_EQ(requests.size(), 1U);
+    EXPECT_NE(requests[0].find("xi-api-key: eleven-secret"), std::string::npos);
+    EXPECT_NE(requests[0].find("/eleven-ref/stream?output_format=mp3_44100_128"), std::string::npos);
+    application->request_shutdown();
+    (void)application->join_shutdown(2s);
+}
+
+
+TEST(ApplicationMedia, PreviewReportsTheElevenLabsAuthenticationError) {
+    const nlohmann::json error = {{"detail", {{"code", "invalid_api_key"},
+        {"message", "API key ID used as API key."}}}};
+    const auto body = error.dump();
+    MockHttpServer server({"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: "
+        + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body});
+    server.start();
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    const auto key = application->create_api_key({.display_name = "Eleven", .value = "key-id"}, epoch);
+    const auto voice = application->create_voice({.display_name = "Reader", .elevenlabs_voice_id = "voice-id",
+        .provider = "elevenlabs"}, epoch);
+    (void)application->save_voice_output_settings({.output_format = "mp3", .default_voice = voice.display_name,
+        .elevenlabs = ElevenLabsOutputSettings{.url = "https://api.elevenlabs.io/v1/text-to-speech",
+            .model = "eleven_multilingual_v2", .api_key = key.id, .output_format = "mp3_44100_128"}}, epoch);
+    application->set_speech_url_override("http://127.0.0.1:" + std::to_string(server.port()) + "/v1/text-to-speech");
+    try {
+        (void)wait_reply(application->start_speech("view-1", 7, "Hello", {}, epoch));
+        FAIL() << "Expected authentication error";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::internal_error);
+        EXPECT_EQ(std::string(error.what()), "ElevenLabs (HTTP 400): API key ID used as API key.");
+    }
+    server.join();
+    application->request_shutdown();
+    (void)application->join_shutdown(2s);
+}
+
 } // namespace
 } // namespace cha::app

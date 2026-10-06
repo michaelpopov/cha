@@ -715,6 +715,9 @@ describe('live chat', () => {
     act(() => events.handlers[0].onSnapshot(snapshot));
     await waitFor(() => expect(startAudioDownloadBatch).toHaveBeenCalledOnce());
     expect(startAudioDownloadBatch.mock.calls[0][2].entries).toHaveLength(3);
+    expect(startAudioDownloadBatch.mock.calls[0][2].entries).toEqual([
+      { entry_id: 1 }, { entry_id: 2 }, { entry_id: 3 },
+    ]);
     expect(startAudioDownload).not.toHaveBeenCalled();
     fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Another prompt' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
@@ -911,7 +914,7 @@ describe('live chat', () => {
     act(() => events.handlers[0].onSnapshot({ ...completed, transcript: [...completed.transcript] }));
     expect(startAudioDownload).toHaveBeenCalledOnce();
     expect(startAudioDownload).toHaveBeenCalledWith('entrance', 'welcome', 4,
-      { vault_name: 'Personal', reference_id: 'character-voice', settings: { speed: 0.8 } });
+      { vault_name: 'Personal', reference_id: 'character-voice', provider: 'fishaudio', settings: { speed: 0.8 } });
     await waitFor(() => expect(play).toHaveBeenCalledOnce());
   });
 

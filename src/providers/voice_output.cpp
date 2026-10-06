@@ -1,6 +1,7 @@
-#include "providers/fish_audio.h"
+#include "providers/voice_output.h"
 
 #include "util/curl.h"
+#include "providers/voice_output_config.h"
 #include "util/logging.h"
 #include "util/text.h"
 #include "workspace/workspace.h"
@@ -17,7 +18,7 @@ namespace cha {
 namespace {
 using Json = nlohmann::json;
 
-std::string prepare_speech_text(std::string_view source) {
+std::string prepare_speech_text(std::string_view source, const char* pause = " [long pause] ") {
     std::string text = remove_url_references(source);
     const auto multiline = std::regex::ECMAScript | std::regex::multiline;
     static const std::regex line_prefix(
@@ -54,7 +55,7 @@ std::string prepare_speech_text(std::string_view source) {
         if (plain == text) break;
         text = std::move(plain);
     }
-    return std::regex_replace(std::string(trim_view(text)), paragraph_break, " [long pause] ");
+    return std::regex_replace(std::string(trim_view(text)), paragraph_break, pause);
 }
 
 bool valid_audio_type(std::string_view value) {
@@ -90,7 +91,7 @@ std::size_t receive_audio(char* data, std::size_t size, std::size_t count, void*
 
 void require_curl(CURLcode result, const char* detail = "") {
     if (result != CURLE_OK) {
-        std::string message = "FishAudio request failed (curl " + std::to_string(result)
+        std::string message = "Voice output request failed (curl " + std::to_string(result)
             + "): " + curl_easy_strerror(result);
         if (*detail) message += "; " + std::string(detail);
         throw std::runtime_error(message);
@@ -103,7 +104,7 @@ bool perform_transfer(CURL* curl, const char* error_buffer, const std::function<
     if (!multi) throw std::runtime_error("Could not create curl transfer");
     const auto require = [](CURLMcode result) {
         if (result != CURLM_OK) {
-            throw std::runtime_error("FishAudio transfer failed (curl multi "
+            throw std::runtime_error("Voice output transfer failed (curl multi "
                 + std::to_string(result) + "): " + curl_multi_strerror(result));
         }
     };
@@ -118,7 +119,7 @@ bool perform_transfer(CURL* curl, const char* error_buffer, const std::function<
     } while (running);
     int remaining = 0;
     const CURLMsg* result = curl_multi_info_read(multi.get(), &remaining);
-    if (!result || result->msg != CURLMSG_DONE) throw std::runtime_error("FishAudio transfer returned no result");
+    if (!result || result->msg != CURLMSG_DONE) throw std::runtime_error("Voice output transfer returned no result");
     require_curl(result->data.result, error_buffer);
     return !cancelled();
 }
@@ -131,28 +132,31 @@ std::string entry_speech_text(const EntryAudioLookup& entry) {
     return std::regex_replace(remove_url_references(entry.entry_text), timestamp_prefix, "");
 }
 
-struct FishAudioResult { long status; EntryAudio audio; };
+struct VoiceOutputResult { long status; EntryAudio audio; };
 
-static std::optional<FishAudioResult> transfer_fish_audio(
-    const WorkspaceVoiceOutput& output, const std::string& key,
-    const FishAudioRequest& request,
+static std::optional<VoiceOutputResult> transfer_voice_output(
+    const WorkspaceVoiceProviderOutput& output, const std::string& key,
+    const VoiceOutputRequest& request,
     const std::function<bool()>& cancelled, const AudioChunkCallback& on_audio) {
     if (cancelled()) {
         return std::nullopt;
     }
     CurlHandle curl;
     CurlHeaders headers;
-    for (const std::string& header : {
-             std::string("Content-Type: application/json"),
-             "Authorization: Bearer " + key, "model: " + request.model}) {
-        headers.append(header);
+    headers.append("Content-Type: application/json");
+    if (request.provider == "elevenlabs") {
+        headers.append("xi-api-key: " + key);
+    } else {
+        headers.append("Authorization: Bearer " + key);
+        headers.append("model: " + request.model);
     }
     char error_buffer[CURL_ERROR_SIZE]{};
     const auto require = [&](CURLcode result) { require_curl(result, error_buffer); };
     const std::string body = request.body.dump();
     AudioReceiver receiver{curl.get(), {}, on_audio, {}};
     require(curl_easy_setopt(curl.get(), CURLOPT_ERRORBUFFER, error_buffer));
-    require(curl_easy_setopt(curl.get(), CURLOPT_URL, output.url.c_str()));
+    const auto& url = request.url.empty() ? output.url : request.url;
+    require(curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str()));
     require(curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS, body.c_str()));
     require(curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers.get()));
     require(curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, receive_audio));
@@ -172,19 +176,19 @@ static std::optional<FishAudioResult> transfer_fish_audio(
     char* content_type = nullptr;
     require(curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status));
     require(curl_easy_getinfo(curl.get(), CURLINFO_CONTENT_TYPE, &content_type));
-    return FishAudioResult{status, {std::move(receiver.body), content_type ? content_type : ""}};
+    return VoiceOutputResult{status, {std::move(receiver.body), content_type ? content_type : ""}};
 }
 
-std::optional<EntryAudio> download_fish_audio(
-    const WorkspaceVoiceOutput& output, const std::string& key,
-    const FishAudioRequest& request, const std::function<bool()>& cancelled,
+std::optional<EntryAudio> download_voice_output(
+    const WorkspaceVoiceProviderOutput& output, const std::string& key,
+    const VoiceOutputRequest& request, const std::function<bool()>& cancelled,
     const AudioChunkCallback& on_audio) {
-    auto result = transfer_fish_audio(output, key, request, cancelled, on_audio);
+    auto result = transfer_voice_output(output, key, request, cancelled, on_audio);
     if (!result) return std::nullopt;
-    if (result->status != 200) throw std::runtime_error("FishAudio request failed (HTTP " + std::to_string(result->status) + ").");
+    if (result->status != 200) throw std::runtime_error(voice_output_http_error_message(request.provider, result->status, result->audio.audio));
     auto& audio = result->audio;
     if (!valid_entry_audio(audio))
-        throw std::runtime_error("FishAudio returned invalid audio.");
+        throw std::runtime_error("Voice provider returned invalid audio.");
     return std::move(audio);
 }
 
@@ -194,20 +198,9 @@ bool valid_entry_audio(const EntryAudio& audio) {
     return !audio.audio.empty() && valid_audio_type(audio.content_type);
 }
 
-std::string fish_audio_http_error_message(long status) {
-    switch (status) {
-    case 401: return "Authentication failed. Check the FishAudio API key.";
-    case 403: return "Access denied by FishAudio.";
-    case 402: return "Insufficient FishAudio credits.";
-    case 413: return "Text is too large for FishAudio.";
-    case 429: return "FishAudio rate limit reached. Try again shortly.";
-    default: return "FishAudio request failed.";
-    }
-}
-
-FishAudioTransfer FishAudioProxy::synthesize(
-    const WorkspaceVoiceOutput& output, const std::string& key,
-    const FishAudioRequest& request, const std::function<bool()>& cancelled,
+VoiceOutputTransfer VoiceOutputProxy::synthesize(
+    const WorkspaceVoiceProviderOutput& output, const std::string& key,
+    const VoiceOutputRequest& request, const std::function<bool()>& cancelled,
     const AudioChunkCallback& on_audio) {
     // counting_semaphore::try_acquire may fail spuriously under contention.
     auto available = slots_.load();
@@ -218,7 +211,7 @@ FishAudioTransfer FishAudioProxy::synthesize(
         std::atomic_size_t& slots;
         ~ReleaseSlot() { slots++; }
     } release{slots_};
-    auto result = transfer_fish_audio(
+    auto result = transfer_voice_output(
         output, key, request, [&] { return stopped_ || cancelled(); }, on_audio);
     if (!result) return {.cancelled = true};
     return {
@@ -227,9 +220,11 @@ FishAudioTransfer FishAudioProxy::synthesize(
     };
 }
 
-FishAudioSynthesis decode_fish_audio_synthesis(const Json& input) {
-    FishAudioSynthesis synthesis;
+VoiceSynthesis decode_voice_synthesis(const Json& input) {
+    VoiceSynthesis synthesis;
     try {
+        synthesis.provider = input.value("provider", std::string("fishaudio"));
+        validate_voice_output_provider(synthesis.provider);
         if (input.contains("reference_id")) {
             synthesis.reference_id = input.at("reference_id").get<std::string>();
         }
@@ -243,15 +238,84 @@ FishAudioSynthesis decode_fish_audio_synthesis(const Json& input) {
             }
         }
     } catch (const Json::exception&) {
-        synthesis.decoding_failure = std::make_exception_ptr(std::invalid_argument("Invalid FishAudio request"));
+        synthesis.decoding_failure = std::make_exception_ptr(std::invalid_argument("Invalid voice output request"));
     } catch (...) {
         synthesis.decoding_failure = std::current_exception();
     }
     return synthesis;
 }
 
-FishAudioRequest make_fish_audio_request(
-    const WorkspaceVoiceOutput& output, std::string_view text, const FishAudioSynthesis& synthesis) {
+WorkspaceVoiceProviderOutput select_voice_output(const WorkspaceVoiceOutput& configured, std::string_view provider) {
+    validate_voice_output_provider(provider);
+    const auto& output = provider == "elevenlabs" ? configured.elevenlabs : configured.fishaudio;
+    if (!output) throw std::invalid_argument(std::string(provider == "elevenlabs" ? "ElevenLabs" : "FishAudio")
+        + " voice output is not configured.");
+    return *output;
+}
+
+std::string voice_output_http_error_message(std::string_view provider, long status, std::string_view body) {
+    const std::string name = provider == "elevenlabs" ? "ElevenLabs" : "FishAudio";
+    const Json error = Json::parse(body, nullptr, false);
+    if (error.is_object()) {
+        const Json& detail = error.contains("detail") ? error["detail"]
+            : error.contains("error") ? error["error"] : error;
+        const Json& message = detail.is_object() && detail.contains("message") ? detail["message"] : detail;
+        if (message.is_string()) {
+            const auto text = trim_view(message.get_ref<const std::string&>());
+            if (!text.empty()) {
+                auto length = std::min(text.size(), std::size_t{1024});
+                while (length < text.size() && (static_cast<unsigned char>(text[length]) & 0xc0) == 0x80)
+                    --length;
+                return name + " (HTTP " + std::to_string(status) + "): " + std::string(text.substr(0, length));
+            }
+        }
+    }
+    switch (status) {
+    case 401: return "Authentication failed. Check the " + name + " API key.";
+    case 403: return "Access denied by " + name + ".";
+    case 402: return "Insufficient " + name + " credits.";
+    case 413: return "Text is too large for " + name + ".";
+    case 429: return name + " rate limit reached. Try again shortly.";
+    default: return name + " request failed.";
+    }
+}
+
+VoiceOutputRequest make_voice_output_request(
+    const WorkspaceVoiceProviderOutput& output, std::string_view text, const VoiceSynthesis& synthesis) {
+    validate_voice_output_provider(synthesis.provider);
+    if (synthesis.provider == "fishaudio") return make_fish_audio_request(output, text, synthesis);
+    if (synthesis.decoding_failure) std::rethrow_exception(synthesis.decoding_failure);
+    if (!synthesis.reference_id || synthesis.reference_id->empty())
+        throw std::invalid_argument("Missing voice ID");
+    const auto spoken = prepare_speech_text(text, "\n\n");
+    if (spoken.empty()) throw std::invalid_argument("Missing speech text");
+    for (const auto& name : synthesis.ignored_settings)
+        log_warn("Ignoring unsupported ElevenLabs voice setting: " + name);
+    char* escaped = curl_easy_escape(nullptr, synthesis.reference_id->c_str(),
+        static_cast<int>(synthesis.reference_id->size()));
+    if (!escaped) throw std::runtime_error("Could not encode voice ID");
+    const std::unique_ptr<char, decltype(&curl_free)> encoded(escaped, curl_free);
+    auto base = output.url;
+    while (base.ends_with('/')) base.pop_back();
+    VoiceOutputRequest request{
+        .model = output.model,
+        .body = {{"text", spoken}, {"model_id", output.model}},
+        .provider = "elevenlabs",
+        .url = base + "/" + escaped + "/stream?output_format="
+            + normalize_elevenlabs_output_format(output.output_format),
+    };
+    if (synthesis.settings.speed) {
+        if (elevenlabs_supports_speed(output.model)) {
+            const double speed = *synthesis.settings.speed;
+            if (!std::isfinite(speed) || speed < 0.7 || speed > 1.2) throw std::invalid_argument("Invalid speed");
+            request.body["voice_settings"] = {{"speed", speed}};
+        }
+    }
+    return request;
+}
+
+VoiceOutputRequest make_fish_audio_request(
+    const WorkspaceVoiceProviderOutput& output, std::string_view text, const VoiceSynthesis& synthesis) {
     if (!synthesis.reference_id) throw std::invalid_argument("Invalid FishAudio request");
     if (text.empty() || synthesis.reference_id->empty()) throw std::invalid_argument("Missing text or voice ID");
     if (synthesis.decoding_failure) std::rethrow_exception(synthesis.decoding_failure);
@@ -260,7 +324,7 @@ FishAudioRequest make_fish_audio_request(
     }
     const auto spoken = prepare_speech_text(text);
     if (spoken.empty()) throw std::invalid_argument("Missing speech text");
-    FishAudioRequest request{
+    VoiceOutputRequest request{
         .model = output.model,
         .body = {{"text", spoken}, {"reference_id", *synthesis.reference_id}, {"format", output.output_format},
             {"temperature", 0.5}, {"latency", "normal"}},
@@ -273,10 +337,10 @@ FishAudioRequest make_fish_audio_request(
     return request;
 }
 
-FishAudioRequest make_fish_audio_request(
-    const WorkspaceVoiceOutput& output, const Json& input) try {
+VoiceOutputRequest make_fish_audio_request(
+    const WorkspaceVoiceProviderOutput& output, const Json& input) try {
     const auto text = input.at("text").get<std::string>();
-    return make_fish_audio_request(output, text, decode_fish_audio_synthesis(input));
+    return make_fish_audio_request(output, text, decode_voice_synthesis(input));
 } catch (const Json::exception&) {
     throw std::invalid_argument("Invalid FishAudio request");
 }

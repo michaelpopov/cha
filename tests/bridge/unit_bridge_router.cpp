@@ -1700,6 +1700,28 @@ TEST_F(BridgeRouterTest, HumanAudioRequestsReturnInvalidArgument) {
     }
 }
 
+TEST_F(BridgeRouterTest, InvalidVoiceProvidersReturnInvalidArgument) {
+    bootstrap_epoch();
+    const auto voice = call("voice.create", {{"display_name", "Reader"}, {"description", ""},
+        {"elevenlabs_voice_id", "voice"}});
+    ASSERT_TRUE(voice["ok"]);
+    for (const nlohmann::json& provider : {nlohmann::json(1), nlohmann::json(nullptr), nlohmann::json("eleven")}) {
+        const auto create = call("voice.create", {{"display_name", "Other"}, {"description", ""},
+            {"elevenlabs_voice_id", "voice"}, {"provider", provider}});
+        EXPECT_FALSE(create["ok"]);
+        EXPECT_EQ(create["error"]["code"], "invalid_argument");
+        const auto update = call("voice.update", {{"voice_id", voice["result"]["id"]},
+            {"display_name", "Reader"}, {"description", ""}, {"elevenlabs_voice_id", "voice"},
+            {"speed", nullptr}, {"provider", provider}});
+        EXPECT_FALSE(update["ok"]);
+        EXPECT_EQ(update["error"]["code"], "invalid_argument");
+        const auto speech = call("speech.start", {{"text", "Hello"}, {"provider", provider}});
+        EXPECT_FALSE(speech["ok"]);
+        EXPECT_EQ(speech["error"]["code"], "invalid_argument");
+        EXPECT_EQ(speech["error"]["message"].get<std::string>().find("FishAudio"), std::string::npos);
+    }
+}
+
 TEST_F(BridgeRouterTest, SpeechAndAudioMethodsUseOpaqueResources) {
     MockHttpServer server({http_response("audio/mpeg", "AUDIO")});
     server.start();

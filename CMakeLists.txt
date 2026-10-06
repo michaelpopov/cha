@@ -304,7 +304,7 @@ add_library(cha_lib STATIC
     src/storage/sqlite_storage.cpp
     src/storage/workspace_session_database.cpp
     src/app/application_config.cpp
-    src/providers/fish_audio.cpp
+    src/providers/voice_output.cpp
     src/app/r2_database_transfer.cpp
     src/workspace/workspace.cpp
     src/workspace/workspace_config_store.cpp
@@ -527,7 +527,7 @@ if(BUILD_TESTING)
         tests/app/unit_vault_maintenance.cpp
         tests/runtime/unit_session_output.cpp
         tests/app/unit_session_retirement.cpp
-        tests/providers/unit_fish_audio.cpp
+        tests/providers/unit_voice_output.cpp
         tests/media/unit_audio_download.cpp
         tests/media/unit_xai_transcript.cpp
         tests/media/unit_xai_voice.cpp

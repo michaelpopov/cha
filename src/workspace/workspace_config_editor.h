@@ -39,12 +39,14 @@ public:
         std::string_view display_name,
         std::string_view description,
         std::string_view elevenlabs_voice_id,
-        const VoiceSettings& settings);
+        const VoiceSettings& settings,
+        std::string_view provider = "fishaudio");
     void create_voice(
         std::string_view voice_id,
         std::string_view display_name,
         std::string_view description,
-        std::string_view elevenlabs_voice_id);
+        std::string_view elevenlabs_voice_id,
+        std::string_view provider = "fishaudio");
     void delete_voice(std::string_view voice_id);
     void write_jev(const std::optional<WorkspaceJev>& settings);
     void write_session_naming(const WorkspaceSessionNaming& settings);

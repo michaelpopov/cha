@@ -532,11 +532,10 @@ export function ChatScreen({
 
   const speechRequest = useCallback((entry: SessionSnapshot['transcript'][number]): AudioDownloadBatchEntry => {
     const voice = speechVoices.get(entry.participant_id);
-    return { entry_id: entry.id,
-      reference_id: voice?.elevenlabs_voice_id ?? textToSpeechConfiguration!.voiceId,
-      settings: voice?.settings ?? {},
-    };
-  }, [speechVoices, textToSpeechConfiguration]);
+    return voice ? { entry_id: entry.id, reference_id: voice.elevenlabs_voice_id,
+      provider: voice.provider ?? 'fishaudio', settings: voice.settings,
+    } : { entry_id: entry.id };
+  }, [speechVoices]);
 
   useEffect(() => {
     // Reset once when this observer changes sessions/vaults or clears audio.

@@ -200,11 +200,13 @@ public:
         std::string_view display_name,
         std::string_view description,
         std::string_view elevenlabs_voice_id,
-        const VoiceSettings& settings);
+        const VoiceSettings& settings,
+        std::string_view provider = "fishaudio");
     std::string create_voice(
         std::string_view display_name,
         std::string_view description,
-        std::string_view elevenlabs_voice_id);
+        std::string_view elevenlabs_voice_id,
+        std::string_view provider = "fishaudio");
     WorkspaceConfigEditResult apply_voice_delete(
         std::string_view voice_id);
     void apply_jev_update(const std::optional<WorkspaceJev>& settings);

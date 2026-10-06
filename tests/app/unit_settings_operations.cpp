@@ -445,5 +445,142 @@ TEST(ApplicationSettings, SavesXaiVoiceInputWithoutVoiceOutput) {
     EXPECT_TRUE(reopened->join_shutdown(2s));
 }
 
+
+TEST(ApplicationSettings, EditsDefaultVoiceWhenElevenLabsConfigurationWasIgnored) {
+    test::TestWorkspace workspace;
+    workspace.write_voice("reader", "display_name = 'Reader'\nelevenlabs_voice_id = 'eleven-id'\nprovider = 'elevenlabs'\n");
+    const auto output_path = workspace.root() / "system" / "voice-output" / "config.toml";
+    std::filesystem::create_directories(output_path.parent_path());
+    const std::string output = "api_key = ''\ndefault_voice = 'Reader'\n[elevenlabs]\nurl = 'invalid'\n";
+    { std::ofstream file(output_path); file << output; }
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    auto epoch = application->context_epoch();
+    ASSERT_TRUE(application->get_voice_output_settings(epoch));
+    ASSERT_FALSE(application->get_voice_output_settings(epoch)->elevenlabs);
+    const VoiceUpdate update{.display_name = "Reader", .description = "Updated",
+        .elevenlabs_voice_id = "eleven-id", .settings = {.speed = 1.1}, .provider = "elevenlabs"};
+    const auto edited = application->update_voice("reader", update, epoch);
+    EXPECT_EQ(edited.description, "Updated");
+    EXPECT_EQ(edited.speed, 1.1);
+    EXPECT_EQ(application->get_voice_output_settings(epoch)->default_voice, "Reader");
+    auto renamed = update;
+    renamed.display_name = "Renamed Reader";
+    (void)application->update_voice("reader", renamed, epoch);
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    epoch = application->context_epoch();
+    EXPECT_EQ(application->get_voice_output_settings(epoch)->default_voice, "Renamed Reader");
+    EXPECT_EQ(application->list_voices(epoch).front().display_name, "Renamed Reader");
+    EXPECT_EQ(application->list_voices(epoch).front().speed, 1.1);
+}
+
+TEST(ApplicationSettings, RejectsUnconfiguredProviderChangesOnlyForTheDefaultVoice) {
+    for (const std::string provider : {"fishaudio", "elevenlabs"}) {
+        SCOPED_TRACE(provider);
+        test::TestWorkspace workspace;
+        const auto database = test::import_test_database(workspace.root());
+        auto application = Application::open(make_command(workspace, database));
+        const auto epoch = application->context_epoch();
+        const auto key = application->create_api_key({.display_name = "Voice key", .value = "secret"}, epoch);
+        const auto voice = application->create_voice({.display_name = "Reader",
+            .elevenlabs_voice_id = "voice-id", .provider = provider}, epoch);
+        VoiceOutputSettings output{.url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
+            .api_key = provider == "fishaudio" ? key.id : "", .output_format = "mp3", .default_voice = "Reader"};
+        const ElevenLabsOutputSettings eleven{.url = "https://api.elevenlabs.io/v1/text-to-speech",
+            .model = "eleven_v4_turbo", .api_key = key.id, .output_format = "mp3_44100_128"};
+        if (provider == "elevenlabs") output.elevenlabs = eleven;
+        (void)application->save_voice_output_settings(output, epoch);
+        const std::string other_provider = provider == "fishaudio" ? "elevenlabs" : "fishaudio";
+        const VoiceUpdate update{.display_name = "Renamed Reader", .description = "Updated",
+            .elevenlabs_voice_id = "other-id", .provider = other_provider};
+        try {
+            (void)application->update_voice(voice.id, update, epoch);
+            FAIL() << "The default voice must keep a configured provider";
+        } catch (const ApplicationError& error) {
+            EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+            EXPECT_EQ(std::string(error.what()), other_provider == "elevenlabs"
+                ? "ElevenLabs voice output is not configured." : "FishAudio voice output is not configured.");
+        }
+        const auto voices = application->list_voices(epoch);
+        ASSERT_EQ(voices.size(), 1U);
+        EXPECT_EQ(voices.front().provider, provider);
+        EXPECT_EQ(voices.front().display_name, "Reader");
+        EXPECT_EQ(voices.front().elevenlabs_voice_id, "voice-id");
+        auto runtime = application->get_voice_output_runtime(epoch);
+        ASSERT_TRUE(runtime);
+        EXPECT_EQ(runtime->provider, provider);
+        EXPECT_EQ(application->get_voice_output_settings(epoch)->default_voice, "Reader");
+
+        const auto nondefault = application->create_voice({.display_name = "Other",
+            .elevenlabs_voice_id = "other", .provider = provider}, epoch);
+        EXPECT_EQ(application->update_voice(nondefault.id, update, epoch).provider, other_provider);
+        ASSERT_TRUE(application->get_voice_output_runtime(epoch));
+
+        output.api_key = key.id;
+        output.elevenlabs = eleven;
+        (void)application->save_voice_output_settings(output, epoch);
+        auto valid_update = update;
+        valid_update.display_name = "Default Reader";
+        EXPECT_EQ(application->update_voice(voice.id, valid_update, epoch).provider, other_provider);
+        runtime = application->get_voice_output_runtime(epoch);
+        ASSERT_TRUE(runtime);
+        EXPECT_EQ(runtime->provider, other_provider);
+        EXPECT_EQ(runtime->default_voice_id, "other-id");
+    }
+}
+
+TEST(ApplicationSettings, KeepsLegacyFishVoicesAndPersistsElevenLabsAlongsideFishAudio) {
+    test::TestWorkspace workspace;
+    workspace.write_voice("legacy", "display_name = \"Legacy\"\nelevenlabs_voice_id = \"fish-id\"\n");
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    auto epoch = application->context_epoch();
+    EXPECT_EQ(application->list_voices(epoch).front().provider, "fishaudio");
+    const auto fish_key = application->create_api_key({.display_name = "Fish", .value = "fish-secret"}, epoch);
+    const auto eleven_key = application->create_api_key({.display_name = "Eleven", .value = "eleven-secret"}, epoch);
+    const auto eleven_voice = application->create_voice({.display_name = "Eleven Reader", .description = "Reader",
+        .elevenlabs_voice_id = "eleven-id", .provider = "elevenlabs"}, epoch);
+    EXPECT_EQ(eleven_voice.provider, "elevenlabs");
+    const auto fish_voice = application->create_voice({.display_name = "Fish Reader", .elevenlabs_voice_id = "new-fish"}, epoch);
+    EXPECT_EQ(fish_voice.provider, "fishaudio");
+    auto settings = application->save_voice_output_settings({
+        .url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro", .api_key = fish_key.id,
+        .output_format = "mp3", .default_voice = eleven_voice.display_name,
+        .elevenlabs = ElevenLabsOutputSettings{.url = "https://api.elevenlabs.io/v1/text-to-speech",
+            .model = "eleven_multilingual_v2", .api_key = eleven_key.id, .output_format = "mp3_44100_128"},
+    }, epoch);
+    ASSERT_TRUE(settings.elevenlabs);
+    EXPECT_TRUE(settings.elevenlabs->supports_speed);
+    EXPECT_EQ(settings.api_key, fish_key.id);
+    EXPECT_EQ(settings.elevenlabs->api_key, eleven_key.id);
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    epoch = application->context_epoch();
+    const auto reloaded = application->get_voice_output_settings(epoch);
+    ASSERT_TRUE(reloaded && reloaded->elevenlabs);
+    EXPECT_EQ(reloaded->elevenlabs->model, "eleven_multilingual_v2");
+    auto no_speed = *reloaded;
+    no_speed.elevenlabs->model = "eleven_v4_turbo";
+    EXPECT_FALSE(application->save_voice_output_settings(no_speed, epoch).elevenlabs->supports_speed);
+    const auto voices = application->list_voices(epoch);
+    EXPECT_EQ(voices.size(), 3U);
+    for (const auto& voice : voices)
+        EXPECT_EQ(voice.provider, voice.id == eleven_voice.id ? "elevenlabs" : "fishaudio");
+    // ElevenLabs can be the only configured service.
+    settings.api_key.clear();
+    settings.url = "obsolete endpoint";
+    settings.model.clear();
+    settings.output_format = "obsolete-format";
+    EXPECT_NO_THROW((void)application->save_voice_output_settings(settings, epoch));
+    const auto runtime = application->get_voice_output_runtime(epoch);
+    ASSERT_TRUE(runtime);
+    EXPECT_EQ(runtime->provider, "elevenlabs");
+    EXPECT_EQ(runtime->default_voice_id, "eleven-id");
+    settings.api_key = fish_key.id;
+    EXPECT_THROW((void)application->save_voice_output_settings(settings, epoch), ApplicationError);
+    EXPECT_THROW((void)application->create_voice({.display_name = "Bad", .elevenlabs_voice_id = "bad", .provider = "unknown"}, epoch), ApplicationError);
+}
+
 } // namespace
 } // namespace cha::app

@@ -2,7 +2,7 @@
 
 #include "storage/session_repository.h"
 #include "media/audio_stream.h"
-#include "providers/fish_audio.h"
+#include "providers/voice_output.h"
 #include "workspace/workspace.h"
 #include <array>
 #include <atomic>
@@ -33,11 +33,11 @@ struct AudioDownloadStatus {
 };
 struct AudioDownloadRequest {
     std::string vault_name;
-    FishAudioSynthesis synthesis;
+    VoiceSynthesis synthesis;
 };
 struct AudioDownloadBatchEntry {
     EntryId entry_id;
-    FishAudioSynthesis synthesis;
+    VoiceSynthesis synthesis;
 };
 struct AudioDownloadBatchRequest {
     std::string vault_name;
@@ -56,15 +56,15 @@ public:
 // always happen outside it. Jobs keep their identity after removal from jobs_.
 class AudioDownloadManager {
 public:
-    using Transport = std::function<std::optional<EntryAudio>(const WorkspaceVoiceOutput&,
-        const std::string&, const FishAudioRequest&, const std::function<bool()>&,
+    using Transport = std::function<std::optional<EntryAudio>(const WorkspaceVoiceProviderOutput&,
+        const std::string&, const VoiceOutputRequest&, const std::function<bool()>&,
         const AudioChunkCallback&)>;
     // Reads the active vault's name on each check, so a vault switch is seen
     // without holding a reference to the composition root.
     using ActiveVaultName = std::function<std::string()>;
     AudioDownloadManager(const SessionRepository& sessions,
         ActiveVaultName active_vault_name, bool enabled,
-        Transport transport = download_fish_audio);
+        Transport transport = download_voice_output);
     ~AudioDownloadManager();
     AudioAcceptance submit(const FullSessionId& session, EntryId id, const AudioDownloadRequest& input);
     std::vector<AudioAcceptance> submit_batch(const FullSessionId& session, const AudioDownloadBatchRequest& input);
@@ -83,9 +83,9 @@ private:
     using Key = std::tuple<std::string, std::string, EntryId>;
     struct Job {
         EntryAudioLookup entry;
-        WorkspaceVoiceOutput output;
+        WorkspaceVoiceProviderOutput output;
         std::string key;
-        FishAudioRequest request;
+        VoiceOutputRequest request;
         AudioJobState state{AudioJobState::queued};
         std::atomic_bool cancelled{false};
         std::shared_ptr<AudioStream> stream = std::make_shared<AudioStream>();
@@ -96,7 +96,7 @@ private:
     void worker();
     void run(const std::shared_ptr<Job>& job);
     void cancel_all();
-    std::shared_ptr<Job> prepare_job(const EntryAudioLookup& entry, const FishAudioSynthesis& synthesis);
+    std::shared_ptr<Job> prepare_job(const EntryAudioLookup& entry, const VoiceSynthesis& synthesis);
     const SessionRepository& sessions_;
     ActiveVaultName active_vault_name_;
     bool enabled_;

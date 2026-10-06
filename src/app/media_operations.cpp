@@ -8,7 +8,8 @@
 #include "util/curl.h"
 #include "util/logging.h"
 #include "util/text.h"
-#include "providers/fish_audio.h"
+#include "providers/voice_output.h"
+#include "providers/voice_output_config.h"
 #include "workspace/workspace.h"
 
 #include <curl/curl.h>
@@ -158,13 +159,11 @@ void throw_audio_error(const AudioDownloadError& error) {
     throw ApplicationError(ErrorCode::speech_busy, error.what());
 }
 
-void throw_speech_provider_error(long status, std::string_view body) {
-    if (status >= 400 && trim_view(body).empty()) {
-        throw ApplicationError(
-            ErrorCode::internal_error,
-            fish_audio_http_error_message(status));
-    }
-    throw ApplicationError(ErrorCode::internal_error, "FishAudio request failed.");
+void throw_speech_provider_error(std::string_view provider, long status, std::string_view body) {
+    const auto message = status >= 400 ? voice_output_http_error_message(provider, status, body)
+        : std::string("Voice provider returned invalid audio.");
+    log_warn(message);
+    throw ApplicationError(ErrorCode::internal_error, message);
 }
 
 std::optional<std::string> connect_voice_transcription(
@@ -250,35 +249,37 @@ std::shared_ptr<OperationReply> Application::start_speech(
     std::string_view connection_id,
     std::uint64_t request_id,
     std::string text,
-    FishAudioSynthesis synthesis,
+    VoiceSynthesis synthesis,
     std::uint64_t epoch) {
     auto reply = std::make_shared<OperationReply>();
-    WorkspaceVoiceOutput output;
+    WorkspaceVoiceProviderOutput output;
     std::string key;
-    FishAudioRequest request;
+    VoiceOutputRequest request;
     std::shared_ptr<PendingMediaRegistry::PendingMedia> pending;
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
+        if (synthesis.decoding_failure) std::rethrow_exception(synthesis.decoding_failure);
+        validate_voice_output_provider(synthesis.provider);
         const auto workspace = impl_->store->snapshot();
-        if (!workspace || !workspace->voice_output()
-            || !impl_->api_keys->find(workspace->voice_output()->api_key_id)) {
-            throw ApplicationError(
-                ErrorCode::not_found, "Voice output is not configured.");
+        if (!workspace || !workspace->voice_output()) {
+            throw ApplicationError(ErrorCode::not_found, "Voice output is not configured.");
         }
-        output = *workspace->voice_output();
-        if (impl_->speech_url_override) output.url = *impl_->speech_url_override;
+        const auto& configured = *workspace->voice_output();
         if (!synthesis.reference_id) {
-            const WorkspaceVoice* voice =
-                workspace->find_voice_by_name(output.default_voice);
-            if (!voice) {
-                throw ApplicationError(
-                    ErrorCode::not_found, "Voice output is not configured.");
-            }
+            const auto* voice = workspace->find_voice_by_name(configured.default_voice);
+            if (!voice) throw ApplicationError(ErrorCode::not_found, "Voice output is not configured.");
             synthesis.reference_id = voice->elevenlabs_voice_id;
+            synthesis.provider = voice->provider;
+            synthesis.settings = voice->settings;
         }
+        try { output = select_voice_output(configured, synthesis.provider); }
+        catch (const std::invalid_argument& error) { throw ApplicationError(ErrorCode::not_found, error.what()); }
+        if (!impl_->api_keys->find(output.api_key_id))
+            throw ApplicationError(ErrorCode::not_found, "Voice output is not configured.");
+        if (impl_->speech_url_override) output.url = *impl_->speech_url_override;
         key = impl_->api_keys->value(output.api_key_id);
-        request = make_fish_audio_request(output, text, synthesis);
+        request = make_voice_output_request(output, text, synthesis);
         pending = impl_->pending_media.remember(std::string(connection_id), request_id);
     }
     if (!impl_->background_jobs.launch(
@@ -322,7 +323,7 @@ std::shared_ptr<OperationReply> Application::start_speech(
                             "Speech generation is busy. Try again shortly.");
                     }
                     if (transfer.status != 200 || !valid_entry_audio(transfer.audio)) {
-                        throw_speech_provider_error(transfer.status, transfer.audio.audio);
+                        throw_speech_provider_error(request.provider, transfer.status, transfer.audio.audio);
                     }
                     stream->finish();
                     return;
@@ -333,7 +334,7 @@ std::shared_ptr<OperationReply> Application::start_speech(
                 } catch (const std::exception& error) {
                     log_warn(error.what());
                     reply->fail(
-                        ErrorCode::internal_error, "FishAudio request failed.");
+                        ErrorCode::internal_error, "Voice output request failed.");
                 } catch (...) {
                     reply->fail(ErrorCode::internal_error, {});
                 }

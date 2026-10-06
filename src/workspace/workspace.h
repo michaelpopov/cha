@@ -53,9 +53,10 @@ struct WorkspaceVoice {
     std::string id;
     std::string label;
     std::string description;
-    // Legacy configuration field name; contains a FishAudio reference ID.
+    // Provider voice ID; field name retained for compatibility.
     std::string elevenlabs_voice_id;
     VoiceSettings settings;
+    std::string provider{"fishaudio"};
 };
 
 inline constexpr std::string_view openai_voice_input_url_message =
@@ -99,11 +100,16 @@ struct WorkspaceWebSearch {
     std::string firecrawl_api_key_id;
 };
 
-struct WorkspaceVoiceOutput {
+struct WorkspaceVoiceProviderOutput {
     std::string url;
     std::string model;
     std::string api_key_id;
     std::string output_format;
+};
+
+struct WorkspaceVoiceOutput {
+    std::optional<WorkspaceVoiceProviderOutput> fishaudio;
+    std::optional<WorkspaceVoiceProviderOutput> elevenlabs;
     std::string default_voice;
 };
 

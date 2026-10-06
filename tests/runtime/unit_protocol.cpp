@@ -101,6 +101,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             {"id", "warm-narrator"},
             {"display_name", "Warm Narrator"},
             {"elevenlabs_voice_id", "eleven-voice-123"},
+            {"provider", "fishaudio"},
             {"settings", {
                 {"speed", 0.95},
             }},

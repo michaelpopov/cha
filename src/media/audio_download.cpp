@@ -1,4 +1,5 @@
 #include "media/audio_download.h"
+#include "providers/voice_output_config.h"
 #include "storage/not_found_error.h"
 #include "util/logging.h"
 #include "util/path_name.h"
@@ -99,22 +100,19 @@ AudioAcceptance AudioDownloadManager::submit(const FullSessionId& session, Entry
 }
 
 std::shared_ptr<AudioDownloadManager::Job> AudioDownloadManager::prepare_job(
-    const EntryAudioLookup& entry, const FishAudioSynthesis& synthesis) {
+    const EntryAudioLookup& entry, const VoiceSynthesis& synthesis) {
     if (entry.entry_kind != EntryKind::character) {
         throw std::invalid_argument("Voice output is only available for character replies.");
     }
+    if (synthesis.decoding_failure) std::rethrow_exception(synthesis.decoding_failure);
+    validate_voice_output_provider(synthesis.provider);
     auto job = std::make_shared<Job>();
     const auto workspace = sessions_.workspace();
     if (!workspace || !workspace->voice_output()) {
         throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
     }
     job->entry = entry;
-    job->output = *workspace->voice_output();
-    const auto* credential = workspace->find_api_key(job->output.api_key_id);
-    if (!credential) {
-        throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
-    }
-    job->key = credential->value;
+    const auto& output = *workspace->voice_output();
     auto resolved = synthesis;
     if (!resolved.reference_id) {
         const auto* character = workspace->find_character(entry.participant_id);
@@ -122,14 +120,22 @@ std::shared_ptr<AudioDownloadManager::Job> AudioDownloadManager::prepare_job(
             ? workspace->find_voice(*character->voice_id) : nullptr;
         if (voice) {
             resolved.reference_id = voice->elevenlabs_voice_id;
+            resolved.provider = voice->provider;
             resolved.settings = voice->settings;
-        } else if (const auto* fallback = workspace->find_voice_by_name(job->output.default_voice)) {
+        } else if (const auto* fallback = workspace->find_voice_by_name(output.default_voice)) {
             resolved.reference_id = fallback->elevenlabs_voice_id;
+            resolved.provider = fallback->provider;
+            resolved.settings = fallback->settings;
         } else {
             throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
         }
     }
-    job->request = make_fish_audio_request(job->output, entry_speech_text(entry), resolved);
+    try { job->output = select_voice_output(output, resolved.provider); }
+    catch (const std::invalid_argument& error) { throw AudioDownloadError(404, "not_found", error.what()); }
+    const auto* credential = workspace->find_api_key(job->output.api_key_id);
+    if (!credential) throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
+    job->key = credential->value;
+    job->request = make_voice_output_request(job->output, entry_speech_text(entry), resolved);
     return job;
 }
 
@@ -404,7 +410,7 @@ void AudioDownloadManager::run(const std::shared_ptr<Job>& job) {
                     if (!cancelled()) job->stream->append(type, bytes);
                 });
             if (!result || cancelled()) return;
-            if (!valid_entry_audio(*result)) throw std::runtime_error("FishAudio returned invalid audio.");
+            if (!valid_entry_audio(*result)) throw std::runtime_error("Voice provider returned invalid audio.");
         } catch (const std::exception&) {
             if (cancelled()) return;
             // Restarting after publishing audio would repeat words already played.

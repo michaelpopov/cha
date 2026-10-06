@@ -123,12 +123,16 @@ components:
       additionalProperties: false
       required: [id, display_name, elevenlabs_voice_id, settings]
       properties:
+        provider:
+          type: string
+          enum: [fishaudio, elevenlabs]
+          description: Defaults to fishaudio when omitted.
         id:
           $ref: "#/components/schemas/Identifier"
         display_name:
           type: string
         elevenlabs_voice_id:
-          description: FishAudio reference ID; field name retained for compatibility.
+          description: Provider voice ID; field name retained for compatibility.
           type: string
         settings:
           $ref: "#/components/schemas/SpeechVoiceSettings"
@@ -615,12 +619,16 @@ components:
       additionalProperties: false
       required: [display_name, description, elevenlabs_voice_id, speed]
       properties:
+        provider:
+          type: string
+          enum: [fishaudio, elevenlabs]
+          description: Defaults to fishaudio when omitted.
         display_name:
           type: string
         description:
           type: string
         elevenlabs_voice_id:
-          description: FishAudio reference ID; field name retained for compatibility.
+          description: Provider voice ID; field name retained for compatibility.
           type: string
         speed:
           type: [number, "null"]
@@ -632,12 +640,16 @@ components:
       additionalProperties: false
       required: [display_name, description, elevenlabs_voice_id]
       properties:
+        provider:
+          type: string
+          enum: [fishaudio, elevenlabs]
+          description: Defaults to fishaudio when omitted.
         display_name:
           type: string
         description:
           type: string
         elevenlabs_voice_id:
-          description: FishAudio reference ID; field name retained for compatibility.
+          description: Provider voice ID; field name retained for compatibility.
           type: string
 
     VoiceDetail:
@@ -645,6 +657,10 @@ components:
       additionalProperties: false
       required: [id, display_name, description, elevenlabs_voice_id, speed, writable, used_by]
       properties:
+        provider:
+          type: string
+          enum: [fishaudio, elevenlabs]
+          description: Defaults to fishaudio when omitted.
         id:
           $ref: "#/components/schemas/Identifier"
         display_name:
@@ -652,7 +668,7 @@ components:
         description:
           type: string
         elevenlabs_voice_id:
-          description: FishAudio reference ID; field name retained for compatibility.
+          description: Provider voice ID; field name retained for compatibility.
           type: string
         speed:
           type: [number, "null"]
@@ -782,31 +798,44 @@ components:
         preview:
           type: string
 
+    ElevenLabsOutputSettings:
+      type: object
+      additionalProperties: false
+      required: [url, model, api_key, output_format]
+      properties:
+        url: {type: string, minLength: 1}
+        model: {type: string, minLength: 1}
+        api_key: {$ref: "#/components/schemas/Identifier"}
+        output_format: {type: string, minLength: 1}
+        supports_speed: {type: boolean, readOnly: true}
+
     VoiceOutputSettings:
       type: object
       additionalProperties: false
       required: [url, model, api_key, output_format, default_voice]
       properties:
+        elevenlabs:
+          $ref: "#/components/schemas/ElevenLabsOutputSettings"
         url:
           type: string
-          minLength: 1
         model:
           type: string
-          minLength: 1
         api_key:
-          $ref: "#/components/schemas/Identifier"
+          type: string
         output_format:
           type: string
-          minLength: 1
         default_voice:
           type: string
-          minLength: 1
 
     VoiceOutputRuntime:
       type: object
       additionalProperties: false
       required: [url, model, output_format, default_voice_id]
       properties:
+        provider:
+          type: string
+          enum: [fishaudio, elevenlabs]
+          description: Defaults to fishaudio when omitted.
         url:
           type: string
           minLength: 1
@@ -1451,8 +1480,12 @@ components:
     AudioDownloadRequest:
       type: object
       additionalProperties: false
-      required: [vault_name, reference_id]
+      required: [vault_name]
       properties:
+        provider:
+          type: string
+          enum: [fishaudio, elevenlabs]
+          description: Defaults to fishaudio when omitted.
         vault_name: {type: string, minLength: 1}
         reference_id: {type: string, minLength: 1}
         settings:
@@ -1462,8 +1495,12 @@ components:
     AudioDownloadBatchEntry:
       type: object
       additionalProperties: false
-      required: [entry_id, reference_id]
+      required: [entry_id]
       properties:
+        provider:
+          type: string
+          enum: [fishaudio, elevenlabs]
+          description: Defaults to fishaudio when omitted.
         entry_id: {type: integer, minimum: 1}
         reference_id: {type: string, minLength: 1}
         settings:

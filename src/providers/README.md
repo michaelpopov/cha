@@ -42,8 +42,8 @@ call repeatedly.
 | `sse_framer.*` | Protocol-neutral server-sent event framing. |
 | `openai_oauth.*` | OpenAI subscription login, refresh, persistence, and cancellation. |
 | `api_key_store.*` / `credentials.h` | Vault-backed model and R2 credential values and lifecycle. |
-| `voice_output_config.*` | FishAudio output endpoint and format validation. |
-| `fish_audio.*` | FishAudio request construction, streaming transport, and audio validation. |
+| `voice_output_config.*` | Voice output endpoint and format validation. |
+| `voice_output.*` | FishAudio and ElevenLabs requests, streaming transport, and audio validation. |
 | `jev.*` | Cancellable recipient classification with a five-second deadline. |
 | `web_search.*` | Brave/Tavily requests and bounded result JSON. |
 | `tool_calls.*` | Search function schemas and validated tool-call continuation values. |

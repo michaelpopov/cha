@@ -13,6 +13,7 @@ export function nativeSpeechFromClient(client: ChaClient): NativeSpeech {
         voice?.elevenlabs_voice_id,
         voice?.settings,
         signal,
+        voice?.provider,
       );
     },
     release(resourceId) {
@@ -26,19 +27,22 @@ export interface TextToSpeechConfiguration {
   voiceId: string;
   outputFormat: string;
   model: string;
+  provider?: 'fishaudio' | 'elevenlabs';
 }
 
 export interface TextToSpeechVoice {
-  // Legacy field name; contains a FishAudio reference ID.
+  provider?: 'fishaudio' | 'elevenlabs';
+  // Provider voice ID; field name retained for compatibility.
   elevenlabs_voice_id: string;
   settings: {
     speed?: number;
   };
 }
 
-export function speechVoice(voice: Pick<VoiceUpdate, 'elevenlabs_voice_id' | 'speed'>): TextToSpeechVoice {
+export function speechVoice(voice: Pick<VoiceUpdate, 'elevenlabs_voice_id' | 'speed' | 'provider'>): TextToSpeechVoice {
   return {
     elevenlabs_voice_id: voice.elevenlabs_voice_id,
+    provider: voice.provider ?? 'fishaudio',
     settings: voice.speed === null ? {} : { speed: voice.speed },
   };
 }
@@ -59,6 +63,7 @@ export function useTextToSpeechConfiguration(
           voiceId: loaded.default_voice_id,
           outputFormat: loaded.output_format,
           model: loaded.model,
+          provider: loaded.provider ?? 'fishaudio',
         });
       },
       () => { if (current) setConfiguration(null); },

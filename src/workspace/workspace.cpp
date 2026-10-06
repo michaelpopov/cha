@@ -410,14 +410,14 @@ WorkspaceVoiceOutput load_voice_output(
     const toml::table table = read_toml(source, path, "voice output config");
     static constexpr std::string_view fields[]{
         "url", "model", "api_key", "output_format", "default_voice",
-        "instrumentation_provider", "instrumentation_reasoning_effort"};
+        "instrumentation_provider", "instrumentation_reasoning_effort", "elevenlabs"};
     reject_unknown_fields(table, path, fields, "Voice output config");
-    WorkspaceVoiceOutput result{
-        .url = required_string(table, path, "url"),
-        .model = required_string(table, path, "model"),
-        .api_key_id = required_string(table, path, "api_key"),
-        .output_format = required_string(table, path, "output_format"),
-        .default_voice = required_string(table, path, "default_voice"),
+    WorkspaceVoiceOutput result{.default_voice = required_string(table, path, "default_voice")};
+    WorkspaceVoiceProviderOutput fish{
+        .url = optional_value<std::string>(table, path, "url", "a string").value_or(""),
+        .model = optional_value<std::string>(table, path, "model", "a string").value_or(""),
+        .api_key_id = optional_value<std::string>(table, path, "api_key", "a string").value_or(""),
+        .output_format = optional_value<std::string>(table, path, "output_format", "a string").value_or("mp3"),
     };
     for (const auto* field : {"instrumentation_provider", "instrumentation_reasoning_effort"}) {
         if (table.contains(field)) {
@@ -425,13 +425,45 @@ WorkspaceVoiceOutput load_voice_output(
                 + "' in " + utf8_path(path));
         }
     }
-    result.url = parse_voice_output_endpoint(result.url);
-    result.model = normalize_voice_output_model(result.model);
-    try {
-        result.output_format = normalize_voice_output_format(result.output_format);
-    } catch (const std::invalid_argument&) {
-        log_warn("Ignoring unsupported voice output format in " + utf8_path(path) + "; using mp3");
-        result.output_format = "mp3";
+    if (const auto* eleven = table["elevenlabs"].as_table()) {
+        static constexpr std::string_view eleven_fields[]{"url", "model", "api_key", "output_format"};
+        for (const auto& [key, value] : *eleven) {
+            (void)value;
+            if (std::ranges::find(eleven_fields, key.str()) == std::end(eleven_fields))
+                log_warn("Ignoring unused ElevenLabs output field '" + std::string(key.str()) + "' in " + utf8_path(path));
+        }
+        try {
+            result.elevenlabs = WorkspaceVoiceProviderOutput{
+                .url = parse_voice_output_endpoint(required_string(*eleven, path, "url"), "elevenlabs"),
+                .model = normalize_voice_output_model(required_string(*eleven, path, "model")),
+                .api_key_id = required_string(*eleven, path, "api_key"),
+                .output_format = normalize_elevenlabs_output_format(required_string(*eleven, path, "output_format")),
+            };
+        } catch (const std::exception& error) {
+            log_warn("Ignoring ElevenLabs output settings: " + std::string(error.what()));
+        }
+    } else if (table.contains("elevenlabs")) {
+        log_warn("Ignoring ElevenLabs output settings in " + utf8_path(path) + ": elevenlabs must be a table.");
+    }
+    if (fish.api_key_id.empty()) {
+        if (!fish.url.empty() || !fish.model.empty())
+            log_warn("Ignoring FishAudio output endpoint and model without an API key.");
+    } else {
+        try {
+            fish.url = parse_voice_output_endpoint(fish.url);
+            fish.model = normalize_voice_output_model(fish.model);
+        } catch (const std::invalid_argument& error) {
+            if (!result.elevenlabs) throw;
+            log_warn("Ignoring FishAudio output settings: " + std::string(error.what()));
+            fish.api_key_id.clear();
+        }
+        try {
+            fish.output_format = normalize_voice_output_format(fish.output_format);
+        } catch (const std::invalid_argument&) {
+            log_warn("Ignoring unsupported voice output format in " + utf8_path(path) + "; using mp3");
+            fish.output_format = "mp3";
+        }
+        if (!fish.api_key_id.empty()) result.fishaudio = std::move(fish);
     }
     return result;
 }
@@ -629,7 +661,7 @@ WorkspaceVoice load_voice(
     const std::filesystem::path path = directory / "config.toml";
     const toml::table table = read_toml(source, path, "voice config");
     static constexpr std::string_view fields[]{
-        "display_name", "description", "elevenlabs_voice_id", "stability",
+        "display_name", "description", "elevenlabs_voice_id", "provider", "stability",
         "similarity_boost", "style", "use_speaker_boost", "speed"};
     reject_unknown_fields(table, path, fields, "Voice config");
     for (const std::string_view obsolete : {
@@ -655,6 +687,11 @@ WorkspaceVoice load_voice(
             .speed = optional_bounded_number(table, path, "speed", 0.7, 1.2),
         },
     };
+    loaded.provider = optional_value<std::string>(table, path, "provider", "a string").value_or("fishaudio");
+    try { validate_voice_output_provider(loaded.provider); }
+    catch (const std::invalid_argument& error) {
+        throw std::runtime_error("Voice provider in '" + utf8_path(path) + "': " + error.what());
+    }
     validate_public_name(loaded.label, "Voice name", path);
     if (!loaded.description.empty()) {
         validate_description(loaded.description, "Voice", path);
@@ -2388,7 +2425,8 @@ void WorkspaceConfigEditor::write_voice(
     std::string_view display_name,
     std::string_view description,
     std::string_view elevenlabs_voice_id,
-    const VoiceSettings& settings) {
+    const VoiceSettings& settings,
+    std::string_view provider) {
     const auto path = workspace_.voice_config_paths_.find(std::string(voice_id));
     if (path == workspace_.voice_config_paths_.end()) {
         throw std::runtime_error(
@@ -2408,6 +2446,8 @@ void WorkspaceConfigEditor::write_voice(
     if (!description.empty()) {
         table.insert("description", std::string(description));
     }
+    validate_voice_output_provider(provider);
+    table.insert("provider", std::string(provider));
     table.insert("elevenlabs_voice_id", std::string(elevenlabs_voice_id));
     if (settings.speed) table.insert("speed", *settings.speed);
     write_toml(path->second, table);
@@ -2422,7 +2462,8 @@ void WorkspaceConfigEditor::create_voice(
     std::string_view voice_id,
     std::string_view display_name,
     std::string_view description,
-    std::string_view elevenlabs_voice_id) {
+    std::string_view elevenlabs_voice_id,
+    std::string_view provider) {
     const std::filesystem::path directory =
         workspace_.root_ / "system" / "voices" / std::string(voice_id);
     const std::filesystem::path path = directory / "config.toml";
@@ -2443,6 +2484,8 @@ void WorkspaceConfigEditor::create_voice(
     if (!description.empty()) {
         table.insert("description", std::string(description));
     }
+    validate_voice_output_provider(provider);
+    table.insert("provider", std::string(provider));
     table.insert("elevenlabs_voice_id", std::string(elevenlabs_voice_id));
     write_toml(path, table);
     (void)load_voice(source_, directory);
@@ -2563,21 +2606,28 @@ void WorkspaceConfigEditor::write_voice_input(const WorkspaceVoiceInput& setting
 }
 
 void WorkspaceConfigEditor::write_voice_output(const WorkspaceVoiceOutput& settings) {
-    const std::string url = parse_voice_output_endpoint(settings.url);
-    const std::string model = normalize_voice_output_model(settings.model);
-    const std::string format = normalize_voice_output_format(settings.output_format);
-    const std::filesystem::path directory = workspace_.root_ / "system" / "voice-output";
-    const std::filesystem::path path = directory / "config.toml";
-    if (settings.api_key_id.empty() || settings.default_voice.empty()) {
-        throw std::invalid_argument("Invalid voice output settings");
-    }
+    if (settings.default_voice.empty()) throw std::invalid_argument("Invalid voice output settings");
     toml::table table;
-    table.insert("url", url);
-    table.insert("model", model);
-    table.insert("api_key", settings.api_key_id);
-    table.insert("output_format", format);
     table.insert("default_voice", settings.default_voice);
-    write_toml(path, table);
+    if (settings.fishaudio) {
+        const auto& fish = *settings.fishaudio;
+        if (fish.api_key_id.empty()) throw std::invalid_argument("Invalid FishAudio output settings");
+        table.insert("url", parse_voice_output_endpoint(fish.url));
+        table.insert("model", normalize_voice_output_model(fish.model));
+        table.insert("api_key", fish.api_key_id);
+        table.insert("output_format", normalize_voice_output_format(fish.output_format));
+    }
+    if (settings.elevenlabs) {
+        const auto& eleven = *settings.elevenlabs;
+        if (eleven.api_key_id.empty()) throw std::invalid_argument("Invalid ElevenLabs output settings");
+        table.insert("elevenlabs", toml::table{
+            {"url", parse_voice_output_endpoint(eleven.url, "elevenlabs")},
+            {"model", normalize_voice_output_model(eleven.model)},
+            {"api_key", eleven.api_key_id},
+            {"output_format", normalize_elevenlabs_output_format(eleven.output_format)},
+        });
+    }
+    write_toml(workspace_.root_ / "system" / "voice-output" / "config.toml", table);
 }
 
 void WorkspaceConfigEditor::create_api_key(

@@ -122,7 +122,7 @@ export function useAudioDownloads(client: Pick<ChaClient,
     }
     const observer = {
       submit(id: number, request: AudioDownloadRequest) {
-        return admit([{ entry_id: id, reference_id: request.reference_id, settings: request.settings }],
+        return admit([{ entry_id: id, reference_id: request.reference_id, settings: request.settings, provider: request.provider }],
           async () => [await client.startAudioDownload(forum!, session!, id, request)]);
       },
       submitBatch(request: AudioDownloadBatchRequest) {

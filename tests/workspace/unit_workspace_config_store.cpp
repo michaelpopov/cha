@@ -1475,18 +1475,17 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
     const auto store = open_store();
     const std::string voice_id = store->create_voice(
         "Default Reader", "", "eleven-default");
-    store->apply_voice_output_update({
+    store->apply_voice_output_update({.fishaudio = WorkspaceVoiceProviderOutput{
         .url = "https://api.fish.audio/v1/tts",
         .model = "s2.1-pro",
         .api_key_id = "api_key_8",
-        .output_format = "mp3",
-        .default_voice = "Default Reader",
+        .output_format = "mp3"}, .default_voice = "Default Reader",
     });
 
     ASSERT_TRUE(store->snapshot()->voice_output());
-    EXPECT_EQ(store->snapshot()->voice_output()->model, "s2.1-pro");
-    EXPECT_EQ(store->snapshot()->voice_output()->api_key_id, "api_key_8");
-    EXPECT_EQ(store->snapshot()->voice_output()->output_format, "mp3");
+    EXPECT_EQ(store->snapshot()->voice_output()->fishaudio->model, "s2.1-pro");
+    EXPECT_EQ(store->snapshot()->voice_output()->fishaudio->api_key_id, "api_key_8");
+    EXPECT_EQ(store->snapshot()->voice_output()->fishaudio->output_format, "mp3");
     EXPECT_EQ(store->snapshot()->voice_output()->default_voice, "Default Reader");
     const std::string stored = stored_config(
         database(), "system/voice-output/config.toml");
@@ -1507,6 +1506,20 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
     EXPECT_THROW(
         store->apply_voice_delete(voice_id),
         std::invalid_argument);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, VoiceDeliveryEditKeepsIgnoredOutputConfigurationUnchanged) {
+    workspace_.write_voice("reader", "display_name = 'Reader'\nelevenlabs_voice_id = 'eleven-id'\nprovider = 'elevenlabs'\n");
+    const std::string output = "api_key = ''\ndefault_voice = 'Reader'\n[elevenlabs]\nurl = 'invalid'\n";
+    write_bytes(source() / "system" / "voice-output" / "config.toml", output);
+    (void)import_workspace_configuration(source(), database());
+    const auto store = open_store();
+    const auto before = config_contents(database());
+    store->apply_voice_update("reader", "Reader", "Updated", "eleven-id", {.speed = 1.1}, "elevenlabs");
+    EXPECT_EQ(stored_config(database(), "system/voice-output/config.toml"), output);
+    EXPECT_EQ(changed_config_names(before, config_contents(database())),
+        (std::set<std::string>{"system/voices/reader/config.toml"}));
+    EXPECT_EQ(store->snapshot()->find_voice("reader")->settings.speed, 1.1);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsInvalidUnusedProviderUpdates) {
