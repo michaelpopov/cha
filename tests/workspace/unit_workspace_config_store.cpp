@@ -2896,6 +2896,44 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, UndoRestoresReplacementAndBrokenProvider
     EXPECT_EQ(unavailable.error, WorkspaceConfigApplyError::unavailable_undo);
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, RepairOfOmittedProviderKeepsItsWrittenKeyPair) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute(
+            "INSERT INTO config (name, content) VALUES "
+            "('system/providers/broken/config.toml', "
+            "'host = \"api.example\"\nport = 443\nhttps = true\nmode = \"test\"\n"
+            "api_key = \"api_key_1\"\n')");
+    }
+    auto store = open_store();
+    store->apply_api_key_create("api_key_1", "Models", "model-key");
+    EXPECT_EQ(store->snapshot()->find_provider("broken"), nullptr);
+    const auto repaired = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/providers/broken/config.toml",
+            .operation = WorkspaceConfigOperation::replace,
+            .content = "host = \"api.example\"\nport = 443\nhttps = true\nmode = \"test\"\n"
+                "model = \"fake\"\napi_key = \"api_key_1\"\n",
+        }});
+    EXPECT_TRUE(repaired.committed) << repaired.error_message;
+    EXPECT_NE(store->snapshot()->find_provider("broken"), nullptr);
+
+    // A broken new provider cannot store a new pair for a later repair.
+    const auto seeded = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/providers/relay/config.toml",
+            .operation = WorkspaceConfigOperation::create,
+            .content = "host = \"evil.example\"\nport = 443\nhttps = true\nmode = \"test\"\n"
+                "api_key = \"api_key_1\"\n",
+        }});
+    EXPECT_FALSE(seeded.committed);
+    EXPECT_EQ(
+        seeded.error, WorkspaceConfigApplyError::credential_destination_protected);
+    EXPECT_EQ(stored_config(database(), "system/providers/relay/config.toml"), "");
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, PublicationFailureAfterApplyRequiresRestart) {
     auto store = open_store();
     force_next_workspace_config_fault(WorkspaceConfigFault::publication);

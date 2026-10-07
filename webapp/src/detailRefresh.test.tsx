@@ -34,24 +34,17 @@ function refreshValue(failed: boolean, retry: () => void): DetailRefreshValue {
   return { epoch: failed ? 2 : 1, refreshing: false, failed, retry };
 }
 
-it('keeps Save disabled when the shared refresh fails', async () => {
-  const user = userEvent.setup();
+it('lets a loaded form save when only the bootstrap refresh fails', () => {
   const retry = vi.fn();
   const view = render(<SaveForm refresh={refreshValue(false, retry)} />);
   expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-  expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
 
   view.rerender(<SaveForm refresh={refreshValue(true, retry)} />);
-  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-  await user.click(screen.getByRole('button', { name: 'Try again' }));
-  expect(retry).toHaveBeenCalledTimes(1);
-
-  view.rerender(<SaveForm refresh={refreshValue(false, retry)} />);
   expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
 });
 
-it('keeps a title Save disabled when the shared refresh fails', async () => {
+it('keeps a title Save disabled when its owner refresh fails', async () => {
   const onSave = vi.fn(async () => {});
   const retry = vi.fn();
   const view = render(
@@ -76,7 +69,7 @@ it('keeps a title Save disabled when the shared refresh fails', async () => {
   expect(onSave).not.toHaveBeenCalled();
 });
 
-it('keeps a text-editor Save disabled when the shared refresh fails', async () => {
+it('keeps a text-editor Save disabled when its owner refresh fails', async () => {
   const onSave = vi.fn(async () => {});
   const retry = vi.fn();
   function editor(failed: boolean) {
@@ -108,9 +101,9 @@ it('keeps a text-editor Save disabled when the shared refresh fails', async () =
   expect(onSave).not.toHaveBeenCalled();
 });
 
-it('retries the form when the shared refresh succeeded', () => {
+it('uses only the form refetch for Save, inner controls, and retry', () => {
   const retry = vi.fn();
-  const refresh = refreshValue(false, retry);
+  const refresh = refreshValue(true, retry);
   const { result } = renderHook(() => useFormReload('form'), {
     wrapper: ({ children }: { children: ReactNode }) => (
       <DetailRefreshProvider value={refresh}>{children}</DetailRefreshProvider>
@@ -121,15 +114,18 @@ it('retries the form when the shared refresh succeeded', () => {
     result.current.start();
     result.current.loaded({ name: 'Guide' }, () => {});
   });
+  expect(result.current.blocked).toBe(false);
+  expect(result.current.context.failed).toBe(false);
   act(() => {
     const background = result.current.start();
     result.current.fail(background);
   });
   expect(result.current.blocked).toBe(true);
   expect(result.current.refreshFailed).toBe(true);
+  expect(result.current.context.failed).toBe(true);
   expect(result.current.attempt).toBe(0);
 
-  act(() => result.current.retry());
+  act(() => result.current.context.retry());
   expect(retry).not.toHaveBeenCalled();
   expect(result.current.attempt).toBe(1);
 });

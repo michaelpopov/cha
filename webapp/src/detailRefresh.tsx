@@ -1,7 +1,9 @@
 import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
 
-// Welcome answers reload open forms through this value. Screens outside the
-// desktop application see the idle default and keep their existing loads.
+// Refetch state of the nearest data owner after a Welcome answer. The desktop
+// App provides the bootstrap state. A screen that loads its own detail provides
+// its own state to the controls inside it. Screens outside the desktop
+// application see the idle default and keep their existing loads.
 export interface DetailRefreshValue {
   epoch: number;
   refreshing: boolean;
@@ -106,6 +108,8 @@ export function useFormReload(identity: string | null) {
     setPhase('idle');
   }
 
+  // Save depends only on this form's own refetch, not on the bootstrap refresh.
+  const retry = () => setAttempt((value) => value + 1);
   return {
     epoch: refresh.epoch,
     attempt,
@@ -115,16 +119,16 @@ export function useFormReload(identity: string | null) {
     accept,
     remember,
     markDirty,
-    retry: () => {
-      if (refresh.failed) {
-        refresh.retry();
-        return;
-      }
-      setAttempt((value) => value + 1);
+    retry,
+    // For controls inside the form, such as the editable title.
+    context: {
+      epoch: refresh.epoch,
+      refreshing: phase === 'loading',
+      failed: phase === 'failed',
+      retry,
     },
-    refreshing: phase === 'loading' || refresh.refreshing,
-    blocked: phase !== 'idle' || refresh.refreshing || refresh.failed,
-    refreshFailed: phase === 'failed' || refresh.failed,
+    blocked: phase !== 'idle',
+    refreshFailed: phase === 'failed',
     stale: phase === 'stale',
   };
 }

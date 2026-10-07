@@ -496,6 +496,7 @@ export function App({
         type: 'bootstrap-refreshed',
         bootstrap,
       });
+      setDetailFailed(false);
       return true;
     } catch {
       // The live snapshot remains usable. Discovery refresh is non-critical.
@@ -545,6 +546,7 @@ export function App({
       if (!Number.isSafeInteger(event.causing_request_id) || event.state !== 'running') return;
       const started = ++generation;
       clearVaultContext();
+      setDetailFailed(false);
       playbackPositions.current.clear();
       navigate({ type: 'vault-context-reset' });
       void (async () => {

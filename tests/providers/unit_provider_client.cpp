@@ -2888,6 +2888,117 @@ TEST(ProviderClientTools, MaintenanceDisablesToolsAfterTwentyFourCalls) {
     }
 }
 
+TEST(ProviderClientTools, MaintenanceAnswerBudgetKeepsSavedResultsAndStopsLaterCalls) {
+    struct Case {
+        std::vector<std::pair<std::string, std::size_t>> calls;
+        std::vector<std::string> expected_run;
+    };
+    const std::string big_name = "assistant_logs";
+    const std::size_t big = 262000;
+    const std::vector<Case> cases{
+        // The apply goes over the budget. Its saved result reaches the model.
+        {{{big_name, big}, {big_name, big}, {"vault_config_apply", 300}, {"vault_config_list", 10}},
+            {big_name, big_name, "vault_config_apply"}},
+        // A read goes over the budget. It is replaced, and the apply after it does not run.
+        {{{big_name, big}, {big_name, big}, {big_name, 1000}, {"vault_config_apply", 300}},
+            {big_name, big_name, big_name}},
+    };
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        for (const Case& test : cases) {
+            std::vector<Json> requests;
+            ProviderClient client(shared_definition([&] {
+                auto definition = network_definition(80, false);
+                definition.provider.config.api = api;
+                return definition;
+            }()), nullptr, [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
+                requests.push_back(Json::parse(request.body));
+                if (requests.size() == 1) {
+                    Json batch = Json::array();
+                    for (std::size_t index = 0; index < test.calls.size(); ++index) {
+                        batch.push_back(search_call(
+                            api, "call" + std::to_string(index), "{}", test.calls[index].first));
+                    }
+                    return tool_reply(api, false, batch);
+                }
+                return tool_reply(api, false, Json::array(), "Done.");
+            });
+            Transcript transcript;
+            auto input = client_request(transcript, 6, "Repair");
+            std::vector<std::string> run;
+            input.maintenance_tool = [&](std::string_view name, auto, const auto&) {
+                run.emplace_back(name);
+                const std::size_t size = test.calls[run.size() - 1].second;
+                if (name == "vault_config_apply") {
+                    return R"({"committed":true,"padding":")" + std::string(size, 'a') + "\"}";
+                }
+                return R"({"text":")" + std::string(size, 'x') + "\"}";
+            };
+            const auto result = client.perform(
+                client.prepare(input), [](auto) {}, std::atomic_bool{false});
+            EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(run, test.expected_run);
+            ASSERT_EQ(requests.size(), 2u);
+            EXPECT_FALSE(requests.back().contains("tools"));
+            const auto& messages = requests.back()[api == ProviderApi::responses ? "input" : "messages"];
+            std::vector<std::string> outputs;
+            for (const Json& message : messages) {
+                const auto field = api == ProviderApi::responses ? "output" : "content";
+                const bool tool = api == ProviderApi::responses
+                    ? message.value("type", "") == "function_call_output"
+                    : message.value("role", "") == "tool";
+                if (tool) outputs.push_back(message[field].get<std::string>());
+            }
+            ASSERT_EQ(outputs.size(), test.calls.size());
+            EXPECT_NE(outputs[3].find("This call was not run."), std::string::npos);
+            if (test.expected_run.back() == "vault_config_apply") {
+                EXPECT_NE(outputs[2].find(R"("committed":true)"), std::string::npos);
+            } else {
+                EXPECT_NE(outputs[2].find("Tool results for this answer are too large."),
+                    std::string::npos);
+            }
+        }
+    }
+}
+
+TEST(ProviderClientTools, MaintenanceReplacesOneOversizedResultAndContinues) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        std::vector<Json> requests;
+        ProviderClient client(shared_definition([&] {
+            auto definition = network_definition(80, false);
+            definition.provider.config.api = api;
+            return definition;
+        }()), nullptr, [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
+            requests.push_back(Json::parse(request.body));
+            if (requests.size() == 1) {
+                return tool_reply(api, false, Json::array({
+                    search_call(api, "huge", "{}", "assistant_logs"),
+                    search_call(api, "small", "{}", "vault_config_list"),
+                }));
+            }
+            return tool_reply(api, false, Json::array(), "Done.");
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 7, "Repair");
+        std::vector<std::string> run;
+        input.maintenance_tool = [&](std::string_view name, auto, const auto&) {
+            run.emplace_back(name);
+            if (name == "assistant_logs") {
+                return R"({"text":")" + std::string(maintenance_call_result_limit, 'x') + "\"}";
+            }
+            return std::string(R"({"entries":[]})");
+        };
+        const auto result = client.perform(
+            client.prepare(input), [](auto) {}, std::atomic_bool{false});
+        EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(run, (std::vector<std::string>{"assistant_logs", "vault_config_list"}));
+        ASSERT_EQ(requests.size(), 2u);
+        EXPECT_TRUE(requests.back().contains("tools"));
+        const std::string sent = requests.back().dump();
+        EXPECT_NE(sent.find("Tool result is too large."), std::string::npos);
+        EXPECT_NE(sent.find("entries"), std::string::npos);
+    }
+}
+
 TEST(ProviderClientTools, MaintenanceOmitsRequiredWebSearch) {
     for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
         int web_calls = 0;

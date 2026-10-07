@@ -112,7 +112,8 @@ public:
     [[nodiscard]] std::uint64_t context_epoch() const;
     std::uint64_t bump_context_epoch();
     // Posts save effects for one admitted epoch. Returns false when the runtime
-    // did not accept the work. Does not wait for the notice to be stored.
+    // did not accept the work. Does not wait for the notice to be stored, and
+    // waits at most one second for space in a full queue.
     bool post_maintenance_result(
         std::uint64_t epoch,
         FullSessionId welcome,

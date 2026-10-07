@@ -201,14 +201,6 @@ std::string AssistantService::execute(
     if (!links_.admit || !links_.store || !links_.lifecycle) {
         return tool_error("unavailable", "Maintenance tools are not available.");
     }
-    if (const auto denied = links_.admit(context.context_epoch)) {
-        if (*denied == ErrorCode::vault_changed) {
-            return tool_error(
-                "stale_context",
-                "The vault context changed. Read the configuration again.");
-        }
-        return tool_error("unavailable", "The application is unavailable.");
-    }
 
     Json parsed = Json::parse(arguments, nullptr, false);
     if (parsed.is_discarded() || !parsed.is_object()) {
@@ -228,63 +220,9 @@ std::string AssistantService::execute(
         || (links_.stopping && links_.stopping->load(std::memory_order_acquire))) {
         return tool_error("cancelled", "The maintenance tool was cancelled.");
     }
-    if (const auto denied = links_.admit(context.context_epoch)) {
-        if (*denied == ErrorCode::vault_changed) {
-            return tool_error(
-                "stale_context",
-                "The vault context changed. Read the configuration again.");
-        }
-        return tool_error("unavailable", "The application is unavailable.");
-    }
-
-    const auto stopping = links_.stopping;
-    const auto cancel_check = [&cancelled, stopping] {
-        return cancelled.load(std::memory_order_acquire)
-            || (stopping && stopping->load(std::memory_order_acquire));
-    };
-
-    auto redact = [this](std::string text) {
-        std::vector<std::string> secrets;
-        try {
-            if (const auto snapshot = links_.store->snapshot()) {
-                for (const SavedApiKey& key : snapshot->api_keys()) {
-                    if (key.value.size() >= 4) secrets.push_back(key.value);
-                }
-                if (const auto& r2 = snapshot->r2_storage()) {
-                    if (r2->secret_key.size() >= 4) secrets.push_back(r2->secret_key);
-                }
-            }
-        } catch (const std::exception&) {
-        }
-        if (links_.oauth) {
-            for (std::string& secret : links_.oauth->redaction_secrets()) {
-                if (secret.size() >= 4) secrets.push_back(std::move(secret));
-            }
-        }
-        std::ranges::sort(secrets, [](const std::string& left, const std::string& right) {
-            return left.size() > right.size();
-        });
-        for (const std::string& secret : secrets) replace_all(text, secret, "[REDACTED]");
-        std::vector<std::string> roots;
-        try {
-            roots.push_back(links_.store->private_root().string());
-            roots.push_back(links_.store->workspace_path().string());
-        } catch (const std::exception&) {
-        }
-        std::ranges::sort(roots, [](const std::string& left, const std::string& right) {
-            return left.size() > right.size();
-        });
-        for (const std::string& root : roots) {
-            if (root.size() >= 2) replace_all(text, root, "[path]");
-        }
-        return text;
-    };
-
-    auto stale = [&]() -> std::optional<ErrorCode> {
-        return links_.admit(context.context_epoch);
-    };
+    // Admission reads lifecycle state, so it runs only while the lock is held.
     auto admission_error = [&]() -> std::optional<std::string> {
-        const auto denied = stale();
+        const auto denied = links_.admit(context.context_epoch);
         if (!denied) return std::nullopt;
         if (*denied == ErrorCode::vault_changed) {
             return tool_error(
@@ -292,6 +230,49 @@ std::string AssistantService::execute(
                 "The vault context changed. Read the configuration again.");
         }
         return tool_error("unavailable", "The application is unavailable.");
+    };
+    if (const auto error = admission_error()) return *error;
+
+    const auto stopping = links_.stopping;
+    const auto cancel_check = [&cancelled, stopping] {
+        return cancelled.load(std::memory_order_acquire)
+            || (stopping && stopping->load(std::memory_order_acquire));
+    };
+
+    // Collected once per call: a log read redacts up to 2,000 entries.
+    std::vector<std::string> secrets;
+    try {
+        if (const auto snapshot = links_.store->snapshot()) {
+            for (const SavedApiKey& key : snapshot->api_keys()) {
+                if (key.value.size() >= 4) secrets.push_back(key.value);
+            }
+            if (const auto& r2 = snapshot->r2_storage()) {
+                if (r2->secret_key.size() >= 4) secrets.push_back(r2->secret_key);
+            }
+        }
+    } catch (const std::exception&) {
+    }
+    if (links_.oauth) {
+        for (std::string& secret : links_.oauth->redaction_secrets()) {
+            if (secret.size() >= 4) secrets.push_back(std::move(secret));
+        }
+    }
+    std::vector<std::string> roots;
+    try {
+        roots.push_back(links_.store->private_root().string());
+        roots.push_back(links_.store->workspace_path().string());
+    } catch (const std::exception&) {
+    }
+    std::erase_if(roots, [](const std::string& root) { return root.size() < 2; });
+    const auto longer_first = [](const std::string& left, const std::string& right) {
+        return left.size() > right.size();
+    };
+    std::ranges::sort(secrets, longer_first);
+    std::ranges::sort(roots, longer_first);
+    const auto redact = [&secrets, &roots](std::string text) {
+        for (const std::string& secret : secrets) replace_all(text, secret, "[REDACTED]");
+        for (const std::string& root : roots) replace_all(text, root, "[path]");
+        return text;
     };
 
     try {
@@ -341,7 +322,13 @@ std::string AssistantService::execute(
             }
             const auto read = links_.store->read_config(paths);
             if (const auto error = admission_error()) return *error;
+            // JSON escaping makes text larger. A file that does not fit in the
+            // encoded result is too_large, so the other files still arrive.
             Json files = Json::array();
+            std::size_t total = Json{
+                {"version", version_text(read.revision)},
+                {"files", Json::array()},
+            }.dump().size();
             for (const auto& item : read.files) {
                 Json file{{"path", item.path}, {"status", read_status_name(item.status)}};
                 if (item.status == WorkspaceConfigReadStatus::ok) file["content"] = item.content;
@@ -353,7 +340,17 @@ std::string AssistantService::execute(
                         {"credential_present", item.key->credential_present},
                     };
                 }
+                std::size_t size = file.dump().size() + 1;
+                if (file.contains("content") && total + size > maintenance_call_result_limit) {
+                    file.erase("content");
+                    file["status"] = read_status_name(WorkspaceConfigReadStatus::too_large);
+                    size = file.dump().size() + 1;
+                }
+                total += size;
                 files.push_back(std::move(file));
+            }
+            if (total > maintenance_call_result_limit) {
+                return tool_error("too_large", "Too many paths. Read fewer paths at once.");
             }
             return Json{
                 {"version", version_text(read.revision)},
@@ -365,9 +362,9 @@ std::string AssistantService::execute(
             if (parsed.size() != 1 || !parsed.contains("verbose") || !parsed["verbose"].is_boolean()) {
                 return tool_error("invalid_argument", "assistant_logging requires verbose.");
             }
+            if (const auto error = admission_error()) return *error;
             set_diagnostic_log_verbose(parsed["verbose"].get<bool>());
             const LogBufferState state = diagnostic_log_state();
-            if (const auto error = admission_error()) return *error;
             return Json{
                 {"level", level_name(state.level)},
                 {"expires_in_ms", state.verbose_remaining_ms
@@ -416,6 +413,8 @@ std::string AssistantService::execute(
                     "invalid_argument",
                     "limit must be positive and no greater than the buffer capacity.");
             }
+            // The snapshot holds its entries and latest number from one lock, so
+            // the next read can continue after that number without a gap.
             const LogBufferSnapshot snapshot = snapshot_diagnostic_log();
             const LogBufferState state = diagnostic_log_state();
             if (const auto error = admission_error()) return *error;
@@ -424,7 +423,7 @@ std::string AssistantService::execute(
                 : std::optional<std::uint64_t>(snapshot.entries.front().number);
             const bool lost = after && (
                 (oldest && *oldest > *after + 1)
-                || (!oldest && state.latest_number > *after));
+                || (!oldest && snapshot.latest_number > *after));
             std::vector<LogBufferEntry> matches;
             for (const LogBufferEntry& entry : snapshot.entries) {
                 if (after && entry.number <= *after) continue;
@@ -438,34 +437,41 @@ std::string AssistantService::execute(
             if (limited) {
                 matches.erase(matches.begin(), matches.end() - static_cast<std::ptrdiff_t>(limit));
             }
-            Json body;
-            auto dump_entries = [&] {
-                Json entries = Json::array();
-                for (const LogBufferEntry& entry : matches) {
-                    entries.push_back({
-                        {"number", entry.number},
-                        {"level", level_name(entry.level)},
-                        {"text", entry.text},
-                    });
-                }
-                body = Json{
-                    {"entries", std::move(entries)},
+            // Size each entry once, then drop the oldest entries until the result fits.
+            Json entries = Json::array();
+            std::vector<std::size_t> sizes;
+            for (const LogBufferEntry& entry : matches) {
+                entries.push_back({
+                    {"number", entry.number},
+                    {"level", level_name(entry.level)},
+                    {"text", entry.text},
+                });
+                sizes.push_back(entries.back().dump().size() + 1);
+            }
+            const auto encode = [&](Json items, bool shortened) {
+                return Json{
+                    {"entries", std::move(items)},
                     {"oldest_available", oldest ? Json(*oldest) : Json(nullptr)},
-                    {"latest_number", state.latest_number},
+                    {"latest_number", snapshot.latest_number},
                     {"level", level_name(state.level)},
                     {"expires_in_ms", state.verbose_remaining_ms
                         ? Json(*state.verbose_remaining_ms) : Json(nullptr)},
                     {"lost", lost},
-                    {"limited", limited},
-                };
-                return body.dump();
+                    {"limited", shortened},
+                }.dump();
             };
-            std::string encoded = dump_entries();
-            while (encoded.size() > maintenance_call_result_limit && !matches.empty()) {
-                matches.erase(matches.begin());
-                limited = true;
-                encoded = dump_entries();
+            std::size_t total = encode(Json::array(), false).size();
+            for (const std::size_t size : sizes) total += size;
+            std::size_t dropped = 0;
+            while (total > maintenance_call_result_limit && dropped < sizes.size()) {
+                total -= sizes[dropped++];
             }
+            if (dropped > 0) {
+                limited = true;
+                entries.erase(
+                    entries.begin(), entries.begin() + static_cast<std::ptrdiff_t>(dropped));
+            }
+            const std::string encoded = encode(std::move(entries), limited);
             if (const auto error = admission_error()) return *error;
             if (encoded.size() > maintenance_call_result_limit) {
                 return tool_error("too_large", "The log result is too large.");
@@ -527,9 +533,6 @@ std::string AssistantService::execute(
             } catch (const WorkspaceRestartRequiredError& error) {
                 restart = true;
                 restart_message = redact(error.what());
-            }
-            if (!restart && applied.error == WorkspaceConfigApplyError::none && stale()) {
-                // The write is already committed. Report it as saved.
             }
             const bool saved = restart || (
                 applied.error == WorkspaceConfigApplyError::none && !applied.changed.empty());
@@ -614,7 +617,7 @@ std::string AssistantService::execute(
                 if (!delivered) message += " Session refresh was not delivered.";
             }
             const auto code = apply_error_name(applied.error);
-            return Json{
+            Json result{
                 {"committed", applied.committed},
                 {"version", version_text(applied.revision)},
                 {"changed", std::move(changed)},
@@ -622,7 +625,16 @@ std::string AssistantService::execute(
                 {"undo_available", applied.undo_available},
                 {"error", code.empty() ? Json(nullptr) : Json(std::string(code))},
                 {"message", std::move(message)},
-            }.dump();
+            };
+            std::string encoded = result.dump();
+            if (encoded.size() > maintenance_call_result_limit) {
+                // The provider loop never replaces an apply result. Keep it in bounds.
+                result["warnings"] = Json::array();
+                result["message"] = result["message"].get<std::string>()
+                    + " Warnings were omitted because the result is too large.";
+                encoded = result.dump();
+            }
+            return encoded;
         }
     } catch (const WorkspaceRestartRequiredError& error) {
         return Json{

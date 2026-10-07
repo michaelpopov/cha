@@ -37,7 +37,7 @@ import {
 } from '../textToSpeech';
 import { validateBootstrap } from '../state/bootstrap';
 import type { AppAction, AppState } from '../state/view';
-import { useFormReload } from '../detailRefresh';
+import { DetailRefreshProvider, useFormReload } from '../detailRefresh';
 import { useLoad } from '../useLoad';
 import { voiceClasses } from './characterAppearance';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -660,7 +660,7 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
     <section className="cha-screen cha-navigation" aria-label="Vault settings">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
       {(detail || selectedName) && <div className="cha-detail-actions">
-        {detail ? <EditableTitle
+        {detail ? <DetailRefreshProvider value={reload.context}><EditableTitle
           available disabled={saving || deleting}
           id={selectedName} name={detail.display_name} subject="Vault"
           onSave={async (display_name) => {
@@ -674,7 +674,7 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
               setSaving(false);
             }
           }}
-        /> : <h1>{selectedName}</h1>}
+        /></DetailRefreshProvider> : <h1>{selectedName}</h1>}
       </div>}
       {!selectedName && <p className="cha-state-message">No vault is selected.</p>}
       {selectedName && !detail && !error && <p className="cha-state-message" role="status">Loading vault…</p>}
@@ -1168,7 +1168,7 @@ export function ProviderScreen({
         <ChevronLeftIcon /><span>Providers</span>
       </button>
       {(detail || state.inspectedProvider.name) && <div className="cha-detail-actions">
-        {detail ? <EditableTitle
+        {detail ? <DetailRefreshProvider value={reload.context}><EditableTitle
           available={detail.writable} disabled={saving || deleting}
           id={detail.id} name={detail.display_name} subject="Provider"
           onSave={async (display_name) => {
@@ -1184,7 +1184,7 @@ export function ProviderScreen({
               setSaving(false);
             }
           }}
-        /> : <h1>{state.inspectedProvider.name}</h1>}
+        /></DetailRefreshProvider> : <h1>{state.inspectedProvider.name}</h1>}
       </div>}
       {!id && <p className="cha-state-message">No provider is selected.</p>}
       {id && !detail && !error && <p className="cha-state-message" role="status">Loading provider…</p>}
@@ -1396,7 +1396,7 @@ export function StyleScreen({
     <section className="cha-screen cha-navigation" aria-label="Style settings">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-styles' })} type="button"><ChevronLeftIcon /><span>Styles</span></button>
       {(detail || state.inspectedStyle.name) && <div className="cha-detail-actions">
-        {detail ? <EditableTitle
+        {detail ? <DetailRefreshProvider value={reload.context}><EditableTitle
           available={detail.writable} disabled={saving || deleting}
           id={detail.id} name={detail.display_name} subject="Style"
           onSave={async (display_name) => {
@@ -1412,7 +1412,7 @@ export function StyleScreen({
               setSaving(false);
             }
           }}
-        /> : <h1>{state.inspectedStyle.name}</h1>}
+        /></DetailRefreshProvider> : <h1>{state.inspectedStyle.name}</h1>}
       </div>}
       {!id && <p className="cha-state-message">No style is selected.</p>}
       {id && !detail && !error && <p className="cha-state-message" role="status">Loading style…</p>}
@@ -2005,7 +2005,7 @@ export function VoiceScreen({
     <section className="cha-screen cha-navigation" aria-label="Voice settings">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
       {(detail || state.inspectedVoice.name) && <div className="cha-detail-actions">
-        {detail ? <EditableTitle
+        {detail ? <DetailRefreshProvider value={reload.context}><EditableTitle
           available={detail.writable} disabled={saving || deleting}
           id={detail.id} name={detail.display_name} subject="Voice"
           onSave={async (display_name) => {
@@ -2021,7 +2021,7 @@ export function VoiceScreen({
               setSaving(false);
             }
           }}
-        /> : <h1>{state.inspectedVoice.name}</h1>}
+        /></DetailRefreshProvider> : <h1>{state.inspectedVoice.name}</h1>}
       </div>}
       {!id && <p className="cha-state-message">No voice is selected.</p>}
       {id && !detail && !error && <p className="cha-state-message" role="status">Loading voice…</p>}
@@ -2317,7 +2317,7 @@ export function ApiKeyScreen({ client, dispatch, state }: SettingsScreenProps) {
     <section className="cha-screen cha-navigation" aria-label="API key settings">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
       {(key || state.inspectedApiKey.name) && <div className="cha-detail-actions">
-        {key ? <EditableTitle
+        {key ? <DetailRefreshProvider value={reload.context}><EditableTitle
           available disabled={busy !== null} id={key.id} name={key.display_name} subject="API key"
           onSave={async (displayName) => {
             setBusy('name');
@@ -2330,7 +2330,7 @@ export function ApiKeyScreen({ client, dispatch, state }: SettingsScreenProps) {
               setBusy(null);
             }
           }}
-        /> : <h1>{state.inspectedApiKey.name}</h1>}
+        /></DetailRefreshProvider> : <h1>{state.inspectedApiKey.name}</h1>}
       </div>}
       {!id && <p className="cha-state-message">No API key is selected.</p>}
       {id && !key && !error && <p className="cha-state-message" role="status">Loading API key…</p>}

@@ -876,6 +876,43 @@ TEST(LiveSessionManager, MaintenanceTimeoutCleanupDoesNotWaitForQueueCapacity) {
     }
 }
 
+TEST(LiveSessionManager, MaintenanceResultIgnoresAnOldEpochAndKeepsWelcomeOpen) {
+    test::TestWorkspace fixture;
+    const test::WebGraph graph(fixture.root());
+    LiveSessionManager manager(manager_settings(3), graph.opener());
+    const FullSessionId welcome{std::string(entrance_id), std::string(welcome_id)};
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(welcome, 5s)));
+    const StoredSession stored = graph.sessions()->create("lobby", "Ordinary");
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(stored.identity, 5s)));
+    const LiveSessionHandle welcome_session = manager.lookup(welcome);
+    const LiveSessionHandle ordinary = manager.lookup(stored.identity);
+    ASSERT_TRUE(welcome_session);
+    ASSERT_TRUE(ordinary);
+    const auto notices = [&] {
+        std::vector<std::string> texts;
+        const CommandSubmitResult state = welcome_session->snapshot(5s);
+        if (const auto* snapshot = std::get_if<SessionSnapshot>(&state)) {
+            for (const TranscriptEntry& entry : snapshot->transcript) {
+                if (entry.kind == EntryKind::notice) texts.push_back(entry.text);
+            }
+        }
+        return texts;
+    };
+
+    const auto old_epoch = manager.context_epoch();
+    (void)manager.bump_context_epoch();
+    EXPECT_FALSE(manager.post_maintenance_result(old_epoch, welcome, "Old save."));
+    EXPECT_TRUE(notices().empty());
+    EXPECT_NE(ordinary->lifecycle(), LiveSessionState::finished);
+
+    EXPECT_TRUE(manager.post_maintenance_result(manager.context_epoch(), welcome, "Saved."));
+    EXPECT_TRUE(wait_for_finished(ordinary));
+    EXPECT_EQ(notices(), std::vector<std::string>{"Saved."});
+    EXPECT_NE(welcome_session->lifecycle(), LiveSessionState::finished);
+
+    manager.begin_shutdown();
+}
+
 TEST(LiveSessionManager, ContextPublicationDoesNotWaitAndRejectsOldQueuedWork) {
     SessionFiles files;
     std::promise<void> entered;

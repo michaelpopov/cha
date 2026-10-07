@@ -613,7 +613,12 @@ GenerationResult ProviderClient::perform(
                     : R"({"error":"Web tool limit reached. Answer using the available results."})";
             } else if (maintenance) {
                 ++tool_calls_used;
-                if (call.name == "web_search" || call.name == "web_read") {
+                // An apply result is never replaced after it runs, so a saved
+                // change is never reported as unsaved. The service keeps it small.
+                const bool apply = call.name == "vault_config_apply";
+                if (force_final) {
+                    output = R"({"error":"too_large","message":"Tool results for this answer are too large. This call was not run.","committed":false})";
+                } else if (call.name == "web_search" || call.name == "web_read") {
                     output = R"({"error":"unavailable","message":"Web tools are not available for this request.","committed":false})";
                 } else if (arguments.is_discarded()) {
                     output = R"({"error":"invalid_argument","message":"Tool arguments are not valid JSON.","committed":false})";
@@ -625,14 +630,18 @@ GenerationResult ProviderClient::perform(
                         output = R"({"error":"validation_failure","message":"The maintenance tool failed.","committed":false})";
                     }
                 }
-                if (output.size() > maintenance_call_result_limit) {
+                if (!apply && output.size() > maintenance_call_result_limit) {
                     output = R"({"error":"too_large","message":"Tool result is too large.","committed":false})";
                 }
-                maintenance_result_bytes += output.size();
-                if (maintenance_result_bytes > maintenance_answer_result_limit) {
-                    output = R"({"error":"too_large","message":"Tool results for this answer are too large.","committed":false})";
+                if (!force_final
+                    && maintenance_result_bytes + output.size() > maintenance_answer_result_limit) {
+                    // Later calls in this response do not run.
                     force_final = true;
+                    if (!apply) {
+                        output = R"({"error":"too_large","message":"Tool results for this answer are too large.","committed":false})";
+                    }
                 }
+                maintenance_result_bytes += output.size();
                 log_info("Maintenance tool call: name=" + call.name
                     + " result_bytes=" + std::to_string(output.size()));
             } else {

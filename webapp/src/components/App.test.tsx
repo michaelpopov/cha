@@ -2612,3 +2612,41 @@ it('keeps a Welcome draft when detail is unchanged and blocks Save when it chang
   await act(async () => { await Promise.resolve(); });
   expect(getCharacter.mock.calls.length).toBe(settled);
 });
+
+it('keeps form Save available when only the Welcome bootstrap refresh fails', async () => {
+  const user = userEvent.setup();
+  const events = drivableSessionEvents();
+  let bootstrapCalls = 0;
+  render(<App
+    client={fixtureClient({
+      getBootstrap: async () => {
+        bootstrapCalls += 1;
+        if (bootstrapCalls > 1) throw new ChaError('internal_error', 'Bootstrap failed.');
+        return {
+          ...bootstrapFixture,
+          initial_forum_id: 'entrance',
+          initial_session_id: welcomeSessionId,
+          entrance_forum_id: 'entrance',
+        };
+      },
+      getSessionSnapshot: async () => ({
+        ...snapshotFixture,
+        session_id: welcomeSessionId,
+        discardable: true,
+      }),
+    })}
+    connectSessionEvents={events.connect}
+  />);
+
+  // Opening Welcome refreshes bootstrap, and that refresh fails.
+  await waitFor(() => expect(bootstrapCalls).toBeGreaterThan(1));
+  await openSettingsNavigation();
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(within(screen.getByLabelText('Characters navigation'))
+    .getByRole('button', { name: /Guide/ }));
+  await user.click(within(screen.getByLabelText('Character detail navigation'))
+    .getByRole('button', { name: 'Settings' }));
+  const style = await screen.findByLabelText('Style');
+  await user.selectOptions(style, 'mono-large');
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+});

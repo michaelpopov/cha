@@ -727,7 +727,10 @@ bool LiveSessionManager::post_maintenance_result(
     std::string notice) {
     auto& impl = *runtime_->impl_;
     if (epoch == 0 || epoch != impl.context_epoch.load()) return false;
-    return impl.enqueue_control(
+    // A provider worker calls this, and vault maintenance waits for that worker.
+    // Do not wait long when the queue is full.
+    constexpr auto queue_wait = std::chrono::seconds(1);
+    return impl.enqueue_control_until(
         [&impl, epoch, welcome = std::move(welcome), notice = std::move(notice)] {
             try {
                 if (impl.stopping_requested.load() || epoch != impl.context_epoch.load()) return;
@@ -748,7 +751,8 @@ bool LiveSessionManager::post_maintenance_result(
             } catch (...) {
                 log_error("configuration notice persistence failed");
             }
-        });
+        },
+        std::chrono::steady_clock::now() + queue_wait);
 }
 
 std::optional<LiveSessionOpenResult> LiveSessionManager::try_reattach(

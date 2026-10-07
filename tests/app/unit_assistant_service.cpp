@@ -96,10 +96,11 @@ public:
     std::atomic_bool& cancelled() { return cancelled_; }
     MaintenanceContext& context() { return context_; }
 
-    void fail_on_next_second_admit() { fail_after_ = admit_count_ + 2; }
+    // Admission runs first after the lifecycle lock, then again after the read.
+    void fail_after_lock() { fail_after_ = admit_count_ + 1; }
 
     void deny_after_read(ErrorCode code) {
-        fail_after_ = admit_count_ + 3;
+        fail_after_ = admit_count_ + 2;
         fail_code_ = code;
     }
 
@@ -246,7 +247,7 @@ TEST(AssistantService, RejectsTheWrongSessionAndAStaleEpoch) {
         "The vault context changed. Read the configuration again.");
 
     harness.context() = welcome_context();
-    harness.fail_on_next_second_admit();
+    harness.fail_after_lock();
     const Json after_lock = harness.run("vault_config_list", {{"prefix", nullptr}});
     EXPECT_EQ(after_lock["error"], "stale_context");
     EXPECT_EQ(harness.store().config_revision(), 1u);
@@ -334,6 +335,43 @@ TEST(AssistantService, ListsReadsAndReportsKeyMetadata) {
             },
         }}.execute("vault_config_list", "not-json", welcome_context(), harness.cancelled()));
     EXPECT_EQ(malformed["error"], "invalid_argument");
+}
+
+TEST(AssistantService, ReadMarksAFileTooLargeWhenItsEscapedTextDoesNotFit) {
+    ServiceHarness harness;
+    // Each quote doubles in JSON. Three raw files fit the store budget, but
+    // only two fit the encoded tool result.
+    const std::string quoted(60 * 1024, '"');
+    std::vector<WorkspaceConfigChange> changes;
+    std::vector<std::string> paths;
+    for (const char* name : {"one", "two", "three"}) {
+        paths.push_back("characters/guide/" + std::string(name) + ".md");
+        changes.push_back({
+            .path = paths.back(),
+            .operation = WorkspaceConfigOperation::create,
+            .content = quoted,
+        });
+    }
+    const auto created = harness.store().apply_config(
+        harness.store().config_revision(), changes);
+    ASSERT_TRUE(created.committed) << created.error_message;
+
+    const std::string encoded = AssistantService{AssistantService::Links{
+        .store = &harness.store(),
+        .lifecycle = &harness.lifecycle(),
+        .stopping = &harness.stopping(),
+        .admit = [](std::uint64_t) -> std::optional<ErrorCode> { return std::nullopt; },
+    }}.execute(
+        "vault_config_read", Json{{"paths", paths}}.dump(), welcome_context(),
+        harness.cancelled());
+    EXPECT_LE(encoded.size(), maintenance_call_result_limit);
+    const Json read = Json::parse(encoded);
+    ASSERT_EQ(read["files"].size(), 3u);
+    EXPECT_EQ(read["files"][0]["status"], "ok");
+    EXPECT_EQ(read["files"][0]["content"], quoted);
+    EXPECT_EQ(read["files"][1]["status"], "ok");
+    EXPECT_EQ(read["files"][2]["status"], "too_large");
+    EXPECT_FALSE(read["files"][2].contains("content"));
 }
 
 TEST(AssistantService, ExercisesTheFourMaintenanceRecipes) {

@@ -26,7 +26,7 @@ import {
   type TextToSpeechVoice,
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
-import { sameDetail, useDetailRefresh, useFormReload } from '../detailRefresh';
+import { DetailRefreshProvider, sameDetail, useDetailRefresh, useFormReload } from '../detailRefresh';
 import { type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
 import { BackToSettings } from './Settings';
@@ -139,8 +139,10 @@ function RosterDetailScreen<Value>({
   const [value, setValue] = useState<Value | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [requestVersion, setRequestVersion] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const valueRef = useRef<Value | null>(null);
   const seenSubject = useRef<string | null>(null);
+  const retry = () => setRequestVersion((version) => version + 1);
 
   useEffect(() => {
     if (!subjectId) return;
@@ -153,10 +155,12 @@ function RosterDetailScreen<Value>({
       setValue(null);
       setError(null);
     }
+    setRefreshing(background);
     void load(subjectId).then(
       (loaded) => {
         if (!current) return;
         setError(null);
+        setRefreshing(false);
         if (!background || !sameDetail(valueRef.current, loaded)) {
           valueRef.current = loaded;
           setValue(loaded);
@@ -164,7 +168,9 @@ function RosterDetailScreen<Value>({
         }
       },
       (failure: unknown) => {
-        if (current) setError(publicErrorMessage(failure, copy.failed));
+        if (!current) return;
+        setRefreshing(false);
+        setError(publicErrorMessage(failure, copy.failed));
       },
     );
     return () => {
@@ -194,14 +200,21 @@ function RosterDetailScreen<Value>({
           <p>{error}</p>
           <button
             className="cha-button cha-button-ghost"
-            onClick={() => setRequestVersion((version) => version + 1)}
+            onClick={retry}
             type="button"
           >
             Try again
           </button>
         </div>
       )}
-      {value !== null && render(value, setValue)}
+      {/* The title and text editor below save this screen's detail. */}
+      {value !== null && (
+        <DetailRefreshProvider
+          value={{ epoch: refresh.epoch, refreshing, failed: error !== null, retry }}
+        >
+          {render(value, setValue)}
+        </DetailRefreshProvider>
+      )}
     </section>
   );
 }

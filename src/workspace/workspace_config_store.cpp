@@ -1063,27 +1063,29 @@ std::string assistant_provider_id(const Workspace& workspace) {
 struct ConfigPathPolicy {
     bool readable{true};
     bool writable{false};
+    // Assistant and credential files. Other read-only paths are unsupported.
+    bool protected_file{false};
     std::string reason;
 };
 
 ConfigPathPolicy config_path_policy(
     std::string_view path, std::string_view assistant_provider) {
     if (path.starts_with("system/assistant/")) {
-        return {true, false, "Assistant settings are read-only"};
+        return {true, false, true, "Assistant settings are read-only"};
     }
     if (is_assistant_member_path(path)) {
-        return {true, false, "Assistant member files are read-only"};
+        return {true, false, true, "Assistant member files are read-only"};
     }
     if (is_assistant_provider_path(path, assistant_provider)) {
-        return {true, false, "Assistant's selected provider is read-only"};
+        return {true, false, true, "Assistant's selected provider is read-only"};
     }
     if (path.starts_with("system/keys/")) {
-        return {true, false, "Credentials cannot be written"};
+        return {true, false, true, "Credentials cannot be written"};
     }
     if (!is_writable_config_root(path)) {
-        return {true, false, "Unsupported configuration path"};
+        return {true, false, false, "Unsupported configuration path"};
     }
-    return {true, true, {}};
+    return {true, true, false, {}};
 }
 
 std::string sanitize_config_error(
@@ -1160,55 +1162,69 @@ void add_credential_pair(
     pairs.emplace(std::move(destination), std::move(key));
 }
 
-std::set<CredentialPair> credential_destination_pairs(const Workspace& workspace) {
+bool is_provider_config(std::string_view name) {
+    constexpr std::string_view prefix = "system/providers/";
+    constexpr std::string_view suffix = "/config.toml";
+    if (!name.starts_with(prefix) || !name.ends_with(suffix)) return false;
+    const std::string_view id =
+        name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
+    return !id.empty() && id.find('/') == std::string_view::npos;
+}
+
+// Pairs as written in the configuration rows, with the loader's defaults.
+// Entries that the loader omits or ignores count too. Then a repair of a broken
+// entry keeps its pair, and a broken new entry cannot add a pair for later.
+// A file that does not parse adds no pair.
+std::set<CredentialPair> credential_destination_pairs(
+    const Workspace& workspace,
+    const std::vector<ConfigFile>& rows) {
     std::set<CredentialPair> pairs;
-    for (const WorkspaceProvider& provider : workspace.providers()) {
-        add_credential_pair(
-            pairs,
-            provider_credential_destination(provider.config),
-            resolve_key_reference(
-                workspace, provider.config.api_key_id, provider.config.api_key_env));
-    }
-    if (workspace.jev()) {
-        add_credential_pair(
-            pairs,
-            url_credential_destination(workspace.jev()->url),
-            resolve_key_reference(workspace, workspace.jev()->api_key_id, {}));
-    }
-    if (workspace.voice_input()) {
-        add_credential_pair(
-            pairs,
-            url_credential_destination(workspace.voice_input()->url),
-            resolve_key_reference(
-                workspace, workspace.voice_input()->api_key_id, {}));
-    }
-    if (workspace.voice_output()) {
-        if (workspace.voice_output()->fishaudio) {
+    const auto text = [](const toml::table& table, std::string_view field) {
+        return table[field].value_or(std::string{});
+    };
+    for (const ConfigFile& row : rows) {
+        const bool provider = is_provider_config(row.name);
+        if (!provider
+            && row.name != "system/jev/config.toml"
+            && row.name != "system/voice-input/config.toml"
+            && row.name != "system/voice-output/config.toml"
+            && row.name != "system/web-search/config.toml") {
+            continue;
+        }
+        toml::table table;
+        try {
+            table = toml::parse(row.content);
+        } catch (const toml::parse_error&) {
+            continue;
+        }
+        const auto key = [&](const toml::table& source) {
+            return resolve_key_reference(workspace, text(source, "api_key"), {});
+        };
+        if (provider) {
+            ModelBackendConfig config;
+            config.host = text(table, "host");
+            config.port = table["port"].value_or(0);
+            config.https = table["https"].value_or(false);
             add_credential_pair(
                 pairs,
-                "fishaudio",
+                provider_credential_destination(config),
                 resolve_key_reference(
-                    workspace, workspace.voice_output()->fishaudio->api_key_id, {}));
-        }
-        if (workspace.voice_output()->elevenlabs) {
+                    workspace, text(table, "api_key"), text(table, "api_key_env")));
+        } else if (row.name == "system/voice-output/config.toml") {
+            add_credential_pair(pairs, "fishaudio", key(table));
+            if (const toml::table* eleven = table["elevenlabs"].as_table()) {
+                add_credential_pair(pairs, "elevenlabs", key(*eleven));
+            }
+        } else if (row.name == "system/web-search/config.toml") {
             add_credential_pair(
-                pairs,
-                "elevenlabs",
-                resolve_key_reference(
-                    workspace,
-                    workspace.voice_output()->elevenlabs->api_key_id,
-                    {}));
+                pairs, table["provider"].value_or(std::string("brave")), key(table));
+            add_credential_pair(
+                pairs, "firecrawl",
+                resolve_key_reference(workspace, text(table, "firecrawl_api_key"), {}));
+        } else {
+            add_credential_pair(pairs, url_credential_destination(text(table, "url")), key(table));
         }
     }
-    const WorkspaceWebSearch& search = workspace.web_search();
-    add_credential_pair(
-        pairs,
-        search.provider,
-        resolve_key_reference(workspace, search.api_key_id, {}));
-    add_credential_pair(
-        pairs,
-        "firecrawl",
-        resolve_key_reference(workspace, search.firecrawl_api_key_id, {}));
     return pairs;
 }
 
@@ -1543,6 +1559,7 @@ struct WorkspaceConfigStore::Impl {
                 "Configuration apply requires at least one change");
         }
 
+        const std::string provider = assistant_provider_id(*published);
         std::set<std::string> seen;
         std::size_t total_bytes = 0;
         for (const WorkspaceConfigChange& change : changes) {
@@ -1563,17 +1580,13 @@ struct WorkspaceConfigStore::Impl {
                 return failed(
                     WorkspaceConfigApplyError::invalid_path, error.what());
             }
-            const std::string provider = assistant_provider_id(*published);
             const ConfigPathPolicy policy =
                 config_path_policy(change.path, provider);
-            if (change.path.starts_with("system/assistant/")
-                || is_assistant_member_path(change.path)
-                || is_assistant_provider_path(change.path, provider)
-                || change.path.starts_with("system/keys/")) {
+            if (policy.protected_file) {
                 return failed(
                     WorkspaceConfigApplyError::protected_path, policy.reason);
             }
-            if (!is_writable_config_root(change.path)) {
+            if (!policy.writable) {
                 return failed(
                     WorkspaceConfigApplyError::invalid_path,
                     "Configuration path '" + change.path + "' is not writable");
@@ -1661,8 +1674,8 @@ struct WorkspaceConfigStore::Impl {
                 WorkspaceConfigApplyError::invalid_argument,
                 "Configuration changes cannot remove existing entities or memberships");
         }
-        const auto base_pairs = credential_destination_pairs(*published);
-        const auto next_pairs = credential_destination_pairs(*candidate);
+        const auto base_pairs = credential_destination_pairs(*published, committed_rows);
+        const auto next_pairs = credential_destination_pairs(*candidate, rows);
         for (const auto& pair : next_pairs) {
             if (!base_pairs.contains(pair)) {
                 return failed(

@@ -8,6 +8,7 @@
 #include "support/test_session_database.h"
 #include "support/test_transcript.h"
 #include "util/path_name.h"
+#include "workspace/builtins.h"
 #include "workspace/workspace.h"
 
 #include <gtest/gtest.h>
@@ -873,6 +874,69 @@ TEST(SessionController, PersistsAnIdentifiedCancelledResponse) {
         restored.back().status,
         EntryStatus::cancelled);
     EXPECT_EQ(restored.back().text, "Partial");
+}
+
+TEST(SessionController, StoresQueuedConfigurationNoticesInOrderAfterStop) {
+    TemporaryJournal temporary;
+    auto controller = test::from_test_backends(
+        test::one_backend(std::make_unique<ScriptedBackend>(
+            GenerationResult{}, std::vector<std::string>{"Partial"}, true)),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Fix it");
+    ASSERT_TRUE(controller->is_generating());
+    EXPECT_FALSE(controller->record_configuration_notice("First save."));
+    EXPECT_FALSE(controller->record_configuration_notice("Second save."));
+    for (const TranscriptEntry& entry : copy_entries(controller->view().transcript)) {
+        EXPECT_NE(entry.kind, EntryKind::notice);
+    }
+
+    (void)controller->request_stop();
+    (void)receive_until_idle(*controller);
+    auto entries = copy_entries(controller->view().transcript);
+    ASSERT_GE(entries.size(), 3U);
+    const TranscriptEntry& first = entries[entries.size() - 2];
+    EXPECT_EQ(first.kind, EntryKind::notice);
+    EXPECT_EQ(first.text, "First save.");
+    EXPECT_EQ(entries.back().kind, EntryKind::notice);
+    EXPECT_EQ(entries.back().text, "Second save.");
+    EXPECT_GT(entries.back().id, first.id);
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
+
+    // With no active answer, the notice is stored at once.
+    EXPECT_TRUE(controller->record_configuration_notice("Third save."));
+    entries = copy_entries(controller->view().transcript);
+    EXPECT_EQ(entries.back().text, "Third save.");
+    EXPECT_EQ(load_transcript_entries(temporary.path), entries);
+}
+
+TEST(SessionController, AttachesMaintenanceToolsOnlyToAssistantInWelcome) {
+    test::TestWorkspace fixture;
+    fixture.add_forum("helpdesk", "Helpdesk", workspace_assistant_id);
+    const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
+    const auto maintenance_attached = [&](FullSessionId identity) {
+        TemporaryJournal journal;
+        auto backend = std::make_unique<ScriptedBackend>(
+            GenerationResult{}, std::vector<std::string>{"Answer"});
+        ScriptedBackend* const observed = backend.get();
+        auto slot = std::make_shared<test::RequestBackendFacade::Slot>(std::move(backend));
+        auto providers = std::make_shared<Providers>([slot](SharedCharacterDefinition) {
+            return std::make_unique<test::RequestBackendFacade>(slot);
+        });
+        auto controller = SessionController::from_workspace_for_testing(
+            [workspace] { return workspace; }, std::string(workspace_assistant_id), "reader",
+            journal.path, providers,
+            std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
+            {}, {}, std::move(identity));
+        (void)controller->submit_prompt("reader", "Fix it");
+        (void)receive_until_idle(*controller);
+        EXPECT_EQ(observed->inputs.size(), 1U);
+        return !observed->inputs.empty() && static_cast<bool>(observed->inputs.back().maintenance_tool);
+    };
+    EXPECT_TRUE(maintenance_attached(
+        {std::string(workspace_entrance_id), std::string(welcome_id)}));
+    EXPECT_FALSE(maintenance_attached({"helpdesk", "helpdesk-session"}));
 }
 
 TEST(SessionController, PersistsDisplayedCreationTimeForTerminalOutcomes) {
