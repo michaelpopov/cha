@@ -550,13 +550,16 @@ TEST_P(ChatPersistenceIntegration, ExcludesReasoningFromTranscriptAndContextAfte
 }
 
 TEST_F(ApplicationIntegration, ProtectedVaultRejectsWrongPasswordAndContinuesAfterRestart) {
-    MockHttpServer server({streamed_reply(false, "Before protection"),
-                           streamed_reply(false, "After protection")});
-    server.start();
+    MockHttpServer server({streamed_reply(false, "Integration answer")});
     initialize(server.port());
     const Json identity = create_session();
+    // Serve each chat separately so vault setup and password checks do not
+    // consume the mock server's accept timeout.
+    server.start();
     const Json before = chat(identity, "Remember this");
+    server.join();
     ASSERT_EQ(before.at("transcript").size(), 2U);
+    EXPECT_EQ(before.at("transcript").back().at("text"), "Integration answer");
     (void)call("vault.update", {{"vault_name", "Integration"},
         {"display_name", "Integration"}, {"password", "integration-password"}});
     stop();
@@ -568,10 +571,12 @@ TEST_F(ApplicationIntegration, ProtectedVaultRejectsWrongPasswordAndContinuesAft
     start("integration-password");
     (void)call("session.open", identity);
     EXPECT_EQ(call("session.snapshot", identity).at("transcript"), before.at("transcript"));
+    server.start();
     const Json after = chat(identity, "Continue");
     ASSERT_EQ(after.at("transcript").size(), 4U);
-    EXPECT_EQ(after.at("transcript").back().at("text"), "After protection");
+    EXPECT_EQ(after.at("transcript").back().at("text"), "Integration answer");
     server.join();
+    EXPECT_EQ(server.requests().size(), 2U);
 }
 
 TEST_F(ApplicationIntegration, ProviderFailurePersistsAndNextTurnSucceeds) {

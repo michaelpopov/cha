@@ -32,7 +32,7 @@ function SaveControls() {
 }
 
 function refreshValue(failed: boolean, retry: () => void): DetailRefreshValue {
-  return { epoch: failed ? 2 : 1, refreshing: false, failed, retry };
+  return { epoch: failed ? 2 : 1, refreshing: false, failed, stale: false, retry };
 }
 
 it('lets a loaded form save when only the bootstrap refresh fails', () => {
@@ -45,7 +45,7 @@ it('lets a loaded form save when only the bootstrap refresh fails', () => {
   expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
 });
 
-it('keeps a title Save disabled when its owner refresh fails', async () => {
+it.each(['failed', 'stale'] as const)('keeps a title Save disabled when its owner is %s', async (state) => {
   const onSave = vi.fn(async () => {});
   const retry = vi.fn();
   const view = render(
@@ -60,7 +60,7 @@ it('keeps a title Save disabled when its owner refresh fails', async () => {
   expect(screen.getByRole('button', { name: 'Save character name' })).toBeEnabled();
 
   view.rerender(
-    <DetailRefreshProvider value={refreshValue(true, retry)}>
+    <DetailRefreshProvider value={{ ...refreshValue(false, retry), [state]: true }}>
       <EditableTitle available id="guide" name="Guide" onSave={onSave} subject="Character" />
     </DetailRefreshProvider>,
   );
@@ -70,12 +70,12 @@ it('keeps a title Save disabled when its owner refresh fails', async () => {
   expect(onSave).not.toHaveBeenCalled();
 });
 
-it('keeps a text-editor Save disabled when its owner refresh fails', async () => {
+it.each(['failed', 'stale'] as const)('keeps a text-editor Save disabled when its owner is %s', async (state) => {
   const onSave = vi.fn(async () => {});
   const retry = vi.fn();
-  function editor(failed: boolean) {
+  function editor(blocked: boolean) {
     return (
-      <DetailRefreshProvider value={refreshValue(failed, retry)}>
+      <DetailRefreshProvider value={{ ...refreshValue(false, retry), [state]: blocked }}>
         <DetailActions
           deleteMessage="Delete this file?"
           editor={{

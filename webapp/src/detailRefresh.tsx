@@ -8,6 +8,7 @@ export interface DetailRefreshValue {
   epoch: number;
   refreshing: boolean;
   failed: boolean;
+  stale: boolean;
   retry(): void;
 }
 
@@ -15,6 +16,7 @@ const idleRefresh: DetailRefreshValue = {
   epoch: 0,
   refreshing: false,
   failed: false,
+  stale: false,
   retry() {},
 };
 
@@ -137,6 +139,7 @@ export function useFormReload(identity: string | null) {
       epoch: refresh.epoch,
       refreshing: phase === 'loading',
       failed: phase === 'failed',
+      stale: phase === 'stale',
       retry,
     },
     blocked: phase !== 'idle',

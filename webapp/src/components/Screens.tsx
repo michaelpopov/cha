@@ -212,9 +212,12 @@ function RosterDetailScreen<Value>({
       {/* The title and text editor below save this screen's detail. */}
       {value !== null && (
         <DetailRefreshProvider
-          value={{ epoch: refresh.epoch, refreshing, failed: error !== null, retry }}
+          value={{ epoch: refresh.epoch, refreshing, failed: error !== null, stale: false, retry }}
         >
-          {render(value, setValue)}
+          {render(value, (updated) => {
+            valueRef.current = updated;
+            setValue(updated);
+          })}
         </DetailRefreshProvider>
       )}
     </section>
@@ -1526,10 +1529,9 @@ export function ForumMembersScreen({
   const dirtyRef = useRef(false);
   const baseline = useRef<{ forumId: string | null; key: string; persona: string } | null>(null);
 
-  const dirty = forum !== undefined && (
-    selected.size !== forum.members.length
-    || forum.members.some(({ id }) => !selected.has(id))
-    || personaId !== forum.default_persona_id
+  const dirty = baseline.current !== null && baseline.current.forumId === forumId && (
+    [...selected].sort().join('\0') !== baseline.current.key
+    || personaId !== baseline.current.persona
   );
   dirtyRef.current = dirty;
   const current = {
@@ -1539,10 +1541,14 @@ export function ForumMembersScreen({
   };
 
   // Replaces the draft with the forum's current members and persona.
-  function loadForum() {
-    baseline.current = current;
-    setSelected(new Set(forum?.members.map(({ id }) => id)));
-    setPersonaId(current.persona);
+  function loadForum(loaded: ForumSummary | undefined) {
+    baseline.current = {
+      forumId: forumId ?? null,
+      key: loaded?.members.map(({ id }) => id).sort().join('\0') ?? '',
+      persona: loaded?.default_persona_id ?? '',
+    };
+    setSelected(new Set(loaded?.members.map(({ id }) => id)));
+    setPersonaId(baseline.current.persona);
     setError(null);
     setStale(false);
   }
@@ -1552,12 +1558,15 @@ export function ForumMembersScreen({
     if (previous
         && previous.forumId === current.forumId
         && previous.key === current.key
-        && previous.persona === current.persona) return;
+        && previous.persona === current.persona) {
+      setStale(false);
+      return;
+    }
     if (previous && previous.forumId === current.forumId && dirtyRef.current) {
       setStale(true);
       return;
     }
-    loadForum();
+    loadForum(forum);
   }, [forum, forumId, memberKey, refresh.epoch]);
 
   function toggle(characterId: string) {
@@ -1572,7 +1581,8 @@ export function ForumMembersScreen({
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!forumId || !dirty || selected.size === 0 || !personaId || saving) return;
+    if (!forumId || !dirty || selected.size === 0 || !personaId || saving
+        || stale || refresh.refreshing || refresh.failed) return;
     setSaving(true);
     setError(null);
     try {
@@ -1580,6 +1590,7 @@ export function ForumMembersScreen({
         character_ids: [...selected],
         persona_id: personaId,
       });
+      loadForum(updated);
       dispatch({ type: 'forum-updated', forum: updated });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Forum members could not be saved.'));
@@ -1630,7 +1641,7 @@ export function ForumMembersScreen({
             ))}
           </div>
           {error && <p className="cha-error-message" role="alert">{error}</p>}
-          {stale && <StaleNotice onReload={loadForum} />}
+          {stale && <StaleNotice onReload={() => loadForum(forum)} />}
           {refresh.failed && (
             <div className="cha-state-message cha-error-message" role="alert">
               <p>Forum members could not be reloaded.</p>

@@ -1,8 +1,9 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChaError, type ChaClient, type ProviderDetail, type StyleDetail, type VaultDetail } from '../api/client';
+import { DetailRefreshProvider } from '../detailRefresh';
 import { appReducer, initialAppState, type AppAction, type AppState } from '../state/view';
 import { bootstrapFixture, fixtureClient, voiceDetailFixture } from '../test/fixtures';
 import {
@@ -106,6 +107,45 @@ function activeVaultState(canTransferR2 = true, canModify = true): AppState {
 }
 
 describe('Settings screens', () => {
+  it('blocks renaming a stale provider until its new settings are loaded', async () => {
+    const user = userEvent.setup();
+    let loadedProvider = provider;
+    const updateProvider = vi.fn<ChaClient['updateProvider']>(async (_id, update) => ({
+      ...loadedProvider, ...update,
+    }));
+    const client = fixtureClient({ getProvider: async () => loadedProvider, updateProvider });
+    const dispatch = vi.fn();
+    const state = {
+      ...initialAppState,
+      inspectedProvider: { id: provider.id, name: provider.display_name, writable: true },
+    };
+    const viewFor = (epoch: number) => (
+      <DetailRefreshProvider value={{ epoch, refreshing: false, failed: false, stale: false, retry() {} }}>
+        <ProviderScreen client={client} dispatch={dispatch} state={state} />
+      </DetailRefreshProvider>
+    );
+    const view = render(viewFor(0));
+    fireEvent.change(await screen.findByLabelText('Model'), { target: { value: 'my-draft' } });
+    loadedProvider = { ...provider, model: 'assistant-saved-model' };
+    view.rerender(viewFor(1));
+    await screen.findByText('This item changed. Load the new values to save.');
+
+    await user.click(screen.getByRole('button', { name: `Rename ${provider.display_name}` }));
+    fireEvent.change(screen.getByLabelText('Provider name'), { target: { value: 'Renamed router' } });
+    const saveName = screen.getByRole('button', { name: 'Save provider name' });
+    expect(saveName).toBeDisabled();
+    fireEvent.submit(saveName.closest('form')!);
+    expect(updateProvider).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Load new values' }));
+    expect(screen.getByLabelText('Model')).toHaveValue('assistant-saved-model');
+    expect(saveName).toBeEnabled();
+    await user.click(saveName);
+    expect(updateProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
+      display_name: 'Renamed router', model: 'assistant-saved-model',
+    }));
+  });
+
   it.each([
     ['Vaults', VaultsScreen, 'listVaults', 'New vault'],
     ['Providers', ProvidersScreen, 'listProviders', 'No providers configured'],

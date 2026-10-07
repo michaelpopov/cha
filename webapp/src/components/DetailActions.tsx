@@ -65,7 +65,7 @@ export function EditableTitle({ available, disabled = false, id, name, onSave, s
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const displayName = draft.trim();
-    if (!displayName || saving || disabled || blocked || refresh.refreshing || refresh.failed) return;
+    if (!displayName || saving || disabled || blocked || refresh.refreshing || refresh.failed || refresh.stale) return;
     if (displayName === name) {
       setEditing(false);
       return;
@@ -116,7 +116,7 @@ export function EditableTitle({ available, disabled = false, id, name, onSave, s
       <button
         aria-label={`Save ${lowerSubject} name`}
         className="cha-title-icon-action"
-        disabled={saving || disabled || blocked || refresh.refreshing || refresh.failed || draft.trim() === ''}
+        disabled={saving || disabled || blocked || refresh.refreshing || refresh.failed || refresh.stale || draft.trim() === ''}
         type="submit"
       >
         <CheckIcon />
@@ -250,7 +250,7 @@ export function DetailActions({ name, subject, deleteMessage, onDelete, editor }
   }
 
   async function save() {
-    if (!editor || text === null || saving || stale || refresh.refreshing || refresh.failed) return;
+    if (!editor || text === null || saving || stale || refresh.refreshing || refresh.failed || refresh.stale) return;
     setSaving(true);
     setEditorError(null);
     try {
@@ -310,7 +310,7 @@ export function DetailActions({ name, subject, deleteMessage, onDelete, editor }
         onChange={setText}
         onSave={() => void save()}
         ready
-        saveDisabled={stale || refresh.refreshing || refresh.failed}
+        saveDisabled={stale || refresh.refreshing || refresh.failed || refresh.stale}
         saving={saving}
         title={editor.title}
         value={text}

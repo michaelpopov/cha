@@ -759,6 +759,7 @@ export function App({
     epoch: detailEpoch,
     refreshing: detailRefreshing,
     failed: detailFailed,
+    stale: false,
     retry: () => { void refreshAfterWelcome(); },
   };
 
