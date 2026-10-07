@@ -8,10 +8,13 @@
 
 #include <gtest/gtest.h>
 
+#include "util/logging.h"
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <variant>
@@ -550,6 +553,32 @@ TEST(Application, ListsRenamesExportsAndProtectsWelcome) {
     EXPECT_EQ(
         application->delete_session("builtin-entrance", "builtin-welcome", epoch),
         ErrorCode::not_found);
+}
+
+TEST(Application, StartupLoadsHarmlessFieldsAndKeepsKnownSettings) {
+    test::TestWorkspace workspace;
+    std::ofstream(workspace.root() / "characters" / "guide" / "character.toml")
+        << "display_name = \"Guide\"\nprovider = \"test\"\nlegacy_flag = true\n";
+    std::filesystem::create_directories(workspace.root() / "system" / "web-search");
+    std::ofstream(workspace.root() / "system" / "web-search" / "config.toml")
+        << "provider = \"brave\"\nquery_provider = \"test\"\n";
+    const auto log_file = workspace.root() / "startup-warnings.log";
+    initialize_diagnostic_logging(log_file, "warn");
+    auto application = Application::open(make_command(
+        workspace, test::import_test_database(workspace.root())));
+    const auto epoch = application->context_epoch();
+    EXPECT_EQ(application->get_character("guide", epoch).summary.display_name, "Guide");
+    EXPECT_EQ(application->store().snapshot()->web_search().provider, "brave");
+    shutdown_diagnostic_logging();
+    const auto logged = [&] {
+        std::ifstream input(log_file);
+        return std::string{
+            std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>()};
+    }();
+    EXPECT_NE(logged.find("unsupported field 'legacy_flag'"), std::string::npos);
+    EXPECT_NE(logged.find("Ignoring unused web search field: query_provider"),
+        std::string::npos);
 }
 
 TEST(Application, CharacterPersonaForumAndFileEditsUseTheStore) {

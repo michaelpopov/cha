@@ -38,9 +38,37 @@ namespace {
 
 using Json = nlohmann::ordered_json;
 
-void normalize_legacy_reasoning_effort(std::string& value, const std::filesystem::path& path) {
+struct LoadWarnings {
+    const std::filesystem::path& root;
+    LoadWarningCollector* collector{};
+
+    std::string logical(const std::filesystem::path& path) const {
+        auto name = generic_utf8_path(path.lexically_relative(root));
+        if (name.starts_with("./")) name.erase(0, 2);
+        if (name == ".") return {};
+        return name;
+    }
+
+    void emit(const std::filesystem::path& path, std::string message) const {
+        emit_logical(logical(path), std::move(message));
+    }
+
+    void emit_logical(std::string_view logical_path, std::string message) const {
+        if (collector) {
+            collector->push_back({std::string(logical_path), message});
+        }
+        log_warn(message);
+    }
+};
+
+void normalize_legacy_reasoning_effort(
+    std::string& value,
+    const std::filesystem::path& path,
+    const LoadWarnings& warnings) {
     if (value == "minimal") {
-        log_warn("Using low instead of obsolete minimal reasoning effort in " + utf8_path(path));
+        warnings.emit(
+            path,
+            "Using low instead of obsolete minimal reasoning effort in " + utf8_path(path));
         value = "low";
     }
 }
@@ -148,17 +176,19 @@ std::vector<std::string> optional_string_array(
     return result;
 }
 
-void reject_unknown_fields(
+void warn_unknown_fields(
     const toml::table& table,
     const std::filesystem::path& path,
     std::span<const std::string_view> allowed,
-    std::string_view kind) {
+    std::string_view kind,
+    const LoadWarnings& warnings) {
     for (const auto& [key, value] : table) {
         (void)value;
         if (std::ranges::find(allowed, key.str()) == allowed.end()) {
-            throw std::runtime_error(
+            warnings.emit(
+                path,
                 std::string(kind) + " '" + utf8_path(path)
-                + "' has unsupported field '" + std::string(key.str()) + "'");
+                    + "' has unsupported field '" + std::string(key.str()) + "'");
         }
     }
 }
@@ -247,7 +277,8 @@ std::string option_label(std::string_view id) {
 
 WorkspaceProvider load_provider(
     const TextSource& source,
-    const std::filesystem::path& directory) {
+    const std::filesystem::path& directory,
+    const LoadWarnings& warnings) {
     const std::string id = utf8_path(directory.filename());
     require_path_component(id, directory.parent_path());
     const std::filesystem::path path = directory / "config.toml";
@@ -257,7 +288,7 @@ WorkspaceProvider load_provider(
         "temperature", "max_tokens", "timeout_s", "idle_timeout_s",
         "api_key", "api_key_env", "reasoning_effort", "reasoning_format", "https",
         "api", "auth", "web_search", "cache_retention", "openrouter_targets"};
-    reject_unknown_fields(table, path, fields, "Provider config");
+    warn_unknown_fields(table, path, fields, "Provider config", warnings);
 
     WorkspaceProvider provider{
         .id = id,
@@ -307,12 +338,14 @@ WorkspaceProvider load_provider(
 
     if (auto effort = optional_value<std::string>(
             table, path, "reasoning_effort", "a string")) {
-        normalize_legacy_reasoning_effort(*effort, path);
+        normalize_legacy_reasoning_effort(*effort, path, warnings);
         if (valid_reasoning_effort(*effort)) {
             provider.config.reasoning_effort = *effort;
         } else {
-            log_warn("Ignoring unsupported provider reasoning_effort in "
-                + utf8_path(path) + "; using " + provider.config.reasoning_effort);
+            warnings.emit(
+                path,
+                "Ignoring unsupported provider reasoning_effort in "
+                    + utf8_path(path) + "; using " + provider.config.reasoning_effort);
         }
     }
     const ModelBackendConfig& config = provider.config;
@@ -362,11 +395,12 @@ bool valid_voice_input_delay(std::string_view delay) {
 
 WorkspaceVoiceInput load_voice_input(
     const TextSource& source,
-    const std::filesystem::path& path) {
+    const std::filesystem::path& path,
+    const LoadWarnings& warnings) {
     const toml::table table = read_toml(source, path, "voice input config");
     static constexpr std::string_view fields[]{
         "provider", "url", "model", "api_key", "delay", "prompt", "send_phrase"};
-    reject_unknown_fields(table, path, fields, "Voice input config");
+    warn_unknown_fields(table, path, fields, "Voice input config", warnings);
     WorkspaceVoiceInput result{
         .provider = optional_value<std::string>(
                         table, path, "provider", "a string")
@@ -395,7 +429,8 @@ WorkspaceVoiceInput load_voice_input(
             + std::string(voice_input_url_message(result.provider)));
     }
     if (result.provider == "xai") {
-        normalize_unused_voice_input_delay(result.provider, result.delay);
+        normalize_unused_voice_input_delay(
+            result.provider, result.delay, warnings.logical(path), warnings.collector);
     } else if (!valid_voice_input_delay(result.delay)) {
         throw std::runtime_error(
             "Voice input config '" + utf8_path(path)
@@ -406,12 +441,13 @@ WorkspaceVoiceInput load_voice_input(
 
 WorkspaceVoiceOutput load_voice_output(
     const TextSource& source,
-    const std::filesystem::path& path) {
+    const std::filesystem::path& path,
+    const LoadWarnings& warnings) {
     const toml::table table = read_toml(source, path, "voice output config");
     static constexpr std::string_view fields[]{
         "url", "model", "api_key", "output_format", "default_voice",
         "instrumentation_provider", "instrumentation_reasoning_effort", "elevenlabs"};
-    reject_unknown_fields(table, path, fields, "Voice output config");
+    warn_unknown_fields(table, path, fields, "Voice output config", warnings);
     WorkspaceVoiceOutput result{.default_voice = required_string(table, path, "default_voice")};
     WorkspaceVoiceProviderOutput fish{
         .url = optional_value<std::string>(table, path, "url", "a string").value_or(""),
@@ -421,8 +457,10 @@ WorkspaceVoiceOutput load_voice_output(
     };
     for (const auto* field : {"instrumentation_provider", "instrumentation_reasoning_effort"}) {
         if (table.contains(field)) {
-            log_warn("Ignoring obsolete voice output setting '" + std::string(field)
-                + "' in " + utf8_path(path));
+            warnings.emit(
+                path,
+                "Ignoring obsolete voice output setting '" + std::string(field)
+                    + "' in " + utf8_path(path));
         }
     }
     if (const auto* eleven = table["elevenlabs"].as_table()) {
@@ -430,7 +468,10 @@ WorkspaceVoiceOutput load_voice_output(
         for (const auto& [key, value] : *eleven) {
             (void)value;
             if (std::ranges::find(eleven_fields, key.str()) == std::end(eleven_fields))
-                log_warn("Ignoring unused ElevenLabs output field '" + std::string(key.str()) + "' in " + utf8_path(path));
+                warnings.emit(
+                    path,
+                    "Ignoring unused ElevenLabs output field '" + std::string(key.str())
+                        + "' in " + utf8_path(path));
         }
         try {
             result.elevenlabs = WorkspaceVoiceProviderOutput{
@@ -440,27 +481,36 @@ WorkspaceVoiceOutput load_voice_output(
                 .output_format = normalize_elevenlabs_output_format(required_string(*eleven, path, "output_format")),
             };
         } catch (const std::exception& error) {
-            log_warn("Ignoring ElevenLabs output settings: " + std::string(error.what()));
+            warnings.emit(
+                path, "Ignoring ElevenLabs output settings: " + std::string(error.what()));
         }
     } else if (table.contains("elevenlabs")) {
-        log_warn("Ignoring ElevenLabs output settings in " + utf8_path(path) + ": elevenlabs must be a table.");
+        warnings.emit(
+            path,
+            "Ignoring ElevenLabs output settings in " + utf8_path(path)
+                + ": elevenlabs must be a table.");
     }
     if (fish.api_key_id.empty()) {
         if (!fish.url.empty() || !fish.model.empty())
-            log_warn("Ignoring FishAudio output endpoint and model without an API key.");
+            warnings.emit(
+                path, "Ignoring FishAudio output endpoint and model without an API key.");
     } else {
         try {
             fish.url = parse_voice_output_endpoint(fish.url);
             fish.model = normalize_voice_output_model(fish.model);
         } catch (const std::invalid_argument& error) {
             if (!result.elevenlabs) throw;
-            log_warn("Ignoring FishAudio output settings: " + std::string(error.what()));
+            warnings.emit(
+                path, "Ignoring FishAudio output settings: " + std::string(error.what()));
             fish.api_key_id.clear();
         }
         try {
             fish.output_format = normalize_voice_output_format(fish.output_format);
         } catch (const std::invalid_argument&) {
-            log_warn("Ignoring unsupported voice output format in " + utf8_path(path) + "; using mp3");
+            warnings.emit(
+                path,
+                "Ignoring unsupported voice output format in " + utf8_path(path)
+                    + "; using mp3");
             fish.output_format = "mp3";
         }
         if (!fish.api_key_id.empty()) result.fishaudio = std::move(fish);
@@ -509,7 +559,8 @@ using LoadedKey = std::variant<SavedApiKey, R2StorageKey>;
 
 LoadedKey load_saved_key(
     const TextSource& source,
-    const std::filesystem::path& directory) {
+    const std::filesystem::path& directory,
+    const LoadWarnings& warnings) {
     const std::string id = utf8_path(directory.filename());
     require_path_component(id, directory.parent_path());
     const std::filesystem::path path = directory / "config.toml";
@@ -523,7 +574,7 @@ LoadedKey load_saved_key(
     if (type == "models") {
         static constexpr std::string_view fields[]{
             "display_name", "type", "value"};
-        reject_unknown_fields(table, path, fields, "Key config");
+        warn_unknown_fields(table, path, fields, "Key config", warnings);
         std::string value = required_string(table, path, "value");
         validate_saved_key_text(value, 16 * 1024, "value", path, false);
         return SavedApiKey{
@@ -535,7 +586,7 @@ LoadedKey load_saved_key(
     if (type == "R2") {
         static constexpr std::string_view fields[]{
             "display_name", "type", "url", "access_key_id", "secret_key"};
-        reject_unknown_fields(table, path, fields, "Key config");
+        warn_unknown_fields(table, path, fields, "Key config", warnings);
         R2StorageKey key{
             .id = id,
             .display_name = display_name,
@@ -586,14 +637,15 @@ toml::table key_collection_table(std::uint64_t next_id) {
 
 WorkspaceStyle load_style(
     const TextSource& source,
-    const std::filesystem::path& directory) {
+    const std::filesystem::path& directory,
+    const LoadWarnings& warnings) {
     const std::string id = utf8_path(directory.filename());
     require_path_component(id, directory.parent_path());
     const std::filesystem::path path = directory / "config.toml";
     const toml::table table = read_toml(source, path, "style config");
     static constexpr std::string_view fields[]{
         "display_name", "font", "style", "weight", "size", "text_color"};
-    reject_unknown_fields(table, path, fields, "Style config");
+    warn_unknown_fields(table, path, fields, "Style config", warnings);
     WorkspaceStyle loaded{
         .id = id,
         .label = optional_value<std::string>(
@@ -655,7 +707,8 @@ std::optional<double> optional_bounded_number(
 
 WorkspaceVoice load_voice(
     const TextSource& source,
-    const std::filesystem::path& directory) {
+    const std::filesystem::path& directory,
+    const LoadWarnings& warnings) {
     const std::string id = utf8_path(directory.filename());
     require_path_component(id, directory.parent_path());
     const std::filesystem::path path = directory / "config.toml";
@@ -663,15 +716,18 @@ WorkspaceVoice load_voice(
     static constexpr std::string_view fields[]{
         "display_name", "description", "elevenlabs_voice_id", "provider", "stability",
         "similarity_boost", "style", "use_speaker_boost", "speed"};
-    reject_unknown_fields(table, path, fields, "Voice config");
+    warn_unknown_fields(table, path, fields, "Voice config", warnings);
     for (const std::string_view obsolete : {
              "stability", "similarity_boost", "style", "use_speaker_boost"}) {
         if (table.contains(obsolete)) {
+            const std::string message =
+                "Ignoring obsolete voice settings: stability, similarity_boost, "
+                "style, use_speaker_boost. Saving a voice removes these settings.";
+            if (warnings.collector) {
+                warnings.collector->push_back({warnings.logical(path), message});
+            }
             static std::once_flag warning;
-            std::call_once(warning, [] {
-                log_warn("Ignoring obsolete voice settings: stability, similarity_boost, "
-                    "style, use_speaker_boost. Saving a voice removes these settings.");
-            });
+            std::call_once(warning, [&] { log_warn(message); });
             break;
         }
     }
@@ -723,7 +779,8 @@ bool is_reserved_participant(std::string_view name) {
 WorkspacePersona load_persona(
     const TextSource& source,
     const std::filesystem::path& directory,
-    const std::filesystem::path& personas_directory) {
+    const std::filesystem::path& personas_directory,
+    const LoadWarnings& warnings) {
     const std::string id = utf8_path(directory.filename());
     if (!is_persona_id(id) || is_reserved_participant(id)) {
         throw std::runtime_error("Invalid or reserved persona ID '" + id + "'");
@@ -732,7 +789,7 @@ WorkspacePersona load_persona(
     const toml::table table = read_toml(source, config_path, "persona config");
     static constexpr std::string_view fields[]{
         "display_name", "description", "style", "voice", "prompt"};
-    reject_unknown_fields(table, config_path, fields, "Persona config");
+    warn_unknown_fields(table, config_path, fields, "Persona config", warnings);
     const std::string display_name = required_string(table, config_path, "display_name");
     validate_public_name(display_name, "Persona name", config_path, true);
     if (is_reserved_participant(display_name)) {
@@ -745,7 +802,9 @@ WorkspacePersona load_persona(
     const std::optional<std::string> style_id = optional_value<std::string>(
         table, config_path, "style", "a string");
     if (table.contains("voice")) {
-        log_warn("Ignoring obsolete persona voice setting: " + utf8_path(config_path));
+        warnings.emit(
+            config_path,
+            "Ignoring obsolete persona voice setting: " + utf8_path(config_path));
     }
     if (style_id) require_path_component(*style_id, config_path);
     const std::filesystem::path prompt_path = directory / "PERSONA.md";
@@ -844,6 +903,7 @@ CharacterConfig load_character_config(
     const TextSource& source,
     const std::filesystem::path& path,
     bool definition,
+    const LoadWarnings& warnings,
     bool allow_reserved_name = false,
     bool require_provider = false) {
     const toml::table table = read_toml(source, path, "character config");
@@ -851,11 +911,11 @@ CharacterConfig load_character_config(
         "display_name", "description", "provider", "style", "voice",
         "reasoning_effort", "web_search", "web_search_tool", "tags", "prompt"};
     static constexpr std::string_view override_fields[]{"provider", "prompt"};
-    reject_unknown_fields(
+    warn_unknown_fields(
         table, path,
         definition ? std::span<const std::string_view>(definition_fields)
                    : std::span<const std::string_view>(override_fields),
-        "Character config");
+        "Character config", warnings);
     CharacterConfig result{
         .display_name = optional_value<std::string>(
             table, path, "display_name", "a string"),
@@ -874,7 +934,7 @@ CharacterConfig load_character_config(
         .prompt_variables = template_scope_from_toml(table, "prompt", utf8_path(path)),
     };
     if (result.reasoning_effort) {
-        normalize_legacy_reasoning_effort(*result.reasoning_effort, path);
+        normalize_legacy_reasoning_effort(*result.reasoning_effort, path, warnings);
     }
     if (table.contains("web_search")) {
         result.web_search = choice(
@@ -1025,12 +1085,13 @@ struct LoadedForumConfig {
 LoadedForumConfig load_forum_config(
     const TextSource& source,
     const std::filesystem::path& path,
-    std::span<const std::string> member_ids) {
+    std::span<const std::string> member_ids,
+    const LoadWarnings& warnings) {
     const toml::table table = read_toml(source, path, "forum config");
     static constexpr std::string_view fields[]{
         "display_name", "description", "default_character", "default_agent",
         "default_persona"};
-    reject_unknown_fields(table, path, fields, "Forum config");
+    warn_unknown_fields(table, path, fields, "Forum config", warnings);
     if (table.contains("default_character") && table.contains("default_agent")) {
         throw std::runtime_error(
             "Forum config '" + utf8_path(path)
@@ -1091,14 +1152,15 @@ struct LoadedKeys {
 
 LoadedKeys load_keys(
     const TextSource& source,
-    const std::filesystem::path& root) {
+    const std::filesystem::path& root,
+    const LoadWarnings& warnings) {
     LoadedKeys result;
     const std::filesystem::path keys_directory =
         root / "system" / "keys";
     if (source.is_directory(keys_directory)) {
         for (const std::filesystem::path& directory :
              direct_subdirectories(source, keys_directory)) {
-            LoadedKey loaded = load_saved_key(source, directory);
+            LoadedKey loaded = load_saved_key(source, directory, warnings);
             if (auto* api_key = std::get_if<SavedApiKey>(&loaded)) {
                 result.api_keys.push_back(std::move(*api_key));
                 continue;
@@ -1121,7 +1183,8 @@ std::uint64_t load_next_api_key_id(
     const TextSource& source,
     const std::filesystem::path& root,
     std::span<const SavedApiKey> api_keys,
-    const std::optional<R2StorageKey>& r2_storage) {
+    const std::optional<R2StorageKey>& r2_storage,
+    const LoadWarnings& warnings) {
     const std::filesystem::path keys_directory = root / "system" / "keys";
     std::uint64_t highest_key_id{};
     for (const SavedApiKey& key : api_keys) {
@@ -1144,7 +1207,8 @@ std::uint64_t load_next_api_key_id(
     if (source.is_regular_file(keys_config)) {
         const toml::table table = read_toml(source, keys_config, "key collection config");
         static constexpr std::string_view fields[]{"next_id"};
-        reject_unknown_fields(table, keys_config, fields, "Key collection config");
+        warn_unknown_fields(
+            table, keys_config, fields, "Key collection config", warnings);
         const std::optional<std::int64_t> configured =
             optional_value<std::int64_t>(
                 table, keys_config, "next_id", "an integer");
@@ -1167,23 +1231,25 @@ struct LoadedProviders {
 
 LoadedProviders load_providers(
     const TextSource& source,
-    const std::filesystem::path& root) {
+    const std::filesystem::path& root,
+    const LoadWarnings& warnings) {
     LoadedProviders result;
     const std::filesystem::path providers_directory =
         root / "system" / "providers";
     for (const std::filesystem::path& directory :
          direct_subdirectories(source, providers_directory)) {
         try {
-            WorkspaceProvider provider = load_provider(source, directory);
+            WorkspaceProvider provider = load_provider(source, directory, warnings);
             result.config_paths.emplace(
                 provider.id, directory / "config.toml");
             result.providers.push_back(std::move(provider));
         } catch (const std::exception& error) {
             result.errors.emplace(
                 utf8_path(directory.filename()), error.what());
-            log_warn(
+            warnings.emit(
+                directory / "config.toml",
                 "Provider '" + utf8_path(directory.filename())
-                + "' omitted from workspace: " + error.what());
+                    + "' omitted from workspace: " + error.what());
         }
     }
     std::ranges::sort(
@@ -1201,7 +1267,8 @@ struct LoadedStyles {
 
 LoadedStyles load_styles(
     const TextSource& source,
-    const std::filesystem::path& root) {
+    const std::filesystem::path& root,
+    const LoadWarnings& warnings) {
     LoadedStyles result;
     const std::filesystem::path styles_directory =
         root / "system" / "styles";
@@ -1209,14 +1276,15 @@ LoadedStyles load_styles(
         for (const std::filesystem::path& directory :
              direct_subdirectories(source, styles_directory)) {
             try {
-                WorkspaceStyle style = load_style(source, directory);
+                WorkspaceStyle style = load_style(source, directory, warnings);
                 result.config_paths.emplace(
                     style.id, directory / "config.toml");
                 result.styles.push_back(std::move(style));
             } catch (const std::exception& error) {
-                log_warn(
+                warnings.emit(
+                    directory / "config.toml",
                     "Style '" + utf8_path(directory.filename())
-                    + "' omitted from workspace: " + error.what());
+                        + "' omitted from workspace: " + error.what());
             }
         }
     }
@@ -1235,14 +1303,15 @@ struct LoadedVoices {
 
 LoadedVoices load_voices(
     const TextSource& source,
-    const std::filesystem::path& root) {
+    const std::filesystem::path& root,
+    const LoadWarnings& warnings) {
     LoadedVoices result;
     const std::filesystem::path voices_directory =
         root / "system" / "voices";
     if (source.is_directory(voices_directory)) {
         for (const std::filesystem::path& directory :
              direct_subdirectories(source, voices_directory)) {
-            WorkspaceVoice voice = load_voice(source, directory);
+            WorkspaceVoice voice = load_voice(source, directory, warnings);
             result.config_paths.emplace(
                 voice.id, directory / "config.toml");
             result.voices.push_back(std::move(voice));
@@ -1258,17 +1327,19 @@ LoadedVoices load_voices(
 
 std::optional<WorkspaceVoiceInput> load_voice_input_settings(
     const TextSource& source,
-    const std::filesystem::path& root) {
+    const std::filesystem::path& root,
+    const LoadWarnings& warnings) {
     std::optional<WorkspaceVoiceInput> result;
     const std::filesystem::path voice_input_path =
         root / "system" / "voice-input" / "config.toml";
     if (source.is_regular_file(voice_input_path)) {
         try {
-            result = load_voice_input(source, voice_input_path);
+            result = load_voice_input(source, voice_input_path, warnings);
         } catch (const std::exception& error) {
-            log_warn(
+            warnings.emit(
+                voice_input_path,
                 "Voice input configuration is ignored: "
-                + std::string(error.what()));
+                    + std::string(error.what()));
         }
     }
     return result;
@@ -1276,17 +1347,19 @@ std::optional<WorkspaceVoiceInput> load_voice_input_settings(
 
 std::optional<WorkspaceVoiceOutput> load_voice_output_settings(
     const TextSource& source,
-    const std::filesystem::path& root) {
+    const std::filesystem::path& root,
+    const LoadWarnings& warnings) {
     std::optional<WorkspaceVoiceOutput> result;
     const std::filesystem::path voice_output_path =
         root / "system" / "voice-output" / "config.toml";
     if (source.is_regular_file(voice_output_path)) {
         try {
-            result = load_voice_output(source, voice_output_path);
+            result = load_voice_output(source, voice_output_path, warnings);
         } catch (const std::exception& error) {
-            log_warn(
+            warnings.emit(
+                voice_output_path,
                 "Voice output configuration is ignored: "
-                + std::string(error.what()));
+                    + std::string(error.what()));
         }
     }
     return result;
@@ -1294,7 +1367,8 @@ std::optional<WorkspaceVoiceOutput> load_voice_output_settings(
 
 std::optional<WorkspaceJev> load_jev_settings(
     const TextSource& source,
-    const std::filesystem::path& root) {
+    const std::filesystem::path& root,
+    const LoadWarnings& warnings) {
     const auto path = root / "system" / "jev" / "config.toml";
     if (!source.is_regular_file(path)) return std::nullopt;
     try {
@@ -1303,7 +1377,9 @@ std::optional<WorkspaceJev> load_jev_settings(
         for (const auto& [key, value] : table) {
             (void)value;
             if (std::ranges::find(fields, key.str()) == std::end(fields))
-                log_warn("Ignoring unused recipient detection field: " + std::string(key.str()));
+                warnings.emit(
+                    path,
+                    "Ignoring unused recipient detection field: " + std::string(key.str()));
         }
         WorkspaceJev result{
             .url = required_string(table, path, "url"),
@@ -1313,14 +1389,17 @@ std::optional<WorkspaceJev> load_jev_settings(
         validate_jev_config(result);
         return result;
     } catch (const std::exception& error) {
-        log_warn("Recipient detection configuration is ignored: " + std::string(error.what()));
+        warnings.emit(
+            path,
+            "Recipient detection configuration is ignored: " + std::string(error.what()));
         return std::nullopt;
     }
 }
 
 WorkspaceSessionNaming load_session_naming_settings(
     const TextSource& source,
-    const Workspace& workspace) {
+    const Workspace& workspace,
+    const LoadWarnings& warnings) {
     const auto path = workspace.root() / "system" / "session" / "config.toml";
     if (!source.is_regular_file(path)) return {};
     try {
@@ -1328,32 +1407,37 @@ WorkspaceSessionNaming load_session_naming_settings(
         for (const auto& [key, value] : table) {
             (void)value;
             if (key.str() != "naming_provider" && key.str() != "naming_reasoning_effort")
-                log_warn("Ignoring unused session setting: " + std::string(key.str()));
+                warnings.emit(
+                    path, "Ignoring unused session setting: " + std::string(key.str()));
         }
         WorkspaceSessionNaming settings{
             .provider_id = table["naming_provider"].value_or(std::string{}),
             .reasoning_effort = table["naming_reasoning_effort"].value_or(std::string("low")),
         };
-        normalize_legacy_reasoning_effort(settings.reasoning_effort, path);
+        normalize_legacy_reasoning_effort(settings.reasoning_effort, path, warnings);
         if (!valid_reasoning_effort(settings.reasoning_effort)) {
-            log_warn("Ignoring unsupported session naming effort; using low");
+            warnings.emit(path, "Ignoring unsupported session naming effort; using low");
             settings.reasoning_effort = "low";
         }
         if (!settings.provider_id.empty() && !workspace.find_provider(settings.provider_id)) {
-            log_warn("Session naming provider '" + settings.provider_id
-                + "' is unavailable; using Assistant");
+            warnings.emit(
+                path,
+                "Session naming provider '" + settings.provider_id
+                    + "' is unavailable; using Assistant");
             settings.provider_id.clear();
         }
         return settings;
     } catch (const std::exception& error) {
-        log_warn("Session settings are ignored: " + std::string(error.what()));
+        warnings.emit(
+            path, "Session settings are ignored: " + std::string(error.what()));
         return {};
     }
 }
 
 WorkspaceWebSearch load_web_search_settings(
     const TextSource& source,
-    const std::filesystem::path& root) {
+    const std::filesystem::path& root,
+    const LoadWarnings& warnings) {
     const auto path = root / "system" / "web-search" / "config.toml";
     if (!source.is_regular_file(path)) return {};
     try {
@@ -1364,7 +1448,8 @@ WorkspaceWebSearch load_web_search_settings(
         for (const auto& [key, value] : table) {
             (void)value;
             if (std::ranges::find(fields, key.str()) == std::end(fields))
-                log_warn("Ignoring unused web search field: " + std::string(key.str()));
+                warnings.emit(
+                    path, "Ignoring unused web search field: " + std::string(key.str()));
         }
         WorkspaceWebSearch result{
             .provider = table["provider"].value_or(std::string("brave")),
@@ -1374,17 +1459,20 @@ WorkspaceWebSearch load_web_search_settings(
             .firecrawl_api_key_id = table["firecrawl_api_key"].value_or(std::string{}),
         };
         if (result.provider != "brave" && result.provider != "tavily") {
-            log_warn("Ignoring unsupported web search provider; using Brave Search API");
+            warnings.emit(
+                path, "Ignoring unsupported web search provider; using Brave Search API");
             result.provider = "brave";
             result.tool_enabled = false;
         }
         if (result.read_provider != "off" && result.read_provider != "firecrawl") {
-            log_warn("Ignoring unsupported page reading provider; disabling page reading");
+            warnings.emit(
+                path, "Ignoring unsupported page reading provider; disabling page reading");
             result.read_provider = "off";
         }
         return result;
     } catch (const std::exception& error) {
-        log_warn("Web search configuration is ignored: " + std::string(error.what()));
+        warnings.emit(
+            path, "Web search configuration is ignored: " + std::string(error.what()));
         return {};
     }
 }
@@ -1396,12 +1484,14 @@ struct LoadedPersonas {
 
 LoadedPersonas load_personas(
     const TextSource& source,
-    const Workspace& workspace) {
+    const Workspace& workspace,
+    const LoadWarnings& warnings) {
     LoadedPersonas result;
     const std::filesystem::path personas_directory = workspace.root() / "personas";
     for (const std::filesystem::path& directory : recursive_definition_directories(source,
              personas_directory, "persona.toml", "PERSONA.md")) {
-        WorkspacePersona persona = load_persona(source, directory, personas_directory);
+        WorkspacePersona persona =
+            load_persona(source, directory, personas_directory, warnings);
         if (persona.style_id) {
             const WorkspaceStyle* style = workspace.find_style(*persona.style_id);
             if (style == nullptr) {
@@ -1489,7 +1579,8 @@ struct LoadedCharacters {
 LoadedCharacters load_characters(
     const TextSource& source,
     const Workspace& workspace,
-    const std::unordered_map<std::string, std::string>& provider_errors) {
+    const std::unordered_map<std::string, std::string>& provider_errors,
+    const LoadWarnings& warnings) {
     LoadedCharacters result;
     const std::filesystem::path characters_directory =
         workspace.root() / "characters";
@@ -1504,7 +1595,8 @@ LoadedCharacters load_characters(
             throw std::runtime_error(
                 "Character '" + id + "' requires character.toml and CHARACTER.md");
         }
-        const CharacterConfig config = load_character_config(source, config_path, true);
+        const CharacterConfig config =
+            load_character_config(source, config_path, true, warnings);
         const CharacterAppearance appearance = resolve_character_references(
             config, "Character '" + id + "'", workspace, provider_errors);
         if (!result.directories.emplace(id, directory).second) {
@@ -1567,11 +1659,12 @@ LoadedCharacters load_characters(
 WorkspaceCharacter load_assistant(
     const TextSource& source,
     const Workspace& workspace,
-    const std::unordered_map<std::string, std::string>& provider_errors) {
+    const std::unordered_map<std::string, std::string>& provider_errors,
+    const LoadWarnings& warnings) {
     const std::filesystem::path assistant_path =
         workspace.root() / "system" / "assistant" / "character.toml";
     const CharacterConfig assistant =
-        load_character_config(source, assistant_path, true, true, true);
+        load_character_config(source, assistant_path, true, warnings, true, true);
     const CharacterAppearance assistant_appearance = resolve_character_references(
         assistant, "Assistant", workspace, provider_errors);
     return {
@@ -1625,7 +1718,8 @@ struct LoadedForums {
 LoadedForums load_forums(
     const TextSource& source,
     const Workspace& workspace,
-    const std::unordered_map<std::string, std::filesystem::path>& character_directories) {
+    const std::unordered_map<std::string, std::filesystem::path>& character_directories,
+    const LoadWarnings& warnings) {
     LoadedForums result;
     const std::filesystem::path characters_directory = workspace.root() / "characters";
     const std::filesystem::path forums_directory = workspace.root() / "forums";
@@ -1662,7 +1756,7 @@ LoadedForums load_forums(
         }
         std::ranges::sort(member_ids);
         const LoadedForumConfig config =
-            load_forum_config(source, directory / "config.toml", member_ids);
+            load_forum_config(source, directory / "config.toml", member_ids, warnings);
         if (fold_ascii(config.display_name) == "entrance") {
             throw std::runtime_error(
                 "Forum name '" + config.display_name + "' is reserved");
@@ -1708,7 +1802,8 @@ LoadedForums load_forums(
                 throw std::runtime_error(
                     "Forum '" + id + "' character defaults are not a regular file");
             }
-            defaults = load_character_config(source, defaults_path, false).prompt_variables;
+            defaults = load_character_config(
+                source, defaults_path, false, warnings).prompt_variables;
         }
         for (const std::string& member_id : member_ids) {
             const WorkspaceCharacter& character =
@@ -1727,7 +1822,8 @@ LoadedForums load_forums(
                 }
                 overlay(
                     variables,
-                    load_character_config(source, member_config_path, false).prompt_variables);
+                    load_character_config(
+                        source, member_config_path, false, warnings).prompt_variables);
             }
             const std::filesystem::path member_prompt_path = member_directory / "CHARACTER.md";
             const bool has_member_prompt = source.exists(member_prompt_path);
@@ -1849,23 +1945,37 @@ void validate_jev_config(const WorkspaceJev& config) {
 
 void normalize_unused_voice_input_delay(
     std::string_view provider,
-    std::string& delay) {
+    std::string& delay,
+    std::string_view logical_path,
+    LoadWarningCollector* warnings) {
     if (provider == "xai" && !valid_voice_input_delay(delay)) {
-        log_warn("Ignoring obsolete voice input delay for xAI; using low");
+        const std::string message =
+            "Ignoring obsolete voice input delay for xAI; using low";
+        if (warnings) {
+            warnings->push_back({std::string(logical_path), message});
+        }
+        log_warn(message);
         delay = "low";
     }
 }
 
-Workspace Workspace::load(std::filesystem::path root) {
-    return load(std::move(root), TextSource{});
+Workspace Workspace::load(
+    std::filesystem::path root, LoadWarningCollector* warnings) {
+    return load(std::move(root), TextSource{}, warnings);
 }
 
-Workspace Workspace::load(std::filesystem::path root, const TextFiles& files) {
+Workspace Workspace::load(
+    std::filesystem::path root,
+    const TextFiles& files,
+    LoadWarningCollector* warnings) {
     const TextSource source(root, files);
-    return load(std::move(root), source);
+    return load(std::move(root), source, warnings);
 }
 
-Workspace Workspace::load(std::filesystem::path root, const TextSource& source) {
+Workspace Workspace::load(
+    std::filesystem::path root,
+    const TextSource& source,
+    LoadWarningCollector* warnings) {
     if (!source.is_directory(root)) {
         throw std::runtime_error(
             "Workspace '" + utf8_path(root) + "' is not a directory");
@@ -1873,57 +1983,65 @@ Workspace Workspace::load(std::filesystem::path root, const TextSource& source) 
 
     Workspace workspace;
     workspace.root_ = std::move(root);
+    const LoadWarnings load_warnings{workspace.root_, warnings};
 
     // Keys have no catalog dependencies; retain the existing loading order.
-    LoadedKeys keys = load_keys(source, workspace.root_);
+    LoadedKeys keys = load_keys(source, workspace.root_, load_warnings);
     workspace.api_keys_ = std::move(keys.api_keys);
     workspace.r2_storage_ = std::move(keys.r2_storage);
     build_index(
         std::span<const SavedApiKey>(workspace.api_keys_),
         workspace.api_key_index_, "API key");
-    workspace.next_api_key_id_ = load_next_api_key_id(source,
-        workspace.root_, workspace.api_keys_, workspace.r2_storage_);
+    workspace.next_api_key_id_ = load_next_api_key_id(
+        source, workspace.root_, workspace.api_keys_, workspace.r2_storage_,
+        load_warnings);
 
     // Reference resolution needs the provider, style and voice indexes.
-    LoadedProviders providers = load_providers(source, workspace.root_);
+    LoadedProviders providers = load_providers(source, workspace.root_, load_warnings);
     workspace.providers_ = std::move(providers.providers);
     workspace.provider_config_paths_ = std::move(providers.config_paths);
     build_index(
         std::span<const WorkspaceProvider>(workspace.providers_),
         workspace.provider_index_, "Provider");
 
-    LoadedStyles styles = load_styles(source, workspace.root_);
+    LoadedStyles styles = load_styles(source, workspace.root_, load_warnings);
     workspace.styles_ = std::move(styles.styles);
     workspace.style_config_paths_ = std::move(styles.config_paths);
     build_index(
         std::span<const WorkspaceStyle>(workspace.styles_),
         workspace.style_index_, "Style");
 
-    LoadedVoices voices = load_voices(source, workspace.root_);
+    LoadedVoices voices = load_voices(source, workspace.root_, load_warnings);
     workspace.voices_ = std::move(voices.voices);
     workspace.voice_config_paths_ = std::move(voices.config_paths);
     build_index(
         std::span<const WorkspaceVoice>(workspace.voices_),
         workspace.voice_index_, "Voice");
 
-    workspace.jev_ = load_jev_settings(source, workspace.root_);
-    workspace.session_naming_ = load_session_naming_settings(source, workspace);
-    workspace.web_search_ = load_web_search_settings(source, workspace.root_);
-    workspace.voice_input_ = load_voice_input_settings(source, workspace.root_);
-    workspace.voice_output_ = load_voice_output_settings(source, workspace.root_);
+    workspace.jev_ = load_jev_settings(source, workspace.root_, load_warnings);
+    workspace.session_naming_ =
+        load_session_naming_settings(source, workspace, load_warnings);
+    workspace.web_search_ =
+        load_web_search_settings(source, workspace.root_, load_warnings);
+    workspace.voice_input_ =
+        load_voice_input_settings(source, workspace.root_, load_warnings);
+    workspace.voice_output_ =
+        load_voice_output_settings(source, workspace.root_, load_warnings);
 
     // Guest is already included and sorted by the persona phase.
-    LoadedPersonas personas = load_personas(source, workspace);
+    LoadedPersonas personas = load_personas(source, workspace, load_warnings);
     workspace.personas_ = std::move(personas.personas);
     workspace.persona_directories_ = std::move(personas.directories);
     build_index(
         std::span<const WorkspacePersona>(workspace.personas_),
         workspace.persona_index_, "Persona");
 
-    LoadedCharacters characters = load_characters(source, workspace, providers.errors);
+    LoadedCharacters characters =
+        load_characters(source, workspace, providers.errors, load_warnings);
     workspace.characters_ = std::move(characters.characters);
     workspace.character_config_paths_ = std::move(characters.config_paths);
-    workspace.characters_.push_back(load_assistant(source, workspace, providers.errors));
+    workspace.characters_.push_back(
+        load_assistant(source, workspace, providers.errors, load_warnings));
     std::ranges::sort(
         workspace.characters_, {},
         [](const WorkspaceCharacter& character) {
@@ -1939,7 +2057,8 @@ Workspace Workspace::load(std::filesystem::path root, const TextSource& source) 
 
     // Collision checks and forums require both participant indexes.
     validate_participants(workspace);
-    LoadedForums forums = load_forums(source, workspace, characters.directories);
+    LoadedForums forums =
+        load_forums(source, workspace, characters.directories, load_warnings);
     workspace.forums_ = std::move(forums.forums);
     workspace.forum_config_paths_ = std::move(forums.config_paths);
 
@@ -2272,7 +2391,7 @@ void WorkspaceConfigEditor::write_provider(
     write_toml(path->second, table);
     // Validate the saved file directly; workspace loading can omit invalid providers.
     try {
-        (void)load_provider(source_, path->second.parent_path());
+        (void)load_provider(source_, path->second.parent_path(), {workspace_.root_});
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid provider settings");
     }
@@ -2322,7 +2441,7 @@ void WorkspaceConfigEditor::create_provider(
     }
 
     write_toml(path, table);
-    (void)load_provider(source_, directory);
+    (void)load_provider(source_, directory, {workspace_.root_});
 }
 
 void WorkspaceConfigEditor::delete_provider(std::string_view provider_id) {
@@ -2367,7 +2486,7 @@ void WorkspaceConfigEditor::write_style(
     table.insert("text_color", to_string(appearance.text_color));
     write_toml(path->second, table);
     try {
-        (void)load_style(source_, path->second.parent_path());
+        (void)load_style(source_, path->second.parent_path(), {workspace_.root_});
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid style settings");
     }
@@ -2397,7 +2516,7 @@ void WorkspaceConfigEditor::create_style(
     table.insert("size", "normal");
     table.insert("text_color", "normal");
     write_toml(path, table);
-    (void)load_style(source_, directory);
+    (void)load_style(source_, directory, {workspace_.root_});
 }
 
 void WorkspaceConfigEditor::delete_style(std::string_view style_id) {
@@ -2452,7 +2571,7 @@ void WorkspaceConfigEditor::write_voice(
     if (settings.speed) table.insert("speed", *settings.speed);
     write_toml(path->second, table);
     try {
-        (void)load_voice(source_, path->second.parent_path());
+        (void)load_voice(source_, path->second.parent_path(), {workspace_.root_});
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid voice settings");
     }
@@ -2488,7 +2607,7 @@ void WorkspaceConfigEditor::create_voice(
     table.insert("provider", std::string(provider));
     table.insert("elevenlabs_voice_id", std::string(elevenlabs_voice_id));
     write_toml(path, table);
-    (void)load_voice(source_, directory);
+    (void)load_voice(source_, directory, {workspace_.root_});
 }
 
 void WorkspaceConfigEditor::delete_voice(std::string_view voice_id) {
@@ -2653,7 +2772,7 @@ void WorkspaceConfigEditor::create_api_key(
 
     write_toml(path, api_key_table(display_name, value));
     write_next_api_key_id(saved_key_suffix(id, path) + 1);
-    (void)load_saved_key(source_, directory);
+    (void)load_saved_key(source_, directory, {workspace_.root_});
 }
 
 void WorkspaceConfigEditor::write_api_key(
@@ -2673,7 +2792,7 @@ void WorkspaceConfigEditor::write_api_key(
         throw std::invalid_argument("Invalid API key");
     }
     write_toml(path, api_key_table(display_name, value));
-    (void)load_saved_key(source_, directory);
+    (void)load_saved_key(source_, directory, {workspace_.root_});
 }
 
 void WorkspaceConfigEditor::delete_api_key(std::string_view id) {
@@ -2708,7 +2827,7 @@ void WorkspaceConfigEditor::create_r2_storage(const R2StorageKey& key) {
 
     write_toml(path, r2_storage_table(key));
     write_next_api_key_id(saved_key_suffix(key.id, path) + 1);
-    (void)load_saved_key(source_, directory);
+    (void)load_saved_key(source_, directory, {workspace_.root_});
 }
 
 void WorkspaceConfigEditor::write_r2_storage(const R2StorageKey& key) {
@@ -2729,7 +2848,7 @@ void WorkspaceConfigEditor::write_r2_storage(const R2StorageKey& key) {
         throw std::invalid_argument("Invalid R2 key");
     }
     write_toml(path, r2_storage_table(key));
-    (void)load_saved_key(source_, directory);
+    (void)load_saved_key(source_, directory, {workspace_.root_});
 }
 
 void WorkspaceConfigEditor::delete_r2_storage() {

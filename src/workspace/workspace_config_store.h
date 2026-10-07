@@ -4,8 +4,10 @@
 #include "chat/character_metadata.h"
 #include "providers/credentials.h"
 #include "storage/session_lease.h"
+#include "workspace/workspace.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -66,6 +68,94 @@ public:
 
 struct WorkspaceConfigEditResult {
     std::vector<std::string> affected_forum_ids;
+};
+
+using WorkspaceConfigRevision = std::uint64_t;
+using WorkspaceConfigCancelCheck = std::function<bool()>;
+
+inline constexpr std::size_t workspace_config_file_size_limit = 64 * 1024;
+inline constexpr std::size_t workspace_config_call_size_limit = 256 * 1024;
+inline constexpr std::size_t workspace_config_list_limit = 500;
+
+struct WorkspaceConfigPathInfo {
+    std::string path;
+    std::size_t bytes{};
+    bool readable{true};
+    bool writable{};
+    std::string protection_reason;
+};
+
+struct WorkspaceConfigListResult {
+    WorkspaceConfigRevision revision{};
+    std::vector<WorkspaceConfigPathInfo> entries;
+    bool truncated{};
+};
+
+enum class WorkspaceConfigReadStatus {
+    ok,
+    missing,
+    too_large,
+    key_metadata,
+};
+
+struct WorkspaceConfigKeyInfo {
+    std::string id;
+    std::string display_name;
+    std::string type;
+    bool credential_present{};
+};
+
+struct WorkspaceConfigReadItem {
+    std::string path;
+    WorkspaceConfigReadStatus status{WorkspaceConfigReadStatus::missing};
+    std::string content;
+    std::optional<WorkspaceConfigKeyInfo> key;
+};
+
+struct WorkspaceConfigReadResult {
+    WorkspaceConfigRevision revision{};
+    std::vector<WorkspaceConfigReadItem> files;
+};
+
+enum class WorkspaceConfigOperation {
+    create,
+    replace,
+};
+
+struct WorkspaceConfigChange {
+    std::string path;
+    WorkspaceConfigOperation operation{WorkspaceConfigOperation::replace};
+    std::string content;
+};
+
+enum class WorkspaceConfigApplyError {
+    none,
+    invalid_argument,
+    invalid_path,
+    create_replace_conflict,
+    protected_path,
+    credential_destination_protected,
+    stale_version,
+    unavailable_undo,
+    validation_failure,
+    too_large,
+    cancelled,
+};
+
+struct WorkspaceConfigChangedPath {
+    std::string path;
+    std::optional<std::size_t> old_bytes;
+    std::size_t new_bytes{};
+};
+
+struct WorkspaceConfigApplyResult {
+    bool committed{};
+    WorkspaceConfigRevision revision{};
+    std::vector<WorkspaceConfigChangedPath> changed;
+    std::vector<LoadWarning> warnings;
+    bool undo_available{};
+    WorkspaceConfigApplyError error{WorkspaceConfigApplyError::none};
+    std::string error_message;
 };
 
 // Normal-runtime owner: database lease, SQLite handle, one private temporary
@@ -234,6 +324,18 @@ public:
         const std::filesystem::path& source_database_path,
         const SessionLease& source_lease,
         std::string_view source_password = {});
+
+    [[nodiscard]] WorkspaceConfigRevision config_revision() const;
+    [[nodiscard]] WorkspaceConfigListResult list_config(std::string_view prefix) const;
+    [[nodiscard]] WorkspaceConfigReadResult read_config(
+        std::span<const std::string> paths) const;
+    WorkspaceConfigApplyResult apply_config(
+        WorkspaceConfigRevision version,
+        std::span<const WorkspaceConfigChange> changes,
+        WorkspaceConfigCancelCheck cancelled = {});
+    WorkspaceConfigApplyResult undo_config(
+        WorkspaceConfigRevision version,
+        WorkspaceConfigCancelCheck cancelled = {});
 
 private:
     struct Impl;

@@ -8,12 +8,14 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
 #include <fstream>
 #include <initializer_list>
 #include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cha {
@@ -2102,6 +2104,102 @@ TEST(Workspace, RejectsOpenAiSubscriptionWebSearchOverrides) {
                "web_search = \"required\"\n";
         EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
     }
+}
+
+const LoadWarning* warning_on(
+    const LoadWarningCollector& warnings, std::string_view path) {
+    for (const LoadWarning& warning : warnings) {
+        if (warning.path == path) return &warning;
+    }
+    return nullptr;
+}
+
+TEST(Workspace, HarmlessUnknownFieldsLoadWithPathAwareWarnings) {
+    test::TestWorkspace fixture;
+    fixture.write_character_config(
+        "display_name = \"Guide\"\n"
+        "provider = \"test\"\n"
+        "legacy_flag = true\n");
+    fixture.write_provider(
+        "test",
+        "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n"
+        "retired_option = 3\n");
+    const auto search = fixture.root() / "system" / "web-search" / "config.toml";
+    std::filesystem::create_directories(search.parent_path());
+    std::ofstream(search)
+        << "tool_enabled = false\nprovider = \"brave\"\nquery_provider = \"test\"\n";
+    const auto session = fixture.root() / "system" / "session" / "config.toml";
+    std::filesystem::create_directories(session.parent_path());
+    std::ofstream(session)
+        << "naming_provider = \"test\"\nnaming_reasoning_effort = \"low\"\n"
+           "unused_label = \"old\"\n";
+    const auto jev = fixture.root() / "system" / "jev" / "config.toml";
+    std::filesystem::create_directories(jev.parent_path());
+    std::ofstream(jev)
+        << "url = \"https://openrouter.ai/api/alpha/decisions\"\n"
+           "model = \"typesafe/jev-1.13\"\n"
+           "api_key = \"api_key_1\"\n"
+           "extra_timeout = 5\n";
+    const auto voice = fixture.root() / "system" / "voice-input" / "config.toml";
+    std::filesystem::create_directories(voice.parent_path());
+    std::ofstream(voice)
+        << "provider = \"xai\"\n"
+           "url = \"wss://api.x.ai/v1/stt\"\n"
+           "model = \"grok-voice-transcribe-2.0\"\n"
+           "api_key = \"api_key_1\"\n"
+           "delay = \"obsolete-delay-value\"\n";
+
+    const auto log_file = fixture.root() / "harmless-fields.log";
+    initialize_diagnostic_logging(log_file, "warn");
+    LoadWarningCollector warnings;
+    const Workspace workspace = Workspace::load(fixture.root(), &warnings);
+    shutdown_diagnostic_logging();
+
+    EXPECT_EQ(workspace.find_character("guide")->character.display_name, "Guide");
+    EXPECT_EQ(workspace.find_character("guide")->provider_id, "test");
+    EXPECT_EQ(workspace.find_provider("test")->config.model, "fake");
+    EXPECT_EQ(workspace.web_search().provider, "brave");
+    EXPECT_EQ(workspace.session_naming().provider_id, "test");
+    ASSERT_TRUE(workspace.jev());
+    EXPECT_EQ(workspace.jev()->model, "typesafe/jev-1.13");
+    ASSERT_TRUE(workspace.voice_input());
+    EXPECT_EQ(workspace.voice_input()->delay, "low");
+
+    const auto* character = warning_on(warnings, "characters/guide/character.toml");
+    ASSERT_NE(character, nullptr);
+    EXPECT_NE(character->message.find("unsupported field 'legacy_flag'"), std::string::npos);
+    const auto* provider = warning_on(warnings, "system/providers/test/config.toml");
+    ASSERT_NE(provider, nullptr);
+    EXPECT_NE(provider->message.find("unsupported field 'retired_option'"), std::string::npos);
+    const auto* search_warning = warning_on(warnings, "system/web-search/config.toml");
+    ASSERT_NE(search_warning, nullptr);
+    EXPECT_EQ(search_warning->message, "Ignoring unused web search field: query_provider");
+    const auto* session_warning = warning_on(warnings, "system/session/config.toml");
+    ASSERT_NE(session_warning, nullptr);
+    EXPECT_EQ(session_warning->message, "Ignoring unused session setting: unused_label");
+    const auto* jev_warning = warning_on(warnings, "system/jev/config.toml");
+    ASSERT_NE(jev_warning, nullptr);
+    EXPECT_EQ(jev_warning->message, "Ignoring unused recipient detection field: extra_timeout");
+    const auto* voice_warning = warning_on(warnings, "system/voice-input/config.toml");
+    ASSERT_NE(voice_warning, nullptr);
+    EXPECT_EQ(
+        voice_warning->message, "Ignoring obsolete voice input delay for xAI; using low");
+
+    const std::string logged = file_bytes(log_file);
+    EXPECT_NE(logged.find(character->message), std::string::npos);
+    EXPECT_NE(logged.find(search_warning->message), std::string::npos);
+    EXPECT_NE(logged.find(session_warning->message), std::string::npos);
+    EXPECT_NE(logged.find(jev_warning->message), std::string::npos);
+    EXPECT_NE(logged.find(voice_warning->message), std::string::npos);
+}
+
+TEST(Workspace, InvalidActiveConfigurationStillFailsWithHarmlessFields) {
+    test::TestWorkspace fixture;
+    fixture.write_character_config(
+        "display_name = \"Guide\"\n"
+        "provider = \"missing\"\n"
+        "legacy_flag = true\n");
+    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
 }
 
 TEST(Workspace, SavingOpenAiSubscriptionIgnoresUnsupportedWebSearchOverrides) {

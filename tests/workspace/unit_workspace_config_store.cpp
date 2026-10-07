@@ -2383,6 +2383,538 @@ TEST_F(
     EXPECT_EQ(restarted->snapshot()->root(), restarted->workspace_path());
 }
 
+TEST_F(WorkspaceConfigStoreTest, ImportsHarmlessFieldsThenOpensAndReopens) {
+    write_bytes(
+        source() / "characters" / "guide" / "character.toml",
+        "display_name = \"Guide\"\nprovider = \"test\"\nlegacy_flag = true\n");
+    const std::size_t count = import_from_source();
+    EXPECT_GE(count, 6U);
+    auto store = WorkspaceConfigStore::open(database());
+    EXPECT_EQ(store->snapshot()->find_character("guide")->character.display_name, "Guide");
+    LoadWarningCollector warnings;
+    const Workspace loaded = Workspace::load(
+        store->workspace_path(),
+        [&] {
+            TextFiles files;
+            for (const auto& [name, content] : config_contents(database())) {
+                files.emplace(name, content);
+            }
+            return files;
+        }(),
+        &warnings);
+    EXPECT_EQ(loaded.find_character("guide")->provider_id, "test");
+    bool found_legacy = false;
+    for (const auto& warning : warnings) {
+        if (warning.path == "characters/guide/character.toml"
+            && warning.message.find("legacy_flag") != std::string::npos) {
+            found_legacy = true;
+        }
+    }
+    EXPECT_TRUE(found_legacy);
+    auto maintenance = store->reserve_maintenance();
+    maintenance.close();
+    maintenance.reopen();
+    EXPECT_EQ(store->snapshot()->find_character("guide")->character.display_name, "Guide");
+}
+
+TEST_F(WorkspaceConfigStoreTest, InvalidActiveConfigurationLeavesCommittedRows) {
+    const std::size_t count = import_from_source();
+    EXPECT_GE(count, 6U);
+    const auto before = config_contents(database());
+    write_bytes(
+        source() / "characters" / "guide" / "character.toml",
+        "display_name = \"Guide\"\nprovider = \"missing\"\nlegacy_flag = true\n");
+    EXPECT_THROW((void)import_from_source(), std::runtime_error);
+    EXPECT_EQ(config_contents(database()), before);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, RevisionsAdvanceForAllWritersAndReopen) {
+    auto store = open_store();
+    const auto initial = store->config_revision();
+    EXPECT_GE(initial, 1U);
+    store->apply_character_settings("guide", "second", std::nullopt);
+    const auto after_edit = store->config_revision();
+    EXPECT_GT(after_edit, initial);
+    const auto listed = store->list_config("characters/guide");
+    EXPECT_EQ(listed.revision, after_edit);
+    const std::string path = "characters/guide/character.toml";
+    const auto original = store->read_config(std::vector<std::string>{path});
+    EXPECT_EQ(original.revision, after_edit);
+    ASSERT_EQ(original.files.size(), 1U);
+    ASSERT_EQ(original.files.front().status, WorkspaceConfigReadStatus::ok);
+    const auto noop = store->apply_config(
+        after_edit,
+        std::vector<WorkspaceConfigChange>{{
+            .path = path,
+            .operation = WorkspaceConfigOperation::replace,
+            .content = original.files.front().content,
+        }});
+    EXPECT_TRUE(noop.committed);
+    EXPECT_EQ(noop.revision, after_edit);
+    EXPECT_TRUE(noop.changed.empty());
+    EXPECT_EQ(store->config_revision(), after_edit);
+    {
+        auto maintenance = store->reserve_maintenance();
+        maintenance.close();
+        maintenance.reopen();
+    }
+    EXPECT_GT(store->config_revision(), after_edit);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, ListAndReadPreserveExactSourceAndLimits) {
+    auto store = open_store();
+    const auto all = store->list_config("");
+    EXPECT_FALSE(all.entries.empty());
+    EXPECT_LE(all.entries.size(), workspace_config_list_limit);
+    for (std::size_t index = 1; index < all.entries.size(); ++index) {
+        EXPECT_LT(all.entries[index - 1].path, all.entries[index].path);
+    }
+    const auto characters = store->list_config("characters/");
+    ASSERT_FALSE(characters.entries.empty());
+    for (const auto& entry : characters.entries) {
+        EXPECT_TRUE(entry.path.starts_with("characters/"));
+    }
+    const auto guide = store->list_config("characters/guide");
+    for (const auto& entry : guide.entries) {
+        EXPECT_TRUE(
+            entry.path == "characters/guide"
+            || entry.path.starts_with("characters/guide/"));
+        EXPECT_FALSE(entry.path.starts_with("characters/guide-"));
+    }
+    const std::string path = "characters/guide/CHARACTER.md";
+    const auto read = store->read_config(std::vector<std::string>{path, "missing.toml"});
+    EXPECT_EQ(read.revision, store->config_revision());
+    ASSERT_EQ(read.files.size(), 2U);
+    EXPECT_EQ(read.files[0].status, WorkspaceConfigReadStatus::ok);
+    EXPECT_EQ(read.files[0].content, stored_config(database(), path));
+    EXPECT_EQ(read.files[1].status, WorkspaceConfigReadStatus::missing);
+    const auto assistant = store->read_config(
+        std::vector<std::string>{"system/assistant/character.toml"});
+    ASSERT_EQ(assistant.files.size(), 1U);
+    EXPECT_EQ(assistant.files[0].status, WorkspaceConfigReadStatus::ok);
+    EXPECT_FALSE(assistant.files[0].content.empty());
+    const auto listed_assistant = store->list_config("system/assistant/");
+    ASSERT_FALSE(listed_assistant.entries.empty());
+    EXPECT_FALSE(listed_assistant.entries.front().writable);
+    EXPECT_FALSE(listed_assistant.entries.front().protection_reason.empty());
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, KeyReadsReturnMetadataOnly) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute(
+            "INSERT INTO config (name, content) VALUES "
+            "('system/keys/config.toml', 'next_id = 2\n'), "
+            "('system/keys/api_key_1/config.toml', "
+            "'display_name = ''Secret''\ntype = ''models''\nvalue = ''private-value''\n')");
+    }
+    auto store = open_store();
+    const auto listed = store->list_config("system/keys/");
+    ASSERT_FALSE(listed.entries.empty());
+    for (const auto& entry : listed.entries) {
+        EXPECT_FALSE(entry.writable);
+    }
+    const auto read = store->read_config(
+        std::vector<std::string>{"system/keys/api_key_1/config.toml"});
+    ASSERT_EQ(read.files.size(), 1U);
+    EXPECT_EQ(read.files[0].status, WorkspaceConfigReadStatus::key_metadata);
+    ASSERT_TRUE(read.files[0].key);
+    EXPECT_EQ(read.files[0].key->id, "api_key_1");
+    EXPECT_EQ(read.files[0].key->display_name, "Secret");
+    EXPECT_EQ(read.files[0].key->type, "models");
+    EXPECT_TRUE(read.files[0].key->credential_present);
+    EXPECT_TRUE(read.files[0].content.empty());
+    EXPECT_EQ(read.files[0].content.find("private-value"), std::string::npos);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyCommitsAtomicallyAndReportsByteSizes) {
+    auto store = open_store();
+    const auto version = store->config_revision();
+    const std::string character = "characters/guide/character.toml";
+    const std::string prompt = "characters/guide/CHARACTER.md";
+    const auto before = store->read_config(std::vector<std::string>{character, prompt});
+    const std::string old_character = before.files[0].content;
+    const std::string old_prompt = before.files[1].content;
+    std::string same_length = old_prompt;
+    if (same_length.size() >= 4) same_length.replace(0, 4, "XXXX");
+    else same_length = "XXXX";
+    ASSERT_EQ(same_length.size(), old_prompt.size());
+    const auto result = store->apply_config(
+        version,
+        std::vector<WorkspaceConfigChange>{
+            {.path = character,
+             .operation = WorkspaceConfigOperation::replace,
+             .content = old_character + "legacy_flag = true\n"},
+            {.path = prompt,
+             .operation = WorkspaceConfigOperation::replace,
+             .content = same_length},
+        });
+    EXPECT_TRUE(result.committed);
+    EXPECT_GT(result.revision, version);
+    ASSERT_EQ(result.changed.size(), 2U);
+    EXPECT_EQ(result.changed[0].path, character);
+    EXPECT_EQ(result.changed[0].old_bytes, old_character.size());
+    EXPECT_EQ(
+        result.changed[0].new_bytes, (old_character + "legacy_flag = true\n").size());
+    EXPECT_EQ(result.changed[1].path, prompt);
+    EXPECT_EQ(result.changed[1].old_bytes, old_prompt.size());
+    EXPECT_EQ(result.changed[1].new_bytes, same_length.size());
+    EXPECT_TRUE(result.undo_available);
+    bool saw_legacy = false;
+    for (const auto& warning : result.warnings) {
+        EXPECT_EQ(warning.path, character);
+        if (warning.message.find("legacy_flag") != std::string::npos) saw_legacy = true;
+    }
+    EXPECT_TRUE(saw_legacy);
+    EXPECT_EQ(store->snapshot()->find_character("guide")->character.display_name, "Guide");
+    EXPECT_EQ(stored_config(database(), prompt), same_length);
+    EXPECT_EQ(stored_config(database(), "forums/lobby/FORUM.md").find("Forum"), 0U);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyRejectsStaleProtectedAndCredentialChanges) {
+    auto store = open_store();
+    const auto version = store->config_revision();
+    const std::string character = "characters/guide/character.toml";
+    const auto current = store->read_config(std::vector<std::string>{character});
+    store->apply_character_settings("guide", "second", std::nullopt);
+    const auto stale = store->apply_config(
+        version,
+        std::vector<WorkspaceConfigChange>{{
+            .path = character,
+            .operation = WorkspaceConfigOperation::replace,
+            .content = current.files.front().content,
+        }});
+    EXPECT_FALSE(stale.committed);
+    EXPECT_EQ(stale.error, WorkspaceConfigApplyError::stale_version);
+    EXPECT_EQ(store->snapshot()->find_character("guide")->provider_id, "second");
+
+    const auto protected_write = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/assistant/character.toml",
+            .operation = WorkspaceConfigOperation::replace,
+            .content = stored_config(database(), "system/assistant/character.toml"),
+        }});
+    EXPECT_FALSE(protected_write.committed);
+    EXPECT_EQ(protected_write.error, WorkspaceConfigApplyError::protected_path);
+
+    const auto provider_write = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/providers/test/config.toml",
+            .operation = WorkspaceConfigOperation::replace,
+            .content = stored_config(database(), "system/providers/test/config.toml"),
+        }});
+    EXPECT_FALSE(provider_write.committed);
+    EXPECT_EQ(provider_write.error, WorkspaceConfigApplyError::protected_path);
+
+    store->apply_api_key_create("api_key_1", "Search", "secret-key");
+    store->apply_api_key_create("api_key_2", "Reader", "reader-key");
+    const auto new_destination = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/web-search/config.toml",
+            .operation = WorkspaceConfigOperation::create,
+            .content =
+                "provider = \"brave\"\napi_key = \"api_key_1\"\ntool_enabled = true\n",
+        }});
+    EXPECT_FALSE(new_destination.committed);
+    EXPECT_EQ(
+        new_destination.error,
+        WorkspaceConfigApplyError::credential_destination_protected);
+
+    store->apply_web_search_update({
+        .provider = "brave",
+        .api_key_id = "api_key_1",
+        .tool_enabled = true,
+        .read_provider = "firecrawl",
+        .firecrawl_api_key_id = "api_key_2",
+    });
+    const auto tavily = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/web-search/config.toml",
+            .operation = WorkspaceConfigOperation::replace,
+            .content =
+                "provider = \"tavily\"\napi_key = \"api_key_1\"\ntool_enabled = true\n"
+                "read_provider = \"firecrawl\"\nfirecrawl_api_key = \"api_key_2\"\n",
+        }});
+    EXPECT_FALSE(tavily.committed);
+    EXPECT_EQ(
+        tavily.error, WorkspaceConfigApplyError::credential_destination_protected);
+    const auto firecrawl = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/web-search/config.toml",
+            .operation = WorkspaceConfigOperation::replace,
+            .content =
+                "provider = \"brave\"\napi_key = \"api_key_1\"\ntool_enabled = true\n"
+                "read_provider = \"firecrawl\"\nfirecrawl_api_key = \"api_key_1\"\n",
+        }});
+    EXPECT_FALSE(firecrawl.committed);
+    EXPECT_EQ(
+        firecrawl.error,
+        WorkspaceConfigApplyError::credential_destination_protected);
+    const auto new_host = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/providers/relay/config.toml",
+            .operation = WorkspaceConfigOperation::create,
+            .content =
+                "host = \"evil.example\"\nport = 443\nmode = \"test\"\n"
+                "model = \"fake\"\nhttps = true\napi_key = \"api_key_1\"\n",
+        }});
+    EXPECT_FALSE(new_host.committed);
+    EXPECT_EQ(
+        new_host.error,
+        WorkspaceConfigApplyError::credential_destination_protected);
+    const auto unresolved = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/providers/ghost/config.toml",
+            .operation = WorkspaceConfigOperation::create,
+            .content =
+                "host = \"ghost.example\"\nport = 80\nmode = \"test\"\n"
+                "model = \"fake\"\napi_key = \"api_key_99\"\n",
+        }});
+    EXPECT_FALSE(unresolved.committed);
+    EXPECT_EQ(
+        unresolved.error,
+        WorkspaceConfigApplyError::credential_destination_protected);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyAllowsSharedSettingsAndSeparateProvider) {
+    auto store = open_store();
+    const auto copied = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/providers/copy/config.toml",
+            .operation = WorkspaceConfigOperation::create,
+            .content =
+                "host = \"test\"\nport = 2\nmode = \"test\"\nmodel = \"second\"\n",
+        }});
+    EXPECT_TRUE(copied.committed);
+    EXPECT_NE(store->snapshot()->find_provider("copy"), nullptr);
+    const std::string character = "characters/writer/character.toml";
+    const auto writer = store->read_config(std::vector<std::string>{character});
+    std::string updated = writer.files.front().content;
+    if (updated.find("provider = \"test\"") != std::string::npos) {
+        updated.replace(updated.find("provider = \"test\""), 17, "provider = \"copy\"");
+    }
+    const auto assigned = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = character,
+            .operation = WorkspaceConfigOperation::replace,
+            .content = updated,
+        }});
+    EXPECT_TRUE(assigned.committed);
+    EXPECT_EQ(store->snapshot()->find_character("writer")->provider_id, "copy");
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyPreservesUnrelatedBytesAndFiltersWarnings) {
+    write_bytes(
+        source() / "system" / "web-search" / "config.toml",
+        "provider = \"brave\"\nquery_provider = \"test\"\n");
+    (void)import_workspace_configuration(source(), database());
+    auto store = open_store();
+    const std::string forum = "forums/lobby/FORUM.md";
+    const auto before = stored_config(database(), forum);
+    const auto search_before = stored_config(database(), "system/web-search/config.toml");
+    const auto result = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = forum,
+            .operation = WorkspaceConfigOperation::replace,
+            .content = before + "More instructions.\n",
+        }});
+    EXPECT_TRUE(result.committed);
+    EXPECT_EQ(stored_config(database(), "system/web-search/config.toml"), search_before);
+    for (const auto& warning : result.warnings) {
+        EXPECT_NE(warning.path, "system/web-search/config.toml");
+    }
+    EXPECT_EQ(stored_config(database(), forum), before + "More instructions.\n");
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyFailuresLeaveStateUnchanged) {
+    auto store = open_store();
+    const auto published = store->snapshot();
+    const auto version = store->config_revision();
+    const auto rows = config_contents(database());
+    const auto invalid = store->apply_config(
+        version,
+        std::vector<WorkspaceConfigChange>{{
+            .path = "characters/guide/CHARACTER.md",
+            .operation = WorkspaceConfigOperation::replace,
+            .content = "$$(missing.md)",
+        }});
+    EXPECT_FALSE(invalid.committed);
+    EXPECT_EQ(invalid.error, WorkspaceConfigApplyError::validation_failure);
+    EXPECT_EQ(store->config_revision(), version);
+    EXPECT_EQ(store->snapshot(), published);
+    EXPECT_EQ(config_contents(database()), rows);
+
+    bool cancel = true;
+    const auto cancelled_result = store->apply_config(
+        version,
+        std::vector<WorkspaceConfigChange>{{
+            .path = "characters/guide/character.toml",
+            .operation = WorkspaceConfigOperation::replace,
+            .content = stored_config(database(), "characters/guide/character.toml"),
+        }},
+        [&] { return cancel; });
+    EXPECT_FALSE(cancelled_result.committed);
+    EXPECT_EQ(cancelled_result.error, WorkspaceConfigApplyError::cancelled);
+    EXPECT_EQ(config_contents(database()), rows);
+
+    force_next_workspace_config_fault(WorkspaceConfigFault::sqlite_commit);
+    EXPECT_THROW(
+        (void)store->apply_config(
+            version,
+            std::vector<WorkspaceConfigChange>{{
+                .path = "characters/guide/character.toml",
+                .operation = WorkspaceConfigOperation::replace,
+                .content = stored_config(database(), "characters/guide/character.toml")
+                    + "legacy_flag = true\n",
+            }}),
+        std::runtime_error);
+    EXPECT_EQ(store->snapshot(), published);
+    EXPECT_EQ(config_contents(database()), rows);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, NameCollisionReturnsApplyAndUndoErrors) {
+    auto store = open_store();
+    const auto created = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/session/config.toml",
+            .operation = WorkspaceConfigOperation::create,
+            .content = "naming_provider = \"test\"\n",
+        }});
+    ASSERT_TRUE(created.committed);
+
+    const auto published = store->snapshot();
+    const auto version = store->config_revision();
+    const auto rows = config_contents(database());
+    const auto collision = store->apply_config(
+        version,
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/session/config.toml/extra.toml",
+            .operation = WorkspaceConfigOperation::create,
+            .content = "font = \"mono\"\n",
+        }});
+    EXPECT_FALSE(collision.committed);
+    EXPECT_EQ(collision.error, WorkspaceConfigApplyError::invalid_path);
+    EXPECT_NE(collision.error_message.find("collides"), std::string::npos);
+    EXPECT_FALSE(collision.undo_available);
+    EXPECT_EQ(store->config_revision(), version);
+    EXPECT_EQ(store->snapshot(), published);
+    EXPECT_EQ(config_contents(database()), rows);
+    EXPECT_TRUE(stored_config(database(), "system/session/config.toml/extra.toml").empty());
+
+    const std::string forum = "forums/lobby/FORUM.md";
+    const std::string forum_before = stored_config(database(), forum);
+    const auto replaced = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = forum,
+            .operation = WorkspaceConfigOperation::replace,
+            .content = forum_before + "More.\n",
+        }});
+    ASSERT_TRUE(replaced.committed);
+    ASSERT_TRUE(replaced.undo_available);
+    const auto after_replace = store->snapshot();
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute(
+            "INSERT INTO config (name, content) VALUES "
+            "('system/session/config.toml/extra.toml', 'font = \"mono\"\n')");
+    }
+    const auto before_undo = config_contents(database());
+    const auto undo_version = store->config_revision();
+    const auto undone = store->undo_config(undo_version);
+    EXPECT_FALSE(undone.committed);
+    EXPECT_EQ(undone.error, WorkspaceConfigApplyError::validation_failure);
+    EXPECT_NE(undone.error_message.find("collides"), std::string::npos);
+    EXPECT_TRUE(undone.undo_available);
+    EXPECT_EQ(store->config_revision(), undo_version);
+    EXPECT_EQ(store->snapshot(), after_replace);
+    EXPECT_EQ(config_contents(database()), before_undo);
+    EXPECT_EQ(stored_config(database(), forum), forum_before + "More.\n");
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, UndoRestoresReplacementAndBrokenProvider) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute(
+            "INSERT INTO config (name, content) VALUES "
+            "('system/providers/broken/config.toml', "
+            "'host = \"test\"\nport = 1\nmode = \"test\"\n')");
+    }
+    auto store = open_store();
+    EXPECT_EQ(store->snapshot()->find_provider("broken"), nullptr);
+    const std::string path = "system/providers/broken/config.toml";
+    const std::string broken = stored_config(database(), path);
+    const auto repaired = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = path,
+            .operation = WorkspaceConfigOperation::replace,
+            .content = "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n",
+        }});
+    EXPECT_TRUE(repaired.committed);
+    EXPECT_TRUE(repaired.undo_available);
+    EXPECT_NE(store->snapshot()->find_provider("broken"), nullptr);
+    const auto undone = store->undo_config(repaired.revision);
+    EXPECT_TRUE(undone.committed);
+    EXPECT_FALSE(undone.undo_available);
+    EXPECT_EQ(store->snapshot()->find_provider("broken"), nullptr);
+    EXPECT_EQ(stored_config(database(), path), broken);
+    ASSERT_FALSE(undone.changed.empty());
+    EXPECT_EQ(undone.changed.front().path, path);
+    EXPECT_EQ(undone.changed.front().new_bytes, broken.size());
+    bool omitted = false;
+    for (const auto& warning : undone.warnings) {
+        if (warning.path == path
+            && warning.message.find("omitted from workspace") != std::string::npos) {
+            omitted = true;
+        }
+    }
+    EXPECT_TRUE(omitted);
+
+    const auto created = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/styles/extra/config.toml",
+            .operation = WorkspaceConfigOperation::create,
+            .content = "font = \"mono\"\n",
+        }});
+    EXPECT_TRUE(created.committed);
+    EXPECT_FALSE(created.undo_available);
+    const auto unavailable = store->undo_config(created.revision);
+    EXPECT_FALSE(unavailable.committed);
+    EXPECT_EQ(unavailable.error, WorkspaceConfigApplyError::unavailable_undo);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, PublicationFailureAfterApplyRequiresRestart) {
+    auto store = open_store();
+    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
+    const std::string path = "characters/guide/character.toml";
+    try {
+        (void)store->apply_config(
+            store->config_revision(),
+            std::vector<WorkspaceConfigChange>{{
+                .path = path,
+                .operation = WorkspaceConfigOperation::replace,
+                .content = stored_config(database(), path) + "legacy_flag = true\n",
+            }});
+        FAIL() << "expected restart-required publication failure";
+    } catch (const WorkspaceRestartRequiredError&) {
+    }
+    EXPECT_NE(
+        stored_config(database(), path).find("legacy_flag"), std::string::npos);
+}
+
 void expect_package_seed_subscription(const ModelBackendConfig& config) {
     EXPECT_EQ(config.auth, ProviderAuth::openai_subscription);
     EXPECT_EQ(config.host, "chatgpt.com");

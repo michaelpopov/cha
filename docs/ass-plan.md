@@ -1,6 +1,8 @@
 # Assistant implementation plan
 
-Status: implementation checklist. No step is marked complete.
+Status: implementation checklist. Steps 1–4 and the logger sink
+foundation in step 5 are marked complete. Remaining step 5 items are
+application-boundary log tools.
 
 Implement [the Assistant design](assistant.md) for both the desktop application
 and `cha-daemon` through ChaWeb. The design is the source of behavior and limits;
@@ -39,18 +41,18 @@ Work in [workspace.cpp](../src/workspace/workspace.cpp),
 [workspace.h](../src/workspace/workspace.h), and the shared configuration parsers
 they use. This step is independent of Assistant tools and store revisions.
 
-- [ ] Where a shared loader rejects harmless unknown, unused, or obsolete
+- [x] Where a shared loader rejects harmless unknown, unused, or obsolete
   fields, ignore them and log a warning. Use the same behavior for startup,
   import, and manual editing. Keep existing validation of syntax, required
   values, and references needed by active configuration.
-- [ ] Pass one optional per-load collector through `Workspace::load` and its
+- [x] Pass one optional per-load collector through `Workspace::load` and its
   helpers. Store `(logical path, message)` items with vault-relative paths that
   match configuration rows. Use a small warning helper that takes the path,
   appends to the collector when present, and writes the existing `log_warn`
   message unchanged. Thread it through warning-producing normalizers, including
   xAI voice input delay. Cover existing web search, session-naming, Jev, and
   ignored-configuration warnings as well as new unknown-field warnings.
-- [ ] Loads without a collector retain ordinary logging. Do not infer paths
+- [x] Loads without a collector retain ordinary logging. Do not infer paths
   from message text, scrape logs, or add another validation subsystem.
 
 Add regression cases to existing suites before connecting the tools:
@@ -74,22 +76,22 @@ Work in [workspace_config_store.h](../src/workspace/workspace_config_store.h)
 and [workspace_config_store.cpp](../src/workspace/workspace_config_store.cpp).
 Use [builtins.h](../src/workspace/builtins.h) for reserved identities.
 
-- [ ] Add a process-local revision and typed list/read results. Read SQLite
+- [x] Add a process-local revision and typed list/read results. Read SQLite
   configuration rows into the existing `TextFiles` representation under the
   store mutex; return files and their revision from the same snapshot.
-- [ ] Advance the revision whenever committed configuration rows change,
+- [x] Advance the revision whenever committed configuration rows change,
   including manual settings and credential edits. Advance it on store reopen.
   Cover writers through the common edit path; transcript writes do not count.
   Preserve the revision for a byte-identical edit.
-- [ ] List paths in lexical order with a literal directory-boundary prefix.
+- [x] List paths in lexical order with a literal directory-boundary prefix.
   Return path, byte size, readable/writable policy, and a protection reason.
   Limit a result to 500 entries and report that limit without pagination.
-- [ ] Read requested paths without a prior listing or input version. Report
+- [x] Read requested paths without a prior listing or input version. Report
   missing paths explicitly. Return source Markdown/TOML, not expanded prompts.
   Read-only Assistant files remain inspectable.
-- [ ] Return only ID, display name, type, and credential-present status for
+- [x] Return only ID, display name, type, and credential-present status for
   keys. Never return raw key rows, passwords, OAuth tokens, or key values.
-- [ ] Apply the design's size bounds: 64 KiB per editable file and 256 KiB
+- [x] Apply the design's size bounds: 64 KiB per editable file and 256 KiB
   per call's arguments or results. A file read is complete or `too_large`;
   never present truncated content as a file ready for replacement.
 
@@ -104,34 +106,34 @@ Continue in the store and [workspace.cpp](../src/workspace/workspace.cpp).
 Reuse the in-memory candidate-loading and transaction paths already present;
 do not export configuration or introduce a second parser.
 
-- [ ] Accept a nonempty array of full-file `create`/`replace` changes. Reject
+- [x] Accept a nonempty array of full-file `create`/`replace` changes. Reject
   duplicate paths, unsupported operations, and incorrect create/replace
   preconditions. Validate canonical stored names and the supported roots from
   design section 11; extensions alone do not grant write access.
-- [ ] Compare the supplied revision under the store mutex before building the
+- [x] Compare the supplied revision under the store mutex before building the
   candidate. On conflict, return `stale_version`; do not merge or retry the
   old proposal. Preserve untouched rows byte for byte.
-- [ ] Reject writes to `system/assistant/`, every Assistant member directory,
+- [x] Reject writes to `system/assistant/`, every Assistant member directory,
   and Assistant's selected provider, including byte-identical writes. Select
   the protected provider from the committed workspace. Reject credential,
   transcript, host-file, deletion, stable-ID rename, and membership-removal
   operations.
-- [ ] Load the complete candidate through `Workspace::load` using the supplied
+- [x] Load the complete candidate through `Workspace::load` using the supplied
   text map, with no fallback to filesystem content. For proposed edits, verify
   that existing loaded entity IDs and forum memberships remain present.
-- [ ] Use the warning collector from step 1 for the candidate load. Filter
+- [x] Use the warning collector from step 1 for the candidate load. Filter
   warnings by the paths actually changed and return their paths and messages.
-- [ ] Compare the destination/key-reference pairs described in design section
+- [x] Compare the destination/key-reference pairs described in design section
   4. Include every credential-bearing service, unresolved references, and
   legacy key-name resolution. Treat the search provider's `api_key` and
   Firecrawl's `firecrawl_api_key` as separate destinations. Reject new pairs;
   do not build a dependency graph.
-- [ ] Before commit, check cancellation and allocate the candidate publication,
+- [x] Before commit, check cancellation and allocate the candidate publication,
   result, and undo data. Commit all changed rows in one SQLite transaction,
   then publish the candidate and advance the revision under the existing
   publication lock. Pre-commit errors change nothing. A post-commit publication
   failure follows the existing restart-required path and remains a saved change.
-- [ ] Return commit status, version, changed paths with `old_bytes` and
+- [x] Return commit status, version, changed paths with `old_bytes` and
   `new_bytes`, warnings, and undo availability. Use `old_bytes: null` for
   creation; compare full contents to identify changes. Distinguish the errors
   in design section 6 and sanitize error text. A permitted no-op preserves
@@ -151,18 +153,18 @@ and warnings from unchanged files stay out of the result.
 
 Keep the record in `WorkspaceConfigStore`; no new table or history service.
 
-- [ ] Save old file bytes and the resulting revision for the latest successful
+- [x] Save old file bytes and the resulting revision for the latest successful
   Assistant batch that only replaces files. Allocate the record before commit
   and install it only after success. A batch creating files clears undo.
-- [ ] Invalidate undo after another configuration change, store/vault reopen,
+- [x] Invalidate undo after another configuration change, store/vault reopen,
   vault switch, or restart. A no-op leaves the record intact.
-- [ ] For `action = "undo"`, require `changes = null`, the supplied current
+- [x] For `action = "undo"`, require `changes = null`, the supplied current
   revision, and a native record whose resulting revision matches it. Restore
   only the record's bytes, run normal candidate loading, and commit atomically.
-- [ ] Do not repeat Assistant-protection, credential-destination, or entity
+- [x] Do not repeat Assistant-protection, credential-destination, or entity
   comparisons for undo. The version check and native record identify the exact
   earlier committed state. Preserve epoch admission and cancellation checks.
-- [ ] Advance the revision and clear the record after successful undo. Return
+- [x] Advance the revision and clear the record after successful undo. Return
   the same result shape as apply. Add no redo, file deletion, or automatic undo
   after failed verification.
 
@@ -178,21 +180,21 @@ Work in [logging.cpp](../src/util/logging.cpp) and
 [logging.h](../src/util/logging.h). Keep session and application types out of
 `util/`; sanitization needing credentials belongs at the application boundary.
 
-- [ ] Add a small sink derived from `spdlog::sinks::base_sink<std::mutex>` with
+- [x] Add a small sink derived from `spdlog::sinks::base_sink<std::mutex>` with
   a deque of at most 2,000 entries. Store each entry's number, native level,
   and text formatted with the existing formatter.
-- [ ] Assign numbers inside `sink_it_()` under the sink mutex, after expiry
+- [x] Assign numbers inside `sink_it_()` under the sink mutex, after expiry
   and level checks. Evict the oldest retained entry when full. Rejected messages
   do not advance the counter. Add locked `snapshot()` and `clear()` methods;
   snapshot entries and latest number together, and preserve numbering on clear.
-- [ ] Attach the sink during logger initialization and keep the sink list fixed
+- [x] Attach the sink during logger initialization and keep the sink list fixed
   while writers run. The buffer must exist when file logging is off. Keep file
   and buffer thresholds independent and the logger threshold permissive enough
   for either sink.
-- [ ] Route `log_debug_payload` only to the file sink. Keep
+- [x] Route `log_debug_payload` only to the file sink. Keep
   `debug_logging_enabled()` tied to file payload logging. Preserve the existing
   file path, format, rotation, configured level, and behavior when disabled.
-- [ ] Keep one `verbose_until` in the buffer sink, protected by its mutex and
+- [x] Keep one `verbose_until` in the buffer sink, protected by its mutex and
   based on a monotonic clock. Enable debug for five minutes; repeated enable
   updates expiry; disable restores info. Check expiry on logging and every
   Assistant tool call. Recheck level inside `sink_it_()` so a pre-lock level

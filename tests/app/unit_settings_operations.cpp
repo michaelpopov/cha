@@ -64,6 +64,33 @@ nlohmann::json provider_body(const ProviderDetail& provider) {
     return json;
 }
 
+TEST(ApplicationSettings, SavesWhenLoadedFilesContainHarmlessFields) {
+    test::TestWorkspace workspace;
+    std::ofstream(workspace.root() / "characters" / "guide" / "character.toml")
+        << "display_name = \"Guide\"\nprovider = \"test\"\nlegacy_flag = true\n";
+    std::ofstream(workspace.root() / "personas" / "reader" / "persona.toml")
+        << "display_name = \"Reader\"\nretired = true\n";
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    const auto updated = application->update_character_definition(
+        "guide", {.display_name = "Mentor"}, epoch);
+    EXPECT_EQ(updated.summary.display_name, "Mentor");
+    EXPECT_THROW(
+        (void)application->update_character_definition(
+            "guide",
+            {.display_name = "Rejected", .character_markdown = "$$(missing.md)"},
+            epoch),
+        ApplicationError);
+    EXPECT_EQ(application->get_character("guide", epoch).summary.display_name, "Mentor");
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    EXPECT_EQ(
+        application->get_character("guide", application->context_epoch())
+            .summary.display_name,
+        "Mentor");
+}
+
 TEST(ApplicationSettings, ListsAndUpdatesProvidersWithoutSecrets) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =

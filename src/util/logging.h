@@ -1,13 +1,49 @@
 #pragma once
 
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace cha {
 
-// Enables the named, file-only diagnostic logger using the application
-// configuration. Missing parent directories are created before the file opens.
-// Call this once before worker threads are started.
+enum class LogSeverity {
+    trace,
+    debug,
+    info,
+    warn,
+    error,
+    critical,
+};
+
+struct LogBufferEntry {
+    std::uint64_t number{};
+    LogSeverity level{LogSeverity::info};
+    std::string text;
+};
+
+struct LogBufferSnapshot {
+    std::vector<LogBufferEntry> entries;
+    std::uint64_t latest_number{};
+};
+
+struct LogBufferState {
+    LogSeverity level{LogSeverity::info};
+    std::optional<std::chrono::steady_clock::time_point> verbose_until;
+    std::uint64_t latest_number{};
+};
+
+inline constexpr std::size_t diagnostic_log_capacity = 2000;
+inline constexpr auto diagnostic_log_verbose_duration = std::chrono::minutes(5);
+
+// Enables the process diagnostic logger. The memory buffer is attached even
+// when file logging is off. Missing parent directories are created before the
+// file opens. Call this once before worker threads are started.
 void initialize_diagnostic_logging(
     const std::filesystem::path& log_file,
     std::string_view log_level);
@@ -27,5 +63,12 @@ void log_info(std::string_view message) noexcept;
 void log_warn(std::string_view message) noexcept;
 void log_error(std::string_view message) noexcept;
 void log_critical(std::string_view message) noexcept;
+
+LogBufferSnapshot snapshot_diagnostic_log();
+LogBufferState diagnostic_log_state();
+void clear_diagnostic_log();
+void set_diagnostic_log_verbose(bool enabled);
+void set_diagnostic_log_clock_for_test(
+    std::function<std::chrono::steady_clock::time_point()> clock);
 
 } // namespace cha

@@ -4,8 +4,10 @@
 #include "storage/session_storage_layout.h"
 #include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
+#include "util/curl.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
+#include "workspace/builtins.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_editor.h"
 
@@ -638,7 +640,7 @@ void validate_configuration(
         TextFiles files;
         for (const auto& row : rows) files.emplace(row.name, row.content);
         // Validation reads these in-memory rows, never the real modify path.
-        (void)Workspace::load("/workspace", files);
+        (void)Workspace::load("/workspace", files, nullptr);
     } catch (const toml::parse_error& error) {
         std::string message = error.source().path
             ? "Config file '" + *error.source().path + "': "
@@ -1003,6 +1005,278 @@ void force_next_workspace_config_fault(WorkspaceConfigFault fault) {
     forced_runtime_fault.store(fault);
 }
 
+bool is_writable_config_root(std::string_view path) {
+    static constexpr std::string_view roots[]{
+        "characters/",
+        "personas/",
+        "forums/",
+        "system/providers/",
+        "system/styles/",
+        "system/voices/",
+        "system/jev/",
+        "system/web-search/",
+        "system/session/",
+        "system/voice-input/",
+        "system/voice-output/",
+    };
+    for (const std::string_view root : roots) {
+        if (path.starts_with(root)) return true;
+    }
+    return false;
+}
+
+bool matches_list_prefix(std::string_view path, std::string_view prefix) {
+    if (prefix.empty()) return true;
+    if (!path.starts_with(prefix)) return false;
+    if (path.size() == prefix.size() || prefix.ends_with('/')) return true;
+    return path[prefix.size()] == '/';
+}
+
+bool is_assistant_member_path(std::string_view path) {
+    constexpr std::string_view forums = "forums/";
+    constexpr std::string_view members = "/members/";
+    constexpr std::string_view member = "builtin-assistant";
+    if (!path.starts_with(forums)) return false;
+    path.remove_prefix(forums.size());
+    const auto forum_end = path.find('/');
+    if (forum_end == std::string_view::npos || forum_end == 0) return false;
+    path.remove_prefix(forum_end);
+    if (!path.starts_with(members)) return false;
+    path.remove_prefix(members.size());
+    return path == member || path.starts_with(std::string(member) + "/");
+}
+
+bool is_assistant_provider_path(
+    std::string_view path, std::string_view provider_id) {
+    if (provider_id.empty()) return false;
+    const std::string prefix = "system/providers/" + std::string(provider_id);
+    return path == prefix || path.starts_with(prefix + "/");
+}
+
+std::string assistant_provider_id(const Workspace& workspace) {
+    const WorkspaceCharacter* const assistant =
+        workspace.find_character(assistant_id);
+    if (assistant && assistant->provider_id) return *assistant->provider_id;
+    return {};
+}
+
+struct ConfigPathPolicy {
+    bool readable{true};
+    bool writable{false};
+    std::string reason;
+};
+
+ConfigPathPolicy config_path_policy(
+    std::string_view path, std::string_view assistant_provider) {
+    if (path.starts_with("system/assistant/")) {
+        return {true, false, "Assistant settings are read-only"};
+    }
+    if (is_assistant_member_path(path)) {
+        return {true, false, "Assistant member files are read-only"};
+    }
+    if (is_assistant_provider_path(path, assistant_provider)) {
+        return {true, false, "Assistant's selected provider is read-only"};
+    }
+    if (path.starts_with("system/keys/")) {
+        return {true, false, "Credentials cannot be written"};
+    }
+    if (!is_writable_config_root(path)) {
+        return {true, false, "Unsupported configuration path"};
+    }
+    return {true, true, {}};
+}
+
+std::string sanitize_config_error(
+    std::string message, const std::filesystem::path& root) {
+    const std::string prefixes[]{utf8_path(root), generic_utf8_path(root)};
+    for (const std::string& prefix : prefixes) {
+        if (prefix.empty()) continue;
+        const std::string slash = prefix + '/';
+        std::size_t position = 0;
+        while ((position = message.find(slash)) != std::string::npos) {
+            message.erase(position, slash.size());
+        }
+        position = 0;
+        while ((position = message.find(prefix, position)) != std::string::npos) {
+            message.replace(position, prefix.size(), "workspace");
+            position += std::string_view("workspace").size();
+        }
+    }
+    return message;
+}
+
+std::string resolve_key_reference(
+    const Workspace& workspace,
+    std::string_view api_key_id,
+    std::string_view api_key_env) {
+    if (!api_key_id.empty()) return std::string(api_key_id);
+    if (api_key_env.empty()) return {};
+    for (const SavedApiKey& key : workspace.api_keys()) {
+        if (key.display_name == api_key_env) return key.id;
+    }
+    return std::string(api_key_env);
+}
+
+std::string provider_credential_destination(const ModelBackendConfig& config) {
+    std::string host = config.host;
+    if (host.find(':') != std::string::npos && !host.starts_with('[')) {
+        host = '[' + host + ']';
+    }
+    return std::string(config.https ? "https://" : "http://") + host + ':'
+        + std::to_string(config.port);
+}
+
+std::string url_credential_destination(std::string_view url) {
+    std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> parsed(
+        curl_url(), curl_url_cleanup);
+    const std::string owned(url);
+    if (!parsed
+        || curl_url_set(parsed.get(), CURLUPART_URL, owned.c_str(), 0) != CURLUE_OK) {
+        return owned;
+    }
+    char* scheme = nullptr;
+    char* host = nullptr;
+    char* port = nullptr;
+    curl_url_get(parsed.get(), CURLUPART_SCHEME, &scheme, 0);
+    curl_url_get(parsed.get(), CURLUPART_HOST, &host, 0);
+    curl_url_get(parsed.get(), CURLUPART_PORT, &port, CURLU_DEFAULT_PORT);
+    std::unique_ptr<char, decltype(&curl_free)> owned_scheme(scheme, curl_free);
+    std::unique_ptr<char, decltype(&curl_free)> owned_host(host, curl_free);
+    std::unique_ptr<char, decltype(&curl_free)> owned_port(port, curl_free);
+    if (!scheme || !host) return owned;
+    std::string destination = std::string(scheme) + "://" + host;
+    if (port) {
+        destination += ':';
+        destination += port;
+    }
+    return destination;
+}
+
+using CredentialPair = std::pair<std::string, std::string>;
+
+void add_credential_pair(
+    std::set<CredentialPair>& pairs, std::string destination, std::string key) {
+    if (destination.empty() || key.empty()) return;
+    pairs.emplace(std::move(destination), std::move(key));
+}
+
+std::set<CredentialPair> credential_destination_pairs(const Workspace& workspace) {
+    std::set<CredentialPair> pairs;
+    for (const WorkspaceProvider& provider : workspace.providers()) {
+        add_credential_pair(
+            pairs,
+            provider_credential_destination(provider.config),
+            resolve_key_reference(
+                workspace, provider.config.api_key_id, provider.config.api_key_env));
+    }
+    if (workspace.jev()) {
+        add_credential_pair(
+            pairs,
+            url_credential_destination(workspace.jev()->url),
+            resolve_key_reference(workspace, workspace.jev()->api_key_id, {}));
+    }
+    if (workspace.voice_input()) {
+        add_credential_pair(
+            pairs,
+            url_credential_destination(workspace.voice_input()->url),
+            resolve_key_reference(
+                workspace, workspace.voice_input()->api_key_id, {}));
+    }
+    if (workspace.voice_output()) {
+        if (workspace.voice_output()->fishaudio) {
+            add_credential_pair(
+                pairs,
+                "fishaudio",
+                resolve_key_reference(
+                    workspace, workspace.voice_output()->fishaudio->api_key_id, {}));
+        }
+        if (workspace.voice_output()->elevenlabs) {
+            add_credential_pair(
+                pairs,
+                "elevenlabs",
+                resolve_key_reference(
+                    workspace,
+                    workspace.voice_output()->elevenlabs->api_key_id,
+                    {}));
+        }
+    }
+    const WorkspaceWebSearch& search = workspace.web_search();
+    add_credential_pair(
+        pairs,
+        search.provider,
+        resolve_key_reference(workspace, search.api_key_id, {}));
+    add_credential_pair(
+        pairs,
+        "firecrawl",
+        resolve_key_reference(workspace, search.firecrawl_api_key_id, {}));
+    return pairs;
+}
+
+bool entities_preserved(const Workspace& base, const Workspace& candidate) {
+    for (const WorkspaceCharacter& character : base.characters()) {
+        if (candidate.find_character(character.character.id) == nullptr) {
+            return false;
+        }
+    }
+    for (const WorkspacePersona& persona : base.personas()) {
+        if (candidate.find_persona(persona.id) == nullptr) return false;
+    }
+    for (const WorkspaceForum& forum : base.forums()) {
+        if (candidate.find_forum(forum.id) == nullptr) return false;
+        for (const WorkspaceForumMember& member : forum.members) {
+            if (candidate.find_forum_member(forum.id, member.character_id)
+                == nullptr) {
+                return false;
+            }
+        }
+    }
+    for (const WorkspaceProvider& provider : base.providers()) {
+        if (candidate.find_provider(provider.id) == nullptr) return false;
+    }
+    for (const WorkspaceStyle& style : base.styles()) {
+        if (candidate.find_style(style.id) == nullptr) return false;
+    }
+    for (const WorkspaceVoice& voice : base.voices()) {
+        if (candidate.find_voice(voice.id) == nullptr) return false;
+    }
+    return true;
+}
+
+std::optional<WorkspaceConfigKeyInfo> key_metadata_for(
+    std::string_view path, std::string_view content) {
+    constexpr std::string_view prefix = "system/keys/";
+    if (!path.starts_with(prefix)) return std::nullopt;
+    const std::string_view rest = path.substr(prefix.size());
+    if (rest == "config.toml") return std::nullopt;
+    const auto slash = rest.find('/');
+    if (slash == std::string_view::npos || rest.substr(slash) != "/config.toml") {
+        return WorkspaceConfigKeyInfo{
+            .id = std::string(rest),
+            .type = "unknown",
+        };
+    }
+    WorkspaceConfigKeyInfo info;
+    info.id = std::string(rest.substr(0, slash));
+    try {
+        const toml::table table = toml::parse(std::string(content));
+        info.display_name = table["display_name"].value_or(std::string{});
+        info.type = table["type"].value_or(std::string{});
+        if (info.type == "models") {
+            info.credential_present =
+                !table["value"].value_or(std::string{}).empty();
+        } else if (info.type == "R2") {
+            info.credential_present =
+                !table["secret_key"].value_or(std::string{}).empty();
+        }
+    } catch (const toml::parse_error&) {
+    }
+    return info;
+}
+
+bool cancelled(const WorkspaceConfigCancelCheck& check) {
+    return check && check();
+}
+
 struct WorkspaceConfigStore::Impl {
     std::filesystem::path database_path;
     std::string database_password;
@@ -1014,6 +1288,14 @@ struct WorkspaceConfigStore::Impl {
     std::shared_ptr<const Workspace> published_workspace;
     bool restart_required{};
     std::function<void()> on_restart_required;
+    WorkspaceConfigRevision revision{};
+    struct UndoRecord {
+        WorkspaceConfigRevision resulting_revision{};
+        std::vector<std::pair<std::string, std::string>> old_files;
+    };
+    std::optional<UndoRecord> undo;
+
+    enum class UndoUpdate { leave, clear, install };
 
     [[noreturn]] void require_restart(std::string message) {
         restart_required = true;
@@ -1045,48 +1327,44 @@ struct WorkspaceConfigStore::Impl {
         TextFiles files;
         for (const auto& row : rows) files.emplace(row.name, row.content);
         publish(Workspace::load(tree->workspace(), files));
+        ++revision;
+        undo.reset();
     }
 
-    template<typename Writer>
-    WorkspaceConfigEditResult edit(
-        Writer&& writer,
-        std::string_view deleted_forum_id = {}) {
-        const std::lock_guard lock(mutex);
+    void require_open() const {
         if (restart_required) {
-            throw WorkspaceRestartRequiredError("Configuration is unavailable. Restart is required");
+            throw WorkspaceRestartRequiredError(
+                "Configuration is unavailable. Restart is required");
         }
-        const std::shared_ptr<const Workspace> published = snapshot();
-        if (!published || published->root() != tree->workspace()) {
-            fail_path(
-                "Runtime configuration store has no matching loaded workspace");
-        }
+    }
 
-        const auto committed_rows = read_workspace_config_files(*database);
-        TextFiles files;
-        for (const auto& row : committed_rows) files.emplace(row.name, row.content);
-        WorkspaceConfigEditor editor(*published, files);
-        auto affected_forum_ids = writer(*published, editor);
-        std::vector<ConfigFile> rows;
-        for (const auto& [name, content] : files) rows.push_back({name, content});
-        validate_config_rows(rows);
-        auto candidate = [&] {
-            try {
-                return std::make_shared<const Workspace>(Workspace::load(tree->workspace(), files));
-            } catch (const std::runtime_error& error) {
-                throw WorkspaceConfigValidationError(error.what());
-            }
-        }();
-        if (consume_runtime_fault(WorkspaceConfigFault::validation)) {
-            fail_path("Forced configuration validation failure");
-        }
+    bool undo_is_available() const {
+        return undo && undo->resulting_revision == revision;
+    }
 
-        // Allocate and validate before committing. A rejected candidate has no
-        // side effects to restore. Hold the publication lock across commit so
-        // the only remaining real operation is a noexcept pointer swap.
+    WorkspaceConfigApplyResult failed(
+        WorkspaceConfigApplyError error, std::string message) const {
+        return {
+            .committed = false,
+            .revision = revision,
+            .undo_available = undo_is_available(),
+            .error = error,
+            .error_message = std::move(message),
+        };
+    }
+
+    void commit_and_publish(
+        const std::vector<ConfigFile>& committed_rows,
+        const std::vector<ConfigFile>& rows,
+        std::shared_ptr<const Workspace> candidate,
+        std::string_view deleted_forum_id,
+        UndoUpdate undo_update,
+        std::optional<UndoRecord> new_undo = {}) {
         std::unique_lock publication_lock(snapshot_mutex);
         bool database_committed = false;
+        bool config_changed = false;
         try {
-            const bool config_changed = committed_rows != rows;
+            config_changed = committed_rows != rows;
             if (config_changed || !deleted_forum_id.empty()) {
                 if (consume_runtime_fault(WorkspaceConfigFault::sqlite_begin)) {
                     fail_path("Forced SQLite begin failure");
@@ -1119,14 +1397,399 @@ struct WorkspaceConfigStore::Impl {
                 fail_path("Forced workspace publication failure");
             }
             published_workspace.swap(candidate);
+            if (config_changed) {
+                ++revision;
+                if (undo_update == UndoUpdate::clear) undo.reset();
+                else if (undo_update == UndoUpdate::install) {
+                    undo = std::move(new_undo);
+                }
+            }
         } catch (const std::exception& error) {
             publication_lock.unlock();
             if (!database_committed) throw;
+            if (config_changed) {
+                ++revision;
+                undo.reset();
+            }
             require_restart(
                 "Configuration was committed but could not be published: "
                 + std::string(error.what()) + ". Restart is required");
         }
+    }
+
+    template<typename Writer>
+    WorkspaceConfigEditResult edit(
+        Writer&& writer,
+        std::string_view deleted_forum_id = {}) {
+        const std::lock_guard lock(mutex);
+        require_open();
+        const std::shared_ptr<const Workspace> published = snapshot();
+        if (!published || published->root() != tree->workspace()) {
+            fail_path(
+                "Runtime configuration store has no matching loaded workspace");
+        }
+
+        const auto committed_rows = read_workspace_config_files(*database);
+        TextFiles files;
+        for (const auto& row : committed_rows) files.emplace(row.name, row.content);
+        WorkspaceConfigEditor editor(*published, files);
+        auto affected_forum_ids = writer(*published, editor);
+        std::vector<ConfigFile> rows;
+        for (const auto& [name, content] : files) rows.push_back({name, content});
+        validate_config_rows(rows);
+        auto candidate = [&] {
+            try {
+                return std::make_shared<const Workspace>(
+                    Workspace::load(tree->workspace(), files));
+            } catch (const std::runtime_error& error) {
+                throw WorkspaceConfigValidationError(error.what());
+            }
+        }();
+        if (consume_runtime_fault(WorkspaceConfigFault::validation)) {
+            fail_path("Forced configuration validation failure");
+        }
+
+        commit_and_publish(
+            committed_rows, rows, std::move(candidate), deleted_forum_id,
+            UndoUpdate::clear);
         return {.affected_forum_ids = std::move(affected_forum_ids)};
+    }
+
+    WorkspaceConfigListResult list_config(std::string_view prefix) const {
+        require_open();
+        const std::shared_ptr<const Workspace> published = snapshot();
+        const std::string provider = assistant_provider_id(*published);
+        const auto rows = read_workspace_config_files(*database);
+        WorkspaceConfigListResult result;
+        result.revision = revision;
+        for (const ConfigFile& row : rows) {
+            if (!matches_list_prefix(row.name, prefix)) continue;
+            if (result.entries.size() == workspace_config_list_limit) {
+                result.truncated = true;
+                break;
+            }
+            const ConfigPathPolicy policy = config_path_policy(row.name, provider);
+            result.entries.push_back({
+                .path = row.name,
+                .bytes = row.content.size(),
+                .readable = policy.readable,
+                .writable = policy.writable,
+                .protection_reason = policy.reason,
+            });
+        }
+        return result;
+    }
+
+    WorkspaceConfigReadResult read_config(std::span<const std::string> paths) const {
+        require_open();
+        const auto rows = read_workspace_config_files(*database);
+        TextFiles files;
+        for (const ConfigFile& row : rows) files.emplace(row.name, row.content);
+        WorkspaceConfigReadResult result;
+        result.revision = revision;
+        std::size_t result_bytes = 0;
+        for (const std::string& path : paths) {
+            WorkspaceConfigReadItem item{.path = path};
+            const auto found = files.find(path);
+            if (found == files.end()) {
+                item.status = WorkspaceConfigReadStatus::missing;
+                result.files.push_back(std::move(item));
+                continue;
+            }
+            if (auto key = key_metadata_for(path, found->second)) {
+                item.status = WorkspaceConfigReadStatus::key_metadata;
+                item.key = std::move(key);
+                result.files.push_back(std::move(item));
+                continue;
+            }
+            if (found->second.size() > workspace_config_file_size_limit
+                || result_bytes + found->second.size()
+                    > workspace_config_call_size_limit) {
+                item.status = WorkspaceConfigReadStatus::too_large;
+                result.files.push_back(std::move(item));
+                continue;
+            }
+            item.status = WorkspaceConfigReadStatus::ok;
+            item.content = found->second;
+            result_bytes += item.content.size();
+            result.files.push_back(std::move(item));
+        }
+        return result;
+    }
+
+    WorkspaceConfigApplyResult apply_config(
+        WorkspaceConfigRevision version,
+        std::span<const WorkspaceConfigChange> changes,
+        const WorkspaceConfigCancelCheck& check) {
+        if (cancelled(check)) {
+            return failed(
+                WorkspaceConfigApplyError::cancelled,
+                "Configuration apply was cancelled");
+        }
+        require_open();
+        const std::shared_ptr<const Workspace> published = snapshot();
+        if (!published || published->root() != tree->workspace()) {
+            fail_path(
+                "Runtime configuration store has no matching loaded workspace");
+        }
+        if (version != revision) {
+            return failed(
+                WorkspaceConfigApplyError::stale_version,
+                "Configuration version is stale");
+        }
+        if (changes.empty()) {
+            return failed(
+                WorkspaceConfigApplyError::invalid_argument,
+                "Configuration apply requires at least one change");
+        }
+
+        std::set<std::string> seen;
+        std::size_t total_bytes = 0;
+        for (const WorkspaceConfigChange& change : changes) {
+            if (!seen.insert(change.path).second) {
+                return failed(
+                    WorkspaceConfigApplyError::invalid_argument,
+                    "Duplicate configuration path '" + change.path + "'");
+            }
+            if (change.content.size() > workspace_config_file_size_limit) {
+                return failed(
+                    WorkspaceConfigApplyError::too_large,
+                    "Configuration file '" + change.path + "' exceeds 64 KiB");
+            }
+            total_bytes += change.content.size();
+            try {
+                validate_stored_config_name(change.path);
+            } catch (const std::runtime_error& error) {
+                return failed(
+                    WorkspaceConfigApplyError::invalid_path, error.what());
+            }
+            const std::string provider = assistant_provider_id(*published);
+            const ConfigPathPolicy policy =
+                config_path_policy(change.path, provider);
+            if (change.path.starts_with("system/assistant/")
+                || is_assistant_member_path(change.path)
+                || is_assistant_provider_path(change.path, provider)
+                || change.path.starts_with("system/keys/")) {
+                return failed(
+                    WorkspaceConfigApplyError::protected_path, policy.reason);
+            }
+            if (!is_writable_config_root(change.path)) {
+                return failed(
+                    WorkspaceConfigApplyError::invalid_path,
+                    "Configuration path '" + change.path + "' is not writable");
+            }
+        }
+        if (total_bytes > workspace_config_call_size_limit) {
+            return failed(
+                WorkspaceConfigApplyError::too_large,
+                "Configuration apply exceeds 256 KiB");
+        }
+
+        const auto committed_rows = read_workspace_config_files(*database);
+        TextFiles files;
+        for (const ConfigFile& row : committed_rows) {
+            files.emplace(row.name, row.content);
+        }
+        bool created_file = false;
+        std::vector<WorkspaceConfigChangedPath> changed;
+        UndoRecord record;
+        for (const WorkspaceConfigChange& change : changes) {
+            const auto found = files.find(change.path);
+            const bool exists = found != files.end();
+            if (change.operation == WorkspaceConfigOperation::create) {
+                if (exists) {
+                    return failed(
+                        WorkspaceConfigApplyError::create_replace_conflict,
+                        "Configuration file '" + change.path + "' already exists");
+                }
+                created_file = true;
+            } else if (!exists) {
+                return failed(
+                    WorkspaceConfigApplyError::create_replace_conflict,
+                    "Configuration file '" + change.path + "' does not exist");
+            }
+            const std::optional<std::size_t> old_bytes =
+                exists ? std::optional<std::size_t>(found->second.size())
+                       : std::nullopt;
+            if (!exists || found->second != change.content) {
+                if (exists) {
+                    record.old_files.emplace_back(change.path, found->second);
+                }
+                files[change.path] = change.content;
+                changed.push_back({
+                    .path = change.path,
+                    .old_bytes = old_bytes,
+                    .new_bytes = change.content.size(),
+                });
+            }
+        }
+        if (changed.empty()) {
+            return {
+                .committed = true,
+                .revision = revision,
+                .undo_available = undo_is_available(),
+            };
+        }
+
+        std::vector<ConfigFile> rows;
+        for (const auto& [name, content] : files) {
+            rows.push_back({name, content});
+        }
+        try {
+            validate_config_rows(rows);
+        } catch (const std::runtime_error& error) {
+            return failed(
+                WorkspaceConfigApplyError::invalid_path,
+                sanitize_config_error(error.what(), tree->workspace()));
+        }
+
+        LoadWarningCollector collected;
+        std::shared_ptr<const Workspace> candidate;
+        try {
+            candidate = std::make_shared<const Workspace>(
+                Workspace::load(tree->workspace(), files, &collected));
+        } catch (const std::runtime_error& error) {
+            return failed(
+                WorkspaceConfigApplyError::validation_failure,
+                sanitize_config_error(error.what(), tree->workspace()));
+        }
+        if (consume_runtime_fault(WorkspaceConfigFault::validation)) {
+            fail_path("Forced configuration validation failure");
+        }
+        if (!entities_preserved(*published, *candidate)) {
+            return failed(
+                WorkspaceConfigApplyError::invalid_argument,
+                "Configuration changes cannot remove existing entities or memberships");
+        }
+        const auto base_pairs = credential_destination_pairs(*published);
+        const auto next_pairs = credential_destination_pairs(*candidate);
+        for (const auto& pair : next_pairs) {
+            if (!base_pairs.contains(pair)) {
+                return failed(
+                    WorkspaceConfigApplyError::credential_destination_protected,
+                    "Credential destinations cannot be added through Assistant");
+            }
+        }
+
+        std::set<std::string> changed_paths;
+        for (const auto& item : changed) changed_paths.insert(item.path);
+        std::vector<LoadWarning> warnings;
+        for (const LoadWarning& warning : collected) {
+            if (changed_paths.contains(warning.path)) warnings.push_back(warning);
+        }
+
+        if (cancelled(check)) {
+            return failed(
+                WorkspaceConfigApplyError::cancelled,
+                "Configuration apply was cancelled");
+        }
+
+        record.resulting_revision = revision + 1;
+        const UndoUpdate undo_update =
+            created_file ? UndoUpdate::clear : UndoUpdate::install;
+        commit_and_publish(
+            committed_rows, rows, std::move(candidate), {}, undo_update,
+            created_file ? std::nullopt : std::optional<UndoRecord>(std::move(record)));
+        return {
+            .committed = true,
+            .revision = revision,
+            .changed = std::move(changed),
+            .warnings = std::move(warnings),
+            .undo_available = undo_is_available(),
+        };
+    }
+
+    WorkspaceConfigApplyResult undo_config(
+        WorkspaceConfigRevision version, const WorkspaceConfigCancelCheck& check) {
+        if (cancelled(check)) {
+            return failed(
+                WorkspaceConfigApplyError::cancelled,
+                "Configuration undo was cancelled");
+        }
+        require_open();
+        const std::shared_ptr<const Workspace> published = snapshot();
+        if (!published || published->root() != tree->workspace()) {
+            fail_path(
+                "Runtime configuration store has no matching loaded workspace");
+        }
+        if (version != revision) {
+            return failed(
+                WorkspaceConfigApplyError::stale_version,
+                "Configuration version is stale");
+        }
+        if (!undo_is_available()) {
+            return failed(
+                WorkspaceConfigApplyError::unavailable_undo,
+                "Configuration undo is not available");
+        }
+
+        const auto committed_rows = read_workspace_config_files(*database);
+        TextFiles files;
+        for (const ConfigFile& row : committed_rows) {
+            files.emplace(row.name, row.content);
+        }
+        std::vector<WorkspaceConfigChangedPath> changed;
+        for (const auto& [path, content] : undo->old_files) {
+            const auto found = files.find(path);
+            const std::optional<std::size_t> old_bytes =
+                found == files.end() ? std::nullopt
+                                     : std::optional<std::size_t>(found->second.size());
+            files[path] = content;
+            changed.push_back({
+                .path = path,
+                .old_bytes = old_bytes,
+                .new_bytes = content.size(),
+            });
+        }
+
+        std::vector<ConfigFile> rows;
+        for (const auto& [name, content] : files) {
+            rows.push_back({name, content});
+        }
+        try {
+            validate_config_rows(rows);
+        } catch (const std::runtime_error& error) {
+            return failed(
+                WorkspaceConfigApplyError::validation_failure,
+                sanitize_config_error(error.what(), tree->workspace()));
+        }
+
+        LoadWarningCollector collected;
+        std::shared_ptr<const Workspace> candidate;
+        try {
+            candidate = std::make_shared<const Workspace>(
+                Workspace::load(tree->workspace(), files, &collected));
+        } catch (const std::runtime_error& error) {
+            return failed(
+                WorkspaceConfigApplyError::validation_failure,
+                sanitize_config_error(error.what(), tree->workspace()));
+        }
+        if (consume_runtime_fault(WorkspaceConfigFault::validation)) {
+            fail_path("Forced configuration validation failure");
+        }
+
+        std::set<std::string> changed_paths;
+        for (const auto& item : changed) changed_paths.insert(item.path);
+        std::vector<LoadWarning> warnings;
+        for (const LoadWarning& warning : collected) {
+            if (changed_paths.contains(warning.path)) warnings.push_back(warning);
+        }
+
+        if (cancelled(check)) {
+            return failed(
+                WorkspaceConfigApplyError::cancelled,
+                "Configuration undo was cancelled");
+        }
+
+        commit_and_publish(
+            committed_rows, rows, std::move(candidate), {}, UndoUpdate::clear);
+        return {
+            .committed = true,
+            .revision = revision,
+            .changed = std::move(changed),
+            .warnings = std::move(warnings),
+            .undo_available = false,
+        };
     }
 };
 
@@ -1721,6 +2384,38 @@ void WorkspaceConfigStore::apply_key_migration(
         editor.write_next_api_key_id(next_id);
         return std::vector<std::string>{};
     });
+}
+
+WorkspaceConfigRevision WorkspaceConfigStore::config_revision() const {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->require_open();
+    return impl_->revision;
+}
+
+WorkspaceConfigListResult WorkspaceConfigStore::list_config(
+    std::string_view prefix) const {
+    const std::lock_guard lock(impl_->mutex);
+    return impl_->list_config(prefix);
+}
+
+WorkspaceConfigReadResult WorkspaceConfigStore::read_config(
+    std::span<const std::string> paths) const {
+    const std::lock_guard lock(impl_->mutex);
+    return impl_->read_config(paths);
+}
+
+WorkspaceConfigApplyResult WorkspaceConfigStore::apply_config(
+    WorkspaceConfigRevision version,
+    std::span<const WorkspaceConfigChange> changes,
+    WorkspaceConfigCancelCheck cancelled) {
+    const std::lock_guard lock(impl_->mutex);
+    return impl_->apply_config(version, changes, cancelled);
+}
+
+WorkspaceConfigApplyResult WorkspaceConfigStore::undo_config(
+    WorkspaceConfigRevision version, WorkspaceConfigCancelCheck cancelled) {
+    const std::lock_guard lock(impl_->mutex);
+    return impl_->undo_config(version, cancelled);
 }
 
 void WorkspaceConfigStore::merge(

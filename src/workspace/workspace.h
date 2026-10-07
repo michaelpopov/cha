@@ -74,10 +74,19 @@ struct WorkspaceVoiceInput {
     std::string send_phrase{"over to you"};
 };
 
+struct LoadWarning {
+    std::string path;
+    std::string message;
+};
+
+using LoadWarningCollector = std::vector<LoadWarning>;
+
 // xAI stores delay for old files and does not send it. An invalid value becomes low.
 void normalize_unused_voice_input_delay(
     std::string_view provider,
-    std::string& delay);
+    std::string& delay,
+    std::string_view logical_path = {},
+    LoadWarningCollector* warnings = nullptr);
 
 struct WorkspaceJev {
     std::string url{"https://openrouter.ai/api/alpha/decisions"};
@@ -164,8 +173,13 @@ struct HandleResolution {
 // every value it publishes and never exposes filesystem-backed references.
 class Workspace final {
 public:
-    static Workspace load(std::filesystem::path root);
-    static Workspace load(std::filesystem::path root, const TextFiles& files);
+    static Workspace load(
+        std::filesystem::path root,
+        LoadWarningCollector* warnings = nullptr);
+    static Workspace load(
+        std::filesystem::path root,
+        const TextFiles& files,
+        LoadWarningCollector* warnings = nullptr);
 
     [[nodiscard]] const std::filesystem::path& root() const noexcept {
         return root_;
@@ -263,7 +277,10 @@ public:
 
 private:
     friend class WorkspaceConfigEditor;
-    static Workspace load(std::filesystem::path root, const TextSource& source);
+    static Workspace load(
+        std::filesystem::path root,
+        const TextSource& source,
+        LoadWarningCollector* warnings);
     std::filesystem::path root_;
     std::vector<WorkspaceProvider> providers_;
     std::vector<WorkspaceStyle> styles_;
