@@ -2,6 +2,7 @@
 
 #include "providers/provider_client.h"
 #include "providers/jev.h"
+#include "providers/maintenance.h"
 #include "providers/web_search.h"
 #include "util/concurrent_queue.h"
 #include "util/wake_notifier.h"
@@ -22,6 +23,7 @@ struct ProviderRequestInput {
     GenerationRequest generation;
     std::optional<WorkspaceWebSearch> web_search_tool;
     std::optional<WorkspaceWebSearch> web_read_tool;
+    std::optional<MaintenanceContext> maintenance;
 };
 
 // Launches one detached provider worker. Tests can replace this only to make
@@ -47,7 +49,8 @@ private:
     void set_token(std::uint64_t token) noexcept;
     void execute(const ProviderClientFactory& client_factory,
         const WebSearchExecutor& web_search_executor,
-        const WebReadExecutor& web_read_executor) noexcept;
+        const WebReadExecutor& web_read_executor,
+        const MaintenanceExecutor& maintenance_executor) noexcept;
     void fail(std::string_view message) noexcept;
     void close_with(GenerationEvent event) noexcept;
 
@@ -67,7 +70,8 @@ public:
         ProviderThreadLauncher thread_launcher = {},
         JevExecutor jev_executor = {},
         WebSearchExecutor web_search_executor = {},
-        WebReadExecutor web_read_executor = {});
+        WebReadExecutor web_read_executor = {},
+        MaintenanceExecutor maintenance_executor = {});
     ~Providers();
 
     Providers(const Providers&) = delete;
@@ -81,6 +85,9 @@ public:
     void shutdown() noexcept;
     [[nodiscard]] bool shutdown_until(
         std::chrono::steady_clock::time_point deadline) noexcept;
+    // Cancels in-flight workers and waits. Does not close admission.
+    [[nodiscard]] bool cancel_active_until(
+        std::chrono::steady_clock::time_point deadline) noexcept;
 
 private:
     struct Registry;
@@ -88,6 +95,7 @@ private:
     JevExecutor jev_executor_;
     WebSearchExecutor web_search_executor_;
     WebReadExecutor web_read_executor_;
+    MaintenanceExecutor maintenance_executor_;
     ProviderClientFactory client_factory_;
     ProviderThreadLauncher thread_launcher_;
     std::shared_ptr<Registry> registry_;

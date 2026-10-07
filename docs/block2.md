@@ -1,16 +1,18 @@
 # Block 2: Complete Assistant maintenance chat
 
-Status: not started. Execute after [block 1](block1.md) is complete, on the
-same resulting checkout. This is the final implementation block.
+Status: complete. Assistant maintenance chat works in the desktop application
+and in ChaWeb. Execute this note on the same checkout as [block 1](block1.md).
 
 Read the repository instructions, block 1's completion note,
-[assistant.md](assistant.md), and [ass-plan.md](ass-plan.md) before coding.
+[assistant.md](assistant.md), [ass-plan.md](ass-plan.md), and the existing
+[Assistant instructions](../resources/assistant-maintenance.md) before coding.
 Inspect the actual interfaces produced by block 1 rather than inventing a
 parallel store or logger. The design remains the behavior specification.
 
 Scope: the application portions of plan step 5 and steps 6–11, excluding
 instruction writing, reference updates, and resource preparation in step 9.
-That content will be prepared independently; this block only integrates it.
+The instructions already exist in `resources/assistant-maintenance.md`;
+this block only integrates the supplied content.
 Planning allowance: about 400,000 tokens including inspection, implementation,
 tests, and fixes. Keep the session below 500,000 tokens and reserve the final
 50,000 for validation and completion notes. This estimate is not a measured
@@ -117,19 +119,20 @@ frontend behavior in the next two sections.
 
 ### 4. Integrate the independently prepared instructions
 
-Use the instructions and resources prepared independently of this block.
-Do not write those instructions or update the reference guides here.
+Use the existing `resources/assistant-maintenance.md`, prepared independently
+of this block. Do not regenerate or rewrite it or update the reference guides here.
 
-- Embed the whole `docs/MaintainerGuide.md` and `packaging/linux/README.md` as
-  separate `embed_text.cmake` inputs. Concatenate them with the independently
-  supplied Assistant instruction resource when constructing the maintenance
-  prompt.
+- Embed the whole `resources/assistant-maintenance.md`, `docs/MaintainerGuide.md`,
+  and `packaging/linux/README.md` as separate `embed_text.cmake` inputs.
+  Concatenate their embedded text when constructing the maintenance prompt.
   Use no section slicing, duplicate field catalogue, or help tool.
 - Prepend the native host line exactly as specified: `Host: desktop application`
   or `Host: cha-daemon (ChaWeb)`. Do not infer it from the OS or vault settings.
 - Include the complete maintenance reference only on maintenance requests.
   Preserve the general application guide, give maintenance restrictions
   precedence, and register build dependencies for both hosts.
+- Verify that prompt fixtures for both hosts contain the complete existing
+  Assistant instruction resource and the correct native host line.
 
 ### 5. Desktop refresh and ChaWeb Welcome
 
@@ -221,3 +224,71 @@ areas, test commands/results, and any unverified environment-specific checks.
 Update [ass-plan.md](ass-plan.md) to reflect actual verified progress. If the
 session ceiling is reached before completion, record the exact remaining work
 and leave the block incomplete; do not silently drop acceptance criteria.
+
+## Completion note
+
+Changed areas:
+
+- Welcome maintenance tools on the application service: list, read, apply,
+  undo, logs, and logging. Undo goes through apply. Tool text redacts saved
+  keys, available OAuth tokens, and the private workspace root. Log search
+  uses the redacted text.
+- Maintenance tools and the maintenance reference are attached only to
+  Assistant in Welcome. Both provider protocols omit hosted web search for
+  those requests. A truncated tool call is not executed.
+- The maintenance prompt is the host line plus the whole
+  `resources/assistant-maintenance.md`, `docs/MaintainerGuide.md`, and
+  `packaging/linux/README.md`. Desktop uses `Host: desktop application`.
+  ChaWeb uses `Host: cha-daemon (ChaWeb)`.
+- A committed apply or undo stores a Welcome transcript notice. Completion,
+  failure, and Stop keep that notice. Ordinary sessions refresh. Welcome
+  stays open.
+- Desktop and ChaWeb reload bootstrap and open details when a Welcome answer
+  ends. ChaWeb shows one Welcome entry for `builtin-welcome`.
+
+Commands and results, from the repository root:
+
+```
+cmake --preset ninja
+cmake --build --preset ninja
+ctest --test-dir build/ninja -j8 --output-on-failure
+npm --prefix webapp run check
+npm --prefix webapp run build:chaweb
+make itest-local
+make itest-daemon
+```
+
+Results:
+
+- C++: 1068 tests passed. Two live-provider tests were skipped:
+  `OpenAiOAuthLive.LoginAndRefresh` and
+  `ProviderClientLive.SubscriptionStreamedRequest`.
+- Web check: API types, typecheck, and 1061 Vitest tests passed.
+- `build:chaweb` passed.
+- `make itest-local`: 24 tests passed.
+- `make itest-daemon`: 13 tests passed, including
+  `test_welcome_repair_notice_survives_failure_and_restart`.
+
+Unverified on this host:
+
+- `cmake --preset tsan` failed. `build/tsan/CMakeCache.txt` has
+  `FETCHCONTENT_FULLY_DISCONNECTED=ON`, and
+  `build/tsan/_deps/curl-src` is missing, so `CURL::libcurl` was not found.
+  ThreadSanitizer was not run and is not marked passed. The ninja build ran
+  the logging, provider, and runtime tests.
+- No browser session was used. Desktop and ChaWeb screens were verified with
+  Vitest and with the daemon HTTP tests.
+- `docs/MaintainerGuide.md`, `packaging/linux/README.md`, and
+  `resources/assistant-maintenance.md` were embedded as supplied. Their text
+  was not rewritten.
+- The manual provider Test routine in `src/app/settings_operations.cpp` was
+  not changed.
+
+`docs/ass-plan.md` is checked for the items these commands verified.
+`docs/chaweb.md` describes the Welcome route. Four items stay open: the three
+step 9 writing tasks (guide gaps, the four recipes, and daemon deployment),
+and the step 11 item that also asks to rewrite the maintainer guide.
+After the suite above, `ChaWebAdapter.WelcomeRepairsAndUndoesThroughChat`
+was rebuilt and passed again with the Welcome system-prompt sentence check.
+
+COMPLETED

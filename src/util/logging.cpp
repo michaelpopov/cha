@@ -52,10 +52,19 @@ public:
     LogBufferState state() {
         std::lock_guard lock(mutex_);
         expire();
+        std::optional<std::int64_t> remaining;
+        if (verbose_until_) {
+            const auto now = clock_();
+            if (*verbose_until_ > now) {
+                remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    *verbose_until_ - now).count();
+            }
+        }
         return {
             .level = severity_from_spdlog(level()),
             .verbose_until = verbose_until_,
             .latest_number = latest_number_,
+            .verbose_remaining_ms = remaining,
         };
     }
 

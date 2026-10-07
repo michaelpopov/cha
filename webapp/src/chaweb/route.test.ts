@@ -38,6 +38,7 @@ it('hides Entrance and Welcome and ignores the initial session for the default f
   expect(visibleForums(bootstrapFixture).map((forum) => forum.id)).toEqual(['lobby']);
   expect(defaultForumId(bootstrapFixture)).toBe('lobby');
   expect(sessionUnavailable(bootstrapFixture, 'entrance', 'welcome')).toBe(true);
+  expect(sessionUnavailable(bootstrapFixture, 'entrance', 'builtin-welcome')).toBe(false);
   expect(sessionUnavailable(bootstrapFixture, 'lobby', 'builtin-welcome')).toBe(true);
   expect(sessionUnavailable(bootstrapFixture, 'missing', 'planning')).toBe(true);
   expect(sessionUnavailable(bootstrapFixture, 'lobby', 'planning')).toBe(false);

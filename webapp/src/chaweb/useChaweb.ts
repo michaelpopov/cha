@@ -7,6 +7,7 @@ import {
   type SessionListing,
   type SessionSnapshot,
 } from '../api/client';
+import { welcomeSessionId } from '../state/route';
 import { chaWebMessage, type ChaWebBootstrap, type ChaWebClient } from './client';
 import {
   applyAcknowledgement,
@@ -25,11 +26,11 @@ import {
 } from './outcome';
 import {
   defaultForumId,
+  isWelcomeSession,
   parseChawebHash,
   sameChawebPlace,
   sessionHash,
   sessionUnavailable,
-  visibleForums,
 } from './route';
 
 const pollDelayMs = 1_000;
@@ -97,7 +98,7 @@ function conversationKey(conversation: ConversationRef): string {
 
 function forumIsValid(bootstrap: Bootstrap | null, forumId: string): boolean {
   if (!bootstrap || !forumId) return false;
-  return visibleForums(bootstrap).some((forum) => forum.id === forumId);
+  return bootstrap.forums.some((forum) => forum.id === forumId);
 }
 
 function pageVisible(): boolean {
@@ -170,6 +171,7 @@ export function useChaweb(client: ChaWebClient) {
   const statusRef = useRef<Status>(emptyStatus);
   const appliedHash = useRef<string | null>(null);
   const targetKey = useRef('');
+  const welcomeTurn = useRef<{ key: string; active: boolean; pending: boolean } | null>(null);
   const readLoop = useRef({
     inflight: null as ReadJob | null,
     queued: false,
@@ -300,6 +302,49 @@ export function useChaweb(client: ChaWebClient) {
     }, pollDelayMs);
   }
 
+  function listForumId(): string {
+    const loaded = bootstrapRef.current;
+    const current = forumRef.current;
+    if (loaded && current && current !== loaded.entrance_forum_id) return current;
+    return loaded ? defaultForumId(loaded) : '';
+  }
+
+  function refreshWelcome() {
+    void reloadBootstrap().catch(() => undefined);
+    const forum = listForumId();
+    if (forum) refreshList(forum);
+  }
+
+  function welcomeIdentity(forum: string, session: string): boolean {
+    const loaded = bootstrapRef.current;
+    return loaded !== null && isWelcomeSession(loaded, forum, session);
+  }
+
+  function markWelcomePending(forum: string, session: string) {
+    if (!welcomeIdentity(forum, session)) return;
+    const key = `${forum}/${session}`;
+    const prior = welcomeTurn.current;
+    welcomeTurn.current = {
+      key,
+      active: prior?.key === key ? prior.active : false,
+      pending: true,
+    };
+  }
+
+  function noteWelcomeSnapshot(loaded: SessionSnapshot) {
+    if (!welcomeIdentity(loaded.forum.id, loaded.session_id)) return;
+    const key = `${loaded.forum.id}/${loaded.session_id}`;
+    const prior = welcomeTurn.current;
+    const active = loaded.generation.active;
+    const ended = prior?.key === key && !active && (prior.active || prior.pending);
+    welcomeTurn.current = {
+      key,
+      active,
+      pending: active && prior?.key === key ? prior.pending : false,
+    };
+    if (ended) refreshWelcome();
+  }
+
   function applySnapshot(loaded: SessionSnapshot, proves: boolean) {
     const previous = snapshotRef.current;
     snapshotRef.current = loaded;
@@ -336,7 +381,12 @@ export function useChaweb(client: ChaWebClient) {
       && previous.session_id === loaded.session_id;
     const titleChanged = same && previous.session_label !== loaded.session_label;
     const completed = same && previous.generation.active && !loaded.generation.active;
-    if (titleChanged || completed) refreshList(loaded.forum.id);
+    noteWelcomeSnapshot(loaded);
+    if (welcomeIdentity(loaded.forum.id, loaded.session_id)) {
+      if (titleChanged) refreshWelcome();
+    } else if (titleChanged || completed) {
+      refreshList(loaded.forum.id);
+    }
   }
 
   function succeedRead(job: ReadJob, loaded: SessionSnapshot) {
@@ -373,7 +423,10 @@ export function useChaweb(client: ChaWebClient) {
     }
     loop.failures = 0;
     loop.bootstrapFresh = false;
+    const reconnecting = statusRef.current.reconnectingKey
+      === sessionDraftKey(job.forumId, job.sessionId);
     applySnapshot(loaded, job.ack === (loop.ack[sessionDraftKey(job.forumId, job.sessionId)] ?? 0));
+    if (reconnecting && welcomeIdentity(job.forumId, job.sessionId)) refreshWelcome();
     scheduleAfter(loaded);
   }
 
@@ -577,16 +630,19 @@ export function useChaweb(client: ChaWebClient) {
   }
 
   function assignSession(forum: string, session: string) {
+    const welcome = welcomeIdentity(forum, session);
     invalidateList();
-    if (forumRef.current !== forum) setSessions([]);
+    if (!welcome && forumRef.current !== forum) setSessions([]);
     const next: ConversationRef = { kind: 'session', forumId: forum, sessionId: session };
     conversationRef.current = next;
     screenRef.current = 'conversation';
-    forumRef.current = forum;
+    if (!welcome) {
+      forumRef.current = forum;
+      setForumId(forum);
+    }
     setConversation(next);
     setAudioKey(sessionDraftKey(forum, session));
     setScreen('conversation');
-    setForumId(forum);
     patchStatus((state) => ({ ...state, awaitingKey: sessionDraftKey(forum, session) }));
     const current = snapshotRef.current;
     if (!current || current.forum.id !== forum || current.session_id !== session) {
@@ -595,6 +651,10 @@ export function useChaweb(client: ChaWebClient) {
     }
     retarget(`${forum}/${session}`);
     requestRead();
+    if (welcome) {
+      welcomeTurn.current = { key: `${forum}/${session}`, active: false, pending: false };
+      refreshWelcome();
+    }
   }
 
   function showList() {
@@ -658,11 +718,31 @@ export function useChaweb(client: ChaWebClient) {
 
   function showSessions() {
     const current = conversationRef.current;
-    if (current) {
-      forumRef.current = current.forumId;
-      setForumId(current.forumId);
+    const loaded = bootstrapRef.current;
+    if (current && loaded) {
+      const forum = current.forumId === loaded.entrance_forum_id
+        ? defaultForumId(loaded) : current.forumId;
+      if (forum) {
+        forumRef.current = forum;
+        setForumId(forum);
+      }
     }
     showList();
+  }
+
+  function openWelcome() {
+    const loaded = bootstrapRef.current;
+    if (!loaded) return;
+    const forum = loaded.entrance_forum_id;
+    const session = welcomeSessionId;
+    if (!isWelcomeSession(loaded, forum, session)) return;
+    const hash = sessionHash(forum, session);
+    appliedHash.current = hash;
+    if (window.location.hash !== hash) {
+      window.history.pushState(null, '', locationUrl(hash));
+    }
+    setListError(null);
+    assignSession(forum, session);
   }
 
   function onDraft(text: string) {
@@ -685,6 +765,7 @@ export function useChaweb(client: ChaWebClient) {
     if (control.mode !== 'send' || control.disabled) return;
     const current = conversationRef.current;
     if (!current || screenRef.current !== 'conversation') return;
+    if (current.kind === 'session') markWelcomePending(current.forumId, current.sessionId);
     if (current.kind === 'draft') {
       const key = newDraftKey(current.forumId);
       const draft = draftsRef.current[key] ?? { text: '', revision: 0 };
@@ -725,6 +806,7 @@ export function useChaweb(client: ChaWebClient) {
     const forum = current.forumId;
     const session = current.sessionId;
     const key = sessionDraftKey(forum, session);
+    markWelcomePending(forum, session);
     patchStatus((state) => withConversation(
       state, key, { stopPending: true, notice: stopRequestedNotice, deleteError: undefined },
     ));
@@ -735,6 +817,12 @@ export function useChaweb(client: ChaWebClient) {
   }
 
   function canDelete() {
+    const current = conversationRef.current;
+    const loaded = bootstrapRef.current;
+    if (current?.kind === 'session' && loaded
+        && isWelcomeSession(loaded, current.forumId, current.sessionId)) {
+      return false;
+    }
     const command = buildCommand(
       statusRef.current, conversationRef.current, screenRef.current,
       draftsRef.current, snapshotRef.current, bootstrapRef.current,
@@ -868,7 +956,9 @@ export function useChaweb(client: ChaWebClient) {
     patchStatus((state) => withConversation(
       state, key, { sending: undefined, pendingText: text },
     ));
-    refreshList(forum);
+    const session = conversationRef.current?.kind === 'session'
+      ? conversationRef.current.sessionId : '';
+    if (!welcomeIdentity(forum, session)) refreshList(forum);
     noteAck(key);
   }
 
@@ -1058,6 +1148,7 @@ export function useChaweb(client: ChaWebClient) {
       const forum = forumRef.current;
       if (forum) refreshList(forum);
       const selected = selectedSession();
+      if (selected && welcomeIdentity(selected.forumId, selected.sessionId)) refreshWelcome();
       if (selected) patchStatus((state) => ({
         ...state,
         awaitingKey: sessionDraftKey(selected.forumId, selected.sessionId),
@@ -1132,6 +1223,10 @@ export function useChaweb(client: ChaWebClient) {
       : null,
     chooseForum,
     openSession,
+    openWelcome,
+    welcomeCurrent: conversation?.kind === 'session'
+      && bootstrap !== null
+      && isWelcomeSession(bootstrap, conversation.forumId, conversation.sessionId),
     newSession,
     showSessions,
     refreshVault,

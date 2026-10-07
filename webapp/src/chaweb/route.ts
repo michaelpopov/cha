@@ -47,11 +47,22 @@ export function defaultForumId(bootstrap: Bootstrap): string {
   return forums.find((forum) => forum.id === bootstrap.initial_forum_id)?.id ?? forums[0]?.id ?? '';
 }
 
+export function isWelcomeSession(
+  bootstrap: Bootstrap,
+  forumId: string,
+  sessionId: string,
+): boolean {
+  return forumId === bootstrap.entrance_forum_id
+    && sessionId === welcomeSessionId
+    && bootstrap.forums.some((forum) => forum.id === forumId);
+}
+
 export function sessionUnavailable(
   bootstrap: Bootstrap,
   forumId: string,
   sessionId: string,
 ): boolean {
+  if (isWelcomeSession(bootstrap, forumId, sessionId)) return false;
   if (sessionId === welcomeSessionId) return true;
   if (forumId === bootstrap.entrance_forum_id) return true;
   return !bootstrap.forums.some((forum) => forum.id === forumId);

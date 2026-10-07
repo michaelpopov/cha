@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cha {
 
@@ -74,6 +75,8 @@ public:
     OpenAiOAuthSnapshot poll(std::function<bool()> cancelled = {});
     OpenAiOAuthSnapshot disconnect();
     OpenAiOAuthRequestCredentials credentials();
+    // Tokens currently in memory. Does not refresh or use the network.
+    [[nodiscard]] std::vector<std::string> redaction_secrets() const;
 
 private:
     struct Bundle {

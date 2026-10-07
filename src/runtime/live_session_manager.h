@@ -111,6 +111,12 @@ public:
     void close_session(const FullSessionId& key, std::uint64_t epoch = 0);
     [[nodiscard]] std::uint64_t context_epoch() const;
     std::uint64_t bump_context_epoch();
+    // Posts save effects for one admitted epoch. Returns false when the runtime
+    // did not accept the work. Does not wait for the notice to be stored.
+    bool post_maintenance_result(
+        std::uint64_t epoch,
+        FullSessionId welcome,
+        std::string notice);
     [[nodiscard]] std::optional<LiveSessionOpenResult> try_reattach(
         const FullSessionId& key);
     [[nodiscard]] LiveSessionHandle lookup(

@@ -121,7 +121,7 @@ SessionOpener scripted_opener(
     std::shared_ptr<test::BackendControls> controls,
     SessionController::ActivationHook before_activation = {}) {
     return [path, controls, before_activation](
-               const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+               const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         return test::open_scripted_session(
             identity, path, notifier, controls, before_activation);
     };
@@ -223,7 +223,7 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     std::optional<std::string> persisted_default;
     SessionOpener opener = [path = file.path(), guide, scribe, &persisted_default](
                                const FullSessionId& identity,
-                               std::shared_ptr<WakeNotifier> notifier) {
+                               std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
         backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
         backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
@@ -289,7 +289,7 @@ TEST(LiveSession, MirrorsOnlyDurableRoundTripRenameAndCoverBoundaries) {
                              &mirror_count, &mirrored_label,
                              &mirrored_entries](
                                 const FullSessionId& identity,
-                                std::shared_ptr<WakeNotifier> notifier) {
+                                std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         OpenedSession opened = test::open_scripted_session(
             identity, path, notifier, controls);
         opened.mirror = [&mirror_mutex, &mirror_count, &mirrored_label,
@@ -393,7 +393,7 @@ TEST(LiveSession, KeepsADefaultCharacterThatCouldNotBeSaved) {
     auto guide = std::make_shared<test::BackendControls>();
     auto scribe = std::make_shared<test::BackendControls>();
     SessionOpener opener = [path = file.path(), guide, scribe](
-                               const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+                               const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
         backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
         backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
@@ -537,7 +537,7 @@ TEST(LiveSession, IndependentSessionsProgressWithoutSharedState) {
     auto second_controls = std::make_shared<test::BackendControls>();
     LiveSessionManager manager(
         test_settings(),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             return test::open_scripted_session(
                 identity,
                 identity.session_id == "one" ? first_file.path()
@@ -610,8 +610,8 @@ TEST(LiveSession, StalledRendererDefersSnapshotCaptureUntilItRequestsDelivery) {
     std::atomic_int captures{};
     auto opener = scripted_opener(file.path(), controls);
     LiveSessionHost host(test_settings(),
-        [opener, &captures](const auto& identity, auto notifier) {
-            auto opened = opener(identity, notifier);
+        [opener, &captures](const auto& identity, auto notifier, std::uint64_t epoch) {
+            auto opened = opener(identity, notifier, epoch);
             opened.cached_audio_entries = [&captures] {
                 ++captures;
                 return std::set<EntryId>{};
@@ -727,7 +727,7 @@ TEST(LiveSession, PublishesAnOpenedSessionNoticeOnTheFirstSnapshot) {
     LiveSessionHost host(
         test_settings(),
         [path = file.path(), controls](
-            const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+            const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             OpenedSession opened = test::open_scripted_session(
                 identity, path, notifier, controls);
             opened.notice =
@@ -785,7 +785,7 @@ TEST(LiveSession, FinalSnapshotIncludesReasonsRaisedDuringSnapshotConstruction) 
     std::atomic<bool> block_snapshot{};
     LiveSessionHost host(test_settings(), [&](
                              const FullSessionId& identity,
-                             std::shared_ptr<WakeNotifier> notifier) {
+                             std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         auto opened = test::open_test_session(identity, file.path(), notifier);
         opened.cached_audio_entries = [&] {
             if (block_snapshot.exchange(false)) gate.wait();
@@ -874,7 +874,7 @@ TEST(LiveSession, ControllerFailureIsContainedAndReleasesOnlyThatSession) {
     test::TemporarySessionFile healthy("live_session_healthy");
     LiveSessionManager manager(
         test_settings(),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             return test::open_test_session(
                 identity,
                 identity.session_id == "failing" ? failing.path() : healthy.path(),

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "characters/character_config.h"
+#include "providers/maintenance.h"
 #include "providers/model_backend.h"
 
 #include <nlohmann/json.hpp>
@@ -9,11 +10,14 @@ namespace cha {
 
 void add_web_search_tool(nlohmann::json& body, ProviderApi api);
 void add_web_read_tool(nlohmann::json& body, ProviderApi api);
+void add_maintenance_tools(nlohmann::json& body, ProviderApi api);
 void update_tool_instructions(nlohmann::json& body, ProviderApi api,
     RequestTextSizes* text_sizes = nullptr);
 GenerationResult tool_call_result(const nlohmann::json& continuation,
     ProviderApi api, bool received_answer, GenerationTokenUsage usage, bool collect_tool_calls,
     std::string_view no_answer_message = "Response completed without answer content",
-    std::string_view finish_reason = {});
+    std::string_view finish_reason = {},
+    std::size_t argument_limit = ordinary_tool_argument_limit,
+    bool maintenance = false);
 
 } // namespace cha

@@ -53,6 +53,8 @@ struct ApplicationCommand {
     // Test-only bound for vault-switch drain. Production always uses the
     // ordinary shutdown grace.
     std::optional<int> test_shutdown_grace_ms;
+    // True only for cha-daemon. Desktop stays false. Do not infer this from the OS.
+    bool chaweb_host{false};
 };
 
 ConfigurationDirectory load_configuration_directory(

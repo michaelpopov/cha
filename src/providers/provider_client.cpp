@@ -8,6 +8,7 @@
 #include "providers/openai_oauth.h"
 #include "providers/responses_api.h"
 #include "providers/web_search.h"
+#include "providers/maintenance.h"
 #include "providers/tool_calls.h"
 #include "util/curl.h"
 #include "util/logging.h"
@@ -516,6 +517,7 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
             .text_sizes = text_sizes,
             .web_search_tool = input.web_search_tool,
             .web_read_tool = input.web_read_tool,
+            .maintenance_tool = input.maintenance_tool,
         };
     case ProviderApi::responses:
         return {
@@ -532,6 +534,7 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
             .text_sizes = text_sizes,
             .web_search_tool = input.web_search_tool,
             .web_read_tool = input.web_read_tool,
+            .maintenance_tool = input.maintenance_tool,
         };
     }
     throw std::logic_error("Unknown provider API");
@@ -541,8 +544,12 @@ GenerationResult ProviderClient::perform(
     RequestPayload payload,
     const GenerationDeltaSink& on_delta,
     const std::atomic_bool& cancellation) {
-    const int max_tool_calls = payload.web_read_tool ? 8 : 4;
+    const bool maintenance = static_cast<bool>(payload.maintenance_tool);
+    const int max_tool_calls = maintenance
+        ? maintenance_call_limit
+        : (payload.web_read_tool ? 8 : 4);
     int tool_calls_used = 0;
+    std::size_t maintenance_result_bytes = 0;
     int round = 0;
     GenerationTokenUsage total;
     const auto add = [](auto& sum, const auto& count) {
@@ -577,13 +584,14 @@ GenerationResult ProviderClient::perform(
             + " received_answer=" + (round_received_answer ? "true" : "false"));
         if (result.outcome != GenerationOutcome::completed || result.tool_calls.empty())
             return result;
-        if (!payload.web_search_tool && !payload.web_read_tool) {
+        if (!maintenance && !payload.web_search_tool && !payload.web_read_tool) {
             return {GenerationOutcome::protocol_error,
                 "Model requested a tool when tools were unavailable", total};
         }
         if (tool_calls_used >= max_tool_calls) {
             return {GenerationOutcome::protocol_error,
-                payload.web_read_tool ? "Model kept requesting tools after the web tool limit"
+                maintenance ? "Model kept requesting tools after the maintenance tool limit"
+                    : payload.web_read_tool ? "Model kept requesting tools after the web tool limit"
                     : "Model kept requesting web search after the search limit", total};
         }
         if (body.is_null()) body = Json::parse(payload.bytes);
@@ -594,12 +602,39 @@ GenerationResult ProviderClient::perform(
         } else {
             messages.push_back(continuation);
         }
+        bool force_final = false;
         for (const auto& call : result.tool_calls) {
             if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
             std::string output;
             const auto arguments = Json::parse(call.arguments, nullptr, false);
             if (tool_calls_used >= max_tool_calls) {
-                output = R"({"error":"Web tool limit reached. Answer using the available results."})";
+                output = maintenance
+                    ? R"({"error":"limit","message":"Maintenance tool limit reached. Answer using the available results.","committed":false})"
+                    : R"({"error":"Web tool limit reached. Answer using the available results."})";
+            } else if (maintenance) {
+                ++tool_calls_used;
+                if (call.name == "web_search" || call.name == "web_read") {
+                    output = R"({"error":"unavailable","message":"Web tools are not available for this request.","committed":false})";
+                } else if (arguments.is_discarded()) {
+                    output = R"({"error":"invalid_argument","message":"Tool arguments are not valid JSON.","committed":false})";
+                } else {
+                    try {
+                        output = payload.maintenance_tool(call.name, call.arguments, cancellation);
+                    } catch (const std::exception&) {
+                        log_warn("Maintenance tool failed");
+                        output = R"({"error":"validation_failure","message":"The maintenance tool failed.","committed":false})";
+                    }
+                }
+                if (output.size() > maintenance_call_result_limit) {
+                    output = R"({"error":"too_large","message":"Tool result is too large.","committed":false})";
+                }
+                maintenance_result_bytes += output.size();
+                if (maintenance_result_bytes > maintenance_answer_result_limit) {
+                    output = R"({"error":"too_large","message":"Tool results for this answer are too large.","committed":false})";
+                    force_final = true;
+                }
+                log_info("Maintenance tool call: name=" + call.name
+                    + " result_bytes=" + std::to_string(output.size()));
             } else {
                 ++tool_calls_used;
                 const bool read = call.name == "web_read";
@@ -637,17 +672,20 @@ GenerationResult ProviderClient::perform(
         }
         // Required provider-hosted search must not force another search forever.
         body["tool_choice"] = "auto";
-        if (tool_calls_used >= max_tool_calls) {
+        if (tool_calls_used >= max_tool_calls || force_final) {
             // Some providers still request calls when tool definitions remain.
-            log_debug("Web tool limit reached: requesting final answer without tools");
+            log_debug("Tool limit reached: requesting final answer without tools");
             body.erase("tools");
             body.erase("tool_choice");
             update_tool_instructions(body, definition_->provider.config.api);
-            messages.push_back({{"role", "user"}, {"content",
-                "Web tools are now unavailable because the tool limit was reached. "
-                "Answer the original request using the results already collected. "
-                "State clearly if those results are insufficient to verify any requested information. "
-                "Do not invent missing facts or request more tools."}});
+            messages.push_back({{"role", "user"}, {"content", maintenance
+                ? "Maintenance tools are now unavailable because the tool limit was reached. "
+                    "Answer the original request using the results already collected. "
+                    "Earlier saved changes stay saved. Do not request more tools."
+                : "Web tools are now unavailable because the tool limit was reached. "
+                    "Answer the original request using the results already collected. "
+                    "State clearly if those results are insufficient to verify any requested information. "
+                    "Do not invent missing facts or request more tools."}});
         }
         payload.bytes = body.dump();
     }
@@ -698,16 +736,21 @@ GenerationResult ProviderClient::perform_once(
     }
 
     const std::string& request_body = payload.bytes;
-    const bool collect_tool_calls = payload.web_search_tool || payload.web_read_tool;
+    const bool maintenance = static_cast<bool>(payload.maintenance_tool);
+    const bool collect_tool_calls = maintenance || payload.web_search_tool || payload.web_read_tool;
+    const std::size_t argument_limit = maintenance
+        ? maintenance_argument_limit : ordinary_tool_argument_limit;
     std::unique_ptr<StreamingResponseDecoder> decoder;
     if (config.stream) {
         switch (config.api) {
         case ProviderApi::chat_completions:
             decoder = std::make_unique<ChatCompletionsStreamDecoder>(
-                config.reasoning_format, on_delta, collect_tool_calls);
+                config.reasoning_format, on_delta, collect_tool_calls,
+                argument_limit, maintenance);
             break;
         case ProviderApi::responses:
-            decoder = std::make_unique<ResponsesStreamDecoder>(on_delta, collect_tool_calls);
+            decoder = std::make_unique<ResponsesStreamDecoder>(
+                on_delta, collect_tool_calls, argument_limit, maintenance);
             break;
         default:
             throw std::logic_error("Unknown provider API");
@@ -919,10 +962,13 @@ GenerationResult ProviderClient::perform_once(
             response.body,
             config.reasoning_format,
             on_delta,
-            collect_tool_calls);
+            collect_tool_calls,
+            argument_limit,
+            maintenance);
         break;
     case ProviderApi::responses:
-        result = decode_responses_response(response.body, on_delta, collect_tool_calls);
+        result = decode_responses_response(
+            response.body, on_delta, collect_tool_calls, argument_limit, maintenance);
         break;
     default:
         throw std::logic_error("Unknown provider API");

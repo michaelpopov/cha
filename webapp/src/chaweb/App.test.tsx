@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 
@@ -242,7 +242,8 @@ it('shows forums and recent sessions without opening Welcome or creating a sessi
   expect(rows[1]).toHaveTextContent(/^Older/);
   expect(rows).toHaveLength(2);
   expect(planning).not.toHaveTextContent(/live|generating/i);
-  expect(screen.queryByRole('button', { name: /Welcome/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Welcome' })).toBeInTheDocument();
+  expect(within(screen.getByRole('list', { name: 'Sessions' })).queryByRole('button', { name: 'Welcome' })).not.toBeInTheDocument();
   expect(api.getSession).not.toHaveBeenCalled();
   expect(api.createSession).not.toHaveBeenCalled();
   expect(api.listSessions).toHaveBeenCalledTimes(1);
@@ -319,8 +320,160 @@ it('changes the list when the forum changes and does not open a session', async 
   expect(api.listSessions).toHaveBeenCalledWith('archive');
 });
 
-it('shows an error for an unknown route and refreshes the session list', async () => {
+it('opens Welcome from its direct address', async () => {
   window.history.replaceState(null, '', '/#/forums/entrance/sessions/builtin-welcome');
+  const api = client();
+  render(<App client={api} />);
+  expect(await screen.findByRole('textbox', { name: 'Message' })).toBeInTheDocument();
+  expect(api.getSession).toHaveBeenCalledWith('entrance', 'builtin-welcome');
+  expect(api.createSession).not.toHaveBeenCalled();
+});
+
+function entranceForum() {
+  return boot().forums[0]!;
+}
+
+function welcomeSnapshot(phase: 'idle' | 'active' | 'saved'): SessionSnapshot {
+  const generation = {
+    ...snapshotFixture.generation,
+    active: phase === 'active',
+    phase: phase === 'active' ? 'answering' as const : 'waiting' as const,
+  };
+  const transcript: SessionSnapshot['transcript'] = phase === 'idle' ? [] : [
+    {
+      id: 1,
+      kind: 'character',
+      participant_id: 'assistant',
+      display_name: 'Assistant',
+      addressed_to: '',
+      addressed_to_name: '',
+      text: 'Repaired the name.',
+      status: 'complete',
+      created_at: 1_700_000_100,
+    },
+    ...(phase === 'saved' ? [{
+      id: 2,
+      kind: 'notice' as const,
+      participant_id: '',
+      display_name: '',
+      addressed_to: '',
+      addressed_to_name: '',
+      text: 'Configuration was saved.',
+      status: 'complete' as const,
+      created_at: 1_700_000_200,
+    }] : []),
+  ];
+  return snapshot('builtin-welcome', {
+    forum: entranceForum(),
+    session_label: 'Welcome',
+    characters: [{ id: 'assistant', display_name: 'Assistant', appearance: plainVoice }],
+    default_character_id: 'assistant',
+    transcript,
+    generation,
+    covered_until: undefined,
+  });
+}
+
+function renamedBoot() {
+  const loaded = boot();
+  return {
+    ...loaded,
+    characters: loaded.characters.map((character) => (
+      character.id === 'guide' ? { ...character, display_name: 'Guide renamed' } : character
+    )),
+    forums: loaded.forums.map((forum) => (
+      forum.id === 'lobby' ? {
+        ...forum,
+        members: forum.members.map((member) => ({ ...member, display_name: 'Guide renamed' })),
+      } : forum
+    )),
+  };
+}
+
+it('sends in Welcome and reloads bootstrap when the answer ends', async () => {
+  const user = userEvent.setup();
+  let phase: 'idle' | 'active' | 'saved' = 'idle';
+  let renamed = false;
+  const api = client({
+    getBootstrap: vi.fn(async () => (renamed ? renamedBoot() : boot())),
+    getSession: vi.fn(async () => welcomeSnapshot(phase)),
+    submitInput: vi.fn(async () => { phase = 'active'; }),
+  });
+  await showList(api);
+  await user.click(screen.getByRole('button', { name: 'Welcome' }));
+  await screen.findByRole('textbox', { name: 'Message' });
+  expect(api.getSession).toHaveBeenCalledWith('entrance', 'builtin-welcome');
+  expect(api.createSession).not.toHaveBeenCalled();
+  expect(window.location.hash).toBe('#/forums/entrance/sessions/builtin-welcome');
+
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Repair the guide name');
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  expect(api.submitInput).toHaveBeenCalledWith('entrance', 'builtin-welcome', 'Repair the guide name');
+  expect(await screen.findByText('Repaired the name.')).toBeInTheDocument();
+
+  phase = 'saved';
+  renamed = true;
+  expect(await screen.findByText('Configuration was saved.', {}, { timeout: 3_000 })).toBeInTheDocument();
+
+  window.history.back();
+  expect(await screen.findByRole('button', { name: 'Forum' })).toHaveTextContent('Guide renamed');
+  expect(api.createSession).not.toHaveBeenCalled();
+
+  window.history.forward();
+  expect(await screen.findByText('Configuration was saved.')).toBeInTheDocument();
+  expect(window.location.hash).toBe('#/forums/entrance/sessions/builtin-welcome');
+
+  cleanup();
+  window.history.replaceState(null, '', '/#/forums/entrance/sessions/builtin-welcome');
+  render(<App client={api} />);
+  expect(await screen.findByText('Configuration was saved.')).toBeInTheDocument();
+  expect(api.createSession).not.toHaveBeenCalled();
+  expect(api.getSession).toHaveBeenCalledWith('entrance', 'builtin-welcome');
+});
+
+it('reloads bootstrap when a Welcome answer is already idle', async () => {
+  const user = userEvent.setup();
+  let phase: 'idle' | 'saved' = 'idle';
+  const getBootstrap = vi.fn(async () => boot());
+  const api = client({
+    getBootstrap,
+    getSession: vi.fn(async () => welcomeSnapshot(phase)),
+    submitInput: vi.fn(async () => { phase = 'saved'; }),
+  });
+  await showList(api);
+  await user.click(screen.getByRole('button', { name: 'Welcome' }));
+  await screen.findByRole('textbox', { name: 'Message' });
+  const opened = getBootstrap.mock.calls.length;
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Fix it');
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  expect(await screen.findByText('Configuration was saved.')).toBeInTheDocument();
+  await waitFor(() => expect(getBootstrap.mock.calls.length).toBeGreaterThan(opened));
+  expect(api.createSession).not.toHaveBeenCalled();
+  expect(api.submitInput).toHaveBeenCalledWith('entrance', 'builtin-welcome', 'Fix it');
+});
+
+it('shows Welcome when the vault has no ordinary forums', async () => {
+  const user = userEvent.setup();
+  const entrance = bootstrapFixture.forums[0]!;
+  const api = client({
+    getBootstrap: async () => ({
+      ...bootstrapFixture,
+      forums: [entrance],
+      initial_forum_id: 'entrance',
+    }),
+  });
+  render(<App client={api} />);
+  expect(await screen.findByRole('button', { name: 'Welcome' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'New Session' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Forum' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Welcome' }));
+  expect(await screen.findByRole('textbox', { name: 'Message' })).toBeInTheDocument();
+  expect(api.getSession).toHaveBeenCalledWith('entrance', 'builtin-welcome');
+  expect(api.createSession).not.toHaveBeenCalled();
+});
+
+it('shows an error for an unknown route and refreshes the session list', async () => {
+  window.history.replaceState(null, '', '/#/nope');
   const api = client();
   render(<App client={api} />);
   expect(await screen.findByRole('alert')).toHaveTextContent('That conversation is not available.');

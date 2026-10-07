@@ -2,6 +2,7 @@
 
 // Private runtime shared by the application, vault, and media implementations.
 #include "app/application.h"
+#include "app/assistant_service.h"
 #include "app/background_jobs.h"
 #include "media/xai_voice_session.h"
 #include "media/pending_media_registry.h"
@@ -143,6 +144,8 @@ struct Application::Impl {
     std::unique_ptr<OpenAiOAuth> openai_auth;
     std::mutex web_search_url_mutex;
     std::string web_search_url_override;
+    std::unique_ptr<AssistantService> assistant;
+    std::shared_ptr<const std::string> maintenance_prompt;
     Providers providers;
     std::unique_ptr<LiveSessionManager> live_sessions;
     std::unique_ptr<AudioDownloadManager> audio_downloads;

@@ -535,6 +535,15 @@ OpenAiOAuthSnapshot OpenAiOAuth::disconnect() {
     return snapshot_unlocked();
 }
 
+std::vector<std::string> OpenAiOAuth::redaction_secrets() const {
+    std::lock_guard lock(mutex_);
+    std::vector<std::string> secrets;
+    if (!bundle_) return secrets;
+    if (!bundle_->access_token.empty()) secrets.push_back(bundle_->access_token);
+    if (!bundle_->refresh_token.empty()) secrets.push_back(bundle_->refresh_token);
+    return secrets;
+}
+
 OpenAiOAuthRequestCredentials OpenAiOAuth::credentials() {
     std::lock_guard lock(mutex_);
     if (!bundle_) {

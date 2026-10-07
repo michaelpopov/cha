@@ -2,8 +2,11 @@
 
 #include "characters/character_config.h"
 #include "characters/model_context.h"
+#include "providers/maintenance.h"
 #include "providers/model_backend.h"
 #include "providers/sse_framer.h"
+
+#include <cstddef>
 
 #include <nlohmann/json.hpp>
 #include <map>
@@ -26,8 +29,12 @@ std::string build_responses_request_body(
 class ResponsesStreamDecoder final : public StreamingResponseDecoder {
 public:
     explicit ResponsesStreamDecoder(const GenerationDeltaSink& on_delta,
-        bool collect_tool_calls = false);
-    ResponsesStreamDecoder(GenerationDeltaSink&&, bool = false) = delete;
+        bool collect_tool_calls = false,
+        std::size_t argument_limit = ordinary_tool_argument_limit,
+        bool maintenance = false);
+    ResponsesStreamDecoder(
+        GenerationDeltaSink&&, bool = false,
+        std::size_t = ordinary_tool_argument_limit, bool = false) = delete;
 
     ResponsesStreamDecoder(const ResponsesStreamDecoder&) = delete;
     ResponsesStreamDecoder& operator=(const ResponsesStreamDecoder&) = delete;
@@ -41,6 +48,11 @@ private:
 
     const GenerationDeltaSink* on_delta_;
     bool collect_tool_calls_;
+    std::size_t argument_limit_;
+    bool maintenance_;
+    bool saw_function_call_{};
+    bool arguments_oversized_{};
+    std::map<int, std::size_t> argument_bytes_by_index_{};
     SseFramer framer_;
     std::string protocol_error_;
     bool done_{};
@@ -56,6 +68,8 @@ private:
 GenerationResult decode_responses_response(
     std::string_view body,
     const GenerationDeltaSink& on_delta,
-    bool collect_tool_calls = false);
+    bool collect_tool_calls = false,
+    std::size_t argument_limit = ordinary_tool_argument_limit,
+    bool maintenance = false);
 
 } // namespace cha

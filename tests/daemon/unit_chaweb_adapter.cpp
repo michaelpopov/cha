@@ -7,6 +7,7 @@
 #include "support/test_workspace.h"
 #include "support/xai_fake_server.h"
 #include "storage/session_database.h"
+#include "util/logging.h"
 #include "workspace/builtins.h"
 
 #include <gtest/gtest.h>
@@ -75,7 +76,7 @@ void disable_naming(const test::TestWorkspace& workspace) {
     const auto directory = workspace.root() / "system/session";
     std::filesystem::create_directories(directory);
     std::ofstream(directory / "config.toml")
-        << "naming_provider = \"absent\"\n";
+        << "naming_provider = \"test\"\n";
 }
 
 void use_net_provider(
@@ -87,6 +88,8 @@ void use_net_provider(
               "api = \"chat_completions\"\nstream = false\ntimeout_s = 20\n");
     workspace.write_character_config(
         "display_name = \"Guide\"\nprovider = \"remote\"\n");
+    std::ofstream(workspace.root() / "system" / "assistant" / "character.toml")
+        << "display_name = \"Assistant\"\nprovider = \"remote\"\n";
 }
 
 std::string http_json(std::string_view body) {
@@ -1223,6 +1226,347 @@ TEST(ChaWebAdapter, DeleteStopsGenerationAndPreventsTheSessionFromReturning) {
     server.resume_responses();
     server.join();
     EXPECT_EQ(exchange(*application, get_request(session_path("lobby", id))).status, 404);
+}
+
+class ChaWebLogGuard {
+public:
+    ChaWebLogGuard() {
+        shutdown_diagnostic_logging();
+        directory_ = std::filesystem::temp_directory_path()
+            / ("cha_chaweb_maintenance_"
+               + std::to_string(
+                   std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(directory_);
+        initialize_diagnostic_logging(directory_ / "cha.log", "off");
+    }
+
+    ~ChaWebLogGuard() {
+        shutdown_diagnostic_logging();
+        std::error_code ignored;
+        std::filesystem::remove_all(directory_, ignored);
+    }
+
+private:
+    std::filesystem::path directory_;
+};
+
+nlohmann::json chat_message(nlohmann::json tool_calls, std::string content = {}) {
+    nlohmann::json message{{"role", "assistant"}};
+    if (tool_calls.empty()) {
+        message["content"] = std::move(content);
+    } else {
+        message["content"] = nullptr;
+        message["tool_calls"] = std::move(tool_calls);
+    }
+    return {
+        {"choices", nlohmann::json::array({nlohmann::json{{"message", std::move(message)}}})},
+        {"usage", {{"prompt_tokens", 10}, {"completion_tokens", 2}}},
+    };
+}
+
+nlohmann::json function_call(std::string id, std::string name, const nlohmann::json& arguments) {
+    return {
+        {"id", std::move(id)},
+        {"type", "function"},
+        {"function", {{"name", std::move(name)}, {"arguments", arguments.dump()}}},
+    };
+}
+
+const std::string kGuideConfig = "display_name = \"Guide\"\nprovider = \"remote\"\n";
+const std::string kGuideRenamed = "display_name = \"Guide renamed\"\nprovider = \"remote\"\n";
+
+std::string http_error(int status, std::string_view reason) {
+    return "HTTP/1.1 " + std::to_string(status) + " " + std::string(reason)
+        + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+}
+
+nlohmann::json wait_snapshot(
+    Application& application,
+    std::string_view forum,
+    std::string_view session,
+    bool active) {
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    CgiResponse snapshot;
+    while (std::chrono::steady_clock::now() < deadline) {
+        snapshot = exchange(application, get_request(session_path(forum, session)));
+        if (snapshot.status == 200
+            && snapshot.json.at("generation").at("active").get<bool>() == active) {
+            return snapshot.json;
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+    ADD_FAILURE() << snapshot.raw;
+    return snapshot.json;
+}
+
+bool transcript_has_notice(const nlohmann::json& snapshot, std::string_view text) {
+    for (const auto& entry : snapshot.at("transcript")) {
+        if (entry.at("kind") == "notice"
+            && entry.at("text").get<std::string>().find(text) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<std::string> tool_names(const nlohmann::json& body) {
+    std::vector<std::string> names;
+    for (const auto& tool : body.at("tools")) {
+        names.push_back(tool.at("function").at("name").get<std::string>());
+    }
+    return names;
+}
+
+TEST(ChaWebAdapter, OrdinarySessionDoesNotReceiveMaintenanceTools) {
+    test::TestWorkspace workspace;
+    disable_naming(workspace);
+    MockHttpServer server({http_json(chat_message(nlohmann::json::array(), "Hello").dump())});
+    use_net_provider(workspace, server.port());
+    std::ofstream(workspace.root() / "system" / "assistant" / "character.toml")
+        << "display_name = \"Assistant\"\nprovider = \"test\"\n";
+    auto application = Application::open(
+        make_command(workspace, test::import_test_database(workspace.root())));
+    server.start();
+    const CgiResponse created = exchange(
+        *application,
+        post_request(sessions_path("lobby"), text_body("Hello").dump()));
+    ASSERT_EQ(created.status, 201) << created.raw;
+    ASSERT_TRUE(server.wait_for_requests(1, 5s));
+    server.join();
+    const auto body = nlohmann::json::parse(request_body(server.requests().front()));
+    const std::string encoded = body.dump();
+    EXPECT_EQ(encoded.find("Operating instructions for Assistant"), std::string::npos);
+    EXPECT_EQ(encoded.find("vault_config_list"), std::string::npos);
+}
+
+TEST(ChaWebAdapter, WelcomeRepairsAndUndoesThroughChat) {
+    ChaWebLogGuard logs;
+    test::TestWorkspace workspace;
+    disable_naming(workspace);
+    const auto read_and_logs = chat_message(nlohmann::json::array({
+        function_call("read1", "vault_config_read",
+            {{"paths", nlohmann::json::array({"characters/guide/character.toml"})}}),
+        function_call("logs1", "assistant_logs", {
+            {"after", nullptr},
+            {"minimum_level", nullptr},
+            {"contains", "guide diagnosis"},
+            {"limit", 5},
+        }),
+    }));
+    const auto diagnosis = chat_message(nlohmann::json::array(), "The guide name is ready to change.");
+    const auto apply = chat_message(nlohmann::json::array({
+        function_call("apply1", "vault_config_apply", {
+            {"action", "apply"},
+            {"version", "1"},
+            {"changes", nlohmann::json::array({nlohmann::json{
+                {"path", "characters/guide/character.toml"},
+                {"operation", "replace"},
+                {"content", kGuideRenamed},
+            }})},
+        }),
+    }));
+    const auto saved = chat_message(nlohmann::json::array(), "Saved the guide name.");
+    const auto undo = chat_message(nlohmann::json::array({
+        function_call("undo1", "vault_config_apply", {
+            {"action", "undo"},
+            {"version", "2"},
+            {"changes", nullptr},
+        }),
+    }));
+    const auto restored = chat_message(nlohmann::json::array(), "Restored the guide name.");
+    const auto hello = chat_message(nlohmann::json::array(), "Hello");
+    MockHttpServer server({
+        http_json(hello.dump()),
+        http_json(read_and_logs.dump()),
+        http_json(diagnosis.dump()),
+        http_json(apply.dump()),
+        http_json(saved.dump()),
+        http_json(undo.dump()),
+        http_json(restored.dump()),
+    });
+    use_net_provider(workspace, server.port());
+    const auto database = test::import_test_database(workspace.root());
+    auto command = make_command(workspace, database);
+    command.chaweb_host = true;
+    auto application = Application::open(std::move(command));
+    ASSERT_EQ(application->store().config_revision(), 1u);
+    ASSERT_EQ(
+        application->store().read_config(
+            std::vector<std::string>{"characters/guide/character.toml"}).files.at(0).content,
+        kGuideConfig);
+    server.start();
+    const CgiResponse created = exchange(
+        *application, post_request(sessions_path("lobby"), text_body("Hello").dump()));
+    ASSERT_EQ(created.status, 201) << created.raw;
+    const std::string lobby = created.json.at("id").get<std::string>();
+    ASSERT_FALSE(wait_snapshot(*application, "lobby", lobby, false).is_null());
+
+    log_info("guide diagnosis marker");
+    const std::string input = session_path(entrance_id, welcome_id) + "/input";
+    const CgiResponse review = exchange(
+        *application, post_request(input, text_body("Review the guide").dump()));
+    ASSERT_EQ(review.status, 204) << review.raw;
+    const auto reviewed = wait_snapshot(*application, entrance_id, welcome_id, false);
+    EXPECT_NE(reviewed.dump().find("The guide name is ready to change."), std::string::npos);
+
+    const CgiResponse fix = exchange(
+        *application, post_request(input, text_body("Fix it").dump()));
+    ASSERT_EQ(fix.status, 204) << fix.raw;
+    const auto fixed = wait_snapshot(*application, entrance_id, welcome_id, false);
+    EXPECT_TRUE(transcript_has_notice(fixed, "Configuration was saved."));
+    const auto boot = exchange(*application, get_request(std::string(bootstrap_path)));
+    ASSERT_EQ(boot.status, 200) << boot.raw;
+    bool renamed = false;
+    for (const auto& character : boot.json.at("characters")) {
+        if (character.at("id") == "guide") {
+            EXPECT_EQ(character.at("display_name"), "Guide renamed");
+            renamed = true;
+        }
+    }
+    EXPECT_TRUE(renamed);
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    bool lobby_closed = false;
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto listed = application->list_sessions("lobby", application->context_epoch());
+        if (!listed.empty() && !listed.front().live) {
+            lobby_closed = true;
+            break;
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_TRUE(lobby_closed);
+    EXPECT_EQ(
+        exchange(*application, get_request(session_path(entrance_id, welcome_id))).status,
+        200);
+
+    const CgiResponse restore = exchange(
+        *application, post_request(input, text_body("Undo").dump()));
+    ASSERT_EQ(restore.status, 204) << restore.raw;
+    const auto restored_snapshot = wait_snapshot(*application, entrance_id, welcome_id, false);
+    EXPECT_TRUE(transcript_has_notice(restored_snapshot, "Configuration was saved."));
+    EXPECT_EQ(
+        application->store().snapshot()->find_character("guide")->character.display_name,
+        "Guide");
+    server.join();
+
+    ASSERT_EQ(server.requests().size(), 7u);
+    const auto first = nlohmann::json::parse(request_body(server.requests()[1]));
+    EXPECT_EQ(tool_names(first), (std::vector<std::string>{
+        "vault_config_list", "vault_config_read", "vault_config_apply",
+        "assistant_logs", "assistant_logging"}));
+    const std::string system = first.at("messages").at(0).at("content").get<std::string>();
+    EXPECT_NE(system.find(
+        "You are Assistant, the CHA application guide. In Welcome you can "
+        "diagnose and repair this vault."), std::string::npos);
+    EXPECT_NE(system.find("Host: cha-daemon (ChaWeb)\n\n"), std::string::npos);
+    EXPECT_NE(system.find("# Operating instructions for Assistant"), std::string::npos);
+    EXPECT_NE(system.find("# CHA workspace maintainer guide"), std::string::npos);
+    EXPECT_NE(system.find("# CHA daemon on Linux"), std::string::npos);
+    EXPECT_EQ(system.find("Host: desktop application\n\n# Operating instructions"), std::string::npos);
+    const auto continued = nlohmann::json::parse(request_body(server.requests()[2]));
+    bool saw_file = false;
+    bool saw_marker = false;
+    for (const auto& message : continued.at("messages")) {
+        if (message.value("role", "") != "tool") continue;
+        const auto payload = nlohmann::json::parse(
+            message.at("content").get<std::string>(), nullptr, false);
+        if (payload.is_discarded() || !payload.is_object()) continue;
+        if (payload.contains("files")) {
+            for (const auto& file : payload["files"]) {
+                if (file.value("content", std::string{}) == kGuideConfig) saw_file = true;
+            }
+        }
+        if (payload.contains("entries")) {
+            for (const auto& entry : payload["entries"]) {
+                const auto text = entry.value("text", std::string{});
+                if (text.find("guide diagnosis marker") != std::string::npos) saw_marker = true;
+            }
+        }
+    }
+    EXPECT_TRUE(saw_file);
+    EXPECT_TRUE(saw_marker);
+    const auto saved_request = request_body(server.requests()[4]);
+    EXPECT_NE(saved_request.find("Configuration was saved."), std::string::npos);
+    const auto undo_request = request_body(server.requests()[5]);
+    EXPECT_EQ(undo_request.find("Configuration was saved."), std::string::npos);
+}
+
+TEST(ChaWebAdapter, WelcomeKeepsANoticeWhenTheAnswerFailsAfterCommit) {
+    test::TestWorkspace workspace;
+    disable_naming(workspace);
+    const auto apply = chat_message(nlohmann::json::array({
+        function_call("apply1", "vault_config_apply", {
+            {"action", "apply"},
+            {"version", "1"},
+            {"changes", nlohmann::json::array({nlohmann::json{
+                {"path", "characters/guide/character.toml"},
+                {"operation", "replace"},
+                {"content", kGuideRenamed},
+            }})},
+        }),
+    }));
+    MockHttpServer server({http_json(apply.dump()), http_error(500, "Server Error")});
+    use_net_provider(workspace, server.port());
+    auto command = make_command(workspace, test::import_test_database(workspace.root()));
+    command.chaweb_host = true;
+    auto application = Application::open(std::move(command));
+    ASSERT_EQ(application->store().config_revision(), 1u);
+    server.start();
+    const CgiResponse fix = exchange(
+        *application,
+        post_request(
+            session_path(entrance_id, welcome_id) + "/input",
+            text_body("Fix it").dump()));
+    ASSERT_EQ(fix.status, 204) << fix.raw;
+    const auto snapshot = wait_snapshot(*application, entrance_id, welcome_id, false);
+    EXPECT_TRUE(transcript_has_notice(snapshot, "Configuration was saved."));
+    const auto boot = exchange(*application, get_request(std::string(bootstrap_path)));
+    bool renamed = false;
+    for (const auto& character : boot.json.at("characters")) {
+        if (character.at("id") == "guide") {
+            EXPECT_EQ(character.at("display_name"), "Guide renamed");
+            renamed = true;
+        }
+    }
+    EXPECT_TRUE(renamed);
+    server.join();
+}
+
+TEST(ChaWebAdapter, StopAfterASavedRepairStoresTheNotice) {
+    test::TestWorkspace workspace;
+    disable_naming(workspace);
+    const auto apply = chat_message(nlohmann::json::array({
+        function_call("apply1", "vault_config_apply", {
+            {"action", "apply"},
+            {"version", "1"},
+            {"changes", nlohmann::json::array({nlohmann::json{
+                {"path", "characters/guide/character.toml"},
+                {"operation", "replace"},
+                {"content", kGuideRenamed},
+            }})},
+        }),
+    }));
+    const auto late = chat_message(nlohmann::json::array(), "This answer should not be required.");
+    MockHttpServer server({http_json(apply.dump()), http_json(late.dump())});
+    server.pause_before_response(2);
+    use_net_provider(workspace, server.port());
+    auto command = make_command(workspace, test::import_test_database(workspace.root()));
+    command.chaweb_host = true;
+    auto application = Application::open(std::move(command));
+    ASSERT_EQ(application->store().config_revision(), 1u);
+    server.start();
+    const std::string welcome = session_path(entrance_id, welcome_id);
+    const CgiResponse fix = exchange(
+        *application, post_request(welcome + "/input", text_body("Fix it").dump()));
+    ASSERT_EQ(fix.status, 204) << fix.raw;
+    ASSERT_TRUE(server.wait_for_requests(2, 5s));
+    const CgiResponse stopped = exchange(
+        *application, post_request(welcome + "/stop", "{}"));
+    EXPECT_EQ(stopped.status, 204) << stopped.raw;
+    const auto snapshot = wait_snapshot(*application, entrance_id, welcome_id, false);
+    EXPECT_TRUE(transcript_has_notice(snapshot, "Configuration was saved."));
+    server.resume_responses();
+    server.join();
 }
 
 } // namespace

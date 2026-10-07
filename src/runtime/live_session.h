@@ -28,7 +28,8 @@ class SessionController;
 
 using SessionOpener = std::function<OpenedSession(
     const FullSessionId&,
-    std::shared_ptr<WakeNotifier>)>;
+    std::shared_ptr<WakeNotifier>,
+    std::uint64_t)>;
 
 using LiveSessionClock =
     std::function<std::chrono::steady_clock::time_point()>;
@@ -109,6 +110,8 @@ public:
     take_output();
     void acknowledge_output() noexcept;
     void refresh_presentation();
+    // Stores a configuration notice, or queues it while an answer is active.
+    void record_configuration_notice(std::string text);
     [[nodiscard]] std::shared_ptr<app::SessionOutput> output() const {
         return output_;
     }

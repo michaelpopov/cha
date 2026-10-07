@@ -5,6 +5,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import type { ChaClient, OpenSessionResult } from './api/client';
 import type { SessionEventHandlers } from './api/events';
 import { appReducer, initialAppState } from './state/view';
+import { welcomeSessionId } from './state/route';
 import { fixtureClient, snapshotFixture } from './test/fixtures';
 import { useLiveSession } from './useLiveSession';
 
@@ -30,7 +31,10 @@ function drivableSessionEvents() {
 
 // Bootstrap stays loading, so the startup route and reattach effects stand
 // aside and each test drives the ladder through the calls it names.
-function harness(overrides: Partial<ChaClient> = {}) {
+function harness(
+  overrides: Partial<ChaClient> = {},
+  options: { onWelcomeRefresh?: () => void } = {},
+) {
   const events = drivableSessionEvents();
   const client = fixtureClient(overrides);
   const reducer = vi.fn(appReducer);
@@ -42,6 +46,7 @@ function harness(overrides: Partial<ChaClient> = {}) {
       live: useLiveSession(client, state, dispatch, {
         connectSessionEvents: events.connect,
         refreshBootstrap,
+        onWelcomeRefresh: options.onWelcomeRefresh,
       }),
     };
   });
@@ -308,4 +313,78 @@ it('closes the live stream when the session is cleared', async () => {
   });
 
   expect(events.closes[0]).toHaveBeenCalled();
+});
+
+const welcomeSnapshot = {
+  ...snapshotFixture,
+  session_id: welcomeSessionId,
+};
+
+function welcomeGeneration(active: boolean) {
+  return { ...welcomeSnapshot, generation: { ...welcomeSnapshot.generation, active } };
+}
+
+it('refreshes when Welcome opens and when its answer ends', async () => {
+  const onWelcomeRefresh = vi.fn();
+  const { events, view } = harness({
+    getSessionSnapshot: async () => welcomeSnapshot,
+  }, { onWelcomeRefresh });
+
+  await act(async () => {
+    await view.result.current.live.openConversation('entrance', 'welcome');
+  });
+  expect(onWelcomeRefresh).not.toHaveBeenCalled();
+
+  await act(async () => {
+    await view.result.current.live.openConversation('entrance', welcomeSessionId);
+  });
+  expect(onWelcomeRefresh).toHaveBeenCalledTimes(1);
+  act(() => events.handlers.at(-1)!.onSnapshot(welcomeSnapshot));
+  expect(onWelcomeRefresh).toHaveBeenCalledTimes(1);
+
+  act(() => events.handlers.at(-1)!.onSnapshot(welcomeGeneration(true)));
+  expect(onWelcomeRefresh).toHaveBeenCalledTimes(1);
+  act(() => events.handlers.at(-1)!.onSnapshot(welcomeGeneration(false)));
+  expect(onWelcomeRefresh).toHaveBeenCalledTimes(2);
+  act(() => events.handlers.at(-1)!.onSnapshot(welcomeGeneration(false)));
+  expect(onWelcomeRefresh).toHaveBeenCalledTimes(2);
+
+  act(() => view.result.current.live.noteWelcomeSubmission('entrance', welcomeSessionId));
+  act(() => events.handlers.at(-1)!.onSnapshot(welcomeGeneration(false)));
+  expect(onWelcomeRefresh).toHaveBeenCalledTimes(3);
+});
+
+it('refreshes the first snapshot after Welcome reconnects', async () => {
+  const onWelcomeRefresh = vi.fn();
+  const { events, view } = harness({
+    getSessionSnapshot: async () => welcomeSnapshot,
+  }, { onWelcomeRefresh });
+  await act(async () => {
+    await view.result.current.live.openConversation('entrance', welcomeSessionId);
+  });
+  act(() => events.handlers[0].onSnapshot(welcomeSnapshot));
+  onWelcomeRefresh.mockClear();
+
+  await act(async () => {
+    events.handlers[0].onError({ kind: 'stream_failure' });
+  });
+  act(() => events.handlers.at(-1)!.onSnapshot(welcomeSnapshot));
+  expect(onWelcomeRefresh).toHaveBeenCalledTimes(1);
+  act(() => events.handlers.at(-1)!.onSnapshot(welcomeSnapshot));
+  expect(onWelcomeRefresh).toHaveBeenCalledTimes(1);
+});
+
+it('drops a Welcome snapshot that arrives after the vault context changes', async () => {
+  const onWelcomeRefresh = vi.fn();
+  const { events, view } = harness({
+    getSessionSnapshot: async () => welcomeSnapshot,
+  }, { onWelcomeRefresh });
+  await act(async () => {
+    await view.result.current.live.openConversation('entrance', welcomeSessionId);
+  });
+  const handler = events.handlers[0];
+  onWelcomeRefresh.mockClear();
+  act(() => view.result.current.live.clearVaultContext());
+  act(() => handler.onSnapshot(welcomeGeneration(false)));
+  expect(onWelcomeRefresh).not.toHaveBeenCalled();
 });

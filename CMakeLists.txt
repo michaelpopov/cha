@@ -267,6 +267,9 @@ add_library(cha_lib STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/assistant_maintenance.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/maintainer_guide.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/linux_packaging_readme.cpp
     src/util/crypto.cpp
     src/util/curl.cpp
     src/util/private_filesystem.cpp
@@ -304,6 +307,7 @@ add_library(cha_lib STATIC
     src/storage/sqlite_storage.cpp
     src/storage/workspace_session_database.cpp
     src/app/application_config.cpp
+    src/app/assistant_service.cpp
     src/providers/voice_output.cpp
     src/app/r2_database_transfer.cpp
     src/workspace/workspace.cpp
@@ -356,6 +360,27 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
     COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/characters/CHARACTER.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp -DSYMBOL=embedded_new_character_template -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
     DEPENDS resources/characters/CHARACTER.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/assistant_maintenance.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/assistant-maintenance.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/assistant_maintenance.cpp -DSYMBOL=embedded_assistant_maintenance -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/assistant-maintenance.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/maintainer_guide.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/docs/MaintainerGuide.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/maintainer_guide.cpp -DSYMBOL=embedded_maintainer_guide -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS docs/MaintainerGuide.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/linux_packaging_readme.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/README.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/linux_packaging_readme.cpp -DSYMBOL=embedded_linux_packaging_readme -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS packaging/linux/README.md cmake/embed_text.cmake
     VERBATIM)
 
 target_compile_features(cha_lib PUBLIC cxx_std_20)
@@ -519,6 +544,7 @@ if(BUILD_TESTING)
     add_executable(
         cha_app_tests
         tests/app/unit_application.cpp
+        tests/app/unit_assistant_service.cpp
         tests/app/unit_background_jobs.cpp
         tests/media/unit_pending_media_registry.cpp
         tests/media/unit_media_resources.cpp
@@ -560,6 +586,7 @@ if(BUILD_TESTING)
     target_compile_definitions(
         cha_app_tests
         PRIVATE
+            CHA_SOURCE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}"
             CHA_WIRE_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wire"
             CHA_XAI_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/xai")
     if(TARGET cha_lease_test_helper)

@@ -119,7 +119,8 @@ void ProviderRequest::fail(std::string_view message) noexcept {
 void ProviderRequest::execute(
     const ProviderClientFactory& client_factory,
     const WebSearchExecutor& web_search_executor,
-    const WebReadExecutor& web_read_executor) noexcept {
+    const WebReadExecutor& web_read_executor,
+    const MaintenanceExecutor& maintenance_executor) noexcept {
     const RequestId request_id = input_.generation.run.request_id;
     const auto started = std::chrono::steady_clock::now();
     std::string fields;
@@ -152,7 +153,24 @@ void ProviderRequest::execute(
                 request_id, GenerationDeltaKind::answer, {}, true});
             notifier_->wake();
         };
-        if (input_.web_search_tool && web_search_executor) {
+        if (input_.maintenance) {
+            const MaintenanceContext context = *input_.maintenance;
+            if (maintenance_executor) {
+                generation.maintenance_tool = [maintenance_executor, context](
+                    std::string_view tool_name,
+                    std::string_view tool_arguments,
+                    const std::atomic_bool& cancelled) {
+                    return maintenance_executor(
+                        tool_name, tool_arguments, context, cancelled);
+                };
+            } else {
+                generation.maintenance_tool = [](
+                    std::string_view, std::string_view, const std::atomic_bool&) {
+                    return std::string(
+                        R"({"error":"unavailable","message":"Maintenance tools are not available.","committed":false})");
+                };
+            }
+        } else if (input_.web_search_tool && web_search_executor) {
             generation.web_search_tool = [&, config = *input_.web_search_tool](
                 std::string_view query, const std::atomic_bool& cancelled) {
                 log_info("Web search initiated: trigger=model_tool query_bytes=" + std::to_string(query.size()));
@@ -165,7 +183,7 @@ void ProviderRequest::execute(
                 return results;
             };
         }
-        if (input_.web_read_tool && web_read_executor) {
+        if (!input_.maintenance && input_.web_read_tool && web_read_executor) {
             generation.web_read_tool = [&, config = *input_.web_read_tool](
                 std::string_view url, const std::atomic_bool& cancelled) {
                 log_info("Page reading initiated: trigger=model_tool provider=" + config.read_provider);
@@ -246,10 +264,12 @@ Providers::Providers(
     ProviderThreadLauncher thread_launcher,
     JevExecutor jev_executor,
     WebSearchExecutor web_search_executor,
-    WebReadExecutor web_read_executor)
+    WebReadExecutor web_read_executor,
+    MaintenanceExecutor maintenance_executor)
     : jev_executor_(std::move(jev_executor)),
       web_search_executor_(std::move(web_search_executor)),
       web_read_executor_(std::move(web_read_executor)),
+      maintenance_executor_(std::move(maintenance_executor)),
       client_factory_(client_factory ? std::move(client_factory)
                                     : ProviderClientFactory(default_client_factory)),
       thread_launcher_(thread_launcher ? std::move(thread_launcher)
@@ -279,6 +299,7 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
     ProviderClientFactory client_factory = client_factory_;
     WebSearchExecutor web_search_executor = web_search_executor_;
     WebReadExecutor web_read_executor = web_read_executor_;
+    MaintenanceExecutor maintenance_executor = maintenance_executor_;
 
     std::unique_lock lock(registry->mutex);
     if (!registry->admitting) {
@@ -311,14 +332,17 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
         log_info("Provider request admitted: "
             + request->log_fields()
             + " active_count=" + std::to_string(active_count));
-        thread_launcher_([registry, request, client_factory, web_search_executor, web_read_executor, token]() mutable {
-            request->execute(client_factory, web_search_executor, web_read_executor);
+        thread_launcher_([registry, request, client_factory, web_search_executor,
+            web_read_executor, maintenance_executor, token]() mutable {
+            request->execute(
+                client_factory, web_search_executor, web_read_executor, maintenance_executor);
             // The closure's factory copy may own test or transport support
             // state. Release it before unregistering so the detached tail
             // contains only its request, registry, and scalar token.
             client_factory = nullptr;
             web_search_executor = nullptr;
             web_read_executor = nullptr;
+            maintenance_executor = nullptr;
 
             std::size_t active_count;
             {
@@ -426,6 +450,26 @@ void Providers::shutdown() noexcept {
 
     std::unique_lock lock(registry->mutex);
     registry->empty.wait(lock, [registry] {
+        return registry->active.empty() && registry->diagnostic_tails == 0;
+    });
+}
+
+bool Providers::cancel_active_until(
+    std::chrono::steady_clock::time_point deadline) noexcept {
+    const std::shared_ptr<Registry> registry = registry_;
+    std::vector<Registry::Request> active;
+    {
+        std::lock_guard lock(registry->mutex);
+        active.reserve(registry->active.size());
+        for (const auto& [_, request] : registry->active) {
+            active.push_back(request);
+        }
+    }
+    for (const auto& request : active) {
+        std::visit([](const auto& value) { value->cancel(); }, request);
+    }
+    std::unique_lock lock(registry->mutex);
+    return registry->empty.wait_until(lock, deadline, [registry] {
         return registry->active.empty() && registry->diagnostic_tails == 0;
     });
 }

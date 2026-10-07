@@ -16,6 +16,7 @@ import {
   type ChaClient,
 } from '../api/client';
 import type { NativeBridge } from '../api/nativeBridge';
+import { DetailRefreshProvider } from '../detailRefresh';
 import { validateBootstrap } from '../state/bootstrap';
 import { saveMarkdownDownload } from '../download';
 import { reloadApplication, writeAppRoute } from '../state/route';
@@ -401,6 +402,9 @@ export function App({
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [catalogRevision, setCatalogRevision] = useState(0);
+  const [detailEpoch, setDetailEpoch] = useState(0);
+  const [detailRefreshing, setDetailRefreshing] = useState(false);
+  const [detailFailed, setDetailFailed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => clampSidebarWidth(264));
   const [resizingSidebar, setResizingSidebar] = useState(false);
   const sidebarResize = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
@@ -486,16 +490,28 @@ export function App({
     const refresh = ++bootstrapRefresh.current;
     try {
       const bootstrap = validateBootstrap(await client.getBootstrap());
-      if (refresh < appliedBootstrapRefresh.current) return;
+      if (refresh < appliedBootstrapRefresh.current) return true;
       appliedBootstrapRefresh.current = refresh;
       dispatch({
         type: 'bootstrap-refreshed',
         bootstrap,
       });
+      return true;
     } catch {
       // The live snapshot remains usable. Discovery refresh is non-critical.
+      return false;
     }
   }, [client]);
+
+  const refreshAfterWelcome = useCallback(async () => {
+    setDetailRefreshing(true);
+    setDetailFailed(false);
+    setDetailEpoch((epoch) => epoch + 1);
+    setCatalogRevision((revision) => revision + 1);
+    const ok = await refreshBootstrap();
+    setDetailRefreshing(false);
+    if (!ok) setDetailFailed(true);
+  }, [refreshBootstrap]);
 
   const sessionDiscarded = useCallback(() => setCatalogRevision((revision) => revision + 1), []);
 
@@ -509,11 +525,13 @@ export function App({
     clearVaultContext,
     retainSession,
     abandonUnusedSession,
+    noteWelcomeSubmission,
   } = useLiveSession(client, state, dispatch, {
     connectSessionEvents,
     retryDelays,
     refreshBootstrap,
     onSessionDiscarded: sessionDiscarded,
+    onWelcomeRefresh: () => { void refreshAfterWelcome(); },
   });
 
   useEffect(() => {
@@ -599,6 +617,7 @@ export function App({
   const submitInput = useCallback(async (text: string) => {
     const active = state.activeConversation;
     if (!active) throw new Error('No live conversation is selected.');
+    noteWelcomeSubmission(active.forumId, active.sessionId);
     if (text.trim()) retainSession(active.forumId, active.sessionId);
     const visit = composerVisit.current;
     const forumName = state.sessionSnapshot?.forum.display_name
@@ -617,7 +636,7 @@ export function App({
       }
       throw failure;
     }
-  }, [client, retainSession, runMutation, state.activeConversation, state.activeConversationLabel, state.sessionSnapshot, state.bootstrap]);
+  }, [client, noteWelcomeSubmission, retainSession, runMutation, state.activeConversation, state.activeConversationLabel, state.sessionSnapshot, state.bootstrap]);
 
   const coverConversation = useCallback((throughEntryId: number) => {
     const active = state.activeConversation;
@@ -651,11 +670,12 @@ export function App({
   const stopGeneration = useCallback(() => {
     const active = state.activeConversation;
     if (!active) return Promise.reject(new Error('No live conversation is selected.'));
+    noteWelcomeSubmission(active.forumId, active.sessionId);
     return runMutation(active, 'stop', () => client.stopGeneration(
       active.forumId,
       active.sessionId,
     ));
-  }, [client, runMutation, state.activeConversation]);
+  }, [client, noteWelcomeSubmission, runMutation, state.activeConversation]);
 
   const setDefaultCharacter = useCallback((characterId: string) => {
     const active = state.activeConversation;
@@ -729,8 +749,16 @@ export function App({
   const wholeApplication = state.sessionOperation !== 'idle' && state.mainView === 'chat';
   const chatVisible = ready && !wholeApplication && state.mainView === 'chat';
 
+  const detailRefresh = {
+    epoch: detailEpoch,
+    refreshing: detailRefreshing,
+    failed: detailFailed,
+    retry: () => { void refreshAfterWelcome(); },
+  };
+
   return (
     <AppErrorBoundary onReload={reload}>
+      <DetailRefreshProvider value={detailRefresh}>
       <TransliterationProvider>
         <div
           className={`cha-app ${state.sidebarOpen ? 'is-sidebar-open' : ''}${resizingSidebar ? ' is-resizing-sidebar' : ''}`}
@@ -817,6 +845,7 @@ export function App({
           </main>
         </div>
       </TransliterationProvider>
+      </DetailRefreshProvider>
     </AppErrorBoundary>
   );
 }

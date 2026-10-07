@@ -3,7 +3,9 @@
 #include "chat/session_identity.h"
 #include "session/opened_session.h"
 
+#include <cstdint>
 #include <memory>
+#include <string>
 
 namespace cha {
 
@@ -27,5 +29,7 @@ OpenedSession open_session(
     const FullSessionId& identity,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier,
-    WorkspaceConfigStore& config);
+    WorkspaceConfigStore& config,
+    std::uint64_t context_epoch = 0,
+    std::shared_ptr<const std::string> maintenance_prompt = {});
 } // namespace cha

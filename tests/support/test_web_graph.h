@@ -42,7 +42,7 @@ public:
 
     SessionOpener opener() const {
         return [repository = repository, providers = providers, config = store.get()](
-                   const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+                   const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             return open_session(
                 *repository, identity, *providers, std::move(notifier), *config);
         };

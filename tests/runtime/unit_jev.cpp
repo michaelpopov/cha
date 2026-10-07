@@ -702,7 +702,7 @@ TEST_F(SessionNaming, StoppedClassificationDoesNotRenameAnEmptySession) {
 
 TEST_F(SessionNaming, SnapshotReportsRetentionEvenWithoutEntries) {
     controller.reset();
-    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
         return OpenedSession{.label = "New session",
             .controller = make_controller(wake, load_session_state(journal.path()))};
     });
@@ -729,7 +729,7 @@ TEST_P(SessionNamingRuntime, WaitsForNamingBeforeStartingTheReply) {
     providers = std::make_shared<Providers>(naming_factory(), ProviderThreadLauncher{},
         [](const auto&, const auto&) { return JevResult{JevOutcome::success, "undefined"}; });
     std::string mirrored_label;
-    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
         return OpenedSession{.label = "New session",
             .controller = make_controller(wake, load_session_state(journal.path())),
             .mirror = [&](std::string_view label, auto) { mirrored_label = label; }};
@@ -777,7 +777,7 @@ TEST_F(SessionNaming, NamingTimeoutUsesTimestampAndAllowsTheReply) {
     release_title = release.get_future().share();
     providers = std::make_shared<Providers>(naming_factory(), ProviderThreadLauncher{},
         [](const auto&, const auto&) { return JevResult{JevOutcome::success, "undefined"}; });
-    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
         return OpenedSession{.label = "New session",
             .controller = make_controller(wake, load_session_state(journal.path()))};
     });
@@ -1127,7 +1127,7 @@ TEST_F(JevRouting, FailedClassificationKeepsTheNotesTarget) {
 TEST_F(JevRouting, RuntimeAcceptsSelfNotesWithoutSavingADefaultCharacter) {
     use_runtime_providers({JevOutcome::success, "self_note", {}});
     int saved = 0;
-    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
         return OpenedSession{.label = "Original", .controller = make_controller(wake),
             .persist_default_character = [&](auto) { ++saved; }};
     });
@@ -1213,7 +1213,7 @@ TEST_F(JevRouting, SpecificDecisionsUpdateCurrentTargetAndUndefinedKeepsIt) {
 
 TEST_F(JevRouting, RuntimeSavesIdentifiedCharacterForForumAndReopensWithIt) {
     use_runtime_providers({JevOutcome::success, "character_2"});
-    const auto opener = [&](const FullSessionId&, auto wake) {
+    const auto opener = [&](const FullSessionId&, auto wake, std::uint64_t) {
         return OpenedSession{.label = "Original",
             .controller = SessionController::from_workspace_for_testing(
                 [this] { return store->snapshot(); },
@@ -1252,7 +1252,7 @@ TEST_F(JevRouting, RuntimeDoesNotSaveMarkersFallbacksOrExplicitRecipients) {
         test::TemporarySessionFile file{"jev_unsaved", {"lobby", "session"}};
         use_runtime_providers(result);
         int saved = 0;
-        LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+        LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
             return OpenedSession{.label = "Original",
                 .controller = SessionController::from_workspace_for_testing(
                     [this] { return store->snapshot(); }, "guide", "reader", file.path(),
@@ -1270,7 +1270,7 @@ TEST_F(JevRouting, RuntimeDoesNotSaveMarkersFallbacksOrExplicitRecipients) {
 
 TEST_F(JevRouting, RuntimeKeepsIdentifiedCharacterWhenForumSettingsCannotBeSaved) {
     use_runtime_providers({JevOutcome::success, "character_2"});
-    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
         return OpenedSession{.label = "Original", .controller = make_controller(wake),
             .persist_default_character = [](auto) { throw std::runtime_error("Read-only workspace"); }};
     });
@@ -1470,7 +1470,7 @@ TEST_F(JevRouting, RuntimeExpiryAndAbandonmentCancelWithoutFallback) {
                 started.set_value(); released.wait();
                 return JevResult{JevOutcome::success, "all_characters"};
             });
-        LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+        LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
             return OpenedSession{.label = "Original", .controller = make_controller(wake)};
         });
         ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open({"lobby", "session"}, 2s)));
@@ -1527,7 +1527,7 @@ TEST_F(JevRouting, RuntimeDefersReplyAndStopSettlesItWithoutPersistingMarkers) {
     providers = std::make_shared<Providers>(ProviderClientFactory{}, ProviderThreadLauncher{},
         [&](const auto&, const auto&) { started.set_value(); released.wait(); return JevResult{JevOutcome::success, "all_characters"}; });
     int saved = 0;
-    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
         return OpenedSession{.label = "Original", .controller = make_controller(wake),
             .persist_default_character = [&](auto) { ++saved; }};
     });
@@ -1564,7 +1564,7 @@ TEST_F(JevRouting, NavigationKeepsPendingSessionAndCompletionWakesOwnerExactlyOn
     providers = std::make_shared<Providers>(ProviderClientFactory{}, ProviderThreadLauncher{},
         [&](const auto&, const auto&) { started.set_value(); released.wait(); return JevResult{JevOutcome::success, "character_2"}; });
     test::TemporarySessionFile other{"jev_other", {"lobby", "other"}};
-    LiveSessionManager manager({}, [&](const FullSessionId& identity, auto wake) {
+    LiveSessionManager manager({}, [&](const FullSessionId& identity, auto wake, std::uint64_t) {
         return OpenedSession{.label = identity.session_id,
             .controller = SessionController::from_workspace_for_testing(
                 [this] { return store->snapshot(); }, "guide", "reader",

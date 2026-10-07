@@ -2519,3 +2519,96 @@ it('allows repeated vault switches without reloading the native document', async
   expect(getBootstrap.mock.calls.length).toBeGreaterThan(1);
   bridge.dispose();
 });
+
+it('keeps a Welcome draft when detail is unchanged and blocks Save when it changes', async () => {
+  const user = userEvent.setup();
+  const events = drivableSessionEvents();
+  let characterMode: 'same' | 'changed' | 'fail' = 'same';
+  const getCharacter = vi.fn(async () => {
+    if (characterMode === 'fail') {
+      throw new ChaError('internal_error', 'Character settings could not be loaded.');
+    }
+    if (characterMode === 'changed') return { ...characterDetailFixture, provider: 'sol-high' };
+    return characterDetailFixture;
+  });
+  const submitInput = vi.fn(async () => ({ clear_input: true }));
+  render(<App
+    client={fixtureClient({
+      getBootstrap: async () => ({
+        ...bootstrapFixture,
+        initial_forum_id: 'entrance',
+        initial_session_id: welcomeSessionId,
+        entrance_forum_id: 'entrance',
+      }),
+      getSessionSnapshot: async () => ({
+        ...snapshotFixture,
+        session_id: welcomeSessionId,
+        discardable: true,
+      }),
+      getCharacter,
+      submitInput,
+    })}
+    connectSessionEvents={events.connect}
+  />);
+
+  await waitFor(() => expect(events.connections.some(
+    ({ key }) => key === `entrance/${welcomeSessionId}`,
+  )).toBe(true));
+  const emit = (active: boolean) => {
+    const handler = events.handlers.at(-1);
+    if (!handler) throw new Error('Welcome has no live stream.');
+    act(() => handler.onSnapshot({
+      ...snapshotFixture,
+      session_id: welcomeSessionId,
+      discardable: true,
+      generation: { ...snapshotFixture.generation, active },
+    }));
+  };
+  emit(false);
+  const message = await screen.findByRole('textbox', { name: 'Message' });
+  await user.type(message, 'Fix it');
+  await user.click(screen.getByRole('button', { name: 'Send message' }));
+  expect(submitInput).toHaveBeenCalledWith('entrance', welcomeSessionId, { text: 'Fix it' });
+  emit(true);
+
+  await openSettingsNavigation();
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(within(screen.getByLabelText('Characters navigation'))
+    .getByRole('button', { name: /Guide/ }));
+  await user.click(within(screen.getByLabelText('Character detail navigation'))
+    .getByRole('button', { name: 'Settings' }));
+  const style = await screen.findByLabelText('Style');
+  expect(style).toHaveValue('serif-italic');
+  await user.selectOptions(style, 'mono-large');
+  const save = screen.getByRole('button', { name: 'Save' });
+  await waitFor(() => expect(save).toBeEnabled());
+
+  const afterEdit = getCharacter.mock.calls.length;
+  emit(false);
+  await waitFor(() => expect(getCharacter.mock.calls.length).toBe(afterEdit + 1));
+  expect(style).toHaveValue('mono-large');
+  expect(save).toBeEnabled();
+
+  emit(true);
+  characterMode = 'changed';
+  emit(false);
+  await waitFor(() => expect(save).toBeDisabled());
+  expect(style).toHaveValue('mono-large');
+
+  characterMode = 'fail';
+  emit(true);
+  emit(false);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Character settings could not be loaded.');
+  expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
+  expect(style).toHaveValue('mono-large');
+  expect(save).toBeDisabled();
+
+  characterMode = 'same';
+  await user.click(screen.getByRole('button', { name: 'Try again' }));
+  await waitFor(() => expect(save).toBeEnabled());
+  expect(style).toHaveValue('mono-large');
+  const settled = getCharacter.mock.calls.length;
+  emit(false);
+  await act(async () => { await Promise.resolve(); });
+  expect(getCharacter.mock.calls.length).toBe(settled);
+});

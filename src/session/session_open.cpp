@@ -17,7 +17,9 @@ OpenedSession open_session(
     const FullSessionId& identity,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier,
-    WorkspaceConfigStore& config) {
+    WorkspaceConfigStore& config,
+    std::uint64_t context_epoch,
+    std::shared_ptr<const std::string> maintenance_prompt) {
     const std::shared_ptr<const Workspace> workspace = config.snapshot();
     const WorkspaceForum* const forum = workspace->find_forum(identity.forum_id);
     if (forum == nullptr) {
@@ -37,7 +39,9 @@ OpenedSession open_session(
             providers,
             std::move(notifier),
             std::move(prepared.restore),
-            prepared.identity),
+            prepared.identity,
+            context_epoch,
+            std::move(maintenance_prompt)),
         .persist_default_character = [&config, forum_id = forum->id](
                                          std::string_view character_id) {
             (void)config.apply_forum_default_character(forum_id, character_id);

@@ -199,11 +199,11 @@ Work in [logging.cpp](../src/util/logging.cpp) and
   updates expiry; disable restores info. Check expiry on logging and every
   Assistant tool call. Recheck level inside `sink_it_()` so a pre-lock level
   check cannot admit expired debug messages. Add no timer or logging notices.
-- [ ] Expose snapshots and effective logging state for the two logging tools.
+- [x] Expose snapshots and effective logging state for the two logging tools.
   Filter by native severity, literal substring, and exclusive `after`; return
   the last requested matching entries in chronological order. Enforce a positive
   limit no greater than capacity and report lost/limited evidence.
-- [ ] At the application boundary, redact available saved key values and OAuth
+- [x] At the application boundary, redact available saved key values and OAuth
   tokens, remove the private workspace root, and enforce result limits. Return
   one JSON item per log call with ordinary JSON escaping. Do not parse message
   text as additional entries or trusted records.
@@ -221,49 +221,49 @@ Update [application_internal.h](../src/app/application_internal.h), application
 construction, and `CMakeLists.txt`. Reuse `workspace_operations.*`,
 `settings_operations.*`, `vault_operations.cpp`, and `runtime/live_session*`.
 
-- [ ] Give the service typed operations matching the five tools. Delegate file
+- [x] Give the service typed operations matching the five tools. Delegate file
   access and transactions to the store and logging to the sink. Translate
   results without placing application/store types in provider protocol code.
-- [ ] Capture the epoch from `LiveSessionManager::context_epoch()` when the
+- [x] Capture the epoch from `LiveSessionManager::context_epoch()` when the
   Welcome live session starts, using the epoch admitted for that opening. Pass
   it through the session opener to `SessionController`, then copy it into each
   maintenance `ProviderRequestInput` with the native character/forum/session/
   request IDs. A vault switch replaces live sessions; never refresh an old
   request's epoch in a tool callback. Check identities, epoch, and request
   cancellation on every call; the model cannot supply these values.
-- [ ] Inject an application-owned maintenance executor into `Providers` at
+- [x] Inject an application-owned maintenance executor into `Providers` at
   construction, following the existing `WebSearchExecutor` path. Copy it into
   each provider worker and bind the trusted input context and cancellation to
   the request's tool callback. Keep application/store types out of protocol code.
-- [ ] Use cancellable `try_lock_for` acquisition of `lifecycle_mutex`, as
+- [x] Use cancellable `try_lock_for` acquisition of `lifecycle_mutex`, as
   specified in design section 9. Check admission before work and cancellation
   before commit. Release lifecycle/store locks before runtime work or callbacks.
   Never wait for a provider from a runtime thread that the provider needs.
-- [ ] Reuse application-owned worker supervision. Callbacks may refer to
+- [x] Reuse application-owned worker supervision. Callbacks may refer to
   application-owned stores/managers while workers are joined; they must not
   capture `SessionController` or `LiveSession` pointers.
-- [ ] Reuse existing settings effects after apply and undo: refresh presentation,
+- [x] Reuse existing settings effects after apply and undo: refresh presentation,
   invalidate affected ordinary conversations, refresh optional services,
   and register new forums. Invalidating all ordinary
   sessions is acceptable when simpler than computing precise dependencies.
-- [ ] Explicitly exclude `builtin-entrance` before invalidation. Refresh its
+- [x] Explicitly exclude `builtin-entrance` before invalidation. Refresh its
   presentation and let its next request use new inventory/shared values while
   the current Assistant answer keeps its immutable inputs. Do not start global
   vault maintenance for a configuration batch.
-- [ ] Carry epoch and committed version through native result delivery and runtime effects.
+- [x] Carry epoch and committed version through native result delivery and runtime effects.
   Preserve commit order and discard events for an obsolete vault context.
   Report post-commit refresh failures without claiming the save rolled back.
-- [ ] Wire a frontend refresh trigger when a Welcome answer ends, on completion,
+- [x] Wire a frontend refresh trigger when a Welcome answer ends, on completion,
   failure, or Stop. In desktop `webapp/src/useLiveSession.ts` and
   `components/App.tsx`, reload bootstrap and refetch open entity views/session
   lists with existing read APIs. Apply the same rule in ChaWeb in step 10.
   Refresh even after a read-only answer; do not parse save-notice text.
-- [ ] Use existing generation/submission tracking to cover fast answers without
+- [x] Use existing generation/submission tracking to cover fast answers without
   an observed active snapshot, and avoid repeating refresh on duplicate idle
   snapshots. Refresh on opening/reconnecting Welcome as well. Keep the trigger
   state across screen changes and use existing context/navigation guards for
   late responses; add no bridge event or background polling.
-- [ ] Invalidate cached details and reload clean forms in `components/Screens.tsx`
+- [x] Invalidate cached details and reload clean forms in `components/Screens.tsx`
   and `components/Settings.tsx`. Keep the loaded `detail` and draft during the
   refetch and compare fetched values with the form's loaded baseline. Equal
   detail preserves the draft and normal Save eligibility. Only mark a dirty
@@ -272,7 +272,7 @@ construction, and `CMakeLists.txt`. Reuse `workspace_operations.*`,
   after its failure, using existing retry/reopen actions. A successful retry
   with unchanged detail restores normal Save eligibility without a reset.
   Do not merge drafts or add revision arguments to all typed settings writes.
-- [ ] On vault switch, drain old workers, reset verbosity, and clear the buffer
+- [x] On vault switch, drain old workers, reset verbosity, and clear the buffer
   before admitting the new vault. Reset verbosity at shutdown and preserve
   existing undo/revision invalidation during maintenance. Recheck admission
   before returning log data after filtering/redaction.
@@ -300,21 +300,21 @@ Use `runtime/live_session_manager.*`, `live_session.*`,
 `session/session_controller.*`, [transcript.cpp](../src/chat/transcript.cpp),
 and the existing `SessionJournal` path. No new transcript kind is needed.
 
-- [ ] Post committed apply/undo results from the provider callback to the
+- [x] Post committed apply/undo results from the provider callback to the
   session runtime after releasing configuration locks. Do not wait for notice
   insertion or depend on a successful final model response.
-- [ ] On the runtime thread, create a short `EntryKind::notice` with
+- [x] On the runtime thread, create a short `EntryKind::notice` with
   `make_notice_entry()`, persist it with `SessionJournal::record_entry()`, append
   it to Welcome, and publish the snapshot. Include any post-commit refresh
   error in the summary; keep full result JSON in the current tool exchange.
-- [ ] If an answer is active, queue notice text and allocate/store/append entries
+- [x] If an answer is active, queue notice text and allocate/store/append entries
   after completion, failure, or cancellation. Flush all three terminal paths
   and preserve the transcript's streaming and entry-ID ordering rules. Append
   immediately if no answer is active.
-- [ ] Use stored entries instead of `LiveSession::notice_`. Reuse desktop and
+- [x] Use stored entries instead of `LiveSession::notice_`. Reuse desktop and
   ChaWeb notice rendering, and the existing model-context exclusion for notice
   entries. Keep raw tool results out of stored conversation history.
-- [ ] Create native notices only for committed configuration changes. Logging
+- [x] Create native notices only for committed configuration changes. Logging
   state and other tool errors stay in tool results; Assistant reports them in
   its ordinary answer. Add no logger-to-session dependency.
 
@@ -329,36 +329,36 @@ Work in `providers/tool_calls.*`, `providers.*`, `provider_client.*`,
 `model_backend.h`, `chat_completions_api.*`, `responses_api.*`, and
 `session/session_controller.cpp`.
 
-- [ ] Add strict schemas for the five tools and a small request-owned dispatch
+- [x] Add strict schemas for the five tools and a small request-owned dispatch
   callback bound to the executor and context from step 6. Reject unknown names,
   extra arguments, wrong types, and malformed calls. Keep app/store dependencies
   behind the callback; no plugin registry.
-- [ ] Attach maintenance definitions and the trusted context only for Assistant
+- [x] Attach maintenance definitions and the trusted context only for Assistant
   in Welcome. Ordinary characters, multicast targets, and Assistant in a
   user-defined forum receive no maintenance tools. Keep existing Jev routing;
   an explicit `@Assistant` remains its bypass.
-- [ ] For maintenance requests, omit `web_search`/`web_read` definitions and
+- [x] For maintenance requests, omit `web_search`/`web_read` definitions and
   callbacks and override provider-hosted search to `off` in the request copy.
   Do not mutate the saved provider or shared character definition. Keep this
   restriction through continuations and the final tools-disabled request,
   even when saved search is `required`. Reject unsolicited web calls before
   invoking any executor. Ordinary forum web behavior remains unchanged.
-- [ ] Extend existing streaming and non-streaming decoding and continuation
+- [x] Extend existing streaming and non-streaming decoding and continuation
   handling in both protocols. Execute multiple calls sequentially. Retain
   usage aggregation, cancellation, request timeouts, and current handling of
   intermediate tool-round text and provider errors.
-- [ ] Replace maintenance calls' existing smaller argument-decoder limit with
+- [x] Replace maintenance calls' existing smaller argument-decoder limit with
   the design's 256 KiB bound, including streaming accumulation. Enforce 512 KiB
   of tool results and 24 Assistant calls per answer; malformed calls count.
   At the call limit, request the final answer with tools disabled. Never execute
   a truncated call. Preserve ordinary web-tool limits for ordinary requests.
-- [ ] For a maintenance tool call cut off by the model output limit, surface:
+- [x] For a maintenance tool call cut off by the model output limit, surface:
   "The model's output limit cut off the tool call. This call was not applied.
   Edit the configuration file manually." Handle Chat Completions `length`
   and Responses `max_output_tokens`, including incomplete argument JSON, before
   the generic invalid/incomplete-call error. Keep other failures accurate and
   retain save notices for any earlier committed calls in the answer.
-- [ ] Check logging expiry on each maintenance call. Return effective logging
+- [x] Check logging expiry on each maintenance call. Return effective logging
   state through the logging tools. Keep raw results confined to the current
   continuation exchange and exclude them from ordinary diagnostic log messages.
 
@@ -376,7 +376,7 @@ Use [MaintainerGuide.md](MaintainerGuide.md), the
 [Linux packaging guide](../packaging/linux/README.md), `resources/`,
 [embed_text.cmake](../cmake/embed_text.cmake), and `CMakeLists.txt`.
 
-- [ ] Embed the whole `docs/MaintainerGuide.md` and `packaging/linux/README.md`
+- [x] Embed the whole `docs/MaintainerGuide.md` and `packaging/linux/README.md`
   as separate inputs to the existing `embed_text.cmake`. Add a resource with
   brief Assistant-specific operating instructions. Concatenate the embedded
   strings when constructing the maintenance prompt. Do not slice by section
@@ -393,14 +393,14 @@ Use [MaintainerGuide.md](MaintainerGuide.md), the
   access, `--config`, host configuration versus vault rows, protected-vault
   startup, and unavailable history. A stopped/unreachable daemon requires
   administrator action. Do not suggest desktop Settings/Test controls in ChaWeb.
-- [ ] Include the document in full only in maintenance requests; retain
+- [x] Include the document in full only in maintenance requests; retain
   `resources/application-guide.md` as the general guide. Keep embedded content
   outside the writable namespace and give maintenance-specific restrictions
   precedence over general manual editing/export guidance.
-- [ ] Pass host identity from native application construction and prepend exactly
+- [x] Pass host identity from native application construction and prepend exactly
   `Host: desktop application` or `Host: cha-daemon (ChaWeb)`. Update the daemon
   and native host construction paths; do not infer host from OS or vault data.
-- [ ] Register embedding inputs/dependencies so guide changes rebuild the prompt
+- [x] Register embedding inputs/dependencies so guide changes rebuild the prompt
   in both hosts. Update Welcome's introductory prompt text to describe its
   maintenance role without contradicting the embedded instructions.
 
@@ -415,23 +415,23 @@ Work in `webapp/src/chaweb/route.ts`, `sessions.tsx`, `useChaweb.ts`, `App.tsx`,
 and existing tests. Use `daemon/chaweb_adapter.*` only for required changes to
 existing snapshot delivery; add no maintenance endpoint.
 
-- [ ] Show one Welcome entry in existing navigation. Open
+- [x] Show one Welcome entry in existing navigation. Open
   `bootstrap.entrance_forum_id` / `builtin-welcome` directly in the existing
   conversation view without creating a session or additional Entrance sessions.
-- [ ] Remove route blocks and navigation filters that make Welcome unreachable.
+- [x] Remove route blocks and navigation filters that make Welcome unreachable.
   Validate chat input against the bootstrap forum catalogue rather than the
   ordinary-forum picker, so Send works in Welcome. Allow Welcome even when the
   vault has no ordinary forums. Preserve built-in session deletion rules.
-- [ ] Support direct URLs, browser reload, and back/forward navigation. Render
+- [x] Support direct URLs, browser reload, and back/forward navigation. Render
   stored save notices through existing transcript snapshots.
-- [ ] In `useChaweb.ts`, reload bootstrap and the session list when a Welcome
+- [x] In `useChaweb.ts`, reload bootstrap and the session list when a Welcome
   answer ends (completion, failure, or Stop), including fast answers between
   polls. Also refresh on opening/reconnecting Welcome. Reuse the existing
   snapshot/read loop and prevent repeated refresh on unchanged idle snapshots;
   do not add an event type or background polling.
-- [ ] Keep all maintenance operations in chat. Add no settings screen, repair,
+- [x] Keep all maintenance operations in chat. Add no settings screen, repair,
   undo, logging, approval, or status controls, and no extra notification polling.
-- [ ] Update route/component expectations that currently require Welcome to be
+- [x] Update route/component expectations that currently require Welcome to be
   hidden or rejected. Test opening the entry, enabled Send, a vault with only
   Entrance, and no session-creation request when Welcome opens.
 
@@ -443,20 +443,20 @@ manual reload, including when the final model answer fails.
 
 ## 11. Verify the complete feature and finish documentation
 
-- [ ] Extend deterministic fake-provider fixtures to request the maintenance
+- [x] Extend deterministic fake-provider fixtures to request the maintenance
   tools, inspect their results, and complete or fail the answer. Use existing
   native fake transports for the full tool coverage. For `itest-daemon`, extend
   the text-only fake provider in `tests/integration/daemon_integration_test.py`
   with a small scripted repair exchange. Reuse temporary vaults and the existing
   daemon/socket-activation fixtures and Unix-socket nginx setup; no paid API is
   required.
-- [ ] Exercise all four recipes in desktop application tests and through the
+- [x] Exercise all four recipes in desktop application tests and through the
   daemon input/snapshot path in `tests/daemon/unit_chaweb_adapter.cpp`: read-only
   diagnosis, authorized repair and undo, verbose reproduction with stop/expiry,
   and an unresolved external failure. In `itest-daemon`, cover Welcome input,
   a repair, and the saved notice in subsequent snapshots, including failure
   after commit. Verify that a fresh bootstrap read reflects the changed catalogue.
-- [ ] Extend `webapp/src/chaweb/App.test.tsx` using the real `App`, `userEvent`,
+- [x] Extend `webapp/src/chaweb/App.test.tsx` using the real `App`, `userEvent`,
   and the existing fake client. Start at the rendered session list, click
   Welcome, type and send a message, verify the Welcome input request, and
   display the response and save notice from returned snapshots. Test back and
@@ -464,11 +464,11 @@ manual reload, including when the final model answer fails.
   Opening Welcome must not create a session. These tests run in the existing
   Vitest suite; no browser installation, new server fixture, or test command
   is required.
-- [ ] Verify daemon behavior without a connected browser: log writes enforce
+- [x] Verify daemon behavior without a connected browser: log writes enforce
   expiry and configuration saves persist after restart, while the log buffer
   and undo record do not. Verify ordinary conversations and manual settings
   continue to work after Assistant edits.
-- [ ] Run the relevant focused suites during development, then the repository
+- [x] Run the relevant focused suites during development, then the repository
   checks below. Use the existing `tsan` preset for the touched sink, provider,
   and runtime concurrency cases. Register new C++ sources/tests in existing
   CMake targets. Report unavailable host-specific checks explicitly.
@@ -477,7 +477,7 @@ manual reload, including when the final model answer fails.
   maintainer-guide gaps and the existing troubleshooting map from step 9.
   Keep [assistant.md](assistant.md) consistent with the completed behavior and
   mark this checklist only as steps are actually verified.
-- [ ] Check every acceptance criterion in design section 17. Preserve the
+- [x] Check every acceptance criterion in design section 17. Preserve the
   existing manual provider Test routine: saved settings for repair verification,
   net mode, 10-second timeouts, no web search, and no added output-token cap.
   Use logs and reproduction for routine ChaWeb verification.

@@ -5,6 +5,7 @@ import type { SessionEventConnection, SessionEventHandlers } from './api/events'
 import {
   currentAppRoute,
   sessionRoute,
+  welcomeSessionId,
   writeAppRoute,
 } from './state/route';
 import type { AppAction, AppState } from './state/view';
@@ -86,8 +87,9 @@ const inPlaceActions = new Set<AppAction['type']>([
 interface LiveSessionOptions {
   connectSessionEvents?: SessionEventsConnector;
   retryDelays?: readonly number[];
-  refreshBootstrap(): Promise<void>;
+  refreshBootstrap(): Promise<boolean | void>;
   onSessionDiscarded?(): void;
+  onWelcomeRefresh?(): void;
 }
 
 export function useLiveSession(
@@ -99,6 +101,7 @@ export function useLiveSession(
     retryDelays = liveRetryDelays,
     refreshBootstrap,
     onSessionDiscarded,
+    onWelcomeRefresh,
   }: LiveSessionOptions,
 ) {
   // The epoch this render was built from. The ref below is what asynchronous
@@ -130,6 +133,41 @@ export function useLiveSession(
     generation: number,
     reopen?: boolean,
   ) => void>(() => undefined);
+  const entranceForumId = useRef<string | null>(null);
+  entranceForumId.current = state.bootstrap?.entrance_forum_id ?? null;
+  const welcomeTurn = useRef<{ key: string; active: boolean; pending: boolean } | null>(null);
+  const welcomeRefresh = useRef(onWelcomeRefresh);
+  welcomeRefresh.current = onWelcomeRefresh;
+
+  const isWelcome = useCallback((forumId: string, sessionId: string) => {
+    if (sessionId !== welcomeSessionId) return false;
+    const entrance = entranceForumId.current;
+    return entrance === null || forumId === entrance;
+  }, []);
+
+  const noteWelcomeSnapshot = useCallback((forumId: string, sessionId: string, active: boolean) => {
+    if (!isWelcome(forumId, sessionId)) return false;
+    const key = `${forumId}/${sessionId}`;
+    const prior = welcomeTurn.current;
+    const ended = prior?.key === key && !active && (prior.active || prior.pending);
+    welcomeTurn.current = {
+      key,
+      active,
+      pending: active && prior?.key === key ? prior.pending : false,
+    };
+    return ended;
+  }, [isWelcome]);
+
+  const noteWelcomeSubmission = useCallback((forumId: string, sessionId: string) => {
+    if (!isWelcome(forumId, sessionId)) return;
+    const key = `${forumId}/${sessionId}`;
+    const prior = welcomeTurn.current;
+    welcomeTurn.current = {
+      key,
+      active: prior?.key === key ? prior.active : false,
+      pending: true,
+    };
+  }, [isWelcome]);
 
   const cancelRetryTimer = useCallback(() => {
     retryTimerCancellation.current?.();
@@ -224,6 +262,7 @@ export function useLiveSession(
   const clearVaultContext = useCallback(() => {
     vaultContext.current += 1;
     unusedSession.current = null;
+    welcomeTurn.current = null;
     clearLiveSession();
     pendingTarget.current = null;
     pendingRecentSessions.current.clear();
@@ -244,6 +283,7 @@ export function useLiveSession(
     }
     const key = `${forumId}/${sessionId}`;
     let events: SessionEventConnection | null = null;
+    let refreshOnFirst = reconnecting;
     const failed = () => {
       if (onSettled) onSettled(false);
       else recoveryStarter.current(forumId, sessionId, generation);
@@ -256,6 +296,11 @@ export function useLiveSession(
           if (!snapshot.discardable) retainSession(forumId, sessionId);
           if (snapshot.recent_pending) pendingRecentSessions.current.add(key);
           else if (pendingRecentSessions.current.delete(key)) void refreshBootstrap();
+          const ended = noteWelcomeSnapshot(forumId, sessionId, snapshot.generation.active);
+          if (isWelcome(forumId, sessionId) && (refreshOnFirst || ended)) {
+            welcomeRefresh.current?.();
+          }
+          refreshOnFirst = false;
           if (snapshot.lifecycle !== 'running' && snapshot.shutdown_reason === 'reloading') {
             detachStream(events);
             recoveryStarter.current(forumId, sessionId, generation, true);
@@ -304,7 +349,8 @@ export function useLiveSession(
       if (events) detachStream(events);
       failed();
     }
-  }, [cancelRetryTimer, connectSessionEvents, detachStream, dispatch, refreshBootstrap, retainSession]);
+  }, [cancelRetryTimer, connectSessionEvents, detachStream, dispatch, isWelcome,
+    noteWelcomeSnapshot, refreshBootstrap, retainSession]);
 
   // One replacement attach: resolves true when the new stream delivers its
   // first snapshot, false when it fails first. A failure after that belongs to
@@ -424,6 +470,14 @@ export function useLiveSession(
       if (liveGeneration.current !== generation) continue;
 
       dispatch({ type: 'conversation-opened', snapshot });
+      if (isWelcome(forumId, sessionId)) {
+        welcomeTurn.current = {
+          key: `${forumId}/${sessionId}`,
+          active: snapshot.generation.active,
+          pending: false,
+        };
+        welcomeRefresh.current?.();
+      }
       unusedSession.current = snapshot.discardable
         ? { forumId, sessionId } : null;
       if (snapshot.recent_pending) pendingRecentSessions.current.add(`${forumId}/${sessionId}`);
@@ -435,7 +489,7 @@ export function useLiveSession(
       return true;
     }
     return false;
-  }, [client, connectStream, dispatch, openWithCapacityRetry, refreshBootstrap, resetLiveSession]);
+  }, [client, connectStream, dispatch, isWelcome, openWithCapacityRetry, refreshBootstrap, resetLiveSession]);
 
   const openConversation = useCallback(async (
     forumId: string,
@@ -637,5 +691,6 @@ export function useLiveSession(
     clearVaultContext,
     retainSession,
     abandonUnusedSession,
+    noteWelcomeSubmission,
   };
 }

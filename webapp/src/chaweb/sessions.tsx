@@ -16,9 +16,11 @@ export function SessionsView({
   forumId,
   sessions,
   currentSessionId,
+  welcomeCurrent = false,
   error,
   onForum,
   onOpen,
+  onOpenWelcome,
   onNewSession,
   onRetry,
   disabled = false,
@@ -28,9 +30,11 @@ export function SessionsView({
   forumId: string;
   sessions: SessionListing[];
   currentSessionId: string | null;
+  welcomeCurrent?: boolean;
   error: string | null;
   onForum(forumId: string): void;
   onOpen(sessionId: string): void;
+  onOpenWelcome(): void;
   onNewSession(): void;
   onRetry?(): void;
   disabled?: boolean;
@@ -39,6 +43,7 @@ export function SessionsView({
   const picker = useRef<HTMLDetailsElement>(null);
   const selectedForum = forums.find((forum) => forum.id === forumId);
   const rows = sessionsForNavigation(sessions);
+  const canCreate = forums.length > 0;
 
   useEffect(() => {
     const closeOutside = (event: Event) => {
@@ -60,7 +65,7 @@ export function SessionsView({
 
   return (
     <div className="chaweb-sessions">
-      <details
+      {forums.length > 0 && <details
         inert={disabled}
         className="chaweb-forum-picker"
         onKeyDown={(event) => {
@@ -113,11 +118,21 @@ export function SessionsView({
             </button>
           ))}
         </div>
-      </details>
+      </details>}
       {error && <p className="chaweb-alert" role="alert">{error}</p>}
       {onRetry && (
         <button className="chaweb-new-session" disabled={disabled} onClick={onRetry} type="button">Retry</button>
       )}
+      <button
+        aria-current={welcomeCurrent ? 'true' : undefined}
+        className="chaweb-session"
+        disabled={disabled}
+        onClick={onOpenWelcome}
+        type="button"
+      >
+        <span className="chaweb-session-title">Welcome</span>
+        {welcomeCurrent && <CheckIcon />}
+      </button>
       <ul aria-label="Sessions" className="chaweb-list">
         {rows.map((session) => {
           const current = session.id === currentSessionId;
@@ -143,7 +158,7 @@ export function SessionsView({
           );
         })}
       </ul>
-      <button className="chaweb-new-session" disabled={disabled} onClick={onNewSession} type="button">
+      <button className="chaweb-new-session" disabled={disabled || !canCreate} onClick={onNewSession} type="button">
         New Session
       </button>
       {vaultActions}

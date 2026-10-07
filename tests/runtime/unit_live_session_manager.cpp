@@ -65,7 +65,7 @@ private:
 // Every mapped actor here runs a real SessionController over real storage;
 // nothing about the controller, its output, or its lifecycle is faked.
 SessionOpener test_opener(SessionFiles& files) {
-    return [&files](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+    return [&files](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         return test::open_test_session(
             identity, files.path_for(identity), notifier);
     };
@@ -110,7 +110,7 @@ public:
     explicit WedgedOwners(SessionFiles& files) : files_(files) {}
 
     SessionOpener opener() {
-        return [this](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        return [this](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             return test::open_scripted_session(
                 identity,
                 files_.path_for(identity),
@@ -159,7 +159,7 @@ TEST(LiveSessionManager, ReusesRunningSessionAndReturnsTheActor) {
     std::atomic<int> starts{};
     LiveSessionManager manager(
         manager_settings(2),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             ++starts;
             return test::open_test_session(
                 identity, files.path_for(identity), notifier);
@@ -312,7 +312,7 @@ TEST(LiveSessionManager, SimultaneousDistinctOpensAreSerializedAndRespectLimit) 
     int started{};
     LiveSessionManager manager(
         manager_settings(session_limit),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             {
                 std::unique_lock lock(mutex);
                 ++active;
@@ -369,7 +369,7 @@ TEST(LiveSessionManager, ConcurrentSameKeyOpensShareOneOwnerAndOutcome) {
     std::atomic<int> starts{};
     LiveSessionManager manager(
         manager_settings(2),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             ++starts;
             {
                 std::unique_lock lock(mutex);
@@ -406,7 +406,7 @@ TEST(LiveSessionManager, ConcurrentDifferentKeyOpensAreSerialized) {
     bool release_first{};
     LiveSessionManager manager(
         manager_settings(2),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             {
                 std::unique_lock lock(mutex);
                 ++entered;
@@ -442,7 +442,7 @@ TEST(LiveSessionManager, FailedOpenIsSweptAndCanBeRetried) {
     std::atomic<int> attempts{};
     LiveSessionManager manager(
         manager_settings(1),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             if (++attempts == 1) throw std::runtime_error("open failed");
             return test::open_test_session(
                 identity, files.path_for(identity), notifier);
@@ -463,7 +463,7 @@ TEST(LiveSessionManager, TimeoutDoesNotCancelTheOpen) {
     std::atomic<int> starts{};
     LiveSessionManager manager(
         manager_settings(1),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             ++starts;
             {
                 std::unique_lock lock(mutex);
@@ -493,7 +493,7 @@ TEST(LiveSessionManager, WaitersHaveIndependentDeadlines) {
     bool release{};
     LiveSessionManager manager(
         manager_settings(1),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             {
                 std::unique_lock lock(mutex);
                 entered = true;
@@ -566,7 +566,7 @@ TEST(LiveSessionManager, ShutdownExposesUnfinishedOwnersWithoutCompletingStartup
     bool release{};
     LiveSessionManager manager(
         manager_settings(1),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             {
                 std::unique_lock lock(mutex);
                 entered = true;
@@ -604,7 +604,7 @@ TEST(LiveSessionManager, ShutdownAtCommitNeverPublishesAndTearsDownTheNewControl
     LiveSessionManager* manager_pointer = nullptr;
     LiveSessionManager manager(
         manager_settings(1),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             ++opens;
             // Shutdown wins the commit race while this open is still running.
             manager_pointer->begin_shutdown();
@@ -663,7 +663,7 @@ TEST(LiveSessionManager, ReopensSameKeyAfterTheOldOwnerHasBeenJoined) {
     std::atomic<int> starts{};
     LiveSessionManager manager(
         manager_settings(2),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             ++starts;
             return test::open_test_session(
                 identity, files.path_for(identity), notifier);
@@ -718,7 +718,7 @@ TEST(LiveSessionManager, RepeatedOpenUnloadCyclesReapOwnersAndReleaseCapacity) {
     std::atomic<int> starts{};
     LiveSessionManager manager(
         manager_settings(1),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             ++starts;
             return test::open_test_session(
                 identity, files.path_for(identity), notifier);
@@ -748,7 +748,7 @@ TEST(LiveSessionManager, GlobalMaintenanceReleasesActorsAndResumesAdmission) {
     SessionFiles files;
     LiveSessionManager manager(
         manager_settings(2),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             return test::open_test_session(
                 identity, files.path_for(identity), notifier);
         });
@@ -785,7 +785,7 @@ TEST(LiveSessionManager, MaintenanceDeadlinesIncludeAdmissionAndQueueWait) {
             const FullSessionId blocked{"forum", "blocked"};
             LiveSessionManager manager(settings, [&](
                                            const FullSessionId& identity,
-                                           std::shared_ptr<WakeNotifier> notifier) {
+                                           std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
                 if (identity == blocked) {
                     entered.set_value();
                     released.wait();
@@ -838,7 +838,7 @@ TEST(LiveSessionManager, MaintenanceTimeoutCleanupDoesNotWaitForQueueCapacity) {
         settings.command_queue_capacity = 1;
         LiveSessionManager manager(settings, [&](
                                        const FullSessionId& identity,
-                                       std::shared_ptr<WakeNotifier> notifier) {
+                                       std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             auto opened = test::open_test_session(identity, files.path_for(identity), notifier);
             opened.cached_audio_entries = [&] {
                 if (block_snapshot.exchange(false)) {
@@ -886,7 +886,7 @@ TEST(LiveSessionManager, ContextPublicationDoesNotWaitAndRejectsOldQueuedWork) {
     const FullSessionId blocked{"forum", "blocked"};
     LiveSessionManager manager(manager_settings(3), [&](
                                    const FullSessionId& identity,
-                                   std::shared_ptr<WakeNotifier> notifier) {
+                                   std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         if (identity == blocked) {
             entered.set_value();
             released.wait();

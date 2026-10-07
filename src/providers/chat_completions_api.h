@@ -1,8 +1,11 @@
 #pragma once
 
 #include "characters/character_config.h"
+#include "providers/maintenance.h"
 #include "providers/model_backend.h"
 #include "providers/sse_framer.h"
+
+#include <cstddef>
 
 #include <nlohmann/json.hpp>
 #include <string>
@@ -32,8 +35,12 @@ public:
     ChatCompletionsStreamDecoder(
         ReasoningFormat format,
         const GenerationDeltaSink& on_delta,
-        bool collect_tool_calls = false);
-    ChatCompletionsStreamDecoder(ReasoningFormat, GenerationDeltaSink&&, bool = false) = delete;
+        bool collect_tool_calls = false,
+        std::size_t argument_limit = ordinary_tool_argument_limit,
+        bool maintenance = false);
+    ChatCompletionsStreamDecoder(
+        ReasoningFormat, GenerationDeltaSink&&, bool = false,
+        std::size_t = ordinary_tool_argument_limit, bool = false) = delete;
 
     ChatCompletionsStreamDecoder(const ChatCompletionsStreamDecoder&) = delete;
     ChatCompletionsStreamDecoder& operator=(
@@ -60,6 +67,8 @@ private:
     ReasoningFormat format_;
     const GenerationDeltaSink* on_delta_;
     bool collect_tool_calls_;
+    std::size_t argument_limit_;
+    bool maintenance_;
     SseFramer framer_;
     std::string protocol_error_;
     bool done_{};
@@ -76,6 +85,8 @@ GenerationResult decode_chat_completions_response(
     std::string_view body,
     ReasoningFormat format,
     const GenerationDeltaSink& on_delta,
-    bool collect_tool_calls = false);
+    bool collect_tool_calls = false,
+    std::size_t argument_limit = ordinary_tool_argument_limit,
+    bool maintenance = false);
 
 } // namespace cha

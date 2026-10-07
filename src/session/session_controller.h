@@ -52,7 +52,9 @@ public:
         Providers& providers,
         std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored,
-        FullSessionId identity);
+        FullSessionId identity,
+        std::uint64_t context_epoch = 0,
+        std::shared_ptr<const std::string> maintenance_prompt = {});
 
     // Tests use the same Workspace data path, but may own an injected provider
     // executor and use an activation fault hook.
@@ -66,7 +68,9 @@ public:
         SessionRestore restored = {},
         ActivationHook before_activation = {},
         FullSessionId identity = {},
-        SessionKey session_key = 1);
+        SessionKey session_key = 1,
+        std::uint64_t context_epoch = 0,
+        std::shared_ptr<const std::string> maintenance_prompt = {});
     ~SessionController();
     SessionController(const SessionController&) = delete;
     SessionController& operator=(const SessionController&) = delete;
@@ -108,6 +112,9 @@ public:
     [[nodiscard]] ControllerUpdate handle_generation_event(GenerationEvent event);
     [[nodiscard]] ControllerEventBatch receive_events(std::size_t max_events);
     void shutdown();
+    [[nodiscard]] std::uint64_t context_epoch() const noexcept { return context_epoch_; }
+    // Queues the notice while an answer is active. Returns true when it was stored now.
+    bool record_configuration_notice(std::string text);
     [[nodiscard]] bool classification_pending() const noexcept { return pending_classification_.has_value(); }
     [[nodiscard]] std::chrono::steady_clock::time_point next_deadline() const noexcept;
     enum class SubmissionOutcome { accepted, cancelled, expired, failed };
@@ -156,7 +163,9 @@ private:
         SessionRestore restored,
         ActivationHook before_activation = {},
         FullSessionId identity = {},
-        std::shared_ptr<Providers> providers_owner = {});
+        std::shared_ptr<Providers> providers_owner = {},
+        std::uint64_t context_epoch = 0,
+        std::shared_ptr<const std::string> maintenance_prompt = {});
 
     void initialize(SessionRestore restored, std::string_view initial_persona_id);
     [[nodiscard]] SharedCharacterDefinition definition_for(
@@ -187,6 +196,8 @@ private:
     void activate_run(const RunSpec& run, std::size_t foreground_index,
                       ControllerUpdate& update);
     void finish_generation_run(ControllerUpdate& update);
+    void flush_configuration_notices();
+    void append_configuration_notice(std::string text);
     void cancel_generation_requests() noexcept;
     void apply(const GenerationEventDelta& event, ControllerUpdate& update);
     void apply(const GenerationCompleted& event, ControllerUpdate& update);
@@ -257,6 +268,9 @@ private:
     std::optional<ActiveGeneration> generation_;
     ActivationHook before_activation_;
     bool shutdown_{};
+    std::uint64_t context_epoch_{};
+    std::shared_ptr<const std::string> maintenance_prompt_;
+    std::vector<std::string> pending_notices_;
 };
 
 } // namespace cha

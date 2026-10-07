@@ -183,7 +183,7 @@ std::string build_chat_completions_request_body(
             {"allow_fallbacks", false},
         };
     }
-    if (config.web_search != WebSearchMode::off) {
+    if (!input.maintenance_tool && config.web_search != WebSearchMode::off) {
         if (!is_openrouter_host(config.host)) {
             throw std::logic_error(
                 "Chat Completions web search requires OpenRouter");
@@ -204,8 +204,12 @@ std::string build_chat_completions_request_body(
         }
     }
 
-    if (input.web_search_tool) add_web_search_tool(body, config.api);
-    if (input.web_read_tool) add_web_read_tool(body, config.api);
+    if (input.maintenance_tool) {
+        add_maintenance_tools(body, config.api);
+    } else {
+        if (input.web_search_tool) add_web_search_tool(body, config.api);
+        if (input.web_read_tool) add_web_read_tool(body, config.api);
+    }
     if (input.include_tool_instructions) update_tool_instructions(body, config.api, text_sizes);
     return dump_json(body, "Model request");
 }
@@ -213,10 +217,14 @@ std::string build_chat_completions_request_body(
 ChatCompletionsStreamDecoder::ChatCompletionsStreamDecoder(
     ReasoningFormat format,
     const GenerationDeltaSink& on_delta,
-    bool collect_tool_calls)
+    bool collect_tool_calls,
+    std::size_t argument_limit,
+    bool maintenance)
     : format_(format),
       on_delta_(&on_delta),
-      collect_tool_calls_(collect_tool_calls) {
+      collect_tool_calls_(collect_tool_calls),
+      argument_limit_(argument_limit),
+      maintenance_(maintenance) {
 }
 
 void ChatCompletionsStreamDecoder::consume(std::string_view bytes) {
@@ -249,7 +257,8 @@ StreamDecodeResult ChatCompletionsStreamDecoder::finish() {
     }
     return {tool_call_result(message_, ProviderApi::chat_completions,
         received_answer_, usage_, collect_tool_calls_,
-        "Streaming response completed without answer content", finish_reason_), false};
+        "Streaming response completed without answer content", finish_reason_,
+        argument_limit_, maintenance_), false};
 }
 
 void ChatCompletionsStreamDecoder::accumulate_delta(const Json& delta) {
@@ -296,9 +305,11 @@ void ChatCompletionsStreamDecoder::accumulate_delta(const Json& delta) {
                     if (!function.contains(field) || function[field].is_null()) continue;
                     auto& text = call["function"][field];
                     if (text.is_null()) text = "";
-                    text.get_ref<std::string&>() += function[field].get<std::string>();
-                    if (text.get_ref<std::string&>().size() > 16384)
-                        throw std::invalid_argument("Tool arguments too large");
+                    auto& stored = text.get_ref<std::string&>();
+                    if (stored.size() <= argument_limit_) {
+                        stored += function[field].get<std::string>();
+                    }
+                    if (stored.size() > argument_limit_) stored.resize(argument_limit_ + 1);
                 }
             }
         }
@@ -353,7 +364,9 @@ GenerationResult decode_chat_completions_response(
     std::string_view body,
     ReasoningFormat format,
     const GenerationDeltaSink& on_delta,
-    bool collect_tool_calls) {
+    bool collect_tool_calls,
+    std::size_t argument_limit,
+    bool maintenance) {
     Json value;
     try {
         value = Json::parse(body);
@@ -397,7 +410,8 @@ GenerationResult decode_chat_completions_response(
         ? value.at(reason_pointer).get<std::string>() : std::string{};
     return tool_call_result(value.at(message_pointer), ProviderApi::chat_completions,
         received_answer, usage, collect_tool_calls,
-        "Response completed without answer content", finish_reason);
+        "Response completed without answer content", finish_reason,
+        argument_limit, maintenance);
 }
 
 } // namespace cha

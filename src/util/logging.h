@@ -36,6 +36,8 @@ struct LogBufferState {
     LogSeverity level{LogSeverity::info};
     std::optional<std::chrono::steady_clock::time_point> verbose_until;
     std::uint64_t latest_number{};
+    // Milliseconds left on the sink clock. Null when verbose logging is off.
+    std::optional<std::int64_t> verbose_remaining_ms;
 };
 
 inline constexpr std::size_t diagnostic_log_capacity = 2000;

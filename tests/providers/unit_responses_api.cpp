@@ -328,6 +328,106 @@ TEST(ResponsesApi, ReportsInvalidAndFailedEvents) {
     }
 }
 
+std::string sse_event(const Json& value) {
+    return "data: " + value.dump() + "\n\n";
+}
+
+Json function_call_item(std::string name, std::string arguments) {
+    return {
+        {"type", "function_call"},
+        {"call_id", "call_1"},
+        {"name", std::move(name)},
+        {"arguments", std::move(arguments)},
+    };
+}
+
+TEST(ResponsesApi, BoundsStoredFunctionCallText) {
+    constexpr std::size_t limit = 8;
+    const Json call = function_call_item(std::string(40, 'n'), "{}");
+    const auto expect_bounded = [&](bool include_output) {
+        Output output;
+        ResponsesStreamDecoder decoder(output.sink(), true, limit);
+        decoder.consume(sse_event({
+            {"type", "response.output_item.done"},
+            {"output_index", 0},
+            {"item", call},
+        }));
+        Json response{{"status", "completed"}};
+        if (include_output) response["output"] = Json::array({call});
+        decoder.consume(sse_event({
+            {"type", "response.completed"},
+            {"response", std::move(response)},
+        }));
+        const StreamDecodeResult result = decoder.finish();
+        EXPECT_EQ(result.result.outcome, GenerationOutcome::completed) << result.result.message;
+        ASSERT_EQ(result.result.tool_calls.size(), 1u);
+        EXPECT_EQ(result.result.tool_calls[0].name.size(), limit + 1);
+        EXPECT_EQ(result.result.tool_calls[0].arguments, "{}");
+        const Json continuation = Json::parse(result.result.continuation);
+        ASSERT_TRUE(continuation.is_array());
+        ASSERT_FALSE(continuation.empty());
+        EXPECT_EQ(continuation[0]["name"].get<std::string>().size(), limit + 1);
+        EXPECT_EQ(continuation[0]["arguments"].get<std::string>(), "{}");
+    };
+    expect_bounded(false);
+    expect_bounded(true);
+
+    const Json oversized = function_call_item(
+        "vault_config_list", std::string(limit + 20, 'x'));
+    Output output;
+    ResponsesStreamDecoder decoder(output.sink(), true, limit);
+    decoder.consume(sse_event({
+        {"type", "response.function_call_arguments.delta"},
+        {"delta", std::string(limit + 20, 'x')},
+    }));
+    decoder.consume(sse_event({
+        {"type", "response.output_item.done"},
+        {"output_index", 0},
+        {"item", oversized},
+    }));
+    decoder.consume(sse_event({
+        {"type", "response.completed"},
+        {"response", {{"status", "completed"}, {"output", Json::array({oversized})}}},
+    }));
+    const StreamDecodeResult result = decoder.finish();
+    EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
+    EXPECT_EQ(result.result.message, "Tool arguments too large");
+    EXPECT_TRUE(result.result.tool_calls.empty());
+}
+
+TEST(ResponsesApi, LimitsStreamedArgumentsPerCall) {
+    constexpr std::size_t limit = 8;
+    const auto incomplete = [](std::vector<std::pair<int, std::string>> deltas) {
+        Output output;
+        ResponsesStreamDecoder decoder(output.sink(), true, limit);
+        for (const auto& [index, delta] : deltas) {
+            decoder.consume(sse_event({
+                {"type", "response.function_call_arguments.delta"},
+                {"output_index", index},
+                {"delta", delta},
+            }));
+        }
+        decoder.consume(sse_event({
+            {"type", "response.incomplete"},
+            {"response", {{"incomplete_details", {{"reason", "content_filter"}}}}},
+        }));
+        return decoder.finish();
+    };
+
+    const StreamDecodeResult separate = incomplete({
+        {0, std::string(limit, 'a')},
+        {1, std::string(limit, 'b')},
+    });
+    EXPECT_EQ(separate.result.outcome, GenerationOutcome::protocol_error);
+    EXPECT_EQ(separate.result.message, "Responses stream ended incomplete: content_filter");
+
+    const StreamDecodeResult one_call = incomplete({
+        {0, std::string(limit, 'a')},
+        {0, "x"},
+    });
+    EXPECT_EQ(one_call.result.message, "Tool arguments too large");
+}
+
 TEST(ResponsesApi, RequiresCompletionAndAnswerText) {
     struct Case {
         const char* stream;

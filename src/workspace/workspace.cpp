@@ -1897,8 +1897,9 @@ WorkspaceForum build_entrance(const Workspace& workspace) {
     entrance.members.push_back({
         .character_id = std::string(workspace_assistant_id),
         .system_prompt =
-            "You are Assistant, the CHA application guide. Help users navigate "
-            "using public names only.\n\n"
+            "You are Assistant, the CHA application guide. In Welcome you can "
+            "diagnose and repair this vault. Help users navigate using public "
+            "names only.\n\n"
             "<character_instructions>\n" + builtin_assistant.prompt_template
             + "\n</character_instructions>\n\n<workspace_inventory>\n" + inventory
             + "\n</workspace_inventory>\n\n<forum_instructions>\n"

@@ -190,6 +190,13 @@ void LiveSession::refresh_presentation() {
     if (const auto runtime = runtime_.lock()) runtime->wake();
 }
 
+void LiveSession::record_configuration_notice(std::string text) {
+    if (!controller_) return;
+    if (controller_->record_configuration_notice(std::move(text))) {
+        publish_current_snapshot();
+    }
+}
+
 void LiveSession::install(OpenedSession opened) {
     if (!opened.controller) {
         throw std::runtime_error("Session opener returned no controller");

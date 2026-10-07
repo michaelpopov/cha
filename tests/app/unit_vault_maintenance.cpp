@@ -6,6 +6,7 @@
 #include "support/test_transcript.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
+#include "util/logging.h"
 #include "util/toml_file.h"
 #include "app/current_vault.h"
 #include "workspace/builtins.h"
@@ -954,6 +955,58 @@ TEST(ApplicationVault, CapabilitiesFollowModifyAndR2OnTheActiveVault) {
 
     (void)application->switch_vault("A", {}, application->context_epoch());
     EXPECT_TRUE(application->capabilities().can_modify);
+}
+
+TEST(ApplicationVault, SwitchClearsMaintenanceLogsAndDropsUndo) {
+    shutdown_diagnostic_logging();
+    const auto directory = std::filesystem::temp_directory_path()
+        / ("cha_vault_maintenance_log_"
+           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    initialize_diagnostic_logging(directory / "cha.log", "off");
+    struct Guard {
+        std::filesystem::path directory;
+        ~Guard() {
+            set_diagnostic_log_clock_for_test({});
+            shutdown_diagnostic_logging();
+            std::error_code ignored;
+            std::filesystem::remove_all(directory, ignored);
+        }
+    } guard{directory};
+
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    set_diagnostic_log_verbose(true);
+    log_info("vault switch marker");
+    const std::string path = "characters/guide/character.toml";
+    const auto before = application->store().read_config(std::vector<std::string>{path});
+    std::string renamed = before.files.at(0).content;
+    const auto name = renamed.find("Guide");
+    ASSERT_NE(name, std::string::npos);
+    renamed.replace(name, std::string("Guide").size(), "Guide renamed");
+    const auto applied = application->store().apply_config(
+        application->store().config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = path,
+            .operation = WorkspaceConfigOperation::replace,
+            .content = renamed,
+        }});
+    ASSERT_TRUE(applied.committed);
+    EXPECT_EQ(
+        application->switch_vault("B", {}, application->context_epoch()).state,
+        ApplicationState::running);
+    const LogBufferState state = diagnostic_log_state();
+    EXPECT_EQ(state.level, LogSeverity::info);
+    EXPECT_FALSE(state.verbose_until);
+    EXPECT_TRUE(snapshot_diagnostic_log().entries.empty());
+    EXPECT_EQ(
+        application->switch_vault("A", {}, application->context_epoch()).state,
+        ApplicationState::running);
+    const auto after = application->store().read_config(std::vector<std::string>{path});
+    EXPECT_EQ(after.files.at(0).content, renamed);
+    const auto undo = application->store().undo_config(application->store().config_revision());
+    EXPECT_FALSE(undo.committed);
+    EXPECT_EQ(undo.error, WorkspaceConfigApplyError::unavailable_undo);
 }
 
 TEST(ApplicationVault, BootstrapDuringUnavailableDoesNotReadClosedHandles) {

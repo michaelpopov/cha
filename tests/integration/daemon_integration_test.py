@@ -32,6 +32,9 @@ ROOT = Path(__file__).resolve().parents[2]
 HOLD = "HOLD-PROVIDER"
 FAIL = "FAIL-PROVIDER"
 PROVIDER_REPLY = "Provider reply"
+REPAIR = "REPAIR-WELCOME"
+UNDO = "UNDO-WELCOME"
+FAIL_AFTER = "FAIL-AFTER-SAVE"
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -62,13 +65,103 @@ def newest_user_text(body):
     return ""
 
 
+def tool_reply(calls):
+    message = {"role": "assistant", "content": None, "tool_calls": [
+        {"id": call_id, "type": "function", "function": {
+            "name": name, "arguments": json.dumps(arguments)}}
+        for call_id, name, arguments in calls]}
+    return 200, json.dumps({"choices": [{"message": message}]}).encode()
+
+
+def text_reply(text):
+    return 200, json.dumps({"choices": [{"message": {
+        "role": "assistant", "content": text}}]}).encode()
+
+
+def tool_results(body):
+    try:
+        messages = json.loads(body).get("messages", [])
+    except ValueError:
+        return []
+    results = []
+    for message in messages:
+        if message.get("role") != "tool":
+            continue
+        content = message.get("content", "")
+        try:
+            results.append(json.loads(content))
+        except ValueError:
+            results.append({})
+    return results
+
+
+def maintenance_reply(body, prompt):
+    """Scripted Welcome repair. Ordinary HOLD/FAIL text stays on the other path."""
+    results = tool_results(body)
+    last = results[-1] if results else None
+    if REPAIR in prompt:
+        if last is None:
+            return tool_reply([("read1", "vault_config_read", {
+                "paths": ["characters/guide/character.toml"]})])
+        if isinstance(last, dict) and "files" in last:
+            content = last["files"][0]["content"]
+            renamed = content.replace(
+                'display_name = "Guide"', 'display_name = "Guide renamed"', 1)
+            return tool_reply([("apply1", "vault_config_apply", {
+                "action": "apply",
+                "version": last["version"],
+                "changes": [{
+                    "path": "characters/guide/character.toml",
+                    "operation": "replace",
+                    "content": renamed,
+                }],
+            })])
+        return text_reply("Renamed the guide.")
+    if FAIL_AFTER in prompt:
+        if last is None:
+            return tool_reply([("read1", "vault_config_read", {
+                "paths": ["characters/guide/CHARACTER.md"]})])
+        if isinstance(last, dict) and "files" in last:
+            return tool_reply([("apply1", "vault_config_apply", {
+                "action": "apply",
+                "version": last["version"],
+                "changes": [{
+                    "path": "characters/guide/CHARACTER.md",
+                    "operation": "replace",
+                    "content": "Repaired instructions\n",
+                }],
+            })])
+        return 500, b""
+    if last is None:
+        return tool_reply([("logs1", "assistant_logs", {
+            "after": None,
+            "minimum_level": None,
+            "contains": "vault_config_apply",
+            "limit": 5,
+        })])
+    if isinstance(last, dict) and "entries" in last:
+        return tool_reply([("read1", "vault_config_read", {"paths": [
+            "characters/guide/character.toml",
+            "characters/guide/CHARACTER.md",
+        ]})])
+    if isinstance(last, dict) and "files" in last:
+        return tool_reply([("undo1", "vault_config_apply", {
+            "action": "undo",
+            "version": last["version"],
+            "changes": None,
+        })])
+    return text_reply("Undo is not available.")
+
+
 class FakeProvider:
-    """Chat Completions provider on 127.0.0.1. It records the newest user
-    message of each request. HOLD waits until `released` is set; FAIL returns
-    HTTP 500; any other text gets PROVIDER_REPLY."""
+    """Chat Completions provider on 127.0.0.1. It records each request body and
+    the newest user message. HOLD waits until `released` is set; FAIL returns
+    HTTP 500; Welcome repair words run a scripted tool exchange; any other text
+    gets PROVIDER_REPLY."""
 
     def __init__(self):
         self.prompts = []
+        self.bodies = []
         self.changed = threading.Condition()
         self.released = threading.Event()
         provider = self
@@ -79,14 +172,18 @@ class FakeProvider:
                 prompt = newest_user_text(body)
                 with provider.changed:
                     provider.prompts.append(prompt)
+                    provider.bodies.append(body.decode())
                     provider.changed.notify_all()
-                if HOLD in prompt:
-                    provider.released.wait(30)
-                if FAIL in prompt:
-                    status, reply = 500, b""
+                if any(word in prompt for word in (REPAIR, UNDO, FAIL_AFTER)):
+                    status, reply = maintenance_reply(body, prompt)
                 else:
-                    status, reply = 200, json.dumps({"choices": [{"message": {
-                        "role": "assistant", "content": PROVIDER_REPLY}}]}).encode()
+                    if HOLD in prompt:
+                        provider.released.wait(30)
+                    if FAIL in prompt:
+                        status, reply = 500, b""
+                    else:
+                        status, reply = 200, json.dumps({"choices": [{"message": {
+                            "role": "assistant", "content": PROVIDER_REPLY}}]}).encode()
                 try:
                     self.send_response(status)
                     self.send_header("Content-Type", "application/json")
@@ -362,11 +459,25 @@ class ChaWebIntegration(DaemonHarness):
             time.sleep(0.05)
         self.fail(description + "\n" + self.logs())
 
-    def wait_idle(self, session_id):
+    def wait_idle(self, session_id, forum=None):
         def check():
-            snap = self.snapshot(session_id)
+            snap = self.snapshot(session_id, forum)
             return snap if not snap["generation"]["active"] else None
         return self.wait_until(check, "generation stayed active")
+
+    def welcome_turn(self, text):
+        entrance = self.bootstrap()["entrance_forum_id"]
+        status, _, raw = self.exchange(
+            "POST", self.session_path("builtin-welcome", entrance) + "/input",
+            {"text": text})
+        self.assertEqual(status, 204, raw)
+        return self.wait_idle("builtin-welcome", entrance)
+
+    def character_name(self, character_id):
+        for item in self.bootstrap()["characters"]:
+            if item["id"] == character_id:
+                return item["display_name"]
+        self.fail(f"missing character {character_id}")
 
     def wait_not_live(self, session_id):
         def check():
@@ -600,6 +711,62 @@ class ChaWebIntegration(DaemonHarness):
         finished = self.wait_idle(session_id)
         self.assertTrue(any(PROVIDER_REPLY in text for text in self.texts(finished)))
         self.assertEqual(self.prompt_count(lost), 1)
+
+    def test_welcome_repair_notice_survives_failure_and_restart(self):
+        self.use_provider()
+        repaired = self.welcome_turn(REPAIR)
+        self.assertTrue(any(
+            entry.get("kind") == "notice" and "Configuration was saved." in entry.get("text", "")
+            for entry in repaired["transcript"]))
+        self.assertEqual(self.character_name("guide"), "Guide renamed")
+        self.assertTrue(self.provider.bodies)
+        opening = json.loads(self.provider.bodies[0])
+        self.assertEqual(
+            [tool["function"]["name"] for tool in opening["tools"]],
+            ["vault_config_list", "vault_config_read", "vault_config_apply",
+             "assistant_logs", "assistant_logging"])
+        system = opening["messages"][0]["content"]
+        self.assertIn("Host: cha-daemon (ChaWeb)\n\n", system)
+        self.assertIn("# Operating instructions for Assistant", system)
+        self.assertIn("# CHA workspace maintainer guide", system)
+        self.assertIn("# CHA daemon on Linux", system)
+        self.assertNotIn("Host: desktop application\n\n# Operating instructions", system)
+        failed = self.welcome_turn(FAIL_AFTER)
+        self.assertTrue(any(
+            entry.get("kind") == "notice" and "Configuration was saved." in entry.get("text", "")
+            for entry in failed["transcript"]))
+        ordinary = self.create("Hello from the lobby")
+        finished = self.wait_idle(ordinary["id"])
+        self.assertTrue(any(PROVIDER_REPLY in text for text in self.texts(finished)))
+
+        config = self.directory / "alice-net"
+        self.stop(self.daemon)
+        self.assertEqual(self.daemon.returncode, 0)
+        self.daemon = self.start_daemon("alice", config)
+        self.wait_ready()
+        self.assertEqual(self.character_name("guide"), "Guide renamed")
+        before = len(self.provider.bodies)
+        restored = self.welcome_turn(UNDO)
+        self.assertEqual(self.character_name("guide"), "Guide renamed")
+        undo_bodies = self.provider.bodies[before:]
+        log_result = next(
+            result for body in undo_bodies
+            for result in tool_results(body) if "entries" in result)
+        self.assertFalse(any(
+            "vault_config_apply" in entry.get("text", "")
+            for entry in log_result["entries"]))
+        read_result = next(
+            result for body in undo_bodies
+            for result in tool_results(body) if "files" in result)
+        contents = {item["path"]: item.get("content", "") for item in read_result["files"]}
+        self.assertIn('display_name = "Guide renamed"', contents["characters/guide/character.toml"])
+        self.assertEqual(contents["characters/guide/CHARACTER.md"], "Repaired instructions\n")
+        undo_result = next(
+            result for body in undo_bodies
+            for result in tool_results(body) if result.get("error"))
+        self.assertEqual(undo_result["error"], "unavailable_undo")
+        self.assertFalse(undo_result["committed"])
+        self.assertTrue(any("Undo is not available." in text for text in self.texts(restored)))
 
     def test_session_survives_daemon_restart(self):
         config = self.directory / "alice"

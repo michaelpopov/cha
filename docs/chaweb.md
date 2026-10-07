@@ -39,8 +39,18 @@ that application has no HTTP listener.
 
 ## Conversation workflow
 
-The session list shows user forums and their stored sessions, excluding
-Entrance and Welcome. New conversations are local drafts until the first Send.
+The session list shows one Welcome entry and the stored sessions of ordinary
+forums. Welcome opens `bootstrap.entrance_forum_id` / `builtin-welcome` in the
+existing conversation view. Opening Welcome does not create a session. Ordinary
+forums stay in the picker. Entrance is not an extra forum. A vault with only
+Entrance still shows Welcome. Send uses the existing snapshot and input path.
+Maintenance is chat only: list, read, apply, undo, logs, and logging. A saved
+configuration appears as a transcript notice. When a Welcome answer ends, by
+completion, failure, or Stop, the browser reloads bootstrap and the session
+list. Built-in Welcome cannot be deleted. A direct URL, reload, and
+back/forward navigation use the same route.
+
+New conversations are local drafts until the first Send.
 The daemon creates a stored session and submits the first input together;
 rejected first input is cleaned up when possible. Session titles come from the
 existing naming request. A new-session response can wait for recipient detection

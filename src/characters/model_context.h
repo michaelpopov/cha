@@ -43,6 +43,9 @@ struct GenerationRequest {
     RunSpec run;
     std::function<std::string(std::string_view, const std::atomic_bool&)> web_search_tool;
     std::function<std::string(std::string_view, const std::atomic_bool&)> web_read_tool;
+    // Bound maintenance tool. Empty for ordinary conversations.
+    std::function<std::string(
+        std::string_view, std::string_view, const std::atomic_bool&)> maintenance_tool;
     // Auxiliary requests such as session naming do not need conversation tool rules.
     bool include_tool_instructions{true};
 };

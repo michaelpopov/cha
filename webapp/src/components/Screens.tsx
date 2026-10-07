@@ -26,6 +26,7 @@ import {
   type TextToSpeechVoice,
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
+import { sameDetail, useDetailRefresh, useFormReload } from '../detailRefresh';
 import { type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
 import { BackToSettings } from './Settings';
@@ -134,18 +135,30 @@ function RosterDetailScreen<Value>({
   subtitle,
   toolbarAction,
 }: RosterDetailScreenProps<Value>) {
+  const refresh = useDetailRefresh();
   const [value, setValue] = useState<Value | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [requestVersion, setRequestVersion] = useState(0);
+  const valueRef = useRef<Value | null>(null);
+  const seenSubject = useRef<string | null>(null);
 
   useEffect(() => {
     if (!subjectId) return;
     let current = true;
-    setValue(null);
-    setError(null);
+    const identityChanged = seenSubject.current !== subjectId;
+    const background = !identityChanged && valueRef.current !== null;
+    seenSubject.current = subjectId;
+    if (!background) {
+      valueRef.current = null;
+      setValue(null);
+      setError(null);
+    }
     void load(subjectId).then(
       (loaded) => {
-        if (current) {
+        if (!current) return;
+        setError(null);
+        if (!background || !sameDetail(valueRef.current, loaded)) {
+          valueRef.current = loaded;
           setValue(loaded);
           onLoaded?.(loaded, subjectId);
         }
@@ -157,7 +170,7 @@ function RosterDetailScreen<Value>({
     return () => {
       current = false;
     };
-  }, [copy.failed, load, onLoaded, requestVersion, subjectId]);
+  }, [copy.failed, load, onLoaded, refresh.epoch, requestVersion, subjectId]);
 
   return (
     <section className="cha-screen cha-navigation" aria-label={ariaLabel}>
@@ -851,29 +864,34 @@ export function PersonaSettingsScreen({
   const [style, setStyle] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [requestVersion, setRequestVersion] = useState(0);
+  const reload = useFormReload(personaId || null);
 
   useEffect(() => {
     if (!personaId) return;
     let current = true;
-    setDetail(null);
-    setError(null);
+    const background = reload.start();
+    if (!background) {
+      setDetail(null);
+      setError(null);
+    }
     void client.getPersona(personaId).then(
       (loaded) => {
         if (!current) return;
-        setDetail(loaded);
-        setStyle(loaded.style);
+        reload.loaded(loaded, (value) => {
+          setDetail(value);
+          setStyle(value.style);
+        });
       },
       (failure: unknown) => {
-        if (current) {
-          setError(publicErrorMessage(failure, 'Persona settings could not be loaded.'));
-        }
+        if (!current) return;
+        setError(publicErrorMessage(failure, 'Persona settings could not be loaded.'));
+        reload.fail(background);
       },
     );
     return () => {
       current = false;
     };
-  }, [client, personaId, requestVersion]);
+  }, [client, personaId, reload.epoch, reload.attempt]);
 
   function closeSettings() {
     if (personaId) dispatch({ type: 'inspect-persona', personaId });
@@ -893,6 +911,7 @@ export function PersonaSettingsScreen({
       dispatch({ type: 'persona-updated', persona: saved });
       setDetail(saved);
       setStyle(saved.style);
+      reload.remember(saved);
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Persona settings could not be saved.'));
     } finally {
@@ -902,6 +921,7 @@ export function PersonaSettingsScreen({
 
   const unresolvedStyle = detail && unresolvedOption(detail.available_styles, detail.style);
   const dirty = detail !== null && style !== detail.style;
+  reload.markDirty(dirty);
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Persona settings">
@@ -916,10 +936,10 @@ export function PersonaSettingsScreen({
       {error && (
         <div className="cha-state-message cha-error-message" role="alert">
           <p>{error}</p>
-          {detail === null && (
+          {(detail === null || reload.refreshFailed) && (
             <button
               className="cha-button cha-button-ghost"
-              onClick={() => setRequestVersion((version) => version + 1)}
+              onClick={reload.retry}
               type="button"
             >
               Try again
@@ -955,7 +975,7 @@ export function PersonaSettingsScreen({
             </button>
             <button
               className="cha-button cha-button-primary"
-              disabled={!dirty || saving}
+              disabled={!dirty || saving || reload.blocked}
               type="submit"
             >
               Save
@@ -984,34 +1004,41 @@ export function CharacterSettingsScreen({
   const [webSearchTool, setWebSearchTool] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [requestVersion, setRequestVersion] = useState(0);
+  const reload = useFormReload(characterId || null);
+
+  function applyCharacter(loaded: CharacterDetail) {
+    setDetail(loaded);
+    setProvider(loaded.provider);
+    setStyle(loaded.style);
+    setVoice(loaded.voice_id);
+    setReasoningEffort(loaded.reasoning_effort);
+    setWebSearch(loaded.web_search);
+    setWebSearchTool(loaded.web_search_tool);
+  }
 
   useEffect(() => {
     if (!characterId) return;
     let current = true;
-    setDetail(null);
-    setError(null);
+    const background = reload.start();
+    if (!background) {
+      setDetail(null);
+      setError(null);
+    }
     void client.getCharacter(characterId).then(
       (loaded) => {
         if (!current) return;
-        setDetail(loaded);
-        setProvider(loaded.provider);
-        setStyle(loaded.style);
-        setVoice(loaded.voice_id);
-        setReasoningEffort(loaded.reasoning_effort);
-        setWebSearch(loaded.web_search);
-        setWebSearchTool(loaded.web_search_tool);
+        reload.loaded(loaded, applyCharacter);
       },
       (failure: unknown) => {
-        if (current) {
-          setError(publicErrorMessage(failure, 'Character settings could not be loaded.'));
-        }
+        if (!current) return;
+        setError(publicErrorMessage(failure, 'Character settings could not be loaded.'));
+        reload.fail(background);
       },
     );
     return () => {
       current = false;
     };
-  }, [characterId, client, requestVersion]);
+  }, [characterId, client, reload.epoch, reload.attempt]);
 
   function closeSettings() {
     if (characterId) dispatch({ type: 'inspect-character', characterId });
@@ -1038,13 +1065,8 @@ export function CharacterSettingsScreen({
         web_search_tool: webSearchTool,
       });
       dispatch({ type: 'character-updated', character: saved });
-      setDetail(saved);
-      setProvider(saved.provider);
-      setStyle(saved.style);
-      setVoice(saved.voice_id);
-      setReasoningEffort(saved.reasoning_effort);
-      setWebSearch(saved.web_search);
-      setWebSearchTool(saved.web_search_tool);
+      applyCharacter(saved);
+      reload.remember(saved);
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Character settings could not be saved.'));
     } finally {
@@ -1065,6 +1087,7 @@ export function CharacterSettingsScreen({
       || reasoningEffort !== detail.reasoning_effort
       || webSearch !== detail.web_search
       || webSearchTool !== detail.web_search_tool);
+  reload.markDirty(dirty);
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Character settings">
@@ -1079,10 +1102,10 @@ export function CharacterSettingsScreen({
       {error && (
         <div className="cha-state-message cha-error-message" role="alert">
           <p>{error}</p>
-          {detail === null && (
+          {(detail === null || reload.refreshFailed) && (
             <button
               className="cha-button cha-button-ghost"
-              onClick={() => setRequestVersion((version) => version + 1)}
+              onClick={reload.retry}
               type="button"
             >
               Try again
@@ -1203,7 +1226,7 @@ export function CharacterSettingsScreen({
             </button>
             <button
               className="cha-button cha-button-primary"
-              disabled={!dirty || provider === null || saving}
+              disabled={!dirty || provider === null || saving || reload.blocked}
               type="submit"
             >
               Save
@@ -1480,18 +1503,39 @@ export function ForumMembersScreen({
   const [personaId, setPersonaId] = useState(forum?.default_persona_id ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setSelected(new Set(forum?.members.map(({ id }) => id)));
-    setPersonaId(forum?.default_persona_id ?? '');
-    setError(null);
-  }, [forumId, memberKey, forum?.default_persona_id]);
+  const [stale, setStale] = useState(false);
+  const refresh = useDetailRefresh();
+  const dirtyRef = useRef(false);
+  const baseline = useRef<{ forumId: string | null; key: string; persona: string } | null>(null);
 
   const dirty = forum !== undefined && (
     selected.size !== forum.members.length
     || forum.members.some(({ id }) => !selected.has(id))
     || personaId !== forum.default_persona_id
   );
+  dirtyRef.current = dirty;
+
+  useEffect(() => {
+    const next = {
+      forumId: forumId ?? null,
+      key: memberKey,
+      persona: forum?.default_persona_id ?? '',
+    };
+    const previous = baseline.current;
+    if (previous
+        && previous.forumId === next.forumId
+        && previous.key === next.key
+        && previous.persona === next.persona) return;
+    if (previous && previous.forumId === next.forumId && dirtyRef.current) {
+      setStale(true);
+      return;
+    }
+    baseline.current = next;
+    setSelected(new Set(forum?.members.map(({ id }) => id)));
+    setPersonaId(next.persona);
+    setError(null);
+    setStale(false);
+  }, [forum, forumId, memberKey, refresh.epoch]);
 
   function toggle(characterId: string) {
     setSelected((current) => {
@@ -1563,10 +1607,16 @@ export function ForumMembersScreen({
             ))}
           </div>
           {error && <p className="cha-error-message" role="alert">{error}</p>}
+          {refresh.failed && (
+            <div className="cha-state-message cha-error-message" role="alert">
+              <p>Forum members could not be reloaded.</p>
+              <button className="cha-button cha-button-ghost" onClick={refresh.retry} type="button">Try again</button>
+            </div>
+          )}
           <div className="cha-forum-members-actions">
             <button
               className="cha-button cha-button-primary"
-              disabled={!dirty || selected.size === 0 || !personaId || saving}
+              disabled={!dirty || selected.size === 0 || !personaId || saving || stale || refresh.refreshing || refresh.failed}
               type="submit"
             >
               Save

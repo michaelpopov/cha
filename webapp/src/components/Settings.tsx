@@ -37,6 +37,7 @@ import {
 } from '../textToSpeech';
 import { validateBootstrap } from '../state/bootstrap';
 import type { AppAction, AppState } from '../state/view';
+import { useFormReload } from '../detailRefresh';
 import { useLoad } from '../useLoad';
 import { voiceClasses } from './characterAppearance';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -515,35 +516,46 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
   const [operationComplete, setOperationComplete] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
+  const reload = useFormReload(selectedName);
   const busy = pendingOperation !== null || checkingUpload || saving || deleting;
   const canTransferR2 = state.bootstrap?.capabilities?.can_transfer_r2 === true;
   const canModify = state.bootstrap?.capabilities?.can_modify === true;
 
+  function applyVault(value: { found: VaultDetail; count: number }) {
+    setVaultCount(value.count);
+    setDetail(value.found);
+    setEnableProtection(false);
+    setPassword('');
+  }
+
   useEffect(() => {
     let current = true;
-    setDetail(null);
-    setError(null);
+    const background = reload.start();
+    if (!background) {
+      setDetail(null);
+      setError(null);
+    }
     if (!selectedName) return () => { current = false; };
     void client.listVaults().then(
       (loaded) => {
         if (!current) return;
-        setVaultCount(loaded.length);
         const found = loaded.find(({ display_name: currentName }) => currentName === selectedName);
         if (!found) {
           setError('That vault was not found.');
+          reload.fail(background);
           return;
         }
-        setDetail(found);
-        setEnableProtection(false);
-        setPassword('');
+        setError(null);
+        reload.loaded({ found, count: loaded.length }, applyVault);
       },
       (failure: unknown) => {
-        if (current) setError(publicErrorMessage(failure, 'Vault settings could not be loaded.'));
+        if (!current) return;
+        setError(publicErrorMessage(failure, 'Vault settings could not be loaded.'));
+        reload.fail(background);
       },
     );
     return () => { current = false; };
-  }, [client, revision, selectedName]);
+  }, [client, reload.epoch, reload.attempt, selectedName]);
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -559,6 +571,7 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
       setDetail(updated);
       setEnableProtection(false);
       setPassword('');
+      reload.remember({ found: updated, count: vaultCount });
       dispatch({ type: 'vault-updated', previousName: selectedName, vault: updated });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Vault settings could not be saved.'));
@@ -630,10 +643,17 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
     }
   }
 
+  const protectionDirty = enableProtection || password !== '';
+  reload.markDirty(protectionDirty);
+
   function reset() {
+    setError(null);
+    if (reload.stale) {
+      reload.accept(applyVault);
+      return;
+    }
     setEnableProtection(false);
     setPassword('');
-    setError(null);
   }
 
   return (
@@ -648,6 +668,7 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
             try {
               const saved = await client.updateVault(selectedName!, { display_name, password: null });
               setDetail(saved);
+              reload.remember({ found: saved, count: vaultCount });
               dispatch({ type: 'vault-updated', previousName: selectedName!, vault: saved });
             } finally {
               setSaving(false);
@@ -657,7 +678,7 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
       </div>}
       {!selectedName && <p className="cha-state-message">No vault is selected.</p>}
       {selectedName && !detail && !error && <p className="cha-state-message" role="status">Loading vault…</p>}
-      {error && !detail && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {error && (!detail || reload.refreshFailed) && <LoadFailure message={error} retry={reload.retry} />}
       {detail && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset disabled={saving || deleting}>
@@ -711,8 +732,8 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
           {operationComplete && <p className="cha-state-message" role="status">{operationComplete}</p>}
           {operationError && <p className="cha-error-message" role="alert">{operationError}</p>}
           {!detail.can_delete && <p className="cha-settings-note">{vaultCount === 1 ? 'The last vault cannot be deleted.' : 'Switch to another vault before deleting this one.'}</p>}
-          {error && <p className="cha-error-message" role="alert">{error}</p>}
-          {!detail.protected && enableProtection && <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving || deleting} onClick={reset} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!password || saving || deleting} type="submit">{saving ? 'Protecting…' : 'Protect vault'}</button></div>}
+          {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
+          {!detail.protected && enableProtection && <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving || deleting} onClick={reset} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!password || saving || deleting || reload.blocked} type="submit">{saving ? 'Protecting…' : 'Protect vault'}</button></div>}
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-danger" disabled={!detail.can_delete || saving || deleting} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete vault'}</button></div>
         </form>
       )}
@@ -953,37 +974,47 @@ export function ProviderScreen({
   const [testSucceeded, setTestSucceeded] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [revision, setRevision] = useState(0);
+  const reload = useFormReload(id);
+
+  function applyProvider(loaded: { provider: ProviderDetail; keys: ApiKeyDetail[] }) {
+    setDetail(loaded.provider);
+    setDraft(providerDraft(loaded.provider, loaded.keys));
+    setBaseUrl(providerBaseUrl(loaded.provider));
+    setOpenRouterTargets(openRouterTargetsText(loaded.provider.openrouter_targets));
+    setKeys(loaded.keys);
+    dispatch({
+      type: 'provider-detail-loaded',
+      providerId: loaded.provider.id,
+      providerName: loaded.provider.display_name,
+      writable: loaded.provider.writable,
+    });
+  }
 
   useEffect(() => {
     let current = true;
-    setDetail(null);
-    setDraft(null);
-    setOpenRouterTargets('');
-    setError(null);
-    setTestSucceeded(false);
+    const background = reload.start();
+    if (!background) {
+      setDetail(null);
+      setDraft(null);
+      setOpenRouterTargets('');
+      setError(null);
+      setTestSucceeded(false);
+    }
     if (!id) return () => { current = false; };
     void Promise.all([client.getProvider(id), client.listApiKeys()]).then(
       ([provider, loadedKeys]) => {
         if (!current) return;
-        setDetail(provider);
-        setDraft(providerDraft(provider, loadedKeys));
-        setBaseUrl(providerBaseUrl(provider));
-        setOpenRouterTargets(openRouterTargetsText(provider.openrouter_targets));
-        setKeys(loadedKeys);
-        dispatch({
-          type: 'provider-detail-loaded',
-          providerId: provider.id,
-          providerName: provider.display_name,
-          writable: provider.writable,
-        });
+        setError(null);
+        reload.loaded({ provider, keys: loadedKeys }, applyProvider);
       },
       (failure: unknown) => {
-        if (current) setError(publicErrorMessage(failure, 'Provider settings could not be loaded.'));
+        if (!current) return;
+        setError(publicErrorMessage(failure, 'Provider settings could not be loaded.'));
+        reload.fail(background);
       },
     );
     return () => { current = false; };
-  }, [client, dispatch, id, revision]);
+  }, [client, dispatch, id, reload.epoch, reload.attempt]);
 
   function change<Key extends keyof ProviderUpdate>(key: Key, value: ProviderUpdate[Key]) {
     setDraft((current) => current ? { ...current, [key]: value } : current);
@@ -1061,6 +1092,7 @@ export function ProviderScreen({
       setBaseUrl(providerBaseUrl(updated));
       setOpenRouterTargets(openRouterTargetsText(updated.openrouter_targets));
       setTestSucceeded(false);
+      reload.remember({ provider: updated, keys });
       dispatch({
         type: 'provider-updated',
         providerId: updated.id,
@@ -1115,14 +1147,19 @@ export function ProviderScreen({
     || baseUrl !== providerBaseUrl(detail)
     || openRouterTargets !== openRouterTargetsText(detail.openrouter_targets)
   );
+  reload.markDirty(dirty);
 
   function reset() {
+    setError(null);
+    setTestSucceeded(false);
+    if (reload.stale) {
+      reload.accept(applyProvider);
+      return;
+    }
     if (!detail) return;
     setDraft(providerDraft(detail, keys));
     setBaseUrl(providerBaseUrl(detail));
     setOpenRouterTargets(openRouterTargetsText(detail.openrouter_targets));
-    setError(null);
-    setTestSucceeded(false);
   }
 
   return (
@@ -1140,6 +1177,7 @@ export function ProviderScreen({
               const saved = await client.updateProvider(detail.id, { ...providerUpdate(detail), display_name });
               setDetail(saved);
               setDraft((current) => current && ({ ...current, display_name: saved.display_name }));
+              reload.remember({ provider: saved, keys });
               dispatch({ type: 'provider-updated', providerId: saved.id,
                 providerName: saved.display_name, writable: saved.writable });
             } finally {
@@ -1150,7 +1188,7 @@ export function ProviderScreen({
       </div>}
       {!id && <p className="cha-state-message">No provider is selected.</p>}
       {id && !detail && !error && <p className="cha-state-message" role="status">Loading provider…</p>}
-      {error && !detail && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {error && (!detail || reload.refreshFailed) && <LoadFailure message={error} retry={reload.retry} />}
       {detail && draft && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset aria-label="Provider details" disabled={saving || testing || deleting || !detail.writable}>
@@ -1174,12 +1212,12 @@ export function ProviderScreen({
           </fieldset>
           {!detail.writable && <p>This provider is read-only.</p>}
           <UsedBy empty="No characters use this provider." items={detail.used_by} />
-          {error && <p className="cha-error-message" role="alert">{error}</p>}
+          {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
           {testSucceeded && <p className="cha-settings-saved" role="status"><span aria-hidden="true" className="cha-settings-status-marker" /> Provider responded successfully.</p>}
           <div className="cha-settings-form-actions">
             <button className="cha-button" disabled={saving || testing || deleting} onClick={() => void runTest()} type="button">{testing ? 'Testing…' : 'Test'}</button>
-            <button className="cha-button cha-button-ghost" disabled={!dirty || saving || testing || deleting} onClick={reset} type="button">Cancel</button>
-            <button className="cha-button cha-button-primary cha-provider-save-action" disabled={!dirty || saving || testing || deleting || !detail.writable} type="submit">{saving ? 'Saving…' : 'Save changes'}</button>
+            <button className="cha-button cha-button-ghost" disabled={(!dirty && !reload.stale) || saving || testing || deleting} onClick={reset} type="button">Cancel</button>
+            <button className="cha-button cha-button-primary cha-provider-save-action" disabled={!dirty || saving || testing || deleting || !detail.writable || reload.blocked} type="submit">{saving ? 'Saving…' : 'Save changes'}</button>
           </div>
           <div className="cha-settings-form-actions">
             <button className="cha-button cha-button-danger cha-provider-delete-action" disabled={saving || testing || deleting || !detail.writable} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete provider'}</button>
@@ -1263,31 +1301,48 @@ export function StyleScreen({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [revision, setRevision] = useState(0);
+  const reload = useFormReload(id);
+
+  function applyStyle(loaded: StyleDetail) {
+    setDetail(loaded);
+    setDraft(styleUpdate(loaded));
+    dispatch({
+      type: 'style-detail-loaded',
+      styleId: loaded.id,
+      styleName: loaded.display_name,
+      writable: loaded.writable,
+    });
+  }
+
   useEffect(() => {
     let current = true;
-    setDetail(null);
-    setDraft(null);
-    setError(null);
+    const background = reload.start();
+    if (!background) {
+      setDetail(null);
+      setDraft(null);
+      setError(null);
+    }
     if (!id) return () => { current = false; };
     void client.listStyles().then(
       (styles) => {
         if (!current) return;
         const loaded = styles.find((style) => style.id === id);
-        if (!loaded) return setError('That style was not found.');
-        setDetail(loaded);
-        setDraft(styleUpdate(loaded));
-        dispatch({
-          type: 'style-detail-loaded',
-          styleId: loaded.id,
-          styleName: loaded.display_name,
-          writable: loaded.writable,
-        });
+        if (!loaded) {
+          setError('That style was not found.');
+          reload.fail(background);
+          return;
+        }
+        setError(null);
+        reload.loaded(loaded, applyStyle);
       },
-      (failure: unknown) => { if (current) setError(publicErrorMessage(failure, 'Style settings could not be loaded.')); },
+      (failure: unknown) => {
+        if (!current) return;
+        setError(publicErrorMessage(failure, 'Style settings could not be loaded.'));
+        reload.fail(background);
+      },
     );
     return () => { current = false; };
-  }, [client, dispatch, id, revision]);
+  }, [client, dispatch, id, reload.epoch, reload.attempt]);
 
   function change<Key extends keyof StyleUpdate>(key: Key, value: StyleUpdate[Key]) {
     setDraft((current) => current ? { ...current, [key]: value } : current);
@@ -1301,6 +1356,7 @@ export function StyleScreen({
       const updated = await client.updateStyle(id, draft);
       setDetail(updated);
       setDraft(styleUpdate(updated));
+      reload.remember(updated);
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Style settings could not be saved.'));
     } finally {
@@ -1320,7 +1376,15 @@ export function StyleScreen({
       setDeleting(false);
     }
   }
-  const dirty = detail && draft && JSON.stringify(styleUpdate(detail)) !== JSON.stringify(draft);
+  const dirty = Boolean(detail && draft && JSON.stringify(styleUpdate(detail)) !== JSON.stringify(draft));
+  reload.markDirty(dirty);
+  function resetStyle() {
+    if (reload.stale) {
+      reload.accept(applyStyle);
+      return;
+    }
+    if (detail) setDraft(styleUpdate(detail));
+  }
   const appearance = draft && {
     font: draft.font,
     style: draft.style,
@@ -1341,6 +1405,7 @@ export function StyleScreen({
               const saved = await client.updateStyle(detail.id, { ...styleUpdate(detail), display_name });
               setDetail(saved);
               setDraft((current) => current && ({ ...current, display_name: saved.display_name }));
+              reload.remember(saved);
               dispatch({ type: 'style-updated', styleId: saved.id,
                 styleName: saved.display_name, writable: saved.writable });
             } finally {
@@ -1351,7 +1416,7 @@ export function StyleScreen({
       </div>}
       {!id && <p className="cha-state-message">No style is selected.</p>}
       {id && !detail && !error && <p className="cha-state-message" role="status">Loading style…</p>}
-      {error && !detail && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {error && (!detail || reload.refreshFailed) && <LoadFailure message={error} retry={reload.retry} />}
       {detail && draft && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset aria-label="Style settings" disabled={saving || deleting || !detail.writable}>
@@ -1365,8 +1430,8 @@ export function StyleScreen({
           </fieldset>
           <p className={`cha-style-sample cha-message-text${appearance ? voiceClasses(appearance) : ''}`}>The chief task in life is this…</p>
           <UsedBy empty="Nothing uses this style." items={detail.used_by} />
-          {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving || deleting} onClick={() => setDraft(styleUpdate(detail))} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || saving || deleting || !detail.writable} type="submit">{saving ? 'Saving…' : 'Save style'}</button></div>
+          {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={(!dirty && !reload.stale) || saving || deleting} onClick={resetStyle} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || saving || deleting || !detail.writable || reload.blocked} type="submit">{saving ? 'Saving…' : 'Save style'}</button></div>
           <div className="cha-settings-form-actions">
             <button className="cha-button cha-button-danger" disabled={saving || deleting || !detail.writable} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete style'}</button>
           </div>
@@ -1501,15 +1566,34 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
   const [outputError, setOutputError] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState<string | null>(null);
   const [outputMessage, setOutputMessage] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
+  const reload = useFormReload('voice-settings');
+
+  function applyVoiceSettings(value: {
+    input: VoiceInputSettings | null;
+    output: VoiceOutputSettings | null;
+    keys: ApiKeyDetail[];
+    voices: VoiceDetail[];
+  }) {
+    setSavedInput(value.input);
+    setInput(value.input ?? defaultVoiceInput);
+    setSavedOutput(value.output);
+    setOutput(value.output ?? defaultVoiceOutput(value.voices));
+    setOutputProvider(value.output?.api_key || !value.output?.elevenlabs?.api_key
+      ? 'fishaudio' : 'elevenlabs');
+    setKeys(value.keys);
+    setVoices(value.voices);
+  }
 
   useEffect(() => {
     let current = true;
-    setSavedInput(undefined);
-    setSavedOutput(undefined);
-    setKeys(null);
-    setVoices(null);
-    setLoadError(null);
+    const background = reload.start();
+    if (!background) {
+      setSavedInput(undefined);
+      setSavedOutput(undefined);
+      setKeys(null);
+      setVoices(null);
+      setLoadError(null);
+    }
     void Promise.all([
       client.getVoiceInputSettings(),
       client.getVoiceOutputSettings(),
@@ -1518,23 +1602,22 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     ]).then(
       ([inputSettings, outputSettings, loadedKeys, loadedVoices]) => {
         if (!current) return;
-        setSavedInput(inputSettings);
-        setInput(inputSettings ?? defaultVoiceInput);
-        setSavedOutput(outputSettings);
-        setOutput(outputSettings ?? defaultVoiceOutput(loadedVoices));
-        setOutputProvider(outputSettings?.api_key || !outputSettings?.elevenlabs?.api_key
-          ? 'fishaudio' : 'elevenlabs');
-        setKeys(loadedKeys);
-        setVoices(loadedVoices);
+        setLoadError(null);
+        reload.loaded({
+          input: inputSettings,
+          output: outputSettings,
+          keys: loadedKeys,
+          voices: loadedVoices,
+        }, applyVoiceSettings);
       },
       (failure: unknown) => {
-        if (current) setLoadError(publicErrorMessage(
-          failure, 'Voice settings could not be loaded.',
-        ));
+        if (!current) return;
+        setLoadError(publicErrorMessage(failure, 'Voice settings could not be loaded.'));
+        reload.fail(background);
       },
     );
     return () => { current = false; };
-  }, [client, revision]);
+  }, [client, reload.epoch, reload.attempt]);
 
   const inputBaseline = savedInput ?? defaultVoiceInput;
   const outputBaseline = savedOutput ?? defaultVoiceOutput(voices ?? []);
@@ -1552,6 +1635,25 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     || output.default_voice !== outputBaseline.default_voice
     || JSON.stringify(output.elevenlabs) !== JSON.stringify(outputBaseline.elevenlabs);
   const inputReady = Boolean(input.url.trim() && input.model.trim() && input.api_key);
+  reload.markDirty(inputDirty || outputDirty);
+  function resetVoiceInput() {
+    setInputMessage(null);
+    setInputError(null);
+    if (reload.stale) {
+      reload.accept(applyVoiceSettings);
+      return;
+    }
+    setInput(inputBaseline);
+  }
+  function resetVoiceOutput() {
+    setOutputMessage(null);
+    setOutputError(null);
+    if (reload.stale) {
+      reload.accept(applyVoiceSettings);
+      return;
+    }
+    setOutput(outputBaseline);
+  }
   const outputReady = Boolean(
     ((output.url.trim() && output.model.trim() && output.api_key && output.output_format.trim())
       || (output.elevenlabs?.url.trim() && output.elevenlabs.model.trim()
@@ -1598,6 +1700,12 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
       });
       setSavedInput(updatedInput);
       setInput(updatedInput);
+      reload.remember({
+        input: updatedInput,
+        output: savedOutput ?? null,
+        keys: keys ?? [],
+        voices: voices ?? [],
+      });
       setInputMessage('Voice input saved.');
     } catch (failure: unknown) {
       setInputError(publicErrorMessage(failure, 'Voice input could not be saved.'));
@@ -1626,6 +1734,12 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
       });
       setSavedOutput(updatedOutput);
       setOutput(updatedOutput);
+      reload.remember({
+        input: savedInput ?? null,
+        output: updatedOutput,
+        keys: keys ?? [],
+        voices: voices ?? [],
+      });
       setOutputMessage('Voice output saved.');
     } catch (failure: unknown) {
       setOutputError(publicErrorMessage(failure, 'Voice output could not be saved.'));
@@ -1638,7 +1752,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     <section className="cha-screen cha-navigation" aria-label="Voice settings">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
       {(savedInput === undefined || savedOutput === undefined) && !loadError && <p className="cha-state-message" role="status">Loading voice settings…</p>}
-      {loadError && (savedInput === undefined || savedOutput === undefined) && <LoadFailure message={loadError} retry={() => setRevision((value) => value + 1)} />}
+      {loadError && (savedInput === undefined || savedOutput === undefined || reload.refreshFailed) && <LoadFailure message={loadError} retry={reload.retry} />}
       {savedInput !== undefined && savedOutput !== undefined && keys && voices && (
         <>
           {keys.length === 0 && <p className="cha-error-message" role="alert">Add an API key before configuring voice.</p>}
@@ -1656,7 +1770,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
             )}
             {inputMessage && <p className="cha-state-message" role="status">{inputMessage}</p>}
             {inputError && <p className="cha-error-message" role="alert">{inputError}</p>}
-            <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!inputDirty || savingInput} onClick={() => { setInput(inputBaseline); setInputMessage(null); setInputError(null); }} type="button">Reset voice input</button><button className="cha-button cha-button-primary" disabled={!inputDirty || !inputReady || savingInput} type="submit">{savingInput ? 'Saving…' : 'Save voice input'}</button></div>
+            <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={(!inputDirty && !reload.stale) || savingInput} onClick={resetVoiceInput} type="button">Reset voice input</button><button className="cha-button cha-button-primary" disabled={!inputDirty || !inputReady || savingInput || reload.blocked} type="submit">{savingInput ? 'Saving…' : 'Save voice input'}</button></div>
           </form>
           <form className="cha-settings-form" onSubmit={(event) => void saveOutput(event)}>
             <label>Output provider<select className="cha-form-control" value={outputProvider} onChange={(event) => setOutputProvider(event.target.value as typeof outputProvider)}><option value="fishaudio">FishAudio</option><option value="elevenlabs">ElevenLabs</option></select></label>
@@ -1668,7 +1782,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
             {voices.length === 0 && <p className="cha-error-message" role="alert">Add a voice before configuring voice output.</p>}
             {outputMessage && <p className="cha-state-message" role="status">{outputMessage}</p>}
             {outputError && <p className="cha-error-message" role="alert">{outputError}</p>}
-            <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!outputDirty || savingOutput} onClick={() => { setOutput(outputBaseline); setOutputMessage(null); setOutputError(null); }} type="button">Reset voice output</button><button className="cha-button cha-button-primary" disabled={!outputDirty || !outputReady || savingOutput} type="submit">{savingOutput ? 'Saving…' : 'Save voice output'}</button></div>
+            <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={(!outputDirty && !reload.stale) || savingOutput} onClick={resetVoiceOutput} type="button">Reset voice output</button><button className="cha-button cha-button-primary" disabled={!outputDirty || !outputReady || savingOutput || reload.blocked} type="submit">{savingOutput ? 'Saving…' : 'Save voice output'}</button></div>
           </form>
         </>
       )}
@@ -1748,43 +1862,57 @@ export function VoiceScreen({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [revision, setRevision] = useState(0);
+  const reload = useFormReload(id);
   const preview = useRef<TextToSpeechSession | null>(null);
   const speechConfiguration = useTextToSpeechConfiguration(client);
   const { data: voiceOutput, error: voiceOutputError, retry: retryVoiceOutput } = useLoad(
     client, loadVoiceOutput, 'Voice output settings could not be loaded.',
   );
 
+  function applyVoice(loaded: VoiceDetail) {
+    setDetail(loaded);
+    setDraft(voiceUpdate(loaded));
+    dispatch({
+      type: 'voice-detail-loaded',
+      voiceId: loaded.id,
+      voiceName: loaded.display_name,
+      writable: loaded.writable,
+    });
+  }
+
   useEffect(() => () => preview.current?.stop(), []);
   useEffect(() => {
     let current = true;
-    preview.current?.stop();
-    preview.current = null;
-    setPreviewing(false);
-    setDetail(null);
-    setDraft(null);
-    setError(null);
+    const background = reload.start();
+    if (!background) {
+      preview.current?.stop();
+      preview.current = null;
+      setPreviewing(false);
+      setDetail(null);
+      setDraft(null);
+      setError(null);
+    }
     if (!id) return () => { current = false; };
     void client.listVoices().then(
       (voices) => {
         if (!current) return;
         const loaded = voices.find((voice) => voice.id === id);
-        if (!loaded) return setError('That voice was not found.');
-        setDetail(loaded);
-        setDraft(voiceUpdate(loaded));
-        dispatch({
-          type: 'voice-detail-loaded',
-          voiceId: loaded.id,
-          voiceName: loaded.display_name,
-          writable: loaded.writable,
-        });
+        if (!loaded) {
+          setError('That voice was not found.');
+          reload.fail(background);
+          return;
+        }
+        setError(null);
+        reload.loaded(loaded, applyVoice);
       },
       (failure: unknown) => {
-        if (current) setError(publicErrorMessage(failure, 'Voice settings could not be loaded.'));
+        if (!current) return;
+        setError(publicErrorMessage(failure, 'Voice settings could not be loaded.'));
+        reload.fail(background);
       },
     );
     return () => { current = false; };
-  }, [client, dispatch, id, revision]);
+  }, [client, dispatch, id, reload.epoch, reload.attempt]);
 
   function change<Key extends keyof VoiceUpdate>(key: Key, value: VoiceUpdate[Key]) {
     setDraft((current) => current ? { ...current, [key]: value } : current);
@@ -1839,6 +1967,7 @@ export function VoiceScreen({
       const updated = await client.updateVoice(id, draft);
       setDetail(updated);
       setDraft(voiceUpdate(updated));
+      reload.remember(updated);
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Voice settings could not be saved.'));
     } finally {
@@ -1860,8 +1989,16 @@ export function VoiceScreen({
     }
   }
 
-  const dirty = detail && draft
-    && JSON.stringify(voiceUpdate(detail)) !== JSON.stringify(draft);
+  const dirty = Boolean(detail && draft
+    && JSON.stringify(voiceUpdate(detail)) !== JSON.stringify(draft));
+  reload.markDirty(dirty);
+  function resetVoice() {
+    if (reload.stale) {
+      reload.accept(applyVoice);
+      return;
+    }
+    if (detail) setDraft(voiceUpdate(detail));
+  }
   const disabled = saving || deleting || !detail?.writable;
   const supportsSpeed = draft?.provider !== 'elevenlabs' || voiceOutput?.elevenlabs?.supports_speed !== false;
   return (
@@ -1877,6 +2014,7 @@ export function VoiceScreen({
               const saved = await client.updateVoice(detail.id, { ...voiceUpdate(detail), display_name });
               setDetail(saved);
               setDraft((current) => current && ({ ...current, display_name: saved.display_name }));
+              reload.remember(saved);
               dispatch({ type: 'voice-updated', voiceId: saved.id,
                 voiceName: saved.display_name, writable: saved.writable });
             } finally {
@@ -1887,7 +2025,7 @@ export function VoiceScreen({
       </div>}
       {!id && <p className="cha-state-message">No voice is selected.</p>}
       {id && !detail && !error && <p className="cha-state-message" role="status">Loading voice…</p>}
-      {error && !detail && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {error && (!detail || reload.refreshFailed) && <LoadFailure message={error} retry={reload.retry} />}
       {detail && draft && (
         <form className="cha-settings-form cha-voice-settings-form" onSubmit={(event) => void save(event)}>
           <label htmlFor="cha-voice-description">Description<textarea className="cha-form-control cha-voice-description" disabled={disabled} id="cha-voice-description" onChange={(event) => change('description', event.target.value)} value={draft.description} /></label>
@@ -1908,8 +2046,8 @@ export function VoiceScreen({
           {previewError && <p className="cha-error-message" role="alert">{previewError}</p>}
           {speechConfiguration && <div className="cha-settings-form-actions"><button className="cha-button cha-voice-preview-action" disabled={!previewing && (!previewText.trim() || !draft.elevenlabs_voice_id.trim())} onClick={() => void togglePreview()} type="button">{previewing ? <><StopIcon /> Stop preview</> : <><SpeakerIcon /> Play preview</>}</button></div>}
           <UsedBy empty="Nothing uses this voice." items={detail.used_by} />
-          {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving || deleting} onClick={() => setDraft(voiceUpdate(detail))} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || disabled || !draft.elevenlabs_voice_id.trim()} type="submit">{saving ? 'Saving…' : 'Save voice'}</button></div>
+          {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={(!dirty && !reload.stale) || saving || deleting} onClick={resetVoice} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || disabled || !draft.elevenlabs_voice_id.trim() || reload.blocked} type="submit">{saving ? 'Saving…' : 'Save voice'}</button></div>
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-danger" disabled={saving || deleting || !detail.writable} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete voice'}</button></div>
         </form>
       )}
@@ -1954,7 +2092,12 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
   const [busy, setBusy] = useState<'save' | 'delete' | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
+  const reload = useFormReload('r2');
+
+  function applyR2(loaded: R2StorageDetail | null) {
+    setDetail(loaded);
+    setDraft(r2Draft(loaded));
+  }
 
   async function refreshCapabilities() {
     try {
@@ -1969,22 +2112,25 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
 
   useEffect(() => {
     let current = true;
-    setDetail(undefined);
-    setError(null);
+    const background = reload.start();
+    if (!background) {
+      setDetail(undefined);
+      setError(null);
+    }
     void client.getR2Storage().then(
       (loaded) => {
         if (!current) return;
-        setDetail(loaded);
-        setDraft(r2Draft(loaded));
+        setError(null);
+        reload.loaded(loaded, applyR2);
       },
       (failure: unknown) => {
-        if (current) setError(publicErrorMessage(
-          failure, 'R2 storage credentials could not be loaded.',
-        ));
+        if (!current) return;
+        setError(publicErrorMessage(failure, 'R2 storage credentials could not be loaded.'));
+        reload.fail(background);
       },
     );
     return () => { current = false; };
-  }, [client, revision]);
+  }, [client, reload.epoch, reload.attempt]);
 
   function change(field: keyof R2Draft, value: string) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -1999,6 +2145,14 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
     && draft.access_key_id.trim()
     && (detail || draft.secret_key),
   );
+  reload.markDirty(dirty);
+  function resetR2() {
+    if (reload.stale) {
+      reload.accept(applyR2);
+      return;
+    }
+    setDraft(r2Draft(detail ?? null));
+  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2014,6 +2168,7 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
       });
       setDetail(saved);
       setDraft(r2Draft(saved));
+      reload.remember(saved);
       await refreshCapabilities();
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'R2 storage credentials could not be saved.'));
@@ -2041,15 +2196,15 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
     <section className="cha-screen cha-navigation" aria-label="R2 storage settings">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
       {detail === undefined && !error && <p className="cha-state-message" role="status">Loading R2 storage credentials…</p>}
-      {error && detail === undefined && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {error && (detail === undefined || reload.refreshFailed) && <LoadFailure message={error} retry={reload.retry} />}
       {detail !== undefined && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
         <fieldset disabled={busy !== null}>
           <label>R2 URL<input autoComplete="off" autoFocus className="cha-form-control" onChange={(event) => change('url', event.target.value)} placeholder="https://account.r2.cloudflarestorage.com/bucket" type="url" value={draft.url} /></label>
           <label>Access key ID<input autoComplete="off" className="cha-form-control" onChange={(event) => change('access_key_id', event.target.value)} placeholder="Paste access key ID" value={draft.access_key_id} /></label>
           <label>Secret key<input autoComplete="off" className="cha-form-control" onChange={(event) => change('secret_key', event.target.value)} placeholder={detail ? 'Leave blank to keep the current secret' : 'Paste secret key'} type="password" value={draft.secret_key} /></label>
         </fieldset>
-        {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || busy !== null} onClick={() => setDraft(r2Draft(detail))} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || !valid || busy !== null} type="submit">{busy === 'save' ? 'Saving…' : 'Save R2 credentials'}</button></div>
+        {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
+        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={(!dirty && !reload.stale) || busy !== null} onClick={resetR2} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || !valid || busy !== null || reload.blocked} type="submit">{busy === 'save' ? 'Saving…' : 'Save R2 credentials'}</button></div>
         {detail && <div className="cha-settings-form-actions"><button className="cha-button cha-button-danger" disabled={busy !== null} onClick={() => setConfirming(true)} type="button">{busy === 'delete' ? 'Removing…' : 'Remove R2 credentials'}</button></div>}
       </form>}
       {confirming && <ConfirmDialog confirmLabel="Remove R2 credentials" message="Remove R2 storage credentials from this vault? Database upload and download will stop working." onCancel={() => setConfirming(false)} onConfirm={() => void remove()} title="Remove R2 credentials?" />}
@@ -2095,34 +2250,58 @@ export function ApiKeyScreen({ client, dispatch, state }: SettingsScreenProps) {
   const [busy, setBusy] = useState<'name' | 'value' | 'delete' | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
+  const reload = useFormReload(id);
+
+  function applyKey(loaded: ApiKeyDetail) {
+    setKey(loaded);
+    setReplacement('');
+    dispatch({
+      type: 'api-key-detail-loaded',
+      apiKeyId: loaded.id,
+      apiKeyName: loaded.display_name,
+    });
+  }
+
   useEffect(() => {
     let current = true;
-    setKey(null);
-    setError(null);
+    const background = reload.start();
+    if (!background) {
+      setKey(null);
+      setReplacement('');
+      setError(null);
+    }
     if (!id) return () => { current = false; };
     void client.listApiKeys().then(
       (keys) => {
         if (!current) return;
         const loaded = keys.find((candidate) => candidate.id === id);
-        if (!loaded) return setError('That API key was not found.');
-        setKey(loaded);
-        dispatch({
-          type: 'api-key-detail-loaded',
-          apiKeyId: loaded.id,
-          apiKeyName: loaded.display_name,
-        });
+        if (!loaded) {
+          setError('That API key was not found.');
+          reload.fail(background);
+          return;
+        }
+        setError(null);
+        reload.loaded(loaded, applyKey);
       },
-      (failure: unknown) => { if (current) setError(publicErrorMessage(failure, 'The API key could not be loaded.')); },
+      (failure: unknown) => {
+        if (!current) return;
+        setError(publicErrorMessage(failure, 'The API key could not be loaded.'));
+        reload.fail(background);
+      },
     );
     return () => { current = false; };
-  }, [client, dispatch, id, revision]);
+  }, [client, dispatch, id, reload.epoch, reload.attempt]);
 
   async function replace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!id || !replacement || busy) return;
     setBusy('value'); setError(null);
-    try { const updated = await client.replaceApiKeyValue(id, replacement); setKey(updated); setReplacement(''); }
+    try {
+      const updated = await client.replaceApiKeyValue(id, replacement);
+      setKey(updated);
+      setReplacement('');
+      reload.remember(updated);
+    }
     catch (failure: unknown) { setError(publicErrorMessage(failure, 'The API key value could not be replaced.')); }
     finally { setBusy(null); }
   }
@@ -2133,6 +2312,7 @@ export function ApiKeyScreen({ client, dispatch, state }: SettingsScreenProps) {
     try { await client.deleteApiKey(id); dispatch({ type: 'show-settings-api-keys' }); }
     catch (failure: unknown) { setError(publicErrorMessage(failure, 'The API key could not be removed.')); setBusy(null); }
   }
+  reload.markDirty(replacement !== '');
   return (
     <section className="cha-screen cha-navigation" aria-label="API key settings">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
@@ -2144,6 +2324,7 @@ export function ApiKeyScreen({ client, dispatch, state }: SettingsScreenProps) {
             try {
               const saved = await client.renameApiKey(key.id, displayName);
               setKey(saved);
+              reload.remember(saved);
               dispatch({ type: 'api-key-updated', apiKeyId: saved.id, apiKeyName: saved.display_name });
             } finally {
               setBusy(null);
@@ -2153,11 +2334,11 @@ export function ApiKeyScreen({ client, dispatch, state }: SettingsScreenProps) {
       </div>}
       {!id && <p className="cha-state-message">No API key is selected.</p>}
       {id && !key && !error && <p className="cha-state-message" role="status">Loading API key…</p>}
-      {error && !key && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {error && (!key || reload.refreshFailed) && <LoadFailure message={error} retry={reload.retry} />}
       {key && <form className="cha-settings-form" onSubmit={(event) => void replace(event)}>
-        <fieldset disabled={busy !== null}><label>New API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setReplacement(event.target.value)} placeholder="Paste replacement key" type="password" value={replacement} /></label><div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!replacement || busy !== null} type="submit">{busy === 'value' ? 'Saving…' : 'Save'}</button></div></fieldset>
+        <fieldset disabled={busy !== null}><label>New API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setReplacement(event.target.value)} placeholder="Paste replacement key" type="password" value={replacement} /></label><div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!replacement || busy !== null || reload.blocked} type="submit">{busy === 'value' ? 'Saving…' : 'Save'}</button></div></fieldset>
         <UsedBy empty="Nothing references this key." items={key.used_by} />
-        {error && <p className="cha-error-message" role="alert">{error}</p>}
+        {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
         <div className="cha-settings-form-actions">
           <button className="cha-button cha-button-danger" disabled={busy !== null} onClick={() => setConfirming(true)} type="button">{busy === 'delete' ? 'Removing…' : 'Remove API key'}</button>
         </div>
@@ -2183,57 +2364,110 @@ export function SessionSettingsScreen({ client, dispatch }: SettingsScreenProps)
   const [settings, setSettings] = useState<JevSettings>(defaultJev);
   const [saved, setSaved] = useState<JevSettings | null>(null);
   const [naming, setNaming] = useState<SessionNamingSettings | null>(null);
+  const [namingBaseline, setNamingBaseline] = useState<SessionNamingSettings | null>(null);
   const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
   const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
   const [pending, setPending] = useState(false);
   const [namingPending, setNamingPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [jevError, setJevError] = useState<string | null>(null);
+  const [namingError, setNamingError] = useState<string | null>(null);
+  const jevReload = useFormReload('jev');
+  const namingReload = useFormReload('naming');
+
+  function applyJev(value: { config: JevSettings | null; keys: ApiKeyDetail[] }) {
+    setSaved(value.config);
+    setSettings(value.config ?? defaultJev);
+    setKeys(value.keys);
+  }
+
+  function applyNaming(value: { config: SessionNamingSettings; providers: ProviderSummary[] }) {
+    setNamingBaseline(value.config);
+    setNaming(value.config);
+    setProviders(value.providers);
+  }
+
   useEffect(() => {
     let current = true;
+    const background = jevReload.start();
+    if (!background) setJevError(null);
     void Promise.all([client.getJevSettings(), client.listApiKeys()]).then(([config, apiKeys]) => {
       if (!current) return;
-      setSaved(config); setSettings(config ?? defaultJev); setKeys(apiKeys);
+      setJevError(null);
+      jevReload.loaded({ config, keys: apiKeys }, applyJev);
     }, (failure: unknown) => {
-      if (current) setError(publicErrorMessage(failure, 'Recipient detection settings could not be loaded.'));
-    });
-    void Promise.all([client.getSessionNamingSettings(), client.listProviders()]).then(([config, modelProviders]) => {
       if (!current) return;
-      setNaming(config); setProviders(modelProviders);
-    }, (failure: unknown) => {
-      if (current) setError(publicErrorMessage(failure, 'Session naming settings could not be loaded.'));
+      setJevError(publicErrorMessage(failure, 'Recipient detection settings could not be loaded.'));
+      jevReload.fail(background);
     });
     return () => { current = false; };
-  }, [client]);
+  }, [client, jevReload.epoch, jevReload.attempt]);
+
+  useEffect(() => {
+    let current = true;
+    const background = namingReload.start();
+    if (!background) setNamingError(null);
+    void Promise.all([client.getSessionNamingSettings(), client.listProviders()]).then(([config, modelProviders]) => {
+      if (!current) return;
+      setNamingError(null);
+      namingReload.loaded({ config, providers: modelProviders }, applyNaming);
+    }, (failure: unknown) => {
+      if (!current) return;
+      setNamingError(publicErrorMessage(failure, 'Session naming settings could not be loaded.'));
+      namingReload.fail(background);
+    });
+    return () => { current = false; };
+  }, [client, namingReload.epoch, namingReload.attempt]);
+
   async function save(event: FormEvent) {
     event.preventDefault();
-    setPending(true); setError(null);
+    setPending(true); setJevError(null);
     try {
       const next = await client.saveJevSettings({ ...settings, model: settings.model.trim(), url: settings.url.trim() });
       setSaved(next); setSettings(next);
+      jevReload.remember({ config: next, keys: keys ?? [] });
     } catch (failure: unknown) {
-      setError(publicErrorMessage(failure, 'Recipient detection settings could not be saved.'));
+      setJevError(publicErrorMessage(failure, 'Recipient detection settings could not be saved.'));
     } finally { setPending(false); }
   }
   async function disable() {
-    setPending(true); setError(null);
-    try { await client.disableJev(); setSaved(null); setSettings(defaultJev); }
-    catch (failure: unknown) { setError(publicErrorMessage(failure, 'Recipient detection could not be disabled.')); }
+    setPending(true); setJevError(null);
+    try {
+      await client.disableJev();
+      setSaved(null);
+      setSettings(defaultJev);
+      jevReload.remember({ config: null, keys: keys ?? [] });
+    }
+    catch (failure: unknown) { setJevError(publicErrorMessage(failure, 'Recipient detection could not be disabled.')); }
     finally { setPending(false); }
   }
   async function saveNaming(event: FormEvent) {
     event.preventDefault();
     if (!naming) return;
-    setNamingPending(true); setError(null);
+    setNamingPending(true); setNamingError(null);
     try {
       const next = await client.saveSessionNamingSettings(naming);
+      setNamingBaseline(next);
       setNaming(next);
+      namingReload.remember({ config: next, providers: providers ?? [] });
     } catch (failure: unknown) {
-      setError(publicErrorMessage(failure, 'Session naming settings could not be saved.'));
+      setNamingError(publicErrorMessage(failure, 'Session naming settings could not be saved.'));
     } finally { setNamingPending(false); }
   }
+  const jevDirty = saved === null
+    ? settings.url !== defaultJev.url || settings.model !== defaultJev.model || settings.api_key !== ''
+    : settings.url !== saved.url || settings.model !== saved.model || settings.api_key !== saved.api_key;
+  const namingDirty = namingBaseline !== null && naming !== null && (
+    naming.provider !== namingBaseline.provider
+    || naming.reasoning_effort !== namingBaseline.reasoning_effort
+  );
+  jevReload.markDirty(jevDirty);
+  namingReload.markDirty(namingDirty);
   return <section className="cha-screen cha-navigation" aria-label="Session settings">
     <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings' })} type="button"><ChevronLeftIcon /><span>Settings</span></button>
-    {error && <p className="cha-error-message" role="alert">{error}</p>}
+    {namingError && <p className="cha-error-message" role="alert">{namingError}</p>}
+    {namingReload.refreshFailed && <button className="cha-button cha-button-ghost" onClick={namingReload.retry} type="button">Try again</button>}
+    {jevError && <p className="cha-error-message" role="alert">{jevError}</p>}
+    {jevReload.refreshFailed && <button className="cha-button cha-button-ghost" onClick={jevReload.retry} type="button">Try again</button>}
     {naming && providers && <form className="cha-settings-form" onSubmit={(event) => void saveNaming(event)}>
       <h2 className="cha-settings-section-title">Session naming</h2>
       <label>Provider<select className="cha-form-control" disabled={namingPending}
@@ -2247,7 +2481,7 @@ export function SessionSettingsScreen({ client, dispatch }: SettingsScreenProps)
         <option value="high">High</option><option value="xhigh">Extra high</option>
       </select></label>
       <div className="cha-settings-form-actions"><button className="cha-button cha-button-primary"
-        disabled={namingPending || !providers.some((provider) => provider.id === naming.provider)}
+        disabled={namingPending || namingReload.blocked || !providers.some((provider) => provider.id === naming.provider)}
         type="submit">Save session naming</button></div>
     </form>}
     {keys && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
@@ -2260,7 +2494,7 @@ export function SessionSettingsScreen({ client, dispatch }: SettingsScreenProps)
       </select></label>
       <div className="cha-settings-form-actions">
         <button className="cha-button cha-button-ghost" disabled={pending || !saved} onClick={() => void disable()} type="button">Disable recipient detection</button>
-        <button className="cha-button cha-button-primary" disabled={pending || !settings.url.trim() || !settings.model.trim() || !keys.some((key) => key.id === settings.api_key)} type="submit">Save recipient detection</button>
+        <button className="cha-button cha-button-primary" disabled={pending || jevReload.blocked || !settings.url.trim() || !settings.model.trim() || !keys.some((key) => key.id === settings.api_key)} type="submit">Save recipient detection</button>
       </div>
     </form>}
   </section>;
@@ -2277,23 +2511,34 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
   const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const reload = useFormReload('web-search');
+
+  function applySearch(value: { config: WebSearchSettings; keys: ApiKeyDetail[] }) {
+    setSaved(value.config);
+    setSettings(value.config);
+    setKeys(value.keys);
+  }
 
   useEffect(() => {
     let current = true;
+    const background = reload.start();
+    if (!background) setError(null);
     void Promise.all([
       client.getWebSearchSettings(), client.listApiKeys(),
     ]).then(
       ([config, apiKeys]) => {
-        if (current) {
-          setSaved(config); setSettings(config); setKeys(apiKeys);
-        }
+        if (!current) return;
+        setError(null);
+        reload.loaded({ config, keys: apiKeys }, applySearch);
       },
       (failure: unknown) => {
-        if (current) setError(publicErrorMessage(failure, 'Search API settings could not be loaded.'));
+        if (!current) return;
+        setError(publicErrorMessage(failure, 'Search API settings could not be loaded.'));
+        reload.fail(background);
       },
     );
     return () => { current = false; };
-  }, [client]);
+  }, [client, reload.epoch, reload.attempt]);
 
   const dirty = saved !== null && (
     settings.read_provider !== saved.read_provider
@@ -2302,6 +2547,7 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
     || settings.provider !== saved.provider
     || settings.api_key !== saved.api_key
   );
+  reload.markDirty(dirty);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -2310,6 +2556,7 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
     try {
       const next = await client.saveWebSearchSettings(settings);
       setSaved(next); setSettings(next);
+      reload.remember({ config: next, keys: keys ?? [] });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Search API settings could not be saved.'));
     } finally { setPending(false); }
@@ -2318,6 +2565,7 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
   return <section className="cha-screen cha-navigation" aria-label="Search API">
     <BackToSettings dispatch={dispatch} />
     {error && <p className="cha-error-message" role="alert">{error}</p>}
+    {reload.refreshFailed && <button className="cha-button cha-button-ghost" onClick={reload.retry} type="button">Try again</button>}
     {keys && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
       <label className="cha-checkbox-row"><input checked={settings.tool_enabled} disabled={pending}
         onChange={(event) => setSettings({ ...settings, tool_enabled: event.target.checked })}
@@ -2349,7 +2597,7 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
       </select></label>}
       <div className="cha-settings-form-actions">
         <button className="cha-button cha-button-primary" type="submit"
-          disabled={!dirty || pending
+          disabled={!dirty || pending || reload.blocked
             || (settings.tool_enabled && !keys.some((key) => key.id === settings.api_key))
             || (settings.read_provider === 'firecrawl'
               && !keys.some((key) => key.id === settings.firecrawl_api_key))}>

@@ -2,6 +2,7 @@
 
 #include "storage/not_found_error.h"
 #include "util/logging.h"
+#include "workspace/builtins.h"
 #include "util/owner_wake_signal.h"
 
 #include <algorithm>
@@ -193,9 +194,11 @@ struct SessionRuntime::Impl {
         return next;
     }
 
-    std::shared_ptr<LiveSession> create_session(const FullSessionId& identity) {
+    std::shared_ptr<LiveSession> create_session(
+        const FullSessionId& identity,
+        std::uint64_t epoch) {
         auto session = owner.make_session(identity, next_instance++);
-        OpenedSession opened = opener(identity, notifier);
+        OpenedSession opened = opener(identity, notifier, epoch);
         session->install(std::move(opened));
         return session;
     }
@@ -237,7 +240,7 @@ struct SessionRuntime::Impl {
         }
         publish_live(key);
         try {
-            auto session = create_session(key);
+            auto session = create_session(key, epoch);
             if (stopping_requested.load() || global_maintenance || epoch != context_epoch.load()
                 || maintenance.contains(key)) {
                 session->finalize(stopping_requested.load()
@@ -630,7 +633,7 @@ LiveSessionOpenResult LiveSessionManager::select(
             LiveSessionHandle candidate;
             impl.publish_live(key);
             try {
-                candidate = impl.create_session(key);
+                candidate = impl.create_session(key, epoch);
             } catch (const std::bad_alloc&) {
                 std::terminate();
             } catch (const SessionNotFoundError&) {
@@ -716,6 +719,36 @@ std::uint64_t LiveSessionManager::context_epoch() const {
 
 std::uint64_t LiveSessionManager::bump_context_epoch() {
     return runtime_->impl_->context_epoch.fetch_add(1) + 1;
+}
+
+bool LiveSessionManager::post_maintenance_result(
+    std::uint64_t epoch,
+    FullSessionId welcome,
+    std::string notice) {
+    auto& impl = *runtime_->impl_;
+    if (epoch == 0 || epoch != impl.context_epoch.load()) return false;
+    return impl.enqueue_control(
+        [&impl, epoch, welcome = std::move(welcome), notice = std::move(notice)] {
+            try {
+                if (impl.stopping_requested.load() || epoch != impl.context_epoch.load()) return;
+                for (auto& [identity, session] : impl.sessions) {
+                    if (identity.forum_id == workspace_entrance_id) session->refresh_presentation();
+                    else session->request_shutdown(ShutdownReason::reloading);
+                }
+                if (const auto found = impl.sessions.find(welcome); found != impl.sessions.end()) {
+                    found->second->record_configuration_notice(notice);
+                }
+            } catch (const std::exception& error) {
+                try {
+                    log_error(session_log(welcome, "notice_persistence_failed")
+                        + " reason=" + error.what());
+                } catch (...) {
+                    log_error("configuration notice persistence failed");
+                }
+            } catch (...) {
+                log_error("configuration notice persistence failed");
+            }
+        });
 }
 
 std::optional<LiveSessionOpenResult> LiveSessionManager::try_reattach(

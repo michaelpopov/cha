@@ -1,5 +1,7 @@
 #include "app/application_internal.h"
 
+#include "providers/maintenance.h"
+
 #include "app/settings_operations.h"
 #include "app/vault_operations.h"
 #include "app/workspace_operations.h"
@@ -231,6 +233,13 @@ Application::Impl::Impl(
           command.config_directory / "api-keys.json")),
       openai_auth(std::make_unique<OpenAiOAuth>(
           command.config_directory / "openai-auth.json")),
+      assistant(std::make_unique<AssistantService>(AssistantService::Links{
+          .store = store.get(),
+          .oauth = openai_auth.get(),
+          .lifecycle = &lifecycle_mutex,
+          .stopping = &stopping_flag,
+          .admit = [this](std::uint64_t epoch) { return admit_locked(epoch); },
+      })),
       providers(shared_openai_provider_factory(
           openai_auth.get(), api_keys.get()), {},
           [keys = api_keys.get()](const JevRequestInput& input, const std::atomic_bool& cancelled) {
@@ -261,6 +270,10 @@ Application::Impl::Impl(
               if (config.read_provider == "firecrawl")
                   return read_firecrawl(url, keys->value(config.firecrawl_api_key_id), cancelled);
               throw std::runtime_error("Unsupported page reading provider");
+          },
+          [this](std::string_view name, std::string_view arguments,
+              const MaintenanceContext& context, const std::atomic_bool& cancelled) {
+              return assistant->execute(name, arguments, context, cancelled);
           }) {
     vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{
@@ -285,11 +298,15 @@ Application::Impl::Impl(
         }
     }
 
+    maintenance_prompt = std::make_shared<const std::string>(
+        maintenance_reference(command.chaweb_host));
     auto opener = [this](
                       const FullSessionId& identity,
-                      std::shared_ptr<WakeNotifier> notifier) {
+                      std::shared_ptr<WakeNotifier> notifier,
+                      std::uint64_t epoch) {
         OpenedSession opened = cha::open_session(
-            *sessions, identity, providers, std::move(notifier), *store);
+            *sessions, identity, providers, std::move(notifier), *store,
+            epoch, maintenance_prompt);
         const auto selected_mirror = mirror;
         opened.mirror = [selected_mirror, identity](
                             std::string_view label,
@@ -300,6 +317,7 @@ Application::Impl::Impl(
     };
     live_sessions = std::make_unique<LiveSessionManager>(
         settings, opener);
+    assistant->bind_runtime(*live_sessions, *sessions);
     audio_downloads = std::make_unique<AudioDownloadManager>(
         *sessions, [this] { return current_vault_.get().name; }, true);
     publish_capabilities_locked();
@@ -1451,6 +1469,7 @@ void Application::set_context_changed(ContextChanged callback) {
 }
 
 void Application::request_shutdown() {
+    set_diagnostic_log_verbose(false);
     impl_->stopping_flag = true;
     impl_->state.store(ApplicationState::stopping);
     impl_->speech_proxy.stop();

@@ -1,6 +1,7 @@
 #include "providers/tool_calls.h"
 
 #include <stdexcept>
+#include <string>
 #include <unordered_set>
 
 namespace cha {
@@ -51,6 +52,108 @@ void add_web_read_tool(nlohmann::json& body, ProviderApi api) {
             {"properties", {{"url", {{"type", "string"},
                 {"description", "The absolute HTTP or HTTPS URL of the page to read"}}}}},
             {"required", Json::array({"url"})}, {"additionalProperties", false}}},
+    });
+}
+
+void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
+    using Json = nlohmann::json;
+    const auto nullable_string = [](const char* description) {
+        return Json{
+            {"type", Json::array({"string", "null"})},
+            {"description", description},
+        };
+    };
+    const auto function_parameters = [](Json properties, Json required) {
+        return Json{
+            {"type", "object"},
+            {"properties", std::move(properties)},
+            {"required", std::move(required)},
+            {"additionalProperties", false},
+        };
+    };
+    append_tool(body, api, Json{
+        {"name", "vault_config_list"},
+        {"description", "List vault configuration files in lexical order. "
+            "prefix is a literal directory-boundary prefix, or null for every file. "
+            "This call does not save configuration."},
+        {"strict", true},
+        {"parameters", function_parameters(
+            {{"prefix", nullable_string("Directory-boundary prefix, or null")}},
+            Json::array({"prefix"}))},
+    });
+    append_tool(body, api, Json{
+        {"name", "vault_config_read"},
+        {"description", "Read exact configuration file text from the current snapshot. "
+            "Takes no version. A file is complete or too_large. "
+            "Key files return metadata only. This call does not save configuration."},
+        {"strict", true},
+        {"parameters", function_parameters(
+            {{"paths", Json{
+                {"type", "array"},
+                {"items", Json{{"type", "string"}}},
+                {"description", "Configuration paths to read"}}}},
+            Json::array({"paths"}))},
+    });
+    append_tool(body, api, Json{
+        {"name", "vault_config_apply"},
+        {"description", "apply saves full-file create or replace changes and requires "
+            "the current version plus a non-empty changes array. undo restores the "
+            "previous saved apply, requires the current version, and requires changes null. "
+            "This call saves configuration."},
+        {"strict", true},
+        {"parameters", function_parameters(
+            {
+                {"action", Json{{"type", "string"}, {"enum", Json::array({"apply", "undo"})},
+                    {"description", "apply saves changes. undo restores the previous apply."}}},
+                {"version", Json{{"type", "string"},
+                    {"description", "Current configuration version"}}},
+                {"changes", Json{
+                    {"type", Json::array({"array", "null"})},
+                    {"description", "Full-file changes for apply, or null for undo"},
+                    {"items", Json{
+                        {"type", "object"},
+                        {"properties", {
+                            {"path", Json{{"type", "string"}}},
+                            {"operation", Json{{"type", "string"},
+                                {"enum", Json::array({"create", "replace"})}}},
+                            {"content", Json{{"type", "string"},
+                                {"description", "Complete replacement file text"}}},
+                        }},
+                        {"required", Json::array({"path", "operation", "content"})},
+                        {"additionalProperties", false},
+                    }},
+                }},
+            },
+            Json::array({"action", "version", "changes"}))},
+    });
+    append_tool(body, api, Json{
+        {"name", "assistant_logs"},
+        {"description", "Read recent diagnostic buffer entries. "
+            "minimum_level null means info. contains is a literal substring or null. "
+            "after is an exclusive entry number or null. This call does not save configuration "
+            "and does not change verbosity."},
+        {"strict", true},
+        {"parameters", function_parameters(
+            {
+                {"after", Json{{"type", Json::array({"integer", "null"})},
+                    {"description", "Exclusive entry number, or null"}}},
+                {"minimum_level", nullable_string("Lowest level to return. Usual value is info.")},
+                {"contains", nullable_string("Literal substring, or null")},
+                {"limit", Json{{"type", "integer"},
+                    {"description", "Positive count no greater than the buffer capacity"}}},
+            },
+            Json::array({"after", "minimum_level", "contains", "limit"}))},
+    });
+    append_tool(body, api, Json{
+        {"name", "assistant_logging"},
+        {"description", "Set temporary diagnostic buffer verbosity. "
+            "true enables debug for five minutes. false restores info immediately. "
+            "This call does not save configuration."},
+        {"strict", true},
+        {"parameters", function_parameters(
+            {{"verbose", Json{{"type", "boolean"},
+                {"description", "true enables debug. false restores info."}}}},
+            Json::array({"verbose"}))},
     });
 }
 
@@ -109,12 +212,15 @@ void update_tool_instructions(nlohmann::json& body, ProviderApi api,
 
 GenerationResult tool_call_result(const nlohmann::json& continuation,
     ProviderApi api, bool received_answer, GenerationTokenUsage usage, bool collect_tool_calls,
-    std::string_view no_answer_message, std::string_view finish_reason) {
+    std::string_view no_answer_message, std::string_view finish_reason,
+    std::size_t argument_limit, bool maintenance) {
     GenerationResult result{GenerationOutcome::completed, {}, usage};
     if (!collect_tool_calls) {
         if (received_answer) return result;
         return {GenerationOutcome::protocol_error, std::string(no_answer_message), usage};
     }
+    bool oversized = false;
+    bool saw_call = false;
     try {
         const bool responses = api == ProviderApi::responses;
         auto calls = responses ? continuation
@@ -130,13 +236,28 @@ GenerationResult tool_call_result(const nlohmann::json& continuation,
             const auto& function = responses ? item : item.at("function");
             ToolCall call{item.at(responses ? "call_id" : "id").get<std::string>(),
                 function.at("name").get<std::string>(), function.at("arguments").get<std::string>()};
-            if (call.id.empty() || call.name.empty() || call.arguments.size() > 16384
+            if (call.arguments.size() > argument_limit) {
+                oversized = true;
+                saw_call = true;
+                continue;
+            }
+            if (call.id.empty() || call.name.empty()
                 || !ids.insert(call.id).second || result.tool_calls.size() >= 32)
                 throw std::invalid_argument("Invalid tool call");
+            saw_call = true;
             result.tool_calls.push_back(std::move(call));
         }
     } catch (const std::exception&) {
         return {GenerationOutcome::protocol_error, "Response contained invalid tool calls", usage};
+    }
+    const bool output_limited = maintenance
+        && (finish_reason == "length" || finish_reason == "max_output_tokens");
+    if (saw_call && output_limited) {
+        return {GenerationOutcome::protocol_error,
+            std::string(maintenance_output_limit_message), usage};
+    }
+    if (oversized) {
+        return {GenerationOutcome::protocol_error, "Tool arguments too large", usage};
     }
     if (!result.tool_calls.empty()) {
         if (finish_reason == "length" || finish_reason == "content_filter")

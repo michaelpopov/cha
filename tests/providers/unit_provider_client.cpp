@@ -1,4 +1,5 @@
 #include "providers/provider_client.h"
+#include "providers/maintenance.h"
 #include "support/test_workspace.h"
 #include "workspace/workspace_config_store.h"
 #include "chat/transcript.h"
@@ -2711,6 +2712,252 @@ TEST(ProviderClientTools, RejectsIncompleteChatToolCallsInBothResponseForms) {
             EXPECT_EQ(searches, 0);
         }
     }
+}
+
+Json maintenance_arguments() {
+    return Json{{"prefix", nullptr}};
+}
+
+void expect_maintenance_tools(const Json& body) {
+    ASSERT_TRUE(body.contains("tools"));
+    std::vector<std::string> names;
+    for (const Json& tool : body["tools"]) {
+        EXPECT_EQ(tool["type"], "function");
+        const Json& function = tool.contains("function") ? tool["function"] : tool;
+        names.push_back(function["name"].get<std::string>());
+        EXPECT_NE(tool.value("type", ""), "web_search");
+        EXPECT_NE(tool.value("type", ""), "openrouter:web_search");
+    }
+    EXPECT_EQ(names, (std::vector<std::string>{
+        "vault_config_list", "vault_config_read", "vault_config_apply",
+        "assistant_logs", "assistant_logging"}));
+}
+
+ProviderHttpResponse limited_tool_reply(ProviderApi api, bool stream, Json calls) {
+    auto reply = tool_reply(api, stream, std::move(calls));
+    if (!stream) {
+        auto body = Json::parse(reply.body);
+        if (api == ProviderApi::responses) {
+            body["status"] = "incomplete";
+            body["incomplete_details"] = {{"reason", "max_output_tokens"}};
+        } else {
+            body["choices"][0]["finish_reason"] = "length";
+        }
+        reply.body = body.dump();
+        return reply;
+    }
+    if (api == ProviderApi::responses) {
+        const auto marker = reply.body.rfind("data: ");
+        reply.body.erase(marker);
+        reply.body += "data: " + Json{
+            {"type", "response.incomplete"},
+            {"response", {
+                {"status", "incomplete"},
+                {"incomplete_details", {{"reason", "max_output_tokens"}}},
+            }},
+        }.dump() + "\n\n";
+        return reply;
+    }
+    const auto event = "data: " + Json{{"choices", Json::array({Json{
+        {"delta", Json::object()}, {"finish_reason", "length"}}})}}.dump() + "\n\n";
+    reply.body.insert(reply.body.find("data: [DONE]"), event);
+    return reply;
+}
+
+TEST(ProviderClientTools, MaintenanceTruncationIsNotExecuted) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        for (bool stream : {false, true}) {
+            int calls = 0;
+            ProviderClient client(shared_definition([&] {
+                auto definition = network_definition(80, stream);
+                definition.provider.config.api = api;
+                return definition;
+            }()), nullptr, [&](const ProviderHttpRequest&, const std::atomic_bool&) {
+                return limited_tool_reply(api, stream, Json::array({
+                    search_call(api, "cut", "{oops", "vault_config_list")}));
+            });
+            Transcript transcript;
+            auto input = client_request(transcript, 1, "Repair");
+            input.maintenance_tool = [&](auto, auto, const auto&) {
+                ++calls;
+                return "{}";
+            };
+            const auto result = client.perform(
+                client.prepare(input), [](auto) {}, std::atomic_bool{false});
+            EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error) << result.message;
+            EXPECT_EQ(result.message, std::string(maintenance_output_limit_message));
+            EXPECT_EQ(calls, 0);
+        }
+    }
+}
+
+TEST(ProviderClientTools, MaintenanceRejectsOversizedAndMalformedCalls) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        int calls = 0;
+        ProviderClient client(shared_definition([&] {
+            auto definition = network_definition(80, false);
+            definition.provider.config.api = api;
+            return definition;
+        }()), nullptr, [&](const ProviderHttpRequest&, const std::atomic_bool&) {
+            return tool_reply(api, false, Json::array({search_call(
+                api, "huge", std::string(maintenance_argument_limit + 1, 'x'),
+                "vault_config_list")}));
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Repair");
+        input.maintenance_tool = [&](auto, auto, const auto&) {
+            ++calls;
+            return "{}";
+        };
+        const auto result = client.perform(
+            client.prepare(input), [](auto) {}, std::atomic_bool{false});
+        EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+        EXPECT_EQ(result.message, "Tool arguments too large");
+        EXPECT_EQ(calls, 0);
+    }
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        for (bool stream : {false, true}) {
+            int calls = 0;
+            std::vector<Json> requests;
+            ProviderClient client(shared_definition([&] {
+                auto definition = network_definition(80, stream);
+                definition.provider.config.api = api;
+                return definition;
+            }()), nullptr, [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
+                requests.push_back(Json::parse(request.body));
+                if (requests.size() == 1) {
+                    return tool_reply(api, stream, Json::array({
+                        search_call(api, "bad", "not-json", "vault_config_read")}));
+                }
+                return tool_reply(api, stream, Json::array(), "Corrected.");
+            });
+            Transcript transcript;
+            auto input = client_request(transcript, 2, "Repair");
+            input.maintenance_tool = [&](auto, auto, const auto&) {
+                ++calls;
+                return "{}";
+            };
+            std::string answer;
+            const auto result = client.perform(client.prepare(input), [&](GenerationDelta delta) {
+                if (delta.kind == GenerationDeltaKind::answer) answer += delta.text;
+            }, std::atomic_bool{false});
+            EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(calls, 0);
+            EXPECT_EQ(answer, "Corrected.");
+            const auto& messages = requests.back()[api == ProviderApi::responses ? "input" : "messages"];
+            const auto output = messages.back()[api == ProviderApi::responses ? "output" : "content"].get<std::string>();
+            EXPECT_NE(output.find("invalid_argument"), std::string::npos);
+        }
+    }
+}
+
+TEST(ProviderClientTools, MaintenanceDisablesToolsAfterTwentyFourCalls) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        int calls = 0;
+        std::vector<Json> requests;
+        ProviderClient client(shared_definition([&] {
+            auto definition = network_definition(80, false);
+            definition.provider.config.api = api;
+            return definition;
+        }()), nullptr, [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
+            requests.push_back(Json::parse(request.body));
+            if (requests.size() == 1) {
+                Json batch = Json::array();
+                for (int index = 0; index < maintenance_call_limit; ++index) {
+                    batch.push_back(search_call(
+                        api, "call" + std::to_string(index),
+                        maintenance_arguments().dump(), "vault_config_list"));
+                }
+                return tool_reply(api, false, batch);
+            }
+            return tool_reply(api, false, Json::array(), "Finished from the results.");
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 3, "Repair");
+        input.maintenance_tool = [&](auto, auto, const auto&) {
+            ++calls;
+            return R"({"version":"1","entries":[]})";
+        };
+        const auto result = client.perform(
+            client.prepare(input), [](auto) {}, std::atomic_bool{false});
+        EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(calls, maintenance_call_limit);
+        ASSERT_EQ(requests.size(), 2u);
+        EXPECT_FALSE(requests.back().contains("tools"));
+        EXPECT_NE(requests.back().dump().find("Earlier saved changes stay saved."), std::string::npos);
+    }
+}
+
+TEST(ProviderClientTools, MaintenanceOmitsRequiredWebSearch) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        int web_calls = 0;
+        int maintenance_calls = 0;
+        std::vector<Json> requests;
+        ProviderClient client(shared_definition([&] {
+            auto definition = network_definition(80, false);
+            definition.provider.config.api = api;
+            definition.provider.config.host = "openrouter.ai";
+            definition.provider.config.web_search = WebSearchMode::required;
+            return definition;
+        }()), nullptr, [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
+            requests.push_back(Json::parse(request.body));
+            if (requests.size() == 1) {
+                return tool_reply(api, false, Json::array({
+                    search_call(api, "search"),
+                    search_call(api, "read", R"({"url":"https://example.org"})", "web_read"),
+                    search_call(api, "list", maintenance_arguments().dump(), "vault_config_list"),
+                }));
+            }
+            return tool_reply(api, false, Json::array(), "Local evidence only.");
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 4, "Repair");
+        input.web_search_tool = [&](auto, const auto&) -> std::string {
+            ++web_calls;
+            throw std::runtime_error("web search must not run");
+        };
+        input.web_read_tool = [&](auto, const auto&) -> std::string {
+            ++web_calls;
+            throw std::runtime_error("web read must not run");
+        };
+        input.maintenance_tool = [&](std::string_view name, auto, const auto&) {
+            ++maintenance_calls;
+            EXPECT_EQ(name, "vault_config_list");
+            return R"({"version":"1","entries":[]})";
+        };
+        const auto result = client.perform(
+            client.prepare(input), [](auto) {}, std::atomic_bool{false});
+        EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(web_calls, 0);
+        EXPECT_EQ(maintenance_calls, 1);
+        expect_maintenance_tools(requests.front());
+        const auto& messages = requests.back()[api == ProviderApi::responses ? "input" : "messages"];
+        int unavailable = 0;
+        for (const Json& message : messages) {
+            const auto field = api == ProviderApi::responses ? "output" : "content";
+            if (!message.contains(field) || !message[field].is_string()) continue;
+            if (message[field].get<std::string>().find("Web tools are not available") != std::string::npos) {
+                ++unavailable;
+            }
+        }
+        EXPECT_EQ(unavailable, 2);
+    }
+}
+
+TEST(ProviderClientTools, SubscriptionMaintenanceDoesNotAddAnOutputTokenCap) {
+    SubscriptionOwner owner;
+    OpenAiOAuth oauth = owner.make_connected();
+    CharacterDefinition definition = subscription_definition();
+    definition.provider.config.max_tokens = 32;
+    definition.provider.config.web_search = WebSearchMode::required;
+    ProviderClient client(shared_definition(std::move(definition)), &oauth);
+    Transcript transcript;
+    auto input = client_request(transcript, 5, "Repair");
+    input.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
+    const Json body = Json::parse(client.prepare(input).bytes);
+    EXPECT_FALSE(body.contains("max_output_tokens"));
+    EXPECT_FALSE(body.contains("max_tokens"));
+    expect_maintenance_tools(body);
 }
 
 } // namespace

@@ -1,5 +1,8 @@
 #include "session/session_controller.h"
 
+#include "providers/maintenance.h"
+#include "workspace/builtins.h"
+
 #include "storage/session_label.h"
 #include "util/crypto.h"
 #include "util/logging.h"
@@ -239,13 +242,16 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
-    FullSessionId identity) {
+    FullSessionId identity,
+    std::uint64_t context_epoch,
+    std::shared_ptr<const std::string> maintenance_prompt) {
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(read_workspace),
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id), std::move(database_path),
         session_key, std::move(database_password), providers,
-        std::move(notifier), std::move(restored), {}, std::move(identity)));
+        std::move(notifier), std::move(restored), {}, std::move(identity), {},
+        context_epoch, std::move(maintenance_prompt)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_workspace_for_testing(
@@ -258,7 +264,9 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
     SessionRestore restored,
     ActivationHook before_activation,
     FullSessionId identity,
-    SessionKey session_key) {
+    SessionKey session_key,
+    std::uint64_t context_epoch,
+    std::shared_ptr<const std::string> maintenance_prompt) {
     if (!providers) throw std::invalid_argument("Session controller requires providers");
     Providers& provider = *providers;
     return std::unique_ptr<SessionController>(new SessionController(
@@ -268,7 +276,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
         std::move(database_path), session_key, {}, provider,
         std::move(notifier),
         std::move(restored), std::move(before_activation), std::move(identity),
-        std::move(providers)));
+        std::move(providers), context_epoch, std::move(maintenance_prompt)));
 }
 
 SessionController::SessionController(
@@ -283,7 +291,9 @@ SessionController::SessionController(
     SessionRestore restored,
     ActivationHook before_activation,
     FullSessionId identity,
-    std::shared_ptr<Providers> providers_owner)
+    std::shared_ptr<Providers> providers_owner,
+    std::uint64_t context_epoch,
+    std::shared_ptr<const std::string> maintenance_prompt)
     : read_workspace_(std::move(read_workspace)),
       journal_(std::move(path), session_key, database_password),
       providers_owner_(std::move(providers_owner)),
@@ -291,7 +301,9 @@ SessionController::SessionController(
       notifier_(std::move(notifier)),
       identity_(std::move(identity)),
       default_character_id_(std::move(initial_default_character_id)),
-      before_activation_(std::move(before_activation)) {
+      before_activation_(std::move(before_activation)),
+      context_epoch_(context_epoch),
+      maintenance_prompt_(std::move(maintenance_prompt)) {
     if (!notifier_) throw std::invalid_argument("Session controller requires a wake notifier");
     initialize(std::move(restored), initial_default_persona_id);
 }
@@ -716,8 +728,11 @@ void SessionController::start_generation(
             throw std::logic_error("Generation target has no character definition");
         }
         const auto current = workspace();
+        const bool maintenance = identity_.forum_id == workspace_entrance_id
+            && identity_.session_id == welcome_id
+            && target.id == workspace_assistant_id;
         const auto* character = current->find_character(target.id);
-        const bool tool_requested = character && character->web_search_tool.value_or(
+        const bool tool_requested = !maintenance && character && character->web_search_tool.value_or(
             current->web_search().tool_enabled);
         const bool tool_enabled = tool_requested
             && current->find_api_key(current->web_search().api_key_id) != nullptr;
@@ -725,21 +740,42 @@ void SessionController::start_generation(
             log_warn("On-demand web search is unavailable: no search API key is configured");
         }
         const auto& web = current->web_search();
-        const bool web_tools_allowed = character && character->web_search_tool.value_or(true);
+        const bool web_tools_allowed = !maintenance && character
+            && character->web_search_tool.value_or(true);
         const bool read_requested = web_tools_allowed
             && web.read_provider == "firecrawl";
         const bool read_enabled = read_requested && current->find_api_key(
             web.firecrawl_api_key_id);
         if (read_requested && !read_enabled)
             log_warn("Page reading is unavailable: no reader API key is configured");
+        if (maintenance) {
+            auto copy = std::make_shared<CharacterDefinition>(*definition);
+            copy->provider.config.web_search = WebSearchMode::off;
+            if (maintenance_prompt_ && !maintenance_prompt_->empty()) {
+                if (!copy->system_prompt.empty()) copy->system_prompt += "\n\n";
+                copy->system_prompt += *maintenance_prompt_;
+            }
+            definition = std::move(copy);
+        }
+        const RequestId request_id = next_request_id_++;
         const std::string cache_key = prompt_cache_key(identity_, target.id);
+        std::optional<MaintenanceContext> maintenance_context;
+        if (maintenance) {
+            maintenance_context = MaintenanceContext{
+                .character_id = target.id,
+                .forum_id = identity_.forum_id,
+                .session_id = identity_.session_id,
+                .request_id = request_id,
+                .context_epoch = context_epoch_,
+            };
+        }
         inputs.push_back({
             .character = std::move(definition),
             .generation = {
                 .history = history,
                 .run = {
                     .session = identity_,
-                    .request_id = next_request_id_++,
+                    .request_id = request_id,
                     .target = std::move(target),
                     .author = author,
                     .prompt_text = text,
@@ -750,6 +786,7 @@ void SessionController::start_generation(
             .web_search_tool = tool_enabled
                 ? std::optional<WorkspaceWebSearch>(current->web_search()) : std::nullopt,
             .web_read_tool = read_enabled ? std::optional<WorkspaceWebSearch>(web) : std::nullopt,
+            .maintenance = std::move(maintenance_context),
         });
     }
 
@@ -840,6 +877,7 @@ void SessionController::finish_generation_run(ControllerUpdate& update) {
     generation_->requests[foreground].reset();
     if (shutdown_ || generation_->cancellation_requested
         || foreground + 1 == generation_->requests.size()) {
+        flush_configuration_notices();
         const std::string terminal_notices = generation_->terminal_notices;
         generation_.reset();
         require_snapshot(update);
@@ -855,6 +893,30 @@ void SessionController::finish_generation_run(ControllerUpdate& update) {
         generation_.reset();
         throw;
     }
+}
+
+void SessionController::append_configuration_notice(std::string text) {
+    TranscriptEntry entry = make_notice_entry(next_entry_id_++, std::move(text));
+    persist("record a configuration notice", [this, &entry] {
+        journal_.record_entry(entry);
+    });
+    transcript_.add_entry(std::move(entry));
+}
+
+void SessionController::flush_configuration_notices() {
+    for (std::string& text : pending_notices_) {
+        append_configuration_notice(std::move(text));
+    }
+    pending_notices_.clear();
+}
+
+bool SessionController::record_configuration_notice(std::string text) {
+    if (generation_) {
+        pending_notices_.push_back(std::move(text));
+        return false;
+    }
+    append_configuration_notice(std::move(text));
+    return true;
 }
 
 void SessionController::cancel_generation_requests() noexcept {

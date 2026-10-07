@@ -11,6 +11,7 @@
 #include "workspace/workspace.h"
 
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <stdexcept>
 #include <utility>
@@ -254,6 +255,13 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         cancel_maintenance_locked(notice);
         throw;
     }
+    const auto deadline = std::chrono::steady_clock::now() + maintenance_grace();
+    if (!app.providers.cancel_active_until(deadline)) {
+        cancel_maintenance_locked(notice);
+        return false;
+    }
+    set_diagnostic_log_verbose(false);
+    clear_diagnostic_log();
     return true;
 }
 

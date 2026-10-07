@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 
 import { publicErrorMessage } from '../api/client';
+import { useDetailRefresh } from '../detailRefresh';
 import { ConfirmDialog } from './ConfirmDialog';
 import { CheckIcon, CloseIcon, EditIcon, FileUpIcon, SkullBonesIcon, TextLinesIcon } from './Icons';
 import { TextEditorDialog } from './TextEditorDialog';
@@ -18,14 +19,37 @@ interface EditableTitleProps {
 export function EditableTitle({ available, disabled = false, id, name, onSave, subject }: EditableTitleProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name ?? '');
+  const [blocked, setBlocked] = useState(false);
   const transliteration = useTransliteration<HTMLInputElement>(draft);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const previousId = useRef(id);
+  const previousName = useRef(name);
+  const editingRef = useRef(editing);
+  const draftRef = useRef(draft);
+  const refresh = useDetailRefresh();
+  editingRef.current = editing;
+  draftRef.current = draft;
 
   useEffect(() => {
-    setEditing(false);
+    const priorId = previousId.current;
+    const priorName = previousName.current;
+    previousId.current = id;
+    previousName.current = name;
+    if (priorId !== id) {
+      setEditing(false);
+      setDraft(name ?? '');
+      setBlocked(false);
+      setError(null);
+      return;
+    }
+    if (priorName === name) return;
+    if (editingRef.current && draftRef.current !== (priorName ?? '')) {
+      setBlocked(true);
+      return;
+    }
     setDraft(name ?? '');
-    setError(null);
+    setBlocked(false);
   }, [id, name]);
 
   if (!id || !name) return null;
@@ -35,12 +59,13 @@ export function EditableTitle({ available, disabled = false, id, name, onSave, s
     setDraft(name ?? '');
     setEditing(false);
     setError(null);
+    setBlocked(false);
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const displayName = draft.trim();
-    if (!displayName || saving || disabled) return;
+    if (!displayName || saving || disabled || blocked || refresh.refreshing || refresh.failed) return;
     if (displayName === name) {
       setEditing(false);
       return;
@@ -91,7 +116,7 @@ export function EditableTitle({ available, disabled = false, id, name, onSave, s
       <button
         aria-label={`Save ${lowerSubject} name`}
         className="cha-title-icon-action"
-        disabled={saving || disabled || draft.trim() === ''}
+        disabled={saving || disabled || blocked || refresh.refreshing || refresh.failed || draft.trim() === ''}
         type="submit"
       >
         <CheckIcon />
@@ -177,12 +202,33 @@ interface DetailActionsProps {
 
 // The screen owns the data and mutations; these controls only own their dialogs.
 export function DetailActions({ name, subject, deleteMessage, onDelete, editor }: DetailActionsProps) {
+  const refresh = useDetailRefresh();
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
+  const baseline = useRef<string | null>(null);
+  const textRef = useRef(text);
+  textRef.current = text;
+  const editorValue = editor?.value;
+
+  useEffect(() => {
+    if (textRef.current === null || editorValue === undefined) return;
+    if (editorValue === baseline.current) {
+      setStale(false);
+      return;
+    }
+    if (textRef.current !== baseline.current) {
+      setStale(true);
+      return;
+    }
+    baseline.current = editorValue;
+    setText(editorValue);
+    setStale(false);
+  }, [editorValue]);
 
   async function remove() {
     if (deleting) return;
@@ -199,7 +245,7 @@ export function DetailActions({ name, subject, deleteMessage, onDelete, editor }
   }
 
   async function save() {
-    if (!editor || text === null || saving) return;
+    if (!editor || text === null || saving || stale || refresh.refreshing || refresh.failed) return;
     setSaving(true);
     setEditorError(null);
     try {
@@ -218,7 +264,12 @@ export function DetailActions({ name, subject, deleteMessage, onDelete, editor }
         <button
           aria-label={editor.title}
           className="cha-compact-icon-action"
-          onClick={() => { setText(editor.value); setEditorError(null); }}
+          onClick={() => {
+            baseline.current = editor.value;
+            setStale(false);
+            setText(editor.value);
+            setEditorError(null);
+          }}
           title={editor.title}
           type="button"
         ><TextLinesIcon /></button>
@@ -248,10 +299,11 @@ export function DetailActions({ name, subject, deleteMessage, onDelete, editor }
       {text !== null && editor && <TextEditorDialog
         error={editorError}
         loading={false}
-        onCancel={() => setText(null)}
+        onCancel={() => { setText(null); setStale(false); }}
         onChange={setText}
         onSave={() => void save()}
         ready
+        saveDisabled={stale || refresh.refreshing || refresh.failed}
         saving={saving}
         title={editor.title}
         value={text}

@@ -50,7 +50,7 @@ private:
 };
 
 SessionOpener test_opener(SessionFiles& files) {
-    return [&files](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+    return [&files](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         return test::open_test_session(
             identity, files.path_for(identity), notifier);
     };
@@ -80,7 +80,7 @@ TEST(SessionRetirement, VisitsMoreIdleSessionsThanTheActorLimit) {
     const FullSessionId c{"forum", "c"};
     LiveSessionManager manager(
         native_manager_settings(2),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
             if (identity == b) {
                 std::unique_lock lock(mutex);
                 b_entered = true;
@@ -127,7 +127,7 @@ TEST(SessionRetirement, FailedOpenLeavesPreviousSelection) {
     SessionFiles files;
     auto opener = [&files](
                       const FullSessionId& identity,
-                      std::shared_ptr<WakeNotifier> notifier) {
+                      std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         if (identity.session_id == "missing") {
             throw SessionNotFoundError("missing");
         }
@@ -153,7 +153,7 @@ TEST(SessionRetirement, TimedOutOpenLeavesPreviousSelection) {
     bool entered{};
     bool release{};
     auto opener = [&](const FullSessionId& identity,
-                      std::shared_ptr<WakeNotifier> notifier) {
+                      std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         if (identity.session_id == "slow") {
             std::unique_lock lock(mutex);
             entered = true;
@@ -192,7 +192,7 @@ TEST(SessionRetirement, BusyDeselectedGenerationFinishesThenRetires) {
     auto controls = std::make_shared<test::BackendControls>();
     auto opener = [&files, controls](
                       const FullSessionId& identity,
-                      std::shared_ptr<WakeNotifier> notifier) {
+                      std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         return test::open_scripted_session(
             identity, files.path_for(identity), notifier, controls);
     };
@@ -220,7 +220,7 @@ TEST(SessionRetirement, BusyActorsAtLimitAreNotCancelled) {
     auto controls_b = std::make_shared<test::BackendControls>();
     auto opener = [&files, controls_a, controls_b](
                       const FullSessionId& identity,
-                      std::shared_ptr<WakeNotifier> notifier) {
+                      std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
         return test::open_scripted_session(
             identity,
             files.path_for(identity),

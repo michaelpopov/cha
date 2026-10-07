@@ -82,6 +82,17 @@ bool is_successful_completed_status(std::string_view status) {
     return status.empty() || status == "completed";
 }
 
+// One extra byte keeps an oversized call detectable and unexecuted.
+void bound_function_call_text(Json& item, std::size_t argument_limit) {
+    if (!item.is_object() || item.value("type", "") != "function_call") return;
+    for (const char* field : {"name", "arguments"}) {
+        auto text = item.find(field);
+        if (text == item.end() || !text->is_string()) continue;
+        auto& stored = text->get_ref<std::string&>();
+        if (stored.size() > argument_limit) stored.resize(argument_limit + 1);
+    }
+}
+
 } // namespace
 
 std::string build_responses_request_body(
@@ -164,34 +175,43 @@ std::string build_responses_request_body(
             }
         }
 
-        const char* const web_search_type = is_openrouter_host(config.host)
-            ? "openrouter:web_search"
-            : "web_search";
-        switch (config.web_search) {
-        case WebSearchMode::off:
-            break;
-        case WebSearchMode::automatic:
-            body["tools"] = Json::array({Json{{"type", web_search_type}}});
-            body["tool_choice"] = "auto";
-            break;
-        case WebSearchMode::required:
-            body["tools"] = Json::array({Json{{"type", web_search_type}}});
-            body["tool_choice"] = "required";
-            break;
-        default:
-            throw std::logic_error("Unknown web search mode");
+        if (!input.maintenance_tool) {
+            const char* const web_search_type = is_openrouter_host(config.host)
+                ? "openrouter:web_search"
+                : "web_search";
+            switch (config.web_search) {
+            case WebSearchMode::off:
+                break;
+            case WebSearchMode::automatic:
+                body["tools"] = Json::array({Json{{"type", web_search_type}}});
+                body["tool_choice"] = "auto";
+                break;
+            case WebSearchMode::required:
+                body["tools"] = Json::array({Json{{"type", web_search_type}}});
+                body["tool_choice"] = "required";
+                break;
+            default:
+                throw std::logic_error("Unknown web search mode");
+            }
         }
     }
 
-    if (input.web_search_tool) add_web_search_tool(body, config.api);
-    if (input.web_read_tool) add_web_read_tool(body, config.api);
+    if (input.maintenance_tool) {
+        add_maintenance_tools(body, config.api);
+    } else {
+        if (input.web_search_tool) add_web_search_tool(body, config.api);
+        if (input.web_read_tool) add_web_read_tool(body, config.api);
+    }
     if (input.include_tool_instructions) update_tool_instructions(body, config.api, text_sizes);
     return dump_json(body, "Model request");
 }
 
 ResponsesStreamDecoder::ResponsesStreamDecoder(const GenerationDeltaSink& on_delta,
-    bool collect_tool_calls)
-    : on_delta_(&on_delta), collect_tool_calls_(collect_tool_calls) {
+    bool collect_tool_calls, std::size_t argument_limit, bool maintenance)
+    : on_delta_(&on_delta),
+      collect_tool_calls_(collect_tool_calls),
+      argument_limit_(argument_limit),
+      maintenance_(maintenance) {
 }
 
 void ResponsesStreamDecoder::consume(std::string_view bytes) {
@@ -224,7 +244,8 @@ StreamDecodeResult ResponsesStreamDecoder::finish() {
     }
     return {tool_call_result(output_, ProviderApi::responses,
         received_answer_, usage_, collect_tool_calls_,
-        "Streaming response completed without answer content"), false};
+        "Streaming response completed without answer content", {},
+        argument_limit_, maintenance_), false};
 }
 
 bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
@@ -266,13 +287,34 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
         return true;
     }
 
+    if (type == "response.function_call_arguments.delta") {
+        if (!collect_tool_calls_) return true;
+        saw_function_call_ = true;
+        const auto delta = value.find("delta");
+        if (delta == value.end() || !delta->is_string()) return true;
+        int index = 0;
+        const auto output_index = value.find("output_index");
+        if (output_index != value.end()) {
+            if (!output_index->is_number_integer()) return true;
+            index = output_index->get<int>();
+            if (index < 0) return true;
+        }
+        const std::size_t bytes =
+            argument_bytes_by_index_[index] += delta->get<std::string>().size();
+        if (bytes > argument_limit_) arguments_oversized_ = true;
+        return true;
+    }
+
     if (type == "response.output_item.done") {
         if (!collect_tool_calls_) return true;
         const auto index = value.find("output_index");
         const auto item = value.find("item");
         if (index != value.end() && index->is_number_integer()
             && index->get<int>() >= 0 && item != value.end() && item->is_object()) {
-            output_items_[index->get<int>()] = *item;
+            Json& stored = output_items_[index->get<int>()];
+            stored = *item;
+            if (stored.value("type", "") == "function_call") saw_function_call_ = true;
+            bound_function_call_text(stored, argument_limit_);
         } else if (protocol_error_.empty()) {
             protocol_error_ = "Responses stream contained an invalid output item";
         }
@@ -285,7 +327,10 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
         if (response != value.end() && response->is_object()) {
             usage_ = responses_token_usage(*response);
             const auto output = response->find("output");
-            if (collect_tool_calls_ && output != response->end() && output->is_array()) output_ = *output;
+            if (collect_tool_calls_ && output != response->end() && output->is_array()) {
+                output_ = *output;
+                for (auto& item : output_) bound_function_call_text(item, argument_limit_);
+            }
             const std::string status = first_string_field(*response, "status");
             if (!is_successful_completed_status(status)) {
                 if (protocol_error_.empty()) {
@@ -349,9 +394,15 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
             if (reason.empty()) {
                 reason = first_string_field(value, "reason");
             }
-            protocol_error_ = reason.empty()
-                ? "Responses stream ended incomplete"
-                : "Responses stream ended incomplete: " + reason;
+            if (maintenance_ && saw_function_call_ && reason == "max_output_tokens") {
+                protocol_error_ = std::string(maintenance_output_limit_message);
+            } else if (arguments_oversized_ && saw_function_call_) {
+                protocol_error_ = "Tool arguments too large";
+            } else {
+                protocol_error_ = reason.empty()
+                    ? "Responses stream ended incomplete"
+                    : "Responses stream ended incomplete: " + reason;
+            }
             describe_response_ = false;
         }
         return false;
@@ -382,7 +433,9 @@ void ResponsesStreamDecoder::emit_answer(std::string text) {
 GenerationResult decode_responses_response(
     std::string_view body,
     const GenerationDeltaSink& on_delta,
-    bool collect_tool_calls) {
+    bool collect_tool_calls,
+    std::size_t argument_limit,
+    bool maintenance) {
     Json value;
     try {
         value = Json::parse(body);
@@ -425,6 +478,29 @@ GenerationResult decode_responses_response(
             const auto details = value.find("incomplete_details");
             if (details != value.end() && details->is_object()) {
                 reason = first_string_field(*details, "reason");
+            }
+            bool saw_call = false;
+            bool oversized = false;
+            const auto output = value.find("output");
+            if (output != value.end() && output->is_array()) {
+                for (const Json& item : *output) {
+                    if (!item.is_object() || first_string_field(item, "type") != "function_call") {
+                        continue;
+                    }
+                    saw_call = true;
+                    const auto arguments = item.find("arguments");
+                    if (arguments != item.end() && arguments->is_string()
+                        && arguments->get<std::string>().size() > argument_limit) {
+                        oversized = true;
+                    }
+                }
+            }
+            if (maintenance && saw_call && reason == "max_output_tokens") {
+                return {GenerationOutcome::protocol_error,
+                    std::string(maintenance_output_limit_message), usage};
+            }
+            if (oversized && saw_call) {
+                return {GenerationOutcome::protocol_error, "Tool arguments too large", usage};
             }
             return {
                 GenerationOutcome::protocol_error,
@@ -511,7 +587,9 @@ GenerationResult decode_responses_response(
         }
     }
 
-    return tool_call_result(*output, ProviderApi::responses, received_answer, usage, collect_tool_calls);
+    return tool_call_result(*output, ProviderApi::responses, received_answer, usage,
+        collect_tool_calls, "Response completed without answer content", {},
+        argument_limit, maintenance);
 }
 
 } // namespace cha

@@ -19,7 +19,7 @@ constexpr const char usage[] =
 void use_net_provider(const cha::test::TestWorkspace& workspace, int port) {
     const auto session = workspace.root() / "system/session";
     std::filesystem::create_directories(session);
-    std::ofstream(session / "config.toml") << "naming_provider = \"absent\"\n";
+    std::ofstream(session / "config.toml") << "naming_provider = \"test\"\n";
     workspace.write_provider(
         "remote",
         "host = \"127.0.0.1\"\nport = " + std::to_string(port)
@@ -27,6 +27,8 @@ void use_net_provider(const cha::test::TestWorkspace& workspace, int port) {
               "api = \"chat_completions\"\nstream = false\ntimeout_s = 20\n");
     workspace.write_character_config(
         "display_name = \"Guide\"\nprovider = \"remote\"\n");
+    std::ofstream(workspace.root() / "system" / "assistant" / "character.toml")
+        << "display_name = \"Assistant\"\nprovider = \"remote\"\n";
 }
 
 std::optional<int> parse_port(std::string_view text) {

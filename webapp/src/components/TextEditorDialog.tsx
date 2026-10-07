@@ -10,6 +10,7 @@ export function TextEditorDialog({
   onChange,
   onSave,
   ready,
+  saveDisabled = false,
   saving,
   title,
   value,
@@ -20,6 +21,7 @@ export function TextEditorDialog({
   onChange(value: string): void;
   onSave(): void;
   ready: boolean;
+  saveDisabled?: boolean;
   saving: boolean;
   title: string;
   value: string;
@@ -42,7 +44,7 @@ export function TextEditorDialog({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (ready && !loading && !saving) onSave();
+    if (ready && !loading && !saving && !saveDisabled) onSave();
   }
 
   return createPortal(
@@ -90,7 +92,7 @@ export function TextEditorDialog({
           </button>
           <button
             className="cha-button cha-button-primary"
-            disabled={!ready || loading || saving}
+            disabled={!ready || loading || saving || saveDisabled}
             type="submit"
           >
             {saving ? 'Saving…' : 'Save'}
