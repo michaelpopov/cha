@@ -2949,8 +2949,24 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PublicationFailureAfterApplyRequiresRest
         FAIL() << "expected restart-required publication failure";
     } catch (const WorkspaceRestartRequiredError&) {
     }
-    EXPECT_NE(
-        stored_config(database(), path).find("legacy_flag"), std::string::npos);
+    const std::string committed = stored_config(database(), path);
+    EXPECT_NE(committed.find("legacy_flag"), std::string::npos);
+
+    // Later calls write nothing. They return the error instead of throwing it,
+    // because a thrown restart error means a committed write.
+    const auto later = store->apply_config(
+        0,
+        std::vector<WorkspaceConfigChange>{{
+            .path = path,
+            .operation = WorkspaceConfigOperation::replace,
+            .content = committed + "other_flag = true\n",
+        }});
+    EXPECT_FALSE(later.committed);
+    EXPECT_EQ(later.error, WorkspaceConfigApplyError::restart_required);
+    const auto undo = store->undo_config(0);
+    EXPECT_FALSE(undo.committed);
+    EXPECT_EQ(undo.error, WorkspaceConfigApplyError::restart_required);
+    EXPECT_EQ(stored_config(database(), path), committed);
 }
 
 void expect_package_seed_subscription(const ModelBackendConfig& config) {

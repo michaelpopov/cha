@@ -1533,16 +1533,22 @@ struct WorkspaceConfigStore::Impl {
         return result;
     }
 
-    WorkspaceConfigApplyResult apply_config(
+    // Checks shared by apply and undo before they read the committed rows.
+    std::optional<WorkspaceConfigApplyResult> refuse_batch(
         WorkspaceConfigRevision version,
-        std::span<const WorkspaceConfigChange> changes,
-        const WorkspaceConfigCancelCheck& check) {
+        const WorkspaceConfigCancelCheck& check,
+        std::string_view action) const {
         if (cancelled(check)) {
             return failed(
                 WorkspaceConfigApplyError::cancelled,
-                "Configuration apply was cancelled");
+                "Configuration " + std::string(action) + " was cancelled");
         }
-        require_open();
+        // A restart error thrown after this check always means a committed write.
+        if (restart_required) {
+            return failed(
+                WorkspaceConfigApplyError::restart_required,
+                "Configuration is unavailable. Restart is required");
+        }
         const std::shared_ptr<const Workspace> published = snapshot();
         if (!published || published->root() != tree->workspace()) {
             fail_path(
@@ -1553,12 +1559,90 @@ struct WorkspaceConfigStore::Impl {
                 WorkspaceConfigApplyError::stale_version,
                 "Configuration version is stale");
         }
+        return std::nullopt;
+    }
+
+    struct Candidate {
+        std::vector<ConfigFile> rows;
+        std::shared_ptr<const Workspace> workspace;
+        LoadWarningCollector warnings;
+    };
+
+    // Validates the row names and loads the candidate. Returns a failure, or
+    // nothing when the candidate loaded. A bad row name is the caller's path
+    // for apply, but stored data for undo, so each caller names its error.
+    std::optional<WorkspaceConfigApplyResult> load_candidate(
+        const TextFiles& files,
+        WorkspaceConfigApplyError row_error,
+        Candidate& candidate) const {
+        for (const auto& [name, content] : files) {
+            candidate.rows.push_back({name, content});
+        }
+        try {
+            validate_config_rows(candidate.rows);
+        } catch (const std::runtime_error& error) {
+            return failed(
+                row_error,
+                sanitize_config_error(error.what(), tree->workspace()));
+        }
+        try {
+            candidate.workspace = std::make_shared<const Workspace>(
+                Workspace::load(tree->workspace(), files, &candidate.warnings));
+        } catch (const std::runtime_error& error) {
+            return failed(
+                WorkspaceConfigApplyError::validation_failure,
+                sanitize_config_error(error.what(), tree->workspace()));
+        }
+        if (consume_runtime_fault(WorkspaceConfigFault::validation)) {
+            fail_path("Forced configuration validation failure");
+        }
+        return std::nullopt;
+    }
+
+    // Commits a loaded candidate. Reports only warnings from changed paths.
+    WorkspaceConfigApplyResult commit_candidate(
+        const std::vector<ConfigFile>& committed_rows,
+        Candidate candidate,
+        std::vector<WorkspaceConfigChangedPath> changed,
+        const WorkspaceConfigCancelCheck& check,
+        std::string_view action,
+        UndoUpdate undo_update,
+        std::optional<UndoRecord> new_undo = {}) {
+        std::set<std::string> changed_paths;
+        for (const auto& item : changed) changed_paths.insert(item.path);
+        std::vector<LoadWarning> warnings;
+        for (const LoadWarning& warning : candidate.warnings) {
+            if (changed_paths.contains(warning.path)) warnings.push_back(warning);
+        }
+        if (cancelled(check)) {
+            return failed(
+                WorkspaceConfigApplyError::cancelled,
+                "Configuration " + std::string(action) + " was cancelled");
+        }
+        commit_and_publish(
+            committed_rows, candidate.rows, std::move(candidate.workspace), {},
+            undo_update, std::move(new_undo));
+        return {
+            .committed = true,
+            .revision = revision,
+            .changed = std::move(changed),
+            .warnings = std::move(warnings),
+            .undo_available = undo_is_available(),
+        };
+    }
+
+    WorkspaceConfigApplyResult apply_config(
+        WorkspaceConfigRevision version,
+        std::span<const WorkspaceConfigChange> changes,
+        const WorkspaceConfigCancelCheck& check) {
+        if (auto refused = refuse_batch(version, check, "apply")) return *refused;
         if (changes.empty()) {
             return failed(
                 WorkspaceConfigApplyError::invalid_argument,
                 "Configuration apply requires at least one change");
         }
 
+        const std::shared_ptr<const Workspace> published = snapshot();
         const std::string provider = assistant_provider_id(*published);
         std::set<std::string> seen;
         std::size_t total_bytes = 0;
@@ -1644,38 +1728,19 @@ struct WorkspaceConfigStore::Impl {
             };
         }
 
-        std::vector<ConfigFile> rows;
-        for (const auto& [name, content] : files) {
-            rows.push_back({name, content});
+        Candidate candidate;
+        if (auto failure = load_candidate(
+                files, WorkspaceConfigApplyError::invalid_path, candidate)) {
+            return *failure;
         }
-        try {
-            validate_config_rows(rows);
-        } catch (const std::runtime_error& error) {
-            return failed(
-                WorkspaceConfigApplyError::invalid_path,
-                sanitize_config_error(error.what(), tree->workspace()));
-        }
-
-        LoadWarningCollector collected;
-        std::shared_ptr<const Workspace> candidate;
-        try {
-            candidate = std::make_shared<const Workspace>(
-                Workspace::load(tree->workspace(), files, &collected));
-        } catch (const std::runtime_error& error) {
-            return failed(
-                WorkspaceConfigApplyError::validation_failure,
-                sanitize_config_error(error.what(), tree->workspace()));
-        }
-        if (consume_runtime_fault(WorkspaceConfigFault::validation)) {
-            fail_path("Forced configuration validation failure");
-        }
-        if (!entities_preserved(*published, *candidate)) {
+        if (!entities_preserved(*published, *candidate.workspace)) {
             return failed(
                 WorkspaceConfigApplyError::invalid_argument,
                 "Configuration changes cannot remove existing entities or memberships");
         }
         const auto base_pairs = credential_destination_pairs(*published, committed_rows);
-        const auto next_pairs = credential_destination_pairs(*candidate, rows);
+        const auto next_pairs =
+            credential_destination_pairs(*candidate.workspace, candidate.rows);
         for (const auto& pair : next_pairs) {
             if (!base_pairs.contains(pair)) {
                 return failed(
@@ -1684,52 +1749,20 @@ struct WorkspaceConfigStore::Impl {
             }
         }
 
-        std::set<std::string> changed_paths;
-        for (const auto& item : changed) changed_paths.insert(item.path);
-        std::vector<LoadWarning> warnings;
-        for (const LoadWarning& warning : collected) {
-            if (changed_paths.contains(warning.path)) warnings.push_back(warning);
-        }
-
-        if (cancelled(check)) {
-            return failed(
-                WorkspaceConfigApplyError::cancelled,
-                "Configuration apply was cancelled");
-        }
-
         record.resulting_revision = revision + 1;
-        const UndoUpdate undo_update =
-            created_file ? UndoUpdate::clear : UndoUpdate::install;
-        commit_and_publish(
-            committed_rows, rows, std::move(candidate), {}, undo_update,
-            created_file ? std::nullopt : std::optional<UndoRecord>(std::move(record)));
-        return {
-            .committed = true,
-            .revision = revision,
-            .changed = std::move(changed),
-            .warnings = std::move(warnings),
-            .undo_available = undo_is_available(),
-        };
+        if (created_file) {
+            return commit_candidate(
+                committed_rows, std::move(candidate), std::move(changed), check,
+                "apply", UndoUpdate::clear);
+        }
+        return commit_candidate(
+            committed_rows, std::move(candidate), std::move(changed), check,
+            "apply", UndoUpdate::install, std::move(record));
     }
 
     WorkspaceConfigApplyResult undo_config(
         WorkspaceConfigRevision version, const WorkspaceConfigCancelCheck& check) {
-        if (cancelled(check)) {
-            return failed(
-                WorkspaceConfigApplyError::cancelled,
-                "Configuration undo was cancelled");
-        }
-        require_open();
-        const std::shared_ptr<const Workspace> published = snapshot();
-        if (!published || published->root() != tree->workspace()) {
-            fail_path(
-                "Runtime configuration store has no matching loaded workspace");
-        }
-        if (version != revision) {
-            return failed(
-                WorkspaceConfigApplyError::stale_version,
-                "Configuration version is stale");
-        }
+        if (auto refused = refuse_batch(version, check, "undo")) return *refused;
         if (!undo_is_available()) {
             return failed(
                 WorkspaceConfigApplyError::unavailable_undo,
@@ -1755,54 +1788,14 @@ struct WorkspaceConfigStore::Impl {
             });
         }
 
-        std::vector<ConfigFile> rows;
-        for (const auto& [name, content] : files) {
-            rows.push_back({name, content});
+        Candidate candidate;
+        if (auto failure = load_candidate(
+                files, WorkspaceConfigApplyError::validation_failure, candidate)) {
+            return *failure;
         }
-        try {
-            validate_config_rows(rows);
-        } catch (const std::runtime_error& error) {
-            return failed(
-                WorkspaceConfigApplyError::validation_failure,
-                sanitize_config_error(error.what(), tree->workspace()));
-        }
-
-        LoadWarningCollector collected;
-        std::shared_ptr<const Workspace> candidate;
-        try {
-            candidate = std::make_shared<const Workspace>(
-                Workspace::load(tree->workspace(), files, &collected));
-        } catch (const std::runtime_error& error) {
-            return failed(
-                WorkspaceConfigApplyError::validation_failure,
-                sanitize_config_error(error.what(), tree->workspace()));
-        }
-        if (consume_runtime_fault(WorkspaceConfigFault::validation)) {
-            fail_path("Forced configuration validation failure");
-        }
-
-        std::set<std::string> changed_paths;
-        for (const auto& item : changed) changed_paths.insert(item.path);
-        std::vector<LoadWarning> warnings;
-        for (const LoadWarning& warning : collected) {
-            if (changed_paths.contains(warning.path)) warnings.push_back(warning);
-        }
-
-        if (cancelled(check)) {
-            return failed(
-                WorkspaceConfigApplyError::cancelled,
-                "Configuration undo was cancelled");
-        }
-
-        commit_and_publish(
-            committed_rows, rows, std::move(candidate), {}, UndoUpdate::clear);
-        return {
-            .committed = true,
-            .revision = revision,
-            .changed = std::move(changed),
-            .warnings = std::move(warnings),
-            .undo_available = false,
-        };
+        return commit_candidate(
+            committed_rows, std::move(candidate), std::move(changed), check,
+            "undo", UndoUpdate::clear);
     }
 };
 

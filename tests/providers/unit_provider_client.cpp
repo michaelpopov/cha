@@ -2999,6 +2999,45 @@ TEST(ProviderClientTools, MaintenanceReplacesOneOversizedResultAndContinues) {
     }
 }
 
+TEST(ProviderClientTools, MaintenanceAnswerBudgetStopsCallsInLaterRounds) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        std::vector<Json> requests;
+        ProviderClient client(shared_definition([&] {
+            auto definition = network_definition(80, false);
+            definition.provider.config.api = api;
+            return definition;
+        }()), nullptr, [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
+            requests.push_back(Json::parse(request.body));
+            if (requests.size() == 1) {
+                Json batch = Json::array();
+                for (int index = 0; index < 3; ++index) {
+                    batch.push_back(search_call(
+                        api, "big" + std::to_string(index), "{}", "assistant_logs"));
+                }
+                return tool_reply(api, false, batch);
+            }
+            // The final request has no tools, but this provider still asks for one.
+            return tool_reply(api, false, Json::array({
+                search_call(api, "late", "{}", "vault_config_apply"),
+            }));
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 8, "Repair");
+        std::vector<std::string> run;
+        input.maintenance_tool = [&](std::string_view name, auto, const auto&) {
+            run.emplace_back(name);
+            return R"({"text":")" + std::string(262000, 'x') + "\"}";
+        };
+        const auto result = client.perform(
+            client.prepare(input), [](auto) {}, std::atomic_bool{false});
+        EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+        EXPECT_EQ(run, (std::vector<std::string>(3, "assistant_logs")));
+        ASSERT_EQ(requests.size(), 2u);
+        EXPECT_FALSE(requests.back().contains("tools"));
+        EXPECT_FALSE(requests.back().contains("tool_choice"));
+    }
+}
+
 TEST(ProviderClientTools, MaintenanceOmitsRequiredWebSearch) {
     for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
         int web_calls = 0;

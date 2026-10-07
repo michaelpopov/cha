@@ -9,6 +9,7 @@ import {
   writeAppRoute,
 } from './state/route';
 import type { AppAction, AppState } from './state/view';
+import { welcomeSnapshot, welcomeSubmission, type WelcomeTurn } from './welcomeTurn';
 
 // Owns everything a navigation can invalidate: the address bar, the epoch
 // marking which conversation the reader is on, and the open/subscribe/recover/
@@ -135,7 +136,7 @@ export function useLiveSession(
   ) => void>(() => undefined);
   const entranceForumId = useRef<string | null>(null);
   entranceForumId.current = state.bootstrap?.entrance_forum_id ?? null;
-  const welcomeTurn = useRef<{ key: string; active: boolean; pending: boolean } | null>(null);
+  const welcomeTurn = useRef<WelcomeTurn | null>(null);
   const welcomeRefresh = useRef(onWelcomeRefresh);
   welcomeRefresh.current = onWelcomeRefresh;
 
@@ -147,26 +148,14 @@ export function useLiveSession(
 
   const noteWelcomeSnapshot = useCallback((forumId: string, sessionId: string, active: boolean) => {
     if (!isWelcome(forumId, sessionId)) return false;
-    const key = `${forumId}/${sessionId}`;
-    const prior = welcomeTurn.current;
-    const ended = prior?.key === key && !active && (prior.active || prior.pending);
-    welcomeTurn.current = {
-      key,
-      active,
-      pending: active && prior?.key === key ? prior.pending : false,
-    };
-    return ended;
+    const next = welcomeSnapshot(welcomeTurn.current, `${forumId}/${sessionId}`, active);
+    welcomeTurn.current = next.turn;
+    return next.ended;
   }, [isWelcome]);
 
   const noteWelcomeSubmission = useCallback((forumId: string, sessionId: string) => {
     if (!isWelcome(forumId, sessionId)) return;
-    const key = `${forumId}/${sessionId}`;
-    const prior = welcomeTurn.current;
-    welcomeTurn.current = {
-      key,
-      active: prior?.key === key ? prior.active : false,
-      pending: true,
-    };
+    welcomeTurn.current = welcomeSubmission(welcomeTurn.current, `${forumId}/${sessionId}`);
   }, [isWelcome]);
 
   const cancelRetryTimer = useCallback(() => {

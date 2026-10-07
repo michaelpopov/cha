@@ -504,12 +504,16 @@ export function App({
     }
   }, [client]);
 
+  const welcomeRefresh = useRef(0);
   const refreshAfterWelcome = useCallback(async () => {
+    const refresh = ++welcomeRefresh.current;
     setDetailRefreshing(true);
     setDetailFailed(false);
     setDetailEpoch((epoch) => epoch + 1);
     setCatalogRevision((revision) => revision + 1);
     const ok = await refreshBootstrap();
+    // Only the newest refresh ends the refreshing state.
+    if (refresh !== welcomeRefresh.current) return;
     setDetailRefreshing(false);
     if (!ok) setDetailFailed(true);
   }, [refreshBootstrap]);

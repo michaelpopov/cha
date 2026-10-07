@@ -34,6 +34,18 @@ export function useDetailRefresh(): DetailRefreshValue {
   return useContext(DetailRefreshContext);
 }
 
+// Shown while a dirty form holds old data. Loading the new values drops the draft.
+export function StaleNotice({ onReload }: { onReload(): void }) {
+  return (
+    <div className="cha-state-message cha-error-message" role="alert">
+      <p>This item changed. Load the new values to save.</p>
+      <button className="cha-button cha-button-ghost" onClick={onReload} type="button">
+        Load new values
+      </button>
+    </div>
+  );
+}
+
 export function sameDetail(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }

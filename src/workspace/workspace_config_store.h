@@ -140,6 +140,7 @@ enum class WorkspaceConfigApplyError {
     validation_failure,
     too_large,
     cancelled,
+    restart_required,
 };
 
 struct WorkspaceConfigChangedPath {
@@ -329,6 +330,8 @@ public:
     [[nodiscard]] WorkspaceConfigListResult list_config(std::string_view prefix) const;
     [[nodiscard]] WorkspaceConfigReadResult read_config(
         std::span<const std::string> paths) const;
+    // A store that already requires restart returns restart_required. A thrown
+    // WorkspaceRestartRequiredError means that this call committed its rows.
     WorkspaceConfigApplyResult apply_config(
         WorkspaceConfigRevision version,
         std::span<const WorkspaceConfigChange> changes,

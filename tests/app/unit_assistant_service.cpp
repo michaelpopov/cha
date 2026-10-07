@@ -552,6 +552,27 @@ TEST(AssistantService, ExercisesTheFourMaintenanceRecipes) {
     EXPECT_TRUE(quiet["expires_in_ms"].is_null());
 }
 
+TEST(AssistantService, ReportsASaveOnlyWhenThisCallCommitted) {
+    ServiceHarness harness;
+    const std::string original = harness.store().read_config(
+        std::vector<std::string>{kGuide}).files.front().content;
+    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
+    const Json saved = harness.run(
+        "vault_config_apply", replace_change(kGuide, original + "# first\n", "1"));
+    EXPECT_EQ(saved["committed"], true);
+    EXPECT_EQ(saved["restart_required"], true);
+
+    // The store now requires restart. Later calls save nothing and must say so.
+    const Json read = harness.run("vault_config_read", read_arguments(kGuide));
+    EXPECT_EQ(read["committed"], false);
+    EXPECT_EQ(read["error"], "restart_required");
+    const Json later = harness.run(
+        "vault_config_apply", replace_change(kGuide, original + "# second\n", "2"));
+    EXPECT_EQ(later["committed"], false);
+    EXPECT_EQ(later["error"], "restart_required");
+    EXPECT_EQ(later["message"].get<std::string>().find("was saved"), std::string::npos);
+}
+
 TEST(AssistantService, RedactsSecretsAndKeepsOneMultilineLogRecord) {
     ServiceHarness harness;
     harness.store().apply_api_key_create("api_key_1", "Secret", "super-secret-key-value");

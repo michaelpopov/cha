@@ -8,6 +8,7 @@
 #include "util/public_name.h"
 #include "util/text.h"
 #include "util/toml_file.h"
+#include "workspace/builtins.h"
 #include "workspace/workspace.h"
 
 #include <algorithm>
@@ -245,6 +246,11 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         // Reservation may already have stopped one or more actors. Keep
         // old queued work from treating the recovered context as intact.
         publish_epoch(notice, ApplicationState::running);
+        // Welcome's maintenance requests carry the epoch from its opening. If
+        // Welcome is still open, reopen it so that its requests are admitted.
+        app.live_sessions->reload_session(
+            {std::string(entrance_id), std::string(welcome_id)},
+            std::chrono::steady_clock::now() + maintenance_grace());
         return false;
     }
     global_maintenance = std::move(

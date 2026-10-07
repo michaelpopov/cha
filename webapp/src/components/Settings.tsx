@@ -37,7 +37,7 @@ import {
 } from '../textToSpeech';
 import { validateBootstrap } from '../state/bootstrap';
 import type { AppAction, AppState } from '../state/view';
-import { DetailRefreshProvider, useFormReload } from '../detailRefresh';
+import { DetailRefreshProvider, StaleNotice, useFormReload } from '../detailRefresh';
 import { useLoad } from '../useLoad';
 import { voiceClasses } from './characterAppearance';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -733,6 +733,7 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
           {operationError && <p className="cha-error-message" role="alert">{operationError}</p>}
           {!detail.can_delete && <p className="cha-settings-note">{vaultCount === 1 ? 'The last vault cannot be deleted.' : 'Switch to another vault before deleting this one.'}</p>}
           {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
+          {reload.stale && <StaleNotice onReload={() => reload.accept(applyVault)} />}
           {!detail.protected && enableProtection && <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving || deleting} onClick={reset} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!password || saving || deleting || reload.blocked} type="submit">{saving ? 'Protecting…' : 'Protect vault'}</button></div>}
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-danger" disabled={!detail.can_delete || saving || deleting} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete vault'}</button></div>
         </form>
@@ -1213,6 +1214,7 @@ export function ProviderScreen({
           {!detail.writable && <p>This provider is read-only.</p>}
           <UsedBy empty="No characters use this provider." items={detail.used_by} />
           {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
+          {reload.stale && <StaleNotice onReload={() => reload.accept(applyProvider)} />}
           {testSucceeded && <p className="cha-settings-saved" role="status"><span aria-hidden="true" className="cha-settings-status-marker" /> Provider responded successfully.</p>}
           <div className="cha-settings-form-actions">
             <button className="cha-button" disabled={saving || testing || deleting} onClick={() => void runTest()} type="button">{testing ? 'Testing…' : 'Test'}</button>
@@ -1431,6 +1433,7 @@ export function StyleScreen({
           <p className={`cha-style-sample cha-message-text${appearance ? voiceClasses(appearance) : ''}`}>The chief task in life is this…</p>
           <UsedBy empty="Nothing uses this style." items={detail.used_by} />
           {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
+          {reload.stale && <StaleNotice onReload={() => reload.accept(applyStyle)} />}
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={(!dirty && !reload.stale) || saving || deleting} onClick={resetStyle} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || saving || deleting || !detail.writable || reload.blocked} type="submit">{saving ? 'Saving…' : 'Save style'}</button></div>
           <div className="cha-settings-form-actions">
             <button className="cha-button cha-button-danger" disabled={saving || deleting || !detail.writable} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete style'}</button>
@@ -1753,6 +1756,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
       {(savedInput === undefined || savedOutput === undefined) && !loadError && <p className="cha-state-message" role="status">Loading voice settings…</p>}
       {loadError && (savedInput === undefined || savedOutput === undefined || reload.refreshFailed) && <LoadFailure message={loadError} retry={reload.retry} />}
+      {reload.stale && <StaleNotice onReload={() => reload.accept(applyVoiceSettings)} />}
       {savedInput !== undefined && savedOutput !== undefined && keys && voices && (
         <>
           {keys.length === 0 && <p className="cha-error-message" role="alert">Add an API key before configuring voice.</p>}
@@ -2047,6 +2051,7 @@ export function VoiceScreen({
           {speechConfiguration && <div className="cha-settings-form-actions"><button className="cha-button cha-voice-preview-action" disabled={!previewing && (!previewText.trim() || !draft.elevenlabs_voice_id.trim())} onClick={() => void togglePreview()} type="button">{previewing ? <><StopIcon /> Stop preview</> : <><SpeakerIcon /> Play preview</>}</button></div>}
           <UsedBy empty="Nothing uses this voice." items={detail.used_by} />
           {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
+          {reload.stale && <StaleNotice onReload={() => reload.accept(applyVoice)} />}
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={(!dirty && !reload.stale) || saving || deleting} onClick={resetVoice} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || disabled || !draft.elevenlabs_voice_id.trim() || reload.blocked} type="submit">{saving ? 'Saving…' : 'Save voice'}</button></div>
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-danger" disabled={saving || deleting || !detail.writable} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete voice'}</button></div>
         </form>
@@ -2204,6 +2209,7 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
           <label>Secret key<input autoComplete="off" className="cha-form-control" onChange={(event) => change('secret_key', event.target.value)} placeholder={detail ? 'Leave blank to keep the current secret' : 'Paste secret key'} type="password" value={draft.secret_key} /></label>
         </fieldset>
         {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
+        {reload.stale && <StaleNotice onReload={() => reload.accept(applyR2)} />}
         <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={(!dirty && !reload.stale) || busy !== null} onClick={resetR2} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || !valid || busy !== null || reload.blocked} type="submit">{busy === 'save' ? 'Saving…' : 'Save R2 credentials'}</button></div>
         {detail && <div className="cha-settings-form-actions"><button className="cha-button cha-button-danger" disabled={busy !== null} onClick={() => setConfirming(true)} type="button">{busy === 'delete' ? 'Removing…' : 'Remove R2 credentials'}</button></div>}
       </form>}
@@ -2339,6 +2345,7 @@ export function ApiKeyScreen({ client, dispatch, state }: SettingsScreenProps) {
         <fieldset disabled={busy !== null}><label>New API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setReplacement(event.target.value)} placeholder="Paste replacement key" type="password" value={replacement} /></label><div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!replacement || busy !== null || reload.blocked} type="submit">{busy === 'value' ? 'Saving…' : 'Save'}</button></div></fieldset>
         <UsedBy empty="Nothing references this key." items={key.used_by} />
         {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
+        {reload.stale && <StaleNotice onReload={() => reload.accept(applyKey)} />}
         <div className="cha-settings-form-actions">
           <button className="cha-button cha-button-danger" disabled={busy !== null} onClick={() => setConfirming(true)} type="button">{busy === 'delete' ? 'Removing…' : 'Remove API key'}</button>
         </div>
@@ -2466,8 +2473,10 @@ export function SessionSettingsScreen({ client, dispatch }: SettingsScreenProps)
     <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings' })} type="button"><ChevronLeftIcon /><span>Settings</span></button>
     {namingError && <p className="cha-error-message" role="alert">{namingError}</p>}
     {namingReload.refreshFailed && <button className="cha-button cha-button-ghost" onClick={namingReload.retry} type="button">Try again</button>}
+    {namingReload.stale && <StaleNotice onReload={() => namingReload.accept(applyNaming)} />}
     {jevError && <p className="cha-error-message" role="alert">{jevError}</p>}
     {jevReload.refreshFailed && <button className="cha-button cha-button-ghost" onClick={jevReload.retry} type="button">Try again</button>}
+    {jevReload.stale && <StaleNotice onReload={() => jevReload.accept(applyJev)} />}
     {naming && providers && <form className="cha-settings-form" onSubmit={(event) => void saveNaming(event)}>
       <h2 className="cha-settings-section-title">Session naming</h2>
       <label>Provider<select className="cha-form-control" disabled={namingPending}
@@ -2566,6 +2575,7 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
     <BackToSettings dispatch={dispatch} />
     {error && <p className="cha-error-message" role="alert">{error}</p>}
     {reload.refreshFailed && <button className="cha-button cha-button-ghost" onClick={reload.retry} type="button">Try again</button>}
+    {reload.stale && <StaleNotice onReload={() => reload.accept(applySearch)} />}
     {keys && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
       <label className="cha-checkbox-row"><input checked={settings.tool_enabled} disabled={pending}
         onChange={(event) => setSettings({ ...settings, tool_enabled: event.target.checked })}

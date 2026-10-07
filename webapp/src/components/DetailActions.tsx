@@ -131,6 +131,11 @@ export function EditableTitle({ available, disabled = false, id, name, onSave, s
         <CloseIcon />
       </button>
       {error && <span className="cha-persona-title-error" role="alert">{error}</span>}
+      {!error && blocked && (
+        <span className="cha-persona-title-error" role="alert">
+          This name changed. Cancel to load the new name.
+        </span>
+      )}
     </form>
   );
 }
@@ -297,7 +302,9 @@ export function DetailActions({ name, subject, deleteMessage, onDelete, editor }
         title={`Delete ${subject.toLowerCase()}?`}
       />}
       {text !== null && editor && <TextEditorDialog
-        error={editorError}
+        error={stale
+          ? 'This text changed. Cancel and open it again to load the new text.'
+          : editorError}
         loading={false}
         onCancel={() => { setText(null); setStale(false); }}
         onChange={setText}

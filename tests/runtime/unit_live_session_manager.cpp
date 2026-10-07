@@ -913,6 +913,46 @@ TEST(LiveSessionManager, MaintenanceResultIgnoresAnOldEpochAndKeepsWelcomeOpen) 
     manager.begin_shutdown();
 }
 
+TEST(LiveSessionManager, ReloadReopensWelcomeWithTheCurrentEpoch) {
+    test::TestWorkspace fixture;
+    const test::WebGraph graph(fixture.root());
+    const SessionOpener open_graph = graph.opener();
+    std::mutex mutex;
+    std::vector<std::uint64_t> welcome_epochs;
+    const FullSessionId welcome{std::string(entrance_id), std::string(welcome_id)};
+    LiveSessionManager manager(manager_settings(3), [&](
+                                   const FullSessionId& identity,
+                                   std::shared_ptr<WakeNotifier> notifier,
+                                   std::uint64_t epoch) {
+        if (identity == welcome) {
+            const std::lock_guard lock(mutex);
+            welcome_epochs.push_back(epoch);
+        }
+        return open_graph(identity, std::move(notifier), epoch);
+    });
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(welcome, 5s)));
+    const StoredSession stored = graph.sessions()->create("lobby", "Ordinary");
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(stored.identity, 5s)));
+    const LiveSessionHandle old_welcome = manager.lookup(welcome);
+    const LiveSessionHandle ordinary = manager.lookup(stored.identity);
+    ASSERT_TRUE(old_welcome);
+    ASSERT_TRUE(ordinary);
+
+    // A failed maintenance reservation publishes a new epoch without stopping sessions.
+    const std::uint64_t epoch = manager.bump_context_epoch();
+    manager.reload_session(welcome, std::chrono::steady_clock::now() + 2s);
+    ASSERT_TRUE(wait_for_finished(old_welcome));
+    EXPECT_NE(ordinary->lifecycle(), LiveSessionState::finished);
+
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(welcome, 5s)));
+    {
+        const std::lock_guard lock(mutex);
+        ASSERT_EQ(welcome_epochs.size(), 2u);
+        EXPECT_EQ(welcome_epochs.back(), epoch);
+    }
+    manager.begin_shutdown();
+}
+
 TEST(LiveSessionManager, ContextPublicationDoesNotWaitAndRejectsOldQueuedWork) {
     SessionFiles files;
     std::promise<void> entered;

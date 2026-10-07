@@ -118,6 +118,11 @@ public:
         std::uint64_t epoch,
         FullSessionId welcome,
         std::string notice);
+    // Asks one live session to reopen, so that it captures the current epoch.
+    // Waits at most until the deadline for queue space.
+    void reload_session(
+        const FullSessionId& key,
+        std::chrono::steady_clock::time_point deadline);
     [[nodiscard]] std::optional<LiveSessionOpenResult> try_reattach(
         const FullSessionId& key);
     [[nodiscard]] LiveSessionHandle lookup(

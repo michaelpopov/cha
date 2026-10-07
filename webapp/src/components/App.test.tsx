@@ -2594,6 +2594,7 @@ it('keeps a Welcome draft when detail is unchanged and blocks Save when it chang
   emit(false);
   await waitFor(() => expect(save).toBeDisabled());
   expect(style).toHaveValue('mono-large');
+  expect(screen.getByRole('alert')).toHaveTextContent('This item changed. Load the new values to save.');
 
   characterMode = 'fail';
   emit(true);
@@ -2649,4 +2650,69 @@ it('keeps form Save available when only the Welcome bootstrap refresh fails', as
   const style = await screen.findByLabelText('Style');
   await user.selectOptions(style, 'mono-large');
   expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+});
+
+it('keeps form Save disabled until the newest Welcome refresh ends', async () => {
+  const user = userEvent.setup();
+  const events = drivableSessionEvents();
+  const bootstrap = {
+    ...bootstrapFixture,
+    initial_forum_id: 'entrance',
+    initial_session_id: welcomeSessionId,
+    entrance_forum_id: 'entrance',
+  };
+  const pending: Array<(value: typeof bootstrap) => void> = [];
+  let bootstrapCalls = 0;
+  render(<App
+    client={fixtureClient({
+      getBootstrap: () => {
+        bootstrapCalls += 1;
+        if (bootstrapCalls === 1) return Promise.resolve(bootstrap);
+        return new Promise((resolve) => { pending.push(resolve); });
+      },
+      getSessionSnapshot: async () => ({
+        ...snapshotFixture,
+        session_id: welcomeSessionId,
+        discardable: false,
+      }),
+    })}
+    connectSessionEvents={events.connect}
+  />);
+  await waitFor(() => expect(events.handlers).toHaveLength(1));
+  const emit = (active: boolean) => {
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture,
+      session_id: welcomeSessionId,
+      discardable: false,
+      generation: { ...snapshotFixture.generation, active },
+    }));
+  };
+  const resolveAll = async () => {
+    await act(async () => { pending.splice(0).forEach((resolve) => resolve(bootstrap)); });
+  };
+
+  // Opening Welcome starts the first refresh. It stays in flight.
+  emit(false);
+  await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+  const older = pending.splice(0);
+  await openSettingsNavigation();
+  await user.click(await screen.findByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(within(screen.getByLabelText('Forum sessions navigation'))
+    .getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(await screen.findByRole('button', { name: 'Members' }));
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Persona' }), 'guest');
+  const save = screen.getByRole('button', { name: 'Save' });
+  expect(save).toBeDisabled();
+
+  // A Welcome answer ends and starts a second refresh.
+  emit(true);
+  emit(false);
+  await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+
+  // The older refresh ends first. Save waits for the newer one.
+  await act(async () => { older.forEach((resolve) => resolve(bootstrap)); });
+  expect(save).toBeDisabled();
+  await resolveAll();
+  await waitFor(() => expect(save).toBeEnabled());
 });

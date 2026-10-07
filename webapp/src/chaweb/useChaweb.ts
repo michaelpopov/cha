@@ -8,6 +8,7 @@ import {
   type SessionSnapshot,
 } from '../api/client';
 import { welcomeSessionId } from '../state/route';
+import { welcomeSnapshot, welcomeSubmission, type WelcomeTurn } from '../welcomeTurn';
 import { chaWebMessage, type ChaWebBootstrap, type ChaWebClient } from './client';
 import {
   applyAcknowledgement,
@@ -171,7 +172,7 @@ export function useChaweb(client: ChaWebClient) {
   const statusRef = useRef<Status>(emptyStatus);
   const appliedHash = useRef<string | null>(null);
   const targetKey = useRef('');
-  const welcomeTurn = useRef<{ key: string; active: boolean; pending: boolean } | null>(null);
+  const welcomeTurn = useRef<WelcomeTurn | null>(null);
   const readLoop = useRef({
     inflight: null as ReadJob | null,
     queued: false,
@@ -322,27 +323,15 @@ export function useChaweb(client: ChaWebClient) {
 
   function markWelcomePending(forum: string, session: string) {
     if (!welcomeIdentity(forum, session)) return;
-    const key = `${forum}/${session}`;
-    const prior = welcomeTurn.current;
-    welcomeTurn.current = {
-      key,
-      active: prior?.key === key ? prior.active : false,
-      pending: true,
-    };
+    welcomeTurn.current = welcomeSubmission(welcomeTurn.current, `${forum}/${session}`);
   }
 
   function noteWelcomeSnapshot(loaded: SessionSnapshot) {
     if (!welcomeIdentity(loaded.forum.id, loaded.session_id)) return;
-    const key = `${loaded.forum.id}/${loaded.session_id}`;
-    const prior = welcomeTurn.current;
-    const active = loaded.generation.active;
-    const ended = prior?.key === key && !active && (prior.active || prior.pending);
-    welcomeTurn.current = {
-      key,
-      active,
-      pending: active && prior?.key === key ? prior.pending : false,
-    };
-    if (ended) refreshWelcome();
+    const next = welcomeSnapshot(
+      welcomeTurn.current, `${loaded.forum.id}/${loaded.session_id}`, loaded.generation.active);
+    welcomeTurn.current = next.turn;
+    if (next.ended) refreshWelcome();
   }
 
   function applySnapshot(loaded: SessionSnapshot, proves: boolean) {

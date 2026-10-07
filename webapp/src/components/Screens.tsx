@@ -26,7 +26,9 @@ import {
   type TextToSpeechVoice,
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
-import { DetailRefreshProvider, sameDetail, useDetailRefresh, useFormReload } from '../detailRefresh';
+import {
+  DetailRefreshProvider, sameDetail, StaleNotice, useDetailRefresh, useFormReload,
+} from '../detailRefresh';
 import { type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
 import { BackToSettings } from './Settings';
@@ -879,6 +881,11 @@ export function PersonaSettingsScreen({
   const [saving, setSaving] = useState(false);
   const reload = useFormReload(personaId || null);
 
+  function applyPersona(loaded: PersonaDetail) {
+    setDetail(loaded);
+    setStyle(loaded.style);
+  }
+
   useEffect(() => {
     if (!personaId) return;
     let current = true;
@@ -890,10 +897,7 @@ export function PersonaSettingsScreen({
     void client.getPersona(personaId).then(
       (loaded) => {
         if (!current) return;
-        reload.loaded(loaded, (value) => {
-          setDetail(value);
-          setStyle(value.style);
-        });
+        reload.loaded(loaded, applyPersona);
       },
       (failure: unknown) => {
         if (!current) return;
@@ -922,8 +926,7 @@ export function PersonaSettingsScreen({
         style,
       });
       dispatch({ type: 'persona-updated', persona: saved });
-      setDetail(saved);
-      setStyle(saved.style);
+      applyPersona(saved);
       reload.remember(saved);
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Persona settings could not be saved.'));
@@ -978,6 +981,7 @@ export function PersonaSettingsScreen({
               <option value={unresolvedStyle.id}>{unresolvedStyle.label}</option>
             )}
           </select>
+          {reload.stale && <StaleNotice onReload={() => reload.accept(applyPersona)} />}
           <div className="cha-new-session-actions">
             <button
               className="cha-button cha-button-ghost"
@@ -1229,6 +1233,7 @@ export function CharacterSettingsScreen({
             client={client}
             voiceId={voice}
           />
+          {reload.stale && <StaleNotice onReload={() => reload.accept(applyCharacter)} />}
           <div className="cha-new-session-actions">
             <button
               className="cha-button cha-button-ghost"
@@ -1527,27 +1532,32 @@ export function ForumMembersScreen({
     || personaId !== forum.default_persona_id
   );
   dirtyRef.current = dirty;
+  const current = {
+    forumId: forumId ?? null,
+    key: memberKey,
+    persona: forum?.default_persona_id ?? '',
+  };
+
+  // Replaces the draft with the forum's current members and persona.
+  function loadForum() {
+    baseline.current = current;
+    setSelected(new Set(forum?.members.map(({ id }) => id)));
+    setPersonaId(current.persona);
+    setError(null);
+    setStale(false);
+  }
 
   useEffect(() => {
-    const next = {
-      forumId: forumId ?? null,
-      key: memberKey,
-      persona: forum?.default_persona_id ?? '',
-    };
     const previous = baseline.current;
     if (previous
-        && previous.forumId === next.forumId
-        && previous.key === next.key
-        && previous.persona === next.persona) return;
-    if (previous && previous.forumId === next.forumId && dirtyRef.current) {
+        && previous.forumId === current.forumId
+        && previous.key === current.key
+        && previous.persona === current.persona) return;
+    if (previous && previous.forumId === current.forumId && dirtyRef.current) {
       setStale(true);
       return;
     }
-    baseline.current = next;
-    setSelected(new Set(forum?.members.map(({ id }) => id)));
-    setPersonaId(next.persona);
-    setError(null);
-    setStale(false);
+    loadForum();
   }, [forum, forumId, memberKey, refresh.epoch]);
 
   function toggle(characterId: string) {
@@ -1620,6 +1630,7 @@ export function ForumMembersScreen({
             ))}
           </div>
           {error && <p className="cha-error-message" role="alert">{error}</p>}
+          {stale && <StaleNotice onReload={loadForum} />}
           {refresh.failed && (
             <div className="cha-state-message cha-error-message" role="alert">
               <p>Forum members could not be reloaded.</p>

@@ -1,11 +1,12 @@
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { expect, it, vi } from 'vitest';
 
 import { DetailActions, EditableTitle } from './components/DetailActions';
 import {
   DetailRefreshProvider,
+  StaleNotice,
   useFormReload,
   type DetailRefreshValue,
 } from './detailRefresh';
@@ -128,4 +129,83 @@ it('uses only the form refetch for Save, inner controls, and retry', () => {
   act(() => result.current.context.retry());
   expect(retry).not.toHaveBeenCalled();
   expect(result.current.attempt).toBe(1);
+});
+
+function StaleForm({ incoming }: { incoming: string }) {
+  const reload = useFormReload('form');
+  const [saved, setSaved] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const apply = (value: string) => {
+    setSaved(value);
+    setDraft(value);
+  };
+  useEffect(() => {
+    reload.start();
+    reload.loaded(incoming, apply);
+  }, [incoming]);
+  reload.markDirty(saved !== null && draft !== saved);
+  return (
+    <>
+      <input aria-label="Name" onChange={(event) => setDraft(event.target.value)} value={draft} />
+      {reload.stale && <StaleNotice onReload={() => reload.accept(apply)} />}
+      <button type="submit" disabled={reload.blocked}>Save</button>
+    </>
+  );
+}
+
+it('tells a stale form why Save is off and loads the new values on request', async () => {
+  const view = render(<StaleForm incoming="Guide" />);
+  await userEvent.type(screen.getByLabelText('Name'), ' draft');
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+
+  view.rerender(<StaleForm incoming="Mentor" />);
+  expect(screen.getByRole('alert')).toHaveTextContent('This item changed. Load the new values to save.');
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  expect(screen.getByLabelText('Name')).toHaveValue('Guide draft');
+
+  await userEvent.click(screen.getByRole('button', { name: 'Load new values' }));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Name')).toHaveValue('Mentor');
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+});
+
+it('tells a title editor why Save is off when the name changes', async () => {
+  const onSave = vi.fn(async () => {});
+  const title = (name: string) => (
+    <EditableTitle available id="guide" name={name} onSave={onSave} subject="Character" />
+  );
+  const view = render(title('Guide'));
+  await userEvent.click(screen.getByRole('button', { name: 'Rename Guide' }));
+  await userEvent.type(screen.getByLabelText('Character name'), ' draft');
+
+  view.rerender(title('Mentor'));
+  expect(screen.getByRole('alert')).toHaveTextContent('This name changed. Cancel to load the new name.');
+  expect(screen.getByRole('button', { name: 'Save character name' })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel renaming' }));
+  expect(screen.getByRole('button', { name: 'Rename Mentor' })).toBeInTheDocument();
+});
+
+it('tells a text editor why Save is off when the text changes', async () => {
+  const actions = (value: string) => (
+    <DetailActions
+      deleteMessage="Delete this file?"
+      editor={{
+        title: 'Edit character file',
+        uploadLabel: 'Replace character file content from file',
+        value,
+        onSave: async () => {},
+      }}
+      name="CHARACTER.md"
+      onDelete={async () => {}}
+      subject="File"
+    />
+  );
+  const view = render(actions('hello'));
+  await userEvent.click(screen.getByRole('button', { name: 'Edit character file' }));
+  await userEvent.type(screen.getByLabelText('Edit character file text'), ' draft');
+
+  view.rerender(actions('changed'));
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'This text changed. Cancel and open it again to load the new text.');
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
 });

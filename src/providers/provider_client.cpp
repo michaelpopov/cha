@@ -679,9 +679,11 @@ GenerationResult ProviderClient::perform(
                     {"tool_call_id", call.id}, {"content", output}});
             }
         }
+        // A full result budget ends tool use for the whole answer, as the call limit does.
+        if (force_final) tool_calls_used = max_tool_calls;
         // Required provider-hosted search must not force another search forever.
         body["tool_choice"] = "auto";
-        if (tool_calls_used >= max_tool_calls || force_final) {
+        if (tool_calls_used >= max_tool_calls) {
             // Some providers still request calls when tool definitions remain.
             log_debug("Tool limit reached: requesting final answer without tools");
             body.erase("tools");

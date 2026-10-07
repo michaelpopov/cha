@@ -755,6 +755,18 @@ bool LiveSessionManager::post_maintenance_result(
         std::chrono::steady_clock::now() + queue_wait);
 }
 
+void LiveSessionManager::reload_session(
+    const FullSessionId& key,
+    std::chrono::steady_clock::time_point deadline) {
+    auto& impl = *runtime_->impl_;
+    (void)impl.enqueue_control_until([&impl, key] {
+        if (impl.stopping_requested.load() || impl.global_maintenance) return;
+        if (const auto found = impl.sessions.find(key); found != impl.sessions.end()) {
+            found->second->request_shutdown(ShutdownReason::reloading);
+        }
+    }, deadline);
+}
+
 std::optional<LiveSessionOpenResult> LiveSessionManager::try_reattach(
     const FullSessionId& key) {
     auto& impl = *runtime_->impl_;
