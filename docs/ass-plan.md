@@ -1,608 +1,502 @@
-# Assistant configuration maintenance: implementation plan
+# Assistant implementation plan
 
-Status: not implemented. The checkboxes below track proposed work, not work
-completed while writing this plan.
+Status: implementation checklist. No step is marked complete.
 
-The revised [Assistant design](assistant.md) is the source of requirements.
-This plan follows its narrowed Assistant protection, credential-destination
-rule, UI-only Undo, and single embedded configuration reference. If the design
-changes, reconcile this plan before implementation.
+Implement [the Assistant design](assistant.md) for both the desktop application
+and `cha-daemon` through ChaWeb. The design is the source of behavior and limits;
+this plan gives the order of work, code locations, and verification for each
+step. Add focused tests with the step that introduces the behavior.
 
-## 1. Scope and fixed decisions
+Keep the implementation small. Reuse the configuration store, loader, provider
+loop, session runtime, journal, and chat rendering. Add no configuration knobs,
+plugin framework, database migration, file-log reader, automatic repair loop,
+or server-administration API. The only added UI entry is Welcome in ChaWeb.
 
-Implement configuration review and requested repairs directly against the
-active vault. Keep the existing SQLite schema, immutable `Workspace` values,
-and `WorkspaceConfigStore` transaction path.
+## Tool contract
 
-Preserve these decisions throughout implementation:
+Implement exactly these five model tools. All are available only to the
+built-in Assistant in Entrance's Welcome session.
 
-- Expose exactly five model functions: `vault_config_list`,
-  `vault_config_read`, `vault_config_check`, `vault_config_apply`, and
-  `vault_config_help`. Undo is a native operation used by the UI only.
-- Attach tools only to a single-target request for `builtin-assistant` in
-  `builtin-entrance`. Do not attach them to multicast or other forums.
-- Protect `system/assistant/`, every forum's
-  `members/builtin-assistant/`, and Assistant's selected provider definition.
-  Shared styles, voices, defaults, and forum prompts remain editable. Do not
-  restore the earlier design's comparison of Assistant's effective settings.
-- Permit complete file creation and replacement. Do not permit deletion,
-  stable-ID renaming, removal of existing entities, or removal of memberships.
-  Undo has no deletion exception.
-- Reject newly introduced `(destination, key reference)` pairs. Unresolved
-  key references must also participate in this comparison.
-- Use a process-local revision counter and the existing application epoch.
-  Do not add store identities, per-file versions, or a database migration.
-- Unknown configuration fields warn in all loading paths. A native warning
-  does not prevent an otherwise valid save. Assistant is instructed to fix
-  warnings in changed files and check the resulting runtime effects.
-- Reuse the maintainer guide's configuration sections. Leave
-  `resources/application-guide.md` free of configuration-tool instructions.
-- Do not add a shell, MCP service, general tool registry, separate event bus,
-  remote service probes, or persistent edit history.
-
-The scope is independent of other proposed features. Do not make this work
-depend on a headless interface or change unrelated design documents.
-
-## 2. Delivery order
-
-Each step should leave the application buildable and existing behavior tested.
-Add tests with the step that changes the behavior. Keep production request
-attachment disabled until the final integration step; no new user-facing
-feature flag is needed for this development sequence.
-
-| Step | Deliverable | Depends on |
+| Tool | Inputs | Main result |
 | --- | --- | --- |
-| 1 | Unknown-field tolerance in existing loaders | Existing application |
-| 2 | Load diagnostics, configuration revision, and consistent reads | 1 |
-| 3 | Batch preview, protected paths, credential destinations, and effects | 2 |
-| 4 | Atomic apply and replacement-only native Undo | 3 |
-| 5 | Admitted application operations, safe worker callbacks, and runtime effects | 4 |
-| 6 | Five function schemas and bounded provider continuation | 2; native dispatch from 5 for integration |
-| 7 | Embedded operating instructions and maintainer-guide topics | 1; tool contracts from 6 |
-| 8 | Native save results, frontend diff, and Undo control | 5 |
-| 9 | Entrance-only attachment and complete workflow verification | 6, 7, 8 |
+| `vault_config_list` | `prefix` | Paths, sizes, access policy, configuration version. |
+| `vault_config_read` | `paths` | Exact source from one current snapshot and its version; key metadata only. |
+| `vault_config_apply` | `action`, `version`, `changes` | Committed result or error; `action` is `apply` or `undo`. |
+| `assistant_logs` | `after`, `minimum_level`, `contains`, `limit` | Numbered, sanitized buffer entries and current logging state. |
+| `assistant_logging` | `verbose` | Effective level, expiry, and latest entry number. |
 
-The individual components in steps 6 and 7 can be tested with injected
-callbacks and sample workspaces before production attachment. This does not
-authorize publishing an incomplete write workflow.
+Only apply and undo take an input version. Apply validates and saves together.
+Undo uses native saved contents with `changes = null`. All maintenance requests
+exclude web search, page reading, and provider-hosted search.
 
-## 3. Step 1: make unknown fields warnings
+Implement steps 1–9 before enabling the complete maintenance conversation.
+Step 10 makes that same conversation reachable in ChaWeb. Step 11 verifies the
+whole feature and updates documentation to describe implemented behavior.
 
-Primary files:
+## 1. Make unknown and obsolete fields harmless across existing load paths
 
-- `src/workspace/workspace.cpp`
-- `tests/workspace/unit_workspace.cpp`
-- `tests/workspace/unit_workspace_config_store.cpp`
-- Relevant cases in `tests/app/unit_settings_operations.cpp` and
-  `tests/app/unit_application.cpp`
+Work in [workspace.cpp](../src/workspace/workspace.cpp),
+[workspace.h](../src/workspace/workspace.h), and the shared configuration parsers
+they use. This step is independent of Assistant tools and store revisions.
 
-Work:
+- [ ] Where a shared loader rejects harmless unknown, unused, or obsolete
+  fields, ignore them and log a warning. Use the same behavior for startup,
+  import, and manual editing. Keep existing validation of syntax, required
+  values, and references needed by active configuration.
+- [ ] Pass one optional per-load collector through `Workspace::load` and its
+  helpers. Store `(logical path, message)` items with vault-relative paths that
+  match configuration rows. Use a small warning helper that takes the path,
+  appends to the collector when present, and writes the existing `log_warn`
+  message unchanged. Thread it through warning-producing normalizers, including
+  xAI voice input delay. Cover existing web search, session-naming, Jev, and
+  ignored-configuration warnings as well as new unknown-field warnings.
+- [ ] Loads without a collector retain ordinary logging. Do not infer paths
+  from message text, scrape logs, or add another validation subsystem.
 
-- [ ] Replace `reject_unknown_fields` with a clearly named warning helper and
-  update its callers. Check provider, character, member, persona, style,
-  voice, service, and key configuration loaders.
-- [ ] Keep recognized-field type checks, required values, ranges, reference
-  resolution, and template errors intact. An unknown field is ignored; a
-  malformed required field is still an error.
-- [ ] Preserve warning behavior in the optional-service loaders that already
-  tolerate unknown settings. Avoid duplicate warnings for the same condition.
-- [ ] Verify the shared loader behavior through startup, import, and manual
-  settings edits. Do not introduce a tool-only permissive mode.
+Add regression cases to existing suites before connecting the tools:
 
-Validation:
+- `tests/workspace/unit_workspace.cpp`: harmless fields load with warnings and
+  keep known settings unchanged; warning paths are correct, including web search,
+  session naming, Jev, and xAI voice input. Preserve existing log messages.
+- `tests/workspace/unit_workspace_config_store.cpp`: import a configuration
+  with harmless fields, then open/reopen the saved vault successfully. Invalid
+  active configuration still fails without replacing committed data.
+- `tests/app/unit_application.cpp`: startup opens a vault containing those
+  fields and exposes the expected known settings with warnings.
+- `tests/app/unit_settings_operations.cpp`: existing manual editors can save
+  valid changes when the edited or another loaded file has harmless fields;
+  reopening shows the saved values. Invalid active settings still fail without
+  changing committed configuration.
 
-- An extra unused field no longer prevents a valid workspace from loading or
-  being imported and edited.
-- A misspelled optional field warns and leaves its resolved value unchanged.
-- An unknown field cannot supply a missing required value.
-- A referenced invalid provider still fails; an unused invalid definition
-  retains the loader's existing warning/omission behavior.
+## 2. Add configuration revisions and snapshot reads
 
-Done when the change can ship independently of the Assistant tools and the
-affected loader, store, and application tests pass.
+Work in [workspace_config_store.h](../src/workspace/workspace_config_store.h)
+and [workspace_config_store.cpp](../src/workspace/workspace_config_store.cpp).
+Use [builtins.h](../src/workspace/builtins.h) for reserved identities.
 
-## 4. Step 2: diagnostics, revision, and reads
+- [ ] Add a process-local revision and typed list/read results. Read SQLite
+  configuration rows into the existing `TextFiles` representation under the
+  store mutex; return files and their revision from the same snapshot.
+- [ ] Advance the revision whenever committed configuration rows change,
+  including manual settings and credential edits. Advance it on store reopen.
+  Cover writers through the common edit path; transcript writes do not count.
+  Preserve the revision for a byte-identical edit.
+- [ ] List paths in lexical order with a literal directory-boundary prefix.
+  Return path, byte size, readable/writable policy, and a protection reason.
+  Limit a result to 500 entries and report that limit without pagination.
+- [ ] Read requested paths without a prior listing or input version. Report
+  missing paths explicitly. Return source Markdown/TOML, not expanded prompts.
+  Read-only Assistant files remain inspectable.
+- [ ] Return only ID, display name, type, and credential-present status for
+  keys. Never return raw key rows, passwords, OAuth tokens, or key values.
+- [ ] Apply the design's size bounds: 64 KiB per editable file and 256 KiB
+  per call's arguments or results. A file read is complete or `too_large`;
+  never present truncated content as a file ready for replacement.
 
-Primary files:
+Verify in `tests/workspace/unit_workspace_config_store.cpp`: consistent
+snapshots during edits, reads after unrelated saves, missing paths, prefix
+boundaries, explicit limits, key metadata, revisions for all writers and reopen,
+and unchanged revisions after no-ops. Use the existing temporary-vault fixtures.
 
-- `src/workspace/workspace.h` and `workspace.cpp`
-- `src/workspace/workspace_config_store.h` and `.cpp`
-- `src/util/text_source.*` and `src/util/toml_file.*` where diagnostics originate
-- Existing workspace tests
+## 3. Implement atomic apply and native validation
 
-Use small value types for diagnostics, file metadata, and read results. Keep
-them in the workspace layer; add a focused helper file only if the store file
-would otherwise become difficult to read.
+Continue in the store and [workspace.cpp](../src/workspace/workspace.cpp).
+Reuse the in-memory candidate-loading and transaction paths already present;
+do not export configuration or introduce a second parser.
 
-Work:
+- [ ] Accept a nonempty array of full-file `create`/`replace` changes. Reject
+  duplicate paths, unsupported operations, and incorrect create/replace
+  preconditions. Validate canonical stored names and the supported roots from
+  design section 11; extensions alone do not grant write access.
+- [ ] Compare the supplied revision under the store mutex before building the
+  candidate. On conflict, return `stale_version`; do not merge or retry the
+  old proposal. Preserve untouched rows byte for byte.
+- [ ] Reject writes to `system/assistant/`, every Assistant member directory,
+  and Assistant's selected provider, including byte-identical writes. Select
+  the protected provider from the committed workspace. Reject credential,
+  transcript, host-file, deletion, stable-ID rename, and membership-removal
+  operations.
+- [ ] Load the complete candidate through `Workspace::load` using the supplied
+  text map, with no fallback to filesystem content. For proposed edits, verify
+  that existing loaded entity IDs and forum memberships remain present.
+- [ ] Use the warning collector from step 1 for the candidate load. Filter
+  warnings by the paths actually changed and return their paths and messages.
+- [ ] Compare the destination/key-reference pairs described in design section
+  4. Include every credential-bearing service, unresolved references, and
+  legacy key-name resolution. Treat the search provider's `api_key` and
+  Firecrawl's `firecrawl_api_key` as separate destinations. Reject new pairs;
+  do not build a dependency graph.
+- [ ] Before commit, check cancellation and allocate the candidate publication,
+  result, and undo data. Commit all changed rows in one SQLite transaction,
+  then publish the candidate and advance the revision under the existing
+  publication lock. Pre-commit errors change nothing. A post-commit publication
+  failure follows the existing restart-required path and remains a saved change.
+- [ ] Return commit status, version, changed paths with `old_bytes` and
+  `new_bytes`, warnings, and undo availability. Use `old_bytes: null` for
+  creation; compare full contents to identify changes. Distinguish the errors
+  in design section 6 and sanitize error text. A permitted no-op preserves
+  revision and undo.
 
-- [ ] Add an optional per-load warning collector to `Workspace::load` and pass
-  it through the parsing helpers that emit warnings. Calls still write their
-  normal logs. Do not scrape logs, replace the global logger, or use a global
-  active collector.
-- [ ] Retain the loader's message text and first-error behavior. Store the
-  originating logical path with each warning so the batch layer can mark
-  warnings from changed files without guessing from message text.
-- [ ] Normalize diagnostic paths to vault-relative names at the tool boundary.
-  Sanitize parser errors before returning them; do not include a raw source
-  line from a credential file or an absolute host path.
-- [ ] Add a revision counter to `WorkspaceConfigStore::Impl`. Advance it after
-  an actual committed row change in the shared `edit()` path and on reopen.
-  Audit credential writes, default-character updates, merge, and maintenance
-  paths for revision or epoch invalidation.
-- [ ] Return the revision as an opaque string. Read revision, rows, and access
-  metadata under the store lock so they describe the same committed state.
-- [ ] Add list and read methods. List uses a literal directory-boundary prefix,
-  lexical ordering, a 500-entry limit, and an explicit limit indicator. There
-  is no cursor. Read requires the current version and reports missing paths.
-- [ ] Return raw TOML/Markdown source only for allowed readable paths. Supply
-  saved-key ID, name, type, and presence metadata through listing, without raw
-  credential files or R2 access values.
+Verify in the workspace tests using existing fault injection: multi-file
+atomicity, unchanged comments and prompts, invalid paths/references/templates,
+protection before no-op handling, allowed shared settings, and separate-provider
+creation for an ordinary character. Cover new
+credential destinations, unresolved keys, Brave-to-Tavily changes, and a Brave
+key assigned to Firecrawl. Exercise validation, SQLite, and publication failures.
+Check path/byte-size results for creation and replacement, including a
+same-length edit. Verify that warnings from changed files retain their paths
+and warnings from unchanged files stay out of the result.
 
-Validation:
+## 4. Add one native undo record
 
-- A concurrent edit cannot produce a read containing one revision and another
-  revision's file contents. Old read versions fail.
-- Actual form/key/default-character changes advance the revision; transcripts
-  and byte-identical edits do not.
-- Reopen invalidates old reads. Maintenance invalidates calls through the
-  captured application epoch, without adding a second identity mechanism.
-- A list reaching 500 entries reports that fact; a narrower prefix works.
-- Parallel candidate loads do not mix diagnostic lists. Keys never appear in
-  readable source or returned parser diagnostics.
+Keep the record in `WorkspaceConfigStore`; no new table or history service.
 
-Done when inspection and diagnostics work in native tests without model or
-frontend changes.
+- [ ] Save old file bytes and the resulting revision for the latest successful
+  Assistant batch that only replaces files. Allocate the record before commit
+  and install it only after success. A batch creating files clears undo.
+- [ ] Invalidate undo after another configuration change, store/vault reopen,
+  vault switch, or restart. A no-op leaves the record intact.
+- [ ] For `action = "undo"`, require `changes = null`, the supplied current
+  revision, and a native record whose resulting revision matches it. Restore
+  only the record's bytes, run normal candidate loading, and commit atomically.
+- [ ] Do not repeat Assistant-protection, credential-destination, or entity
+  comparisons for undo. The version check and native record identify the exact
+  earlier committed state. Preserve epoch admission and cancellation checks.
+- [ ] Advance the revision and clear the record after successful undo. Return
+  the same result shape as apply. Add no redo, file deletion, or automatic undo
+  after failed verification.
 
-## 5. Step 3: construct and check a candidate batch
+Verify replacement undo, stale/unavailable undo, no undo after creation, and
+repair followed by undo of a broken provider or style omitted by the loader.
+The last case must restore the exact bytes and warning even when that entity
+disappears from the loaded catalogue again. Check the restored paths and byte
+sizes in the undo result.
 
-Primary files:
+## 5. Add the memory log sink and expiry checks
 
-- `src/workspace/workspace_config_store.*`
-- `src/workspace/workspace_config_editor.h` where existing editing helpers help
-- `src/characters/character_config.*` and provider/service helpers as references
-- `tests/workspace/unit_workspace_config_store.cpp`
+Work in [logging.cpp](../src/util/logging.cpp) and
+[logging.h](../src/util/logging.h). Keep session and application types out of
+`util/`; sanitization needing credentials belongs at the application boundary.
 
-Add an internal candidate-building function shared by check, apply, and the
-eligible parts of Undo. It receives the current workspace, current rows, and
-requested changes. It returns the loaded candidate, changed rows, diagnostics,
-native diff, and resolved effects. It does not publish anything.
+- [ ] Add a small sink derived from `spdlog::sinks::base_sink<std::mutex>` with
+  a deque of at most 2,000 entries. Store each entry's number, native level,
+  and text formatted with the existing formatter.
+- [ ] Assign numbers inside `sink_it_()` under the sink mutex, after expiry
+  and level checks. Evict the oldest retained entry when full. Rejected messages
+  do not advance the counter. Add locked `snapshot()` and `clear()` methods;
+  snapshot entries and latest number together, and preserve numbering on clear.
+- [ ] Attach the sink during logger initialization and keep the sink list fixed
+  while writers run. The buffer must exist when file logging is off. Keep file
+  and buffer thresholds independent and the logger threshold permissive enough
+  for either sink.
+- [ ] Route `log_debug_payload` only to the file sink. Keep
+  `debug_logging_enabled()` tied to file payload logging. Preserve the existing
+  file path, format, rotation, configured level, and behavior when disabled.
+- [ ] Keep one `verbose_until` in the buffer sink, protected by its mutex and
+  based on a monotonic clock. Enable debug for five minutes; repeated enable
+  updates expiry; disable restores info. Check expiry on logging and every
+  Assistant tool call. Recheck level inside `sink_it_()` so a pre-lock level
+  check cannot admit expired debug messages. Add no timer or logging notices.
+- [ ] Expose snapshots and effective logging state for the two logging tools.
+  Filter by native severity, literal substring, and exclusive `after`; return
+  the last requested matching entries in chronological order. Enforce a positive
+  limit no greater than capacity and report lost/limited evidence.
+- [ ] At the application boundary, redact available saved key values and OAuth
+  tokens, remove the private workspace root, and enforce result limits. Return
+  one JSON item per log call with ordinary JSON escaping. Do not parse message
+  text as additional entries or trusted records.
 
-### File and entity rules
+Verify in `tests/util/unit_logging.cpp`: independent file/buffer behavior,
+payload exclusion, concurrent insertion/snapshot/clear, eviction and `after`,
+level rejection, stable numbering across clear, and expiry using a controlled
+clock rather than a five-minute wait. Test CR/LF and fake records in warning
+text. Application tests cover redaction and the absence of logging notices.
 
-- [ ] Accept only `create` and `replace`, with one operation per canonical
-  path. Check existence/absence as required by the operation.
-- [ ] Reuse `validate_stored_config_name` and add the design's supported-root
-  allowlist. Reject external app files, secrets, traversal, unsupported
-  extensions, and arbitrary new `system/` areas.
-- [ ] Derive the protected provider path from the committed Assistant
-  definition. Reject direct and forum-member protected paths, including
-  byte-identical writes and creation beneath protected directories.
-- [ ] Apply all changes to a copied `TextFiles` map. Leave every untouched row
-  byte-identical, and load the complete candidate through the existing loader.
-- [ ] Compare existing entity IDs and forum memberships with the candidate.
-  Reject implicit removal, including an edit that causes an existing
-  definition to be ignored. Permit valid new entities and memberships.
-- [ ] Allow an empty check for a review of current configuration. Apply will
-  require at least one requested change.
+## 6. Connect the native service, lifecycle, and runtime effects
 
-### Credential destinations
+Add `src/app/assistant_service.h` and `.cpp`, owned by `Application::Impl`.
+Update [application_internal.h](../src/app/application_internal.h), application
+construction, and `CMakeLists.txt`. Reuse `workspace_operations.*`,
+`settings_operations.*`, `vault_operations.cpp`, and `runtime/live_session*`.
 
-- [ ] Add one explicit helper that collects destination/key pairs from model
-  providers, Jev, voice input, voice output, and web search.
-- [ ] For model providers, use the actual scheme, host, and port selected by
-  native request construction. For Jev and voice input, parse those URL
-  components using the existing URL machinery. Normalize equivalent host
-  spellings and default ports consistently with request construction.
-- [ ] Use fixed service names for voice output and web search, with distinct
-  names for distinct search services. Reuse their existing endpoint constraints.
-- [ ] Resolve a legacy `api_key_env` name to the saved ID when possible, using
-  the same precedence as the request path. Retain unresolved IDs and names as
-  tagged written references, so an absent key cannot bypass the comparison.
-- [ ] Reject any candidate pair absent from the base set with
-  `credential_destination_protected`. Do not equate an unresolved name with an
-  ID merely because their text matches.
-- [ ] Compare configured references even when credentials are currently
-  absent. Check disabled service configurations that can later use those
-  references; do not make missing credentials an authorization exemption.
-- [ ] Do not change manual settings behavior or add an approval override to
-  this tool policy. Undo's restoration exception belongs in step 4.
+- [ ] Give the service typed operations matching the five tools. Delegate file
+  access and transactions to the store and logging to the sink. Translate
+  results without placing application/store types in provider protocol code.
+- [ ] Capture the epoch from `LiveSessionManager::context_epoch()` when the
+  Welcome live session starts, using the epoch admitted for that opening. Pass
+  it through the session opener to `SessionController`, then copy it into each
+  maintenance `ProviderRequestInput` with the native character/forum/session/
+  request IDs. A vault switch replaces live sessions; never refresh an old
+  request's epoch in a tool callback. Check identities, epoch, and request
+  cancellation on every call; the model cannot supply these values.
+- [ ] Inject an application-owned maintenance executor into `Providers` at
+  construction, following the existing `WebSearchExecutor` path. Copy it into
+  each provider worker and bind the trusted input context and cancellation to
+  the request's tool callback. Keep application/store types out of protocol code.
+- [ ] Use cancellable `try_lock_for` acquisition of `lifecycle_mutex`, as
+  specified in design section 9. Check admission before work and cancellation
+  before commit. Release lifecycle/store locks before runtime work or callbacks.
+  Never wait for a provider from a runtime thread that the provider needs.
+- [ ] Reuse application-owned worker supervision. Callbacks may refer to
+  application-owned stores/managers while workers are joined; they must not
+  capture `SessionController` or `LiveSession` pointers.
+- [ ] Reuse existing settings effects after apply and undo: refresh presentation,
+  invalidate affected ordinary conversations, refresh optional services,
+  and register new forums. Invalidating all ordinary
+  sessions is acceptable when simpler than computing precise dependencies.
+- [ ] Explicitly exclude `builtin-entrance` before invalidation. Refresh its
+  presentation and let its next request use new inventory/shared values while
+  the current Assistant answer keeps its immutable inputs. Do not start global
+  vault maintenance for a configuration batch.
+- [ ] Carry epoch and committed version through native result delivery and runtime effects.
+  Preserve commit order and discard events for an obsolete vault context.
+  Report post-commit refresh failures without claiming the save rolled back.
+- [ ] Wire a frontend refresh trigger when a Welcome answer ends, on completion,
+  failure, or Stop. In desktop `webapp/src/useLiveSession.ts` and
+  `components/App.tsx`, reload bootstrap and refetch open entity views/session
+  lists with existing read APIs. Apply the same rule in ChaWeb in step 10.
+  Refresh even after a read-only answer; do not parse save-notice text.
+- [ ] Use existing generation/submission tracking to cover fast answers without
+  an observed active snapshot, and avoid repeating refresh on duplicate idle
+  snapshots. Refresh on opening/reconnecting Welcome as well. Keep the trigger
+  state across screen changes and use existing context/navigation guards for
+  late responses; add no bridge event or background polling.
+- [ ] Invalidate cached details and reload clean forms in `components/Screens.tsx`
+  and `components/Settings.tsx`. Keep the loaded `detail` and draft during the
+  refetch and compare fetched values with the form's loaded baseline. Equal
+  detail preserves the draft and normal Save eligibility. Only mark a dirty
+  form stale if its detail changed; keep the draft visible but disable Save
+  until reset/reopen loads fresh data. Keep Save disabled during a refetch or
+  after its failure, using existing retry/reopen actions. A successful retry
+  with unchanged detail restores normal Save eligibility without a reset.
+  Do not merge drafts or add revision arguments to all typed settings writes.
+- [ ] On vault switch, drain old workers, reset verbosity, and clear the buffer
+  before admitting the new vault. Reset verbosity at shutdown and preserve
+  existing undo/revision invalidation during maintenance. Recheck admission
+  before returning log data after filtering/redaction.
 
-### Diagnostics, diff, and effects
+Verify in `tests/app/`, `tests/runtime/`, and `tests/session/`: stale epoch
+admission, cancellation before/after commit, shutdown while a callback waits,
+vault switching during tool activity, and worker lifetime. Rename a character
+and change a shared prompt while Assistant is answering: ordinary sessions
+refresh, Welcome remains active, and later requests see the committed state.
+Add frontend tests in `useLiveSession.test.ts` and component tests for the
+terminal refresh, updated lists/details, and stale forms, including failed
+refetch, missed active snapshots, duplicate snapshots, and navigation.
+Start a read-only Welcome answer, switch to a form and edit it, then finish
+the answer: unchanged detail must preserve the draft and allow Save under its
+normal rules. Repeat after an unrelated repair. Changed detail must block a
+dirty form's Save until reset/reopen. A failed refetch keeps the draft, and a
+retry returning unchanged detail restores Save without re-entering edits.
+Verify the captured epoch reaches `ProviderRequestInput` unchanged: a request
+from an old Welcome is rejected after a switch, and a new Welcome uses the
+new epoch. Use an injected fake maintenance executor to check the context.
 
-- [ ] Mark each warning with whether its path is in the batch. Keep warnings
-  non-blocking in native code.
-- [ ] Produce a deterministic text diff from old and new file contents.
-  Share this formatter between check and apply; no patch application language
+## 7. Store native save notices in Welcome
+
+Use `runtime/live_session_manager.*`, `live_session.*`,
+`session/session_controller.*`, [transcript.cpp](../src/chat/transcript.cpp),
+and the existing `SessionJournal` path. No new transcript kind is needed.
+
+- [ ] Post committed apply/undo results from the provider callback to the
+  session runtime after releasing configuration locks. Do not wait for notice
+  insertion or depend on a successful final model response.
+- [ ] On the runtime thread, create a short `EntryKind::notice` with
+  `make_notice_entry()`, persist it with `SessionJournal::record_entry()`, append
+  it to Welcome, and publish the snapshot. Include any post-commit refresh
+  error in the summary; keep full result JSON in the current tool exchange.
+- [ ] If an answer is active, queue notice text and allocate/store/append entries
+  after completion, failure, or cancellation. Flush all three terminal paths
+  and preserve the transcript's streaming and entry-ID ordering rules. Append
+  immediately if no answer is active.
+- [ ] Use stored entries instead of `LiveSession::notice_`. Reuse desktop and
+  ChaWeb notice rendering, and the existing model-context exclusion for notice
+  entries. Keep raw tool results out of stored conversation history.
+- [ ] Create native notices only for committed configuration changes. Logging
+  state and other tool errors stay in tool results; Assistant reports them in
+  its ordinary answer. Add no logger-to-session dependency.
+
+Verify saved-change visibility after failure, Stop, browser reload, and later
+transient notices. Verify multiple notices retain order and later model history
+excludes them in `tests/agents/unit_model_context.cpp`. Use existing transcript,
+controller, journal, and live-session tests; Welcome keeps its current lifetime.
+
+## 8. Integrate the five tools with both provider protocols
+
+Work in `providers/tool_calls.*`, `providers.*`, `provider_client.*`,
+`model_backend.h`, `chat_completions_api.*`, `responses_api.*`, and
+`session/session_controller.cpp`.
+
+- [ ] Add strict schemas for the five tools and a small request-owned dispatch
+  callback bound to the executor and context from step 6. Reject unknown names,
+  extra arguments, wrong types, and malformed calls. Keep app/store dependencies
+  behind the callback; no plugin registry.
+- [ ] Attach maintenance definitions and the trusted context only for Assistant
+  in Welcome. Ordinary characters, multicast targets, and Assistant in a
+  user-defined forum receive no maintenance tools. Keep existing Jev routing;
+  an explicit `@Assistant` remains its bypass.
+- [ ] For maintenance requests, omit `web_search`/`web_read` definitions and
+  callbacks and override provider-hosted search to `off` in the request copy.
+  Do not mutate the saved provider or shared character definition. Keep this
+  restriction through continuations and the final tools-disabled request,
+  even when saved search is `required`. Reject unsolicited web calls before
+  invoking any executor. Ordinary forum web behavior remains unchanged.
+- [ ] Extend existing streaming and non-streaming decoding and continuation
+  handling in both protocols. Execute multiple calls sequentially. Retain
+  usage aggregation, cancellation, request timeouts, and current handling of
+  intermediate tool-round text and provider errors.
+- [ ] Replace maintenance calls' existing smaller argument-decoder limit with
+  the design's 256 KiB bound, including streaming accumulation. Enforce 512 KiB
+  of tool results and 24 Assistant calls per answer; malformed calls count.
+  At the call limit, request the final answer with tools disabled. Never execute
+  a truncated call. Preserve ordinary web-tool limits for ordinary requests.
+- [ ] For a maintenance tool call cut off by the model output limit, surface:
+  "The model's output limit cut off the tool call. This call was not applied.
+  Edit the configuration file manually." Handle Chat Completions `length`
+  and Responses `max_output_tokens`, including incomplete argument JSON, before
+  the generic invalid/incomplete-call error. Keep other failures accurate and
+  retain save notices for any earlier committed calls in the answer.
+- [ ] Check logging expiry on each maintenance call. Return effective logging
+  state through the logging tools. Keep raw results confined to the current
+  continuation exchange and exclude them from ordinary diagnostic log messages.
+
+Verify in existing provider/protocol tests with fake transports: list/read/apply
+continuations, validation errors and correction, undo, logging, sequential calls,
+limits, truncation, cancellation, and attempted web calls. Check the actionable
+output-limit message and zero executor calls for truncated calls in both
+streaming and non-streaming paths. Exercise subscription
+Responses using its valid saved settings; add no `max_tokens` override or model
+test tool. Confirm global search/Firecrawl edits cannot enable Welcome web tools.
+
+## 9. Assemble the maintenance reference and identify the host
+
+Use [MaintainerGuide.md](MaintainerGuide.md), the
+[Linux packaging guide](../packaging/linux/README.md), `resources/`,
+[embed_text.cmake](../cmake/embed_text.cmake), and `CMakeLists.txt`.
+
+- [ ] Embed the whole `docs/MaintainerGuide.md` and `packaging/linux/README.md`
+  as separate inputs to the existing `embed_text.cmake`. Add a resource with
+  brief Assistant-specific operating instructions. Concatenate the embedded
+  strings when constructing the maintenance prompt. Do not slice by section
+  numbers, add a slicing script, or maintain a second field catalogue.
+- [ ] Fill actual guide gaps against the parsers: paths, fields, types/defaults,
+  omission behavior, precedence/includes, IDs, services, key metadata, ignored
+  fields, and protected Assistant settings. Extend the existing troubleshooting
+  map where needed rather than adding a separate topic system.
+- [ ] Include the four design recipes and rules for diagnosis versus permission
+  to write, fresh reads, preserving unrelated source, stale versions, undo,
+  no web tools, temporary logging, untrusted data, and saved versus verified
+  results. Explain Jev's explicit-recipient bypass.
+- [ ] Describe daemon deployment and manual recovery: nginx/socket/service
+  access, `--config`, host configuration versus vault rows, protected-vault
+  startup, and unavailable history. A stopped/unreachable daemon requires
+  administrator action. Do not suggest desktop Settings/Test controls in ChaWeb.
+- [ ] Include the document in full only in maintenance requests; retain
+  `resources/application-guide.md` as the general guide. Keep embedded content
+  outside the writable namespace and give maintenance-specific restrictions
+  precedence over general manual editing/export guidance.
+- [ ] Pass host identity from native application construction and prepend exactly
+  `Host: desktop application` or `Host: cha-daemon (ChaWeb)`. Update the daemon
+  and native host construction paths; do not infer host from OS or vault data.
+- [ ] Register embedding inputs/dependencies so guide changes rebuild the prompt
+  in both hosts. Update Welcome's introductory prompt text to describe its
+  maintenance role without contradicting the embedded instructions.
+
+Verify prompt fixtures for both hosts, whole-file reference inclusion only with
+maintenance tools, preservation of the general guide, and parser agreement for
+the documented fields. Verify instructions distinguish saved changes from
+successful reproduction; do not test exact generated model prose.
+
+## 10. Make Welcome accessible in ChaWeb
+
+Work in `webapp/src/chaweb/route.ts`, `sessions.tsx`, `useChaweb.ts`, `App.tsx`,
+and existing tests. Use `daemon/chaweb_adapter.*` only for required changes to
+existing snapshot delivery; add no maintenance endpoint.
+
+- [ ] Show one Welcome entry in existing navigation. Open
+  `bootstrap.entrance_forum_id` / `builtin-welcome` directly in the existing
+  conversation view without creating a session or additional Entrance sessions.
+- [ ] Remove route blocks and navigation filters that make Welcome unreachable.
+  Validate chat input against the bootstrap forum catalogue rather than the
+  ordinary-forum picker, so Send works in Welcome. Allow Welcome even when the
+  vault has no ordinary forums. Preserve built-in session deletion rules.
+- [ ] Support direct URLs, browser reload, and back/forward navigation. Render
+  stored save notices through existing transcript snapshots.
+- [ ] In `useChaweb.ts`, reload bootstrap and the session list when a Welcome
+  answer ends (completion, failure, or Stop), including fast answers between
+  polls. Also refresh on opening/reconnecting Welcome. Reuse the existing
+  snapshot/read loop and prevent repeated refresh on unchanged idle snapshots;
+  do not add an event type or background polling.
+- [ ] Keep all maintenance operations in chat. Add no settings screen, repair,
+  undo, logging, approval, or status controls, and no extra notification polling.
+- [ ] Update route/component expectations that currently require Welcome to be
+  hidden or rejected. Test opening the entry, enabled Send, a vault with only
+  Entrance, and no session-creation request when Welcome opens.
+
+Verify `route.test.ts`, `App.test.tsx`, relevant behavior/transcript tests, and
+`tests/daemon/unit_chaweb_adapter.cpp`. Native save notices must remain visible
+after answer failure and reload within the same daemon's Welcome lifetime.
+After a repair, updated character names and forum lists must appear without a
+manual reload, including when the final model answer fails.
+
+## 11. Verify the complete feature and finish documentation
+
+- [ ] Extend deterministic fake-provider fixtures to request the maintenance
+  tools, inspect their results, and complete or fail the answer. Use existing
+  native fake transports for the full tool coverage. For `itest-daemon`, extend
+  the text-only fake provider in `tests/integration/daemon_integration_test.py`
+  with a small scripted repair exchange. Reuse temporary vaults and the existing
+  daemon/socket-activation fixtures and Unix-socket nginx setup; no paid API is
+  required.
+- [ ] Exercise all four recipes in desktop application tests and through the
+  daemon input/snapshot path in `tests/daemon/unit_chaweb_adapter.cpp`: read-only
+  diagnosis, authorized repair and undo, verbose reproduction with stop/expiry,
+  and an unresolved external failure. In `itest-daemon`, cover Welcome input,
+  a repair, and the saved notice in subsequent snapshots, including failure
+  after commit. Verify that a fresh bootstrap read reflects the changed catalogue.
+- [ ] Extend `webapp/src/chaweb/App.test.tsx` using the real `App`, `userEvent`,
+  and the existing fake client. Start at the rendered session list, click
+  Welcome, type and send a message, verify the Welcome input request, and
+  display the response and save notice from returned snapshots. Test back and
+  forward navigation and remount at the Welcome URL with the saved snapshot.
+  Opening Welcome must not create a session. These tests run in the existing
+  Vitest suite; no browser installation, new server fixture, or test command
   is required.
-- [ ] Compare the small set of resolved values to report before/after effects.
-  Include changed character/provider values, presentation, forum/persona
-  context, expanded prompts, and effective optional-service state. A text-only
-  change can have an empty effect list.
-- [ ] Identify all affected forums from resolved values, including changes
-  reached through shared includes. Do not create a persistent dependency index.
-- [ ] Enforce file/result limits before returning a preview. Return complete
-  editable source or an error; never silently truncate it.
+- [ ] Verify daemon behavior without a connected browser: log writes enforce
+  expiry and configuration saves persist after restart, while the log buffer
+  and undo record do not. Verify ordinary conversations and manual settings
+  continue to work after Assistant edits.
+- [ ] Run the relevant focused suites during development, then the repository
+  checks below. Use the existing `tsan` preset for the touched sink, provider,
+  and runtime concurrency cases. Register new C++ sources/tests in existing
+  CMake targets. Report unavailable host-specific checks explicitly.
+- [ ] Update [chaweb.md](chaweb.md) when access is implemented, replacing the
+  Entrance/Welcome exclusion and describing chat-based maintenance. Update
+  maintainer-guide gaps and the existing troubleshooting map from step 9.
+  Keep [assistant.md](assistant.md) consistent with the completed behavior and
+  mark this checklist only as steps are actually verified.
+- [ ] Check every acceptance criterion in design section 17. Preserve the
+  existing manual provider Test routine: saved settings for repair verification,
+  net mode, 10-second timeouts, no web search, and no added output-token cap.
+  Use logs and reproduction for routine ChaWeb verification.
 
-Validation:
-
-- Protected Assistant files and its provider fail. Shared styles, voices,
-  search settings, and ordinary forum defaults succeed when otherwise valid.
-- Copying Assistant's provider to a new ID and assigning another character
-  succeeds without changing Assistant's selected provider.
-- New key/host, key/scheme, and key/port pairs fail through every applicable
-  provider/service path. Existing pairs can be reused or removed.
-- Missing future key IDs, unresolved legacy names, ambiguous names, key
-  precedence, and equivalent endpoint spellings have explicit cases.
-- Unknown-field warnings in changed files are marked. A misspelled optional
-  setting produces no intended runtime effect.
-- An empty check returns existing warnings, performs no writes, and does not
-  refresh sessions. Invalid batches leave both rows and publication untouched.
-
-Done when all native policies are independently tested and check gives an
-accurate account of the batch's effect.
-
-## 6. Step 4: atomic apply and native Undo
-
-Primary files: `src/workspace/workspace_config_store.*` and its existing fault
-injection tests.
-
-Work:
-
-- [ ] Add apply using the same candidate builder as check. Compare the supplied
-  revision under the edit lock; do not merge or retry stale input.
-- [ ] Allocate candidate publication, result/diff data, and any Undo contents
-  before opening the commit boundary. Verify that a normal success result can
-  fit within the caller's remaining result allowance before a write.
-- [ ] Use the existing changed-row SQLite transaction and publication lock.
-  Advance the revision only with a real committed change. A protected no-op
-  remains an error; an ordinary no-op preserves revision and Undo.
-- [ ] Return `committed: true`, the new revision, actual changed paths, native
-  diff, warnings, effects, and Undo availability. Preserve the distinction
-  between no change, rejected change, and committed-but-restart-required.
-- [ ] Retain one Undo record only for a successful batch consisting entirely
-  of replacements. Store prior contents and the resulting revision, not a full
-  vault copy. A successful batch containing creation clears the record.
-- [ ] Invalidate Undo on any later actual configuration change and on
-  reopen/maintenance. A failed check/apply or a no-op must not invalidate it.
-- [ ] Implement native Undo as replacement of the saved old contents at the
-  exact recorded revision. Revalidate files, entities, and Assistant
-  protection. Skip only the credential-destination comparison, as required
-  for restoration of the original pairs. Clear the record after success.
-- [ ] Do not expose a model Undo schema or any file deletion in the inverse.
-
-Validation:
-
-- Use existing validation, SQLite begin/write/commit, and publication fault
-  seams. Inspect both stored rows and the published workspace after failures.
-- A multi-file apply saves everything or nothing. A repeated apply with the
-  old revision cannot commit twice.
-- Replacement-only Undo restores exact bytes once; creation, stale state,
-  maintenance, and restart make it unavailable.
-- Undo can restore a credential pair removed by the forward batch without
-  permitting a general destination-policy bypass.
-- Pre-commit cancellation causes no write. Post-commit failure never claims
-  that the database rolled back.
-
-Done when native mutation behavior is complete without a model attached.
-
-## 7. Step 5: application admission and runtime effects
-
-Primary files:
-
-- `src/app/application.*`, `application_internal.h`, and a focused
-  `src/app/assistant_operations.*` if needed
-- `src/app/workspace_operations.*`, `settings_operations.*`, and resource hooks
-- `src/runtime/live_session_manager.*`, `live_session.*`, and session projection
-- `src/storage/session_repository.*`
-- Application, runtime, and provider-lifetime tests
-
-Work:
-
-- [ ] Add application operations that accept trusted character, forum/session,
-  request, captured epoch, cancellation, and deadline values. Model arguments
-  contain none of these authority fields.
-- [ ] Check Assistant/Entrance/single-target eligibility when binding the
-  callback and again at dispatch. Reads must also reject a stale epoch.
-- [ ] Acquire the timed `lifecycle_mutex` through short `try_lock_for` attempts,
-  checking cancellation, stopping, and the overall deadline between attempts.
-  Do not use the typed editors' blocking lock from a provider worker.
-- [ ] Preserve lifecycle-then-store lock order. Check admission after acquiring
-  the lifecycle lock and before any access to the active store.
-- [ ] Reuse the lifetime guarantee of application-owned provider supervision.
-  Callbacks may refer to application-owned dependencies; they must not capture
-  a raw `SessionController` or `LiveSession` pointer.
-- [ ] Apply ordinary conversation invalidation, presentation refresh, service
-  refresh, and forum registration from the candidate's resolved effect list.
-  Release lifecycle/store locks before session-runtime or UI delivery work.
-- [ ] Use the existing non-blocking shutdown/refresh paths for affected live
-  sessions. Preserve the active Entrance management turn, including when
-  shared styles, voices, or service defaults change. Its next request reads
-  new shared settings and inventory.
-- [ ] Carry epoch and committed revision in effects and save notices. Deliver
-  notices in commit order; reject old-context work before it acts on current
-  sessions. Cover concurrent tool/manual commits rather than assuming that
-  provider workers finish in commit order.
-- [ ] Publish a save notice directly from committed native work. Do not rely
-  on an eventual model reply or on a still-active generation event handler.
-  Include refresh failures without turning a committed edit into an apparent
-  rollback.
-- [ ] Propagate every actual configuration publication to the current Undo
-  state and management view, including ordinary form and runtime edits.
-  Do not call observers while holding the store's edit/publication locks.
-
-Validation:
-
-- A blocked callback sees cancellation while shutdown holds the lifecycle
-  lock. Shutdown finishes within its existing grace period.
-- Destroying or stopping the originating controller does not leave a callback
-  with invalid pointers or allow a pre-commit cancelled write.
-- Switching vaults during a call prevents access to the new vault. A late
-  notice cannot invalidate a new vault's session with the same public IDs.
-- Shared includes update every affected ordinary forum. Presentation-only
-  edits avoid unnecessary cancellation, and Entrance can finish its reply.
-- Cancelled generation, model failure after save, and ancillary refresh
-  failure still produce an accurate native result.
-- A vault without an export/modify directory can use the feature. Do not gate
-  it on the existing `can_modify` export/import capability.
-
-Done when deterministic application tests can perform the complete native
-workflow, including cancellation and maintenance races.
-
-## 8. Step 6: provider functions and bounded continuation
-
-Primary files:
-
-- `src/characters/model_context.h`
-- `src/providers/model_backend.h`, `providers.*`, and `provider_client.*`
-- `src/providers/tool_calls.*`, `responses_api.*`, and `chat_completions_api.*`
-- Existing provider tests and mock HTTP fixtures
-
-Work:
-
-- [ ] Introduce the smallest request-owned description/dispatch structure that
-  can carry web search and the five configuration functions. Keep workspace
-  types and configuration mutations out of the protocol code, and preserve
-  the character layer's dependency direction.
-- [ ] Define strict schemas for the exact arguments in design section 6.
-  Reject unknown functions, unknown arguments, duplicate paths, and wrong
-  types. Configuration validation errors remain structured tool results.
-- [ ] Serialize function definitions for both APIs and collect tool calls
-  whenever either tool family is attached. Remove the current dependency on a
-  nonempty `web_search_tool` callback for all tool handling.
-- [ ] Execute calls sequentially. Preserve call IDs, protocol continuation
-  items, reasoning continuation where required, and accumulated token usage.
-- [ ] Keep web search's four attempts separate from 24 configuration calls.
-  Exhausting one family must not prematurely remove the other family.
-- [ ] Apply the fixed limits below to encoded arguments/results and stream
-  assembly. Check the aggregate budget before dispatching a write and before
-  appending its result. Reserve room for a bounded error/final response.
-- [ ] Carry one overall deadline across provider rounds and native calls.
-  Count malformed/unknown requests toward a bounded turn, and retain existing
-  cancellation checks before each call.
-- [ ] Classify output-limit termination in both streaming and non-streaming
-  protocol paths. Do not execute partial calls. With configuration tools
-  attached, use the actionable manual-edit message from the design.
-- [ ] Keep info-level logs to outcomes and paths. Preserve existing debug
-  payload logging/redaction; do not add a new log store or a blanket ban on
-  debug tool payloads.
-
-| Limit | Value |
-| --- | --- |
-| Listed entries | 500, then request a narrower prefix |
-| One editable file | 64 KiB |
-| Encoded arguments or result per call | 256 KiB |
-| Total configuration results retained in one answer | 512 KiB |
-| Configuration calls per answer | 24 |
-| Web-search attempts per answer | Existing 4 |
-| Native UI diff | 8 KiB, with an explicit indication if shortened |
-
-Validation:
-
-- Run tool/result/final-answer fixtures for both APIs, streaming and ordinary
-  responses, with configuration only, search only, and both families.
-- Cover several calls in one response, unknown calls, malformed JSON, exact
-  byte boundaries, UTF-8/JSON escaping, total-result exhaustion, and cancellation.
-- A large or output-truncated batch executes no partial edit. A previously
-  committed earlier batch remains reported as saved if a later round fails.
-- Request payloads never contain raw saved-key records, and ordinary
-  transcripts never receive file text or tool protocol items.
-
-Done when injected native callbacks pass the provider tests. Production
-requests still do not receive write tools at this step.
-
-## 9. Step 7: embed the operating guide and reference
-
-Primary files:
-
-- `docs/MaintainerGuide.md`
-- New operating/credentials/recipes resources under `resources/`
-- `CMakeLists.txt` and `cmake/embed_text.cmake`
-- A small help-topic lookup next to the application tool implementation
-
-Work:
-
-- [ ] Prepare maintainer-guide sections 3–10 for embedding. Move filesystem
-  and coding-harness workflow sentences to the guide's workflow sections.
-  Preserve one authoritative description of configuration fields.
-- [ ] Complete missing fields and defaults, especially
-  `system/session/config.toml`, current search controls, provider routing,
-  unknown-field warnings, and current built-in IDs.
-- [ ] Embed the guide through the existing build mechanism. Use an explicit
-  topic-to-heading map for the sections/subsections in design section 11.
-  Fail a build/test when a required heading is absent or duplicated; no manual
-  copied topic files or documentation generator is needed.
-- [ ] Add only the new operating instructions, credential-destination
-  explanation, and tool recipes. The Assistant topic can combine its guide
-  excerpt with the operating guide's protection rules.
-- [ ] Return an index and bounded topic text through `vault_config_help`.
-  Keep workflow-only export/import/deletion instructions out of topic excerpts.
-- [ ] Keep `resources/application-guide.md` unchanged. Add the separate
-  operating guide only to the request-owned instructions for eligible
-  Entrance requests at attachment time.
-- [ ] Explain review versus edit, untrusted retrieved text, warning repair,
-  expected effects, protected files, manual credential setup, and UI-only Undo.
-  Explicitly require fresh reads and a new check for later-turn acceptance.
-
-Validation:
-
-- Every topic resolves to the intended current heading and fits the tool
-  limits. Changing source guide text changes the embedded result on rebuild.
-- Reference examples load with the same parser used by the store. A test fails
-  when examples use obsolete IDs, nonexistent fields, or wrong defaults.
-- Non-Entrance Assistant requests retain their existing guide and receive no
-  maintenance instructions. Instructions do not claim runtime effects that
-  native check cannot establish.
-
-The maintainer-guide edits are part of the future implementation described
-here. Writing this plan does not modify that guide or other existing docs.
-
-Done when help and instructions have one maintained source and pass resource
-and example tests.
-
-## 10. Step 8: save results, diff, and UI-only Undo
-
-Primary files:
-
-- `src/runtime/protocol.*`, `session_projection.*`, and `session_output.*`
-- `src/bridge/bridge_protocol.*`, `bridge_router.*`, and the relevant dispatcher
-- `resources/dto.yaml` and generated `webapp/src/api/schema.d.ts`
-- `webapp/src/api/{client,nativeClient,nativeEvents,guards}.ts`
-- `webapp/src/useLiveSession.ts`, `components/ChatScreen.tsx`,
-  `components/App.tsx`, and `state/entityUpdates.ts`
-- Wire fixtures, bridge tests, session-output tests, and corresponding UI tests
-
-Work:
-
-- [ ] Define a transient native edit notice with originating session/request,
-  epoch, committed revision, changed paths, bounded diff, warnings, Undo state,
-  and post-commit refresh error. This is application state, not a transcript
-  entry or database audit row.
-- [ ] Prefer carrying notices and current Undo availability in Entrance's
-  `SessionSnapshot`. A published snapshot is the save-result event through the
-  existing bridge; a second transport or event bus is unnecessary.
-- [ ] Retain results of the current/latest editing turn long enough for Stop,
-  failure, background completion, and resubscription. Several commits in one
-  answer must remain distinguishable; their count is bounded by the tool limit.
-  Snapshot coalescing must not discard an acknowledged save's result.
-- [ ] Ensure snapshot/append selection falls back to a fresh snapshot when
-  notice or Undo state changes. Scope delivery by existing epoch/subscription
-  rules, and retain save results independently of generation completion.
-- [ ] Add one context-bound native Undo method accepting the expected
-  committed version. Follow the existing method policy, request parsing, error
-  envelope, and type-generation workflow. Do not add `vault_config_undo`.
-- [ ] Show concise save status, an on-demand plain-text diff, and Undo when the
-  canonical native state allows it. Do not render diff content as executable
-  HTML or instructions. Do not add panel headings or explanatory legends.
-- [ ] Refresh entity lists and selected details after a committed edit. Reuse
-  existing bootstrap/detail loading and summary helpers; preserve historical
-  transcript attribution and unsaved user drafts where possible.
-- [ ] Clear or disable Undo after any later configuration revision. If a stale
-  control is clicked, the native operation rejects it and the UI refreshes its
-  state without pretending the old values were restored.
-- [ ] Regenerate API types, update exact bridge protocol/version expectations
-  where required, and update method-policy and native event fixtures together.
-
-Validation:
-
-- A saved change and diff remain visible when the following model round fails
-  or the user presses Stop. A new vault never receives an old save notice.
-- Snapshot coalescing and resubscription preserve the notices and their order.
-- A replacement-only edit offers Undo; creation does not. Undo is absent from
-  model tool definitions and works only at the recorded revision.
-- Manual settings edits refresh the UI's Undo state. No-op/failed edits retain
-  eligible Undo. Post-commit refresh errors still say the change was saved.
-- Live entity names/settings update without altering stored speaker names or
-  unnecessarily clearing current selections.
-
-Done when a scripted native edit produces the complete visible workflow
-without a live model.
-
-## 11. Step 9: attach tools and verify the complete workflow
-
-Primary files: `src/session/session_open.*`, `session_controller.*`,
-`src/providers/providers.*`, and application/runtime request construction.
-
-Work:
-
-- [ ] Pass the application dispatch capability through the existing session
-  creation/request path. Capture epoch and trusted request identity while
-  that request belongs to the admitted context, not at later tool execution.
-- [ ] Attach the five functions and separate operating guide only to eligible
-  Entrance Assistant requests. A renamed ordinary character must not obtain
-  them. Preserve existing web search behavior independently.
-- [ ] Append instructions to the request-owned input without mutating a shared
-  workspace or the Assistant definition. Do not save operating instructions
-  back to the vault.
-- [ ] Verify complete review, direct repair, proposal/acceptance, conflict,
-  protected-file, destination-policy, and Undo workflows with a deterministic
-  backend and the real store/application pipeline.
-- [ ] Run one native host smoke test with a disposable vault; exercise real
-  bridge delivery, diff display, Stop after save, and Undo. Use an optional
-  live-provider smoke test only after deterministic coverage passes.
-
-Required complete scenarios:
-
-1. Review a character's search settings. Return findings and diagnostics with
-   no configuration change.
-2. Fix a character override. Check reports the intended before/after value;
-   apply saves it, the UI shows the diff, and Undo restores it.
-3. Copy Assistant's provider and assign another character to the copy. The
-   existing destination/key pair is reused; Assistant's provider is unchanged.
-   The creation batch has no Undo.
-4. Attempt direct Assistant editing, membership editing, or a new credential
-   destination, including following hostile instructions in a prompt/search
-   result. Native policies reject each prohibited action.
-5. Edit a shared style, voice, service default, or forum prompt. It succeeds
-   when valid; affected ordinary sessions refresh while Entrance completes.
-6. Propose a change, let the user accept in a later turn, then reread/check/apply
-   from current state. Report the actual new diff, not the earlier proposal.
-7. Make a manual edit after a tool read. The old batch fails as stale; a fresh
-   read enables a new valid batch.
-8. Stop or fail the model after a successful save. The native result remains
-   visible and shows the correct Undo state.
-9. Switch vaults or shut down during lock acquisition/validation. No stale
-   access, late pre-commit write, deadlock, or use of destroyed controllers occurs.
-
-Done when every acceptance requirement in design section 13 has a test or a
-recorded native smoke-test result, and ordinary chat/search regression tests pass.
-
-## 12. Validation commands and completion criteria
-
-Build and run the affected suites after each implementation step. Existing
-test executables are `cha_tests`, `cha_app_tests`, `cha_bridge_tests`, and
-`cha_native_runtime_tests`; use their GoogleTest filters or CTest name filters
-for focused checks.
+Run from the repository root on a supported development host:
 
 ```sh
-make build
-ctest --test-dir build/ninja --output-on-failure -R 'Workspace|ProviderClient|Responses|ChatCompletions|Providers|Application|LiveSession|SessionOutput|Bridge|NativeRuntime'
+cmake --preset ninja
+cmake --build --preset ninja
+ctest --test-dir build/ninja -j8 --output-on-failure
+npm --prefix webapp run check
+npm --prefix webapp run build:chaweb
 ```
 
-After changing wire types or UI code:
+On Linux/macOS, also run `make itest-local` and `make itest-daemon`. The daemon
+integration runner needs nginx and uses temporary sockets/vaults and a local
+fake provider. The rendered ChaWeb tests run as part of
+`npm --prefix webapp run check`. The live provider/R2 suite is not required to
+verify this feature.
 
-```sh
-npm --prefix webapp run api-types
-make web-check
-make web-stage
-```
-
-At final integration, run `make test` and the relevant native host harness
-under `tests/native/macos/` or `tests/native/windows/`. Check both supported
-hosts before release; record a platform limitation if only one is available.
-Run focused sanitizer checks when lifetime or race tests reveal unresolved
-concerns, rather than repeating the whole suite after documentation-only edits.
-
-The feature is ready when:
-
-- Native path, entity, credential-destination, epoch, and transaction rules
-  hold even when the model ignores its instructions.
-- Check and apply report accurate source diffs, warnings, and runtime effects.
-- Saves and Undo remain truthful through cancellation, concurrency, model
-  failure, and post-commit refresh failures.
-- The reference shipped in the application matches the loader and has no
-  independently maintained duplicate configuration manual.
-- Existing manual settings, import/export, ordinary conversations, web search,
-  and vault switching continue to pass their relevant tests.
-- Only intended source, generated contract, test, and reference changes are
-  included. No schema migration or unrelated feature is required.
+Completion means the same five tools work through desktop Welcome and visible
+ChaWeb Welcome, protected configuration stays fixed, writes are atomic, undo
+works for eligible repairs, logs are isolated and sanitized, save notices
+survive failed answers/reloads, and the final design's acceptance checks pass.
