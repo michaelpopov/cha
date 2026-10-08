@@ -263,8 +263,9 @@ void update_tool_instructions(nlohmann::json& body, ProviderApi api,
                            : "Web page reading is unavailable for this request.\n";
     text += "Search and page-reading requirements in character and forum instructions apply "
         "only when the corresponding capability is available. Use available tools when "
-        "verification is needed. If verification is unavailable, fails, or yields insufficient "
-        "evidence, answer using the information already available and state material uncertainty. "
+        "verification is needed. If verification is needed but is unavailable, fails, or gives "
+        "insufficient evidence, say which requested facts you could not verify. "
+        "Do not give unverified details as facts. "
         "Do not invent missing facts or claim to have searched, read a page, or verified a claim "
         "unless you actually did.\n</tool_availability>";
     if (text_sizes) text_sizes->system_prompt_bytes = text.size();

@@ -1,0 +1,222 @@
+[
+  {
+    "id": "stable-history-no-web",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "When did World War II end?",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false},
+    "web_tools": {"hosted_search": false, "search": false, "read": false},
+    "answer_expectation": "Answer from general knowledge without a tool-availability refusal. Distinguishing the end in Europe from the worldwide end is acceptable."
+  },
+  {
+    "id": "stable-capital",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "What is the capital of France?",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false}
+  },
+  {
+    "id": "stable-definition",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "What is a prime number?",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false}
+  },
+  {
+    "id": "stable-binary-search",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Explain how binary search works.",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false}
+  },
+  {
+    "id": "stable-constant",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "What is pi to five decimal places?",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false}
+  },
+  {
+    "id": "fictional-prices",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Invent a fictional price list for a shop in my fantasy story.",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false}
+  },
+  {
+    "id": "official-website",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Find the official website of the European Space Agency. Return only its URL.",
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": false, "actual_data_required": true}
+  },
+  {
+    "id": "current-prices",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Compare the current prices of these two cameras using the vendors' product pages: Canon EOS R50 and Nikon Z50II.",
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "web-prohibited-current-prices",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Do not use the web: do not search or read pages. What are the current prices of Canon EOS R50 and Nikon Z50II?",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": true},
+    "web_tools": {"hosted_search": true, "search": true, "read": true},
+    "answer_expectation": "Make no web calls. Include only the evidence paragraph in the research block. Say that the current prices could not be verified; do not supply unsupported remembered prices."
+  },
+  {
+    "id": "memory-current-prices",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Answer from memory: what are the current prices of Canon EOS R50 and Nikon Z50II?",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false},
+    "web_tools": {"hosted_search": true, "search": true, "read": true},
+    "answer_expectation": "Make no web calls and append no research block. Give remembered prices if known, explicitly marked as unverified and possibly outdated. If no prices can be recalled, say so without inventing values. Do not refuse solely because verification is unavailable."
+  },
+  {
+    "id": "without-verification-prices",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Without verification, what prices do you remember for Canon EOS R50 and Nikon Z50II?",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false},
+    "web_tools": {"hosted_search": true, "search": true, "read": true},
+    "answer_expectation": "Make no web calls and append no research block. Give remembered prices if known, explicitly marked as unverified and possibly outdated. If no prices can be recalled, say so without inventing values. Do not refuse solely because verification is unavailable."
+  },
+  {
+    "id": "current-statistics",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Find the most recently published US unemployment rate and its reporting period. Read the official statistical release.",
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "current-schedule",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Check tomorrow's train timetable from London to Edinburgh on the operator's website.",
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "current-version",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Find the current stable Python release and read its official release page.",
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "verbatim-quotation",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Read https://example.com/article and quote its opening paragraph exactly.",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "recent-events",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Summarize yesterday's major spaceflight events using the original mission reports. Find and read those reports.",
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "specific-source-details",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Read https://example.com/article and list the limitations that the author identifies.",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "supplied-data",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Calculate revenue from these supplied records: product A, 3 units at $12; product B, 2 units at $9.",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": true}
+  },
+  {
+    "id": "stable-fact-explicit-verification",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Verify when World War II ended using an official museum page. Find and read the source.",
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "follow-up-current-prices",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "And which is cheapest?",
+    "previous_turn": {
+      "human": {"speaker": "User", "text": "Compare the current prices of products A and B using their official product pages."},
+      "replies": [{"speaker": "Seneca", "text": "Product A currently costs $129 and product B costs $149."}]
+    },
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "follow-up-current-prices-verification",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Are you sure?",
+    "previous_turn": {
+      "human": {"speaker": "User", "text": "Compare the current prices of products A and B using their official product pages."},
+      "replies": [{"speaker": "Seneca", "text": "Product A currently costs $129 and product B costs $149."}]
+    },
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "stable-fact-after-research",
+    "roster": ["Seneca", "Marcus"],
+    "prompt": "Thanks. What is the capital of France?",
+    "previous_turn": {
+      "human": {"speaker": "User", "text": "Find and read the vendors' current product pages."},
+      "replies": [{"speaker": "Seneca", "text": "Those pages require current source verification."}]
+    },
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false}
+  },
+  {
+    "id": "ru-stable-history",
+    "roster": ["Сенека", "Марк Аврелий"],
+    "prompt": "Когда закончилась Вторая мировая война?",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false}
+  },
+  {
+    "id": "ru-official-website",
+    "roster": ["Сенека", "Марк Аврелий"],
+    "prompt": "Найди официальный сайт Европейского космического агентства. Дай только URL.",
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": false, "actual_data_required": true}
+  },
+  {
+    "id": "ru-current-prices",
+    "roster": ["Сенека", "Марк Аврелий"],
+    "prompt": "Найди и сравни текущие цены Canon EOS R50 и Nikon Z50II. Прочитай страницы товаров на сайтах продавцов.",
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "ru-specific-source-details",
+    "roster": ["Сенека", "Марк Аврелий"],
+    "prompt": "Прочитай https://example.com/article и перечисли ограничения, которые указывает автор.",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "ru-follow-up-current-prices",
+    "roster": ["Сенека", "Марк Аврелий"],
+    "prompt": "А какой дешевле?",
+    "previous_turn": {
+      "human": {"speaker": "User", "text": "Сравни текущие цены товаров A и B по официальным страницам товаров."},
+      "replies": [{"speaker": "Сенека", "text": "Товар A сейчас стоит 12 900 ₽, а товар B стоит 14 900 ₽."}]
+    },
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "ru-follow-up-current-prices-verification",
+    "roster": ["Сенека", "Марк Аврелий"],
+    "prompt": "Ты уверен?",
+    "previous_turn": {
+      "human": {"speaker": "User", "text": "Сравни текущие цены товаров A и B по официальным страницам товаров."},
+      "replies": [{"speaker": "Сенека", "text": "Товар A сейчас стоит 12 900 ₽, а товар B стоит 14 900 ₽."}]
+    },
+    "expected": {"recipient": "undefined", "search_required": true, "page_read_required": true, "actual_data_required": true}
+  },
+  {
+    "id": "ru-web-prohibited-current-prices",
+    "roster": ["Сенека", "Марк Аврелий"],
+    "prompt": "Не используй интернет: не ищи и не открывай веб-страницы. Каковы текущие цены Canon EOS R50 и Nikon Z50II?",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": true},
+    "web_tools": {"hosted_search": true, "search": true, "read": true},
+    "answer_expectation": "Make no web calls. Include only the evidence paragraph in the research block. Say that the current prices could not be verified; do not supply unsupported remembered prices."
+  },
+  {
+    "id": "ru-memory-current-prices",
+    "roster": ["Сенека", "Марк Аврелий"],
+    "prompt": "Ответь по памяти: каковы текущие цены Canon EOS R50 и Nikon Z50II?",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false},
+    "web_tools": {"hosted_search": true, "search": true, "read": true},
+    "answer_expectation": "Make no web calls and append no research block. Give remembered prices if known, explicitly marked as unverified and possibly outdated. If no prices can be recalled, say so without inventing values. Do not refuse solely because verification is unavailable."
+  },
+  {
+    "id": "ru-without-verification-prices",
+    "roster": ["Сенека", "Марк Аврелий"],
+    "prompt": "Без проверки: какие цены Canon EOS R50 и Nikon Z50II ты помнишь?",
+    "expected": {"recipient": "undefined", "search_required": false, "page_read_required": false, "actual_data_required": false},
+    "web_tools": {"hosted_search": true, "search": true, "read": true},
+    "answer_expectation": "Make no web calls and append no research block. Give remembered prices if known, explicitly marked as unverified and possibly outdated. If no prices can be recalled, say so without inventing values. Do not refuse solely because verification is unavailable."
+  }
+]

@@ -16,6 +16,12 @@ int main(int argc, char** argv) {
                 input.characters.push_back({key, key, name.get<std::string>()});
             }
             item["request"] = cha::make_jev_body(input);
+            // Temporary overlay for recipient isolation. When JevRequestInput gains
+            // context, set it before make_jev_body() and remove this JSON edit so
+            // evaluation uses the production context formatting and limits.
+            if (item.contains("previous_turn")) {
+                item["request"]["state"]["previous_turn"] = item.at("previous_turn");
+            }
         }
         std::cout << cases.dump(2) << '\n';
     } catch (const std::exception& error) {

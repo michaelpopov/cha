@@ -395,7 +395,8 @@ TEST(ProviderClient, ToolInstructionsMatchCapabilitiesAttachedToEachRequest) {
                     EXPECT_NE(instructions.find(read
                         ? "Web page reading is available for this request."
                         : "Web page reading is unavailable for this request."), std::string::npos);
-                    EXPECT_NE(instructions.find("state material uncertainty"), std::string::npos);
+                    EXPECT_NE(instructions.find("say which requested facts you could not verify"), std::string::npos);
+                    EXPECT_NE(instructions.find("Do not give unverified details as facts."), std::string::npos);
                     EXPECT_NE(instructions.find("unless you actually did"), std::string::npos);
                     const auto tool_count = (hosted != WebSearchMode::off) + search + read;
                     if (tool_count) EXPECT_EQ(body["tools"].size(), tool_count);
