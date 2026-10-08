@@ -1,6 +1,8 @@
 #pragma once
 
 #include "workspace/workspace.h"
+#include "chat/research_needs.h"
+#include "chat/transcript.h"
 #include "util/wake_notifier.h"
 #include <atomic>
 #include <chrono>
@@ -18,18 +20,30 @@ struct JevOption {
     std::string character_id;
     std::string display_name;
 };
+struct JevContextEntry {
+    std::string speaker;
+    std::string text;
+};
+struct JevPreviousTurn {
+    JevContextEntry human;
+    std::vector<JevContextEntry> replies;
+};
+std::optional<JevPreviousTurn> jev_previous_turn(TranscriptView transcript);
+
 struct JevRequestInput {
     WorkspaceJev config;
     std::string prompt;
     std::vector<JevOption> characters;
     std::chrono::steady_clock::time_point deadline{
         std::chrono::steady_clock::time_point::max()};
+    std::optional<JevPreviousTurn> previous_turn;
 };
 enum class JevOutcome { success, cancelled, failure };
 struct JevResult {
     JevOutcome outcome{JevOutcome::failure};
     std::string choice;
     std::string message;
+    ResearchNeeds research_needs{};
 };
 using JevExecutor = std::function<JevResult(const JevRequestInput&, const std::atomic_bool&)>;
 

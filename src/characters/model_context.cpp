@@ -189,6 +189,18 @@ std::vector<ModelMessage> project_model_context(
             input.run.created_at,
             input.run.prompt_text),
     });
+    const auto needs = input.research_needs;
+    if (needs.search || needs.page_read || needs.actual_data) {
+        auto& content = messages.back().content;
+        content += "\n\n<research_requirements>\n";
+        if (needs.search) {
+            content += "If web search is available, search for relevant evidence before answering.\n\n";
+        }
+        if (needs.page_read) {
+            content += "Search snippets alone are insufficient for this request. If page reading is available, read the relevant source pages.\n\n";
+        }
+        content += "Base requested source-dependent facts on retrieved or user-supplied evidence. If required tools are unavailable or evidence is insufficient, identify what you could not verify and give only the supported parts. Do not fill gaps with remembered or plausible details. Label deductions clearly. A failed retrieval does not establish that the information does not exist.\n</research_requirements>";
+    }
     return messages;
 }
 

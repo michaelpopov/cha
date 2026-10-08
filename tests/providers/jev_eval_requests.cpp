@@ -15,13 +15,17 @@ int main(int argc, char** argv) {
                 const auto key = "character_" + std::to_string(input.characters.size() + 1);
                 input.characters.push_back({key, key, name.get<std::string>()});
             }
-            item["request"] = cha::make_jev_body(input);
-            // Temporary overlay for recipient isolation. When JevRequestInput gains
-            // context, set it before make_jev_body() and remove this JSON edit so
-            // evaluation uses the production context formatting and limits.
-            if (item.contains("previous_turn")) {
-                item["request"]["state"]["previous_turn"] = item.at("previous_turn");
+            if (item.contains("previous_turn") && !item.at("previous_turn").is_null()) {
+                const auto decode = [](const auto& entry) {
+                    return cha::JevContextEntry{entry.at("speaker").template get<std::string>(),
+                        entry.at("text").template get<std::string>()};
+                };
+                const auto& previous = item.at("previous_turn");
+                input.previous_turn = cha::JevPreviousTurn{decode(previous.at("human")), {}};
+                for (const auto& reply : previous.at("replies"))
+                    input.previous_turn->replies.push_back(decode(reply));
             }
+            item["request"] = cha::make_jev_body(input);
         }
         std::cout << cases.dump(2) << '\n';
     } catch (const std::exception& error) {

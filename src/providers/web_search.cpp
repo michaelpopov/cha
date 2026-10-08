@@ -209,13 +209,6 @@ std::string read_url(std::string_view provider, std::string_view url, std::strin
     return text;
 }
 
-std::string utf8_prefix(std::string_view value, std::size_t count) {
-    count = std::min(count, value.size());
-    while (count < value.size() && count > 0
-        && (static_cast<unsigned char>(value[count]) & 0xc0) == 0x80) --count;
-    return std::string(value.substr(0, count));
-}
-
 // Markdown destinations can contain balanced parentheses and escaped characters.
 std::size_t markdown_delimiter_end(std::string_view text, std::size_t start,
     char open, char close) {

@@ -2133,7 +2133,7 @@ TEST(ProviderClientTools, ReadingStopsAtTheSharedWebToolLimit) {
             [&](const ProviderHttpRequest& request, const auto&) {
                 if (++rounds == 1) {
                     auto calls = Json::array();
-                    for (int i = 0; i < 10; ++i) calls.push_back(search_call(api,
+                    for (int i = 0; i < 18; ++i) calls.push_back(search_call(api,
                         "read" + std::to_string(i), R"({"url":"https://example.org"})", "web_read"));
                     return tool_reply(api, false, calls);
                 }
@@ -2150,7 +2150,7 @@ TEST(ProviderClientTools, ReadingStopsAtTheSharedWebToolLimit) {
                 for (const auto& message : messages)
                     if (api == ProviderApi::responses ? message.value("type", "") == "function_call_output"
                         : message.value("role", "") == "tool") ++outputs;
-                EXPECT_EQ(outputs, 10);
+                EXPECT_EQ(outputs, 18);
                 return tool_reply(api, false, Json::array(), "Done.");
             });
         Transcript transcript;
@@ -2158,7 +2158,7 @@ TEST(ProviderClientTools, ReadingStopsAtTheSharedWebToolLimit) {
         input.web_read_tool = [&](auto, const auto&) { ++reads; return "{}"; };
         const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
         EXPECT_EQ(result.outcome, GenerationOutcome::completed);
-        EXPECT_EQ(reads, 8);
+        EXPECT_EQ(reads, 16);
         EXPECT_EQ(rounds, 2);
     }
 }

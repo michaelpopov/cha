@@ -409,5 +409,38 @@ TEST(ModelContext, EscapesSharedHistoryAsJsonLines) {
     EXPECT_EQ(encoded["text"], foreign_text);
 }
 
+
+TEST(ModelContext, AppendsFixedResearchComponentsOnlyToCurrentOutgoingPrompt) {
+    GenerationRequest input{
+        .history = std::make_shared<const ModelHistory>(ModelHistory{.entries = {
+            test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier", 1),
+            make_character_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 1),
+        }}),
+        .run = {.target = {"assistant", "Assistant"}, .author = {"human", "You"}, .prompt_text = "Current"},
+    };
+    const auto baseline = project_model_context(input, "System");
+    const auto stored = input.history->entries;
+    const std::string search = "If web search is available, search for relevant evidence before answering.";
+    const std::string read = "Search snippets alone are insufficient for this request. If page reading is available, read the relevant source pages.";
+    const std::string evidence = "Base requested source-dependent facts on retrieved or user-supplied evidence. If required tools are unavailable or evidence is insufficient, identify what you could not verify and give only the supported parts. Do not fill gaps with remembered or plausible details. Label deductions clearly. A failed retrieval does not establish that the information does not exist.";
+    for (int mask = 0; mask < 8; ++mask) {
+        SCOPED_TRACE(mask);
+        input.research_needs = {bool(mask & 1), bool(mask & 2), bool(mask & 4)};
+        const auto projected = project_model_context(input, "System");
+        ASSERT_EQ(projected.size(), baseline.size());
+        for (std::size_t i = 0; i + 1 < projected.size(); ++i) EXPECT_EQ(projected[i], baseline[i]);
+        std::string expected = baseline.back().content;
+        if (mask) {
+            expected += "\n\n<research_requirements>\n";
+            if (mask & 1) expected += search + "\n\n";
+            if (mask & 2) expected += read + "\n\n";
+            expected += evidence + "\n</research_requirements>";
+        }
+        EXPECT_EQ(projected.back().content, expected);
+        EXPECT_EQ(input.run.prompt_text, "Current");
+        EXPECT_EQ(input.history->entries, stored);
+    }
+}
+
 } // namespace
 } // namespace cha

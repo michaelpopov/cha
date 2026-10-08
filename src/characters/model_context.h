@@ -1,6 +1,7 @@
 #pragma once
 
 #include "chat/character_metadata.h"
+#include "chat/research_needs.h"
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
 
@@ -48,6 +49,7 @@ struct GenerationRequest {
         std::string_view, std::string_view, const std::atomic_bool&)> maintenance_tool;
     // Auxiliary requests such as session naming do not need conversation tool rules.
     bool include_tool_instructions{true};
+    ResearchNeeds research_needs{};
 };
 
 enum class ModelRole {

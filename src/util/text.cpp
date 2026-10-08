@@ -6,6 +6,13 @@
 
 namespace cha {
 
+std::string utf8_prefix(std::string_view value, std::size_t count) {
+    count = std::min(count, value.size());
+    while (count < value.size() && count > 0
+        && (static_cast<unsigned char>(value[count]) & 0xc0) == 0x80) --count;
+    return std::string(value.substr(0, count));
+}
+
 bool is_space(char character) {
     return std::isspace(static_cast<unsigned char>(character)) != 0;
 }

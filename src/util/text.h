@@ -10,6 +10,8 @@ bool is_space(char character);
 std::size_t find_whitespace(std::string_view value);
 std::string_view trim_view(std::string_view value);
 std::string fold_ascii(std::string_view value);
+// Returns a prefix of valid UTF-8 text within the byte limit, without splitting a code point.
+std::string utf8_prefix(std::string_view value, std::size_t count);
 // Removes links and URLs from model text. A Markdown link with a descriptive
 // label keeps its label. Citations, images, bare URLs, and reference
 // definitions disappear together with the space before them, and a line

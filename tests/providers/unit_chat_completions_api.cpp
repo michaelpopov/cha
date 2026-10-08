@@ -404,5 +404,26 @@ TEST(ChatCompletionsApi, ReportsInvalidNonStreamingBodies) {
     }
 }
 
+
+TEST(ChatCompletionsApi, EncodesProjectedResearchBlockAndCountsConversationBytes) {
+    GenerationRequest input;
+    input.history = std::make_shared<const ModelHistory>();
+    input.run.author = {"human", "You"};
+    input.run.prompt_text = "Verify current prices";
+    input.research_needs = {true, true, true};
+    const auto projected = project_model_context(input, "System");
+    RequestTextSizes sizes;
+    ModelBackendConfig config;
+    config.api = ProviderApi::chat_completions;
+    const auto body = nlohmann::json::parse(build_chat_completions_request_body(input, config, "System", &sizes));
+    const auto content = body["messages"].back()["content"].get<std::string>();
+    EXPECT_EQ(content, projected.back().content);
+    EXPECT_NE(content.find("<research_requirements>"), std::string::npos);
+    EXPECT_EQ(sizes.conversation_bytes, content.size());
+    const auto instructions = body["messages"][0]["content"].get<std::string>();
+    EXPECT_EQ(instructions.find("<research_requirements>"), std::string::npos);
+    EXPECT_NE(instructions.find("Do not give unverified details as facts."), std::string::npos);
+}
+
 } // namespace
 } // namespace cha

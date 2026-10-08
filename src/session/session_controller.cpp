@@ -548,7 +548,8 @@ ControllerUpdate SessionController::submit_prompt(
 }
 
 ControllerUpdate SessionController::dispatch_target(
-    std::string_view author, std::string text, std::string_view target_id) {
+    std::string_view author, std::string text, std::string_view target_id,
+    ResearchNeeds research_needs) {
     if (target_id == null_agent_handle) {
         ControllerUpdate update;
         record_monologue(author, std::move(text), update);
@@ -556,11 +557,11 @@ ControllerUpdate SessionController::dispatch_target(
     }
     const auto current = workspace();
     if (target_id == all_characters_target) {
-        return start_resolved_multicast(author, std::move(text), forum_characters(*current));
+        return start_resolved_multicast(author, std::move(text), forum_characters(*current), research_needs);
     }
     const auto* target = current->find_forum_character(identity_.forum_id, target_id);
     if (!target) return {.notice = "The selected recipient is no longer in this forum. Choose a target and send again."};
-    return start_resolved_multicast(author, std::move(text), {*target});
+    return start_resolved_multicast(author, std::move(text), {*target}, research_needs);
 }
 
 std::vector<CharacterMetadata> SessionController::forum_characters(const Workspace& current) const {
@@ -593,7 +594,7 @@ ControllerUpdate SessionController::start_classification(
     log_debug("Jev classification started: forum_id=" + identity_.forum_id
         + " session_id=" + identity_.session_id);
     auto request = providers_.make_jev_request(
-        {*current->jev(), text, options, deadline}, notifier_);
+        {*current->jev(), text, options, deadline, jev_previous_turn(transcript_.view())}, notifier_);
     pending_classification_ = PendingClassification{
         std::string(author), std::move(text), default_character_id_,
         std::move(options), std::move(submission),
@@ -659,6 +660,9 @@ ControllerUpdate SessionController::finish_classification() {
     log_debug("Jev classification finished: forum_id=" + identity_.forum_id
         + " session_id=" + identity_.session_id
         + " success=" + (result.outcome == JevOutcome::success ? "true" : "false"));
+    log_debug("Jev research decisions: search=" + std::string(result.research_needs.search ? "true" : "false")
+        + " page_read=" + (result.research_needs.page_read ? "true" : "false")
+        + " actual_data=" + (result.research_needs.actual_data ? "true" : "false"));
     log_debug_payload("Jev recipient decision", result.choice);
     log_debug_payload("Jev classification diagnostic", result.message);
     std::string target = input.fallback;
@@ -682,7 +686,7 @@ ControllerUpdate SessionController::finish_classification() {
     // One owner-thread handoff: no idle publication and no classifier re-entry.
     const auto previous_target = default_character_id_;
     if (!failed && result.choice != "undefined") default_character_id_ = target;
-    auto dispatched = dispatch_target(input.author, std::move(input.text), target);
+    auto dispatched = dispatch_target(input.author, std::move(input.text), target, result.research_needs);
     if (dispatched.input_consumed) {
         if (failed) {
             if (target == all_characters_target) {
@@ -715,7 +719,8 @@ void SessionController::start_generation(
     std::string text,
     std::vector<CharacterMetadata> targets,
     SharedModelHistory history,
-    ControllerUpdate& update) {
+    ControllerUpdate& update,
+    ResearchNeeds research_needs) {
     if (!history || targets.empty()) {
         throw std::invalid_argument(
             "Generation requires history and at least one target");
@@ -782,6 +787,7 @@ void SessionController::start_generation(
                     .prompt_cache_key = cache_key,
                     .created_at = unix_now(),
                 },
+                .research_needs = research_needs,
             },
             .web_search_tool = tool_enabled
                 ? std::optional<WorkspaceWebSearch>(current->web_search()) : std::nullopt,
@@ -1041,7 +1047,8 @@ ControllerUpdate SessionController::start_multicast(
 ControllerUpdate SessionController::start_resolved_multicast(
     std::string_view author_id,
     std::string text,
-    std::vector<CharacterMetadata> targets) {
+    std::vector<CharacterMetadata> targets,
+    ResearchNeeds research_needs) {
     if (trim_view(text).empty()) {
         return {.notice = "Multicast prompt is empty"};
     }
@@ -1064,7 +1071,8 @@ ControllerUpdate SessionController::start_resolved_multicast(
         std::move(text),
         std::move(targets),
         std::move(history),
-        update);
+        update,
+        research_needs);
     return update;
 }
 

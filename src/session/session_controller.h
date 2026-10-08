@@ -189,11 +189,13 @@ private:
         std::string text,
         std::vector<CharacterMetadata> targets,
         SharedModelHistory history,
-        ControllerUpdate& update);
+        ControllerUpdate& update,
+        ResearchNeeds research_needs = {});
     [[nodiscard]] ControllerUpdate start_resolved_multicast(
         std::string_view author_id,
         std::string text,
-        std::vector<CharacterMetadata> targets);
+        std::vector<CharacterMetadata> targets,
+        ResearchNeeds research_needs = {});
     void activate_run(const RunSpec& run, std::size_t foreground_index,
                       ControllerUpdate& update);
     void finish_generation_run(ControllerUpdate& update);
@@ -215,7 +217,8 @@ private:
     TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;
 
-    ControllerUpdate dispatch_target(std::string_view author, std::string text, std::string_view target);
+    ControllerUpdate dispatch_target(std::string_view author, std::string text, std::string_view target,
+        ResearchNeeds research_needs = {});
     [[nodiscard]] std::vector<CharacterMetadata> forum_characters(const Workspace& current) const;
     ControllerUpdate start_classification(std::string_view author, std::string text,
         std::shared_ptr<SubmissionState> submission);

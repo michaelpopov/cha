@@ -547,7 +547,7 @@ GenerationResult ProviderClient::perform(
     const bool maintenance = static_cast<bool>(payload.maintenance_tool);
     const int max_tool_calls = maintenance
         ? maintenance_call_limit
-        : (payload.web_read_tool ? 8 : 4);
+        : (payload.web_read_tool ? 16 : 4);
     int tool_calls_used = 0;
     std::size_t maintenance_result_bytes = 0;
     int round = 0;
