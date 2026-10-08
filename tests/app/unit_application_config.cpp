@@ -320,7 +320,8 @@ TEST_F(ApplicationConfigTest, RequiresAllSettingsWithValidTypes) {
     const std::vector<std::string> invalid{
         "[logging]\nfile = \"x\"\nlevel = \"off\"\n",
         "vault = \"Personal\"\n[logging]\nlevel = \"off\"\n",
-        "vault = \"Personal\"\nextra = true\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
+        "vault = \"Personal\"\n[logging]\nfile = \"x\"\nlevel = false\n",
+        "vault = \"Personal\"\n[logging]\nfile = \"x\"\nlevel = \"invalid\"\n",
     };
     for (const std::string& contents : invalid) {
         write_app(contents);
@@ -329,6 +330,25 @@ TEST_F(ApplicationConfigTest, RequiresAllSettingsWithValidTypes) {
             std::runtime_error)
             << contents;
     }
+}
+
+TEST_F(ApplicationConfigTest, IgnoresUnusedApplicationAndLoggingFieldsWithWarnings) {
+    write_app("vault = \"Personal\"\nextra = true\n"
+        "[logging]\nfile = \"x\"\nlevel = \"off\"\nobsolete = 123\n");
+    const auto command = load({"chaweb", "--config=" + config_.string()});
+    ASSERT_EQ(command.warnings.size(), 2u);
+    EXPECT_NE(command.warnings[0].find("extra"), std::string::npos);
+    EXPECT_NE(command.warnings[1].find("obsolete"), std::string::npos);
+}
+
+TEST_F(ApplicationConfigTest, ValidatesInMemoryReplacementWithActualPathResolution) {
+    const auto candidate = load_configuration_directory(config_, "personal.toml",
+        "vault_name = \"Personal\"\ndata = \"../replacement.sqlite3\"\n");
+    ASSERT_EQ(candidate.vaults.size(), 1u);
+    EXPECT_EQ(candidate.vaults[0].data, root_ / "replacement.sqlite3");
+    EXPECT_EQ(candidate.vaults[0].source, config_ / "personal.toml");
+    const auto original = load_configuration_directory(config_);
+    EXPECT_EQ(original.vaults[0].data, root_ / "data/workspace.sqlite3");
 }
 
 TEST_F(ApplicationConfigTest, IgnoresMissingAndObsoleteWebSection) {

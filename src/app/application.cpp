@@ -239,6 +239,7 @@ Application::Impl::Impl(
           .lifecycle = &lifecycle_mutex,
           .stopping = &stopping_flag,
           .admit = [this](std::uint64_t epoch) { return admit_locked(epoch); },
+          .config_directory = command.config_directory,
       })),
       providers(shared_openai_provider_factory(
           openai_auth.get(), api_keys.get()), {},

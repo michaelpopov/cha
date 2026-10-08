@@ -155,6 +155,33 @@ void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
                 {"description", "true enables debug. false restores info."}}}},
             Json::array({"verbose"}))},
     });
+    append_tool(body, api, Json{
+        {"name", "host_config_list"},
+        {"description", "List disk TOML files in the host configuration directory, including "
+            "app.toml and vault registrations. Does not list vault configuration rows or secrets."},
+        {"strict", true},
+        {"parameters", function_parameters(Json::object(), Json::array())},
+    });
+    append_tool(body, api, Json{
+        {"name", "host_config_read"},
+        {"description", "Read a complete disk TOML file from the host configuration directory. "
+            "Use a filename returned by host_config_list. No arbitrary filesystem access."},
+        {"strict", true},
+        {"parameters", function_parameters(
+            {{"path", Json{{"type", "string"}}}}, Json::array({"path"}))},
+    });
+    append_tool(body, api, Json{
+        {"name", "host_config_write"},
+        {"description", "Validate the host configuration and atomically save one disk TOML file. "
+            "Requires exact expected_content from a fresh read, or null to create an absent file. "
+            "Preserve unrelated content. Saved changes take effect after restart. No automatic undo."},
+        {"strict", true},
+        {"parameters", function_parameters({
+            {"path", Json{{"type", "string"}}},
+            {"content", Json{{"type", "string"}, {"description", "Complete new file text"}}},
+            {"expected_content", nullable_string("Exact previously read text, or null for a new file")},
+        }, Json::array({"path", "content", "expected_content"}))},
+    });
 }
 
 void update_tool_instructions(nlohmann::json& body, ProviderApi api,

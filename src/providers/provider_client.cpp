@@ -613,9 +613,10 @@ GenerationResult ProviderClient::perform(
                     : R"({"error":"Web tool limit reached. Answer using the available results."})";
             } else if (maintenance) {
                 ++tool_calls_used;
-                // An apply result is never replaced after it runs, so a saved
+                // A write result is never replaced after it runs, so a saved
                 // change is never reported as unsaved. The service keeps it small.
-                const bool apply = call.name == "vault_config_apply";
+                const bool apply = call.name == "vault_config_apply"
+                    || call.name == "host_config_write";
                 if (force_final) {
                     output = R"({"error":"too_large","message":"Tool results for this answer are too large. This call was not run.","committed":false})";
                 } else if (call.name == "web_search" || call.name == "web_read") {

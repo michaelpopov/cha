@@ -35,6 +35,7 @@ PROVIDER_REPLY = "Provider reply"
 REPAIR = "REPAIR-WELCOME"
 UNDO = "UNDO-WELCOME"
 FAIL_AFTER = "FAIL-AFTER-SAVE"
+HOST_CONFIG = "HOST-CONFIG-WELCOME"
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -99,6 +100,18 @@ def maintenance_reply(body, prompt):
     """Scripted Welcome repair. Ordinary HOLD/FAIL text stays on the other path."""
     results = tool_results(body)
     last = results[-1] if results else None
+    if HOST_CONFIG in prompt:
+        if last is None:
+            return tool_reply([("list1", "host_config_list", {})])
+        if isinstance(last, dict) and "entries" in last:
+            return tool_reply([("read1", "host_config_read", {"path": "app.toml"})])
+        if isinstance(last, dict) and "content" in last:
+            return tool_reply([("write1", "host_config_write", {
+                "path": "app.toml",
+                "content": last["content"] + "\n# Saved by Assistant\n",
+                "expected_content": last["content"],
+            })])
+        return text_reply("Host configuration saved. Restart is required.")
     if REPAIR in prompt:
         if last is None:
             return tool_reply([("read1", "vault_config_read", {
@@ -174,7 +187,7 @@ class FakeProvider:
                     provider.prompts.append(prompt)
                     provider.bodies.append(body.decode())
                     provider.changed.notify_all()
-                if any(word in prompt for word in (REPAIR, UNDO, FAIL_AFTER)):
+                if any(word in prompt for word in (REPAIR, UNDO, FAIL_AFTER, HOST_CONFIG)):
                     status, reply = maintenance_reply(body, prompt)
                 else:
                     if HOLD in prompt:
@@ -712,6 +725,27 @@ class ChaWebIntegration(DaemonHarness):
         self.assertTrue(any(PROVIDER_REPLY in text for text in self.texts(finished)))
         self.assertEqual(self.prompt_count(lost), 1)
 
+    def test_welcome_reads_and_writes_disk_host_configuration(self):
+        self.use_provider()
+        config = self.directory / "alice-net"
+        original = (config / "app.toml").read_text()
+        saved = self.welcome_turn(HOST_CONFIG)
+        self.assertEqual((config / "app.toml").read_text(),
+                         original + "\n# Saved by Assistant\n")
+        self.assertTrue(any(
+            entry.get("kind") == "notice"
+            and "Host configuration was saved. Restart is required." in entry.get("text", "")
+            for entry in saved["transcript"]))
+        results = tool_results(self.provider.bodies[-1])
+        self.assertTrue(results[-1]["committed"])
+        self.assertTrue(results[-1]["restart_required"])
+        self.stop(self.daemon)
+        self.assertEqual(self.daemon.returncode, 0)
+        self.daemon = self.start_daemon("alice", config)
+        self.wait_ready()
+        self.assertEqual((config / "app.toml").read_text(),
+                         original + "\n# Saved by Assistant\n")
+
     def test_welcome_repair_notice_survives_failure_and_restart(self):
         self.use_provider()
         repaired = self.welcome_turn(REPAIR)
@@ -724,7 +758,8 @@ class ChaWebIntegration(DaemonHarness):
         self.assertEqual(
             [tool["function"]["name"] for tool in opening["tools"]],
             ["vault_config_list", "vault_config_read", "vault_config_apply",
-             "assistant_logs", "assistant_logging"])
+             "assistant_logs", "assistant_logging",
+             "host_config_list", "host_config_read", "host_config_write"])
         system = opening["messages"][0]["content"]
         self.assertIn("Host: cha-daemon (ChaWeb)\n\n", system)
         self.assertIn("# Operating instructions for Assistant", system)

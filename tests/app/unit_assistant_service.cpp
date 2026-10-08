@@ -69,6 +69,10 @@ public:
                + std::to_string(
                    std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(log_directory_);
+        std::ofstream(log_directory_ / "app.toml")
+            << "vault = \"Test\"\n[logging]\nfile = \"cha.log\"\nlevel = \"off\"\n";
+        std::ofstream(log_directory_ / "test.toml")
+            << "vault_name = \"Test\"\ndata = \"test.sqlite3\"\n";
         initialize_diagnostic_logging(log_directory_ / "cha.log", "off");
         database_ = test::import_test_database(workspace_.root());
         store_ = WorkspaceConfigStore::open(database_);
@@ -95,6 +99,7 @@ public:
     std::atomic_bool& stopping() { return stopping_; }
     std::atomic_bool& cancelled() { return cancelled_; }
     MaintenanceContext& context() { return context_; }
+    const std::filesystem::path& config_directory() { return log_directory_; }
 
     // Admission runs first after the lifecycle lock, then again after the read.
     void fail_after_lock() { fail_after_ = admit_count_ + 1; }
@@ -131,6 +136,7 @@ private:
                 if (epoch != admitted_epoch_) return ErrorCode::vault_changed;
                 return std::nullopt;
             },
+            .config_directory = log_directory_,
         });
     }
 
@@ -182,6 +188,117 @@ Json replace_change(std::string path, std::string content, std::string version) 
 
 const std::string kGuide = "characters/guide/character.toml";
 const std::string kPrompt = "characters/guide/CHARACTER.md";
+
+TEST(AssistantService, ReadsAndWritesDiskHostConfiguration) {
+    ServiceHarness harness;
+    const auto listed = harness.run("host_config_list", Json::object());
+    ASSERT_EQ(listed["entries"].size(), 2u);
+    EXPECT_EQ(listed["entries"][0]["path"], "app.toml");
+    EXPECT_EQ(listed["entries"][1]["path"], "test.toml");
+    const auto read = harness.run("host_config_read", {{"path", "app.toml"}});
+    ASSERT_EQ(read["status"], "ok");
+    EXPECT_EQ(read["content"], file_text(harness.config_directory() / "app.toml"));
+    const std::string content = "# Keep this comment\nvault = \"Test\"\nobsolete = true\n"
+        "[logging]\nfile = \"cha.log\"\nlevel = \"debug\"\n";
+    const auto saved = harness.run("host_config_write", {
+        {"path", "app.toml"}, {"content", content}, {"expected_content", read["content"]}});
+    ASSERT_EQ(saved["committed"], true) << saved;
+    EXPECT_EQ(saved["restart_required"], true);
+    ASSERT_EQ(saved["warnings"].size(), 1u);
+    EXPECT_NE(saved["warnings"][0].get<std::string>().find("obsolete"), std::string::npos);
+    EXPECT_EQ(file_text(harness.config_directory() / "app.toml"), content);
+    // Disk settings are not applied to the process log buffer.
+    EXPECT_EQ(diagnostic_log_state().level, LogSeverity::info);
+    const auto noop = harness.run("host_config_write", {
+        {"path", "app.toml"}, {"content", content}, {"expected_content", content}});
+    EXPECT_EQ(noop["committed"], false);
+    EXPECT_EQ(noop["restart_required"], false);
+}
+
+TEST(AssistantService, HostWritesRejectStaleAndInvalidConfigurationWithoutSaving) {
+    ServiceHarness harness;
+    const auto file = harness.config_directory() / "app.toml";
+    const std::string original = file_text(file);
+    std::ofstream(file) << original << "# External change\n";
+    const auto stale = harness.run("host_config_write", {
+        {"path", "app.toml"}, {"content", original}, {"expected_content", original}});
+    EXPECT_EQ(stale["error"], "stale_content");
+    const auto current = file_text(file);
+    for (const std::string content : {"vault = [",
+        "vault = \"Unknown\"\n[logging]\nfile = \"cha.log\"\nlevel = \"info\"",
+        "vault = \"Test\"\n[logging]\nfile = \"cha.log\"\nlevel = \"invalid\""}) {
+        const auto invalid = harness.run("host_config_write", {
+            {"path", "app.toml"}, {"content", content}, {"expected_content", current}});
+        EXPECT_EQ(invalid["error"], "validation_failure") << invalid;
+        EXPECT_EQ(invalid["committed"], false);
+        EXPECT_EQ(file_text(file), current);
+    }
+    const auto invalid_registration = harness.run("host_config_write", {
+        {"path", "duplicate.toml"}, {"content", "vault_name = \"Test\"\ndata = \"other.sqlite3\"\n"},
+        {"expected_content", nullptr}});
+    EXPECT_EQ(invalid_registration["error"], "validation_failure");
+    EXPECT_FALSE(std::filesystem::exists(harness.config_directory() / "duplicate.toml"));
+}
+
+TEST(AssistantService, CreatesAndReplacesDiskVaultRegistrations) {
+    ServiceHarness harness;
+    const auto missing = harness.run("host_config_read", {{"path", "new.toml"}});
+    EXPECT_EQ(missing["status"], "missing");
+    const std::string content = "vault_name = \"New\"\ndata = \"new.sqlite3\"\n";
+    const auto created = harness.run("host_config_write", {
+        {"path", "new.toml"}, {"content", content}, {"expected_content", nullptr}});
+    ASSERT_EQ(created["committed"], true) << created;
+    EXPECT_EQ(file_text(harness.config_directory() / "new.toml"), content);
+    const auto conflict = harness.run("host_config_write", {
+        {"path", "new.toml"}, {"content", content}, {"expected_content", nullptr}});
+    EXPECT_EQ(conflict["error"], "stale_content");
+    const auto replaced = harness.run("host_config_write", {
+        {"path", "new.toml"}, {"content", content + "parent = \"Test\"\n"},
+        {"expected_content", content}});
+    EXPECT_EQ(replaced["committed"], true) << replaced;
+}
+
+TEST(AssistantService, HostToolsRejectEscapingPathsSecretsLinksAndOversizedFiles) {
+    ServiceHarness harness;
+    for (const std::string path : {"../app.toml", "/tmp/app.toml", "sub/app.toml",
+        "sub\\app.toml", "C:app.toml", "password", "openai-auth.json", "api-keys.json"}) {
+        EXPECT_EQ(harness.run("host_config_read", {{"path", path}})["error"], "invalid_path");
+        EXPECT_EQ(harness.run("host_config_write", {
+            {"path", path}, {"content", ""}, {"expected_content", nullptr}})["error"], "invalid_path");
+    }
+    std::error_code link_error;
+    std::filesystem::create_symlink(harness.config_directory() / "app.toml",
+        harness.config_directory() / "linked.toml", link_error);
+    if (!link_error) {
+        EXPECT_EQ(harness.run("host_config_read", {{"path", "linked.toml"}})["error"], "invalid_path");
+        EXPECT_EQ(harness.run("host_config_write", {
+            {"path", "linked.toml"}, {"content", ""}, {"expected_content", nullptr}})["error"], "invalid_path");
+        EXPECT_EQ(harness.run("host_config_list", Json::object())["entries"].size(), 2u);
+    }
+    const std::string large(workspace_config_file_size_limit + 1, 'x');
+    std::ofstream(harness.config_directory() / "large.toml") << large;
+    EXPECT_EQ(harness.run("host_config_read", {{"path", "large.toml"}})["error"], "too_large");
+    EXPECT_EQ(harness.run("host_config_write", {
+        {"path", "large.toml"}, {"content", ""}, {"expected_content", large}})["error"], "too_large");
+    EXPECT_EQ(harness.run("host_config_write", {
+        {"path", "new.toml"}, {"content", large}, {"expected_content", nullptr}})["error"], "too_large");
+    harness.context().character_id = "guide";
+    EXPECT_EQ(harness.run("host_config_list", Json::object())["error"], "unavailable");
+}
+
+TEST(AssistantService, HostWritesCheckAdmissionAndCancellation) {
+    ServiceHarness harness;
+    const auto file = harness.config_directory() / "app.toml";
+    const auto original = file_text(file);
+    const Json arguments{{"path", "app.toml"}, {"content", original + "# change\n"},
+        {"expected_content", original}};
+    harness.deny_after_read(ErrorCode::vault_changed);
+    EXPECT_EQ(harness.run("host_config_write", arguments)["error"], "stale_context");
+    EXPECT_EQ(file_text(file), original);
+    harness.cancelled() = true;
+    EXPECT_EQ(harness.run("host_config_write", arguments)["error"], "cancelled");
+    EXPECT_EQ(file_text(file), original);
+}
 
 TEST(AssistantReference, ConcatenatesBothHostLinesAndTheThreeDocuments) {
     const std::filesystem::path root{CHA_SOURCE_DIRECTORY};

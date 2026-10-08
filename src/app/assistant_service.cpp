@@ -1,10 +1,13 @@
 #include "app/assistant_service.h"
 
+#include "app/application_config.h"
 #include "providers/credentials.h"
 #include "providers/openai_oauth.h"
 #include "runtime/live_session_manager.h"
 #include "storage/session_repository.h"
 #include "util/logging.h"
+#include "util/path_name.h"
+#include "util/private_filesystem.h"
 #include "workspace/builtins.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_store.h"
@@ -18,6 +21,7 @@
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <fstream>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -166,6 +170,7 @@ class Redactor {
 public:
     explicit Redactor(const AssistantService::Links& links) {
         try {
+            roots_.push_back(links.config_directory.string());
             if (const auto snapshot = links.store->snapshot()) {
                 for (const SavedApiKey& key : snapshot->api_keys()) {
                     if (key.value.size() >= 4) secrets_.push_back(key.value);
@@ -204,6 +209,140 @@ private:
     std::vector<std::string> secrets_;
     std::vector<std::string> roots_;
 };
+
+bool host_config_name(std::string_view name) {
+    return name.size() > 5 && name.ends_with(".toml")
+        && name.find_first_of("/\\:") == std::string_view::npos
+        && name.find('\0') == std::string_view::npos;
+}
+
+// Bounded reads return complete text, never a partial replacement base.
+std::string read_host_config(const std::filesystem::path& file) {
+    require_regular_file(file);
+    std::ifstream input(file, std::ios::binary);
+    if (!input) throw std::runtime_error("Cannot read host configuration.");
+    std::string content(workspace_config_file_size_limit + 1, '\0');
+    input.read(content.data(), static_cast<std::streamsize>(content.size()));
+    if (input.bad()) throw std::runtime_error("Cannot read host configuration.");
+    content.resize(static_cast<std::size_t>(input.gcount()));
+    return content;
+}
+
+std::string host_config_tool(
+    std::string_view name,
+    const Json& parsed,
+    const AssistantService::Links& links,
+    const MaintenanceContext& context,
+    std::unique_lock<std::timed_mutex>& lifecycle,
+    const AdmissionCheck& admission_error,
+    const WorkspaceConfigCancelCheck& cancel_check,
+    const Redactor& redact) {
+    if (links.config_directory.empty()) {
+        return tool_error("unavailable", "Host configuration tools are not available.");
+    }
+    if (name == "host_config_list") {
+        if (!parsed.empty()) return tool_error("invalid_argument", "host_config_list takes no arguments.");
+        std::vector<std::string> paths;
+        for (const auto& entry : std::filesystem::directory_iterator(links.config_directory)) {
+            const auto path = utf8_path(entry.path().filename());
+            if (host_config_name(path) && std::filesystem::is_regular_file(entry.symlink_status())) {
+                paths.push_back(path);
+            }
+        }
+        std::ranges::sort(paths);
+        const bool truncated = paths.size() > workspace_config_list_limit;
+        if (truncated) paths.resize(workspace_config_list_limit);
+        Json entries = Json::array();
+        for (const auto& path : paths) {
+            entries.push_back({{"path", path},
+                {"bytes", std::filesystem::file_size(links.config_directory / path_from_utf8(path))}});
+        }
+        if (const auto error = admission_error()) return *error;
+        const std::string result = Json{{"entries", entries}, {"truncated", truncated}}.dump();
+        if (result.size() > maintenance_call_result_limit) {
+            return tool_error("too_large", "The host configuration listing is too large.");
+        }
+        return result;
+    }
+    const bool write = name == "host_config_write";
+    if (!parsed.contains("path") || !parsed["path"].is_string()
+        || parsed.size() != (write ? 3 : 1)
+        || (write && (!parsed.contains("content") || !parsed["content"].is_string()
+            || !parsed.contains("expected_content")
+            || (!parsed["expected_content"].is_string() && !parsed["expected_content"].is_null())))) {
+        return tool_error("invalid_argument", write
+            ? "host_config_write requires path, content, and expected_content."
+            : "host_config_read requires path.");
+    }
+    const auto path = parsed["path"].get<std::string>();
+    if (!host_config_name(path)) {
+        return tool_error("invalid_path", "Use a TOML filename in the host configuration directory.");
+    }
+    const auto file = links.config_directory / path_from_utf8(path);
+    std::error_code status_error;
+    const auto status = std::filesystem::symlink_status(file, status_error);
+    if (status_error && status_error != std::errc::no_such_file_or_directory) {
+        throw std::runtime_error("Cannot inspect host configuration.");
+    }
+    const bool exists = status.type() != std::filesystem::file_type::not_found;
+    if (exists && !std::filesystem::is_regular_file(status)) {
+        return tool_error("invalid_path", "Host configuration must be a regular file, not a link.");
+    }
+    std::string current;
+    if (exists) current = read_host_config(file);
+    if (current.size() > workspace_config_file_size_limit) {
+        return tool_error("too_large", "The configuration file exceeds 64 KiB.");
+    }
+    if (const auto error = admission_error()) return *error;
+    if (!write) {
+        const std::string result = Json{{"path", path}, {"status", exists ? "ok" : "missing"},
+            {"content", exists ? Json(current) : Json(nullptr)}}.dump();
+        if (result.size() > maintenance_call_result_limit) {
+            return tool_error("too_large", "The configuration result is too large.");
+        }
+        return result;
+    }
+    const auto content = parsed["content"].get<std::string>();
+    if (content.size() > workspace_config_file_size_limit) {
+        return tool_error("too_large", "The configuration file exceeds 64 KiB.");
+    }
+    const auto& expected = parsed["expected_content"];
+    if (exists != expected.is_string() || (exists && current != expected.get<std::string>())) {
+        return tool_error("stale_content", "The file changed. Read it again before writing.");
+    }
+    if (exists && current == content) {
+        return Json{{"committed", false}, {"restart_required", false}, {"path", path},
+            {"message", "No configuration changes were necessary."}}.dump();
+    }
+    // Reuse startup validation with one in-memory replacement. Nothing is
+    // written until the whole configuration directory has loaded successfully.
+    const auto candidate = load_configuration_directory(links.config_directory, path, content);
+    if (cancel_check()) return tool_error("cancelled", "The maintenance tool was cancelled.");
+    if (const auto error = admission_error()) return *error;
+    // Check again after validation, which also reads the other registrations.
+    if ((exists && read_host_config(file) != current)
+        || (!exists && std::filesystem::exists(std::filesystem::symlink_status(file)))) {
+        return tool_error("stale_content", "The file changed. Read it again before writing.");
+    }
+    create_private_file(file, content);
+    for (const auto& warning : candidate.warnings) log_warn(warning);
+    lifecycle.unlock();
+    const std::string notice = "Host configuration was saved. Restart is required.";
+    bool delivered = true;
+    if (links.sessions) {
+        delivered = links.sessions->post_maintenance_result(context.context_epoch,
+            {context.forum_id, context.session_id}, notice);
+    }
+    Json warnings = Json::array();
+    for (const auto& warning : candidate.warnings) warnings.push_back(redact(warning));
+    Json result{{"committed", true}, {"restart_required", true}, {"path", path},
+        {"warnings", warnings}, {"message", delivered ? notice : notice + " Session refresh was not delivered."}};
+    if (result.dump().size() > maintenance_call_result_limit) {
+        result["warnings"] = Json::array();
+        result["message"] = notice + " Warnings were omitted because the result is too large.";
+    }
+    return result.dump();
+}
 
 std::string list_tool(
     const Json& parsed,
@@ -672,6 +811,10 @@ std::string AssistantService::execute(
     // Collected once per call: a log read redacts up to 2,000 entries.
     const Redactor redact(links_);
     try {
+        if (name == "host_config_list" || name == "host_config_read" || name == "host_config_write") {
+            return host_config_tool(name, parsed, links_, context, lifecycle,
+                admission_error, cancel_check, redact);
+        }
         if (name == "vault_config_list") return list_tool(parsed, *links_.store, admission_error);
         if (name == "vault_config_read") return read_tool(parsed, *links_.store, admission_error);
         if (name == "assistant_logging") return logging_tool(parsed, admission_error);

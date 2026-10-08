@@ -57,8 +57,12 @@ struct ApplicationCommand {
     bool chaweb_host{false};
 };
 
+// An optional in-memory file replacement validates an Assistant edit before
+// saving. Relative paths still resolve from the actual configuration directory.
 ConfigurationDirectory load_configuration_directory(
-    const std::filesystem::path& directory);
+    const std::filesystem::path& directory,
+    std::string_view replacement_name = {},
+    std::string_view replacement_content = {});
 VaultDefinition load_vault_definition_file(
     const std::filesystem::path& configuration_directory,
     const std::filesystem::path& source);

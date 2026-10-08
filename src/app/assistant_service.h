@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -19,8 +20,8 @@ class OpenAiOAuth;
 class SessionRepository;
 class WorkspaceConfigStore;
 
-// Welcome maintenance tools. Configuration goes to the workspace store and
-// memory logs go to the diagnostic sink. This type does not own either.
+// Welcome maintenance tools for vault rows, host TOML files, and memory logs.
+// This type does not own the store or diagnostic sink.
 class AssistantService {
 public:
     struct Links {
@@ -31,6 +32,7 @@ public:
         std::function<std::optional<ErrorCode>(std::uint64_t)> admit;
         LiveSessionManager* sessions{};
         SessionRepository* repository{};
+        std::filesystem::path config_directory;
     };
 
     explicit AssistantService(Links links);

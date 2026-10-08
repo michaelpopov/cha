@@ -85,12 +85,13 @@ ParsedOptions parse_arguments(int argc, const char* const* argv) {
     return result;
 }
 
-void reject_unknown_fields(
+void warn_unknown_fields(
     const toml::table& table,
     const std::filesystem::path& source,
     std::initializer_list<std::string_view> allowed,
     std::string_view section,
-    std::string_view kind) {
+    std::string_view kind,
+    std::vector<std::string>& warnings) {
     for (const auto& [key, value] : table) {
         (void)value;
         bool found = false;
@@ -101,10 +102,10 @@ void reject_unknown_fields(
             }
         }
         if (!found) {
-            throw std::runtime_error(
+            warnings.push_back(
                 std::string(kind) + " '" + utf8_path(source) + "' "
-                + std::string(section) + " contains unknown field '"
-                + std::string(key.str()) + "'.");
+                + std::string(section) + " field '"
+                + std::string(key.str()) + "' is unused and was ignored.");
         }
     }
 }
@@ -170,7 +171,9 @@ std::filesystem::path resolve_config_path(
 
 toml::table parse_toml_file(
     const std::filesystem::path& source,
-    std::string_view kind) {
+    std::string_view kind,
+    std::optional<std::string_view> content = std::nullopt) {
+    if (content) return toml::parse(*content, utf8_path(source));
     std::ifstream input(source, std::ios::binary);
     if (!input) {
         throw std::runtime_error(
@@ -232,9 +235,10 @@ std::string vault_collision(
 LoadedVault load_vault_definition(
     const std::filesystem::path& directory,
     const std::filesystem::path& source,
-    std::vector<std::string>& warnings) {
+    std::vector<std::string>& warnings,
+    std::optional<std::string_view> content = std::nullopt) {
     constexpr std::string_view kind = "vault definition";
-    const toml::table root = parse_toml_file(source, kind);
+    const toml::table root = parse_toml_file(source, kind, content);
     warn_unknown_vault_fields(root, source, warnings);
     const std::string name =
         required_string(root, source, "vault_name", kind);
@@ -500,7 +504,9 @@ void ignore_obsolete_web_section(
 }
 
 ConfigurationDirectory load_configuration_directory(
-    const std::filesystem::path& directory) {
+    const std::filesystem::path& directory,
+    std::string_view replacement_name,
+    std::string_view replacement_content) {
     if (!std::filesystem::is_directory(directory)) {
         throw std::runtime_error(
             "Configuration directory '" + utf8_path(directory)
@@ -510,29 +516,41 @@ ConfigurationDirectory load_configuration_directory(
         std::filesystem::weakly_canonical(std::filesystem::absolute(directory));
     constexpr std::string_view app_kind = "application config";
     const std::filesystem::path app_file = root / "app.toml";
-    const toml::table app = parse_toml_file(app_file, app_kind);
-    reject_unknown_fields(
+    const auto replacement = [&](const std::filesystem::path& file)
+        -> std::optional<std::string_view> {
+        if (!replacement_name.empty() && utf8_path(file.filename()) == replacement_name) {
+            return replacement_content;
+        }
+        return std::nullopt;
+    };
+    std::vector<std::string> warnings;
+    const toml::table app = parse_toml_file(app_file, app_kind, replacement(app_file));
+    warn_unknown_fields(
         app,
         app_file,
         {"vault", "mirror", "modify", "web", "logging", "voice_input", "text_to_speech"},
         "root",
-        app_kind);
+        app_kind, warnings);
     const std::string configured_vault =
         required_string(app, app_file, "vault", app_kind);
     const std::optional<std::filesystem::path> mirror_base = optional_app_path(
         app, root, app_file, "mirror", app_kind);
     const std::optional<std::filesystem::path> modify_base = optional_app_path(
         app, root, app_file, "modify", app_kind);
-    std::vector<std::string> warnings;
     ignore_obsolete_web_section(app, app_file, warnings);
     const toml::table& logging =
         required_table(app, app_file, "logging", app_kind);
-    reject_unknown_fields(
-        logging, app_file, {"file", "level"}, "[logging]", app_kind);
+    warn_unknown_fields(
+        logging, app_file, {"file", "level"}, "[logging]", app_kind, warnings);
     const std::string log_file =
         required_string(logging, app_file, "file", app_kind);
     const std::string log_level =
         required_string(logging, app_file, "level", app_kind);
+    if (log_level != "trace" && log_level != "debug" && log_level != "info"
+        && log_level != "warn" && log_level != "error" && log_level != "critical"
+        && log_level != "off") {
+        throw std::runtime_error("Unsupported logging level '" + log_level + "'.");
+    }
     std::vector<std::filesystem::path> vault_files;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(root)) {
@@ -541,6 +559,12 @@ ConfigurationDirectory load_configuration_directory(
         if (filename == "app.toml") continue;
         if (filename.size() < 5 || !filename.ends_with(".toml")) continue;
         vault_files.push_back(entry.path());
+    }
+    if (!replacement_name.empty() && replacement_name != "app.toml") {
+        const auto file = root / path_from_utf8(replacement_name);
+        if (std::find(vault_files.begin(), vault_files.end(), file) == vault_files.end()) {
+            vault_files.push_back(file);
+        }
     }
     std::sort(vault_files.begin(), vault_files.end());
 
@@ -557,7 +581,7 @@ ConfigurationDirectory load_configuration_directory(
     std::vector<LoadedVault> loaded;
     loaded.reserve(vault_files.size());
     for (const std::filesystem::path& file : vault_files) {
-        loaded.push_back(load_vault_definition(root, file, warnings));
+        loaded.push_back(load_vault_definition(root, file, warnings, replacement(file)));
         assign_vault_paths(
             loaded.back().definition, mirror_base, modify_base);
     }

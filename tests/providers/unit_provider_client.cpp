@@ -2730,7 +2730,8 @@ void expect_maintenance_tools(const Json& body) {
     }
     EXPECT_EQ(names, (std::vector<std::string>{
         "vault_config_list", "vault_config_read", "vault_config_apply",
-        "assistant_logs", "assistant_logging"}));
+        "assistant_logs", "assistant_logging",
+        "host_config_list", "host_config_read", "host_config_write"}));
 }
 
 ProviderHttpResponse limited_tool_reply(ProviderApi api, bool stream, Json calls) {
@@ -2899,6 +2900,8 @@ TEST(ProviderClientTools, MaintenanceAnswerBudgetKeepsSavedResultsAndStopsLaterC
         // The apply goes over the budget. Its saved result reaches the model.
         {{{big_name, big}, {big_name, big}, {"vault_config_apply", 300}, {"vault_config_list", 10}},
             {big_name, big_name, "vault_config_apply"}},
+        {{{big_name, big}, {big_name, big}, {"host_config_write", 300}, {"host_config_list", 10}},
+            {big_name, big_name, "host_config_write"}},
         // A read goes over the budget. It is replaced, and the apply after it does not run.
         {{{big_name, big}, {big_name, big}, {big_name, 1000}, {"vault_config_apply", 300}},
             {big_name, big_name, big_name}},
@@ -2928,7 +2931,7 @@ TEST(ProviderClientTools, MaintenanceAnswerBudgetKeepsSavedResultsAndStopsLaterC
             input.maintenance_tool = [&](std::string_view name, auto, const auto&) {
                 run.emplace_back(name);
                 const std::size_t size = test.calls[run.size() - 1].second;
-                if (name == "vault_config_apply") {
+                if (name == "vault_config_apply" || name == "host_config_write") {
                     return R"({"committed":true,"padding":")" + std::string(size, 'a') + "\"}";
                 }
                 return R"({"text":")" + std::string(size, 'x') + "\"}";
@@ -2950,7 +2953,8 @@ TEST(ProviderClientTools, MaintenanceAnswerBudgetKeepsSavedResultsAndStopsLaterC
             }
             ASSERT_EQ(outputs.size(), test.calls.size());
             EXPECT_NE(outputs[3].find("This call was not run."), std::string::npos);
-            if (test.expected_run.back() == "vault_config_apply") {
+            if (test.expected_run.back() == "vault_config_apply"
+                || test.expected_run.back() == "host_config_write") {
                 EXPECT_NE(outputs[2].find(R"("committed":true)"), std::string::npos);
             } else {
                 EXPECT_NE(outputs[2].find("Tool results for this answer are too large."),
