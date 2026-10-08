@@ -36,6 +36,7 @@ struct DaemonSpawn {
     bool pass_listen_socket{true};
     bool equals_config_option{true};
     std::optional<std::string> listen_pid;
+    std::vector<std::string> extra_arguments;
 };
 
 class DaemonProcess {
@@ -112,6 +113,7 @@ public:
                 arguments.push_back(config_flag);
                 arguments.push_back(const_cast<char*>(config.c_str()));
             }
+            for (auto& argument : spawn.extra_arguments) arguments.push_back(argument.data());
             arguments.push_back(nullptr);
             ::execv(spawn.executable.c_str(), arguments.data());
             _exit(127);

@@ -1453,7 +1453,8 @@ TEST(ChaWebAdapter, WelcomeRepairsAndUndoesThroughChat) {
     EXPECT_EQ(tool_names(first), (std::vector<std::string>{
         "vault_config_list", "vault_config_read", "vault_config_apply",
         "assistant_logs", "assistant_logging",
-        "host_config_list", "host_config_read", "host_config_write"}));
+        "host_config_list", "host_config_read", "host_config_write",
+        "assistant_openai_login"}));
     const std::string system = first.at("messages").at(0).at("content").get<std::string>();
     EXPECT_NE(system.find(
         "You are Assistant, the CHA application guide. In Welcome you can "

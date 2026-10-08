@@ -21,6 +21,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -479,15 +480,10 @@ OpenAiOAuthSnapshot OpenAiOAuth::poll(std::function<bool()> cancelled) {
             dump_json(body, "OpenAI login poll"),
             deadline,
             cancelled);
-    } catch (const std::runtime_error& error) {
-        pending_.reset();
-        error_ = std::string(error.what()) == login_timed_out
-            ? login_timed_out
-            : login_failed;
-        return snapshot_unlocked();
     } catch (...) {
-        pending_.reset();
-        error_ = login_failed;
+        // A network failure does not end the attempt. Its deadline still does.
+        log_warn("OpenAI login poll failed");
+        pending_->next_poll = clock_() + pending_->interval;
         return snapshot_unlocked();
     }
 
@@ -502,7 +498,7 @@ OpenAiOAuthSnapshot OpenAiOAuth::poll(std::function<bool()> cancelled) {
         log_info("OpenAI device login succeeded");
         return snapshot_unlocked();
     }
-    if (response.status == 403 || response.status == 404) {
+    if (response.status == 403 || response.status == 404 || response.status >= 500) {
         pending_->next_poll = clock_() + pending_->interval;
         return snapshot_unlocked();
     }
@@ -521,6 +517,19 @@ OpenAiOAuthSnapshot OpenAiOAuth::poll(std::function<bool()> cancelled) {
     pending_.reset();
     error_ = login_failed;
     return snapshot_unlocked();
+}
+
+OpenAiOAuthSnapshot OpenAiOAuth::poll_when_due(std::function<bool()> cancelled) {
+    using namespace std::chrono_literals;
+    // status() recomputes the server's poll delay and checks attempt expiry.
+    auto snapshot = status();
+    while (snapshot.state == OpenAiOAuthState::waiting && *snapshot.next_poll_delay_ms > 0) {
+        if (cancelled && cancelled()) return snapshot;
+        std::this_thread::sleep_for(std::min(std::chrono::milliseconds{*snapshot.next_poll_delay_ms}, 50ms));
+        snapshot = status();
+    }
+    if (snapshot.state != OpenAiOAuthState::waiting) return snapshot;
+    return poll(cancelled);
 }
 
 OpenAiOAuthSnapshot OpenAiOAuth::disconnect() {

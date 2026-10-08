@@ -40,3 +40,17 @@ it('strips scripts, image fetches, raw HTML, and link interactivity', () => {
   expect(container).toHaveTextContent('<script>window.bad = true</script>');
   expect(container).toHaveTextContent('<button onclick="window.bad = true">raw control</button>');
 });
+
+it('opens only the fixed OpenAI device verification link', () => {
+  const { container } = render(<Markdown source={
+    '[Open ChatGPT](https://auth.openai.com/codex/device)\n\n'
+      + '[Other path](https://auth.openai.com/other) '
+      + '[Query](https://auth.openai.com/codex/device?next=evil) '
+      + '[Other host](https://auth.openai.com.evil.test/codex/device)'
+  } />);
+  const link = screen.getByRole('link', { name: 'Open ChatGPT' });
+  expect(link).toHaveAttribute('href', 'https://auth.openai.com/codex/device');
+  expect(link).toHaveAttribute('target', '_blank');
+  expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  expect(container.querySelectorAll('a')).toHaveLength(1);
+});

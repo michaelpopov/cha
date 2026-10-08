@@ -3,6 +3,7 @@
 #include "storage/workspace_session_database.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
+#include "util/private_filesystem.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -131,6 +132,40 @@ protected:
     std::filesystem::path database_;
     std::filesystem::path config_;
 };
+
+TEST_F(DaemonProcessTest, OpenAiLoginLoadsFixedCredentialsWithoutActivationOrVault) {
+    // Login only needs the host directory, even if the vault cannot be opened.
+    std::filesystem::remove(config_ / "app.toml");
+    std::filesystem::remove(config_ / "test.toml");
+    create_private_file(config_ / "openai-auth.json", nlohmann::json{
+        {"access_token", "test-access"}, {"refresh_token", "test-refresh"},
+        {"account_id", "test-account"}, {"expires_at", 4'000'000'000LL},
+    }.dump());
+    DaemonProcess process(DaemonSpawn{
+        .config_directory = config_,
+        .set_listen_pid = false,
+        .set_listen_fds = false,
+        .pass_listen_socket = false,
+        .extra_arguments = {"--openai-login"},
+    });
+    EXPECT_EQ(process.wait_for_exit(5s), 0);
+    EXPECT_TRUE(process.stderr_text().empty());
+}
+
+TEST_F(DaemonProcessTest, OpenAiLoginRejectsCredentialPathsAndDuplicateFlags) {
+    for (const auto& arguments : std::vector<std::vector<std::string>>{
+            {"--openai-login=/tmp/other.json"},
+            {"--openai-login", "--openai-login"},
+            {"--openai-login", "--auth-file=/tmp/other.json"}}) {
+        DaemonProcess process(DaemonSpawn{
+            .config_directory = config_,
+            .extra_arguments = arguments,
+        });
+        EXPECT_NE(process.wait_for_exit(5s), 0);
+        EXPECT_NE(process.stderr_text().find("Usage:"), std::string::npos);
+        EXPECT_FALSE(std::filesystem::exists(config_ / "openai-auth.json"));
+    }
+}
 
 TEST_F(DaemonProcessTest, RejectsInvalidActivation) {
     struct Case {

@@ -264,6 +264,72 @@ TEST_F(OpenAiOAuthTest, MissingFileIsSignedOut) {
         std::runtime_error);
 }
 
+TEST_F(OpenAiOAuthTest, PollWhenDueWaitsForTheServerDelayThenPollsOnce) {
+    auto oauth = make_owner();
+    push(start_ok(1));
+    ASSERT_EQ(oauth.start().state, OpenAiOAuthState::waiting);
+    push(json_response(403, Json::object()));
+    // Move the test clock past each server delay without a real one-second wait.
+    const auto advance_clock = [&] { advance(1s); return false; };
+    auto result = oauth.poll_when_due(advance_clock);
+    EXPECT_EQ(result.state, OpenAiOAuthState::waiting);
+    EXPECT_EQ(result.user_code, "TEST-ONLY");
+    EXPECT_EQ(requests().size(), 2u);
+
+    push(poll_approved());
+    push(tokens_ok());
+    result = oauth.poll_when_due(advance_clock);
+    EXPECT_EQ(result.state, OpenAiOAuthState::connected);
+    EXPECT_EQ(requests().size(), 4u);
+    auto reloaded = make_owner();
+    EXPECT_EQ(reloaded.status().state, OpenAiOAuthState::connected);
+}
+
+TEST_F(OpenAiOAuthTest, PollWhenDueCanBeCancelledDuringPollDelay) {
+    auto oauth = make_owner();
+    push(start_ok(60));
+    ASSERT_EQ(oauth.start().state, OpenAiOAuthState::waiting);
+    int checks = 0;
+    const auto result = oauth.poll_when_due([&] { return ++checks == 2; });
+    EXPECT_EQ(result.state, OpenAiOAuthState::waiting);
+    EXPECT_EQ(requests().size(), 1u);
+    EXPECT_FALSE(std::filesystem::exists(path_));
+}
+
+TEST_F(OpenAiOAuthTest, PollWhenDueReportsExpiryWithoutNetwork) {
+    auto oauth = make_owner();
+    push(start_ok(60));
+    ASSERT_EQ(oauth.start().state, OpenAiOAuthState::waiting);
+    const auto result = oauth.poll_when_due([&] { advance(16min); return false; });
+    EXPECT_EQ(result.state, OpenAiOAuthState::signed_out);
+    EXPECT_EQ(result.error, "OpenAI login expired.");
+    EXPECT_EQ(requests().size(), 1u);
+}
+
+TEST_F(OpenAiOAuthTest, PollNetworkAndServerFailuresKeepTheAttempt) {
+    auto oauth = make_owner();
+    push(start_ok(1));
+    ASSERT_EQ(oauth.start().state, OpenAiOAuthState::waiting);
+    advance(1s);
+    // No queued response: the fixture transport throws like a network failure.
+    auto snapshot = oauth.poll();
+    EXPECT_EQ(snapshot.state, OpenAiOAuthState::waiting);
+    EXPECT_EQ(snapshot.next_poll_delay_ms, 1000);
+    EXPECT_FALSE(snapshot.error);
+
+    advance(1s);
+    push(json_response(503, Json::object()));
+    snapshot = oauth.poll();
+    EXPECT_EQ(snapshot.state, OpenAiOAuthState::waiting);
+    EXPECT_EQ(snapshot.next_poll_delay_ms, 1000);
+    EXPECT_FALSE(snapshot.error);
+
+    advance(1s);
+    push(poll_approved());
+    push(tokens_ok());
+    EXPECT_EQ(oauth.poll().state, OpenAiOAuthState::connected);
+}
+
 TEST_F(OpenAiOAuthTest, InvalidFileIsSignedOutWithSanitizedError) {
     std::ofstream(path_) << "{not-json";
     OpenAiOAuth oauth = make_owner();

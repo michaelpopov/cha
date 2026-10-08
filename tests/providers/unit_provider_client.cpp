@@ -2731,7 +2731,8 @@ void expect_maintenance_tools(const Json& body) {
     EXPECT_EQ(names, (std::vector<std::string>{
         "vault_config_list", "vault_config_read", "vault_config_apply",
         "assistant_logs", "assistant_logging",
-        "host_config_list", "host_config_read", "host_config_write"}));
+        "host_config_list", "host_config_read", "host_config_write",
+        "assistant_openai_login"}));
 }
 
 ProviderHttpResponse limited_tool_reply(ProviderApi api, bool stream, Json calls) {

@@ -114,8 +114,25 @@ To use an existing CHA vault, put its configuration directory at
 `$CHA_DATA_PATH/<user>/config` before you run `add_user.sh`. The daemon
 requires its database to exist before startup. The vault's providers, forums,
 characters, and provider API keys must already work in CHA. Server providers
-need API keys; ChatGPT subscription providers do not work on the server. The
-example vault contains the bundled characters and forum; configure a provider
+can use API keys or a ChatGPT subscription. To connect ChatGPT in ChaWeb, open
+Assistant in Entrance's Welcome conversation and ask it to connect your account.
+Open the verification link, enter the code, approve access, and reply "Done".
+Assistant then completes login inside the daemon.
+
+If Assistant cannot answer because its own provider needs that login, run this
+as the daemon's user before starting the daemon:
+
+```sh
+"$CHA_DEPLOY_PATH/cha-daemon" --config "$CHA_DATA_PATH/<user>/config" --openai-login
+```
+
+The command prints the link and code and waits for approval, then exits. The
+daemon reads the credentials only when it starts, so if it is already running,
+restart it after login. Both methods save credentials to the fixed
+`openai-auth.json` in that user's config directory. There is no credential-file
+argument.
+
+The example vault contains the bundled characters and forum; configure a provider
 with working credentials before sending chat requests.
 
 For a protected vault, put its password in

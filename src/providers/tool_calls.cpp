@@ -181,6 +181,16 @@ void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
             {"expected_content", nullable_string("Exact previously read text, or null for a new file")},
         }, Json::array({"path", "content", "expected_content"}))},
     });
+    append_tool(body, api, Json{
+        {"name", "assistant_openai_login"},
+        {"description", "Connect the host's ChatGPT account. start returns the verification URL and code. "
+            "Show both to the user and end your answer. After the user confirms browser approval, "
+            "complete checks OpenAI once and saves credentials on success. Tokens are never returned."},
+        {"strict", true},
+        {"parameters", function_parameters(
+            {{"action", Json{{"type", "string"}, {"enum", Json::array({"start", "complete"})}}}},
+            Json::array({"action"}))},
+    });
 }
 
 void update_tool_instructions(nlohmann::json& body, ProviderApi api,

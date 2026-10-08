@@ -2,6 +2,7 @@
 #include "app/application_config.h"
 #include "daemon/chaweb_adapter.h"
 #include "daemon/scgi.h"
+#include "providers/openai_oauth.h"
 #include "util/logging.h"
 #include "util/path_name.h"
 
@@ -32,7 +33,7 @@ namespace {
 constexpr int listen_fd = 3;
 constexpr const char daemon_usage[] =
     "Usage:\n"
-    "  cha-daemon --config=CONFIG_DIR\n";
+    "  cha-daemon --config=CONFIG_DIR [--openai-login]\n";
 
 std::atomic<bool> stop_requested{false};
 static_assert(std::atomic<bool>::is_always_lock_free);
@@ -45,12 +46,25 @@ std::runtime_error argument_error(std::string message) {
     return std::runtime_error(std::move(message) + "\n" + daemon_usage);
 }
 
-std::filesystem::path parse_config_directory(int argc, char** argv) {
+struct DaemonCommand {
+    std::filesystem::path config_directory;
+    bool openai_login{};
+};
+
+DaemonCommand parse_command(int argc, char** argv) {
+    DaemonCommand command;
     std::optional<std::filesystem::path> config;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         const std::size_t equals = argument.find('=');
         const std::string_view option = argument.substr(0, equals);
+        if (option == "--openai-login") {
+            if (equals != std::string_view::npos || command.openai_login) {
+                throw argument_error("Option '--openai-login' takes no value and must appear once.");
+            }
+            command.openai_login = true;
+            continue;
+        }
         if (option != "--config") {
             throw argument_error(
                 "Unknown option '" + std::string(option) + "'.");
@@ -77,7 +91,34 @@ std::filesystem::path parse_config_directory(int argc, char** argv) {
     if (!config) {
         throw argument_error("Missing --config=CONFIG_DIR.");
     }
-    return *config;
+    command.config_directory = *config;
+    return command;
+}
+
+int login_openai(const std::filesystem::path& directory) {
+    if (!std::filesystem::is_directory(directory)) {
+        throw std::runtime_error("Configuration directory must be an existing directory.");
+    }
+    OpenAiOAuth oauth(directory / openai_auth_filename);
+    auto snapshot = oauth.status();
+    const auto cancelled = [] { return stop_requested.load(std::memory_order_relaxed); };
+    if (snapshot.state != OpenAiOAuthState::connected) {
+        snapshot = oauth.start(cancelled);
+    }
+    if (snapshot.state == OpenAiOAuthState::waiting) {
+        std::cout << "Open " << *snapshot.verification_url
+                  << "\nEnter code: " << *snapshot.user_code
+                  << "\nWaiting for approval..." << std::endl;
+        while (snapshot.state == OpenAiOAuthState::waiting && !cancelled()) {
+            snapshot = oauth.poll_when_due(cancelled);
+        }
+    }
+    if (cancelled()) throw std::runtime_error("OpenAI login was cancelled.");
+    if (snapshot.state != OpenAiOAuthState::connected) {
+        throw std::runtime_error(snapshot.error.value_or("OpenAI login failed."));
+    }
+    std::cout << "Connected to ChatGPT." << std::endl;
+    return EXIT_SUCCESS;
 }
 
 ApplicationCommand load_daemon_command(const std::filesystem::path& directory) {
@@ -287,11 +328,14 @@ void report_error(std::string_view message, bool logging_ready) {
 int main(int argc, char** argv) {
     bool logging_ready = false;
     try {
-        const std::filesystem::path config_directory =
-            cha::parse_config_directory(argc, argv);
+        const auto options = cha::parse_command(argc, argv);
+        if (options.openai_login) {
+            cha::install_stop_handlers();
+            return cha::login_openai(options.config_directory);
+        }
         cha::require_activation();
         cha::ApplicationCommand command =
-            cha::load_daemon_command(config_directory);
+            cha::load_daemon_command(options.config_directory);
         cha::initialize_diagnostic_logging(command.log_file, command.log_level);
         logging_ready = true;
         cha::install_stop_handlers();

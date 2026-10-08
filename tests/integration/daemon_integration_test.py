@@ -758,7 +758,8 @@ class ChaWebIntegration(DaemonHarness):
             [tool["function"]["name"] for tool in opening["tools"]],
             ["vault_config_list", "vault_config_read", "vault_config_apply",
              "assistant_logs", "assistant_logging",
-             "host_config_list", "host_config_read", "host_config_write"])
+             "host_config_list", "host_config_read", "host_config_write",
+             "assistant_openai_login"])
         system = opening["messages"][0]["content"]
         self.assertIn("Host: cha-daemon (ChaWeb)\n\n", system)
         self.assertIn("# Operating instructions for Assistant", system)

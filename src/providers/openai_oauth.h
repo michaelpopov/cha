@@ -12,6 +12,8 @@
 
 namespace cha {
 
+inline constexpr std::string_view openai_auth_filename = "openai-auth.json";
+
 enum class OpenAiOAuthState {
     signed_out,
     waiting,
@@ -73,6 +75,8 @@ public:
     [[nodiscard]] OpenAiOAuthSnapshot status() const;
     OpenAiOAuthSnapshot start(std::function<bool()> cancelled = {});
     OpenAiOAuthSnapshot poll(std::function<bool()> cancelled = {});
+    // Waits until OpenAI's polling interval allows the next poll, then polls once.
+    OpenAiOAuthSnapshot poll_when_due(std::function<bool()> cancelled = {});
     OpenAiOAuthSnapshot disconnect();
     OpenAiOAuthRequestCredentials credentials();
     // Tokens currently in memory. Does not refresh or use the network.

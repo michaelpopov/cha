@@ -1,6 +1,7 @@
 #include "app/assistant_service.h"
 
 #include "app/application_config.h"
+#include "app/settings_operations.h"
 #include "providers/credentials.h"
 #include "providers/openai_oauth.h"
 #include "runtime/live_session_manager.h"
@@ -819,6 +820,28 @@ std::string AssistantService::execute(
     // Collect redaction values once per call.
     const Redactor redact(links_);
     try {
+        if (name == "assistant_openai_login") {
+            if (parsed.size() != 1 || !parsed.contains("action") || !parsed["action"].is_string()
+                || (parsed["action"] != "start" && parsed["action"] != "complete")) {
+                return tool_error("invalid_argument", "assistant_openai_login requires action start or complete.");
+            }
+            if (!links_.oauth) return tool_error("unavailable", "OpenAI login is not available.");
+            // The OAuth owner survives vault switches. Do not hold the lifecycle
+            // lock during network calls or while waiting for browser approval.
+            lifecycle.unlock();
+            auto snapshot = links_.oauth->status();
+            if (snapshot.state != OpenAiOAuthState::connected) {
+                if (parsed["action"] == "start") {
+                    snapshot = links_.oauth->start(cancel_check);
+                } else if (snapshot.state == OpenAiOAuthState::waiting) {
+                    snapshot = links_.oauth->poll_when_due(cancel_check);
+                } else if (!snapshot.error) {
+                    return tool_error("invalid_argument", "Start OpenAI login before completing it.");
+                }
+            }
+            if (cancel_check()) return tool_error("cancelled", "OpenAI login was cancelled.");
+            return Json(app::settings::openai_auth_from(snapshot)).dump();
+        }
         if (name == "host_config_list" || name == "host_config_read" || name == "host_config_write") {
             return host_config_tool(name, parsed, links_, context, lifecycle,
                 admission_error, cancel_check, redact);

@@ -117,6 +117,11 @@ public:
         bind();
     }
 
+    void use_oauth(OpenAiOAuthTransport transport, OpenAiOAuthClock clock) {
+        oauth_ = std::make_unique<OpenAiOAuth>(oauth_path_, std::move(transport), std::move(clock));
+        bind();
+    }
+
     Json run(std::string_view name, const Json& arguments) {
         return Json::parse(service_->execute(
             name, arguments.dump(), context_, cancelled_));
@@ -155,6 +160,117 @@ private:
     int fail_after_{};
     ErrorCode fail_code_{ErrorCode::vault_changed};
 };
+
+TEST(AssistantService, OpenAiLoginStartsAndCompletesWithoutReturningTokens) {
+    ServiceHarness harness;
+    auto now = std::chrono::system_clock::now();
+    const std::string token = "e30.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdF90ZXN0In19.sig";
+    int requests = 0;
+    harness.use_oauth([&](const OpenAiOAuthHttpRequest& request) {
+        // Network and waiting must not hold the application's lifecycle lock.
+        std::unique_lock lock(harness.lifecycle(), std::try_to_lock);
+        EXPECT_TRUE(lock.owns_lock());
+        ++requests;
+        Json response;
+        if (requests == 1) {
+            EXPECT_TRUE(request.url.ends_with("/usercode"));
+            response = {{"device_auth_id", "private-device"}, {"user_code", "TEST-CODE"}, {"interval", 1}};
+        } else if (requests == 2) {
+            EXPECT_TRUE(request.url.ends_with("/deviceauth/token"));
+            response = {{"authorization_code", "private-code"}, {"code_verifier", "private-verifier"}};
+        } else {
+            EXPECT_TRUE(request.url.ends_with("/oauth/token"));
+            response = {{"access_token", token}, {"refresh_token", "private-refresh"}, {"expires_in", 3600}};
+        }
+        return OpenAiOAuthHttpResponse{200, response.dump()};
+    }, [&] { return now; });
+
+    const auto start = harness.run("assistant_openai_login", {{"action", "start"}});
+    EXPECT_EQ(start["status"], "waiting");
+    EXPECT_EQ(start["user_code"], "TEST-CODE");
+    EXPECT_EQ(start["verification_url"], "https://auth.openai.com/codex/device");
+    EXPECT_EQ(requests, 1);
+    EXPECT_FALSE(std::filesystem::exists(harness.config_directory() / "openai-auth.json"));
+
+    now += std::chrono::seconds(1);
+    const auto done = harness.run("assistant_openai_login", {{"action", "complete"}});
+    EXPECT_EQ(done, Json({{"status", "connected"}}));
+    EXPECT_EQ(requests, 3);
+    EXPECT_EQ(start.dump().find("private-"), std::string::npos);
+    EXPECT_EQ(done.dump().find(token), std::string::npos);
+    OpenAiOAuth reloaded(harness.config_directory() / "openai-auth.json");
+    EXPECT_EQ(reloaded.status().state, OpenAiOAuthState::connected);
+    EXPECT_EQ(harness.run("assistant_openai_login", {{"action", "start"}}), done);
+    EXPECT_EQ(requests, 3);
+}
+
+TEST(AssistantService, OpenAiLoginRejectsPathsAndRequiresWelcomeAndAnAttempt) {
+    ServiceHarness harness;
+    for (const Json& arguments : {Json::object(), Json{{"action", "disconnect"}},
+            Json{{"action", "start"}, {"path", "other.json"}}}) {
+        EXPECT_EQ(harness.run("assistant_openai_login", arguments)["error"], "invalid_argument");
+    }
+    EXPECT_EQ(harness.run("assistant_openai_login", {{"action", "complete"}})["error"], "invalid_argument");
+    harness.context().session_id = "other";
+    EXPECT_EQ(harness.run("assistant_openai_login", {{"action", "start"}})["error"], "unavailable");
+}
+
+TEST(AssistantService, OpenAiLoginCompleteChecksOnceAndKeepsAPendingCode) {
+    ServiceHarness harness;
+    auto now = std::chrono::system_clock::now();
+    int requests = 0;
+    harness.use_oauth([&](const OpenAiOAuthHttpRequest&) {
+        if (++requests == 1) {
+            return OpenAiOAuthHttpResponse{200, Json{
+                {"device_auth_id", "private-device"}, {"user_code", "TEST-CODE"}, {"interval", 1},
+            }.dump()};
+        }
+        return OpenAiOAuthHttpResponse{400, Json{{"error", "deviceauth_authorization_pending"}}.dump()};
+    }, [&] { return now; });
+    ASSERT_EQ(harness.run("assistant_openai_login", {{"action", "start"}})["status"], "waiting");
+    now += std::chrono::seconds(1);
+    const auto result = harness.run("assistant_openai_login", {{"action", "complete"}});
+    EXPECT_EQ(result["status"], "waiting");
+    EXPECT_EQ(result["user_code"], "TEST-CODE");
+    EXPECT_EQ(result["verification_url"], "https://auth.openai.com/codex/device");
+    EXPECT_EQ(requests, 2);
+}
+
+TEST(AssistantService, OpenAiLoginReportsAnExpiredAttempt) {
+    ServiceHarness harness;
+    auto now = std::chrono::system_clock::now();
+    harness.use_oauth([](const OpenAiOAuthHttpRequest&) {
+        return OpenAiOAuthHttpResponse{200, Json{
+            {"device_auth_id", "private-device"}, {"user_code", "TEST-CODE"}, {"interval", 1},
+        }.dump()};
+    }, [&] { return now; });
+    ASSERT_EQ(harness.run("assistant_openai_login", {{"action", "start"}})["status"], "waiting");
+    now += std::chrono::minutes(16);
+    const auto result = harness.run("assistant_openai_login", {{"action", "complete"}});
+    EXPECT_EQ(result["status"], "signed_out");
+    EXPECT_EQ(result["error"], "OpenAI login expired.");
+}
+
+TEST(AssistantService, OpenAiLoginWaitCanBeCancelledWithoutHoldingLifecycle) {
+    ServiceHarness harness;
+    harness.use_oauth([&](const OpenAiOAuthHttpRequest&) {
+        return OpenAiOAuthHttpResponse{200, Json{
+            {"device_auth_id", "private-device"}, {"user_code", "TEST-CODE"}, {"interval", 60},
+        }.dump()};
+    }, [] { return std::chrono::system_clock::now(); });
+    ASSERT_EQ(harness.run("assistant_openai_login", {{"action", "start"}})["status"], "waiting");
+    auto complete = std::async(std::launch::async, [&] {
+        return harness.run("assistant_openai_login", {{"action", "complete"}});
+    });
+    EXPECT_EQ(complete.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+    const bool unlocked = harness.lifecycle().try_lock();
+    EXPECT_TRUE(unlocked);
+    if (unlocked) harness.lifecycle().unlock();
+    harness.cancelled().store(true);
+    ASSERT_EQ(complete.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    EXPECT_EQ(complete.get()["error"], "cancelled");
+    EXPECT_FALSE(std::filesystem::exists(harness.config_directory() / "openai-auth.json"));
+}
 
 Json read_arguments(std::string path) {
     return {{"paths", Json::array({std::move(path)})}};

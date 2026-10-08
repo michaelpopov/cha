@@ -232,7 +232,7 @@ Application::Impl::Impl(
           *store,
           command.config_directory / "api-keys.json")),
       openai_auth(std::make_unique<OpenAiOAuth>(
-          command.config_directory / "openai-auth.json")),
+          command.config_directory / openai_auth_filename)),
       assistant(std::make_unique<AssistantService>(AssistantService::Links{
           .store = store.get(),
           .oauth = openai_auth.get(),
