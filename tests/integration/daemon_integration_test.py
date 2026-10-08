@@ -125,7 +125,7 @@ def maintenance_reply(body, prompt):
                 "version": last["version"],
                 "changes": [{
                     "path": "characters/guide/character.toml",
-                    "operation": "replace",
+                    "operation": "replace", "key": None, "value": None,
                     "content": renamed,
                 }],
             })])
@@ -140,7 +140,7 @@ def maintenance_reply(body, prompt):
                 "version": last["version"],
                 "changes": [{
                     "path": "characters/guide/CHARACTER.md",
-                    "operation": "replace",
+                    "operation": "replace", "key": None, "value": None,
                     "content": "Repaired instructions\n",
                 }],
             })])
@@ -756,7 +756,7 @@ class ChaWebIntegration(DaemonHarness):
         opening = json.loads(self.provider.bodies[0])
         self.assertEqual(
             [tool["function"]["name"] for tool in opening["tools"]],
-            ["vault_config_list", "vault_config_read", "vault_config_apply",
+            ["vault_config_list", "vault_config_read", "vault_config_apply", "add_character",
              "assistant_logs", "assistant_logging",
              "host_config_list", "host_config_read", "host_config_write",
              "assistant_openai_login"])

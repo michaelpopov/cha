@@ -17,6 +17,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
@@ -28,10 +29,12 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -39,6 +42,17 @@ namespace cha {
 namespace {
 
 using Database = storage::SqliteDatabase;
+
+std::string allocate_character_id(
+    const Workspace& workspace, const WorkspaceConfigEditor& editor) {
+    for (std::size_t suffix = 1;; ++suffix) {
+        const std::string candidate = "character_" + std::to_string(suffix);
+        if (!workspace.find_character(candidate) && !workspace.find_persona(candidate)
+            && !editor.exists(workspace.root() / "characters" / candidate)) {
+            return candidate;
+        }
+    }
+}
 
 constexpr std::array sidecar_suffixes{
     std::string_view("-journal"),
@@ -1533,7 +1547,7 @@ struct WorkspaceConfigStore::Impl {
         return result;
     }
 
-    // Checks shared by apply and undo before they read the committed rows.
+    // Checks shared by apply, undo, and creation before they read the committed rows.
     std::optional<WorkspaceConfigApplyResult> refuse_batch(
         WorkspaceConfigRevision version,
         const WorkspaceConfigCancelCheck& check,
@@ -1631,6 +1645,44 @@ struct WorkspaceConfigStore::Impl {
         };
     }
 
+    // Only root scalar edits are supported. Equal typed values retain the source.
+    static std::string set_config_value(
+        const std::string& content, const WorkspaceConfigChange& change) {
+        if (change.key.empty() || !std::ranges::all_of(change.key, [](unsigned char ch) {
+                return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+                    || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
+            })) {
+            throw std::invalid_argument("set requires a nonempty ASCII root key");
+        }
+        toml::table table = toml::parse(content);
+        const auto* node = table.get(change.key);
+        if (node && (node->is_table() || node->is_array())) {
+            throw std::invalid_argument("set cannot edit or remove a table or array");
+        }
+        if (!change.value) {
+            if (!node) return content;
+            table.erase(change.key);
+        } else {
+            const bool equal = std::visit([&](const auto& value) {
+                using T = std::decay_t<decltype(value)>;
+                if constexpr (std::is_same_v<T, double>) {
+                    if (!std::isfinite(value)) {
+                        throw std::invalid_argument("set requires a finite number");
+                    }
+                }
+                const auto* typed = node ? node->as<T>() : nullptr;
+                return typed && typed->get() == value;
+            }, *change.value);
+            if (equal) return content;
+            std::visit([&](const auto& value) {
+                table.insert_or_assign(change.key, value);
+            }, *change.value);
+        }
+        std::ostringstream output;
+        output << table << '\n';
+        return output.str();
+    }
+
     WorkspaceConfigApplyResult apply_config(
         WorkspaceConfigRevision version,
         std::span<const WorkspaceConfigChange> changes,
@@ -1705,18 +1757,38 @@ struct WorkspaceConfigStore::Impl {
                     WorkspaceConfigApplyError::create_replace_conflict,
                     "Configuration file '" + change.path + "' does not exist");
             }
+            std::string content = change.content;
+            if (change.operation == WorkspaceConfigOperation::set) {
+                const std::string where = "Configuration file '" + change.path + "': ";
+                if (std::filesystem::path(change.path).extension() != ".toml") {
+                    return failed(WorkspaceConfigApplyError::invalid_argument,
+                        where + "set requires an existing TOML file");
+                }
+                try {
+                    content = set_config_value(found->second, change);
+                } catch (const toml::parse_error& error) {
+                    return failed(WorkspaceConfigApplyError::validation_failure,
+                        where + sanitize_config_error(error.what(), tree->workspace()));
+                } catch (const std::invalid_argument& error) {
+                    return failed(WorkspaceConfigApplyError::invalid_argument, where + error.what());
+                }
+                if (content.size() > workspace_config_file_size_limit) {
+                    return failed(WorkspaceConfigApplyError::too_large,
+                        "Configuration file '" + change.path + "' exceeds 64 KiB");
+                }
+            }
             const std::optional<std::size_t> old_bytes =
                 exists ? std::optional<std::size_t>(found->second.size())
                        : std::nullopt;
-            if (!exists || found->second != change.content) {
+            if (!exists || found->second != content) {
                 if (exists) {
                     record.old_files.emplace_back(change.path, found->second);
                 }
-                files[change.path] = change.content;
+                files[change.path] = content;
                 changed.push_back({
                     .path = change.path,
                     .old_bytes = old_bytes,
-                    .new_bytes = change.content.size(),
+                    .new_bytes = content.size(),
                 });
             }
         }
@@ -2064,17 +2136,7 @@ std::string WorkspaceConfigStore::create_character(
     std::string_view description) {
     std::string character_id;
     (void)impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
-        for (std::size_t suffix = 1;; ++suffix) {
-            const std::string candidate = "character_" + std::to_string(suffix);
-            const std::filesystem::path directory =
-                workspace.root() / "characters" / candidate;
-            if (workspace.find_character(candidate) == nullptr
-                && workspace.find_persona(candidate) == nullptr
-                && !editor.exists(directory)) {
-                character_id = candidate;
-                break;
-            }
-        }
+        character_id = allocate_character_id(workspace, editor);
         editor.create_character(character_id, display_name, description);
         return std::vector<std::string>{};
     });
@@ -2415,6 +2477,48 @@ WorkspaceConfigApplyResult WorkspaceConfigStore::apply_config(
     std::span<const WorkspaceConfigChange> changes,
     WorkspaceConfigCancelCheck cancelled) {
     const std::lock_guard lock(impl_->mutex);
+    return impl_->apply_config(version, changes, cancelled);
+}
+
+WorkspaceConfigApplyResult WorkspaceConfigStore::create_character_for_assistant(
+    WorkspaceConfigRevision version,
+    std::string_view name,
+    std::string_view description,
+    std::string_view provider_id,
+    std::string_view profile,
+    std::optional<std::string_view> forum_id,
+    std::string& allocated_id,
+    WorkspaceConfigCancelCheck cancelled) {
+    const std::lock_guard lock(impl_->mutex);
+    allocated_id.clear();
+    if (auto refused = impl_->refuse_batch(version, cancelled, "creation")) return *refused;
+    const auto workspace = impl_->snapshot();
+    const auto committed = read_workspace_config_files(*impl_->database);
+    TextFiles files;
+    for (const auto& row : committed) files.emplace(row.name, row.content);
+    const auto original = files;
+    WorkspaceConfigEditor editor(*workspace, files);
+    try {
+        allocated_id = allocate_character_id(*workspace, editor);
+        editor.create_character(allocated_id, name, description, provider_id, profile);
+        if (forum_id) editor.add_prepared_character_to_forum(*forum_id, allocated_id);
+    } catch (const std::invalid_argument& error) {
+        return impl_->failed(WorkspaceConfigApplyError::invalid_argument,
+            sanitize_config_error(error.what(), impl_->tree->workspace()));
+    }
+    std::vector<WorkspaceConfigChange> changes;
+    for (const auto& [path, content] : original) {
+        if (!files.contains(path)) throw std::logic_error("Character creation removed a row");
+    }
+    for (const auto& [path, content] : files) {
+        const auto old = original.find(path);
+        if (old == original.end() || old->second != content) {
+            changes.push_back({.path = path,
+                .operation = old == original.end() ? WorkspaceConfigOperation::create
+                    : WorkspaceConfigOperation::replace,
+                .content = content});
+        }
+    }
     return impl_->apply_config(version, changes, cancelled);
 }
 

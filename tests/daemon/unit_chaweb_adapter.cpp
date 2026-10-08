@@ -7,6 +7,7 @@
 #include "support/test_workspace.h"
 #include "support/xai_fake_server.h"
 #include "storage/session_database.h"
+#include "storage/session_repository.h"
 #include "util/logging.h"
 #include "workspace/builtins.h"
 
@@ -1339,6 +1340,75 @@ TEST(ChaWebAdapter, OrdinarySessionDoesNotReceiveMaintenanceTools) {
     EXPECT_EQ(encoded.find("vault_config_list"), std::string::npos);
 }
 
+TEST(ChaWebAdapter, WelcomeSetsUndoesAndCreatesCharacterWithPreservedDefaults) {
+    for (const bool fail_refresh : {false, true}) {
+        test::TestWorkspace workspace;
+        disable_naming(workspace);
+        using Json = nlohmann::json;
+        const auto set = chat_message(Json::array({function_call("set1", "vault_config_apply", {
+            {"action", "apply"}, {"version", "1"}, {"changes", Json::array({Json{
+                {"path", "characters/guide/character.toml"}, {"operation", "set"},
+                {"content", nullptr}, {"key", "reasoning_effort"}, {"value", "high"}}})}})}));
+        const auto undo = chat_message(Json::array({function_call("undo1", "vault_config_apply", {
+            {"action", "undo"}, {"version", "2"}, {"changes", nullptr}})}));
+        const auto create = chat_message(Json::array({function_call("create1", "add_character", {
+            {"version", "3"}, {"name", "Scholar"}, {"description", "A careful thinker"},
+            {"provider_id", "remote"}, {"profile", "# Scholar\nA careful thinker.\n"}, {"forum_id", "lobby"}})}));
+        MockHttpServer server({http_json(set.dump()), http_json(undo.dump()), http_json(create.dump()),
+            http_json(chat_message(Json::array(), "Created Scholar.").dump())});
+        if (fail_refresh) server.pause_before_response(3);
+        use_net_provider(workspace, server.port());
+        auto command = make_command(workspace, test::import_test_database(workspace.root()));
+        command.chaweb_host = true;
+        auto application = Application::open(std::move(command));
+        const auto original = application->store().read_config(
+            std::vector<std::string>{"forums/lobby/config.toml", "characters/guide/character.toml"});
+        const auto persona = application->store().snapshot()->find_forum("lobby")->default_persona_id;
+        server.start();
+        const auto response = exchange(*application, post_request(
+            session_path(entrance_id, welcome_id) + "/input",
+            text_body("Set Guide effort, undo it, then create Scholar in the lobby").dump()));
+        ASSERT_EQ(response.status, 204) << response.raw;
+        if (fail_refresh) {
+            ASSERT_TRUE(server.wait_for_requests(3, 5s));
+            force_next_forum_sync_failure();
+            server.resume_responses();
+        }
+        const auto finished = wait_snapshot(*application, entrance_id, welcome_id, false);
+        EXPECT_TRUE(transcript_has_notice(finished, "Configuration was saved."));
+        EXPECT_EQ(transcript_has_notice(finished, "Refresh failed:"), fail_refresh);
+        EXPECT_TRUE(transcript_has_notice(finished, "Undo is not available."));
+        server.join();
+        ASSERT_EQ(server.requests().size(), 4U);
+        const auto snapshot = application->store().snapshot();
+        ASSERT_NE(snapshot->find_character("character_1"), nullptr);
+        EXPECT_EQ(snapshot->find_character("character_1")->provider_id, "remote");
+        EXPECT_FALSE(snapshot->find_character("guide")->reasoning_effort);
+        ASSERT_NE(snapshot->find_forum_member("lobby", "character_1"), nullptr);
+        EXPECT_EQ(snapshot->find_forum("lobby")->default_character_id, "guide");
+        EXPECT_EQ(snapshot->find_forum("lobby")->default_persona_id, persona);
+        const auto read = application->store().read_config(
+            std::vector<std::string>{"forums/lobby/config.toml", "characters/guide/character.toml"});
+        EXPECT_EQ(read.files[0].content, "default_character = \"guide\"\n" + original.files[0].content);
+        EXPECT_EQ(read.files[1].content, original.files[1].content);
+        const auto final = Json::parse(request_body(server.requests().back()));
+        bool saw_creation = false;
+        for (const auto& message : final["messages"]) {
+            if (message.value("role", "") != "tool") continue;
+            const auto result = Json::parse(message["content"].get<std::string>());
+            if (result.contains("character_id")) {
+                saw_creation = true;
+                EXPECT_EQ(result["committed"], true);
+                EXPECT_EQ(result["character_id"], "character_1");
+                EXPECT_EQ(result["undo_available"], false);
+                EXPECT_EQ(result["message"].get<std::string>().find("Refresh failed:") != std::string::npos,
+                    fail_refresh);
+            }
+        }
+        EXPECT_TRUE(saw_creation);
+    }
+}
+
 TEST(ChaWebAdapter, WelcomeRepairsAndUndoesThroughChat) {
     ChaWebLogGuard logs;
     test::TestWorkspace workspace;
@@ -1359,7 +1429,7 @@ TEST(ChaWebAdapter, WelcomeRepairsAndUndoesThroughChat) {
             {"version", "1"},
             {"changes", nlohmann::json::array({nlohmann::json{
                 {"path", "characters/guide/character.toml"},
-                {"operation", "replace"},
+                {"operation", "replace"}, {"key", nullptr}, {"value", nullptr},
                 {"content", kGuideRenamed},
             }})},
         }),
@@ -1451,7 +1521,7 @@ TEST(ChaWebAdapter, WelcomeRepairsAndUndoesThroughChat) {
     ASSERT_EQ(server.requests().size(), 7u);
     const auto first = nlohmann::json::parse(request_body(server.requests()[1]));
     EXPECT_EQ(tool_names(first), (std::vector<std::string>{
-        "vault_config_list", "vault_config_read", "vault_config_apply",
+        "vault_config_list", "vault_config_read", "vault_config_apply", "add_character",
         "assistant_logs", "assistant_logging",
         "host_config_list", "host_config_read", "host_config_write",
         "assistant_openai_login"}));
@@ -1501,7 +1571,7 @@ TEST(ChaWebAdapter, WelcomeKeepsANoticeWhenTheAnswerFailsAfterCommit) {
             {"version", "1"},
             {"changes", nlohmann::json::array({nlohmann::json{
                 {"path", "characters/guide/character.toml"},
-                {"operation", "replace"},
+                {"operation", "replace"}, {"key", nullptr}, {"value", nullptr},
                 {"content", kGuideRenamed},
             }})},
         }),
@@ -1542,7 +1612,7 @@ TEST(ChaWebAdapter, StopAfterASavedRepairStoresTheNotice) {
             {"version", "1"},
             {"changes", nlohmann::json::array({nlohmann::json{
                 {"path", "characters/guide/character.toml"},
-                {"operation", "replace"},
+                {"operation", "replace"}, {"key", nullptr}, {"value", nullptr},
                 {"content", kGuideRenamed},
             }})},
         }),

@@ -123,8 +123,11 @@ public:
     }
 
     Json run(std::string_view name, const Json& arguments) {
-        return Json::parse(service_->execute(
-            name, arguments.dump(), context_, cancelled_));
+        return run_raw(name, arguments.dump());
+    }
+
+    Json run_raw(std::string_view name, std::string_view arguments) {
+        return Json::parse(service_->execute(name, arguments, context_, cancelled_));
     }
 
 private:
@@ -293,7 +296,7 @@ Json replace_change(std::string path, std::string content, std::string version) 
         {"version", std::move(version)},
         {"changes", Json::array({Json{
             {"path", std::move(path)},
-            {"operation", "replace"},
+            {"operation", "replace"}, {"key", nullptr}, {"value", nullptr},
             {"content", std::move(content)},
         }})},
     };
@@ -301,6 +304,151 @@ Json replace_change(std::string path, std::string content, std::string version) 
 
 const std::string kGuide = "characters/guide/character.toml";
 const std::string kPrompt = "characters/guide/CHARACTER.md";
+
+Json set_arguments(std::string version, Json value, std::string key = "reasoning_effort") {
+    return {{"action", "apply"}, {"version", version}, {"changes", Json::array({Json{
+        {"path", kGuide}, {"operation", "set"}, {"content", nullptr},
+        {"key", key}, {"value", value}}})}};
+}
+
+Json character_arguments(std::string version = "1", Json forum = "lobby") {
+    return {{"version", version}, {"name", "Scholar"}, {"description", "A careful thinker"},
+        {"provider_id", "test"}, {"profile", "# Scholar\nThink carefully.\n"}, {"forum_id", forum}};
+}
+
+TEST(AssistantService, SetsScalarsAndRejectsMalformedArguments) {
+    ServiceHarness harness;
+    auto saved = harness.run("vault_config_apply", set_arguments("1", "high"));
+    ASSERT_EQ(saved["committed"], true) << saved;
+    EXPECT_EQ(harness.store().snapshot()->find_character("guide")->reasoning_effort, "high");
+    EXPECT_EQ(saved["undo_available"], true);
+    const auto noop = harness.run("vault_config_apply", set_arguments("2", "high"));
+    EXPECT_TRUE(noop["changed"].empty());
+    EXPECT_EQ(noop["version"], "2");
+    EXPECT_EQ(noop["undo_available"], true);
+    const auto removed = harness.run("vault_config_apply", set_arguments("2", nullptr));
+    EXPECT_EQ(removed["committed"], true);
+    EXPECT_FALSE(harness.store().snapshot()->find_character("guide")->reasoning_effort);
+    for (const Json& value : {Json::array({1}), Json::object({{"x", 1}}), Json(std::uint64_t{9223372036854775808ULL})}) {
+        EXPECT_EQ(harness.run("vault_config_apply", set_arguments("3", value))["error"], "invalid_argument");
+    }
+    for (const auto field : {"path", "operation", "content", "key", "value"}) {
+        auto args = set_arguments("3", true);
+        args["changes"][0].erase(field);
+        EXPECT_EQ(harness.run("vault_config_apply", args)["error"], "invalid_argument");
+    }
+    for (const auto field : {"content", "key", "extra"}) {
+        auto args = set_arguments("3", true);
+        args["changes"][0][field] = 1;
+        EXPECT_EQ(harness.run("vault_config_apply", args)["error"], "invalid_argument");
+    }
+    auto replacement = replace_change(kGuide, "", "3");
+    replacement["changes"][0]["value"] = false;
+    EXPECT_EQ(harness.run("vault_config_apply", replacement)["error"], "invalid_argument");
+    auto protected_noop = set_arguments("3", nullptr, "absent");
+    protected_noop["changes"][0]["path"] = "system/assistant/character.toml";
+    EXPECT_EQ(harness.run("vault_config_apply", protected_noop)["error"], "protected_path");
+    EXPECT_EQ(harness.store().config_revision(), 3U);
+}
+
+TEST(AssistantService, SetRejectsOverflowingIntegerTokensWithoutRejectingLargeFloats) {
+    ServiceHarness harness;
+    const auto source = set_arguments("1", "TOKEN", "extra").dump();
+    for (const auto token : {"9223372036854775808", "18446744073709551616", "-9223372036854775809"}) {
+        auto raw = source;
+        raw.replace(raw.find("\"TOKEN\""), 7, token);
+        const auto result = harness.run_raw("vault_config_apply", raw);
+        EXPECT_EQ(result["error"], "invalid_argument") << raw << result;
+        EXPECT_EQ(harness.store().config_revision(), 1U);
+    }
+    for (const auto token : {"9223372036854775807", "-9223372036854775808", "1e30", "true", "1.0"}) {
+        auto raw = set_arguments(std::to_string(harness.store().config_revision()), "TOKEN", "extra").dump();
+        raw.replace(raw.find("\"TOKEN\""), 7, token);
+        const auto result = harness.run_raw("vault_config_apply", raw);
+        EXPECT_EQ(result["committed"], true) << raw << result;
+    }
+}
+
+TEST(AssistantService, CreatesCharacterAndReportsActualPathsWithoutUndo) {
+    for (const Json& forum : {Json("lobby"), Json(nullptr)}) {
+        ServiceHarness harness;
+        const auto result = harness.run("add_character", character_arguments("1", forum));
+        ASSERT_EQ(result["committed"], true) << result;
+        EXPECT_EQ(result["error"], nullptr);
+        EXPECT_EQ(result["character_id"], "character_1");
+        EXPECT_EQ(result["version"], "2");
+        EXPECT_EQ(result["undo_available"], false);
+        EXPECT_LE(result.dump().size(), maintenance_call_result_limit);
+        bool forum_changed = false;
+        bool profile_created = false;
+        for (const auto& item : result["changed"]) {
+            if (item["path"] == "forums/lobby/config.toml") forum_changed = true;
+            if (item["path"] == "characters/character_1/PROFILE.md") {
+                profile_created = true;
+                EXPECT_EQ(item["old_bytes"], nullptr);
+            }
+        }
+        EXPECT_TRUE(profile_created);
+        EXPECT_EQ(forum_changed, !forum.is_null());
+        EXPECT_EQ(harness.store().snapshot()->find_forum("lobby")->default_character_id, "guide");
+        const auto undo = harness.run("vault_config_apply", {
+            {"action", "undo"}, {"version", "2"}, {"changes", nullptr}});
+        EXPECT_EQ(undo["error"], "unavailable_undo");
+    }
+}
+
+TEST(AssistantService, CreationKeepsAdmissionAndStrictArgumentBoundaries) {
+    ServiceHarness harness;
+    for (const auto field : {"version", "name", "description", "provider_id", "profile", "forum_id"}) {
+        auto args = character_arguments();
+        args.erase(field);
+        EXPECT_EQ(harness.run("add_character", args)["error"], "invalid_argument");
+        args[field] = 3;
+        EXPECT_EQ(harness.run("add_character", args)["error"], "invalid_argument");
+    }
+    auto args = character_arguments();
+    args["extra"] = nullptr;
+    EXPECT_EQ(harness.run("add_character", args)["error"], "invalid_argument");
+    args = character_arguments();
+    args["profile"] = std::string(maintenance_argument_limit, 'a');
+    EXPECT_EQ(harness.run("add_character", args)["error"], "too_large");
+    EXPECT_EQ(harness.run("add_character", character_arguments("2"))["error"], "stale_version");
+    harness.context().context_epoch = 2;
+    EXPECT_EQ(harness.run("add_character", character_arguments())["error"], "stale_context");
+    harness.context().context_epoch = 1;
+    harness.context().forum_id = "lobby";
+    EXPECT_EQ(harness.run("add_character", character_arguments())["error"], "unavailable");
+    harness.context() = welcome_context();
+    harness.cancelled() = true;
+    EXPECT_EQ(harness.run("add_character", character_arguments())["error"], "cancelled");
+    EXPECT_EQ(harness.store().config_revision(), 1U);
+}
+
+TEST(AssistantService, CreationReportsCommittedIdOnlyAfterSaveIncludingPublicationFailure) {
+    ServiceHarness harness;
+    auto invalid = character_arguments();
+    invalid["profile"] = "$$(missing.md)";
+    const auto validation = harness.run("add_character", invalid);
+    EXPECT_EQ(validation["error"], "validation_failure");
+    EXPECT_EQ(validation["committed"], false);
+    EXPECT_FALSE(validation.contains("character_id"));
+    EXPECT_EQ(validation.dump().find(harness.store().workspace_path().string()), std::string::npos);
+    force_next_workspace_config_fault(WorkspaceConfigFault::sqlite_commit);
+    const auto sqlite = harness.run("add_character", character_arguments());
+    EXPECT_EQ(sqlite["committed"], false);
+    EXPECT_FALSE(sqlite.contains("character_id"));
+    EXPECT_EQ(harness.store().config_revision(), 1U);
+    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
+    const auto saved = harness.run("add_character", character_arguments());
+    EXPECT_EQ(saved["committed"], true);
+    EXPECT_EQ(saved["restart_required"], true);
+    EXPECT_EQ(saved["character_id"], "character_1");
+    EXPECT_EQ(saved["undo_available"], false);
+    const auto later = harness.run("add_character", character_arguments());
+    EXPECT_EQ(later["committed"], false);
+    EXPECT_EQ(later["error"], "restart_required");
+    EXPECT_FALSE(later.contains("character_id"));
+}
 
 TEST(AssistantService, ReadsAndWritesDiskHostConfiguration) {
     ServiceHarness harness;
@@ -672,8 +820,8 @@ TEST(AssistantService, ExercisesTheFourMaintenanceRecipes) {
         {"action", "apply"},
         {"version", revision()},
         {"changes", Json::array({
-            Json{{"path", kGuide}, {"operation", "replace"}, {"content", warned}},
-            Json{{"path", kPrompt}, {"operation", "replace"}, {"content", same_length}},
+            Json{{"path", kGuide}, {"operation", "replace"}, {"key", nullptr}, {"value", nullptr}, {"content", warned}},
+            Json{{"path", kPrompt}, {"operation", "replace"}, {"key", nullptr}, {"value", nullptr}, {"content", same_length}},
         })},
     });
     EXPECT_EQ(warned_apply["committed"], true);
@@ -720,7 +868,7 @@ TEST(AssistantService, ExercisesTheFourMaintenanceRecipes) {
         {"version", revision()},
         {"changes", Json::array({Json{
             {"path", "system/providers/copy/config.toml"},
-            {"operation", "create"},
+            {"operation", "create"}, {"key", nullptr}, {"value", nullptr},
             {"content", "host = \"test\"\nport = 2\nmode = \"test\"\nmodel = \"second\"\n"},
         }})},
     });
@@ -746,7 +894,7 @@ TEST(AssistantService, ExercisesTheFourMaintenanceRecipes) {
         {"version", revision()},
         {"changes", Json::array({Json{
             {"path", "system/web-search/config.toml"},
-            {"operation", "create"},
+            {"operation", "create"}, {"key", nullptr}, {"value", nullptr},
             {"content", "provider = \"brave\"\napi_key = \"api_key_9\"\ntool_enabled = true\n"},
         }})},
     });

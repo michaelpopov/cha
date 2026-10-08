@@ -17,14 +17,15 @@
 
 #include <algorithm>
 #include <charconv>
-#include <cstddef>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <exception>
 #include <filesystem>
 #include <functional>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -40,6 +41,29 @@ std::string_view embedded_linux_packaging_readme();
 namespace {
 
 using Json = nlohmann::json;
+
+// JSON's DOM parser promotes overflowing integer literals to double. Check the
+// original numeric tokens so set never silently narrows an integer to a float.
+// The parser itself rejects numbers that are not finite.
+struct ConfigNumberCheck : nlohmann::json_sax<Json> {
+    bool null() override { return true; }
+    bool boolean(bool) override { return true; }
+    bool number_integer(Json::number_integer_t) override { return true; }
+    bool number_unsigned(Json::number_unsigned_t value) override {
+        return value <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    }
+    bool number_float(Json::number_float_t, const Json::string_t& token) override {
+        return token.find_first_of(".eE") != std::string::npos;
+    }
+    bool string(Json::string_t&) override { return true; }
+    bool binary(Json::binary_t&) override { return true; }
+    bool start_object(std::size_t) override { return true; }
+    bool key(Json::string_t&) override { return true; }
+    bool end_object() override { return true; }
+    bool start_array(std::size_t) override { return true; }
+    bool end_array() override { return true; }
+    bool parse_error(std::size_t, const std::string&, const Json::exception&) override { return false; }
+};
 
 std::string tool_error(std::string_view code, std::string_view message) {
     return Json{
@@ -567,7 +591,7 @@ std::string logs_tool(
     return encoded;
 }
 
-// The short transcript notice for a committed apply or undo.
+// The short transcript notice for a committed vault save.
 std::string save_notice(
     const WorkspaceConfigApplyResult& applied,
     bool restart,
@@ -597,63 +621,18 @@ std::string save_notice(
     return cap_text(std::move(notice), 500);
 }
 
-std::string apply_tool(
-    const Json& parsed,
+std::string save_tool(
     const AssistantService::Links& links,
     const MaintenanceContext& context,
     std::unique_lock<std::timed_mutex>& lifecycle,
-    const WorkspaceConfigCancelCheck& cancel_check,
-    const Redactor& redact) {
-    if (!parsed.contains("action") || !parsed.contains("version")
-        || !parsed.contains("changes") || parsed.size() != 3
-        || !parsed["action"].is_string()) {
-        return tool_error("invalid_argument", "vault_config_apply arguments are incomplete.");
-    }
-    const auto version = parse_version(parsed["version"]);
-    if (!version) {
-        return tool_error("invalid_argument", "version must be the decimal configuration version.");
-    }
-    const std::string action = parsed["action"].get<std::string>();
-    const bool undo = action == "undo";
-    if (action != "apply" && !undo) {
-        return tool_error("invalid_argument", "action must be apply or undo.");
-    }
-    std::vector<WorkspaceConfigChange> changes;
-    if (undo) {
-        if (!parsed["changes"].is_null()) {
-            return tool_error("invalid_argument", "undo requires changes to be null.");
-        }
-    } else if (!parsed["changes"].is_array() || parsed["changes"].empty()) {
-        return tool_error("invalid_argument", "apply requires a non-empty changes array.");
-    } else {
-        for (const auto& change : parsed["changes"]) {
-            if (!change.is_object() || change.size() != 3
-                || !change.contains("path") || !change["path"].is_string()
-                || !change.contains("operation") || !change["operation"].is_string()
-                || !change.contains("content") || !change["content"].is_string()) {
-                return tool_error("invalid_argument", "Each change requires path, operation, and content.");
-            }
-            const std::string operation = change["operation"].get<std::string>();
-            WorkspaceConfigOperation kind = WorkspaceConfigOperation::replace;
-            if (operation == "create") kind = WorkspaceConfigOperation::create;
-            else if (operation != "replace") {
-                return tool_error("invalid_argument", "operation must be create or replace.");
-            }
-            changes.push_back({
-                .path = change["path"].get<std::string>(),
-                .operation = kind,
-                .content = change["content"].get<std::string>(),
-            });
-        }
-    }
-
+    const Redactor& redact,
+    const std::function<WorkspaceConfigApplyResult()>& save,
+    const std::string* created_id = nullptr) {
     WorkspaceConfigApplyResult applied;
     bool restart = false;
     std::string restart_message;
     try {
-        applied = undo
-            ? links.store->undo_config(*version, cancel_check)
-            : links.store->apply_config(*version, changes, cancel_check);
+        applied = save();
     } catch (const WorkspaceRestartRequiredError& error) {
         // The store throws this only after it committed this call's rows.
         restart = true;
@@ -673,10 +652,15 @@ std::string apply_tool(
             }
         }
         if (links.sessions) {
-            delivered = links.sessions->post_maintenance_result(
-                context.context_epoch,
-                {context.forum_id, context.session_id},
-                save_notice(applied, restart, refresh_error, redact));
+            try {
+                delivered = links.sessions->post_maintenance_result(
+                    context.context_epoch,
+                    {context.forum_id, context.session_id},
+                    save_notice(applied, restart, refresh_error, redact));
+            } catch (const std::exception& error) {
+                delivered = false;
+                refresh_error = redact(error.what());
+            }
         }
     }
 
@@ -684,7 +668,7 @@ std::string apply_tool(
         std::string message = "Configuration was saved. Restart is required.";
         if (!restart_message.empty()) message += " " + restart_message;
         if (!delivered) message += " Session refresh was not delivered.";
-        return Json{
+        Json result{
             {"committed", true},
             {"restart_required", true},
             {"version", nullptr},
@@ -693,7 +677,9 @@ std::string apply_tool(
             {"undo_available", false},
             {"error", nullptr},
             {"message", std::move(message)},
-        }.dump();
+        };
+        if (created_id) result["character_id"] = *created_id;
+        return result.dump();
     }
 
     Json changed = Json::array();
@@ -729,15 +715,127 @@ std::string apply_tool(
         {"error", code.empty() ? Json(nullptr) : Json(std::string(code))},
         {"message", std::move(message)},
     };
+    if (created_id && saved) result["character_id"] = *created_id;
     std::string encoded = result.dump();
     if (encoded.size() > maintenance_call_result_limit) {
-        // The provider loop never replaces an apply result. Keep it in bounds.
+        // The provider loop never replaces a completed write result. Keep it in bounds.
         result["warnings"] = Json::array();
         result["message"] = result["message"].get<std::string>()
             + " Warnings were omitted because the result is too large.";
         encoded = result.dump();
     }
     return encoded;
+}
+
+std::string apply_tool(
+    const Json& parsed,
+    std::string_view arguments,
+    const AssistantService::Links& links,
+    const MaintenanceContext& context,
+    std::unique_lock<std::timed_mutex>& lifecycle,
+    const WorkspaceConfigCancelCheck& cancel_check,
+    const Redactor& redact) {
+    ConfigNumberCheck numbers;
+    if (!Json::sax_parse(arguments.begin(), arguments.end(), &numbers)) {
+        return tool_error("invalid_argument", "set requires signed 64-bit integers or finite floating-point numbers.");
+    }
+    if (!parsed.contains("action") || !parsed.contains("version")
+        || !parsed.contains("changes") || parsed.size() != 3
+        || !parsed["action"].is_string()) {
+        return tool_error("invalid_argument", "vault_config_apply arguments are incomplete.");
+    }
+    const auto version = parse_version(parsed["version"]);
+    if (!version) {
+        return tool_error("invalid_argument", "version must be the decimal configuration version.");
+    }
+    const std::string action = parsed["action"].get<std::string>();
+    const bool undo = action == "undo";
+    if (action != "apply" && !undo) {
+        return tool_error("invalid_argument", "action must be apply or undo.");
+    }
+    std::vector<WorkspaceConfigChange> changes;
+    if (undo) {
+        if (!parsed["changes"].is_null()) {
+            return tool_error("invalid_argument", "undo requires changes to be null.");
+        }
+    } else if (!parsed["changes"].is_array() || parsed["changes"].empty()) {
+        return tool_error("invalid_argument", "apply requires a non-empty changes array.");
+    } else {
+        for (const auto& change : parsed["changes"]) {
+            if (!change.is_object() || change.size() != 5
+                || !change.contains("path") || !change["path"].is_string()
+                || !change.contains("operation") || !change["operation"].is_string()
+                || !change.contains("content") || !change.contains("key")
+                || !change.contains("value")) {
+                return tool_error("invalid_argument", "Each change requires path, operation, content, key, and value.");
+            }
+            const std::string operation = change["operation"].get<std::string>();
+            WorkspaceConfigChange item{.path = change["path"].get<std::string>()};
+            if (operation == "set") {
+                item.operation = WorkspaceConfigOperation::set;
+                if (!change["content"].is_null() || !change["key"].is_string()) {
+                    return tool_error("invalid_argument", "set requires content null and a root key string.");
+                }
+                item.key = change["key"].get<std::string>();
+                const auto& value = change["value"];
+                // ConfigNumberCheck above rejected integers outside signed 64 bits.
+                if (value.is_boolean()) item.value = value.get<bool>();
+                else if (value.is_number_integer()) item.value = value.get<std::int64_t>();
+                else if (value.is_number_float()) item.value = value.get<double>();
+                else if (value.is_string()) item.value = value.get<std::string>();
+                else if (!value.is_null()) {
+                    return tool_error("invalid_argument", "set value must be a string, number, boolean, or null.");
+                }
+            } else if (operation == "create" || operation == "replace") {
+                item.operation = operation == "create" ? WorkspaceConfigOperation::create
+                    : WorkspaceConfigOperation::replace;
+                if (!change["content"].is_string() || !change["key"].is_null()
+                    || !change["value"].is_null()) {
+                    return tool_error("invalid_argument", "create and replace require content text, key null, and value null.");
+                }
+                item.content = change["content"].get<std::string>();
+            } else {
+                return tool_error("invalid_argument", "operation must be create, replace, or set.");
+            }
+            changes.push_back(std::move(item));
+        }
+    }
+
+    return save_tool(links, context, lifecycle, redact, [&] {
+        return undo ? links.store->undo_config(*version, cancel_check)
+            : links.store->apply_config(*version, changes, cancel_check);
+    });
+}
+
+std::string add_character_tool(
+    const Json& parsed,
+    const AssistantService::Links& links,
+    const MaintenanceContext& context,
+    std::unique_lock<std::timed_mutex>& lifecycle,
+    const WorkspaceConfigCancelCheck& cancel_check,
+    const Redactor& redact) {
+    if (parsed.size() != 6) {
+        return tool_error("invalid_argument", "add_character requires version, name, description, provider_id, profile, and forum_id.");
+    }
+    for (const auto field : {"version", "name", "description", "provider_id", "profile"}) {
+        if (!parsed.contains(field) || !parsed[field].is_string()) {
+            return tool_error("invalid_argument", "add_character requires string version, name, description, provider_id, and profile.");
+        }
+    }
+    if (!parsed.contains("forum_id") || (!parsed["forum_id"].is_null() && !parsed["forum_id"].is_string())) {
+        return tool_error("invalid_argument", "forum_id must be a string or null.");
+    }
+    const auto version = parse_version(parsed["version"]);
+    if (!version) return tool_error("invalid_argument", "version must be the decimal configuration version.");
+    const std::optional<std::string> forum = parsed["forum_id"].is_null()
+        ? std::nullopt : std::optional(parsed["forum_id"].get<std::string>());
+    std::string id;
+    return save_tool(links, context, lifecycle, redact, [&] {
+        return links.store->create_character_for_assistant(*version,
+            parsed["name"].get<std::string>(), parsed["description"].get<std::string>(),
+            parsed["provider_id"].get<std::string>(), parsed["profile"].get<std::string>(),
+            forum ? std::optional<std::string_view>(*forum) : std::nullopt, id, cancel_check);
+    }, &id);
 }
 
 } // namespace
@@ -850,11 +948,14 @@ std::string AssistantService::execute(
         if (name == "vault_config_read") return read_tool(parsed, *links_.store, admission_error);
         if (name == "assistant_logging") return logging_tool(parsed, admission_error);
         if (name == "assistant_logs") return logs_tool(parsed, redact, admission_error);
+        if (name == "add_character") {
+            return add_character_tool(parsed, links_, context, lifecycle, cancel_check, redact);
+        }
         if (name == "vault_config_apply") {
-            return apply_tool(parsed, links_, context, lifecycle, cancel_check, redact);
+            return apply_tool(parsed, arguments, links_, context, lifecycle, cancel_check, redact);
         }
     } catch (const WorkspaceRestartRequiredError& error) {
-        // Only apply and undo can save, and they report their own restart.
+        // Vault save tools report post-commit restart errors in their shared wrapper.
         return tool_error("restart_required", redact(error.what()));
     } catch (const std::exception& error) {
         log_warn(std::string("Maintenance tool failed: ") + std::string(name));

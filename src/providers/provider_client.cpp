@@ -615,7 +615,8 @@ GenerationResult ProviderClient::perform(
                 ++tool_calls_used;
                 // A write result is never replaced after it runs, so a saved
                 // change is never reported as unsaved. The service keeps it small.
-                const bool apply = call.name == "vault_config_apply"
+                const bool write = call.name == "vault_config_apply"
+                    || call.name == "add_character"
                     || call.name == "host_config_write";
                 if (force_final) {
                     output = R"({"error":"too_large","message":"Tool results for this answer are too large. This call was not run.","committed":false})";
@@ -631,14 +632,14 @@ GenerationResult ProviderClient::perform(
                         output = R"({"error":"validation_failure","message":"The maintenance tool failed.","committed":false})";
                     }
                 }
-                if (!apply && output.size() > maintenance_call_result_limit) {
+                if (!write && output.size() > maintenance_call_result_limit) {
                     output = R"({"error":"too_large","message":"Tool result is too large.","committed":false})";
                 }
                 if (!force_final
                     && maintenance_result_bytes + output.size() > maintenance_answer_result_limit) {
                     // Later calls in this response do not run.
                     force_final = true;
-                    if (!apply) {
+                    if (!write) {
                         output = R"({"error":"too_large","message":"Tool results for this answer are too large.","committed":false})";
                     }
                 }

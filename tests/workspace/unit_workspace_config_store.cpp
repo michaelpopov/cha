@@ -5,9 +5,11 @@
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_editor.h"
 #include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
+#include <toml++/toml.hpp>
 #include <sqlite3.h>
 
 #include <algorithm>
@@ -2525,6 +2527,386 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, KeyReadsReturnMetadataOnly) {
     EXPECT_TRUE(read.files[0].key->credential_present);
     EXPECT_TRUE(read.files[0].content.empty());
     EXPECT_EQ(read.files[0].content.find("private-value"), std::string::npos);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, SetPreservesTypesNoopsAndUndo) {
+    auto store = open_store();
+    const std::string path = "characters/guide/character.toml";
+    const std::string original = stored_config(database(), path);
+    auto set = [&](std::string key, auto value) {
+        return store->apply_config(store->config_revision(),
+            std::vector<WorkspaceConfigChange>{{.path = path,
+                .operation = WorkspaceConfigOperation::set, .key = key, .value = value}});
+    };
+    auto noop = set("display_name", std::string("Guide"));
+    EXPECT_TRUE(noop.committed);
+    EXPECT_TRUE(noop.changed.empty());
+    EXPECT_EQ(stored_config(database(), path), original);
+    EXPECT_TRUE(set("legacy_bool", true).committed);
+    EXPECT_TRUE(set("legacy_int", std::int64_t{3}).committed);
+    EXPECT_TRUE(set("legacy_float", 3.0).committed);
+    EXPECT_TRUE(set("legacy_string", std::string("3")).committed);
+    auto table = toml::parse(stored_config(database(), path));
+    EXPECT_TRUE(table["legacy_bool"].is_boolean());
+    EXPECT_TRUE(table["legacy_int"].is_integer());
+    EXPECT_TRUE(table["legacy_float"].is_floating_point());
+    EXPECT_TRUE(table["legacy_string"].is_string());
+    EXPECT_EQ(table["provider"].value<std::string>(), "test");
+    const auto revision = store->config_revision();
+    const auto bytes = stored_config(database(), path);
+    noop = set("legacy_float", 3.0);
+    EXPECT_TRUE(noop.changed.empty());
+    EXPECT_TRUE(noop.undo_available);
+    EXPECT_EQ(noop.revision, revision);
+    EXPECT_EQ(stored_config(database(), path), bytes);
+    noop = set("absent", std::nullopt);
+    EXPECT_EQ(noop.revision, revision);
+    EXPECT_TRUE(noop.undo_available);
+    EXPECT_TRUE(set("legacy_string", std::nullopt).committed);
+    EXPECT_FALSE(toml::parse(stored_config(database(), path)).contains("legacy_string"));
+    EXPECT_TRUE(store->undo_config(store->config_revision()).committed);
+    EXPECT_EQ(stored_config(database(), path), bytes);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, SetRejectsInvalidTargetsAndProtectedNoops) {
+    auto store = open_store();
+    auto attempt = [&](std::string path, std::string key) {
+        return store->apply_config(store->config_revision(),
+            std::vector<WorkspaceConfigChange>{{.path = path,
+                .operation = WorkspaceConfigOperation::set, .key = key}});
+    };
+    const auto revision = store->config_revision();
+    EXPECT_EQ(attempt("characters/guide/missing.toml", "x").error,
+        WorkspaceConfigApplyError::create_replace_conflict);
+    EXPECT_EQ(attempt("characters/guide/CHARACTER.md", "x").error,
+        WorkspaceConfigApplyError::invalid_argument);
+    for (const auto key : {"", "x.y", "é", "x y"}) {
+        EXPECT_EQ(attempt("characters/guide/character.toml", key).error,
+            WorkspaceConfigApplyError::invalid_argument);
+    }
+    EXPECT_EQ(attempt("system/assistant/character.toml", "absent").error,
+        WorkspaceConfigApplyError::protected_path);
+    EXPECT_EQ(attempt("forums/lobby/members/builtin-assistant/character.toml", "absent").error,
+        WorkspaceConfigApplyError::protected_path);
+    EXPECT_EQ(attempt("system/providers/test/config.toml", "absent").error,
+        WorkspaceConfigApplyError::protected_path);
+    EXPECT_EQ(store->config_revision(), revision);
+    const std::string path = "characters/guide/character.toml";
+    const auto original = stored_config(database(), path);
+    ASSERT_TRUE(store->apply_config(revision, std::vector<WorkspaceConfigChange>{
+        {.path = path, .content = original + "legacy_array = [1]\n[legacy_table]\nx = 1\n"}}).committed);
+    for (const auto key : {"legacy_array", "legacy_table"}) {
+        const auto rejected = attempt(path, key);
+        EXPECT_EQ(rejected.error, WorkspaceConfigApplyError::invalid_argument);
+        EXPECT_TRUE(rejected.error_message.starts_with("Configuration file '" + path + "': "))
+            << rejected.error_message;
+    }
+    const auto large = store->apply_config(store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{.path = path,
+            .operation = WorkspaceConfigOperation::set, .key = "extra",
+            .value = std::string(workspace_config_file_size_limit, 'x')}});
+    EXPECT_EQ(large.error, WorkspaceConfigApplyError::too_large);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, SetAndCreateValidateAndCommitTogether) {
+    auto store = open_store();
+    const std::string path = "characters/guide/character.toml";
+    std::vector<WorkspaceConfigChange> changes{
+        {.path = "system/providers/copy/config.toml", .operation = WorkspaceConfigOperation::create,
+         .content = stored_config(database(), "system/providers/test/config.toml")},
+        {.path = path, .operation = WorkspaceConfigOperation::set,
+         .key = "provider", .value = std::string("missing")}};
+    EXPECT_EQ(store->apply_config(store->config_revision(), changes).error,
+        WorkspaceConfigApplyError::validation_failure);
+    EXPECT_TRUE(stored_config(database(), "system/providers/copy/config.toml").empty());
+    changes.back().value = std::string("copy");
+    const auto saved = store->apply_config(store->config_revision(), changes);
+    ASSERT_TRUE(saved.committed) << saved.error_message;
+    EXPECT_EQ(saved.changed.size(), 2U);
+    EXPECT_FALSE(saved.undo_available);
+    EXPECT_EQ(store->snapshot()->find_character("guide")->provider_id, "copy");
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, AssistantCreationIsAtomicAndPreservesForumDefaults) {
+    auto store = open_store();
+    const std::string config = "forums/lobby/config.toml";
+    const std::string voice = "characters/character-voice.md";
+    const std::string profile = "# Scholar\nA careful thinker.\n";
+    const std::string original = "\xef\xbb\xbf# Unicode: café\r\ndisplay_name = \"The Lobby\"\r\n"
+        "default_persona = \"reader\"\r\n# default_character is mentioned here\r\n"
+        "[unused]\r\ndefault_character = \"irrelevant\"";
+    ASSERT_TRUE(store->apply_config(store->config_revision(), std::vector<WorkspaceConfigChange>{
+        {.path = config, .content = original}}).committed);
+    const auto before = store->snapshot();
+    const auto old_default = before->find_forum("lobby")->default_character_id;
+    const auto old_persona = before->find_forum("lobby")->default_persona_id;
+    const auto old_members = before->find_forum("lobby")->members.size();
+    const auto old_voice = stored_config(database(), voice);
+    std::string id;
+    const auto saved = store->create_character_for_assistant(store->config_revision(),
+        "Scholar", "A careful thinker", "second", profile, "lobby", id);
+    ASSERT_TRUE(saved.committed) << saved.error_message;
+    EXPECT_EQ(id, "character_1");
+    EXPECT_FALSE(saved.undo_available);
+    EXPECT_EQ(stored_config(database(), config),
+        "\xef\xbb\xbf" + std::string("default_character = \"") + old_default + "\"\n" + original.substr(3));
+    const auto after = store->snapshot();
+    EXPECT_EQ(after->find_forum("lobby")->default_character_id, old_default);
+    EXPECT_EQ(after->find_forum("lobby")->default_persona_id, old_persona);
+    EXPECT_EQ(after->find_forum("lobby")->members.size(), old_members + 1);
+    EXPECT_EQ(after->find_character(id)->provider_id, "second");
+    EXPECT_EQ(stored_config(database(), "characters/" + id + "/PROFILE.md"), profile);
+    EXPECT_EQ(stored_config(database(), "characters/" + id + "/CHARACTER.md"),
+        "$$(../character-voice.md)\n\n<character_profile>\n$$(PROFILE.md)\n</character_profile>\n");
+    EXPECT_EQ(stored_config(database(), "forums/lobby/members/" + id + "/character.toml"),
+        "# Forum member\n");
+    if (!old_voice.empty()) EXPECT_EQ(stored_config(database(), voice), old_voice);
+    EXPECT_TRUE(std::ranges::any_of(saved.changed, [&](const auto& change) { return change.path == config; }));
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, AssistantCreationRetainsExplicitForumSourceBytes) {
+    for (const std::string key : {"default_character", "default_agent", "\"default_character\"", "'default_agent'"}) {
+        auto store = open_store();
+        const std::string path = "forums/lobby/config.toml";
+        const auto old_default = store->snapshot()->find_forum("lobby")->default_character_id;
+        const std::string content = "# café\ndisplay_name = \"The Lobby\"\n" + key + " = \"" + old_default + "\"";
+        ASSERT_TRUE(store->apply_config(store->config_revision(), std::vector<WorkspaceConfigChange>{
+            {.path = path, .content = content}}).committed);
+        const auto persona = store->snapshot()->find_forum("lobby")->default_persona_id;
+        std::string id;
+        const auto result = store->create_character_for_assistant(store->config_revision(),
+            "Scholar " + key, "A thinker", "second", "Profile", "lobby", id);
+        ASSERT_TRUE(result.committed) << result.error_message;
+        EXPECT_EQ(stored_config(database(), path), content);
+        EXPECT_EQ(store->snapshot()->find_forum("lobby")->default_character_id, old_default);
+        EXPECT_EQ(store->snapshot()->find_forum("lobby")->default_persona_id, persona);
+    }
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, AssistantCreationWithoutForumAndCollisionRules) {
+    auto store = open_store();
+    EXPECT_EQ(store->create_character("Draft", "A draft"), "character_1");
+    const auto original_forum = stored_config(database(), "forums/lobby/config.toml");
+    ASSERT_TRUE(store->apply_config(store->config_revision(), std::vector<WorkspaceConfigChange>{
+        {.path = "personas/character_2/persona.toml", .operation = WorkspaceConfigOperation::create,
+         .content = "display_name = \"Reserved Persona\"\n"},
+        {.path = "personas/character_2/PERSONA.md", .operation = WorkspaceConfigOperation::create,
+         .content = "Persona"},
+        {.path = "characters/character_3/notes.md", .operation = WorkspaceConfigOperation::create,
+         .content = "Directory collision"},
+        {.path = "characters/character-voice.md", .content = "Keep this custom shared voice."},
+    }).committed);
+    std::string id;
+    const auto result = store->create_character_for_assistant(store->config_revision(),
+        "Scholar", "A thinker", "second", "Profile", std::nullopt, id);
+    ASSERT_TRUE(result.committed) << result.error_message;
+    EXPECT_EQ(id, "character_4");
+    EXPECT_EQ(stored_config(database(), "characters/character-voice.md"), "Keep this custom shared voice.");
+    EXPECT_EQ(stored_config(database(), "forums/lobby/config.toml"), original_forum);
+    EXPECT_EQ(store->snapshot()->find_forum_member("lobby", id), nullptr);
+    EXPECT_FALSE(store->snapshot()->find_character("character_1")->provider_id);
+    EXPECT_EQ(stored_config(database(), "characters/character_1/PROFILE.md"), "");
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, AssistantCreationRejectsInputAndTemplateWithoutPartialRows) {
+    auto store = open_store();
+    const auto revision = store->config_revision();
+    struct Input { std::string name, description, provider, profile; std::optional<std::string_view> forum; };
+    for (const auto& input : std::vector<Input>{
+        {"", "Description", "second", "Profile", {}},
+        {"Guide", "Description", "second", "Profile", {}},
+        {"New", "", "second", "Profile", {}},
+        {"New", "two\nlines", "second", "Profile", {}},
+        {"New", "Description", "missing", "Profile", {}},
+        {"New", "Description", "second", "Profile", "missing"},
+        {"New", "Description", "second", "Profile", workspace_entrance_id},
+    }) {
+        std::string id;
+        const auto result = store->create_character_for_assistant(revision,
+            input.name, input.description, input.provider, input.profile, input.forum, id);
+        EXPECT_EQ(result.error, WorkspaceConfigApplyError::invalid_argument) << result.error_message;
+        EXPECT_FALSE(result.error_message.empty());
+        EXPECT_EQ(result.error_message.find(store->workspace_path().string()), std::string::npos)
+            << result.error_message;
+        EXPECT_EQ(store->config_revision(), revision);
+        EXPECT_EQ(store->snapshot()->find_character("character_1"), nullptr);
+    }
+    std::string id;
+    const auto invalid = store->create_character_for_assistant(revision,
+        "New", "Description", "second", "$$(missing.md)", "lobby", id);
+    EXPECT_EQ(invalid.error, WorkspaceConfigApplyError::validation_failure);
+    EXPECT_EQ(store->config_revision(), revision);
+    EXPECT_TRUE(stored_config(database(), "characters/character_1/character.toml").empty());
+    id = "old";
+    EXPECT_EQ(store->create_character_for_assistant(revision + 1,
+        "New", "Description", "second", "Profile", {}, id).error,
+        WorkspaceConfigApplyError::stale_version);
+    EXPECT_TRUE(id.empty());
+    EXPECT_EQ(store->create_character_for_assistant(revision,
+        "New", "Description", "second", "Profile", {}, id, [] { return true; }).error,
+        WorkspaceConfigApplyError::cancelled);
+    EXPECT_TRUE(id.empty());
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, AssistantCreationDistinguishesPrecommitAndPublicationFailures) {
+    auto store = open_store();
+    const auto revision = store->config_revision();
+    std::string id;
+    for (const auto fault : {WorkspaceConfigFault::validation, WorkspaceConfigFault::sqlite_write,
+             WorkspaceConfigFault::sqlite_commit}) {
+        force_next_workspace_config_fault(fault);
+        EXPECT_THROW(store->create_character_for_assistant(revision,
+            "New", "Description", "second", "Profile", "lobby", id), std::runtime_error);
+        EXPECT_EQ(store->config_revision(), revision);
+        EXPECT_TRUE(stored_config(database(), "characters/character_1/character.toml").empty());
+    }
+    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
+    EXPECT_THROW(store->create_character_for_assistant(revision,
+        "New", "Description", "second", "Profile", "lobby", id), WorkspaceRestartRequiredError);
+    EXPECT_EQ(id, "character_1");
+    EXPECT_FALSE(stored_config(database(), "characters/character_1/character.toml").empty());
+    EXPECT_EQ(store->create_character_for_assistant(revision,
+        "Later", "Description", "second", "Profile", {}, id).error,
+        WorkspaceConfigApplyError::restart_required);
+    EXPECT_TRUE(id.empty());
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, PreparedMembershipPreservesEveryOriginalForumByte) {
+    auto store = open_store();
+    TextFiles base;
+    for (const auto& entry : store->list_config("").entries) {
+        base.emplace(entry.path, stored_config(database(), entry.path));
+    }
+    const std::string path = "forums/lobby/config.toml";
+    for (const bool bom : {false, true}) {
+        for (const std::string newline : {"\n", "\r\n"}) {
+            for (const bool final_newline : {false, true}) {
+                auto files = base;
+                const std::string source = std::string(bom ? "\xef\xbb\xbf" : "")
+                    + "# café: default_agent = ignored" + newline
+                    + "display_name = \"The Lobby\"" + newline
+                    + "default_persona = \"reader\"" + newline
+                    + "[nested]" + newline + "default_character = \"text\""
+                    + (final_newline ? newline : "");
+                files[path] = source;
+                const auto workspace = Workspace::load(store->workspace_path(), files);
+                WorkspaceConfigEditor editor(workspace, files);
+                editor.create_character("character_1", "Scholar", "A thinker", "second", "Profile");
+                editor.add_prepared_character_to_forum("lobby", "character_1");
+                const auto offset = bom ? 3 : 0;
+                EXPECT_EQ(files[path], source.substr(0, offset)
+                    + "default_character = \"guide\"\n" + source.substr(offset));
+                const auto candidate = Workspace::load(store->workspace_path(), files);
+                EXPECT_EQ(candidate.find_forum("lobby")->default_character_id, "guide");
+                EXPECT_EQ(candidate.find_forum("lobby")->default_persona_id, "reader");
+            }
+        }
+    }
+    // A member that already sorts before the new ID keeps an implicit default.
+    auto files = base;
+    files["characters/a/character.toml"] = "display_name = \"First\"\nprovider = \"second\"\n";
+    files["characters/a/CHARACTER.md"] = "First profile";
+    files["forums/lobby/members/a/character.toml"] = "# Forum member\n";
+    const auto source = files[path];
+    const auto workspace = Workspace::load(store->workspace_path(), files);
+    ASSERT_EQ(workspace.find_forum("lobby")->default_character_id, "a");
+    WorkspaceConfigEditor editor(workspace, files);
+    editor.create_character("character_1", "Scholar", "A thinker", "second", "Profile");
+    editor.add_prepared_character_to_forum("lobby", "character_1");
+    EXPECT_EQ(files[path], source);
+    EXPECT_EQ(Workspace::load(store->workspace_path(), files).find_forum("lobby")->default_character_id, "a");
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, SetNormalizesOnlyActualEditsAndCannotAddCredentialDestinations) {
+    auto store = open_store();
+    const std::string path = "characters/guide/character.toml";
+    const std::string source = "# Preserve until edited\n'display_name' = 'Guide'\nprovider = 'second'\n";
+    ASSERT_TRUE(store->apply_config(store->config_revision(), std::vector<WorkspaceConfigChange>{
+        {.path = path, .content = source}}).committed);
+    const auto revision = store->config_revision();
+    std::vector<WorkspaceConfigChange> changes{{.path = path,
+        .operation = WorkspaceConfigOperation::set, .key = "display_name", .value = std::string("Guide")}};
+    EXPECT_TRUE(store->apply_config(revision, changes).changed.empty());
+    EXPECT_EQ(stored_config(database(), path), source);
+    changes[0].value = std::string("Guide renamed");
+    ASSERT_TRUE(store->apply_config(revision, changes).committed);
+    const auto edited = stored_config(database(), path);
+    EXPECT_EQ(edited.find("# Preserve"), std::string::npos);
+    EXPECT_EQ(toml::parse(edited)["provider"].value<std::string>(), "second");
+    changes = {{.path = "system/providers/second/config.toml", .operation = WorkspaceConfigOperation::set,
+        .key = "api_key", .value = std::string("missing-key")}};
+    EXPECT_EQ(store->apply_config(store->config_revision(), changes).error,
+        WorkspaceConfigApplyError::credential_destination_protected);
+    changes = {{.path = path, .operation = WorkspaceConfigOperation::set, .key = "display_name"},
+        {.path = "characters/guide/note.md", .operation = WorkspaceConfigOperation::create, .content = "note"}};
+    EXPECT_EQ(store->apply_config(store->config_revision(), changes).error,
+        WorkspaceConfigApplyError::validation_failure);
+    EXPECT_TRUE(stored_config(database(), "characters/guide/note.md").empty());
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, SetCanRejectMalformedStoredTomlAndReplacementCanRepairIt) {
+    auto store = open_store();
+    const std::string path = "characters/guide/character.toml";
+    const auto original = stored_config(database(), path);
+    // Simulate damaged persisted source after publication; set must parse the committed row.
+    {
+        Database handle(database(), Database::Mode::read_write);
+        auto update = handle.prepare("UPDATE config SET content = ? WHERE name = ?");
+        update.bind(1, "display_name = \"broken");
+        update.bind(2, path);
+        update.run();
+    }
+    const auto result = store->apply_config(store->config_revision(), std::vector<WorkspaceConfigChange>{
+        {.path = path, .operation = WorkspaceConfigOperation::set, .key = "reasoning_effort", .value = std::string("high")}});
+    EXPECT_EQ(result.error, WorkspaceConfigApplyError::validation_failure);
+    EXPECT_FALSE(result.committed);
+    EXPECT_EQ(result.error_message.find(store->workspace_path().string()), std::string::npos);
+    EXPECT_TRUE(result.error_message.starts_with("Configuration file '" + path + "': "))
+        << result.error_message;
+    ASSERT_TRUE(store->apply_config(store->config_revision(), std::vector<WorkspaceConfigChange>{
+        {.path = path, .content = original}}).committed);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, SetComputedFilesDoNotConsumeSuppliedContentBudget) {
+    auto store = open_store();
+    std::vector<WorkspaceConfigChange> changes;
+    for (int index = 0; index < 5; ++index) {
+        const std::string path = "characters/guide/fragment" + std::to_string(index) + ".toml";
+        ASSERT_TRUE(store->apply_config(store->config_revision(), std::vector<WorkspaceConfigChange>{
+            {.path = path, .operation = WorkspaceConfigOperation::create,
+             .content = "text = '" + std::string(60 * 1024, 'x') + "'\n"}}).committed);
+        changes.push_back({.path = path, .operation = WorkspaceConfigOperation::set,
+            .key = "flag", .value = true});
+    }
+    const auto result = store->apply_config(store->config_revision(), changes);
+    ASSERT_TRUE(result.committed) << result.error_message;
+    EXPECT_EQ(result.changed.size(), 5U);
+    std::size_t computed_bytes = 0;
+    for (const auto& item : result.changed) computed_bytes += item.new_bytes;
+    EXPECT_GT(computed_bytes, workspace_config_call_size_limit);
+    EXPECT_TRUE(result.undo_available);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, SetProviderIgnoresSearchOverrideAndCanMakeItApplicableAgain) {
+    auto store = open_store();
+    const std::string path = "characters/guide/character.toml";
+    ASSERT_TRUE(store->apply_config(store->config_revision(), std::vector<WorkspaceConfigChange>{
+        {.path = "system/providers/chat/config.toml", .operation = WorkspaceConfigOperation::create,
+         .content = "host = 'test'\nport = 2\nmodel = 'fake'\napi = 'chat_completions'\n"},
+        {.path = path, .content = "display_name = 'Guide'\nprovider = 'second'\nweb_search = 'required'\n"}
+    }).committed);
+    std::vector<WorkspaceConfigChange> changes{{.path = path, .operation = WorkspaceConfigOperation::set,
+        .key = "provider", .value = std::string("chat")}};
+    const auto result = store->apply_config(store->config_revision(), changes);
+    ASSERT_TRUE(result.committed) << result.error_message;
+    ASSERT_FALSE(result.warnings.empty());
+    EXPECT_EQ(result.warnings.front().path, path);
+    EXPECT_FALSE(store->snapshot()->find_character("guide")->web_search);
+    EXPECT_EQ(store->snapshot()->character_definition("lobby", "guide").provider.config.web_search, WebSearchMode::off);
+    EXPECT_EQ(toml::parse(stored_config(database(), path))["web_search"].value<std::string>(), "required");
+    changes[0].value = std::string("second");
+    ASSERT_TRUE(store->apply_config(store->config_revision(), changes).committed);
+    EXPECT_EQ(store->snapshot()->find_character("guide")->web_search, WebSearchMode::required);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyCommitsAtomicallyAndReportsByteSizes) {

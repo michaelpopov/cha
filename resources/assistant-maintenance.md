@@ -79,6 +79,10 @@ Provider `mode` defaults to `test`, `https` to `false`, `api` to `responses`,
 `timeout_s` to `600`, and `idle_timeout_s` to `60`. Inspect the actual values
 before attributing a network problem to the service. Character reasoning and
 provider-hosted `web_search` overrides inherit provider values when omitted.
+Unusable search overrides warn and are omitted from effective configuration:
+a providerless character cannot apply one, and an enabled override cannot apply
+to an unsupported provider. Saved source remains intact and can become applicable
+after provider reassignment. An explicit off still applies with any provider.
 Provider-hosted search and CHA's on-demand search are separate controls.
 `web_search_tool` inherits the workspace `tool_enabled` when omitted; an
 explicit `false` also disables page reading in ordinary conversations.
@@ -182,15 +186,37 @@ reports `too_large`; never reconstruct a replacement from partial text.
 
 ### `vault_config_apply(action, version, changes)`
 
-This tool validates and saves; it has no preview or dry-run mode. Only apply
-and undo take an input version. Copy the current opaque version from a tool
-result; do not calculate or invent it.
+This tool validates and saves; it has no preview or dry-run mode. Apply, undo,
+and `add_character` take an input version. Copy the current opaque version
+from a tool result; do not calculate or invent it.
 
 For `action = "apply"`, pass a nonempty `changes` array. Each item has exactly
-`path`, `operation`, and `content`. Content is the complete new file text.
+`path`, `operation`, `content`, `key`, and `value`; unused fields are `null`.
 `operation = "replace"` requires an existing row; `"create"` requires an absent
-row. Include each path at most once. Put all files needed for a coherent repair
-or new entity in one batch. Preserve unrelated fields, comments, and prompts.
+row. For either, `content` is the complete new file text and `key` and `value`
+are null. Include each path at most once. Put all files needed for a coherent
+repair in one batch, including a provider copy and character reassignment.
+
+Use `operation = "set"` for one root scalar in an existing `.toml` row when
+normalization is acceptable. Set `content` to null, `key` to a nonempty root
+key containing only ASCII letters, digits, `_`, or `-`, and `value` to a string,
+boolean, signed 64-bit integer, or finite floating-point number. There is no
+dotted or nested path syntax. Null removes the key so an optional setting can
+inherit or use its default; removing a required setting may fail validation.
+Tables and arrays cannot be changed or removed with set. Equal typed values
+and removal of an absent key preserve exact bytes, version, and undo.
+
+An actual set edit uses TOML serialization: it preserves unrelated values but
+can remove comments, reorder keys, and change quoting or formatting. Use a
+carefully prepared replacement from a fresh read for source preservation,
+Markdown, nested structures, or multiple keys in one file. For example:
+`{"path":"characters/<actual-id>/character.toml","operation":"set","content":null,"key":"reasoning_effort","value":"high"}`.
+Discover the actual path; characters may be in grouping directories.
+
+For one character's effort, change its `reasoning_effort`. Changing provider
+effort affects consumers that inherit it; explicit character overrides remain
+in effect. Change a character's provider in its global definition, never a
+legacy member `provider` field, which has no runtime effect.
 
 Use only the supported configuration roots in the location map. Paths must be
 canonical stored names with supported extensions: no absolute paths, traversal,
@@ -210,8 +236,9 @@ version, only the paths actually changed with `old_bytes` and `new_bytes`,
 warnings for changed files as `(path, message)`, and undo availability. A created file has
 `old_bytes: null`. Equal byte sizes do not mean unchanged text. A byte-identical
 permitted batch is a no-op and preserves version and undo. Protected writes
-are rejected even when byte-identical. Correct warnings introduced by your
-edit; preserve unrelated harmless content.
+are rejected even when byte-identical. Interpret warnings: saving an unknown
+or ignored setting does not prove the requested behavior changed. Preserve
+unrelated harmless content.
 
 On `stale_version`, reread relevant current files and logs, obtain a fresh
 version, and reconsider the repair. Do not rebase, merge automatically, or
@@ -221,8 +248,9 @@ native errors accurately, including create/replace conflicts, protection,
 credential-destination rejection, excessive size, and unavailable undo.
 
 A refresh or publication failure after commit is still a saved change.
-Report any restart requirement without claiming rollback. A committed apply
-or undo has a native save notice in Welcome, available through both hosts,
+Report any restart requirement without claiming rollback. A committed apply,
+undo, or creation has a native save notice in Welcome, available through both
+hosts,
 even if the model answer later fails or is stopped. An active answer delays
 notice insertion until it ends. Browser reload/disconnection does not undo or
 reapply a save; consult current state rather than repeat a write. These notices
@@ -232,8 +260,8 @@ For a user's later undo request, obtain the current version with list, then
 call `vault_config_apply(action = "undo", version = current_version,
 changes = null)`. Native code restores its saved old bytes and validates the
 restored candidate. There is one undo record for the latest successful
-Assistant batch consisting only of replacements. A batch creating any file
-clears undo. Any later configuration change invalidates it; vault switch,
+Assistant batch consisting only of replacements or set edits. A batch creating
+any file clears undo. Any later configuration change invalidates it; vault switch,
 store/vault reopen, and process restart clear it. A no-op preserves it.
 Successful undo advances the version and clears the record. There is no redo,
 file deletion, or persistent edit history. If undo is unavailable, explain the
@@ -247,6 +275,30 @@ incomplete arguments as a saved edit. For a maintenance call cut off by the
 model's output limit, report: "The model's output limit cut off the tool call.
 This call was not applied. Edit the configuration file manually." Keep any
 earlier committed saves distinct. You cannot raise your own provider's limit.
+
+### `add_character(version, name, description, provider_id, profile, forum_id)`
+
+Use this for standard character creation. Read relevant current configuration,
+find actual IDs, and copy the current version. All six arguments are required;
+`forum_id` is null unless membership was requested. Supply a nonempty one-line
+description, an exact existing provider ID, and complete Markdown for
+`PROFILE.md` using the existing template/include rules.
+
+Native code allocates the character ID, writes the standard wrapper and profile,
+assigns the provider, creates shared voice content only when missing, and adds
+optional membership in one atomic save. Other character settings retain their
+defaults. The forum must be an existing writable user forum; Entrance is invalid.
+Creation preserves the forum's effective default character and persona and all
+original configuration bytes. When lexical member ordering would change an
+implicit default, it inserts one assignment to preserve the old default. Source
+preservation does not require a raw creation batch.
+
+The result uses the apply save contract and includes `character_id` only when
+committed, including a saved change requiring restart. Creation clears Assistant
+undo, even when it also replaces the forum configuration. On an uncertain outcome,
+inspect current state before trying again. Do not retry automatically. Do not use
+this tool or raw apply to bypass a protection error. For unsupported coordinated
+work, use one coherent raw batch under the same protection rules.
 
 ### `host_config_list()`
 
@@ -349,7 +401,7 @@ payload logging, so collect only what the diagnosis needs.
    ambiguous, while continuing useful inspection. Do not ask again for each
    file or repeat permission already given.
 4. On a later turn, reread relevant configuration and logs before acting, even
-   when the user accepts your earlier proposal. Prepare complete source from
+   when the user accepts your earlier proposal. Prepare edits from
    a consistent current version, preserve unrelated content, and apply one
    small coherent batch. For host files, use freshly read `expected_content`
    and save one file at a time. Let native validation decide whether it can be saved.
@@ -453,7 +505,7 @@ manual inspection, not an invented historical-log reader.
    IDs and compare timestamps with the current state. Explain the evidence and
    uncertainty. Save nothing.
 2. **Authorized repair, verification, and later undo.** After "Fix it", reread
-   current files and logs, build the smallest full-file batch at one version,
+   current files and logs, build the smallest coherent batch at one version,
    and apply it. Correct clear returned errors within scope. Report the native
    save, validation, warnings, and undo availability; verify with subsequent
    logs and user reproduction, or manual saved-settings Test on desktop. If the

@@ -1530,10 +1530,12 @@ LoadedPersonas load_personas(
 }
 
 CharacterAppearance resolve_character_references(
-    const CharacterConfig& config,
+    CharacterConfig& config,
     std::string_view subject,
     const Workspace& workspace,
-    const std::unordered_map<std::string, std::string>& provider_errors) {
+    const std::unordered_map<std::string, std::string>& provider_errors,
+    const std::filesystem::path& path,
+    const LoadWarnings& warnings) {
     const WorkspaceProvider* provider = config.provider_id
         ? workspace.find_provider(*config.provider_id) : nullptr;
     if (config.provider_id && provider == nullptr) {
@@ -1547,15 +1549,13 @@ CharacterAppearance resolve_character_references(
             std::string(subject) + " references unknown provider '"
             + *config.provider_id + "'");
     }
-    if (config.web_search && !provider) {
-        throw std::runtime_error(
-            std::string(subject) + " enables web search without a provider");
-    }
-    if (config.web_search && *config.web_search != WebSearchMode::off
-        && !provider_supports_web_search(provider->config)) {
-        throw std::runtime_error(
-            std::string(subject)
-            + " enables web search for an unsupported provider");
+    if (config.web_search && (!provider
+        || (*config.web_search != WebSearchMode::off
+            && !provider_supports_web_search(provider->config)))) {
+        warnings.emit(path, std::string(subject) + (provider
+            ? " ignores web search for an unsupported provider"
+            : " ignores web search without a provider"));
+        config.web_search.reset();
     }
     CharacterAppearance appearance;
     if (config.style_id) {
@@ -1600,10 +1600,10 @@ LoadedCharacters load_characters(
             throw std::runtime_error(
                 "Character '" + id + "' requires character.toml and CHARACTER.md");
         }
-        const CharacterConfig config =
+        CharacterConfig config =
             load_character_config(source, config_path, true, warnings);
         const CharacterAppearance appearance = resolve_character_references(
-            config, "Character '" + id + "'", workspace, provider_errors);
+            config, "Character '" + id + "'", workspace, provider_errors, config_path, warnings);
         if (!result.directories.emplace(id, directory).second) {
             throw std::runtime_error("Character ID '" + id + "' is not unique");
         }
@@ -1668,10 +1668,10 @@ WorkspaceCharacter load_assistant(
     const LoadWarnings& warnings) {
     const std::filesystem::path assistant_path =
         workspace.root() / "system" / "assistant" / "character.toml";
-    const CharacterConfig assistant =
+    CharacterConfig assistant =
         load_character_config(source, assistant_path, true, warnings, true, true);
     const CharacterAppearance assistant_appearance = resolve_character_references(
-        assistant, "Assistant", workspace, provider_errors);
+        assistant, "Assistant", workspace, provider_errors, assistant_path, warnings);
     return {
         .character = {
             .id = std::string(workspace_assistant_id),
@@ -3044,7 +3044,9 @@ void WorkspaceConfigEditor::create_persona(
 void WorkspaceConfigEditor::create_character(
     std::string_view character_id,
     std::string_view display_name,
-    std::string_view description) {
+    std::string_view description,
+    std::optional<std::string_view> provider_id,
+    std::string_view profile) {
     try {
         validate_workspace_character_id(character_id);
     } catch (const std::runtime_error&) {
@@ -3060,8 +3062,8 @@ void WorkspaceConfigEditor::create_character(
     try {
         validate_public_name(display_name, "Character name", config_path, true);
         validate_description(description, "Character", config_path);
-    } catch (const std::runtime_error&) {
-        throw std::invalid_argument("Invalid character");
+    } catch (const std::runtime_error& error) {
+        throw std::invalid_argument(error.what());
     }
     if (is_reserved_participant(display_name)) {
         throw std::invalid_argument("Reserved character name");
@@ -3077,7 +3079,11 @@ void WorkspaceConfigEditor::create_character(
         }
     }
 
+    if (provider_id && workspace_.find_provider(*provider_id) == nullptr) {
+        throw std::invalid_argument("Unknown provider '" + std::string(*provider_id) + "'");
+    }
     toml::table config;
+    if (provider_id) config.insert("provider", std::string(*provider_id));
     config.insert("display_name", std::string(display_name));
     config.insert("description", std::string(description));
     write_toml(config_path, config);
@@ -3088,7 +3094,7 @@ void WorkspaceConfigEditor::create_character(
     }
     write_file(
         directory / "CHARACTER.md", embedded_new_character_template());
-    write_file(directory / "PROFILE.md", "");
+    write_file(directory / "PROFILE.md", profile);
 }
 
 void WorkspaceConfigEditor::create_forum(
@@ -3268,6 +3274,28 @@ void WorkspaceConfigEditor::write_forum_file(
     }
     write_markdown_file(config->second, forum->markdown_files,
         filename, content, create, "FORUM.md", "forum");
+}
+
+void WorkspaceConfigEditor::add_prepared_character_to_forum(
+    std::string_view forum_id, std::string_view character_id) {
+    const auto config = workspace_.forum_config_paths_.find(std::string(forum_id));
+    const auto* forum = workspace_.find_forum(forum_id);
+    if (config == workspace_.forum_config_paths_.end() || !forum
+        || forum_id == workspace_entrance_id) {
+        throw std::invalid_argument("Forum '" + std::string(forum_id)
+            + "' has no writable configuration");
+    }
+    const auto table = read_toml(source_, config->second, "forum config");
+    if (!table.contains("default_character") && !table.contains("default_agent")
+        && character_id < forum->default_character_id) {
+        // Preserve all source bytes; an implicit default is the smallest member ID.
+        std::string content = *source_.read(config->second);
+        const std::size_t offset = content.starts_with("\xef\xbb\xbf") ? 3 : 0;
+        content.insert(offset, "default_character = \"" + forum->default_character_id + "\"\n");
+        write_file(config->second, content);
+    }
+    write_file(config->second.parent_path() / "members" / std::string(character_id)
+        / "character.toml", "# Forum member\n");
 }
 
 void WorkspaceConfigEditor::write_forum_members(

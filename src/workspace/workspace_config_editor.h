@@ -98,7 +98,11 @@ public:
     void create_character(
         std::string_view character_id,
         std::string_view display_name,
-        std::string_view description);
+        std::string_view description,
+        std::optional<std::string_view> provider_id = std::nullopt,
+        std::string_view profile = {});
+    void add_prepared_character_to_forum(
+        std::string_view forum_id, std::string_view character_id);
     void create_forum(
         std::string_view forum_id,
         std::string_view display_name,

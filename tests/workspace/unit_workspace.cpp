@@ -560,7 +560,7 @@ TEST(Workspace, CharacterAndAssistantReferenceErrorsKeepTheirSubjectsAndOrder) {
         {"provider = \"broken\"\nstyle = \"missing\"\nvoice = \"missing\"\n",
          " references invalid provider 'broken': "},
         {"provider = \"chat\"\nweb_search = \"auto\"\nstyle = \"missing\"\n",
-         " enables web search for an unsupported provider"},
+         " references unknown style 'missing'"},
         {"provider = \"test\"\nstyle = \"missing\"\nvoice = \"missing\"\n",
          " references unknown style 'missing'"},
         {"provider = \"test\"\nvoice = \"missing\"\n",
@@ -600,18 +600,18 @@ TEST(Workspace, CharacterAndAssistantReferenceErrorsKeepTheirSubjectsAndOrder) {
     }
 }
 
-TEST(Workspace, ProviderlessDraftRejectsExplicitWebSearchOff) {
+TEST(Workspace, ProviderlessDraftIgnoresWebSearchOverride) {
     test::TestWorkspace fixture;
     fixture.add_character("draft", "Draft");
-    std::ofstream(fixture.root() / "characters" / "draft" / "character.toml")
-        << "display_name = \"Draft\"\nweb_search = \"off\"\nstyle = \"missing\"\n";
-    try {
-        (void)Workspace::load(fixture.root());
-        FAIL() << "Expected web search to require a provider";
-    } catch (const std::runtime_error& failure) {
-        EXPECT_STREQ(
-            failure.what(), "Character 'draft' enables web search without a provider");
-    }
+    const auto path = fixture.root() / "characters/draft/character.toml";
+    const std::string source = "display_name = \"Draft\"\nweb_search = \"off\"\n";
+    std::ofstream(path) << source;
+    LoadWarningCollector warnings;
+    const auto workspace = Workspace::load(fixture.root(), &warnings);
+    EXPECT_FALSE(workspace.find_character("draft")->web_search);
+    ASSERT_FALSE(warnings.empty());
+    EXPECT_EQ(warnings.back().path, "characters/draft/character.toml");
+    EXPECT_EQ(file_bytes(path), source);
 }
 
 TEST(Workspace, ExplicitWebSearchOffDoesNotRequireProviderCapability) {
@@ -897,7 +897,7 @@ TEST(Workspace, AllowsCharacterChatWebSearchOnlyForOpenRouter) {
             "provider = \"search\"\n"
             "web_search = \"auto\"\n");
 
-        EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+        EXPECT_FALSE(Workspace::load(fixture.root()).find_character("guide")->web_search);
     }
 }
 
@@ -2083,26 +2083,23 @@ TEST(Workspace, RejectsInvalidOpenAiSubscriptionSettings) {
     }
 }
 
-TEST(Workspace, RejectsOpenAiSubscriptionWebSearchOverrides) {
-    {
+TEST(Workspace, IgnoresOpenAiSubscriptionWebSearchOverrides) {
+    for (const bool assistant : {false, true}) {
         test::TestWorkspace fixture;
         fixture.write_provider("chatgpt", subscription_provider_toml());
-        fixture.write_character_config(
-            "display_name = \"Guide\"\n"
-            "provider = \"chatgpt\"\n"
-            "web_search = \"auto\"\n");
-        EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
-    }
-    {
-        test::TestWorkspace fixture;
-        fixture.write_provider("chatgpt", subscription_provider_toml());
-        fixture.write_character_config(
-            "display_name = \"Guide\"\nprovider = \"test\"\n");
-        std::ofstream(fixture.root() / "system" / "assistant" / "character.toml")
-            << "display_name = \"Assistant\"\n"
-               "provider = \"chatgpt\"\n"
-               "web_search = \"required\"\n";
-        EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+        const std::string path = assistant ? "system/assistant/character.toml"
+            : "characters/guide/character.toml";
+        const std::string source = "display_name = \"" + std::string(assistant ? "Assistant" : "Guide")
+            + "\"\nprovider = \"chatgpt\"\nweb_search = \"required\"\n";
+        std::ofstream(fixture.root() / path) << source;
+        LoadWarningCollector warnings;
+        const auto workspace = Workspace::load(fixture.root(), &warnings);
+        const auto id = assistant ? workspace_assistant_id : "guide";
+        EXPECT_FALSE(workspace.find_character(id)->web_search);
+        EXPECT_EQ(workspace.character_definition(assistant ? workspace_entrance_id : "lobby", id).provider.config.web_search, WebSearchMode::off);
+        EXPECT_EQ(file_bytes(fixture.root() / path), source);
+        ASSERT_FALSE(warnings.empty());
+        EXPECT_EQ(warnings.back().path, path);
     }
 }
 

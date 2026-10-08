@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace cha {
@@ -120,12 +121,15 @@ struct WorkspaceConfigReadResult {
 enum class WorkspaceConfigOperation {
     create,
     replace,
+    set,
 };
 
 struct WorkspaceConfigChange {
     std::string path;
     WorkspaceConfigOperation operation{WorkspaceConfigOperation::replace};
     std::string content;
+    std::string key;
+    std::optional<std::variant<std::string, std::int64_t, double, bool>> value;
 };
 
 enum class WorkspaceConfigApplyError {
@@ -335,6 +339,17 @@ public:
     WorkspaceConfigApplyResult apply_config(
         WorkspaceConfigRevision version,
         std::span<const WorkspaceConfigChange> changes,
+        WorkspaceConfigCancelCheck cancelled = {});
+    // allocated_id is call-local context, not proof of a commit. Like apply,
+    // a thrown WorkspaceRestartRequiredError means this call saved its rows.
+    WorkspaceConfigApplyResult create_character_for_assistant(
+        WorkspaceConfigRevision version,
+        std::string_view name,
+        std::string_view description,
+        std::string_view provider_id,
+        std::string_view profile,
+        std::optional<std::string_view> forum_id,
+        std::string& allocated_id,
         WorkspaceConfigCancelCheck cancelled = {});
     WorkspaceConfigApplyResult undo_config(
         WorkspaceConfigRevision version,

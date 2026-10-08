@@ -2725,11 +2725,31 @@ void expect_maintenance_tools(const Json& body) {
         EXPECT_EQ(tool["type"], "function");
         const Json& function = tool.contains("function") ? tool["function"] : tool;
         names.push_back(function["name"].get<std::string>());
+        EXPECT_EQ(function["strict"], true);
+        const auto& schema = function["parameters"];
+        EXPECT_EQ(schema["additionalProperties"], false);
+        if (function["name"] == "vault_config_apply") {
+            const auto& item = schema["properties"]["changes"]["items"];
+            EXPECT_EQ(item["additionalProperties"], false);
+            EXPECT_EQ(item["required"], Json::array({"path", "operation", "content", "key", "value"}));
+            EXPECT_EQ(item["properties"]["operation"]["enum"], Json::array({"create", "replace", "set"}));
+            EXPECT_EQ(item["properties"]["content"]["type"], Json::array({"string", "null"}));
+            EXPECT_EQ(item["properties"]["key"]["type"], Json::array({"string", "null"}));
+            EXPECT_EQ(item["properties"]["value"]["type"], Json::array({"string", "number", "boolean", "null"}));
+        } else if (function["name"] == "add_character") {
+            EXPECT_EQ(schema["required"], Json::array({"version", "name", "description", "provider_id", "profile", "forum_id"}));
+            EXPECT_EQ(schema["properties"].size(), 6U);
+            for (const auto field : {"version", "name", "description", "provider_id", "profile"}) {
+                EXPECT_EQ(schema["properties"][field]["type"], "string");
+            }
+            EXPECT_EQ(schema["properties"]["forum_id"]["type"], Json::array({"string", "null"}));
+        }
+
         EXPECT_NE(tool.value("type", ""), "web_search");
         EXPECT_NE(tool.value("type", ""), "openrouter:web_search");
     }
     EXPECT_EQ(names, (std::vector<std::string>{
-        "vault_config_list", "vault_config_read", "vault_config_apply",
+        "vault_config_list", "vault_config_read", "vault_config_apply", "add_character",
         "assistant_logs", "assistant_logging",
         "host_config_list", "host_config_read", "host_config_write",
         "assistant_openai_login"}));
@@ -2903,6 +2923,10 @@ TEST(ProviderClientTools, MaintenanceAnswerBudgetKeepsSavedResultsAndStopsLaterC
             {big_name, big_name, "vault_config_apply"}},
         {{{big_name, big}, {big_name, big}, {"host_config_write", 300}, {"host_config_list", 10}},
             {big_name, big_name, "host_config_write"}},
+        {{{big_name, big}, {big_name, big}, {"add_character", 300}, {"vault_config_list", 10}},
+            {big_name, big_name, "add_character"}},
+        {{{big_name, big}, {big_name, big}, {"add_character", maintenance_call_result_limit + 1}, {"vault_config_list", 10}},
+            {big_name, big_name, "add_character"}},
         // A read goes over the budget. It is replaced, and the apply after it does not run.
         {{{big_name, big}, {big_name, big}, {big_name, 1000}, {"vault_config_apply", 300}},
             {big_name, big_name, big_name}},
@@ -2932,7 +2956,7 @@ TEST(ProviderClientTools, MaintenanceAnswerBudgetKeepsSavedResultsAndStopsLaterC
             input.maintenance_tool = [&](std::string_view name, auto, const auto&) {
                 run.emplace_back(name);
                 const std::size_t size = test.calls[run.size() - 1].second;
-                if (name == "vault_config_apply" || name == "host_config_write") {
+                if (name == "vault_config_apply" || name == "host_config_write" || name == "add_character") {
                     return R"({"committed":true,"padding":")" + std::string(size, 'a') + "\"}";
                 }
                 return R"({"text":")" + std::string(size, 'x') + "\"}";
@@ -2955,7 +2979,8 @@ TEST(ProviderClientTools, MaintenanceAnswerBudgetKeepsSavedResultsAndStopsLaterC
             ASSERT_EQ(outputs.size(), test.calls.size());
             EXPECT_NE(outputs[3].find("This call was not run."), std::string::npos);
             if (test.expected_run.back() == "vault_config_apply"
-                || test.expected_run.back() == "host_config_write") {
+                || test.expected_run.back() == "host_config_write"
+                || test.expected_run.back() == "add_character") {
                 EXPECT_NE(outputs[2].find(R"("committed":true)"), std::string::npos);
             } else {
                 EXPECT_NE(outputs[2].find("Tool results for this answer are too large."),

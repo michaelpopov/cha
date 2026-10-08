@@ -96,9 +96,12 @@ void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
     });
     append_tool(body, api, Json{
         {"name", "vault_config_apply"},
-        {"description", "apply saves full-file create or replace changes and requires "
+        {"description", "apply saves create, replace, or set changes and requires "
             "the current version plus a non-empty changes array. undo restores the "
             "previous saved apply, requires the current version, and requires changes null. "
+            "set edits one root TOML scalar; null removes it. Actual edits can remove comments, "
+            "reorder keys, and change formatting. Equal typed values preserve source bytes. "
+            "Use replace to preserve source formatting or change multiple keys in one file. "
             "This call saves configuration."},
         {"strict", true},
         {"parameters", function_parameters(
@@ -109,22 +112,44 @@ void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
                     {"description", "Current configuration version"}}},
                 {"changes", Json{
                     {"type", Json::array({"array", "null"})},
-                    {"description", "Full-file changes for apply, or null for undo"},
+                    {"description", "Changes for apply, or null for undo; each path appears once"},
                     {"items", Json{
                         {"type", "object"},
                         {"properties", {
                             {"path", Json{{"type", "string"}}},
                             {"operation", Json{{"type", "string"},
-                                {"enum", Json::array({"create", "replace"})}}},
-                            {"content", Json{{"type", "string"},
-                                {"description", "Complete replacement file text"}}},
+                                {"enum", Json::array({"create", "replace", "set"})}}},
+                            {"content", nullable_string("Complete file text for create/replace; null for set")},
+                            {"key", nullable_string("Nonempty ASCII root key for set: letters, digits, _, -; null otherwise")},
+                            {"value", Json{{"type", Json::array({"string", "number", "boolean", "null"})},
+                                {"description", "set scalar value, or null to remove; null for create/replace"}}},
                         }},
-                        {"required", Json::array({"path", "operation", "content"})},
+                        {"required", Json::array({"path", "operation", "content", "key", "value"})},
                         {"additionalProperties", false},
                     }},
                 }},
             },
             Json::array({"action", "version", "changes"}))},
+    });
+    append_tool(body, api, Json{
+        {"name", "add_character"},
+        {"description", "Create a standard character with an existing provider and complete Markdown profile "
+            "in one atomic save. forum_id is an existing writable user forum only when membership is requested, "
+            "or null. Preserves forum defaults and source bytes, inserting a default assignment only when needed. "
+            "Requires the current configuration version. Creation has no Assistant undo. "
+            "Returns character_id only when committed, including a post-commit restart requirement. "
+            "Inspect current state before retrying an uncertain outcome."},
+        {"strict", true},
+        {"parameters", function_parameters(
+            {
+                {"version", Json{{"type", "string"}}},
+                {"name", Json{{"type", "string"}}},
+                {"description", Json{{"type", "string"}, {"description", "Nonempty one-line description"}}},
+                {"provider_id", Json{{"type", "string"}, {"description", "Exact existing provider ID"}}},
+                {"profile", Json{{"type", "string"}, {"description", "Complete PROFILE.md source"}}},
+                {"forum_id", nullable_string("Existing writable user forum ID, or null")},
+            },
+            Json::array({"version", "name", "description", "provider_id", "profile", "forum_id"}))},
     });
     append_tool(body, api, Json{
         {"name", "assistant_logs"},
