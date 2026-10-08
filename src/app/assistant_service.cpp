@@ -113,24 +113,6 @@ std::string_view apply_error_name(WorkspaceConfigApplyError error) {
     return "invalid_argument";
 }
 
-void replace_all(std::string& text, std::string_view needle, std::string_view replacement) {
-    if (needle.empty()) return;
-    std::string result;
-    result.reserve(text.size());
-    std::size_t cursor = 0;
-    while (cursor < text.size()) {
-        const auto found = text.find(needle, cursor);
-        if (found == std::string::npos) {
-            result.append(text, cursor, std::string::npos);
-            break;
-        }
-        result.append(text, cursor, found - cursor);
-        result.append(replacement);
-        cursor = found + needle.size();
-    }
-    text = std::move(result);
-}
-
 std::string cap_notice(std::string text) {
     constexpr std::size_t limit = 500;
     if (text.size() <= limit) return text;
@@ -173,17 +155,17 @@ public:
             roots_.push_back(links.config_directory.string());
             if (const auto snapshot = links.store->snapshot()) {
                 for (const SavedApiKey& key : snapshot->api_keys()) {
-                    if (key.value.size() >= 4) secrets_.push_back(key.value);
+                    if (!key.value.empty()) secrets_.push_back(key.value);
                 }
                 if (const auto& r2 = snapshot->r2_storage()) {
-                    if (r2->secret_key.size() >= 4) secrets_.push_back(r2->secret_key);
+                    if (!r2->secret_key.empty()) secrets_.push_back(r2->secret_key);
                 }
             }
         } catch (const std::exception&) {
         }
         if (links.oauth) {
             for (std::string& secret : links.oauth->redaction_secrets()) {
-                if (secret.size() >= 4) secrets_.push_back(std::move(secret));
+                if (!secret.empty()) secrets_.push_back(std::move(secret));
             }
         }
         try {
@@ -199,10 +181,28 @@ public:
         std::ranges::sort(roots_, longer_first);
     }
 
-    std::string operator()(std::string text) const {
-        for (const std::string& secret : secrets_) replace_all(text, secret, "[REDACTED]");
-        for (const std::string& root : roots_) replace_all(text, root, "[path]");
-        return text;
+    std::string operator()(std::string_view text) const {
+        std::string result;
+        result.reserve(text.size());
+        // Match the original text once so short secrets cannot alter the markers.
+        while (!text.empty()) {
+            const auto matches = [text](const std::string& value) {
+                return text.starts_with(value);
+            };
+            const auto root = std::ranges::find_if(roots_, matches);
+            const auto secret = std::ranges::find_if(secrets_, matches);
+            if (root != roots_.end()) {
+                result += "[path]";
+                text.remove_prefix(root->size());
+            } else if (secret != secrets_.end()) {
+                result += "[REDACTED]";
+                text.remove_prefix(secret->size());
+            } else {
+                result += text.front();
+                text.remove_prefix(1);
+            }
+        }
+        return result;
     }
 
 private:

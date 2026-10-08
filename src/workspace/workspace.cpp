@@ -910,12 +910,17 @@ CharacterConfig load_character_config(
     static constexpr std::string_view definition_fields[]{
         "display_name", "description", "provider", "style", "voice",
         "reasoning_effort", "web_search", "web_search_tool", "tags", "prompt"};
-    static constexpr std::string_view override_fields[]{"provider", "prompt"};
+    static constexpr std::string_view override_fields[]{"prompt"};
     warn_unknown_fields(
         table, path,
         definition ? std::span<const std::string_view>(definition_fields)
                    : std::span<const std::string_view>(override_fields),
         "Character config", warnings);
+    if (!definition) {
+        return CharacterConfig{
+            .prompt_variables = template_scope_from_toml(table, "prompt", utf8_path(path)),
+        };
+    }
     CharacterConfig result{
         .display_name = optional_value<std::string>(
             table, path, "display_name", "a string"),

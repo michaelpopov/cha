@@ -724,5 +724,47 @@ TEST(AssistantService, RedactsSecretsAndKeepsOneMultilineLogRecord) {
     EXPECT_NE(hidden.find("[REDACTED]"), std::string::npos);
 }
 
+TEST(AssistantService, RedactsShortCredentialsWithoutChangingMarkersOrPaths) {
+    ServiceHarness harness;
+    harness.store().apply_api_key_create("api_key_1", "Secret", "E");
+    harness.store().apply_r2_storage_create(R2StorageKey{
+        .id = "api_key_2",
+        .display_name = "Storage",
+        .url = "https://r2.example",
+        .access_key_id = "access",
+        .secret_key = "xy",
+    });
+    harness.use_oauth(
+        R"({"access_token":"abc","refresh_token":"!","expires_at":1893456000,"account_id":"acct"})");
+    log_info("api=E storage=xy access=abc refresh=! workspace="
+        + harness.store().workspace_path().string()
+        + " root=" + harness.store().private_root().string());
+
+    const Json shown = harness.run(
+        "assistant_logs", logs_arguments(std::nullopt, nullptr, "api=", 5));
+    ASSERT_EQ(shown["entries"].size(), 1u);
+    const std::string text = shown["entries"][0]["text"].get<std::string>();
+    EXPECT_TRUE(text.ends_with(
+        "api=[REDACTED] storage=[REDACTED] access=[REDACTED] refresh=[REDACTED] "
+        "workspace=[path] root=[path]")) << text;
+}
+
+TEST(AssistantService, SavesUnusedMemberSettingsWithWarnings) {
+    ServiceHarness harness;
+    const std::string path = "forums/lobby/members/guide/character.toml";
+    const Json read = harness.run("vault_config_read", read_arguments(path));
+    const Json saved = harness.run("vault_config_apply", replace_change(
+        path, "provider = 42\nstyle = 42\n[prompt]\ngreeting = \"Hello\"\n",
+        read["version"].get<std::string>()));
+
+    ASSERT_EQ(saved["committed"], true) << saved.dump();
+    ASSERT_FALSE(saved["warnings"].empty());
+    EXPECT_EQ(saved["warnings"][0]["path"], path);
+    const auto snapshot = harness.store().snapshot();
+    EXPECT_EQ(snapshot->find_character("guide")->provider_id, "test");
+    EXPECT_EQ(snapshot->find_forum_member("lobby", "guide")
+        ->prompt_variables.at("greeting"), "Hello");
+}
+
 } // namespace
 } // namespace cha

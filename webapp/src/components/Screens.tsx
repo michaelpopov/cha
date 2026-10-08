@@ -144,6 +144,10 @@ function RosterDetailScreen<Value>({
   const [refreshing, setRefreshing] = useState(false);
   const valueRef = useRef<Value | null>(null);
   const seenSubject = useRef<string | null>(null);
+  const updateValue = useCallback((next: Value | null) => {
+    valueRef.current = next;
+    setValue(next);
+  }, []);
   const retry = () => setRequestVersion((version) => version + 1);
 
   useEffect(() => {
@@ -153,8 +157,7 @@ function RosterDetailScreen<Value>({
     const background = !identityChanged && valueRef.current !== null;
     seenSubject.current = subjectId;
     if (!background) {
-      valueRef.current = null;
-      setValue(null);
+      updateValue(null);
       setError(null);
     }
     setRefreshing(background);
@@ -164,8 +167,7 @@ function RosterDetailScreen<Value>({
         setError(null);
         setRefreshing(false);
         if (!background || !sameDetail(valueRef.current, loaded)) {
-          valueRef.current = loaded;
-          setValue(loaded);
+          updateValue(loaded);
           onLoaded?.(loaded, subjectId);
         }
       },
@@ -178,7 +180,7 @@ function RosterDetailScreen<Value>({
     return () => {
       current = false;
     };
-  }, [copy.failed, load, onLoaded, refresh.epoch, requestVersion, subjectId]);
+  }, [copy.failed, load, onLoaded, refresh.epoch, requestVersion, subjectId, updateValue]);
 
   return (
     <section className="cha-screen cha-navigation" aria-label={ariaLabel}>
@@ -214,10 +216,7 @@ function RosterDetailScreen<Value>({
         <DetailRefreshProvider
           value={{ epoch: refresh.epoch, refreshing, failed: error !== null, stale: false, retry }}
         >
-          {render(value, (updated) => {
-            valueRef.current = updated;
-            setValue(updated);
-          })}
+          {render(value, updateValue)}
         </DetailRefreshProvider>
       )}
     </section>

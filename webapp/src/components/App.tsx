@@ -486,10 +486,13 @@ export function App({
 
   const bootstrapRefresh = useRef(0);
   const appliedBootstrapRefresh = useRef(0);
+  const vaultContext = useRef(0);
   const refreshBootstrap = useCallback(async () => {
     const refresh = ++bootstrapRefresh.current;
+    const context = vaultContext.current;
     try {
       const bootstrap = validateBootstrap(await client.getBootstrap());
+      if (context !== vaultContext.current) return true;
       if (refresh < appliedBootstrapRefresh.current) return true;
       appliedBootstrapRefresh.current = refresh;
       dispatch({
@@ -549,7 +552,10 @@ export function App({
     }>('app.contextChanged', (event) => {
       if (!Number.isSafeInteger(event.causing_request_id) || event.state !== 'running') return;
       const started = ++generation;
+      vaultContext.current += 1;
+      welcomeRefresh.current += 1;
       clearVaultContext();
+      setDetailRefreshing(false);
       setDetailFailed(false);
       playbackPositions.current.clear();
       navigate({ type: 'vault-context-reset' });

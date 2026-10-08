@@ -4,12 +4,54 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { expect, it, vi } from 'vitest';
 
 import { DetailActions, EditableTitle } from './components/DetailActions';
+import { CharacterFileScreen } from './components/Screens';
 import {
   DetailRefreshProvider,
   StaleNotice,
   useFormReload,
   type DetailRefreshValue,
 } from './detailRefresh';
+import { initialAppState } from './state/view';
+import { fixtureClient } from './test/fixtures';
+
+it('refreshes a manually saved file when Assistant restores its initial contents', async () => {
+  const user = userEvent.setup();
+  let content = 'original';
+  const getCharacterFile = vi.fn(async () => ({ filename: 'PROFILE.md', content, writable: true }));
+  const client = fixtureClient({
+    getCharacterFile,
+    updateCharacterFile: async (_id, filename, updated) => {
+      content = updated;
+      return { filename, content, writable: true };
+    },
+  });
+  const state = {
+    ...initialAppState,
+    inspectedCharacter: {
+      id: 'guide', file: 'PROFILE.md', settingsWritable: true, writable: true,
+    },
+  };
+  const dispatch = vi.fn();
+  const viewFor = (epoch: number) => (
+    <DetailRefreshProvider value={{ epoch, refreshing: false, failed: false, stale: false, retry() {} }}>
+      <CharacterFileScreen state={state} dispatch={dispatch} client={client} />
+    </DetailRefreshProvider>
+  );
+  const view = render(viewFor(0));
+  await screen.findByText('original');
+  await user.click(screen.getByRole('button', { name: 'Edit character file' }));
+  const input = screen.getByRole('textbox', { name: 'Edit character file text' });
+  await user.clear(input);
+  await user.type(input, 'manual save');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  await screen.findByText('manual save');
+
+  content = 'original';
+  view.rerender(viewFor(1));
+  await screen.findByText('original');
+  expect(getCharacterFile).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText('manual save')).not.toBeInTheDocument();
+});
 
 function SaveForm({ refresh }: { refresh: DetailRefreshValue }) {
   return (

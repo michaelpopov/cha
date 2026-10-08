@@ -2202,6 +2202,36 @@ TEST(Workspace, InvalidActiveConfigurationStillFailsWithHarmlessFields) {
     EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
 }
 
+TEST(Workspace, IgnoresUnusedForumMemberSettingsWithWarnings) {
+    test::TestWorkspace fixture;
+    const std::string unused =
+        "display_name = 42\ndescription = false\nprovider = 42\n"
+        "style = 42\nvoice = false\nreasoning_effort = false\n"
+        "web_search = \"retired\"\nweb_search_tool = \"unused\"\ntags = 42\n";
+    const auto members = fixture.root() / "forums" / "lobby" / "members";
+    std::ofstream(members / "character_defaults.toml")
+        << unused << "[prompt]\ntone = \"calm\"\n";
+    std::ofstream(members / "guide" / "character.toml")
+        << unused << "[prompt]\ngreeting = \"Hello\"\n";
+
+    LoadWarningCollector warnings;
+    const Workspace workspace = Workspace::load(fixture.root(), &warnings);
+    const auto* member = workspace.find_forum_member("lobby", "guide");
+    ASSERT_NE(member, nullptr);
+    EXPECT_EQ(member->prompt_variables.at("tone"), "calm");
+    EXPECT_EQ(member->prompt_variables.at("greeting"), "Hello");
+    EXPECT_EQ(workspace.find_character("guide")->provider_id, "test");
+    for (const auto path : {
+             "forums/lobby/members/character_defaults.toml",
+             "forums/lobby/members/guide/character.toml"}) {
+        EXPECT_NE(warning_on(warnings, path), nullptr) << path;
+    }
+
+    std::ofstream(members / "guide" / "character.toml")
+        << unused << "prompt = 42\n";
+    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+}
+
 TEST(Workspace, SavingOpenAiSubscriptionIgnoresUnsupportedWebSearchOverrides) {
     test::TestWorkspace fixture;
     fixture.write_provider("chatgpt", subscription_provider_toml());

@@ -1867,6 +1867,95 @@ it('offers bootstrap retry when discovery refresh fails after Settings download'
   bridge.dispose();
 });
 
+it('discards a Welcome bootstrap refresh from a previous vault', async () => {
+  const oldVault = {
+    ...bootstrapFixture,
+    vault_name: 'Personal',
+    vaults: ['Personal', 'Projects'],
+    initial_forum_id: 'entrance',
+    initial_session_id: welcomeSessionId,
+    entrance_forum_id: 'entrance',
+  };
+  const nextVault = { ...oldVault, vault_name: 'Projects' };
+  const held = deferred();
+  const getBootstrap = vi.fn()
+    .mockResolvedValueOnce(oldVault)
+    .mockImplementationOnce(async () => { await held.promise; return oldVault; })
+    .mockResolvedValue(nextVault);
+  const bridge = createEnvelopeNativeBridge({ connectionId: 'welcome-refresh', post() {} });
+  render(<App
+    client={fixtureClient({
+      getBootstrap,
+      getSessionSnapshot: async () => ({
+        ...snapshotFixture, session_id: welcomeSessionId, discardable: false,
+      }),
+    })}
+    contextEvents={bridge}
+    connectSessionEvents={inertSessionEvents}
+  />);
+  await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(2));
+  await openSettingsNavigation();
+  act(() => bridge.receive({
+    connection_id: 'welcome-refresh', delivery_id: 1,
+    messages: [{
+      connection_id: 'welcome-refresh', event: 'app.contextChanged', context_epoch: 2,
+      state: 'running', causing_request_id: 1,
+    }],
+  }));
+  await waitFor(() => expect(screen.getByLabelText('Vault')).toHaveValue('Projects'));
+
+  await act(async () => { held.settle(); });
+  expect(screen.getByLabelText('Vault')).toHaveValue('Projects');
+  bridge.dispose();
+});
+
+it('clears the previous vault\'s pending Welcome refresh when switching vaults', async () => {
+  const user = userEvent.setup();
+  const bootstrap = {
+    ...bootstrapFixture,
+    vault_name: 'Personal',
+    vaults: ['Personal', 'Projects'],
+    initial_forum_id: 'entrance',
+    initial_session_id: welcomeSessionId,
+    entrance_forum_id: 'entrance',
+  };
+  const held = deferred();
+  const getBootstrap = vi.fn()
+    .mockResolvedValueOnce(bootstrap)
+    .mockImplementationOnce(async () => { await held.promise; return bootstrap; })
+    .mockResolvedValue({ ...bootstrap, vault_name: 'Projects' });
+  const bridge = createEnvelopeNativeBridge({ connectionId: 'welcome-state', post() {} });
+  render(<App
+    client={fixtureClient({
+      getBootstrap,
+      getSessionSnapshot: async () => ({
+        ...snapshotFixture, session_id: welcomeSessionId, discardable: false,
+      }),
+    })}
+    contextEvents={bridge}
+    connectSessionEvents={inertSessionEvents}
+  />);
+  await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(2));
+  await openSettingsNavigation();
+  act(() => bridge.receive({
+    connection_id: 'welcome-state', delivery_id: 1,
+    messages: [{
+      connection_id: 'welcome-state', event: 'app.contextChanged', context_epoch: 2,
+      state: 'running', causing_request_id: 1,
+    }],
+  }));
+  await waitFor(() => expect(screen.getByLabelText('Vault')).toHaveValue('Projects'));
+  await user.click(await screen.findByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(within(screen.getByLabelText('Forum sessions navigation'))
+    .getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(await screen.findByRole('button', { name: 'Members' }));
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Persona' }), 'guest');
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  await act(async () => { held.settle(); });
+  bridge.dispose();
+});
+
 it('lets a second navigation supersede an open that is still in flight', async () => {
   const held = deferred();
   const events = recordingSessionEvents();
