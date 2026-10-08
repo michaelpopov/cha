@@ -9,8 +9,6 @@
 #include <fstream>
 #include <iterator>
 #include <string>
-#include <thread>
-#include <vector>
 
 namespace cha {
 namespace {
@@ -135,164 +133,53 @@ TEST_F(LoggingTest, IgnoresRepeatedInitialization) {
     EXPECT_FALSE(std::filesystem::exists(second));
 }
 
-TEST_F(LoggingTest, BufferExistsWhenFileLoggingIsOff) {
-    initialize_diagnostic_logging(log_file(), "off");
-    log_info("buffered without a file");
-    EXPECT_FALSE(std::filesystem::exists(log_file()));
-    const auto snapshot = snapshot_diagnostic_log();
-    ASSERT_EQ(snapshot.entries.size(), 1U);
-    EXPECT_EQ(snapshot.entries.front().level, LogSeverity::info);
-    EXPECT_NE(snapshot.entries.front().text.find("buffered without a file"), std::string::npos);
-    EXPECT_EQ(snapshot.latest_number, snapshot.entries.front().number);
-}
-
-TEST_F(LoggingTest, FileAndBufferLevelsAreIndependent) {
-    initialize_diagnostic_logging(log_file(), "error");
-    log_info("info stays in the buffer");
-    log_error("error reaches both");
-    const auto output = contents(log_file());
-    EXPECT_EQ(output.find("info stays in the buffer"), std::string::npos);
-    EXPECT_NE(output.find("error reaches both"), std::string::npos);
-    bool saw_info = false;
-    bool saw_error = false;
-    for (const auto& entry : snapshot_diagnostic_log().entries) {
-        if (entry.text.find("info stays in the buffer") != std::string::npos) {
-            saw_info = true;
-        }
-        if (entry.text.find("error reaches both") != std::string::npos) {
-            saw_error = true;
-        }
-    }
-    EXPECT_TRUE(saw_info);
-    EXPECT_TRUE(saw_error);
-}
-
-TEST_F(LoggingTest, DebugPayloadsBypassTheMemoryBuffer) {
-    initialize_diagnostic_logging(log_file(), "debug");
-    EXPECT_TRUE(debug_logging_enabled());
-    set_diagnostic_log_verbose(true);
-    log_debug("ordinary debug");
-    log_debug_payload("response", "private prompt");
-    EXPECT_NE(contents(log_file()).find("private prompt"), std::string::npos);
-    const auto snapshot = snapshot_diagnostic_log();
-    bool saw_ordinary = false;
-    for (const auto& entry : snapshot.entries) {
-        EXPECT_EQ(entry.text.find("private prompt"), std::string::npos);
-        if (entry.text.find("ordinary debug") != std::string::npos) saw_ordinary = true;
-    }
-    EXPECT_TRUE(saw_ordinary);
-}
-
-TEST_F(LoggingTest, VerboseBufferDoesNotEnableFilePayloads) {
+TEST_F(LoggingTest, RuntimeLevelControlsFileMessagesAndPayloads) {
     initialize_diagnostic_logging(log_file(), "info");
+    set_diagnostic_log_level("debug");
+    EXPECT_EQ(diagnostic_log_level(), "debug");
+    EXPECT_TRUE(debug_logging_enabled());
+    log_debug("debug after enabling");
+    log_debug_payload("response", "captured payload");
+    set_diagnostic_log_level("info");
+    EXPECT_EQ(diagnostic_log_level(), "info");
     EXPECT_FALSE(debug_logging_enabled());
-    set_diagnostic_log_verbose(true);
-    EXPECT_FALSE(debug_logging_enabled());
-    log_debug("buffer debug");
-    log_debug_payload("request", "private prompt");
-    EXPECT_EQ(contents(log_file()).find("private prompt"), std::string::npos);
-    EXPECT_EQ(contents(log_file()).find("buffer debug"), std::string::npos);
-    bool saw_debug = false;
-    for (const auto& entry : snapshot_diagnostic_log().entries) {
-        if (entry.text.find("buffer debug") != std::string::npos) saw_debug = true;
-        EXPECT_EQ(entry.text.find("private prompt"), std::string::npos);
+    log_debug("debug after restoring");
+    log_debug_payload("response", "uncaptured payload");
+    const auto output = contents(log_file());
+    EXPECT_NE(output.find("debug after enabling"), std::string::npos);
+    EXPECT_NE(output.find("captured payload"), std::string::npos);
+    EXPECT_EQ(output.find("debug after restoring"), std::string::npos);
+    EXPECT_EQ(output.find("uncaptured payload"), std::string::npos);
+}
+
+TEST_F(LoggingTest, CanEnableFileLoggingAfterStartingOff) {
+    initialize_diagnostic_logging(log_file(), "off");
+    EXPECT_EQ(diagnostic_log_file(), log_file());
+    set_diagnostic_log_level("debug");
+    log_debug("enabled from off");
+    set_diagnostic_log_level("off");
+    log_error("disabled again");
+    const auto output = contents(log_file());
+    EXPECT_NE(output.find("enabled from off"), std::string::npos);
+    EXPECT_EQ(output.find("disabled again"), std::string::npos);
+}
+
+TEST_F(LoggingTest, AllRuntimeLevelsAndInvalidLevel) {
+    initialize_diagnostic_logging(log_file(), "info");
+    for (const auto level : {"trace", "debug", "info", "warn", "error", "critical", "off"}) {
+        set_diagnostic_log_level(level);
+        EXPECT_EQ(diagnostic_log_level(), level);
     }
-    EXPECT_TRUE(saw_debug);
+    EXPECT_THROW(set_diagnostic_log_level("verbose"), std::runtime_error);
+    EXPECT_EQ(diagnostic_log_level(), "off");
 }
 
-TEST_F(LoggingTest, SnapshotClearAndNumbering) {
-    initialize_diagnostic_logging(log_file(), "off");
-    log_warn("first");
-    log_error("second");
-    const auto first = snapshot_diagnostic_log();
-    ASSERT_EQ(first.entries.size(), 2U);
-    EXPECT_EQ(first.entries[0].number + 1, first.entries[1].number);
-    EXPECT_EQ(first.latest_number, first.entries[1].number);
-    clear_diagnostic_log();
-    const auto cleared = snapshot_diagnostic_log();
-    EXPECT_TRUE(cleared.entries.empty());
-    EXPECT_EQ(cleared.latest_number, first.latest_number);
-    log_info("third");
-    const auto after = snapshot_diagnostic_log();
-    ASSERT_EQ(after.entries.size(), 1U);
-    EXPECT_EQ(after.entries.front().number, first.latest_number + 1);
-}
-
-TEST_F(LoggingTest, RejectedMessagesDoNotAdvanceNumbersAndEvictOldest) {
-    initialize_diagnostic_logging(log_file(), "off");
-    log_debug("rejected");
-    EXPECT_TRUE(snapshot_diagnostic_log().entries.empty());
-    EXPECT_EQ(snapshot_diagnostic_log().latest_number, 0U);
-    for (std::size_t index = 0; index < diagnostic_log_capacity + 5; ++index) {
-        log_info("entry-" + std::to_string(index));
-    }
-    const auto snapshot = snapshot_diagnostic_log();
-    ASSERT_EQ(snapshot.entries.size(), diagnostic_log_capacity);
-    EXPECT_NE(snapshot.entries.front().text.find("entry-5"), std::string::npos);
-    EXPECT_EQ(snapshot.latest_number, diagnostic_log_capacity + 5);
-    EXPECT_EQ(snapshot.entries.back().number, snapshot.latest_number);
-}
-
-TEST_F(LoggingTest, CarriageReturnStaysOneEntry) {
-    initialize_diagnostic_logging(log_file(), "off");
+TEST_F(LoggingTest, EscapesMultilineMessages) {
+    initialize_diagnostic_logging(log_file(), "info");
     log_warn("unknown field 'a\r\n[error] forged'");
-    const auto snapshot = snapshot_diagnostic_log();
-    ASSERT_EQ(snapshot.entries.size(), 1U);
-    EXPECT_EQ(snapshot.entries.front().level, LogSeverity::warn);
-    EXPECT_NE(snapshot.entries.front().text.find("a\r\n[error] forged"), std::string::npos);
-}
-
-TEST_F(LoggingTest, VerboseExpiryUsesTheInjectedClock) {
-    initialize_diagnostic_logging(log_file(), "off");
-    auto now = std::chrono::steady_clock::now();
-    set_diagnostic_log_clock_for_test([&] { return now; });
-    set_diagnostic_log_verbose(true);
-    log_debug("accepted");
-    EXPECT_EQ(diagnostic_log_state().level, LogSeverity::debug);
-    ASSERT_TRUE(diagnostic_log_state().verbose_until);
-    now += std::chrono::minutes(4);
-    set_diagnostic_log_verbose(true);
-    now += std::chrono::minutes(4);
-    log_debug("still accepted");
-    now += diagnostic_log_verbose_duration + std::chrono::seconds(1);
-    log_debug("expired");
-    const auto snapshot = snapshot_diagnostic_log();
-    bool saw_expired = false;
-    bool saw_accepted = false;
-    for (const auto& entry : snapshot.entries) {
-        if (entry.text.find("expired") != std::string::npos) saw_expired = true;
-        if (entry.text.find("accepted") != std::string::npos) saw_accepted = true;
-    }
-    EXPECT_TRUE(saw_accepted);
-    EXPECT_FALSE(saw_expired);
-    EXPECT_EQ(diagnostic_log_state().level, LogSeverity::info);
-    EXPECT_FALSE(diagnostic_log_state().verbose_until);
-    set_diagnostic_log_verbose(false);
-    EXPECT_EQ(diagnostic_log_state().level, LogSeverity::info);
-}
-
-TEST_F(LoggingTest, ConcurrentInsertSnapshotAndClear) {
-    initialize_diagnostic_logging(log_file(), "off");
-    std::atomic<int> writes{0};
-    std::vector<std::thread> threads;
-    threads.reserve(8);
-    for (int worker = 0; worker < 8; ++worker) {
-        threads.emplace_back([&, worker] {
-            for (int index = 0; index < 50; ++index) {
-                log_info("worker-" + std::to_string(worker) + "-" + std::to_string(index));
-                writes.fetch_add(1);
-                if (index % 10 == 0) (void)snapshot_diagnostic_log();
-                if (index == 25 && worker == 0) clear_diagnostic_log();
-            }
-        });
-    }
-    for (auto& thread : threads) thread.join();
-    const auto snapshot = snapshot_diagnostic_log();
-    EXPECT_GE(writes.load(), 400);
-    EXPECT_LE(snapshot.entries.size(), diagnostic_log_capacity);
-    for (std::size_t index = 1; index < snapshot.entries.size(); ++index) {
-        EXPECT_LT(snapshot.entries[index - 1].number, snapshot.entries[index].number);
-    }
+    const auto output = contents(log_file());
+    EXPECT_NE(output.find("a\\r\\n[error] forged"), std::string::npos);
+    EXPECT_EQ(output.find("\n[error] forged"), std::string::npos);
 }
 
 } // namespace

@@ -147,7 +147,6 @@ def maintenance_reply(body, prompt):
         return 500, b""
     if last is None:
         return tool_reply([("logs1", "assistant_logs", {
-            "after": None,
             "minimum_level": None,
             "contains": "vault_config_apply",
             "limit": 5,

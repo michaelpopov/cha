@@ -19,7 +19,9 @@
 #include <cstddef>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <exception>
+#include <filesystem>
 #include <functional>
 #include <fstream>
 #include <mutex>
@@ -61,6 +63,8 @@ std::optional<std::uint64_t> parse_version(const Json& value) {
     if (error != std::errc{} || pointer != end) return std::nullopt;
     return parsed;
 }
+
+enum class LogSeverity { trace, debug, info, warn, error, critical };
 
 std::string_view level_name(LogSeverity level) {
     switch (level) {
@@ -113,8 +117,7 @@ std::string_view apply_error_name(WorkspaceConfigApplyError error) {
     return "invalid_argument";
 }
 
-std::string cap_notice(std::string text) {
-    constexpr std::size_t limit = 500;
+std::string cap_text(std::string text, std::size_t limit) {
     if (text.size() <= limit) return text;
     text.resize(limit - 3);
     // Drop a cut that lands inside one UTF-8 character. A complete character
@@ -433,35 +436,26 @@ std::string read_tool(
 }
 
 std::string logging_tool(const Json& parsed, const AdmissionCheck& admission_error) {
-    if (parsed.size() != 1 || !parsed.contains("verbose") || !parsed["verbose"].is_boolean()) {
-        return tool_error("invalid_argument", "assistant_logging requires verbose.");
+    if (parsed.size() != 1 || !parsed.contains("level") || !parsed["level"].is_string()) {
+        return tool_error("invalid_argument", "assistant_logging requires level.");
+    }
+    const auto level = parsed["level"].get<std::string>();
+    if (level != "off" && !parse_level(level)) {
+        return tool_error("invalid_argument", "level is not a known level.");
     }
     if (const auto error = admission_error()) return *error;
-    set_diagnostic_log_verbose(parsed["verbose"].get<bool>());
-    const LogBufferState state = diagnostic_log_state();
-    return Json{
-        {"level", level_name(state.level)},
-        {"expires_in_ms", state.verbose_remaining_ms
-            ? Json(*state.verbose_remaining_ms) : Json(nullptr)},
-        {"latest_number", state.latest_number},
-    }.dump();
+    set_diagnostic_log_level(level);
+    return Json{{"level", diagnostic_log_level()}}.dump();
 }
 
 std::string logs_tool(
     const Json& parsed,
     const Redactor& redact,
     const AdmissionCheck& admission_error) {
-    if (!parsed.contains("after") || !parsed.contains("minimum_level")
+    if (!parsed.contains("minimum_level")
         || !parsed.contains("contains") || !parsed.contains("limit")
-        || parsed.size() != 4) {
+        || parsed.size() != 3) {
         return tool_error("invalid_argument", "assistant_logs arguments are incomplete.");
-    }
-    std::optional<std::uint64_t> after;
-    if (!parsed["after"].is_null()) {
-        if (!parsed["after"].is_number_unsigned()) {
-            return tool_error("invalid_argument", "after must be a positive integer or null.");
-        }
-        after = parsed["after"].get<std::uint64_t>();
     }
     LogSeverity minimum = LogSeverity::info;
     if (!parsed["minimum_level"].is_null()) {
@@ -485,68 +479,84 @@ std::string logs_tool(
         return tool_error("invalid_argument", "limit must be a positive integer.");
     }
     const auto limit = parsed["limit"].get<std::uint64_t>();
-    if (limit == 0 || limit > diagnostic_log_capacity) {
-        return tool_error(
-            "invalid_argument",
-            "limit must be positive and no greater than the buffer capacity.");
+    if (limit == 0 || limit > maintenance_log_entry_limit) {
+        return tool_error("invalid_argument", "limit must be between 1 and "
+            + std::to_string(maintenance_log_entry_limit) + ".");
     }
-    // The snapshot holds its entries and latest number from one lock, so
-    // the next read can continue after that number without a gap.
-    const LogBufferSnapshot snapshot = snapshot_diagnostic_log();
-    const LogBufferState state = diagnostic_log_state();
     if (const auto error = admission_error()) return *error;
-    const std::optional<std::uint64_t> oldest = snapshot.entries.empty()
-        ? std::nullopt
-        : std::optional<std::uint64_t>(snapshot.entries.front().number);
-    const bool lost = after && (
-        (oldest && *oldest > *after + 1)
-        || (!oldest && snapshot.latest_number > *after));
-    std::vector<LogBufferEntry> matches;
-    for (const LogBufferEntry& entry : snapshot.entries) {
-        if (after && entry.number <= *after) continue;
-        if (entry.level < minimum) continue;
-        LogBufferEntry copy = entry;
-        copy.text = redact(std::move(copy.text));
-        if (!contains.empty() && copy.text.find(contains) == std::string::npos) continue;
-        matches.push_back(std::move(copy));
+    const auto path = diagnostic_log_file();
+    if (path.empty()) return tool_error("unavailable", "Diagnostic logging is not initialized.");
+    // spdlog renames the previous file to "name.1.ext". Read it first to keep time order.
+    std::filesystem::path rotated = path.stem();
+    rotated += ".1";
+    rotated += path.extension();
+    rotated = path.parent_path() / rotated;
+    // One large payload line must not use the whole result.
+    constexpr std::size_t entry_text_limit = 4096;
+    bool missing = true;
+    bool limited = false;
+    std::deque<Json> matches;
+    for (const auto& file : {rotated, path}) {
+        std::ifstream input(file);
+        if (!input) {
+            if (std::filesystem::exists(file)) {
+                return tool_error("unavailable", "Cannot read the diagnostic log file.");
+            }
+            continue;
+        }
+        missing = false;
+        std::string line;
+        while (std::getline(input, line)) {
+            // Parse only the native header, before redaction or substring filtering.
+            if (!line.starts_with("[")) continue;
+            const auto thread = line.find("] [thread ");
+            if (thread == std::string::npos) continue;
+            const auto start = line.find("] [", thread + 3);
+            if (start == std::string::npos) continue;
+            const auto end = line.find("] ", start + 3);
+            if (end == std::string::npos) continue;
+            const auto name = std::string_view(line).substr(start + 3, end - start - 3);
+            const auto level = parse_level(name == "warning" ? "warn" : name);
+            if (!level || *level < minimum) continue;
+            auto text = redact(std::move(line));
+            if (!contains.empty() && text.find(contains) == std::string::npos) continue;
+            matches.push_back({
+                {"level", level_name(*level)},
+                {"text", cap_text(std::move(text), entry_text_limit)},
+            });
+            if (matches.size() > limit) {
+                matches.pop_front();
+                limited = true;
+            }
+        }
+        if (input.bad()) return tool_error("unavailable", "Cannot read the diagnostic log file.");
     }
-    bool limited = matches.size() > limit;
-    if (limited) {
-        matches.erase(matches.begin(), matches.end() - static_cast<std::ptrdiff_t>(limit));
-    }
-    // Size each entry once, then drop the oldest entries until the result fits.
-    Json entries = Json::array();
-    std::vector<std::size_t> sizes;
-    for (const LogBufferEntry& entry : matches) {
-        entries.push_back({
-            {"number", entry.number},
-            {"level", level_name(entry.level)},
-            {"text", entry.text},
-        });
-        sizes.push_back(entries.back().dump().size() + 1);
-    }
+    // Log text is untrusted and can hold invalid UTF-8.
+    const auto dump = [](const Json& value) {
+        return value.dump(-1, ' ', false, Json::error_handler_t::replace);
+    };
     const auto encode = [&](Json items, bool shortened) {
-        return Json{
+        return dump(Json{
             {"entries", std::move(items)},
-            {"oldest_available", oldest ? Json(*oldest) : Json(nullptr)},
-            {"latest_number", snapshot.latest_number},
-            {"level", level_name(state.level)},
-            {"expires_in_ms", state.verbose_remaining_ms
-                ? Json(*state.verbose_remaining_ms) : Json(nullptr)},
-            {"lost", lost},
+            {"status", missing ? "missing" : "ok"},
+            {"level", diagnostic_log_level()},
             {"limited", shortened},
-        }.dump();
+        });
     };
     std::size_t total = encode(Json::array(), false).size();
-    for (const std::size_t size : sizes) total += size;
+    std::vector<std::size_t> sizes;
+    for (const Json& entry : matches) {
+        sizes.push_back(dump(entry).size() + 1);
+        total += sizes.back();
+    }
     std::size_t dropped = 0;
     while (total > maintenance_call_result_limit && dropped < sizes.size()) {
         total -= sizes[dropped++];
     }
-    if (dropped > 0) {
-        limited = true;
-        entries.erase(
-            entries.begin(), entries.begin() + static_cast<std::ptrdiff_t>(dropped));
+    if (dropped > 0) limited = true;
+    Json entries = Json::array();
+    for (std::size_t index = dropped; index < matches.size(); ++index) {
+        entries.push_back(std::move(matches[index]));
     }
     const std::string encoded = encode(std::move(entries), limited);
     if (const auto error = admission_error()) return *error;
@@ -583,7 +593,7 @@ std::string save_notice(
         notice += " Refresh failed: " + refresh_error;
     }
     if (restart) notice += " Restart is required.";
-    return cap_notice(std::move(notice));
+    return cap_text(std::move(notice), 500);
 }
 
 std::string apply_tool(
@@ -757,8 +767,6 @@ std::string AssistantService::execute(
     std::string_view arguments,
     const MaintenanceContext& context,
     const std::atomic_bool& cancelled) {
-    // Expiry is applied inside the sink. Logging state is returned only by the log tools.
-    (void)diagnostic_log_state();
     if (arguments.size() > maintenance_argument_limit) {
         return tool_error("too_large", "Tool arguments are too large.");
     }
@@ -808,7 +816,7 @@ std::string AssistantService::execute(
     };
     if (const auto error = admission_error()) return *error;
 
-    // Collected once per call: a log read redacts up to 2,000 entries.
+    // Collect redaction values once per call.
     const Redactor redact(links_);
     try {
         if (name == "host_config_list" || name == "host_config_read" || name == "host_config_write") {

@@ -957,7 +957,7 @@ TEST(ApplicationVault, CapabilitiesFollowModifyAndR2OnTheActiveVault) {
     EXPECT_TRUE(application->capabilities().can_modify);
 }
 
-TEST(ApplicationVault, SwitchClearsMaintenanceLogsAndDropsUndo) {
+TEST(ApplicationVault, SwitchPreservesFileLoggingAndDropsUndo) {
     shutdown_diagnostic_logging();
     const auto directory = std::filesystem::temp_directory_path()
         / ("cha_vault_maintenance_log_"
@@ -967,7 +967,6 @@ TEST(ApplicationVault, SwitchClearsMaintenanceLogsAndDropsUndo) {
     struct Guard {
         std::filesystem::path directory;
         ~Guard() {
-            set_diagnostic_log_clock_for_test({});
             shutdown_diagnostic_logging();
             std::error_code ignored;
             std::filesystem::remove_all(directory, ignored);
@@ -976,7 +975,7 @@ TEST(ApplicationVault, SwitchClearsMaintenanceLogsAndDropsUndo) {
 
     TwoVaults pair;
     auto application = Application::open(pair.command);
-    set_diagnostic_log_verbose(true);
+    set_diagnostic_log_level("debug");
     log_info("vault switch marker");
     const std::string path = "characters/guide/character.toml";
     const auto before = application->store().read_config(std::vector<std::string>{path});
@@ -995,10 +994,10 @@ TEST(ApplicationVault, SwitchClearsMaintenanceLogsAndDropsUndo) {
     EXPECT_EQ(
         application->switch_vault("B", {}, application->context_epoch()).state,
         ApplicationState::running);
-    const LogBufferState state = diagnostic_log_state();
-    EXPECT_EQ(state.level, LogSeverity::info);
-    EXPECT_FALSE(state.verbose_until);
-    EXPECT_TRUE(snapshot_diagnostic_log().entries.empty());
+    EXPECT_EQ(diagnostic_log_level(), "debug");
+    std::ifstream log(directory / "cha.log");
+    const std::string contents{std::istreambuf_iterator<char>(log), {}};
+    EXPECT_NE(contents.find("vault switch marker"), std::string::npos);
     EXPECT_EQ(
         application->switch_vault("A", {}, application->context_epoch()).state,
         ApplicationState::running);

@@ -128,32 +128,31 @@ void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
     });
     append_tool(body, api, Json{
         {"name", "assistant_logs"},
-        {"description", "Read recent diagnostic buffer entries. "
+        {"description", "Read recent entries from the diagnostic log file and its latest rotated file. "
             "minimum_level null means info. contains is a literal substring or null. "
-            "after is an exclusive entry number or null. This call does not save configuration "
-            "and does not change verbosity."},
+            "This call does not change the log level."},
         {"strict", true},
         {"parameters", function_parameters(
             {
-                {"after", Json{{"type", Json::array({"integer", "null"})},
-                    {"description", "Exclusive entry number, or null"}}},
                 {"minimum_level", nullable_string("Lowest level to return. Usual value is info.")},
                 {"contains", nullable_string("Literal substring, or null")},
                 {"limit", Json{{"type", "integer"},
-                    {"description", "Positive count no greater than the buffer capacity"}}},
+                    {"description", "Positive count no greater than "
+                        + std::to_string(maintenance_log_entry_limit)}}},
             },
-            Json::array({"after", "minimum_level", "contains", "limit"}))},
+            Json::array({"minimum_level", "contains", "limit"}))},
     });
     append_tool(body, api, Json{
         {"name", "assistant_logging"},
-        {"description", "Set temporary diagnostic buffer verbosity. "
-            "true enables debug for five minutes. false restores info immediately. "
-            "This call does not save configuration."},
+        {"description", "Change the process file log level until changed again or restarted. "
+            "This call does not save configuration. Debug also enables request/response payload logs. "
+            "When enabling debug, tell the user and ask them to remind you to restore "
+            "the saved [logging] level from app.toml later."},
         {"strict", true},
         {"parameters", function_parameters(
-            {{"verbose", Json{{"type", "boolean"},
-                {"description", "true enables debug. false restores info."}}}},
-            Json::array({"verbose"}))},
+            {{"level", Json{{"type", "string"},
+                {"enum", Json::array({"trace", "debug", "info", "warn", "error", "critical", "off"})}}}},
+            Json::array({"level"}))},
     });
     append_tool(body, api, Json{
         {"name", "host_config_list"},

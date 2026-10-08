@@ -1237,7 +1237,7 @@ public:
                + std::to_string(
                    std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(directory_);
-        initialize_diagnostic_logging(directory_ / "cha.log", "off");
+        initialize_diagnostic_logging(directory_ / "cha.log", "info");
     }
 
     ~ChaWebLogGuard() {
@@ -1347,7 +1347,6 @@ TEST(ChaWebAdapter, WelcomeRepairsAndUndoesThroughChat) {
         function_call("read1", "vault_config_read",
             {{"paths", nlohmann::json::array({"characters/guide/character.toml"})}}),
         function_call("logs1", "assistant_logs", {
-            {"after", nullptr},
             {"minimum_level", nullptr},
             {"contains", "guide diagnosis"},
             {"limit", 5},

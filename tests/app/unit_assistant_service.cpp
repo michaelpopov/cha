@@ -59,7 +59,7 @@ MaintenanceContext welcome_context(std::uint64_t epoch = 1) {
     };
 }
 
-// One imported vault, its store, and the process log buffer for one test.
+// One imported vault, its store, and the process log file for one test.
 class ServiceHarness {
 public:
     ServiceHarness() {
@@ -73,7 +73,7 @@ public:
             << "vault = \"Test\"\n[logging]\nfile = \"cha.log\"\nlevel = \"off\"\n";
         std::ofstream(log_directory_ / "test.toml")
             << "vault_name = \"Test\"\ndata = \"test.sqlite3\"\n";
-        initialize_diagnostic_logging(log_directory_ / "cha.log", "off");
+        initialize_diagnostic_logging(log_directory_ / "cha.log", "info");
         database_ = test::import_test_database(workspace_.root());
         store_ = WorkspaceConfigStore::open(database_);
         oauth_path_ = log_directory_ / "openai-auth.json";
@@ -85,7 +85,6 @@ public:
         service_.reset();
         oauth_.reset();
         store_.reset();
-        set_diagnostic_log_clock_for_test({});
         shutdown_diagnostic_logging();
         std::error_code ignored;
         std::filesystem::remove_all(log_directory_, ignored);
@@ -162,12 +161,10 @@ Json read_arguments(std::string path) {
 }
 
 Json logs_arguments(
-    std::optional<std::uint64_t> after,
     const char* level,
     const char* contains,
     int limit) {
     return {
-        {"after", after ? Json(*after) : Json(nullptr)},
         {"minimum_level", level ? Json(level) : Json(nullptr)},
         {"contains", contains ? Json(contains) : Json(nullptr)},
         {"limit", limit},
@@ -207,8 +204,8 @@ TEST(AssistantService, ReadsAndWritesDiskHostConfiguration) {
     ASSERT_EQ(saved["warnings"].size(), 1u);
     EXPECT_NE(saved["warnings"][0].get<std::string>().find("obsolete"), std::string::npos);
     EXPECT_EQ(file_text(harness.config_directory() / "app.toml"), content);
-    // Disk settings are not applied to the process log buffer.
-    EXPECT_EQ(diagnostic_log_state().level, LogSeverity::info);
+    // Disk settings are not applied to the process logger.
+    EXPECT_EQ(diagnostic_log_level(), "info");
     const auto noop = harness.run("host_config_write", {
         {"path", "app.toml"}, {"content", content}, {"expected_content", content}});
     EXPECT_EQ(noop["committed"], false);
@@ -390,7 +387,7 @@ TEST(AssistantService, MapsACompletedReadDenialToItsAdmitCode) {
 TEST(AssistantService, CancellationLeavesBeforeTheLifecycleLock) {
     ServiceHarness harness;
     harness.stopping() = true;
-    const Json stopped = harness.run("assistant_logs", logs_arguments(std::nullopt, nullptr, nullptr, 1));
+    const Json stopped = harness.run("assistant_logs", logs_arguments(nullptr, nullptr, 1));
     EXPECT_EQ(stopped["error"], "cancelled");
     EXPECT_EQ(stopped["message"], "The maintenance tool was cancelled.");
 
@@ -503,11 +500,12 @@ TEST(AssistantService, ExercisesTheFourMaintenanceRecipes) {
     EXPECT_NE(diagnosis["files"][0]["content"].get<std::string>().find("Guide"), std::string::npos);
     EXPECT_EQ(diagnosis["files"][1]["status"], "ok");
     const Json found = harness.run(
-        "assistant_logs", logs_arguments(std::nullopt, nullptr, "guide diagnosis", 5));
+        "assistant_logs", logs_arguments(nullptr, "guide diagnosis", 5));
     ASSERT_FALSE(found["entries"].empty());
     EXPECT_NE(found["entries"].back()["text"].get<std::string>().find("guide diagnosis marker"),
         std::string::npos);
-    EXPECT_EQ(found["lost"], false);
+    EXPECT_EQ(found["status"], "ok");
+    EXPECT_EQ(found["limited"], false);
     EXPECT_EQ(harness.store().config_revision(), 1u);
 
     const std::string original = diagnosis["files"][0]["content"].get<std::string>();
@@ -640,33 +638,24 @@ TEST(AssistantService, ExercisesTheFourMaintenanceRecipes) {
     EXPECT_EQ(destination["error"], "credential_destination_protected");
     EXPECT_EQ(harness.store().config_revision(), before_key);
 
-    std::atomic<std::chrono::steady_clock::time_point> now{
-        std::chrono::steady_clock::now()};
-    set_diagnostic_log_clock_for_test([&now] { return now.load(); });
-    const Json verbose = harness.run("assistant_logging", {{"verbose", true}});
+    const Json verbose = harness.run("assistant_logging", {{"level", "debug"}});
     EXPECT_EQ(verbose["level"], "debug");
-    EXPECT_TRUE(verbose["expires_in_ms"].is_number());
-    const auto latest = verbose["latest_number"].get<std::uint64_t>();
+    EXPECT_FALSE(verbose.contains("expires_in_ms"));
     log_debug("verbose reproduction marker");
+    log_debug_payload("response", "reproduction payload marker");
     const Json reproduced = harness.run(
-        "assistant_logs", logs_arguments(latest, "debug", "verbose reproduction", 5));
+        "assistant_logs", logs_arguments("debug", "verbose reproduction", 5));
     ASSERT_EQ(reproduced["entries"].size(), 1u);
     EXPECT_EQ(reproduced["entries"][0]["level"], "debug");
-    EXPECT_GT(reproduced["entries"][0]["number"].get<std::uint64_t>(), latest);
-    now = now.load() + std::chrono::minutes(6);
-    const auto before_expired = harness.run(
-        "assistant_logs", logs_arguments(std::nullopt, "info", nullptr, 1));
-    const auto number_before = before_expired["latest_number"].get<std::uint64_t>();
-    log_debug("expired debug marker");
-    const Json expired = harness.run(
-        "assistant_logs", logs_arguments(std::nullopt, "debug", "expired debug", 5));
-    EXPECT_EQ(expired["level"], "info");
-    EXPECT_TRUE(expired["expires_in_ms"].is_null());
-    EXPECT_TRUE(expired["entries"].empty());
-    EXPECT_EQ(expired["latest_number"], number_before);
-    const Json quiet = harness.run("assistant_logging", {{"verbose", false}});
+    const auto payload = harness.run(
+        "assistant_logs", logs_arguments("debug", "reproduction payload", 5));
+    ASSERT_EQ(payload["entries"].size(), 1u);
+    const Json quiet = harness.run("assistant_logging", {{"level", "info"}});
     EXPECT_EQ(quiet["level"], "info");
-    EXPECT_TRUE(quiet["expires_in_ms"].is_null());
+    log_debug("disabled debug marker");
+    const auto disabled = harness.run(
+        "assistant_logs", logs_arguments("debug", "disabled debug", 5));
+    EXPECT_TRUE(disabled["entries"].empty());
 }
 
 TEST(AssistantService, ReportsASaveOnlyWhenThisCallCommitted) {
@@ -690,7 +679,79 @@ TEST(AssistantService, ReportsASaveOnlyWhenThisCallCommitted) {
     EXPECT_EQ(later["message"].get<std::string>().find("was saved"), std::string::npos);
 }
 
-TEST(AssistantService, RedactsSecretsAndKeepsOneMultilineLogRecord) {
+TEST(AssistantService, ReadsPersistedFileEntriesWithFiltersAndLimits) {
+    ServiceHarness harness;
+    const auto path = harness.config_directory() / "cha.log";
+    log_info("persisted marker first");
+    log_warn("persisted marker warning");
+    log_error("persisted marker last");
+    shutdown_diagnostic_logging();
+    initialize_diagnostic_logging(path, "off");
+    const auto recent = harness.run(
+        "assistant_logs", logs_arguments(nullptr, "persisted marker", 2));
+    EXPECT_EQ(recent["status"], "ok");
+    EXPECT_EQ(recent["level"], "off");
+    EXPECT_EQ(recent["limited"], true);
+    ASSERT_EQ(recent["entries"].size(), 2u);
+    EXPECT_EQ(recent["entries"][0]["level"], "warn");
+    EXPECT_EQ(recent["entries"][1]["level"], "error");
+    const auto errors = harness.run(
+        "assistant_logs", logs_arguments("error", "persisted marker", 5));
+    EXPECT_EQ(errors["limited"], false);
+    ASSERT_EQ(errors["entries"].size(), 1u);
+    EXPECT_NE(errors["entries"][0]["text"].get<std::string>().find("last"), std::string::npos);
+}
+
+TEST(AssistantService, ReadsTheRotatedLogFileFirst) {
+    ServiceHarness harness;
+    shutdown_diagnostic_logging();
+    std::ofstream(harness.config_directory() / "cha.1.log")
+        << "[2026-10-08 09:00:00.000000] [thread 1] [info] rotated marker older\n";
+    std::ofstream(harness.config_directory() / "cha.log")
+        << "[2026-10-08 09:01:00.000000] [thread 1] [info] rotated marker newer\n";
+    initialize_diagnostic_logging(harness.config_directory() / "cha.log", "off");
+    const auto read = harness.run("assistant_logs", logs_arguments(nullptr, "rotated marker", 5));
+    EXPECT_EQ(read["status"], "ok");
+    ASSERT_EQ(read["entries"].size(), 2u);
+    EXPECT_NE(read["entries"][0]["text"].get<std::string>().find("older"), std::string::npos);
+    EXPECT_NE(read["entries"][1]["text"].get<std::string>().find("newer"), std::string::npos);
+}
+
+TEST(AssistantService, ReadsInvalidUtf8AndCutsLargeLogEntries) {
+    ServiceHarness harness;
+    log_error("invalid utf8 marker \xff end");
+    log_info("large entry marker " + std::string(10000, 'x'));
+    const auto invalid = harness.run(
+        "assistant_logs", logs_arguments(nullptr, "invalid utf8 marker", 5));
+    ASSERT_EQ(invalid["entries"].size(), 1u);
+    EXPECT_NE(invalid["entries"][0]["text"].get<std::string>().find("\xEF\xBF\xBD end"),
+        std::string::npos);
+    const auto large = harness.run(
+        "assistant_logs", logs_arguments(nullptr, "large entry marker", 5));
+    ASSERT_EQ(large["entries"].size(), 1u);
+    const auto text = large["entries"][0]["text"].get<std::string>();
+    EXPECT_LE(text.size(), 4096u);
+    EXPECT_TRUE(text.ends_with("..."));
+}
+
+TEST(AssistantService, ReportsMissingLogAndRejectsInvalidLogArguments) {
+    ServiceHarness harness;
+    shutdown_diagnostic_logging();
+    std::filesystem::remove(harness.config_directory() / "cha.log");
+    initialize_diagnostic_logging(harness.config_directory() / "cha.log", "off");
+    const auto missing = harness.run("assistant_logs", logs_arguments(nullptr, nullptr, 5));
+    EXPECT_EQ(missing["status"], "missing");
+    EXPECT_TRUE(missing["entries"].empty());
+    for (const auto limit : {0, 2001}) {
+        EXPECT_EQ(harness.run("assistant_logs", logs_arguments(nullptr, nullptr, limit))["error"],
+            "invalid_argument");
+    }
+    EXPECT_EQ(harness.run("assistant_logging", {{"level", "verbose"}})["error"], "invalid_argument");
+    EXPECT_EQ(harness.run("assistant_logging", {{"verbose", true}})["error"], "invalid_argument");
+    EXPECT_EQ(diagnostic_log_level(), "off");
+}
+
+TEST(AssistantService, RedactsSecretsAndEscapesMultilineLogRecords) {
     ServiceHarness harness;
     harness.store().apply_api_key_create("api_key_1", "Secret", "super-secret-key-value");
     harness.use_oauth(
@@ -703,16 +764,17 @@ TEST(AssistantService, RedactsSecretsAndKeepsOneMultilineLogRecord) {
         + " root " + root);
     log_info("fake record\r\nsecond line\n");
     const Json redacted = harness.run(
-        "assistant_logs", logs_arguments(std::nullopt, nullptr, "super-secret-key-value", 5));
+        "assistant_logs", logs_arguments(nullptr, "super-secret-key-value", 5));
     EXPECT_TRUE(redacted["entries"].empty());
     const Json shown = harness.run(
-        "assistant_logs", logs_arguments(std::nullopt, nullptr, "fake record", 5));
+        "assistant_logs", logs_arguments(nullptr, "fake record", 5));
     ASSERT_EQ(shown["entries"].size(), 1u);
     const std::string text = shown["entries"][0]["text"].get<std::string>();
     EXPECT_NE(text.find("second line"), std::string::npos);
-    EXPECT_NE(text.find('\n'), std::string::npos);
+    EXPECT_NE(text.find("\\n"), std::string::npos);
+    EXPECT_EQ(text.find('\n'), std::string::npos);
     const Json secrets = harness.run(
-        "assistant_logs", logs_arguments(std::nullopt, nullptr, "[REDACTED]", 5));
+        "assistant_logs", logs_arguments(nullptr, "[REDACTED]", 5));
     ASSERT_FALSE(secrets["entries"].empty());
     const std::string hidden = secrets["entries"].back()["text"].get<std::string>();
     EXPECT_EQ(hidden.find("super-secret-key-value"), std::string::npos);
@@ -741,7 +803,7 @@ TEST(AssistantService, RedactsShortCredentialsWithoutChangingMarkersOrPaths) {
         + " root=" + harness.store().private_root().string());
 
     const Json shown = harness.run(
-        "assistant_logs", logs_arguments(std::nullopt, nullptr, "api=", 5));
+        "assistant_logs", logs_arguments(nullptr, "api=", 5));
     ASSERT_EQ(shown["entries"].size(), 1u);
     const std::string text = shown["entries"][0]["text"].get<std::string>();
     EXPECT_TRUE(text.ends_with(

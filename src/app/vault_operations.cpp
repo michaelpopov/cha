@@ -266,8 +266,6 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         cancel_maintenance_locked(notice);
         return false;
     }
-    set_diagnostic_log_verbose(false);
-    clear_diagnostic_log();
     return true;
 }
 

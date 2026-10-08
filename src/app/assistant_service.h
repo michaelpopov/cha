@@ -20,7 +20,7 @@ class OpenAiOAuth;
 class SessionRepository;
 class WorkspaceConfigStore;
 
-// Welcome maintenance tools for vault rows, host TOML files, and memory logs.
+// Welcome maintenance tools for vault rows, host TOML files, and file logs.
 // This type does not own the store or diagnostic sink.
 class AssistantService {
 public:

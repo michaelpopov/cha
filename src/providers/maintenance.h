@@ -12,6 +12,7 @@ inline constexpr int maintenance_call_limit = 24;
 inline constexpr std::size_t maintenance_argument_limit = 256 * 1024;
 inline constexpr std::size_t maintenance_call_result_limit = 256 * 1024;
 inline constexpr std::size_t maintenance_answer_result_limit = 512 * 1024;
+inline constexpr std::size_t maintenance_log_entry_limit = 2000;
 inline constexpr std::size_t ordinary_tool_argument_limit = 16 * 1024;
 inline constexpr std::string_view maintenance_output_limit_message =
     "The model's output limit cut off the tool call. This call was not applied. "

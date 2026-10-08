@@ -1470,7 +1470,6 @@ void Application::set_context_changed(ContextChanged callback) {
 }
 
 void Application::request_shutdown() {
-    set_diagnostic_log_verbose(false);
     impl_->stopping_flag = true;
     impl_->state.store(ApplicationState::stopping);
     impl_->speech_proxy.stop();
