@@ -345,10 +345,13 @@ TEST_F(ApplicationConfigTest, ValidatesInMemoryReplacementWithActualPathResoluti
     const auto candidate = load_configuration_directory(config_, "personal.toml",
         "vault_name = \"Personal\"\ndata = \"../replacement.sqlite3\"\n");
     ASSERT_EQ(candidate.vaults.size(), 1u);
-    EXPECT_EQ(candidate.vaults[0].data, root_ / "replacement.sqlite3");
-    EXPECT_EQ(candidate.vaults[0].source, config_ / "personal.toml");
+    EXPECT_EQ(candidate.vaults[0].data,
+        std::filesystem::weakly_canonical(root_ / "replacement.sqlite3"));
+    EXPECT_EQ(candidate.vaults[0].source,
+        std::filesystem::weakly_canonical(config_ / "personal.toml"));
     const auto original = load_configuration_directory(config_);
-    EXPECT_EQ(original.vaults[0].data, root_ / "data/workspace.sqlite3");
+    EXPECT_EQ(original.vaults[0].data,
+        std::filesystem::weakly_canonical(root_ / "data/workspace.sqlite3"));
 }
 
 TEST_F(ApplicationConfigTest, IgnoresMissingAndObsoleteWebSection) {
