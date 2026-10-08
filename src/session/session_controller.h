@@ -94,6 +94,7 @@ public:
         std::optional<EntryId> through_entry_id = std::nullopt);
     [[nodiscard]] ControllerUpdate uncover_conversation();
     [[nodiscard]] ControllerUpdate delete_turn(EntryId response_entry_id);
+    [[nodiscard]] ControllerUpdate clear_conversation();
     // The web text grammar submits handles; resolution and all target
     // validation stay here with the forum's authoritative character set.
     [[nodiscard]] ControllerUpdate start_multicast(

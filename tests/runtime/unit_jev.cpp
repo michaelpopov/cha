@@ -473,6 +473,32 @@ TEST_F(SessionNaming, WorksWithoutJevAndLimitsTheNameToSixWords) {
     EXPECT_FALSE(controller->is_generating());
 }
 
+TEST_F(SessionNaming, ClearCancelsAnUndeliveredNameAndKeepsTheSessionVisible) {
+    (void)send("@- Old note");
+    ASSERT_FALSE(controller->is_generating());
+    ASSERT_TRUE(controller->is_naming());
+    run_workers();
+
+    const auto cleared = send("/clear");
+    EXPECT_TRUE(cleared.clear_input);
+    EXPECT_FALSE(controller->is_naming());
+    EXPECT_FALSE(controller->recent_pending());
+    EXPECT_FALSE(controller->receive_events(100).update.session_label);
+    const auto restored = load_session_state(journal.path());
+    EXPECT_TRUE(restored.entries.empty());
+    EXPECT_FALSE(restored.recent_pending);
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "New session");
+}
+
+TEST_F(SessionNaming, ClearInAnEmptySessionKeepsItHiddenFromRecents) {
+    const auto cleared = send("/clear");
+    EXPECT_TRUE(cleared.clear_input);
+    EXPECT_EQ(cleared.session.notice, "");
+    EXPECT_FALSE(requires_snapshot(cleared.session));
+    EXPECT_TRUE(controller->recent_pending());
+    EXPECT_TRUE(load_session_state(journal.path()).recent_pending);
+}
+
 TEST_F(SessionNaming, ManualRenameWinsOverACompletedButUndeliveredTitle) {
     (void)send("Plan a garden");
     run_workers();

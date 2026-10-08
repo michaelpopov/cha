@@ -26,6 +26,7 @@ Settings screen too, but its built-in name and guide cannot be edited.
 
 - `/cover` hides all earlier conversation from model context; `/uncover` restores it.
 - `/mcast <targets> <text>` sends one prompt to multiple characters.
+- `/clear` removes all messages from the current session, including saved history.
 
 Use the target selector to choose a character, all characters, or Self-notes.
 Use the Stop button to stop generation.

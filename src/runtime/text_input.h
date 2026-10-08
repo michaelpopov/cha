@@ -16,6 +16,7 @@ class SessionController;
 enum class CommandKind {
     text,
     mcast,
+    clear,
     unknown,
 };
 

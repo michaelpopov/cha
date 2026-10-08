@@ -16,6 +16,7 @@ struct CommandDescriptor {
 
 constexpr std::array descriptors{
     CommandDescriptor{"/mcast", CommandKind::mcast},
+    CommandDescriptor{"/clear", CommandKind::clear},
 };
 
 std::size_t skip_space(std::string_view input, std::size_t index) {
@@ -218,6 +219,16 @@ CommandResult handle_text_input(
     if (command.kind == CommandKind::mcast) {
         return handle_multicast_input(controller, author_id, command.argument,
             std::move(submission));
+    }
+    if (command.kind == CommandKind::clear) {
+        if (!command.argument.empty()) {
+            result.clear_input = true;
+            result.session.notice = "Usage: /clear";
+            return result;
+        }
+        result.session = controller.clear_conversation();
+        result.clear_input = result.session.input_consumed;
+        return result;
     }
     result.clear_input = true;
     result.session.notice = "Unknown command. Commands: " + command_names();

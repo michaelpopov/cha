@@ -28,6 +28,7 @@ The chat input also accepts these controller-level commands:
 | Command | Purpose |
 | --- | --- |
 | `/mcast` | Send one prompt to multiple forum characters. |
+| `/clear` | Remove all messages and saved history from the current session. |
 
 Leading `@Name` addresses a prompt to one character. `@@` starts literal text
 with an at-sign. A handle may be a display name, an unambiguous part of one, or

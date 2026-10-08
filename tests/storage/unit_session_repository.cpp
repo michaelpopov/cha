@@ -208,6 +208,41 @@ TEST_F(SessionRepositoryTest, DeletingEntriesAndSessionsAlsoDeletesTheirAudio) {
     EXPECT_EQ(scalar(database_path(), "SELECT COUNT(*) FROM entry_audio"), 0);
 }
 
+TEST_F(SessionRepositoryTest, ClearingHistoryRemovesOnlyTheSelectedSessionsEntriesTurnsAndAudio) {
+    const SessionRepository repository = make_repository();
+    const auto first = repository.prepare(repository.create("lobby", "First").identity);
+    const auto second = repository.prepare(repository.create("lobby", "Second").identity);
+    for (const auto* prepared : {&first, &second}) {
+        SessionJournal journal(prepared->database_path, prepared->session_key);
+        journal.start_turn(1, test::human_entry(
+            1, {"human", "You"}, {"guide", "Guide"}, "Prompt", 1));
+        journal.complete_turn(1, {.id = 2, .kind = EntryKind::character,
+            .participant_id = "guide", .display_name = "Guide",
+            .text = "Response", .request_id = 1});
+        journal.record_entry(make_notice_entry(3, "Notice"));
+        const auto response = repository.lookup_entry_audio(prepared->identity, 2);
+        ASSERT_TRUE(response);
+        repository.save_entry_audio(*response, {"audio", "audio/mpeg"});
+    }
+    const auto late_audio = repository.lookup_entry_audio(first.identity, 2);
+    ASSERT_TRUE(late_audio);
+
+    SessionJournal journal(first.database_path, first.session_key);
+    journal.clear_history();
+
+    const auto restored = repository.prepare(first.identity).restore;
+    EXPECT_TRUE(restored.entries.empty());
+    EXPECT_TRUE(restored.interrupted_turns.empty());
+    EXPECT_EQ(restored.next_entry_id, 4U);
+    EXPECT_EQ(restored.next_request_id, 2U);
+    EXPECT_EQ(repository.prepare(first.identity).label, "First");
+    EXPECT_EQ(repository.history(second.identity).size(), 3U);
+    EXPECT_EQ(scalar(database_path(), "SELECT COUNT(*) FROM turns"), 1);
+    EXPECT_EQ(scalar(database_path(), "SELECT COUNT(*) FROM entry_audio"), 1);
+    repository.save_entry_audio(*late_audio, {"late", "audio/mpeg"});
+    EXPECT_EQ(scalar(database_path(), "SELECT COUNT(*) FROM entry_audio"), 1);
+}
+
 TEST_F(SessionRepositoryTest, EntryAudioDoesNotCrossVaultsOrAttachToReplacedText) {
     SessionRepository repository = make_repository();
     const auto prepared = repository.prepare(repository.create("lobby", "Stored").identity);

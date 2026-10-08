@@ -7,7 +7,8 @@ reads a controller or a borrowed controller view.
 
 Workspace characters choose providers in workspace configuration. A session's
 forum chooses its persona, so the submitter cannot select authorship. The raw
-input path recognizes an optional leading character mention and `/mcast`, then
+input path recognizes an optional leading character mention, `/mcast`, and
+`/clear`, then
 lets `SessionController` resolve recipients against the authoritative forum
 configuration.
 
@@ -136,7 +137,7 @@ releases request handles, and late notifier wakes are harmless.
 | `runtime_settings.h` | Runtime capacity, timing, and batching settings. |
 | `session_projection.*` | Build protocol snapshots from controller and workspace state. |
 | `session_output.*` | Deliver and coalesce session output across threads. |
-| `text_input.*` | Parse and dispatch messages, mentions, and `/mcast`. |
+| `text_input.*` | Parse and dispatch messages, mentions, `/mcast`, and `/clear`. |
 | `live_session.*` | Represent one stable live-session endpoint and its runtime-owned controller. |
 | `live_session_manager.*` | Own the runtime thread, live-session registry, selection, retirement, and shutdown. |
 

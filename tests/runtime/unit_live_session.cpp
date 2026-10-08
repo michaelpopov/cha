@@ -278,6 +278,32 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     EXPECT_EQ(read_session_database_metadata(file.path()).label, "Renamed live");
 }
 
+TEST(LiveSession, ClearPublishesAnEmptyTranscriptToTheSubscriber) {
+    test::TemporarySessionFile file("live_session_clear");
+    auto controls = std::make_shared<test::BackendControls>();
+    LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
+    subscribe(*host);
+    ASSERT_TRUE(next_output(*host));
+    host->acknowledge_output();
+
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(RawCommand{"@- Note"}, 2s)));
+    const auto recorded = next_output(*host);
+    ASSERT_TRUE(recorded);
+    EXPECT_EQ(recorded->snapshot.transcript.size(), 1U);
+    host->acknowledge_output();
+
+    const auto result = host->submit(RawCommand{"/clear"}, 2s);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(result));
+    EXPECT_TRUE(std::get<CommandResult>(result).clear_input);
+    const auto cleared = next_output(*host);
+    ASSERT_TRUE(cleared);
+    EXPECT_EQ(cleared->kind, app::SessionOutputItem::Kind::snapshot);
+    EXPECT_TRUE(cleared->snapshot.transcript.empty());
+    EXPECT_FALSE(cleared->snapshot.notice);
+    host->acknowledge_output();
+}
+
 TEST(LiveSession, MirrorsOnlyDurableRoundTripRenameAndCoverBoundaries) {
     test::TemporarySessionFile file("live_session_mirror_boundaries");
     auto controls = std::make_shared<test::BackendControls>();

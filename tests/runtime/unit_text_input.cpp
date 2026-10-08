@@ -144,7 +144,7 @@ TEST(TextInput, DispatchesTheRemainingSlashCommands) {
         notifier());
 
     for (const std::string_view removed : {
-             "/clear", "/info", "/characters", "/agents", "/@Guide",
+             "/info", "/characters", "/agents", "/@Guide",
              "/style sans-bold", "/cover", "/uncover", "/stop", "/exit"}) {
         const CommandResult result =
             handle_text_input(*controller, "operator", std::string(removed));
@@ -158,6 +158,35 @@ TEST(TextInput, DispatchesTheRemainingSlashCommands) {
         handle_text_input(*controller, "operator", "/mcast");
     EXPECT_TRUE(empty_multicast.clear_input);
     EXPECT_EQ(empty_multicast.session.notice, "Multicast prompt is empty");
+}
+
+TEST(TextInput, ClearsTheSessionWithoutRecordingTheCommand) {
+    TemporaryTextSession temporary;
+    auto controller = test::from_test_workspace(
+        std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
+    (void)handle_text_input(*controller, "operator", "@- Remember this");
+    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
+
+    const CommandResult invalid =
+        handle_text_input(*controller, "operator", "/clear later");
+    EXPECT_EQ(invalid.session.notice, "Usage: /clear");
+    EXPECT_EQ(controller->view().transcript.entries.size(), 1U);
+
+    for (const std::string input : {"/clear", "/clear \t\n"}) {
+        if (controller->view().transcript.empty()) {
+            (void)handle_text_input(*controller, "operator", "@- Remember this too");
+        }
+        const CommandResult cleared = handle_text_input(*controller, "operator", input);
+        EXPECT_TRUE(cleared.clear_input);
+        EXPECT_TRUE(requires_snapshot(cleared.session));
+        EXPECT_EQ(cleared.session.notice, "");
+        EXPECT_TRUE(controller->view().transcript.empty());
+        EXPECT_TRUE(load_session_state(temporary.path).entries.empty());
+    }
+
+    (void)handle_text_input(*controller, "operator", "@- A new message");
+    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
+    EXPECT_EQ(controller->view().transcript.entries.front().text, "A new message");
 }
 
 TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
@@ -285,6 +314,12 @@ TEST(TextInput, PreservesDraftsDuringGeneration) {
         multicast_while_active.session.notice,
         "Generation in progress; use the Stop button");
 
+    const CommandResult clear_while_active =
+        handle_text_input(*controller, "operator", "/clear");
+    EXPECT_FALSE(clear_while_active.clear_input);
+    EXPECT_EQ(clear_while_active.session.notice, generation_in_progress_notice);
+    EXPECT_FALSE(controller->view().transcript.empty());
+
     const CommandResult stop_with_argument =
         handle_text_input(*controller, "operator", "/stop later");
     EXPECT_FALSE(stop_with_argument.clear_input);
@@ -310,10 +345,11 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptance) {
     EXPECT_FALSE(unknown_author.session.input_consumed);
     EXPECT_FALSE(unknown_author.clear_input);
 
-    const CommandResult removed_command =
+    const CommandResult invalid_clear =
         handle_text_input(*controller, "operator", "/clear later");
-    EXPECT_FALSE(removed_command.session.input_consumed);
-    EXPECT_TRUE(removed_command.clear_input);
+    EXPECT_FALSE(invalid_clear.session.input_consumed);
+    EXPECT_TRUE(invalid_clear.clear_input);
+    EXPECT_EQ(invalid_clear.session.notice, "Usage: /clear");
 
     const CommandResult rejected_multicast =
         handle_text_input(*controller, "operator", "/mcast");

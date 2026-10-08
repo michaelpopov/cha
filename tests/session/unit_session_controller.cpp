@@ -1345,6 +1345,38 @@ TEST(SessionController, DeletesAResponseAndItsPromptFromMemoryAndStorage) {
     EXPECT_EQ(controller->delete_turn(2).notice, "Response was not found");
 }
 
+TEST(SessionController, ClearsSavedHistoryAndContextForTheNextRequest) {
+    TemporaryJournal temporary;
+    auto backend = std::make_unique<ScriptedBackend>(
+        GenerationResult{}, std::vector<std::string>{"Answer"});
+    ScriptedBackend* backend_view = backend.get();
+    auto controller = test::from_test_backends(
+        test::one_backend(std::move(backend)), temporary.path, notifier());
+
+    (void)controller->submit_prompt("operator", "First question");
+    receive_until_idle(*controller);
+    (void)controller->cover_conversation();
+    ASSERT_EQ(controller->view().transcript.size(), 3U);
+
+    const ControllerUpdate cleared = controller->clear_conversation();
+    EXPECT_TRUE(requires_snapshot(cleared));
+    EXPECT_TRUE(cleared.input_consumed);
+    EXPECT_TRUE(controller->view().transcript.empty());
+    EXPECT_FALSE(controller->view().transcript.covered_until);
+    EXPECT_TRUE(load_session_state(temporary.path).entries.empty());
+    EXPECT_TRUE(load_session_state(temporary.path).interrupted_turns.empty());
+    EXPECT_EQ(read_session_database_metadata(temporary.path).label, "Controller test");
+
+    (void)controller->submit_prompt("operator", "New question");
+    receive_until_idle(*controller);
+    ASSERT_EQ(backend_view->inputs.size(), 2U);
+    EXPECT_EQ(context_without_timestamp_metadata(
+        backend_view->inputs[1], backend_view->system_prompt),
+        (std::vector<ModelMessage>{operator_prompt("New question")}));
+    EXPECT_EQ(load_session_state(temporary.path).entries,
+        copy_entries(controller->view().transcript));
+}
+
 TEST(SessionController, CoversEarlierTurnsForTheNextRequestAndUncoversThemLater) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(

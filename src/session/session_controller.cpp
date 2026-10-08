@@ -959,6 +959,25 @@ ControllerUpdate SessionController::uncover_conversation() {
     };
 }
 
+ControllerUpdate SessionController::clear_conversation() {
+    if (is_generating()) {
+        return busy_notice();
+    }
+    if (transcript_.view().entries.empty()) {
+        return {.input_consumed = true, .notice = ""};
+    }
+    persist("clear session history", [this] { journal_.clear_history(); });
+    transcript_.replace_entries({});
+    cancel_session_name();
+    ControllerUpdate update{
+        .state = SnapshotRequired{},
+        .input_consumed = true,
+        .notice = "",
+    };
+    publish_recent(update);
+    return update;
+}
+
 ControllerUpdate SessionController::delete_turn(EntryId response_entry_id) {
     if (is_generating()) {
         return busy_notice();

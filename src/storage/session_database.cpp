@@ -725,6 +725,18 @@ void SessionJournal::delete_turn(EntryId response_entry_id) {
     transaction.commit();
 }
 
+void SessionJournal::clear_history() {
+    Transaction transaction(impl_->database);
+    Statement entries = impl_->database.prepare(
+        "DELETE FROM entries WHERE session_key = ?1", impl_->session_key);
+    entries.run();
+    Statement turns = impl_->database.prepare(
+        "DELETE FROM turns WHERE session_key = ?1", impl_->session_key);
+    turns.run();
+    touch_session(impl_->database, impl_->session_key);
+    transaction.commit();
+}
+
 void SessionJournal::rename(std::string_view label) {
     Transaction transaction(impl_->database);
     Statement update = impl_->database.prepare(

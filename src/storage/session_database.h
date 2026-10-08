@@ -88,6 +88,7 @@ public:
     void cancel_turn(RequestId request_id, std::optional<TranscriptEntry> response);
     void fail_turn(RequestId request_id, const TranscriptEntry& error);
     void delete_turn(EntryId response_entry_id);
+    void clear_history();
     void rename(std::string_view label);
     void publish_recent();
     void retain();
