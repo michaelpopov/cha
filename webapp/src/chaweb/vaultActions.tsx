@@ -3,17 +3,18 @@ import { useState } from 'react';
 import type { VaultUploadCheck } from '../api/client';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PasswordDialog } from '../components/PasswordDialog';
-import { DownloadIcon, FileUpIcon, MergeIcon } from '../components/Icons';
+import { DownloadIcon, FileUpIcon, MergeIcon, WrenchIcon } from '../components/Icons';
 import { ChaWebError, chaWebMessage, type ChaWebBootstrap, type ChaWebClient } from './client';
 
 type Operation = 'upload' | 'download' | 'merge';
 
-export function VaultActions({ bootstrap, client, blocked, onBusy, onRefresh }: {
+export function VaultActions({ bootstrap, client, blocked, onBusy, onRefresh, onOpenAssistant }: {
   bootstrap: ChaWebBootstrap;
   client: ChaWebClient;
   blocked: boolean;
   onBusy(busy: boolean): void;
   onRefresh(): Promise<void>;
+  onOpenAssistant(): void;
 }) {
   const [pending, setPending] = useState<Operation | 'check' | null>(null);
   const [confirmation, setConfirmation] = useState<'upload' | 'download' | null>(null);
@@ -94,6 +95,9 @@ export function VaultActions({ bootstrap, client, blocked, onBusy, onRefresh }: 
         <button aria-label="Parent merge" className="chaweb-icon-button"
           disabled={disabled || !bootstrap.vault_parent} onClick={() => void run('merge')}
           title="Parent merge" type="button"><MergeIcon /></button>
+        <button aria-label="Assistant" className="chaweb-icon-button"
+          disabled={blocked || pending !== null} onClick={onOpenAssistant}
+          title="Assistant" type="button"><WrenchIcon /></button>
       </div>
       {status && <p className="chaweb-status" role="status">{status}</p>}
       {error && !passwordPrompt && <p className="chaweb-alert" role="alert">{error}</p>}

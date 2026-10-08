@@ -1213,9 +1213,6 @@ export function useChaweb(client: ChaWebClient) {
     chooseForum,
     openSession,
     openWelcome,
-    welcomeCurrent: conversation?.kind === 'session'
-      && bootstrap !== null
-      && isWelcomeSession(bootstrap, conversation.forumId, conversation.sessionId),
     newSession,
     showSessions,
     refreshVault,

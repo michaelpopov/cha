@@ -95,6 +95,14 @@ export function MergeIcon(props: IconProps) {
   );
 }
 
+export function WrenchIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m14.7 6.3 3 3 3.5-3.5a6 6 0 0 1-7.6 7.6l-7.5 7.5a2.1 2.1 0 0 1-3-3l7.5-7.5a6 6 0 0 1 7.6-7.6z" {...stroke} />
+    </Icon>
+  );
+}
+
 export function MessageIcon(props: IconProps) {
   return (
     <Icon {...props}>

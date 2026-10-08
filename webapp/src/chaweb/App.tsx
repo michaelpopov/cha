@@ -72,8 +72,6 @@ export function App({ client }: { client: ChaWebClient }) {
           onForum={model.chooseForum}
           onNewSession={model.newSession}
           onOpen={model.openSession}
-          onOpenWelcome={model.openWelcome}
-          welcomeCurrent={model.welcomeCurrent}
           onRetry={model.listCanRetry ? model.retryList : undefined}
           sessions={model.sessions}
           vaultActions={<VaultActions
@@ -82,6 +80,7 @@ export function App({ client }: { client: ChaWebClient }) {
             client={client}
             onBusy={setVaultBusy}
             onRefresh={model.refreshVault}
+            onOpenAssistant={model.openWelcome}
           />}
         />
       ) : (
