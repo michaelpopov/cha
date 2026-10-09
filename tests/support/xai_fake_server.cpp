@@ -277,11 +277,11 @@ struct XaiFakeServer::Impl {
             const bool split = options.fragment_first && index == 0
                 && options.messages[index].size() > 1;
             if (!split) {
-                send_frame(client, 0x1, options.messages[index], true);
+                send_frame(client, options.msgpack ? 0x2 : 0x1, options.messages[index], true);
                 continue;
             }
             const auto midpoint = options.messages[index].size() / 2;
-            send_frame(client, 0x1, options.messages[index].substr(0, midpoint), false);
+            send_frame(client, options.msgpack ? 0x2 : 0x1, options.messages[index].substr(0, midpoint), false);
             send_frame(client, 0x0, options.messages[index].substr(midpoint), true);
         }
         if (options.close_after_messages) {
@@ -292,6 +292,21 @@ struct XaiFakeServer::Impl {
         const auto deadline = std::chrono::steady_clock::now() + options.read_timeout;
         std::string text;
         bool saw_done = false;
+        const auto speech_frame = [&](const std::string& payload) {
+            if (!options.speech) return false;
+            const auto message = options.msgpack ? nlohmann::json::from_msgpack(payload)
+                : nlohmann::json::parse(payload);
+            const bool has_text = options.msgpack ? message.value("event", "") == "text"
+                : message.contains("inputs") || (message.contains("text")
+                    && message["text"] != "" && message["text"] != " ");
+            if (has_text) {
+                for (const auto& response : options.after_text)
+                    send_frame(client, options.msgpack ? 0x2 : 0x1, response, true);
+                if (options.close_after_text) { send_frame(client, 0x8, "", true); return true; }
+            }
+            return options.msgpack ? message.value("event", "") == "stop"
+                : message.value("close_socket", false) || (message.contains("text") && message["text"] == "");
+        };
         while (std::chrono::steady_clock::now() < deadline && !saw_done) {
             const auto frame = read_frame(client, deadline);
             if (!frame) break;
@@ -311,6 +326,7 @@ struct XaiFakeServer::Impl {
                 binary_open = !frame->fin;
                 if (frame->fin) {
                     remember_binary(binary_partial);
+                    if (speech_frame(binary_partial)) saw_done = true;
                     binary_partial.clear();
                 }
                 continue;
@@ -319,17 +335,19 @@ struct XaiFakeServer::Impl {
                 if (frame->opcode == 0x1) text.clear();
                 text += frame->payload;
                 if (frame->fin) {
-                    std::lock_guard lock(mu);
-                    texts.push_back(text);
-                    events.push_back("t:" + text);
-                    if (text == "{\"type\":\"audio.done\"}") saw_done = true;
+                    {
+                        std::lock_guard lock(mu);
+                        texts.push_back(text);
+                        events.push_back("t:" + text);
+                    }
+                    if (text == "{\"type\":\"audio.done\"}" || speech_frame(text)) saw_done = true;
                     text.clear();
                 }
             }
         }
         if (saw_done) {
             for (const std::string& message : options.after_audio_done) {
-                send_frame(client, 0x1, message, true);
+                send_frame(client, options.msgpack ? 0x2 : 0x1, message, true);
             }
         }
         close_socket(client);

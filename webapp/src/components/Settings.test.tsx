@@ -1692,16 +1692,28 @@ describe('Settings screens', () => {
       saveVoiceOutputSettings,
     });
     render(<VoiceSettingsScreen client={client} dispatch={vi.fn()} state={initialAppState} />);
-    await userEvent.selectOptions(await screen.findByLabelText('Output provider'), 'elevenlabs');
+    expect(await screen.findByLabelText('Connection')).toHaveValue('http');
+    await userEvent.selectOptions(screen.getByLabelText('Connection'), 'websocket');
+    await userEvent.selectOptions(screen.getByLabelText('Output provider'), 'elevenlabs');
+    expect(screen.getByLabelText('Connection')).toHaveValue('http');
     expect(screen.getByLabelText('Output URL endpoint')).toHaveValue('https://api.elevenlabs.io/v1/text-to-speech');
     await userEvent.selectOptions(screen.getByLabelText('Output API key name'), 'eleven-key');
     await userEvent.click(screen.getByRole('button', { name: 'Save voice output' }));
-    expect(saveVoiceOutputSettings).toHaveBeenCalledWith({ ...fish, elevenlabs: {
+    expect(saveVoiceOutputSettings).toHaveBeenCalledWith({ ...fish, connection: 'websocket', elevenlabs: {
       url: 'https://api.elevenlabs.io/v1/text-to-speech', model: 'eleven_multilingual_v2',
       api_key: 'eleven-key', output_format: 'mp3_44100_128',
     } });
     await userEvent.selectOptions(screen.getByLabelText('Output provider'), 'fishaudio');
     expect(screen.getByLabelText('Output API key name')).toHaveValue('fish-key');
+    expect(screen.getByLabelText('Connection')).toHaveValue('websocket');
+    await userEvent.selectOptions(screen.getByLabelText('Output provider'), 'elevenlabs');
+    await userEvent.selectOptions(screen.getByLabelText('Connection'), 'websocket');
+    await userEvent.selectOptions(screen.getByLabelText('Output provider'), 'fishaudio');
+    await userEvent.selectOptions(screen.getByLabelText('Connection'), 'http');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice output' }));
+    expect(saveVoiceOutputSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      connection: 'http', elevenlabs: expect.objectContaining({ connection: 'websocket' }),
+    }));
   });
 
   it('opens an ElevenLabs-only setup on ElevenLabs', async () => {

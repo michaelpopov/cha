@@ -167,7 +167,9 @@ VoiceOutputSettings voice_output_settings(
             .url = settings.elevenlabs->url, .model = settings.elevenlabs->model,
             .api_key = settings.elevenlabs->api_key_id, .output_format = settings.elevenlabs->output_format,
             .supports_speed = elevenlabs_supports_speed(settings.elevenlabs->model),
+            .connection = settings.elevenlabs->connection,
         }) : std::nullopt,
+        .connection = fish.connection,
     };
 }
 
@@ -798,14 +800,14 @@ VoiceOutputSettings save_voice_output_settings(
     if (!update.api_key.empty()) {
         settings.fishaudio = WorkspaceVoiceProviderOutput{
             .url = update.url, .model = update.model, .api_key_id = update.api_key,
-            .output_format = update.output_format,
+            .output_format = update.output_format, .connection = update.connection,
         };
     }
     if (update.elevenlabs) {
         const auto& eleven = *update.elevenlabs;
         settings.elevenlabs = WorkspaceVoiceProviderOutput{
             .url = eleven.url, .model = eleven.model, .api_key_id = eleven.api_key,
-            .output_format = eleven.output_format,
+            .output_format = eleven.output_format, .connection = eleven.connection,
         };
     }
     return with_settings_edit([&] {
@@ -834,6 +836,8 @@ std::optional<VoiceOutputRuntime> get_voice_output_runtime(
     return VoiceOutputRuntime{
         .url = output.url, .model = output.model, .output_format = output.output_format,
         .default_voice_id = default_voice->elevenlabs_voice_id, .provider = default_voice->provider,
+        .connections = {{"fishaudio", configured.fishaudio ? configured.fishaudio->connection : "http"},
+            {"elevenlabs", configured.elevenlabs ? configured.elevenlabs->connection : "http"}},
     };
 }
 

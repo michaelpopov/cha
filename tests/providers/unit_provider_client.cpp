@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -2000,6 +2001,121 @@ ProviderHttpResponse tool_reply(ProviderApi api, bool stream, Json calls,
     return {200, "text/event-stream", events + "data: [DONE]\n\n"};
 }
 
+TEST(ProviderClientTools, RunsMixedWebCallsInGroupsOfFourAndPreservesOrderedResults) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        for (bool stream : {false, true}) {
+            SCOPED_TRACE(std::string(to_string(api)) + (stream ? " streaming" : " JSON"));
+            auto definition = network_definition(80, stream);
+            definition.provider.config.api = api;
+            int requests = 0;
+            ProviderClient client(shared_definition(definition), nullptr,
+                [&](const ProviderHttpRequest& request, const auto&) {
+                    if (++requests == 1) {
+                        auto calls = Json::array();
+                        for (int index = 0; index < 8; ++index) {
+                            const bool read = index % 2 == 0;
+                            calls.push_back(search_call(api, std::to_string(index),
+                                Json{{read ? "url" : "query", std::to_string(index)}}.dump(),
+                                read ? "web_read" : "web_search"));
+                        }
+                        return tool_reply(api, stream, calls);
+                    }
+                    const auto body = Json::parse(request.body);
+                    const auto& messages = body[api == ProviderApi::responses ? "input" : "messages"];
+                    for (int index = 0; index < 8; ++index) {
+                        const auto& output = messages[messages.size() - 8 + index];
+                        EXPECT_EQ(output[api == ProviderApi::responses ? "call_id" : "tool_call_id"],
+                            std::to_string(index));
+                        const auto text = output[api == ProviderApi::responses ? "output" : "content"].get<std::string>();
+                        if (index == 1) {
+                            EXPECT_EQ(Json::parse(text)["error"], "Web search HTTP 429");
+                        } else if (index == 2) {
+                            EXPECT_EQ(Json::parse(text)["error"],
+                                "Page reading failed. Continue without it or try another URL.");
+                            EXPECT_EQ(text.find("private details"), std::string::npos);
+                        } else {
+                            EXPECT_EQ(text, "result " + std::to_string(index));
+                        }
+                    }
+                    return tool_reply(api, stream, Json::array(), "Done");
+                });
+            std::mutex mutex;
+            std::condition_variable changed;
+            int started = 0, completed = 0, active = 0, maximum_active = 0;
+            std::vector<int> completion_order;
+            const auto execute = [&](std::string_view argument, const auto&) -> std::string {
+                const int index = std::stoi(std::string(argument));
+                const int group = index / 4 * 4;
+                std::unique_lock lock(mutex);
+                // The next group must wait even when three earlier calls are done.
+                EXPECT_GE(completed, group);
+                ++started;
+                maximum_active = std::max(maximum_active, ++active);
+                changed.notify_all();
+                EXPECT_TRUE(changed.wait_for(lock, std::chrono::seconds(2), [&] {
+                    return started >= group + 4 && completed == group + 3 - index % 4;
+                }));
+                completion_order.push_back(index);
+                ++completed;
+                --active;
+                changed.notify_all();
+                if (index == 1) throw WebToolError("Web search HTTP 429");
+                if (index == 2) throw std::runtime_error("private details");
+                return "result " + std::string(argument);
+            };
+            Transcript transcript;
+            auto input = client_request(transcript, 1, "Read and search");
+            input.web_search_tool = execute;
+            input.web_read_tool = execute;
+            const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
+            EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(requests, 2);
+            EXPECT_EQ(started, 8);
+            EXPECT_EQ(completed, 8);
+            EXPECT_EQ(active, 0);
+            EXPECT_EQ(maximum_active, 4);
+            EXPECT_EQ(completion_order, (std::vector<int>{3, 2, 1, 0, 7, 6, 5, 4}));
+        }
+    }
+}
+
+TEST(ProviderClientTools, InvalidUnknownAndUnavailableCallsConsumeTheSearchBudget) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        auto definition = network_definition(80, false);
+        definition.provider.config.api = api;
+        int requests = 0;
+        ProviderClient client(shared_definition(definition), nullptr,
+            [&](const ProviderHttpRequest& request, const auto&) {
+                if (++requests == 1) return tool_reply(api, false, Json::array({
+                    search_call(api, "bad", "{"),
+                    search_call(api, "unknown", R"({"query":"x"})", "unknown"),
+                    search_call(api, "unavailable", R"({"url":"https://example.org"})", "web_read"),
+                    search_call(api, "valid"), search_call(api, "excess"), search_call(api, "excess2")}));
+                const auto body = Json::parse(request.body);
+                EXPECT_FALSE(body.contains("tools"));
+                const auto& messages = body[api == ProviderApi::responses ? "input" : "messages"];
+                const std::vector<std::string> ids{"bad", "unknown", "unavailable", "valid", "excess", "excess2"};
+                for (std::size_t index = 0; index < ids.size(); ++index) {
+                    const auto& output = messages[messages.size() - 7 + index];
+                    EXPECT_EQ(output[api == ProviderApi::responses ? "call_id" : "tool_call_id"], ids[index]);
+                    const auto text = output[api == ProviderApi::responses ? "output" : "content"].get<std::string>();
+                    if (index == 3) EXPECT_EQ(text, "results");
+                    else if (index >= 4) EXPECT_NE(text.find("Web tool limit reached"), std::string::npos);
+                    else EXPECT_TRUE(Json::parse(text).contains("error"));
+                }
+                return tool_reply(api, false, Json::array(), "Done");
+            });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Search");
+        std::atomic_int searches{0};
+        input.web_search_tool = [&](auto, const auto&) { ++searches; return "results"; };
+        const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
+        EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(searches, 1);
+        EXPECT_EQ(requests, 2);
+    }
+}
+
 TEST(ProviderClientTools, SearchesThenReadsAndSupportsReadingWithoutSearch) {
     for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
         for (bool stream : {false, true}) {
@@ -2019,7 +2135,7 @@ TEST(ProviderClientTools, SearchesThenReadsAndSupportsReadingWithoutSearch) {
                     });
                 Transcript transcript;
                 auto input = client_request(transcript, 1, "Read the page");
-                int searches = 0, reads = 0;
+                std::atomic_int searches{0}, reads{0};
                 if (search_enabled) input.web_search_tool = [&](auto, const auto&) {
                     ++searches;
                     return R"({"url":"https://example.org/page"})";
@@ -2057,7 +2173,8 @@ TEST(ProviderClientTools, ReadingReturnsErrorsAndStopsOnCancellation) {
         for (bool cancel : {false, true}) {
             auto definition = network_definition(80, false);
             definition.provider.config.api = api;
-            int rounds = 0, reads = 0;
+            int rounds = 0;
+            std::atomic_int reads{0};
             ProviderClient client(shared_definition(definition), nullptr,
                 [&](const ProviderHttpRequest& request, const auto&) {
                     if (++rounds == 1) return tool_reply(api, false, Json::array({
@@ -2128,7 +2245,8 @@ TEST(ProviderClientTools, ReadingStopsAtTheSharedWebToolLimit) {
     for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
         auto definition = network_definition(80, false);
         definition.provider.config.api = api;
-        int rounds = 0, reads = 0;
+        int rounds = 0;
+        std::atomic_int reads{0};
         ProviderClient client(shared_definition(definition), nullptr,
             [&](const ProviderHttpRequest& request, const auto&) {
                 if (++rounds == 1) {
@@ -2179,7 +2297,7 @@ TEST(ProviderClientTools, SearchesAndContinuesBothProtocolsWithStreamingAndToken
                 });
             Transcript transcript;
             auto input = client_request(transcript, 1, "What is current?");
-            int searches = 0;
+            std::atomic_int searches{0};
             input.web_search_tool = [&](std::string_view query, const std::atomic_bool&) {
                 EXPECT_EQ(query, "current release");
                 ++searches;
@@ -2306,7 +2424,7 @@ TEST(ProviderClientTools, ReturnsErrorsForBadArgumentsUnknownToolsAndSearchFailu
             });
         Transcript transcript;
         auto input = client_request(transcript, 1, "Search");
-        int searches = 0;
+        std::atomic_int searches{0};
         input.web_search_tool = [&](auto, const auto&) -> std::string {
             ++searches;
             throw std::runtime_error("private credential details");
@@ -2338,7 +2456,7 @@ TEST(ProviderClientTools, CapsSearchesThenAllowsAFinalAnswer) {
             });
         Transcript transcript;
         auto input = client_request(transcript, 1, "Search");
-        int searches = 0;
+        std::atomic_int searches{0};
         input.web_search_tool = [&](auto, const auto&) { ++searches; return "[]"; };
         const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
         EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
@@ -2388,7 +2506,7 @@ TEST(ProviderClientTools, RemovesToolsAndRequestsAnAnswerWhenSearchLimitIsReache
                 });
             Transcript transcript;
             auto input = client_request(transcript, 1, "Find five news articles");
-            int searches = 0;
+            std::atomic_int searches{0};
             input.web_search_tool = [&](auto, const auto&) { ++searches; return "Search results"; };
             std::string answer;
             const auto result = client.perform(client.prepare(input), [&](GenerationDelta delta) {
@@ -2411,18 +2529,49 @@ TEST(ProviderClientTools, CancellationDuringSearchStopsTheLoop) {
         ProviderClient client(shared_definition(definition), nullptr,
             [&](const auto&, const auto&) {
                 ++requests;
-                return tool_reply(api, false, Json::array({search_call(api, "first"), search_call(api, "second")}));
+                auto calls = Json::array();
+                for (int index = 0; index < 8; ++index)
+                    calls.push_back(search_call(api, std::to_string(index)));
+                return tool_reply(api, false, calls);
             });
         Transcript transcript;
         auto input = client_request(transcript, 1, "Search");
         std::atomic_bool cancelled{false};
-        int searches = 0;
-        input.web_search_tool = [&](auto, const auto&) { ++searches; cancelled.store(true); return ""; };
-        const auto result = client.perform(client.prepare(input), [](auto) {}, cancelled);
+        std::mutex mutex;
+        std::condition_variable changed;
+        int started = 0, finished = 0;
+        bool release = false;
+        input.web_search_tool = [&](auto, const auto& cancellation) {
+            std::unique_lock lock(mutex);
+            ++started;
+            changed.notify_all();
+            EXPECT_TRUE(changed.wait_for(lock, std::chrono::seconds(2), [&] { return release; }));
+            EXPECT_TRUE(cancellation.load());
+            ++finished;
+            return "";
+        };
+        // Reading raises the shared budget so the response contains a later group.
+        input.web_read_tool = [](auto, const auto&) { return "unused"; };
+        auto worker = std::async(std::launch::async, [&] {
+            auto result = client.perform(client.prepare(input), [](auto) {}, cancelled);
+            std::lock_guard lock(mutex);
+            EXPECT_EQ(finished, 4);
+            return result;
+        });
+        {
+            std::unique_lock lock(mutex);
+            EXPECT_TRUE(changed.wait_for(lock, std::chrono::seconds(2), [&] { return started == 4; }));
+            cancelled.store(true);
+            release = true;
+        }
+        changed.notify_all();
+        const auto result = worker.get();
         EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
-        EXPECT_EQ(searches, 1);
+        EXPECT_EQ(started, 4);
+        EXPECT_EQ(finished, 4);
         EXPECT_EQ(requests, 1);
         EXPECT_EQ(result.usage.input_tokens, 10u);
+        EXPECT_EQ(result.usage.output_tokens, 2u);
     }
 }
 
@@ -2453,7 +2602,7 @@ TEST(ProviderClientTools, RejectsIncompleteToolStreamsBeforeSearching) {
             });
         Transcript transcript;
         auto input = client_request(transcript, 1, "Search");
-        int searches = 0;
+        std::atomic_int searches{0};
         input.web_search_tool = [&](auto, const auto&) { ++searches; return "[]"; };
         const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
         EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
@@ -2492,7 +2641,7 @@ TEST(ProviderClientTools, ReturnsAnOutputForEveryCallWhenBatchExceedsSearchLimit
             });
         Transcript transcript;
         auto input = client_request(transcript, 1, "Search");
-        int searches = 0;
+        std::atomic_int searches{0};
         input.web_search_tool = [&](auto, const auto&) { ++searches; return "[]"; };
         const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
         EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
@@ -2555,7 +2704,7 @@ TEST(ProviderClientTools, ValidatesToolDataOnlyWhenOnDemandSearchWasOffered) {
                 });
             Transcript transcript;
             auto input = client_request(transcript, 1, "Hello");
-            int searches = 0;
+            std::atomic_int searches{0};
             if (enabled) input.web_search_tool = [&](auto, const auto&) { ++searches; return "[]"; };
             std::string answer;
             const auto result = client.perform(client.prepare(input), [&](GenerationDelta delta) {
@@ -2586,8 +2735,8 @@ TEST(ProviderClientTools, PreparedPayloadOwnsItsSearchFunction) {
             });
         Transcript transcript;
         auto input = client_request(transcript, 1, "Search");
-        int first_searches = 0;
-        int second_searches = 0;
+        std::atomic_int first_searches{0};
+        std::atomic_int second_searches{0};
         input.web_search_tool = [&](auto, const auto&) { ++first_searches; return "[]"; };
         auto first = client.prepare(input);
         input.web_search_tool = [&](auto, const auto&) { ++second_searches; return "[]"; };
@@ -2641,7 +2790,7 @@ TEST(ProviderClientTools, PreservesGeminiToolCallsAndSignaturesWhenContinuingAft
                     });
                 Transcript transcript;
                 auto input = client_request(transcript, 1, "Search");
-                int searches = 0;
+                std::atomic_int searches{0};
                 input.web_search_tool = [&](std::string_view query, const auto&) {
                     EXPECT_EQ(query, "current release");
                     ++searches;
@@ -2705,7 +2854,7 @@ TEST(ProviderClientTools, RejectsIncompleteChatToolCallsInBothResponseForms) {
                 });
             Transcript transcript;
             auto input = client_request(transcript, 1, "Search");
-            int searches = 0;
+            std::atomic_int searches{0};
             input.web_search_tool = [&](auto, const auto&) { ++searches; return "[]"; };
             const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
             EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);

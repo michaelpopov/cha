@@ -483,6 +483,7 @@ void to_json(nlohmann::json& json, const VoiceInputRuntime& value) {
 void to_json(nlohmann::json& json, const VoiceOutputSettings& value) {
     json = {
         {"url", value.url},
+        {"connection", value.connection},
         {"model", value.model},
         {"api_key", value.api_key},
         {"output_format", value.output_format},
@@ -492,7 +493,7 @@ void to_json(nlohmann::json& json, const VoiceOutputSettings& value) {
         const auto& eleven = *value.elevenlabs;
         json["elevenlabs"] = {{"url", eleven.url}, {"model", eleven.model},
             {"api_key", eleven.api_key}, {"output_format", eleven.output_format},
-            {"supports_speed", eleven.supports_speed}};
+            {"supports_speed", eleven.supports_speed}, {"connection", eleven.connection}};
     }
 }
 
@@ -502,6 +503,7 @@ void to_json(nlohmann::json& json, const VoiceOutputRuntime& value) {
         {"model", value.model},
         {"output_format", value.output_format},
         {"default_voice_id", value.default_voice_id},
+        {"connections", value.connections},
         {"provider", value.provider},
     };
 }

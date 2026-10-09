@@ -21,7 +21,13 @@ struct VoiceOutputRequest {
     nlohmann::json body;
     std::string provider{"fishaudio"};
     std::string url;
+    std::string voice_id;
 };
+
+// Empty text with complete=false means the answer is still being produced.
+struct VoiceTextChunk { std::string text; bool complete{}; };
+using VoiceTextInput = std::function<VoiceTextChunk()>;
+std::string speech_text_prefix(std::string_view text, std::string_view provider, bool complete);
 
 using AudioChunkCallback = std::function<void(std::string_view mime_type, std::string_view bytes)>;
 
@@ -29,6 +35,10 @@ std::optional<EntryAudio> download_voice_output(
     const WorkspaceVoiceProviderOutput& output, const std::string& key,
     const VoiceOutputRequest& request, const std::function<bool()>& cancelled,
     const AudioChunkCallback& on_audio = {});
+std::optional<EntryAudio> stream_voice_websocket(
+    const WorkspaceVoiceProviderOutput& output, const std::string& key,
+    const VoiceOutputRequest& request, const std::function<bool()>& cancelled,
+    const AudioChunkCallback& on_audio, const VoiceTextInput& input = {});
 std::string entry_speech_text(const EntryAudioLookup& entry);
 bool valid_entry_audio(const EntryAudio& audio);
 
@@ -41,14 +51,15 @@ struct VoiceSynthesis {
     std::string provider{"fishaudio"};
 };
 WorkspaceVoiceProviderOutput select_voice_output(const WorkspaceVoiceOutput& configured, std::string_view provider);
+// No text means that speech input will arrive incrementally over WebSocket.
 VoiceOutputRequest make_voice_output_request(
-    const WorkspaceVoiceProviderOutput& output, std::string_view text, const VoiceSynthesis& synthesis);
+    const WorkspaceVoiceProviderOutput& output, std::optional<std::string_view> text, const VoiceSynthesis& synthesis);
 std::string voice_output_http_error_message(
     std::string_view provider, long status, std::string_view body = {});
 
 VoiceSynthesis decode_voice_synthesis(const nlohmann::json& input);
 VoiceOutputRequest make_fish_audio_request(
-    const WorkspaceVoiceProviderOutput& output, std::string_view text, const VoiceSynthesis& synthesis);
+    const WorkspaceVoiceProviderOutput& output, std::optional<std::string_view> text, const VoiceSynthesis& synthesis);
 VoiceOutputRequest make_fish_audio_request(
     const WorkspaceVoiceProviderOutput& output, const nlohmann::json& input);
 

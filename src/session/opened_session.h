@@ -29,6 +29,7 @@ struct OpenedSession {
     // empty; test openers use it to exercise startup-notice behavior.
     std::optional<std::string> notice;
     std::function<std::set<EntryId>()> cached_audio_entries;
+    std::function<void(std::span<const TranscriptEntry>)> update_audio;
 };
 
 } // namespace cha

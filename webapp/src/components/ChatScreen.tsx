@@ -151,9 +151,9 @@ function visibleTranscriptEntries(entries: SessionSnapshot['transcript']) {
   return visible;
 }
 
-function canReadEntry(entry: SessionSnapshot['transcript'][number]): boolean {
+function canReadEntry(entry: SessionSnapshot['transcript'][number], streaming = false): boolean {
   return entry.kind === 'character'
-    && entry.status === 'complete' && entry.created_at !== null;
+    && ((entry.status === 'complete' && entry.created_at !== null) || (streaming && entry.status === 'streaming'));
 }
 
 function TranscriptMessage({
@@ -181,7 +181,7 @@ function TranscriptMessage({
 }) {
   const [copied, setCopied] = useState(false);
   const displayedText = visibleEntryText(entry.kind, entry.text);
-  const canRead = canReadEntry(entry);
+  const canRead = canReadEntry(entry, speechAvailable);
   const usedWebSources = entry.kind === 'character' && entry.web_search_used;
   const canCopy = (entry.kind === 'human' || entry.kind === 'character')
     && displayedText.length > 0;
@@ -437,7 +437,7 @@ export function ChatScreen({
   const sessionAvailable = snapshot !== null && !ended;
   const voiceInputAvailable = voiceConfiguration !== null
     && VoiceInputSession.supported(voiceConfiguration.provider);
-  const textToSpeechConfiguration = useTextToSpeechConfiguration(client);
+  const textToSpeechConfiguration = useTextToSpeechConfiguration(client, state.bootstrap?.vault_name);
   const downloads = useAudioDownloads(client, snapshot?.forum.id, snapshot?.session_id,
     state.bootstrap?.vault_name, state.audioCacheClearCount);
   const speechSelection = useRef<number | null>(null);
@@ -530,6 +530,19 @@ export function ChatScreen({
 
   useEffect(() => stopSpeech, [audioConversationKey, state.audioCacheClearCount]);
 
+  const canStreamSpeech = useCallback((entry: SessionSnapshot['transcript'][number]) => {
+    const voice = speechVoices.get(entry.participant_id);
+    const provider = voice ? voice.provider ?? 'fishaudio' : textToSpeechConfiguration?.provider ?? 'fishaudio';
+    return textToSpeechConfiguration?.connections?.[provider] === 'websocket';
+  }, [speechVoices, textToSpeechConfiguration]);
+
+  useEffect(() => {
+    const id = speechSelection.current;
+    if (id === null) return;
+    const entry = snapshot?.transcript.find((item) => item.id === id);
+    if (!entry || entry.status === 'failed' || entry.status === 'cancelled') stopSpeech();
+  }, [snapshot?.transcript]);
+
   const speechRequest = useCallback((entry: SessionSnapshot['transcript'][number]): AudioDownloadBatchEntry => {
     const voice = speechVoices.get(entry.participant_id);
     return voice ? { entry_id: entry.id, reference_id: voice.elevenlabs_voice_id,
@@ -551,9 +564,9 @@ export function ChatScreen({
     if (!autoAudioEnabled || autoAudioSubmitting || !textToSpeechConfiguration || !downloads.status) return;
     const entries: AudioDownloadBatchEntry[] = [];
     for (const { entry } of transcriptEntries) {
-      if (handledAudioEntries.current.has(entry.id) || !canReadEntry(entry)) continue;
+      if (handledAudioEntries.current.has(entry.id) || !canReadEntry(entry, canStreamSpeech(entry))) continue;
       handledAudioEntries.current.add(entry.id);
-      if (cachedAudioIds?.has(entry.id) || audioJobs.has(entry.id) || !visibleEntryText(entry.kind, entry.text).trim()) continue;
+      if (cachedAudioIds?.has(entry.id) || audioJobs.has(entry.id) || (entry.status === 'complete' && !visibleEntryText(entry.kind, entry.text).trim())) continue;
       entries.push(speechRequest(entry));
     }
     if (entries.length === 0) return;
@@ -568,7 +581,7 @@ export function ChatScreen({
       .finally(() => setAutoAudioSubmitting(false));
   }, [audioConversationKey, state.audioCacheClearCount, autoAudioEnabled, autoAudioSubmitting,
     textToSpeechConfiguration, transcriptEntries, cachedAudioIds, audioJobs, downloads.status,
-    downloads.unavailable, downloads.submitBatch, speechRequest, state.bootstrap?.vault_name]);
+    downloads.unavailable, downloads.submitBatch, speechRequest, canStreamSpeech, state.bootstrap?.vault_name]);
 
   function toggleAutoAudio() {
     setActionError(null);
@@ -589,7 +602,7 @@ export function ChatScreen({
   }
 
   function toggleSpeech(entry: SessionSnapshot['transcript'][number]) {
-    if (!snapshot || !canReadEntry(entry) || (!entry.has_cached_audio && !textToSpeechConfiguration)) return;
+    if (!snapshot || !canReadEntry(entry, canStreamSpeech(entry)) || (!entry.has_cached_audio && !textToSpeechConfiguration)) return;
     const stopping = speechSelection.current === entry.id && textToSpeechSession.current;
     stopSpeech();
     if (stopping) return;
@@ -717,7 +730,7 @@ export function ChatScreen({
         handledSpeechEntries.current.add(id);
         continue;
       }
-      if (!canReadEntry(entry) || (!cachedAudioIds?.has(id) && !audioJobs.has(id))) return;
+      if (!canReadEntry(entry, canStreamSpeech(entry)) || (!cachedAudioIds?.has(id) && !audioJobs.has(id))) return;
       handledSpeechEntries.current.add(id);
       automaticSpeech.current = true;
       if (missingAudioRetry.current !== id) missingAudioRetry.current = null;
@@ -1147,7 +1160,7 @@ export function ChatScreen({
                   speechState={spokenEntry?.id === entry.id ? spokenEntry.state
                     : audioJobs.get(entry.id)?.state ?? 'idle'}
                   speechError={audioJobs.get(entry.id)?.error}
-                  speechAvailable={textToSpeechConfiguration !== null || (entry.has_cached_audio === true && downloads.status !== null)}
+                  speechAvailable={(textToSpeechConfiguration !== null && (entry.status !== 'streaming' || canStreamSpeech(entry))) || (entry.has_cached_audio === true && downloads.status !== null)}
                 />
               </Fragment>
             ))}
@@ -1174,7 +1187,7 @@ export function ChatScreen({
               speechState={spokenEntry?.id === entry.id ? spokenEntry.state
                 : audioJobs.get(entry.id)?.state ?? 'idle'}
               speechError={audioJobs.get(entry.id)?.error}
-              speechAvailable={textToSpeechConfiguration !== null || (entry.has_cached_audio === true && downloads.status !== null)}
+              speechAvailable={(textToSpeechConfiguration !== null && (entry.status !== 'streaming' || canStreamSpeech(entry))) || (entry.has_cached_audio === true && downloads.status !== null)}
             />
           </Fragment>
         ))}

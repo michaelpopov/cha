@@ -309,6 +309,7 @@ add_library(cha_lib STATIC
     src/app/application_config.cpp
     src/app/assistant_service.cpp
     src/providers/voice_output.cpp
+    src/providers/voice_websocket.cpp
     src/app/r2_database_transfer.cpp
     src/workspace/workspace.cpp
     src/workspace/workspace_config_store.cpp
@@ -554,6 +555,7 @@ if(BUILD_TESTING)
         tests/runtime/unit_session_output.cpp
         tests/app/unit_session_retirement.cpp
         tests/providers/unit_voice_output.cpp
+        tests/providers/unit_voice_websocket.cpp
         tests/media/unit_audio_download.cpp
         tests/media/unit_xai_transcript.cpp
         tests/media/unit_xai_voice.cpp

@@ -364,35 +364,37 @@ void Application::release_resource(
 }
 
 AudioAcceptance Application::start_audio(
-    std::string_view forum_id,
-    std::string_view session_id,
-    EntryId entry_id,
-    AudioDownloadRequest request,
-    std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    try {
-        return impl_->audio_downloads->submit(
-            {std::string(forum_id), std::string(session_id)},
-            entry_id, request);
-    } catch (const AudioDownloadError& error) {
-        throw_audio_error(error);
-    }
+    std::string_view forum_id, std::string_view session_id, EntryId entry_id,
+    AudioDownloadRequest request, std::uint64_t epoch) {
+    AudioDownloadBatchRequest batch{request.vault_name, {{entry_id, std::move(request.synthesis)}}};
+    return start_audio_batch(forum_id, session_id, std::move(batch), epoch).at(0);
 }
 
 std::vector<AudioAcceptance> Application::start_audio_batch(
-    std::string_view forum_id,
-    std::string_view session_id,
-    AudioDownloadBatchRequest request,
-    std::uint64_t epoch) {
+    std::string_view forum_id, std::string_view session_id,
+    AudioDownloadBatchRequest request, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
+    const FullSessionId identity{std::string(forum_id), std::string(session_id)};
     try {
-        return impl_->audio_downloads->submit_batch(
-            {std::string(forum_id), std::string(session_id)}, request);
-    } catch (const AudioDownloadError& error) {
-        throw_audio_error(error);
-    }
+        if (auto live = impl_->live_sessions->lookup(identity, epoch)) {
+            struct Admission {
+                std::vector<AudioAcceptance> accepted;
+                std::exception_ptr failure;
+            };
+            auto admission = std::make_shared<Admission>();
+            const auto result = live->submit(SnapshotCommand{[owner = impl_.get(), identity,
+                request = std::move(request), admission](std::span<const TranscriptEntry> entries) {
+                try { admission->accepted = owner->audio_downloads->submit_batch(identity, request, entries); }
+                catch (...) { admission->failure = std::current_exception(); }
+            }}, impl_->settings.command_deadline);
+            if (const auto* code = std::get_if<ErrorCode>(&result)) throw ApplicationError(*code);
+            if (const auto* failure = std::get_if<CommandFailure>(&result)) throw ApplicationError(failure->code, failure->message);
+            if (admission->failure) std::rethrow_exception(admission->failure);
+            return std::move(admission->accepted);
+        }
+        return impl_->audio_downloads->submit_batch(identity, request);
+    } catch (const AudioDownloadError& error) { throw_audio_error(error); }
 }
 
 AudioDownloadStatus Application::audio_status(

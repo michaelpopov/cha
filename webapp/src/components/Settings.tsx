@@ -1551,11 +1551,11 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     useState<VoiceOutputSettings | null | undefined>(undefined);
   const [output, setOutput] = useState<VoiceOutputSettings>(defaultVoiceOutput([]));
   const [outputProvider, setOutputProvider] = useState<'fishaudio' | 'elevenlabs'>('fishaudio');
-  const elevenLabsDefaults = { url: 'https://api.elevenlabs.io/v1/text-to-speech',
+  const elevenLabsDefaults: NonNullable<VoiceOutputSettings['elevenlabs']> = { url: 'https://api.elevenlabs.io/v1/text-to-speech',
     model: 'eleven_multilingual_v2', api_key: '', output_format: 'mp3_44100_128' };
   const providerOutput = outputProvider === 'elevenlabs'
     ? output.elevenlabs ?? elevenLabsDefaults : output;
-  function changeOutput(field: 'url' | 'model' | 'api_key' | 'output_format', value: string) {
+  function changeOutput(field: 'url' | 'model' | 'api_key' | 'output_format' | 'connection', value: string) {
     setOutput((current) => outputProvider === 'elevenlabs'
       ? { ...current, elevenlabs: { ...(current.elevenlabs ?? elevenLabsDefaults), [field]: value } }
       : { ...current, [field]: value });
@@ -1633,6 +1633,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     || input.send_phrase !== inputBaseline.send_phrase;
   const outputDirty = output.url !== outputBaseline.url
     || output.model !== outputBaseline.model
+    || (output.connection ?? 'http') !== (outputBaseline.connection ?? 'http')
     || output.api_key !== outputBaseline.api_key
     || output.output_format !== outputBaseline.output_format
     || output.default_voice !== outputBaseline.default_voice
@@ -1727,12 +1728,14 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
       const updatedOutput = await client.saveVoiceOutputSettings({
         url: output.url,
         model: output.model,
+        ...(output.connection ? { connection: output.connection } : {}),
         api_key: output.api_key,
         output_format: output.output_format.trim(),
         default_voice: output.default_voice,
         ...(output.elevenlabs?.api_key ? { elevenlabs: {
           url: output.elevenlabs.url, model: output.elevenlabs.model,
           api_key: output.elevenlabs.api_key, output_format: output.elevenlabs.output_format,
+          ...(output.elevenlabs.connection ? { connection: output.elevenlabs.connection } : {}),
         } } : {}),
       });
       setSavedOutput(updatedOutput);
@@ -1780,6 +1783,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
             <label>Output provider<select className="cha-form-control" value={outputProvider} onChange={(event) => setOutputProvider(event.target.value as typeof outputProvider)}><option value="fishaudio">FishAudio</option><option value="elevenlabs">ElevenLabs</option></select></label>
             <label>Output URL endpoint<input className="cha-form-control" onChange={(event) => changeOutput('url', event.target.value)} type="url" value={providerOutput.url} /></label>
             <label>Output model name<input className="cha-form-control" onChange={(event) => changeOutput('model', event.target.value)} value={providerOutput.model} /></label>
+            <label>Connection<select className="cha-form-control" value={providerOutput.connection ?? 'http'} onChange={(event) => changeOutput('connection', event.target.value)}><option value="http">HTTP</option><option value="websocket">WebSocket</option></select></label>
             <label>Output API key name<select className="cha-form-control" onChange={(event) => changeOutput('api_key', event.target.value)} value={providerOutput.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
             <label>Output format<input className="cha-form-control" onChange={(event) => changeOutput('output_format', event.target.value)} value={providerOutput.output_format} /></label>
             <label>Default voice<select className="cha-form-control" onChange={(event) => setOutput({ ...output, default_voice: event.target.value })} value={output.default_voice}><option value="">Select a voice</option>{voices.map((voice) => <option key={voice.id} value={voice.display_name}>{voice.display_name}</option>)}</select></label>

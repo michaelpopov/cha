@@ -918,6 +918,59 @@ describe('live chat', () => {
     await waitFor(() => expect(play).toHaveBeenCalledOnce());
   });
 
+  it.each(['complete', 'cancelled'] as const)('starts WebSocket speech during generation and handles %s without speaking twice', async (terminal) => {
+    const audios = mockAudioPlayback();
+    const pending = new Set<number>();
+    const batch = vi.fn(async (_forum: string, _session: string, request: AudioDownloadBatchRequest): Promise<AudioDownloadBatchAcceptance> => {
+      request.entries.forEach(({ entry_id }) => pending.add(entry_id));
+      return { entries: request.entries.map(({ entry_id }) => ({ entry_id, cached: false, state: 'running' })) };
+    });
+    const client = fixtureClient({
+      getVoiceOutputRuntime: async () => ({ ...voiceOutputRuntimeFixture,
+        connections: { fishaudio: 'websocket', elevenlabs: 'http' } }),
+      getAudioDownloads: async () => ({ cached_entry_ids: [], downloads: [...pending].map((entry_id) => ({ entry_id, state: 'running' })) }),
+      startAudioDownloadBatch: batch,
+    });
+    const resolve = vi.spyOn(client, 'resolveAudioSource');
+    const events = drivableEvents();
+    render(<App client={client} connectSessionEvents={events.connect} />);
+    const entry = { id: 3, kind: 'character' as const, participant_id: 'assistant', display_name: 'Assistant',
+      addressed_to: '', addressed_to_name: '', text: 'First sentence. More', status: 'streaming' as const, created_at: null };
+    await attachInitial(events, { ...snapshotFixture, transcript: [entry] });
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto audio response' }));
+    await waitFor(() => expect(audios).toHaveLength(1));
+    expect(batch).toHaveBeenCalledOnce();
+    expect(resolve.mock.calls.map((call) => call[2])).toEqual([3]);
+    act(() => events.handlers[0].onSnapshot({ ...snapshotFixture,
+      transcript: [{ ...entry, text: 'First sentence. More text.' }] }));
+    expect(batch).toHaveBeenCalledOnce();
+    act(() => events.handlers[0].onSnapshot({ ...snapshotFixture,
+      transcript: [{ ...entry, text: 'First sentence. More text.', status: terminal, created_at: 1 }] }));
+    if (terminal === 'cancelled') await waitFor(() => expect(audios[0].pause).toHaveBeenCalledOnce());
+    else {
+      expect(audios[0].pause).not.toHaveBeenCalled();
+      act(() => audios[0].dispatchEvent(new Event('ended')));
+      await waitFor(() => expect(audios[0].pause).toHaveBeenCalledOnce());
+    }
+    expect(batch).toHaveBeenCalledOnce();
+    expect(resolve).toHaveBeenCalledOnce();
+  });
+
+  it('offers manual WebSocket speech for a streaming reply while HTTP still waits', async () => {
+    const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
+    const start = vi.fn(async (_forum: string, _session: string, entry_id: number): Promise<AudioDownloadAcceptance> => ({ entry_id, cached: false, state: 'running' }));
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => ({ ...voiceOutputRuntimeFixture,
+        connections: { fishaudio: 'websocket', elevenlabs: 'http' } }),
+      startAudioDownload: start,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, transcriptSnapshot());
+    fireEvent.click(await screen.findByRole('button', { name: "Generate audio for Assistant's response" }));
+    await waitFor(() => expect(play).toHaveBeenCalledOnce());
+    expect(start).toHaveBeenCalledOnce();
+  });
+
   it('plays new character replies once in transcript order even when audio downloads finish out of order', async () => {
     const audios = mockAudioPlayback();
     const cached = [1];

@@ -9,6 +9,7 @@
 
 #include <curl/curl.h>
 #include <cmath>
+#include <cctype>
 #include <memory>
 #include <regex>
 #include <stdexcept>
@@ -125,6 +126,59 @@ bool perform_transfer(CURL* curl, const char* error_buffer, const std::function<
 }
 } // namespace
 
+std::string speech_text_prefix(std::string_view source, std::string_view provider, bool complete) {
+    if (!complete) {
+        std::size_t stable = 0;
+        std::vector<std::string> markers;
+        int brackets = 0, parentheses = 0;
+        std::size_t code = 0;
+        bool escaped = false;
+        for (std::size_t i = 0; i < source.size(); ++i) {
+            const char c = source[i];
+            if (escaped) {
+                escaped = false;
+                if (c != '*' && c != '_' && c != '~' && c != '`') continue;
+            }
+            if (c == '\\') { escaped = true; continue; }
+            if (c == '`' || c == '~' || c == '*' || c == '_') {
+                auto end = i + 1;
+                while (end < source.size() && source[end] == c) ++end;
+                const auto token = std::string(source.substr(i, end - i));
+                // Underscores in identifiers are ordinary speech text.
+                const auto word = [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_'; };
+                if (c == '_' && i && word(source[i - 1])
+                    && (markers.empty() || markers.back() != token || (end < source.size() && word(source[end])))) { i = end - 1; continue; }
+                if (c == '`') { if (!code) code = end - i; else if (code == end - i) code = 0; }
+                else if (!code) {
+                    if (!markers.empty() && markers.back() == token) markers.pop_back();
+                    else markers.push_back(token);
+                }
+                i = end - 1;
+                continue;
+            }
+            if (code) continue;
+            if (c == '[') ++brackets;
+            if (c == ']' && brackets) --brackets;
+            if (c == '(') ++parentheses;
+            if (c == ')' && parentheses) --parentheses;
+            if (!markers.empty() || brackets || parentheses) continue;
+            // Include the separator so list/heading prefixes are recognized.
+            // Hold the current word and any unfinished Markdown construct.
+            if (std::isspace(static_cast<unsigned char>(c))) stable = i + 1;
+        }
+        // A line of markers can still become a horizontal rule. Wait for its
+        // end before publishing text that the final cleanup would remove.
+        if (stable && source[stable - 1] != '\n' && source[stable - 1] != '\r') {
+            const auto newline = source.substr(0, stable).find_last_of("\r\n");
+            const auto line_start = newline == std::string_view::npos ? 0 : newline + 1;
+            if (source.substr(line_start, stable - line_start).find_first_not_of(" \t-*_=") == std::string_view::npos)
+                stable = line_start;
+        }
+        source = source.substr(0, stable);
+    }
+    return prepare_speech_text(source, provider == "elevenlabs" ? "\n\n" : " [long pause] ");
+}
+
 std::string entry_speech_text(const EntryAudioLookup& entry) {
     // Match the text shown in chat, including legacy echoed timestamps.
     static const std::regex timestamp_prefix(
@@ -183,6 +237,8 @@ std::optional<EntryAudio> download_voice_output(
     const WorkspaceVoiceProviderOutput& output, const std::string& key,
     const VoiceOutputRequest& request, const std::function<bool()>& cancelled,
     const AudioChunkCallback& on_audio) {
+    if (output.connection == "websocket")
+        return stream_voice_websocket(output, key, request, cancelled, on_audio);
     auto result = transfer_voice_output(output, key, request, cancelled, on_audio);
     if (!result) return std::nullopt;
     if (result->status != 200) throw std::runtime_error(voice_output_http_error_message(request.provider, result->status, result->audio.audio));
@@ -211,8 +267,13 @@ VoiceOutputTransfer VoiceOutputProxy::synthesize(
         std::atomic_size_t& slots;
         ~ReleaseSlot() { slots++; }
     } release{slots_};
-    auto result = transfer_voice_output(
-        output, key, request, [&] { return stopped_ || cancelled(); }, on_audio);
+    const auto stop = [&] { return stopped_ || cancelled(); };
+    if (output.connection == "websocket") {
+        auto audio = stream_voice_websocket(output, key, request, stop, on_audio);
+        if (!audio) return {.cancelled = true};
+        return {.status = 200, .audio = std::move(*audio)};
+    }
+    auto result = transfer_voice_output(output, key, request, stop, on_audio);
     if (!result) return {.cancelled = true};
     return {
         .status = result->status,
@@ -281,14 +342,14 @@ std::string voice_output_http_error_message(std::string_view provider, long stat
 }
 
 VoiceOutputRequest make_voice_output_request(
-    const WorkspaceVoiceProviderOutput& output, std::string_view text, const VoiceSynthesis& synthesis) {
+    const WorkspaceVoiceProviderOutput& output, std::optional<std::string_view> text, const VoiceSynthesis& synthesis) {
     validate_voice_output_provider(synthesis.provider);
     if (synthesis.provider == "fishaudio") return make_fish_audio_request(output, text, synthesis);
     if (synthesis.decoding_failure) std::rethrow_exception(synthesis.decoding_failure);
     if (!synthesis.reference_id || synthesis.reference_id->empty())
         throw std::invalid_argument("Missing voice ID");
-    const auto spoken = prepare_speech_text(text, "\n\n");
-    if (spoken.empty()) throw std::invalid_argument("Missing speech text");
+    const auto spoken = text ? prepare_speech_text(*text, "\n\n") : std::string{};
+    if (text && spoken.empty()) throw std::invalid_argument("Missing speech text");
     for (const auto& name : synthesis.ignored_settings)
         log_warn("Ignoring unsupported ElevenLabs voice setting: " + name);
     char* escaped = curl_easy_escape(nullptr, synthesis.reference_id->c_str(),
@@ -303,6 +364,7 @@ VoiceOutputRequest make_voice_output_request(
         .provider = "elevenlabs",
         .url = base + "/" + escaped + "/stream?output_format="
             + normalize_elevenlabs_output_format(output.output_format),
+        .voice_id = *synthesis.reference_id,
     };
     if (synthesis.settings.speed) {
         if (elevenlabs_supports_speed(output.model)) {
@@ -315,15 +377,15 @@ VoiceOutputRequest make_voice_output_request(
 }
 
 VoiceOutputRequest make_fish_audio_request(
-    const WorkspaceVoiceProviderOutput& output, std::string_view text, const VoiceSynthesis& synthesis) {
+    const WorkspaceVoiceProviderOutput& output, std::optional<std::string_view> text, const VoiceSynthesis& synthesis) {
     if (!synthesis.reference_id) throw std::invalid_argument("Invalid FishAudio request");
-    if (text.empty() || synthesis.reference_id->empty()) throw std::invalid_argument("Missing text or voice ID");
+    if ((text && text->empty()) || synthesis.reference_id->empty()) throw std::invalid_argument("Missing text or voice ID");
     if (synthesis.decoding_failure) std::rethrow_exception(synthesis.decoding_failure);
     for (const auto& name : synthesis.ignored_settings) {
         log_warn("Ignoring unsupported FishAudio voice setting: " + name);
     }
-    const auto spoken = prepare_speech_text(text);
-    if (spoken.empty()) throw std::invalid_argument("Missing speech text");
+    const auto spoken = text ? prepare_speech_text(*text) : std::string{};
+    if (text && spoken.empty()) throw std::invalid_argument("Missing speech text");
     VoiceOutputRequest request{
         .model = output.model,
         .body = {{"text", spoken}, {"reference_id", *synthesis.reference_id}, {"format", output.output_format},

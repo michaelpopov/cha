@@ -529,30 +529,36 @@ VoiceInputSettings parse_voice_input_settings(const nlohmann::json& json) {
 }
 
 VoiceOutputSettings parse_voice_output_settings(const nlohmann::json& json) {
+    auto fields = json;
+    fields.erase("connection");
     if (json.contains("elevenlabs"))
-        exact_keys(json, {"url", "model", "api_key", "output_format", "default_voice", "elevenlabs"});
+        exact_keys(fields, {"url", "model", "api_key", "output_format", "default_voice", "elevenlabs"});
     else
-        exact_keys(json, {"url", "model", "api_key", "output_format", "default_voice"});
+        exact_keys(fields, {"url", "model", "api_key", "output_format", "default_voice"});
     VoiceOutputSettings settings{
         .url = required_field<std::string>(json, "url"),
         .model = required_field<std::string>(json, "model"),
         .api_key = required_field<std::string>(json, "api_key"),
         .output_format = required_field<std::string>(json, "output_format"),
         .default_voice = required_field<std::string>(json, "default_voice"),
+        .connection = json.value("connection", std::string("http")),
     };
     if (json.contains("elevenlabs") && !json["elevenlabs"].is_null()) {
         const auto& eleven = json["elevenlabs"];
+        auto eleven_fields = eleven;
+        eleven_fields.erase("connection");
         if (eleven.contains("supports_speed")) {
-            exact_keys(eleven, {"url", "model", "api_key", "output_format", "supports_speed"});
+            exact_keys(eleven_fields, {"url", "model", "api_key", "output_format", "supports_speed"});
             (void)required_field<bool>(eleven, "supports_speed");
         } else {
-            exact_keys(eleven, {"url", "model", "api_key", "output_format"});
+            exact_keys(eleven_fields, {"url", "model", "api_key", "output_format"});
         }
         settings.elevenlabs = ElevenLabsOutputSettings{
             .url = required_field<std::string>(eleven, "url"),
             .model = required_field<std::string>(eleven, "model"),
             .api_key = required_field<std::string>(eleven, "api_key"),
             .output_format = required_field<std::string>(eleven, "output_format"),
+            .connection = eleven.value("connection", std::string("http")),
         };
     }
     return settings;

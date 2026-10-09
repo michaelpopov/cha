@@ -630,6 +630,58 @@ TEST(LiveSession, PublishesExactAppendsAndSnapshotsForStructuralUpdates) {
     controls->finish();
 }
 
+TEST(LiveSession, FeedsAudioFromAnswerEventsWithoutReasoningAndClosesOnShutdown) {
+    test::TemporarySessionFile file("live_session_audio");
+    auto controls = std::make_shared<test::BackendControls>();
+    std::mutex mutex;
+    std::vector<TranscriptEntry> replies;
+    bool closed = false;
+    LiveSessionHost host(test_settings(), [path = file.path(), controls, &mutex, &replies, &closed](
+        const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
+        auto opened = test::open_scripted_session(identity, path, notifier, controls);
+        opened.update_audio = [&mutex, &replies, &closed](std::span<const TranscriptEntry> entries) {
+            std::lock_guard lock(mutex);
+            if (entries.empty()) closed = true;
+            for (const auto& entry : entries) if (entry.kind == EntryKind::character) replies.push_back(entry);
+        };
+        return opened;
+    });
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(host->submit(RawCommand{"Question"}, 2s)));
+    ASSERT_TRUE(controls->wait_until_running());
+    controls->emit_reasoning("Private reasoning");
+    controls->emit_answer("**First sentence.** More");
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    bool streaming = false;
+    while (!streaming && std::chrono::steady_clock::now() < deadline) {
+        {
+            std::lock_guard lock(mutex);
+            streaming = !replies.empty() && replies.back().status == EntryStatus::streaming;
+        }
+        std::this_thread::sleep_for(2ms);
+    }
+    ASSERT_TRUE(streaming);
+    std::string inspected;
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(host->submit(SnapshotCommand{[&](auto entries) {
+        for (const auto& entry : entries) if (entry.kind == EntryKind::character) inspected = entry.text;
+    }}, 2s)));
+    EXPECT_EQ(inspected, "**First sentence.** More");
+    controls->finish();
+    bool completed = false;
+    while (!completed && std::chrono::steady_clock::now() < deadline) {
+        {
+            std::lock_guard lock(mutex);
+            completed = !replies.empty() && replies.back().status == EntryStatus::complete;
+        }
+        std::this_thread::sleep_for(2ms);
+    }
+    ASSERT_TRUE(completed);
+    host->request_shutdown();
+    ASSERT_TRUE(wait_for_finished(host.handle()));
+    std::lock_guard lock(mutex);
+    EXPECT_TRUE(closed);
+    for (const auto& reply : replies) EXPECT_EQ(reply.text.find("Private reasoning"), std::string::npos);
+}
+
 TEST(LiveSession, StalledRendererDefersSnapshotCaptureUntilItRequestsDelivery) {
     test::TemporarySessionFile file("live_session_dirty_projection");
     auto controls = std::make_shared<test::BackendControls>();

@@ -47,7 +47,11 @@ protected:
             journal.record_entry(make_character_entry(id, "guide", "Guide", std::to_string(id), EntryStatus::complete));
         vault = std::make_unique<CurrentVault>(VaultDefinition{.name = "Test", .data = path});
     }
-    AudioDownloadRequest input() { return {"Test", {.reference_id = "voice"}}; }
+    AudioDownloadBatchRequest input(std::initializer_list<EntryId> ids) {
+        AudioDownloadBatchRequest request{"Test", {}};
+        for (const auto id : ids) request.entries.push_back({id, {.reference_id = "voice"}});
+        return request;
+    }
     Json http_input() { return {{"vault_name", "Test"}, {"reference_id", "voice"}}; }
     std::unique_ptr<AudioDownloadManager> make(AudioDownloadManager::Transport transfer) {
         return std::make_unique<AudioDownloadManager>(
@@ -87,7 +91,7 @@ TEST_F(AudioDownloads, StreamsCleanedReplyAndCachesAudioWithoutChangingTranscrip
             return EntryAudio{"firstsecond", "audio/mpeg"};
         });
     ReleaseOnExit audio_cleanup{release_audio};
-    downloads->submit(session, 6, input());
+    downloads->submit_batch(session, input({6}));
     ASSERT_TRUE(eventually([&] { return first_chunk.load(); }));
     const auto stream = downloads->stream(session, 6, "Test");
     ASSERT_TRUE(stream);
@@ -106,7 +110,7 @@ TEST_F(AudioDownloads, StreamsCleanedReplyAndCachesAudioWithoutChangingTranscrip
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
     EXPECT_EQ(downloads->audio(session, 6, "Test")->audio, "firstsecond");
     EXPECT_EQ(sessions->lookup_entry_audio(session, 6)->entry_text, original);
-    EXPECT_EQ(downloads->submit(session, 6, input()).kind, AudioAcceptanceKind::cached);
+    EXPECT_EQ(downloads->submit_batch(session, input({6})).at(0).kind, AudioAcceptanceKind::cached);
     const auto tail = downloads->audio_chunk(session, 6, "Test", 5);
     ASSERT_TRUE(tail);
     EXPECT_EQ(tail->body, "second");
@@ -124,7 +128,7 @@ TEST_F(AudioDownloads, HumanEntriesCannotGenerateAudio) {
             ADD_FAILURE() << "Human entries must not call FishAudio";
             return std::nullopt;
         });
-    EXPECT_THROW(downloads->submit(session, 6, input()), std::invalid_argument);
+    EXPECT_THROW(downloads->submit_batch(session, input({6})), std::invalid_argument);
     const AudioDownloadBatchRequest batch{"Test", {
         {1, {.reference_id = "voice"}}, {6, {.reference_id = "voice"}},
     }};
@@ -324,9 +328,9 @@ TEST_F(AudioDownloads, ThreeWorkersQueueFourthAndDeduplicate) {
         while (!released.contains(text) && !cancel()) cv.wait_for(lock, 5ms);
         return cancel() ? std::nullopt : std::optional<EntryAudio>{{text, "audio/mpeg"}};
     });
-    for (EntryId id = 1; id <= 4; ++id) downloads->submit(session, id, input());
+    downloads->submit_batch(session, input({1, 2, 3, 4}));
     ASSERT_TRUE(eventually([&] { std::lock_guard lock(mutex); return started.size() == 3; }));
-    const auto duplicate = downloads->submit(session, 4, {"Test", {}}); // Existing job wins over new inputs.
+    const auto duplicate = downloads->submit_batch(session, {"Test", {{4, {}}}}).at(0); // Existing job wins over new inputs.
     EXPECT_EQ(duplicate.kind, AudioAcceptanceKind::queued);
     {
         std::lock_guard lock(mutex);
@@ -334,13 +338,13 @@ TEST_F(AudioDownloads, ThreeWorkersQueueFourthAndDeduplicate) {
         released.insert("1"); cv.notify_all();
     }
     ASSERT_TRUE(eventually([&] { std::lock_guard lock(mutex); return started.contains("4"); }));
-    downloads->submit(session, 2, input());
+    downloads->submit_batch(session, input({2}));
     {
         std::lock_guard lock(mutex);
         released = {"1", "2", "3", "4"}; cv.notify_all();
     }
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).size() == 4; }));
-    EXPECT_EQ(downloads->submit(session, 1, input()).kind, AudioAcceptanceKind::cached);
+    EXPECT_EQ(downloads->submit_batch(session, input({1})).at(0).kind, AudioAcceptanceKind::cached);
 }
 TEST_F(AudioDownloads, PlaybackSharesTheDownloadBeforeItIsCached) {
     std::atomic_bool release{}, first_chunk{};
@@ -356,14 +360,14 @@ TEST_F(AudioDownloads, PlaybackSharesTheDownloadBeforeItIsCached) {
         return EntryAudio{"firstsecond", "audio/mpeg"};
     });
     ReleaseOnExit cleanup{release};
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     ASSERT_TRUE(eventually([&] { return first_chunk.load(); }));
     auto stream = downloads->stream(session, 1, "Test");
     ASSERT_TRUE(stream);
     EXPECT_EQ(stream->read(0)->body, "first");
     EXPECT_FALSE(stream->read(0)->complete);
     EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     EXPECT_EQ(downloads->stream(session, 1, "Test"), stream);
     release = true;
     ASSERT_TRUE(eventually([&] { return stream->read(0)->complete; }));
@@ -383,7 +387,7 @@ TEST_F(AudioDownloads, PartialFailureDoesNotRetryOrCacheAndClearRevokesReaders) 
         throw std::runtime_error("Connection lost");
     });
     ReleaseOnExit cleanup{release};
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     auto stream = downloads->stream(session, 1, "Test");
     ASSERT_TRUE(stream);
     ASSERT_TRUE(eventually([&] { return !stream->empty(); }));
@@ -395,7 +399,7 @@ TEST_F(AudioDownloads, PartialFailureDoesNotRetryOrCacheAndClearRevokesReaders) 
     EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
 
     release = false;
-    downloads->submit(session, 2, input());
+    downloads->submit_batch(session, input({2}));
     auto second = downloads->stream(session, 2, "Test");
     ASSERT_TRUE(second);
     downloads->clear(session);
@@ -411,7 +415,7 @@ TEST_F(AudioDownloads, FourAttemptsWithFiftyMillisecondWaits) {
         attempts.push_back(std::chrono::steady_clock::now());
         throw std::runtime_error("upstream failed");
     });
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     ASSERT_TRUE(eventually([&] {
         const auto status = downloads->status(session, "Test");
         return !status.downloads.empty() && status.downloads[0].state == AudioJobState::failed;
@@ -432,17 +436,17 @@ TEST_F(AudioDownloads, RetryWaitDoesNotConsumeQueueWakeup) {
         while (!cancel() && !(text == "1" && release_first)) std::this_thread::sleep_for(1ms);
         return cancel() ? std::nullopt : std::optional<EntryAudio>{{"audio", "audio/mpeg"}};
     });
-    downloads->submit(session, 1, input());
-    downloads->submit(session, 2, input());
+    downloads->submit_batch(session, input({1}));
+    downloads->submit_batch(session, input({2}));
     ASSERT_TRUE(eventually([&] { return first_started && second_started; }));
-    downloads->submit(session, 3, input());
+    downloads->submit_batch(session, input({3}));
     ASSERT_TRUE(eventually([&] { return third_attempts == 1; }));
     // Let worker 3 enter its retry wait before worker 1 becomes idle.
     std::this_thread::sleep_for(10ms);
     release_first = true;
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
     std::this_thread::sleep_for(5ms);
-    downloads->submit(session, 4, input());
+    downloads->submit_batch(session, input({4}));
     ASSERT_TRUE(eventually([&] { return fourth_started.load(); }));
     EXPECT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(4); }));
 }
@@ -456,7 +460,7 @@ TEST_F(AudioDownloads, OpusAudioWithParametersIsSavedWithoutRetry) {
         EXPECT_EQ(request.body.at("format"), "opus");
         return EntryAudio{"opus-audio", "audio/opus; codecs=opus"};
     });
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
     const auto saved = downloads->audio(session, 1, "Test");
     ASSERT_TRUE(saved);
@@ -472,7 +476,7 @@ TEST_F(AudioDownloads, DeletedKeyReportsNotConfiguredButCachedAudioStillWorks) {
     });
     keys->remove(config->snapshot()->voice_output()->fishaudio->api_key_id);
     try {
-        downloads->submit(session, 1, input());
+        downloads->submit_batch(session, input({1}));
         FAIL() << "An uncached entry needs a configured API key";
     } catch (const AudioDownloadError& error) {
         EXPECT_EQ(error.status, 404);
@@ -482,7 +486,7 @@ TEST_F(AudioDownloads, DeletedKeyReportsNotConfiguredButCachedAudioStillWorks) {
     const auto entry = sessions->lookup_entry_audio(session, 1, false);
     ASSERT_TRUE(entry);
     sessions->save_entry_audio(*entry, {"cached", "audio/mpeg"});
-    EXPECT_EQ(downloads->submit(session, 1, input()).kind, AudioAcceptanceKind::cached);
+    EXPECT_EQ(downloads->submit_batch(session, input({1})).at(0).kind, AudioAcceptanceKind::cached);
     EXPECT_EQ(downloads->audio(session, 1, "Test")->audio, "cached");
     EXPECT_EQ(transfers, 0);
 }
@@ -500,7 +504,7 @@ TEST_F(AudioDownloads, ResolvesCharacterVoiceAndSpeedWhenNoVoiceIsSupplied) {
         EXPECT_EQ(request.body.at("prosody").at("speed"), 1.15);
         return EntryAudio{"audio", "audio/mpeg"};
     });
-    downloads->submit(session, 1, {"Test", {}});
+    downloads->submit_batch(session, {"Test", {{1, {}}}});
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
 }
 
@@ -515,14 +519,14 @@ TEST_F(AudioDownloads, ResolvesDefaultVoiceAndDeduplicatesPendingRequests) {
         return cancel() ? std::nullopt : std::optional<EntryAudio>{{"audio", "audio/mpeg"}};
     });
     ReleaseOnExit cleanup{release};
-    EXPECT_EQ(downloads->submit(session, 1, {"Test", {}}).kind, AudioAcceptanceKind::queued);
+    EXPECT_EQ(downloads->submit_batch(session, {"Test", {{1, {}}}}).at(0).kind, AudioAcceptanceKind::queued);
     ASSERT_TRUE(eventually([&] { return transfers.load() == 1; }));
-    EXPECT_EQ(downloads->submit(session, 1, {"Test", {}}).kind, AudioAcceptanceKind::running);
+    EXPECT_EQ(downloads->submit_batch(session, {"Test", {{1, {}}}}).at(0).kind, AudioAcceptanceKind::running);
     EXPECT_EQ(downloads->status(session, "Test").downloads.size(), 1u);
     release = true;
     // The worker saves the audio before it removes the finished job.
     ASSERT_TRUE(eventually([&] {
-        return downloads->submit(session, 1, {"Test", {}}).kind == AudioAcceptanceKind::cached;
+        return downloads->submit_batch(session, {"Test", {{1, {}}}}).at(0).kind == AudioAcceptanceKind::cached;
     }));
     EXPECT_EQ(transfers, 1);
 }
@@ -534,7 +538,7 @@ TEST_F(AudioDownloads, DisabledDownloadsReportEmptyStatusButRejectWork) {
         EXPECT_TRUE(status.cached_entry_ids.empty());
         EXPECT_TRUE(status.downloads.empty());
     }
-    EXPECT_THROW(downloads.submit(session, 1, input()), AudioDownloadError);
+    EXPECT_THROW(downloads.submit_batch(session, input({1})), AudioDownloadError);
 }
 TEST_F(AudioDownloads, DeletedQueuedEntryIsDroppedBeforeTransfer) {
     std::mutex mutex;
@@ -548,7 +552,7 @@ TEST_F(AudioDownloads, DeletedQueuedEntryIsDroppedBeforeTransfer) {
         while (!release && !cancel()) std::this_thread::sleep_for(2ms);
         return cancel() ? std::nullopt : std::optional<EntryAudio>{{"audio", "audio/mpeg"}};
     });
-    for (EntryId id = 1; id <= 4; ++id) downloads->submit(session, id, input());
+    downloads->submit_batch(session, input({1, 2, 3, 4}));
     ASSERT_TRUE(eventually([&] { std::lock_guard lock(mutex); return started.size() == 3; }));
     {
         storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
@@ -567,7 +571,7 @@ TEST_F(AudioDownloads, FourthAttemptCanSucceed) {
         if (++attempts < 4) throw std::runtime_error("upstream failed");
         return EntryAudio{"audio", "audio/mpeg"};
     });
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
     EXPECT_EQ(attempts, 4);
 }
@@ -580,12 +584,12 @@ TEST_F(AudioDownloads, CancellationStopsStalledTransferAndPreservesNewWork) {
         canceled = true;
         return std::nullopt;
     });
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     ASSERT_TRUE(eventually([&] { return started.load(); }));
     downloads->pause(); downloads->resume();
     ASSERT_TRUE(eventually([&] { return canceled.load(); }));
     EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
-    downloads->submit(session, 2, input());
+    downloads->submit_batch(session, input({2}));
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(2); }));
     EXPECT_FALSE(sessions->cached_audio_entries(session).contains(1));
     downloads->request_stop();
@@ -597,7 +601,7 @@ TEST_F(AudioDownloads, CancellationWakesRetryWait) {
         ++attempts;
         throw std::runtime_error("upstream failed");
     });
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     ASSERT_TRUE(eventually([&] { return attempts == 1; }));
     downloads->request_stop();
     EXPECT_TRUE(downloads->join_until(std::chrono::steady_clock::now() + 1s));
@@ -611,7 +615,7 @@ TEST_F(AudioDownloads, PersistenceFailureDoesNotRepeatTransferOrSave) {
     auto downloads = make([&](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         ++transfers; return EntryAudio{"audio", "audio/mpeg"};
     });
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     ASSERT_TRUE(eventually([&] {
         const auto status = downloads->status(session, "Test");
         return !status.downloads.empty() && status.downloads[0].state == AudioJobState::failed;
@@ -619,7 +623,7 @@ TEST_F(AudioDownloads, PersistenceFailureDoesNotRepeatTransferOrSave) {
     EXPECT_EQ(transfers, 1);
     EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
     database.execute("DROP TRIGGER reject_audio");
-    const auto retry = downloads->submit(session, 1, input());
+    const auto retry = downloads->submit_batch(session, input({1})).at(0);
     EXPECT_EQ(retry.kind, AudioAcceptanceKind::queued);
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
     EXPECT_EQ(transfers, 2);
@@ -633,11 +637,11 @@ TEST_F(AudioDownloads, ClearCancelsOldCompletionWithoutReplacingNewJob) {
         return EntryAudio{"audio", "audio/mpeg"}; // Simulate a result racing cancellation.
     });
     ReleaseOnExit cleanup{release};
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     ASSERT_TRUE(eventually([&] { return transfers == 1; }));
     downloads->clear(session);
     EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     ASSERT_TRUE(eventually([&] { return transfers == 2; }));
     release = true;
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
@@ -651,7 +655,7 @@ TEST_F(AudioDownloads, DeletedEntryCannotSaveLateAudio) {
         return EntryAudio{"audio", "audio/mpeg"};
     });
     ReleaseOnExit cleanup{release};
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     ASSERT_TRUE(eventually([&] { return started.load(); }));
     const auto stream = downloads->stream(session, 1, "Test");
     ASSERT_TRUE(stream);
@@ -675,7 +679,7 @@ TEST_F(AudioDownloads, OldVaultCompletionCannotSaveAfterSwitchingAwayAndBack) {
         return EntryAudio{"old-vault-audio", "audio/mpeg"};
     });
     ReleaseOnExit cleanup{release};
-    downloads->submit(session, 1, input());
+    downloads->submit_batch(session, input({1}));
     ASSERT_TRUE(eventually([&] { return started.load(); }));
     downloads->pause();
     vault->set(VaultDefinition{.name = "Other", .data = path});
@@ -717,7 +721,6 @@ TEST_F(AudioDownloads, UncachedAudioRejectsInvalidProviders) {
         -> std::optional<EntryAudio> { throw std::runtime_error("Invalid input must not reach transport"); });
     for (const Json& provider : {Json(1), Json(nullptr), Json("eleven")}) {
         const auto synthesis = decode_voice_synthesis({{"provider", provider}});
-        EXPECT_THROW(downloads->submit(session, 1, {"Test", synthesis}), std::invalid_argument);
         EXPECT_THROW(downloads->submit_batch(session, {"Test", {{1, synthesis}}}), std::invalid_argument);
     }
 }
@@ -759,7 +762,7 @@ TEST_F(AudioDownloads, SelectsTheCharacterProviderBeforeItsCredentialAndKeepsFis
         EXPECT_FALSE(request.body.contains("reference_id"));
         return EntryAudio{"eleven-audio", "audio/mpeg"};
     });
-    downloads->submit(session, 1, {"Test", {}});
+    downloads->submit_batch(session, {"Test", {{1, {}}}});
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
     EXPECT_EQ(downloads->audio(session, 1, "Test")->audio, "eleven-audio");
     // An explicit FishAudio voice still uses the original key and request format.
@@ -770,8 +773,183 @@ TEST_F(AudioDownloads, SelectsTheCharacterProviderBeforeItsCredentialAndKeepsFis
         EXPECT_EQ(request.body.at("reference_id"), "voice");
         return EntryAudio{"fish-audio", "audio/mpeg"};
     });
-    fish->submit(session, 2, input());
+    fish->submit_batch(session, input({2}));
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(2); }));
+}
+
+TEST_F(AudioDownloads, LiveSpeechPublishesAudioBeforePersistenceAndCachesTheFlushedClip) {
+    auto output = *config->snapshot()->voice_output();
+    output.fishaudio->connection = "websocket";
+    config->apply_voice_output_update(output);
+    std::atomic_bool started{false}, first{false}, drained{false};
+    std::string spoken;
+    AudioDownloadManager downloads(*sessions, [this] { return vault->get().name; }, true,
+        download_voice_output, [&](const auto&, const auto&, const auto& request, const auto& cancel,
+            const AudioChunkCallback& audio, const VoiceTextInput& input) -> std::optional<EntryAudio> {
+            EXPECT_EQ(request.body.at("text"), "");
+            started = true;
+            while (!cancel()) {
+                auto text = input();
+                spoken += text.text;
+                if (!text.text.empty() && !first) { audio("audio/mpeg", "first-"); first = true; }
+                if (text.complete) {
+                    audio("audio/mpeg", "last");
+                    drained = true;
+                    return EntryAudio{"first-last", "audio/mpeg"};
+                }
+                std::this_thread::sleep_for(2ms);
+            }
+            return {};
+        });
+    auto reply = make_character_entry(6, "guide", "Guide", "", EntryStatus::streaming);
+    downloads.submit_batch(session, input({6}), std::span(&reply, 1));
+    ASSERT_TRUE(eventually([&] { return started.load(); }));
+    EXPECT_FALSE(first);
+    reply.text = "First sentence. **Bold";
+    downloads.update_live(session, std::span(&reply, 1));
+    ASSERT_TRUE(eventually([&] { return first.load(); }));
+    EXPECT_FALSE(drained);
+    EXPECT_FALSE(sessions->lookup_entry_audio(session, 6));
+    auto stream = downloads.stream(session, 6, "Test");
+    ASSERT_TRUE(stream);
+    EXPECT_EQ(stream->read(0)->body, "first-");
+    EXPECT_FALSE(stream->read(0)->complete);
+    reply.text += " across\nchunks.** Final.";
+    downloads.update_live(session, std::span(&reply, 1));
+    reply.status = EntryStatus::complete;
+    SessionJournal journal(path, sessions->prepare(session).session_key);
+    journal.record_entry(reply);
+    downloads.update_live(session, std::span(&reply, 1));
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
+    downloads.request_stop();
+    ASSERT_TRUE(downloads.join_until(std::chrono::steady_clock::now() + 2s));
+    EXPECT_EQ(spoken, "First sentence. Bold across\nchunks. Final.");
+    EXPECT_EQ(sessions->lookup_entry_audio(session, 6)->cached->audio, "first-last");
+    EXPECT_TRUE(stream->read(0)->complete);
+    EXPECT_FALSE(stream->read(0)->failed);
+}
+
+TEST_F(AudioDownloads, LiveSpeechRejectsRewrittenCleanedTextEvenWhenItGrows) {
+    auto output = *config->snapshot()->voice_output();
+    output.fishaudio->connection = "websocket";
+    config->apply_voice_output_update(output);
+    auto reply = make_character_entry(6, "guide", "Guide", "Intro. *emphasis * ", EntryStatus::streaming);
+    const auto first_text = speech_text_prefix(reply.text, "fishaudio", false);
+    const auto final_text = reply.text + "tail* More words than before.";
+    const auto final_speech = speech_text_prefix(final_text, "fishaudio", true);
+    ASSERT_GE(final_speech.size(), first_text.size());
+    ASSERT_FALSE(final_speech.starts_with(first_text));
+    std::atomic_bool first{false}, release{false};
+    std::atomic_int calls{0};
+    AudioDownloadManager downloads(*sessions, [this] { return vault->get().name; }, true,
+        download_voice_output, [&](const auto&, const auto&, const auto&, const auto& cancel,
+            const AudioChunkCallback& audio, const VoiceTextInput& input) -> std::optional<EntryAudio> {
+            ++calls;
+            EXPECT_EQ(input().text, first_text);
+            audio("audio/mpeg", "partial");
+            first = true;
+            while (!release && !cancel()) std::this_thread::sleep_for(2ms);
+            if (cancel()) return {};
+            try { (void)input(); }
+            catch (const std::runtime_error& error) {
+                EXPECT_STREQ(error.what(), "Speech text changed during synthesis.");
+                throw;
+            }
+            ADD_FAILURE() << "A rewritten speech prefix must stop synthesis";
+            return EntryAudio{"partial", "audio/mpeg"};
+        });
+    ReleaseOnExit cleanup{release};
+    downloads.submit_batch(session, input({6}), std::span(&reply, 1));
+    ASSERT_TRUE(eventually([&] { return first.load(); }));
+    const auto stream = downloads.stream(session, 6, "Test");
+    ASSERT_TRUE(stream);
+    reply.text = final_text;
+    reply.status = EntryStatus::complete;
+    SessionJournal journal(path, sessions->prepare(session).session_key);
+    journal.record_entry(reply);
+    downloads.update_live(session, std::span(&reply, 1));
+    release = true;
+    ASSERT_TRUE(eventually([&] {
+        const auto state = downloads.status(session, "Test");
+        return !state.downloads.empty() && state.downloads[0].state == AudioJobState::failed;
+    }));
+    EXPECT_EQ(calls, 1);
+    EXPECT_TRUE(stream->read(0)->failed);
+    EXPECT_FALSE(stream->read(0)->complete);
+    EXPECT_FALSE(sessions->cached_audio_entries(session).contains(6));
+}
+
+TEST_F(AudioDownloads, LiveSpeechCancellationAndVaultChangesRevokeAudioWithoutCaching) {
+    auto output = *config->snapshot()->voice_output();
+    output.fishaudio->connection = "websocket";
+    config->apply_voice_output_update(output);
+    for (const auto action : {"cancel", "fail", "remove", "edit", "vault", "clear"}) {
+        SCOPED_TRACE(action);
+        std::atomic_bool first{false}, stopped{false};
+        AudioDownloadManager downloads(*sessions, [this] { return vault->get().name; }, true,
+            download_voice_output, [&](const auto&, const auto&, const auto&, const auto& cancel,
+                const AudioChunkCallback& audio, const VoiceTextInput&) -> std::optional<EntryAudio> {
+                audio("audio/mpeg", "partial"); first = true;
+                while (!cancel()) std::this_thread::sleep_for(2ms);
+                stopped = true;
+                return EntryAudio{"late", "audio/mpeg"};
+            });
+        auto reply = make_character_entry(6, "guide", "Guide", "Hello. More", EntryStatus::streaming, 10);
+        downloads.submit_batch(session, input({6}), std::span(&reply, 1));
+        ASSERT_TRUE(eventually([&] { return first.load(); }));
+        auto stream = downloads.stream(session, 6, "Test");
+        ASSERT_TRUE(stream);
+        if (std::string_view(action) == "vault") {
+            downloads.pause();
+            vault->set(VaultDefinition{.name = "Other", .data = path});
+            vault->set(VaultDefinition{.name = "Test", .data = path});
+            downloads.resume();
+        } else if (std::string_view(action) == "clear") downloads.clear(session);
+        else if (std::string_view(action) == "remove") downloads.update_live(session, {});
+        else {
+            if (std::string_view(action) == "edit") reply.text = "Changed";
+            else reply.status = std::string_view(action) == "cancel" ? EntryStatus::cancelled : EntryStatus::failed;
+            downloads.update_live(session, std::span(&reply, 1));
+        }
+        EXPECT_TRUE(eventually([&] { return stopped.load(); }));
+        downloads.request_stop();
+        ASSERT_TRUE(downloads.join_until(std::chrono::steady_clock::now() + 2s));
+        EXPECT_TRUE(stream->read(0)->failed);
+        EXPECT_TRUE(stream->read(0)->body.empty());
+        EXPECT_FALSE(sessions->cached_audio_entries(session).contains(6));
+    }
+}
+
+TEST_F(AudioDownloads, LiveProviderFailureDoesNotRestartPublishedAudio) {
+    auto output = *config->snapshot()->voice_output();
+    output.fishaudio->connection = "websocket";
+    config->apply_voice_output_update(output);
+    std::atomic_int calls{0};
+    AudioDownloadManager downloads(*sessions, [this] { return vault->get().name; }, true,
+        download_voice_output, [&](const auto&, const auto&, const auto&, const auto&,
+            const AudioChunkCallback& audio, const VoiceTextInput&) -> std::optional<EntryAudio> {
+            ++calls;
+            audio("audio/mpeg", "partial");
+            throw std::runtime_error("Disconnected");
+        });
+    auto reply = make_character_entry(6, "guide", "Guide", "Hello.", EntryStatus::streaming, 10);
+    downloads.submit_batch(session, input({6}), std::span(&reply, 1));
+    ASSERT_TRUE(eventually([&] {
+        const auto state = downloads.status(session, "Test");
+        return !state.downloads.empty() && state.downloads[0].state == AudioJobState::failed;
+    }));
+    EXPECT_EQ(calls, 1);
+    EXPECT_TRUE(downloads.audio_chunk(session, 6, "Test", 0)->failed);
+    EXPECT_FALSE(sessions->cached_audio_entries(session).contains(6));
+}
+
+TEST_F(AudioDownloads, LiveHttpRequestsWaitForCompletedReplies) {
+    auto reply = make_character_entry(6, "guide", "Guide", "Hello.", EntryStatus::streaming, 10);
+    auto downloads = make([](const auto&, const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
+        ADD_FAILURE() << "HTTP must not start for an unfinished reply";
+        return {};
+    });
+    EXPECT_THROW(downloads->submit_batch(session, input({6}), std::span(&reply, 1)), std::invalid_argument);
 }
 
 }

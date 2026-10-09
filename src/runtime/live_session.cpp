@@ -207,6 +207,7 @@ void LiveSession::install(OpenedSession opened) {
     persist_default_character_ = std::move(opened.persist_default_character);
     mirror_ = std::move(opened.mirror);
     cached_audio_entries_ = std::move(opened.cached_audio_entries);
+    update_audio_ = std::move(opened.update_audio);
     if (mirror_) {
         mirrored_revision_ = controller_->view().transcript.revision;
         mirrored_label_ = label_;
@@ -221,7 +222,12 @@ void LiveSession::set_running() {
 }
 
 void LiveSession::execute(OwnerCommand command) {
-    if (std::holds_alternative<SnapshotCommand>(command.command)) {
+    if (auto* snapshot = std::get_if<SnapshotCommand>(&command.command)) {
+        if (snapshot->inspect) {
+            snapshot->inspect(controller_->view().transcript.entries);
+            (void)command.reply->complete(CommandResult{});
+            return;
+        }
         (void)command.reply->complete(make_snapshot());
         return;
     }
@@ -436,6 +442,7 @@ bool LiveSession::apply_notice(const std::optional<std::string>& notice) {
 void LiveSession::publish_update(
     ControllerStateUpdate state,
     bool presentation_changed) {
+    if (update_audio_) update_audio_(controller_->view().transcript.entries);
     if (presentation_changed) {
         publish_current_snapshot();
         return;
@@ -525,6 +532,7 @@ void LiveSession::finalize(ShutdownReason reason) noexcept {
         terminal->shutdown_reason = reason;
         (void)run_guarded([&] { output_->publish_snapshot(std::move(*terminal)); });
     }
+    if (update_audio_) (void)run_guarded([&] { update_audio_({}); });
     output_->close();
     if (deferred_submit_) (void)std::exchange(deferred_submit_, {})->complete(ErrorCode::operation_cancelled);
     if (controller_) {

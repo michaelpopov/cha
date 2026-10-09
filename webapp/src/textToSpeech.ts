@@ -28,6 +28,7 @@ export interface TextToSpeechConfiguration {
   outputFormat: string;
   model: string;
   provider?: 'fishaudio' | 'elevenlabs';
+  connections?: Record<string, 'http' | 'websocket'>;
 }
 
 export interface TextToSpeechVoice {
@@ -49,6 +50,7 @@ export function speechVoice(voice: Pick<VoiceUpdate, 'elevenlabs_voice_id' | 'sp
 
 export function useTextToSpeechConfiguration(
   client: Pick<ChaClient, 'getVoiceOutputRuntime'>,
+  vault?: string,
 ): TextToSpeechConfiguration | null {
   const [configuration, setConfiguration] =
     useState<TextToSpeechConfiguration | null>(null);
@@ -64,12 +66,13 @@ export function useTextToSpeechConfiguration(
           outputFormat: loaded.output_format,
           model: loaded.model,
           provider: loaded.provider ?? 'fishaudio',
+          connections: loaded.connections,
         });
       },
       () => { if (current) setConfiguration(null); },
     );
     return () => { current = false; };
-  }, [client]);
+  }, [client, vault]);
   return configuration;
 }
 

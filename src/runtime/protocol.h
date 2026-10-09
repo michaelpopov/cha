@@ -7,7 +7,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -148,7 +150,10 @@ struct RenameSessionCommand {
 
 // A snapshot request shares the owner queue with mutations so callers
 // never read controller-owned state directly.
-struct SnapshotCommand {};
+struct SnapshotCommand {
+    // Native-only inspection on the controller owner thread. Never decoded from the wire.
+    std::function<void(std::span<const TranscriptEntry>)> inspect;
+};
 struct SubscribeCommand {
     std::string connection_id;
     std::uint64_t context_epoch{};
@@ -460,6 +465,7 @@ struct ElevenLabsOutputSettings {
     std::string api_key;
     std::string output_format;
     bool supports_speed{true};
+    std::string connection{"http"};
 };
 
 struct VoiceOutputSettings {
@@ -469,6 +475,7 @@ struct VoiceOutputSettings {
     std::string output_format;
     std::string default_voice;
     std::optional<ElevenLabsOutputSettings> elevenlabs;
+    std::string connection{"http"};
 };
 
 struct VoiceOutputRuntime {
@@ -477,6 +484,7 @@ struct VoiceOutputRuntime {
     std::string output_format;
     std::string default_voice_id;
     std::string provider{"fishaudio"};
+    std::map<std::string, std::string> connections;
 };
 
 struct ApiKeyDetail {

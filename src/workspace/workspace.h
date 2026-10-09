@@ -114,6 +114,7 @@ struct WorkspaceVoiceProviderOutput {
     std::string model;
     std::string api_key_id;
     std::string output_format;
+    std::string connection{"http"};
 };
 
 struct WorkspaceVoiceOutput {

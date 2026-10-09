@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cha::media {
 
@@ -44,6 +45,8 @@ public:
 };
 
 [[nodiscard]] std::unique_ptr<XaiSocket> make_xai_curl_socket();
+// Voice output shares the same curl framing, cancellation, TLS and ping handling.
+[[nodiscard]] std::unique_ptr<XaiSocket> make_voice_curl_socket(std::vector<std::string> headers = {});
 
 inline constexpr std::string_view xai_websocket_required =
     "xAI voice input requires a curl build with WebSocket support";

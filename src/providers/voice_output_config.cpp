@@ -9,8 +9,14 @@
 
 namespace cha {
 
+std::string normalize_voice_output_connection(std::string_view value) {
+    if (value != "http" && value != "websocket")
+        throw std::invalid_argument("Voice connection must be HTTP or WebSocket.");
+    return std::string(value);
+}
+
 bool elevenlabs_supports_speed(std::string_view model) {
-    return model != "eleven_v3" && model != "eleven_v4" && model != "eleven_v4_turbo";
+    return !model.starts_with("eleven_v3") && !model.starts_with("eleven_v4");
 }
 
 void validate_voice_output_provider(std::string_view provider) {

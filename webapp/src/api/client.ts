@@ -525,14 +525,16 @@ export function isWebSearchSettings(value: unknown): value is WebSearchSettings 
 export function isVoiceOutputSettings(value: unknown): value is VoiceOutputSettings {
   if (!isRecord(value) || typeof value.url !== 'string' || typeof value.model !== 'string'
     || typeof value.api_key !== 'string' || typeof value.output_format !== 'string'
-    || typeof value.default_voice !== 'string' || !value.default_voice) return false;
+    || typeof value.default_voice !== 'string' || !value.default_voice
+    || (value.connection !== undefined && !isOneOf(value.connection, ['http', 'websocket']))) return false;
   const eleven = value.elevenlabs;
   return eleven === undefined || (isRecord(eleven)
     && typeof eleven.url === 'string' && eleven.url.length > 0
     && typeof eleven.model === 'string' && eleven.model.length > 0
     && typeof eleven.api_key === 'string' && eleven.api_key.length > 0
     && typeof eleven.output_format === 'string' && eleven.output_format.length > 0
-    && (eleven.supports_speed === undefined || typeof eleven.supports_speed === 'boolean'));
+    && (eleven.supports_speed === undefined || typeof eleven.supports_speed === 'boolean')
+    && (eleven.connection === undefined || isOneOf(eleven.connection, ['http', 'websocket'])));
 }
 
 export function isVoiceOutputRuntime(value: unknown): value is VoiceOutputRuntime {

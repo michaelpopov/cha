@@ -12,6 +12,11 @@ struct XaiFakeServerOptions {
     std::vector<std::string> messages;
     // Text frames sent after a client text frame {"type":"audio.done"}.
     std::vector<std::string> after_audio_done;
+    // Speech fixtures use the same real curl socket, with provider-specific frames.
+    bool speech = false;
+    bool msgpack = false;
+    std::vector<std::string> after_text;
+    bool close_after_text = false;
     bool fragment_first = false;
     bool byte_writes = false;
     bool send_ping = false;

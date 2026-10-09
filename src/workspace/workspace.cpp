@@ -445,7 +445,7 @@ WorkspaceVoiceOutput load_voice_output(
     const LoadWarnings& warnings) {
     const toml::table table = read_toml(source, path, "voice output config");
     static constexpr std::string_view fields[]{
-        "url", "model", "api_key", "output_format", "default_voice",
+        "url", "model", "api_key", "output_format", "default_voice", "connection",
         "instrumentation_provider", "instrumentation_reasoning_effort", "elevenlabs"};
     warn_unknown_fields(table, path, fields, "Voice output config", warnings);
     WorkspaceVoiceOutput result{.default_voice = required_string(table, path, "default_voice")};
@@ -454,6 +454,7 @@ WorkspaceVoiceOutput load_voice_output(
         .model = optional_value<std::string>(table, path, "model", "a string").value_or(""),
         .api_key_id = optional_value<std::string>(table, path, "api_key", "a string").value_or(""),
         .output_format = optional_value<std::string>(table, path, "output_format", "a string").value_or("mp3"),
+        .connection = optional_value<std::string>(table, path, "connection", "a string").value_or("http"),
     };
     for (const auto* field : {"instrumentation_provider", "instrumentation_reasoning_effort"}) {
         if (table.contains(field)) {
@@ -464,7 +465,7 @@ WorkspaceVoiceOutput load_voice_output(
         }
     }
     if (const auto* eleven = table["elevenlabs"].as_table()) {
-        static constexpr std::string_view eleven_fields[]{"url", "model", "api_key", "output_format"};
+        static constexpr std::string_view eleven_fields[]{"url", "model", "api_key", "output_format", "connection"};
         for (const auto& [key, value] : *eleven) {
             (void)value;
             if (std::ranges::find(eleven_fields, key.str()) == std::end(eleven_fields))
@@ -479,6 +480,7 @@ WorkspaceVoiceOutput load_voice_output(
                 .model = normalize_voice_output_model(required_string(*eleven, path, "model")),
                 .api_key_id = required_string(*eleven, path, "api_key"),
                 .output_format = normalize_elevenlabs_output_format(required_string(*eleven, path, "output_format")),
+                .connection = normalize_voice_output_connection(optional_value<std::string>(*eleven, path, "connection", "a string").value_or("http")),
             };
         } catch (const std::exception& error) {
             warnings.emit(
@@ -498,6 +500,7 @@ WorkspaceVoiceOutput load_voice_output(
         try {
             fish.url = parse_voice_output_endpoint(fish.url);
             fish.model = normalize_voice_output_model(fish.model);
+            fish.connection = normalize_voice_output_connection(fish.connection);
         } catch (const std::invalid_argument& error) {
             if (!result.elevenlabs) throw;
             warnings.emit(
@@ -2739,6 +2742,7 @@ void WorkspaceConfigEditor::write_voice_output(const WorkspaceVoiceOutput& setti
         if (fish.api_key_id.empty()) throw std::invalid_argument("Invalid FishAudio output settings");
         table.insert("url", parse_voice_output_endpoint(fish.url));
         table.insert("model", normalize_voice_output_model(fish.model));
+        table.insert("connection", normalize_voice_output_connection(fish.connection));
         table.insert("api_key", fish.api_key_id);
         table.insert("output_format", normalize_voice_output_format(fish.output_format));
     }
@@ -2748,6 +2752,7 @@ void WorkspaceConfigEditor::write_voice_output(const WorkspaceVoiceOutput& setti
         table.insert("elevenlabs", toml::table{
             {"url", parse_voice_output_endpoint(eleven.url, "elevenlabs")},
             {"model", normalize_voice_output_model(eleven.model)},
+            {"connection", normalize_voice_output_connection(eleven.connection)},
             {"api_key", eleven.api_key_id},
             {"output_format", normalize_elevenlabs_output_format(eleven.output_format)},
         });

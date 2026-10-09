@@ -358,6 +358,8 @@ export interface components {
             preview?: string;
         };
         ElevenLabsOutputSettings: {
+            /** @enum {string} */
+            connection?: "http" | "websocket";
             url: string;
             model: string;
             api_key: components["schemas"]["Identifier"];
@@ -365,6 +367,8 @@ export interface components {
             readonly supports_speed?: boolean;
         };
         VoiceOutputSettings: {
+            /** @enum {string} */
+            connection?: "http" | "websocket";
             elevenlabs?: components["schemas"]["ElevenLabsOutputSettings"];
             url: string;
             model: string;
@@ -373,6 +377,9 @@ export interface components {
             default_voice: string;
         };
         VoiceOutputRuntime: {
+            connections?: {
+                [key: string]: "http" | "websocket";
+            };
             /**
              * @description Defaults to fishaudio when omitted.
              * @enum {string}

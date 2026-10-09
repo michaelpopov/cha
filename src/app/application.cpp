@@ -314,13 +314,15 @@ Application::Impl::Impl(
                             std::span<const TranscriptEntry> entries) {
             selected_mirror->update(identity, label, entries);
         };
+        opened.update_audio = [this, identity](std::span<const TranscriptEntry> entries) {
+            if (audio_downloads) audio_downloads->update_live(identity, entries);
+        };
         return opened;
     };
-    live_sessions = std::make_unique<LiveSessionManager>(
-        settings, opener);
-    assistant->bind_runtime(*live_sessions, *sessions);
     audio_downloads = std::make_unique<AudioDownloadManager>(
         *sessions, [this] { return current_vault_.get().name; }, true);
+    live_sessions = std::make_unique<LiveSessionManager>(settings, opener);
+    assistant->bind_runtime(*live_sessions, *sessions);
     publish_capabilities_locked();
     running = true;
     notified_epoch = live_sessions->context_epoch();

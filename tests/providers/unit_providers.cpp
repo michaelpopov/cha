@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -163,6 +164,65 @@ ProviderClientFactory factory(const std::shared_ptr<BackendState>& state) {
         }
         return std::make_unique<TestBackend>(state);
     };
+}
+
+class ConcurrentWebBackend final : public ModelBackend {
+public:
+    RequestPayload prepare(const GenerationRequest& input) override {
+        return {.web_search_tool = input.web_search_tool, .web_read_tool = input.web_read_tool};
+    }
+
+    GenerationResult perform(
+        RequestPayload payload,
+        const GenerationDeltaSink& on_delta,
+        const std::atomic_bool& cancellation) override {
+        std::vector<std::future<std::string>> workers;
+        for (int index = 0; index < 4; ++index) {
+            workers.push_back(std::async(std::launch::async, [&, index] {
+                const auto& execute = index % 2 == 0 ? payload.web_search_tool : payload.web_read_tool;
+                return execute("https://example.org", cancellation);
+            }));
+        }
+        for (auto& worker : workers) EXPECT_EQ(worker.get(), "results");
+        on_delta({GenerationDeltaKind::answer, "Answer"});
+        return {GenerationOutcome::completed, {}};
+    }
+};
+
+TEST(Providers, ConcurrentWebCallbacksPublishWebUseOnceBeforeTheTerminal) {
+    std::mutex mutex;
+    std::condition_variable changed;
+    int started = 0;
+    std::atomic_int completed{0};
+    const auto execute = [&](const auto&, auto, const auto&) {
+        std::unique_lock lock(mutex);
+        ++started;
+        changed.notify_all();
+        EXPECT_TRUE(changed.wait_for(lock, 1s, [&] { return started == 4; }));
+        ++completed;
+        return "results";
+    };
+    Providers providers(
+        [](auto) { return std::make_unique<ConcurrentWebBackend>(); },
+        [](auto worker) { worker(); }, {}, execute, execute);
+    auto request_input = input(definition(), 7);
+    request_input.web_search_tool = WorkspaceWebSearch{};
+    request_input.web_read_tool = WorkspaceWebSearch{};
+    auto notifier = std::make_shared<test::TestNotifier>();
+    auto request = providers.make_request(std::move(request_input), notifier);
+    const auto events = receive_terminal(request);
+    ASSERT_EQ(events.size(), 3u);
+    ASSERT_TRUE(std::holds_alternative<GenerationEventDelta>(events[0]));
+    const auto& web_use = std::get<GenerationEventDelta>(events[0]);
+    EXPECT_TRUE(web_use.web_search_used);
+    EXPECT_TRUE(web_use.text.empty());
+    ASSERT_TRUE(std::holds_alternative<GenerationEventDelta>(events[1]));
+    const auto& answer = std::get<GenerationEventDelta>(events[1]);
+    EXPECT_TRUE(answer.web_search_used);
+    EXPECT_EQ(answer.text, "Answer");
+    EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(events[2]));
+    EXPECT_EQ(completed, 4);
+    EXPECT_EQ(notifier->wake_count(), 3u);
 }
 
 TEST(Providers, StartsEveryRequestImmediatelyWithIndependentBackendsAndQueues) {

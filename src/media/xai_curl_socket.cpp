@@ -38,7 +38,8 @@ std::string_view scheme_of(std::string_view url) {
 
 class XaiCurlSocket final : public XaiSocket {
 public:
-    XaiCurlSocket() = default;
+    explicit XaiCurlSocket(std::vector<std::string> headers = {}, std::size_t message_limit = xai_max_provider_message)
+        : extra_headers_(std::move(headers)), message_limit_(message_limit) {}
     ~XaiCurlSocket() override { close(); }
 
     XaiCurlSocket(const XaiCurlSocket&) = delete;
@@ -64,6 +65,7 @@ public:
         curl_ = CurlHandle();
         headers_ = std::make_unique<CurlHeaders>();
         headers_->append(authorization);
+        for (const auto& header : extra_headers_) headers_->append(header);
         const auto require = [&](CURLcode result) {
             if (result != CURLE_OK) {
                 log_warn(
@@ -305,7 +307,7 @@ private:
             fragment_binary_ = (meta.flags & CURLWS_BINARY) != 0;
             fragment_open_ = true;
         }
-        if (fragment_.size() + chunk.size() > xai_max_provider_message) {
+        if (fragment_.size() + chunk.size() > message_limit_) {
             throw XaiVoiceFailure(
                 ErrorCode::internal_error, std::string(xai_malformed_transcript));
         }
@@ -369,6 +371,8 @@ private:
 #endif
     }
 
+    std::vector<std::string> extra_headers_;
+    std::size_t message_limit_;
     CurlHandle curl_;
     std::unique_ptr<CurlHeaders> headers_;
     CURLM* multi_ = nullptr;
@@ -388,6 +392,10 @@ private:
 
 XaiVoiceFailure::XaiVoiceFailure(ErrorCode code, std::string message)
     : std::runtime_error(std::move(message)), code(code) {}
+
+std::unique_ptr<XaiSocket> make_voice_curl_socket(std::vector<std::string> headers) {
+    return std::make_unique<XaiCurlSocket>(std::move(headers), 16 * 1024 * 1024);
+}
 
 std::unique_ptr<XaiSocket> make_xai_curl_socket() {
     return std::make_unique<XaiCurlSocket>();

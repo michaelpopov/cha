@@ -147,8 +147,9 @@ struct Application::Impl {
     std::unique_ptr<AssistantService> assistant;
     std::shared_ptr<const std::string> maintenance_prompt;
     Providers providers;
-    std::unique_ptr<LiveSessionManager> live_sessions;
+    // Live sessions can update audio while they finish shutting down.
     std::unique_ptr<AudioDownloadManager> audio_downloads;
+    std::unique_ptr<LiveSessionManager> live_sessions;
     VoiceOutputProxy speech_proxy;
     MediaResources media_resources;
     std::optional<std::string> speech_url_override;

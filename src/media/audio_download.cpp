@@ -24,9 +24,9 @@ AudioDownloadManager::Key AudioDownloadManager::key(const FullSessionId& session
 }
 
 AudioDownloadManager::AudioDownloadManager(const SessionRepository& sessions,
-    ActiveVaultName active_vault_name, bool enabled, Transport transport)
+    ActiveVaultName active_vault_name, bool enabled, Transport transport, WebSocketTransport websocket)
     : sessions_(sessions), active_vault_name_(std::move(active_vault_name)),
-      enabled_(enabled), transport_(std::move(transport)) {
+      enabled_(enabled), transport_(std::move(transport)), websocket_(std::move(websocket)) {
     try {
         for (auto& thread : workers_) {
             thread = std::thread([this] { worker(); });
@@ -61,46 +61,38 @@ void AudioDownloadManager::check_generation(const FullSessionId& session, const 
     check(session, vault);
 }
 
-AudioAcceptance AudioDownloadManager::submit(const FullSessionId& session, EntryId id, const AudioDownloadRequest& input) {
-    const auto& vault = input.vault_name;
-    const auto identity = key(session, id);
-    std::size_t generation;
-    {
-        std::lock_guard lock(mutex_);
-        check(session, vault);
-        generation = generation_;
-        if (auto it = jobs_.find(identity); it != jobs_.end() && it->second->state != AudioJobState::failed) {
-            return active_acceptance(id, it->second->state);
-        }
-    }
-    std::exception_ptr failure;
-    std::optional<EntryAudioLookup> entry;
-    auto job = std::make_shared<Job>();
-    try {
-        entry = sessions_.lookup_entry_audio(session, id, false);
-        if (!entry) throw AudioDownloadError(404, "not_found", "Transcript entry not found.");
-        if (!entry->has_cached_audio) {
-            job = prepare_job(*entry, input.synthesis);
-        }
-    } catch (...) {
-        failure = std::current_exception();
-    }
+std::optional<EntryAudioLookup> AudioDownloadManager::lookup(
+    const FullSessionId& session, EntryId id, const TranscriptEntry* live) const {
+    auto entry = sessions_.lookup_entry_audio(session, id, false);
+    if (entry) return entry;
+    if (!live) return {};
+    const auto prepared = sessions_.prepare(session);
+    return EntryAudioLookup{.session_key = prepared.session_key, .entry_id = id,
+        .database_path = prepared.database_path, .identity = session, .entry_text = live->text,
+        .entry_kind = live->kind, .participant_id = live->participant_id};
+}
+
+void AudioDownloadManager::update_live(const FullSessionId& session, std::span<const TranscriptEntry> entries) {
     std::lock_guard lock(mutex_);
-    check_generation(session, vault, generation);
-    if (auto it = jobs_.find(identity); it != jobs_.end() && it->second->state != AudioJobState::failed) {
-        return active_acceptance(id, it->second->state);
+    for (auto& [identity, job] : jobs_) {
+        if (!job->live || job->text_complete || job->entry.identity != session || job->cancelled) continue;
+        const auto found = std::ranges::find(entries, job->entry.entry_id, &TranscriptEntry::id);
+        if (found == entries.end() || found->request_id != job->request_id || found->created_at != job->created_at
+            || found->kind != EntryKind::character || found->participant_id != job->entry.participant_id
+            || found->status == EntryStatus::cancelled || found->status == EntryStatus::failed
+            || !found->text.starts_with(job->entry.entry_text)) {
+            job->cancelled = true;
+            job->stream->fail();
+        } else {
+            job->entry.entry_text = found->text;
+            job->text_complete = found->status == EntryStatus::complete;
+        }
     }
-    if (failure) std::rethrow_exception(failure);
-    if (entry->has_cached_audio) return {id, AudioAcceptanceKind::cached};
-    jobs_[identity] = job;
-    queue_.push_back(job);
-    // Retry waits share this condition variable with idle workers.
     changed_.notify_all();
-    return {id, AudioAcceptanceKind::queued};
 }
 
 std::shared_ptr<AudioDownloadManager::Job> AudioDownloadManager::prepare_job(
-    const EntryAudioLookup& entry, const VoiceSynthesis& synthesis) {
+    const EntryAudioLookup& entry, const VoiceSynthesis& synthesis, const TranscriptEntry* live) {
     if (entry.entry_kind != EntryKind::character) {
         throw std::invalid_argument("Voice output is only available for character replies.");
     }
@@ -135,12 +127,22 @@ std::shared_ptr<AudioDownloadManager::Job> AudioDownloadManager::prepare_job(
     const auto* credential = workspace->find_api_key(job->output.api_key_id);
     if (!credential) throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
     job->key = credential->value;
-    job->request = make_voice_output_request(job->output, entry_speech_text(entry), resolved);
+    if (live) {
+        if (job->output.connection != "websocket")
+            throw std::invalid_argument("HTTP speech requires a completed reply.");
+        job->live = true;
+        job->text_complete = false;
+        job->request_id = live->request_id;
+        job->created_at = live->created_at;
+        job->request = make_voice_output_request(job->output, std::nullopt, resolved);
+    } else {
+        job->request = make_voice_output_request(job->output, entry_speech_text(entry), resolved);
+    }
     return job;
 }
 
 std::vector<AudioAcceptance> AudioDownloadManager::submit_batch(
-    const FullSessionId& session, const AudioDownloadBatchRequest& input) {
+    const FullSessionId& session, const AudioDownloadBatchRequest& input, std::span<const TranscriptEntry> live) {
     const auto& vault = input.vault_name;
     std::size_t generation;
     {
@@ -166,12 +168,15 @@ std::vector<AudioAcceptance> AudioDownloadManager::submit_batch(
                 continue;
             }
         }
-        const auto entry = sessions_.lookup_entry_audio(session, id, false);
+        const auto found = std::ranges::find(live, id, &TranscriptEntry::id);
+        const auto* streaming = found != live.end() && found->status == EntryStatus::streaming ? &*found : nullptr;
+        const auto entry = lookup(session, id, streaming);
         if (!entry) throw AudioDownloadError(404, "not_found", "Transcript entry not found.");
         if (entry->has_cached_audio) {
             prepared.push_back({id, {id, AudioAcceptanceKind::cached}, {}});
         } else {
-            prepared.push_back({id, {id, AudioAcceptanceKind::queued}, prepare_job(*entry, request.synthesis)});
+            auto job = prepare_job(*entry, request.synthesis, streaming);
+            prepared.push_back({id, {id, AudioAcceptanceKind::queued}, std::move(job)});
         }
     }
     std::vector<AudioAcceptance> accepted;
@@ -384,6 +389,7 @@ void AudioDownloadManager::worker() {
     changed_.notify_all();
 }
 void AudioDownloadManager::run(const std::shared_ptr<Job>& job) {
+    if (job->live) { run_live(job); return; }
     struct Finish {
         AudioStream& stream;
         bool saved{};
@@ -437,6 +443,41 @@ void AudioDownloadManager::run(const std::shared_ptr<Job>& job) {
         finish.saved = true;
         return;
     }
+}
+
+void AudioDownloadManager::run_live(const std::shared_ptr<Job>& job) {
+    struct Finish {
+        AudioStream& stream;
+        bool saved{};
+        ~Finish() { if (saved) stream.finish(); else stream.fail(); }
+    } finish{*job->stream};
+    const auto cancelled = [&] { return job->cancelled.load(); };
+    std::string sent_text;
+    auto result = websocket_(job->output, job->key, job->request, cancelled,
+        [&](std::string_view type, std::string_view bytes) {
+            if (!cancelled()) job->stream->append(type, bytes);
+        }, [&] {
+            std::lock_guard lock(mutex_);
+            const auto spoken = speech_text_prefix(entry_speech_text(job->entry), job->request.provider, job->text_complete);
+            if (!spoken.starts_with(sent_text)) throw std::runtime_error("Speech text changed during synthesis.");
+            auto text = spoken.substr(sent_text.size());
+            sent_text = spoken;
+            return VoiceTextChunk{std::move(text), job->text_complete};
+        });
+    if (!result || cancelled()) return;
+    EntryAudioLookup expected;
+    {
+        std::lock_guard lock(mutex_);
+        if (!job->text_complete) throw std::runtime_error("Speech completed before the answer finished.");
+        expected = job->entry;
+    }
+    if (!valid_entry_audio(*result)) throw std::runtime_error("Voice provider returned invalid audio.");
+    sessions_.save_entry_audio(expected, *result, cancelled);
+    const auto saved = sessions_.lookup_entry_audio(expected.identity, expected.entry_id, false);
+    if (!saved || !saved->has_cached_audio || saved->entry_text != expected.entry_text
+        || saved->session_key != expected.session_key || saved->database_path != expected.database_path || cancelled()) return;
+    if (job->stream->empty()) job->stream->append(result->content_type, result->audio);
+    finish.saved = true;
 }
 
 }

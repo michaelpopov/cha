@@ -145,10 +145,9 @@ void ProviderRequest::execute(
             return;
         }
 
-        bool web_search_used = false;
+        std::atomic_bool web_search_used{false};
         const auto mark_web_used = [&] {
-            if (web_search_used) return;
-            web_search_used = true;
+            if (web_search_used.exchange(true)) return;
             (void)events_.push(GenerationEventDelta{
                 request_id, GenerationDeltaKind::answer, {}, true});
             notifier_->wake();
@@ -213,7 +212,7 @@ void ProviderRequest::execute(
                         request_id,
                         delta.kind,
                         std::move(delta.text),
-                        web_search_used,
+                        web_search_used.load(),
                     })) {
                     throw std::logic_error(
                         "Provider request event queue closed before execution stopped");

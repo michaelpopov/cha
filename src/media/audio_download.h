@@ -12,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <span>
 #include <thread>
 #include <vector>
 
@@ -59,15 +60,20 @@ public:
     using Transport = std::function<std::optional<EntryAudio>(const WorkspaceVoiceProviderOutput&,
         const std::string&, const VoiceOutputRequest&, const std::function<bool()>&,
         const AudioChunkCallback&)>;
+    using WebSocketTransport = std::function<std::optional<EntryAudio>(const WorkspaceVoiceProviderOutput&,
+        const std::string&, const VoiceOutputRequest&, const std::function<bool()>&,
+        const AudioChunkCallback&, const VoiceTextInput&)>;
     // Reads the active vault's name on each check, so a vault switch is seen
     // without holding a reference to the composition root.
     using ActiveVaultName = std::function<std::string()>;
     AudioDownloadManager(const SessionRepository& sessions,
         ActiveVaultName active_vault_name, bool enabled,
-        Transport transport = download_voice_output);
+        Transport transport = download_voice_output,
+        WebSocketTransport websocket = stream_voice_websocket);
     ~AudioDownloadManager();
-    AudioAcceptance submit(const FullSessionId& session, EntryId id, const AudioDownloadRequest& input);
-    std::vector<AudioAcceptance> submit_batch(const FullSessionId& session, const AudioDownloadBatchRequest& input);
+    std::vector<AudioAcceptance> submit_batch(const FullSessionId& session, const AudioDownloadBatchRequest& input,
+        std::span<const TranscriptEntry> live = {});
+    void update_live(const FullSessionId& session, std::span<const TranscriptEntry> entries);
     AudioDownloadStatus status(const FullSessionId& session, const std::string& vault);
     std::optional<EntryAudio> audio(const FullSessionId& session, EntryId id, const std::string& vault);
     std::optional<AudioChunk> audio_chunk(
@@ -87,6 +93,10 @@ private:
         std::string key;
         VoiceOutputRequest request;
         AudioJobState state{AudioJobState::queued};
+        bool live{};
+        bool text_complete{true};
+        std::optional<RequestId> request_id;
+        std::int64_t created_at{};
         std::atomic_bool cancelled{false};
         std::shared_ptr<AudioStream> stream = std::make_shared<AudioStream>();
     };
@@ -95,12 +105,17 @@ private:
     void check_generation(const FullSessionId& session, const std::string& vault, std::size_t generation) const;
     void worker();
     void run(const std::shared_ptr<Job>& job);
+    void run_live(const std::shared_ptr<Job>& job);
+    std::optional<EntryAudioLookup> lookup(const FullSessionId& session, EntryId id,
+        const TranscriptEntry* live) const;
     void cancel_all();
-    std::shared_ptr<Job> prepare_job(const EntryAudioLookup& entry, const VoiceSynthesis& synthesis);
+    std::shared_ptr<Job> prepare_job(const EntryAudioLookup& entry, const VoiceSynthesis& synthesis,
+        const TranscriptEntry* live);
     const SessionRepository& sessions_;
     ActiveVaultName active_vault_name_;
     bool enabled_;
     Transport transport_;
+    WebSocketTransport websocket_;
     std::mutex mutex_;
     std::condition_variable changed_;
     std::map<Key, std::shared_ptr<Job>> jobs_;

@@ -22,6 +22,7 @@
 #include <charconv>
 #include <chrono>
 #include <exception>
+#include <future>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -603,50 +604,67 @@ GenerationResult ProviderClient::perform(
             messages.push_back(continuation);
         }
         bool force_final = false;
-        for (const auto& call : result.tool_calls) {
-            if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
-            std::string output;
-            const auto arguments = Json::parse(call.arguments, nullptr, false);
-            if (tool_calls_used >= max_tool_calls) {
-                output = maintenance
-                    ? R"({"error":"limit","message":"Maintenance tool limit reached. Answer using the available results.","committed":false})"
-                    : R"({"error":"Web tool limit reached. Answer using the available results."})";
-            } else if (maintenance) {
-                ++tool_calls_used;
-                // A write result is never replaced after it runs, so a saved
-                // change is never reported as unsaved. The service keeps it small.
-                const bool write = call.name == "vault_config_apply"
-                    || call.name == "add_character"
-                    || call.name == "host_config_write";
-                if (force_final) {
-                    output = R"({"error":"too_large","message":"Tool results for this answer are too large. This call was not run.","committed":false})";
-                } else if (call.name == "web_search" || call.name == "web_read") {
-                    output = R"({"error":"unavailable","message":"Web tools are not available for this request.","committed":false})";
-                } else if (arguments.is_discarded()) {
-                    output = R"({"error":"invalid_argument","message":"Tool arguments are not valid JSON.","committed":false})";
+        std::vector<std::string> outputs(result.tool_calls.size());
+        if (maintenance) {
+            for (std::size_t index = 0; index < result.tool_calls.size(); ++index) {
+                const auto& call = result.tool_calls[index];
+                if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
+                auto& output = outputs[index];
+                const auto arguments = Json::parse(call.arguments, nullptr, false);
+                if (tool_calls_used >= max_tool_calls) {
+                    output = R"({"error":"limit","message":"Maintenance tool limit reached. Answer using the available results.","committed":false})";
                 } else {
-                    try {
-                        output = payload.maintenance_tool(call.name, call.arguments, cancellation);
-                    } catch (const std::exception&) {
-                        log_warn("Maintenance tool failed");
-                        output = R"({"error":"validation_failure","message":"The maintenance tool failed.","committed":false})";
+                    ++tool_calls_used;
+                    // A write result is never replaced after it runs, so a saved
+                    // change is never reported as unsaved. The service keeps it small.
+                    const bool write = call.name == "vault_config_apply"
+                        || call.name == "add_character"
+                        || call.name == "host_config_write";
+                    if (force_final) {
+                        output = R"({"error":"too_large","message":"Tool results for this answer are too large. This call was not run.","committed":false})";
+                    } else if (call.name == "web_search" || call.name == "web_read") {
+                        output = R"({"error":"unavailable","message":"Web tools are not available for this request.","committed":false})";
+                    } else if (arguments.is_discarded()) {
+                        output = R"({"error":"invalid_argument","message":"Tool arguments are not valid JSON.","committed":false})";
+                    } else {
+                        try {
+                            output = payload.maintenance_tool(call.name, call.arguments, cancellation);
+                        } catch (const std::exception&) {
+                            log_warn("Maintenance tool failed");
+                            output = R"({"error":"validation_failure","message":"The maintenance tool failed.","committed":false})";
+                        }
                     }
-                }
-                if (!write && output.size() > maintenance_call_result_limit) {
-                    output = R"({"error":"too_large","message":"Tool result is too large.","committed":false})";
-                }
-                if (!force_final
-                    && maintenance_result_bytes + output.size() > maintenance_answer_result_limit) {
-                    // Later calls in this response do not run.
-                    force_final = true;
-                    if (!write) {
-                        output = R"({"error":"too_large","message":"Tool results for this answer are too large.","committed":false})";
+                    if (!write && output.size() > maintenance_call_result_limit) {
+                        output = R"({"error":"too_large","message":"Tool result is too large.","committed":false})";
                     }
+                    if (!force_final
+                        && maintenance_result_bytes + output.size() > maintenance_answer_result_limit) {
+                        // Later calls in this response do not run.
+                        force_final = true;
+                        if (!write) {
+                            output = R"({"error":"too_large","message":"Tool results for this answer are too large.","committed":false})";
+                        }
+                    }
+                    maintenance_result_bytes += output.size();
+                    log_info("Maintenance tool call: name=" + call.name
+                        + " result_bytes=" + std::to_string(output.size()));
                 }
-                maintenance_result_bytes += output.size();
-                log_info("Maintenance tool call: name=" + call.name
-                    + " result_bytes=" + std::to_string(output.size()));
-            } else {
+            }
+        } else {
+            struct WebCall {
+                std::size_t index;
+                std::string argument;
+                bool read;
+            };
+            std::vector<WebCall> calls;
+            for (std::size_t index = 0; index < result.tool_calls.size(); ++index) {
+                const auto& call = result.tool_calls[index];
+                auto& output = outputs[index];
+                const auto arguments = Json::parse(call.arguments, nullptr, false);
+                if (tool_calls_used >= max_tool_calls) {
+                    output = R"({"error":"Web tool limit reached. Answer using the available results."})";
+                    continue;
+                }
                 ++tool_calls_used;
                 const bool read = call.name == "web_read";
                 const auto& execute = read ? payload.web_read_tool : payload.web_search_tool;
@@ -660,19 +678,43 @@ GenerationResult ProviderClient::perform(
                         ? R"({"error":"web_read requires one non-empty string argument: url."})"
                         : R"({"error":"web_search requires one non-empty string argument: query."})";
                 } else {
-                    try {
-                        output = execute(arguments[argument].get_ref<const std::string&>(), cancellation);
-                    } catch (const WebToolError& error) {
-                        output = Json{{"error", error.what()}}.dump();
-                    } catch (const std::exception&) {
-                        log_warn(read ? "On-demand page reading failed" : "On-demand web search failed");
-                        output = read
-                            ? R"({"error":"Page reading failed. Continue without it or try another URL."})"
-                            : R"({"error":"Web search failed. Continue without it or try another query."})";
-                    }
+                    calls.push_back({index, arguments[argument].get<std::string>(), read});
                 }
             }
-            if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
+            const auto run_web_call = [&payload, &cancellation](const WebCall& call) -> std::string {
+                const auto& execute = call.read ? payload.web_read_tool : payload.web_search_tool;
+                try {
+                    return execute(call.argument, cancellation);
+                } catch (const WebToolError& error) {
+                    return Json{{"error", error.what()}}.dump();
+                } catch (const std::exception&) {
+                    log_warn(call.read ? "On-demand page reading failed" : "On-demand web search failed");
+                    return call.read
+                        ? R"({"error":"Page reading failed. Continue without it or try another URL."})"
+                        : R"({"error":"Web search failed. Continue without it or try another query."})";
+                }
+            };
+            constexpr std::size_t concurrency = 4;
+            for (std::size_t first = 0; first < calls.size(); first += concurrency) {
+                // Async futures wait on destruction, including when launching or
+                // collecting a worker throws. Their referenced calls remain alive.
+                std::vector<std::future<std::string>> workers;
+                workers.reserve(concurrency);
+                const auto end = std::min(first + concurrency, calls.size());
+                for (std::size_t index = first; index < end; ++index) {
+                    if (cancellation.load()) break;
+                    workers.push_back(std::async(std::launch::async, run_web_call, std::cref(calls[index])));
+                }
+                for (std::size_t index = 0; index < workers.size(); ++index) {
+                    outputs[calls[first + index].index] = workers[index].get();
+                }
+                if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
+            }
+        }
+        if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
+        for (std::size_t index = 0; index < result.tool_calls.size(); ++index) {
+            const auto& call = result.tool_calls[index];
+            const auto& output = outputs[index];
             if (responses) {
                 messages.push_back({{"type", "function_call_output"},
                     {"call_id", call.id}, {"output", output}});
