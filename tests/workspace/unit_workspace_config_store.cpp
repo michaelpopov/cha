@@ -3515,6 +3515,56 @@ TEST_F(WorkspaceConfigStoreTest, PicturesRoundTripAllBytesInNestedDefinitionsAnd
     EXPECT_EQ(config_contents(database()), before);
 }
 
+TEST_F(WorkspaceConfigStoreTest, PictureUploadsReplaceAllFormatsAndExportOriginalBytes) {
+    std::filesystem::create_directories(source() / "characters/nested");
+    std::filesystem::rename(source() / "characters/guide", source() / "characters/nested/guide");
+    for (const auto& format : picture_formats) {
+        write_bytes(source() / "characters/nested/guide" / format.filename, "old picture");
+    }
+    import_from_source();
+    const auto before = config_contents(database());
+    std::string bytes;
+    for (unsigned value = 0; value < 256; ++value) bytes += static_cast<char>(value);
+    {
+        auto store = WorkspaceConfigStore::open(database());
+        store->apply_character_picture("guide", "PICTURE.jpg", encode_base64(bytes));
+        const auto picture = store->get_character_picture("guide");
+        ASSERT_TRUE(picture);
+        EXPECT_EQ(picture->filename, "PICTURE.jpg");
+        EXPECT_EQ(picture->content_base64, encode_base64(bytes));
+        store->apply_character_picture(workspace_assistant_id, "PICTURE.png", encode_base64(bytes));
+        EXPECT_EQ(store->get_character_picture(workspace_assistant_id)->filename, "PICTURE.png");
+    }
+    const auto after = config_contents(database());
+    for (const auto& [name, content] : before) {
+        if (!picture_format(name)) EXPECT_EQ(after.at(name), content) << name;
+    }
+    for (const auto& format : picture_formats) {
+        EXPECT_EQ(after.contains("characters/nested/guide/" + std::string(format.filename)),
+            format.filename == "PICTURE.jpg");
+    }
+    export_workspace_configuration(database(), export_);
+    EXPECT_EQ(file_bytes(export_ / "characters/nested/guide/PICTURE.jpg"), bytes);
+    EXPECT_EQ(file_bytes(export_ / "system/assistant/PICTURE.png"), bytes);
+    import_workspace_configuration(export_, database());
+    EXPECT_EQ(config_contents(database()), after);
+}
+
+TEST_F(WorkspaceConfigStoreTest, InvalidPictureUploadsKeepTheExistingPictureAndRevision) {
+    write_bytes(source() / "characters/guide/PICTURE.png", "original");
+    import_from_source();
+    auto store = WorkspaceConfigStore::open(database());
+    const auto before = config_contents(database());
+    const auto revision = store->config_revision();
+    EXPECT_THROW(store->apply_character_picture("missing", "PICTURE.jpg", "AP8="), std::out_of_range);
+    for (const auto filename : {"PICTURE.svg", "portrait.jpg", "PICTURE.PNG", "../PICTURE.jpg"}) {
+        EXPECT_THROW(store->apply_character_picture("guide", filename, "AP8="), std::invalid_argument);
+    }
+    EXPECT_THROW(store->apply_character_picture("guide", "PICTURE.jpg", "bad base64!"), std::invalid_argument);
+    EXPECT_EQ(config_contents(database()), before);
+    EXPECT_EQ(store->config_revision(), revision);
+}
+
 TEST_F(WorkspaceConfigStoreTest, WarnsForEachIgnoredImageNameOrLocation) {
     const std::vector<std::string> ignored{
         "characters/guide/picture.png", "characters/guide/Seneca.jpg",

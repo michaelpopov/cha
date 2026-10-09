@@ -459,7 +459,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         }
         : state;
     case 'show-new-character-file':
-      return state.inspectedCharacter.id && state.inspectedCharacter.writable
+      return state.inspectedCharacter.id && state.inspectedCharacter.settingsWritable
         ? { ...state, mainView: 'new-character-file', ...idleSessionOperation() }
         : state;
     case 'character-detail-loaded':

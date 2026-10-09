@@ -157,6 +157,12 @@ function DefinitionUpload({ ariaLabel, failureMessage, id, onUpload }: Definitio
   async function replaceFromFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file || saving) return;
+    if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name)
+      || (!/\.(md|txt)$/i.test(file.name) && !file.type.startsWith('text/'))) {
+      setError('Choose a Markdown or text file.');
+      event.target.value = '';
+      return;
+    }
     setSaving(true);
     setError(null);
     try {

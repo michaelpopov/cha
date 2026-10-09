@@ -21,7 +21,8 @@ public:
         std::string platform{"test"};
         std::size_t ordinary_limit{16};
         std::size_t control_limit{8};
-        std::size_t request_bytes_limit{65536};
+        // Picture uploads carry their original bytes as base64 in JSON.
+        std::size_t request_bytes_limit{16 * 1024 * 1024};
         std::optional<std::chrono::milliseconds> command_deadline;
         std::function<std::chrono::steady_clock::time_point()> clock;
     };

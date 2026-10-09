@@ -775,6 +775,50 @@ select:disabled {
   display: none;
 }
 
+.cha-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.cha-file-actions .cha-button {
+  display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 3rem;
+  padding: 0.65rem 1.25rem;
+}
+
+.cha-file-upload-button {
+  min-width: min(12.25rem, 100%);
+}
+
+.cha-file-actions svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.cha-uploaded-picture {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.cha-uploaded-picture img {
+  width: 9rem;
+  max-width: 100%;
+  height: 10rem;
+  object-fit: contain;
+  border-radius: 0.65rem;
+  background: var(--input);
+}
+
+
 .cha-roster-name {
   font-weight: 520;
 }

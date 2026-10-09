@@ -68,6 +68,8 @@ const noSessionEvents: SessionEventsConnector = () => ({ close() {} });
 // and routing one through `navigate` would cancel it.
 const inPlaceActions = new Set<AppAction['type']>([
   'toggle-sidebar',
+  'toggle-picture',
+  'resize-picture',
   'bootstrap-refreshed',
   'character-detail-loaded',
   'character-updated',

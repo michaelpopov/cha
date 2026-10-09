@@ -1,5 +1,7 @@
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_editor.h"
+#include "util/base64.h"
+#include "util/picture.h"
 
 #include "characters/model_context.h"
 #include "providers/voice_output_config.h"
@@ -3153,6 +3155,27 @@ void WorkspaceConfigEditor::delete_forum(std::string_view forum_id) {
             + "' has no writable configuration");
     }
     remove_directory(path->second.parent_path());
+}
+
+void WorkspaceConfigEditor::write_character_picture(
+    std::string_view character_id,
+    std::string_view filename,
+    std::string_view content_base64) {
+    const auto directory = workspace_.character_directory(character_id);
+    if (!directory) throw std::out_of_range("That character was not found.");
+    const auto* format = picture_format(filename);
+    if (!format || format->filename != filename) {
+        throw std::invalid_argument("Unsupported picture format.");
+    }
+    try {
+        (void)decode_base64(content_base64);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid picture data.");
+    }
+    for (const auto& supported : picture_formats) {
+        files_.erase(source_.name(*directory / supported.filename));
+    }
+    write_file(*directory / filename, content_base64);
 }
 
 void WorkspaceConfigEditor::write_character_settings(

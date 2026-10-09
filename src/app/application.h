@@ -199,6 +199,11 @@ public:
     [[nodiscard]] std::optional<CharacterPicture> get_character_picture(
         std::string_view character_id,
         std::uint64_t epoch);
+    void update_character_picture(
+        std::string_view character_id,
+        std::string_view filename,
+        std::string_view content_base64,
+        std::uint64_t epoch);
     [[nodiscard]] CharacterDetail get_character(
         std::string_view character_id,
         std::uint64_t epoch);

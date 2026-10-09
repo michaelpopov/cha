@@ -542,6 +542,7 @@ it('adds a character file and opens the saved content', async () => {
   await user.click(await screen.findByRole('button', { name: 'Characters' }));
   await user.click(screen.getByRole('button', { name: /Guide/ }));
   await user.click(await screen.findByRole('button', { name: 'New file' }));
+  await user.click(screen.getByRole('button', { name: 'Write text' }));
   await user.type(screen.getByRole('textbox', { name: 'Filename' }), 'NOTES');
   await user.type(screen.getByRole('textbox', { name: 'Content' }), '# New notes');
   await user.click(screen.getByRole('button', { name: 'Add file' }));
@@ -559,10 +560,96 @@ it('preserves the basename when adding content from a dotfile', async () => {
   await user.click(await screen.findByRole('button', { name: 'New file' }));
   const file = new File(['Notes'], '.gitignore', { type: 'text/plain' });
   Object.defineProperty(file, 'text', { value: async () => 'Notes' });
-  fireEvent.change(screen.getByLabelText('Upload content'), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText('File to upload'), { target: { files: [file] } });
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Filename' })).toHaveValue('.gitignore.md'));
   await user.click(screen.getByRole('button', { name: 'Add file' }));
   expect(createCharacterFile).toHaveBeenCalledWith('guide', '.gitignore.md', 'Notes');
+});
+
+it.each(['XXXX.jpg', 'XXXX.jpeg', 'XXXX.png'])('uploads %s as a picture without reading or displaying it as text', async (name) => {
+  const user = userEvent.setup();
+  const updateCharacterPicture = vi.fn(async () => {});
+  const createCharacterFile = vi.fn();
+  render(<App client={fixtureClient({ updateCharacterPicture, createCharacterFile })} />);
+  await openSettingsNavigation();
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(screen.getByRole('button', { name: /Guide/ }));
+  await user.click(await screen.findByRole('button', { name: 'New file' }));
+  expect(screen.getByRole('button', { name: 'Upload file' })).toHaveClass('cha-button-primary');
+  expect(screen.queryByRole('textbox', { name: 'Content' })).not.toBeInTheDocument();
+  const file = new File([new Uint8Array([0, 255, 128, 1])], name, { type: 'image/jpeg' });
+  const text = vi.fn();
+  Object.defineProperty(file, 'text', { value: text });
+  await user.upload(screen.getByLabelText('File to upload'), file);
+  expect(await screen.findByRole('img', { name: `Preview of ${name}` })).toHaveAttribute('src', 'data:image/jpeg;base64,AP+AAQ==');
+  expect(screen.getByRole('textbox', { name: 'Vault filename' })).toHaveValue(name.replace('XXXX', 'PICTURE'));
+  expect(screen.getByRole('textbox', { name: 'Vault filename' })).toHaveAttribute('readonly');
+  expect(screen.queryByRole('textbox', { name: 'Content' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Add file' }));
+  await waitFor(() => expect(updateCharacterPicture).toHaveBeenCalledWith('guide', file));
+  expect(screen.getByRole('status')).toHaveTextContent('Added as ' + name.replace('XXXX', 'PICTURE'));
+  expect(createCharacterFile).not.toHaveBeenCalled();
+  expect(text).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Write text' }));
+  expect(screen.getByRole('textbox', { name: 'Content' })).toHaveValue('');
+  expect(screen.getByRole('textbox', { name: 'Filename' })).toHaveValue('');
+});
+
+it('offers picture uploads for Assistant without offering text edits', async () => {
+  const user = userEvent.setup();
+  const updateCharacterPicture = vi.fn(async () => {});
+  render(<App client={fixtureClient({
+    getCharacter: async () => ({ ...characterDetailFixture, id: 'assistant', writable: false }),
+    updateCharacterPicture,
+  })} />);
+  await openSettingsNavigation();
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(screen.getByRole('button', { name: /Assistant/ }));
+  await user.click(await screen.findByRole('button', { name: 'New file' }));
+  expect(screen.getByRole('button', { name: 'Upload file' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Write text' })).not.toBeInTheDocument();
+  const file = new File(['bytes'], 'portrait.png', { type: 'image/png' });
+  await user.upload(screen.getByLabelText('File to upload'), file);
+  await screen.findByRole('img', { name: 'Preview of portrait.png' });
+  await user.click(screen.getByRole('button', { name: 'Add file' }));
+  await waitFor(() => expect(updateCharacterPicture).toHaveBeenCalledWith('assistant', file));
+});
+
+it('keeps the selected picture for retry when saving fails', async () => {
+  const user = userEvent.setup();
+  const updateCharacterPicture = vi.fn()
+    .mockRejectedValueOnce(new ChaError('invalid_argument', 'Picture could not be saved.'))
+    .mockResolvedValue(undefined);
+  render(<App client={fixtureClient({ updateCharacterPicture })} />);
+  await openSettingsNavigation();
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(screen.getByRole('button', { name: /Guide/ }));
+  await user.click(await screen.findByRole('button', { name: 'New file' }));
+  await user.upload(screen.getByLabelText('File to upload'), new File(['bytes'], 'portrait.jpg', { type: 'image/jpeg' }));
+  await screen.findByRole('img', { name: 'Preview of portrait.jpg' });
+  await user.click(screen.getByRole('button', { name: 'Add file' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Picture could not be saved.');
+  await user.click(screen.getByRole('button', { name: 'Add file' }));
+  expect(await screen.findByRole('status')).toHaveTextContent('Added as PICTURE.jpg');
+  expect(updateCharacterPicture).toHaveBeenCalledTimes(2);
+});
+
+it('rejects binary files in the text-only replacement control', async () => {
+  const user = userEvent.setup();
+  const updateCharacterFile = vi.fn();
+  render(<App client={fixtureClient({ updateCharacterFile })} />);
+  await openSettingsNavigation();
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(screen.getByRole('button', { name: /Guide/ }));
+  await user.click(await screen.findByRole('button', { name: 'CHARACTER.md' }));
+  await screen.findByRole('button', { name: 'Replace character file content from file' });
+  const file = new File(['binary'], 'portrait.jpg', { type: 'image/jpeg' });
+  const text = vi.fn();
+  Object.defineProperty(file, 'text', { value: text });
+  fireEvent.change(document.querySelector('.cha-definition-upload input')!, { target: { files: [file] } });
+  expect(screen.getByRole('alert')).toHaveTextContent('Choose a Markdown or text file.');
+  expect(text).not.toHaveBeenCalled();
+  expect(updateCharacterFile).not.toHaveBeenCalled();
 });
 
 it('keeps a character on screen and shows the server message when deletion is refused', async () => {
@@ -944,6 +1031,7 @@ it('adds a forum file and opens the saved content', async () => {
   await user.click(within(screen.getByLabelText('Forum sessions navigation'))
     .getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(await screen.findByRole('button', { name: 'New file' }));
+  await user.click(screen.getByRole('button', { name: 'Write text' }));
   await user.type(screen.getByRole('textbox', { name: 'Filename' }), 'NOTES');
   await user.type(screen.getByRole('textbox', { name: 'Content' }), '# New notes');
   await user.click(screen.getByRole('button', { name: 'Add file' }));
@@ -2821,6 +2909,56 @@ describe('picture sizing', () => {
       callbacks.forEach((callback) => callback([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver));
     });
   }
+
+  it.each(['keyboard', 'pointer', 'toggle'])('keeps an unused session and its picture when changing the panel with %s', async (control) => {
+    geometry();
+    vi.stubGlobal('PointerEvent', class extends MouseEvent {
+      pointerId: number;
+      constructor(type: string, init: PointerEventInit) { super(type, init); this.pointerId = init.pointerId ?? 0; }
+    });
+    const user = userEvent.setup();
+    const events = drivableSessionEvents();
+    const discardUnusedSession = vi.fn(async () => undefined);
+    const unused = { ...lobbySnapshot('unused', 'New session'), recent_pending: true, discardable: true };
+    render(<App client={fixtureClient({
+      createSession: async () => ({ id: 'unused', label: 'New session' }),
+      getSessionSnapshot: async (_forumId, sessionId) => sessionId === 'welcome' ? snapshotFixture : unused,
+      getCharacterPicture: async () => ({ filename: 'PICTURE.png', mime_type: 'image/png', content_base64: 'portrait' }),
+      discardUnusedSession,
+    })} connectSessionEvents={events.connect} />);
+    await user.click(await screen.findByRole('button', { name: 'Actions for forum The Lobby' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Create new session' }));
+    await waitFor(() => expect(window.location.hash).toBe('#/s/lobby/unused/'));
+    const index = events.connections.findIndex(({ key }) => key === 'lobby/unused');
+    act(() => events.handlers[index].onSnapshot(unused));
+    expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    await user.type(input, 'Unsent draft');
+    const divider = screen.getByRole('separator', { name: 'Resize picture' });
+    if (control === 'keyboard') {
+      fireEvent.keyDown(divider, { key: 'ArrowLeft' });
+      expect(divider).toHaveAttribute('aria-valuenow', '296');
+    } else if (control === 'pointer') {
+      divider.setPointerCapture = vi.fn();
+      divider.hasPointerCapture = vi.fn().mockReturnValue(true);
+      divider.releasePointerCapture = vi.fn();
+      fireEvent.pointerDown(divider, { pointerId: 1, button: 0, clientX: 500 });
+      fireEvent.pointerMove(divider, { pointerId: 1, clientX: 450 });
+      fireEvent.pointerUp(divider, { pointerId: 1 });
+      expect(divider).toHaveAttribute('aria-valuenow', '330');
+    } else {
+      await user.click(screen.getByRole('button', { name: 'Hide picture' }));
+      await user.click(screen.getByRole('button', { name: 'Show picture' }));
+    }
+    expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
+    expect(input).toHaveValue('Unsent draft');
+    expect(input).toBeEnabled();
+    expect(window.location.hash).toBe('#/s/lobby/unused/');
+    expect(discardUnusedSession).not.toHaveBeenCalled();
+    expect(events.connections[index].close).not.toHaveBeenCalled();
+    act(() => events.handlers[index].onSnapshot({ ...unused, default_character_id: '-' }));
+    expect(screen.getByRole('combobox', { name: 'Choose message target' })).toHaveValue('-');
+  });
 
   it('clamps keyboard sizing, preserves the preferred width after shrinking and navigation, and keeps toggles independent', async () => {
     const measure = geometry();

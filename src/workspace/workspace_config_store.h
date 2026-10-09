@@ -226,6 +226,10 @@ public:
     [[nodiscard]] const std::filesystem::path& welcome_path() const noexcept;
     [[nodiscard]] std::filesystem::path database_path() const;
     [[nodiscard]] MaintenanceGuard reserve_maintenance();
+    void apply_character_picture(
+        std::string_view character_id,
+        std::string_view filename,
+        std::string_view content_base64);
     WorkspaceConfigEditResult apply_character_settings(
         std::string_view character_id,
         std::string_view provider_id,

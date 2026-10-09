@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ChaProtocolError, isCommandResult, type SessionSnapshot } from './client';
 import { createFakeNativeBridge } from './nativeBridge';
@@ -18,6 +18,34 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it.each(['JPG', 'jpeg', 'png'])('uploads original %s bytes under the picture filename', async (extension) => {
+    const write = vi.fn(() => ({}));
+    const client = createNativeChaClient(createFakeNativeBridge({ 'character.picture.update': write }));
+    const file = new File([new Uint8Array([0, 255, 128, 1])], `holiday.${extension}`);
+    await client.updateCharacterPicture('guide', file);
+    expect(write).toHaveBeenCalledWith({
+      character_id: 'guide', filename: `PICTURE.${extension.toLowerCase()}`, content_base64: 'AP+AAQ==',
+    });
+  });
+
+  it('does not upload a file to a vault switched while it was being read', async () => {
+    const read = vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => {});
+    try {
+      const write = vi.fn(() => ({}));
+      const bridge = createFakeNativeBridge({ 'character.picture.update': write });
+      const client = createNativeChaClient(bridge);
+      const saving = client.updateCharacterPicture('guide', new File(['bytes'], 'portrait.png'));
+      const reader = read.mock.instances[0] as FileReader;
+      bridge.setContextEpoch(bridge.contextEpoch() + 1);
+      Object.defineProperty(reader, 'result', { value: 'data:image/png;base64,AP8=' });
+      reader.onload?.call(reader, new ProgressEvent('load') as ProgressEvent<FileReader>);
+      await expect(saving).rejects.toMatchObject({ code: 'vault_changed' });
+      expect(write).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  });
+
   it.each([
     ['PICTURE.png', 'image/png'],
     ['PICTURE.webp', 'image/webp'],

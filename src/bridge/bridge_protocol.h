@@ -43,6 +43,7 @@ enum class Method {
     session_unsubscribe,
     character_get,
     character_picture_get,
+    character_picture_update,
     character_create,
     character_update,
     character_update_definition,

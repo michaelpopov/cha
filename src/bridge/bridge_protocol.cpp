@@ -29,6 +29,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::session_unsubscribe, "session.unsubscribe"},
     {Method::character_get, "character.get"},
     {Method::character_picture_get, "character.picture.get"},
+    {Method::character_picture_update, "character.picture.update"},
     {Method::character_create, "character.create"},
     {Method::character_update, "character.update"},
     {Method::character_update_definition, "character.updateDefinition"},

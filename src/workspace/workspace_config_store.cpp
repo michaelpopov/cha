@@ -2073,6 +2073,16 @@ WorkspaceConfigStore::reserve_maintenance() {
         std::make_unique<MaintenanceGuard::Impl>(*impl_));
 }
 
+void WorkspaceConfigStore::apply_character_picture(
+    std::string_view character_id,
+    std::string_view filename,
+    std::string_view content_base64) {
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_character_picture(character_id, filename, content_base64);
+        return std::vector<std::string>{};
+    });
+}
+
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_settings(
     std::string_view character_id,
     std::string_view provider_id,

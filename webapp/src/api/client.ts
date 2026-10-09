@@ -108,6 +108,7 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
 export interface ChaClient {
   getBootstrap(): Promise<Bootstrap>;
   getCharacterPicture(characterId: string): Promise<CharacterPicture | null>;
+  updateCharacterPicture(characterId: string, file: File): Promise<void>;
   getCharacter(characterId: string): Promise<CharacterDetail>;
   createCharacter(request: CreateCharacterRequest): Promise<CharacterDetail>;
   updateCharacter(characterId: string, settings: UpdateCharacterRequest): Promise<CharacterDetail>;

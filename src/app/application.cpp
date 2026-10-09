@@ -817,6 +817,16 @@ std::optional<CharacterPicture> Application::get_character_picture(
     return workspace::get_character_picture(*impl_->store, character_id);
 }
 
+void Application::update_character_picture(
+    std::string_view character_id,
+    std::string_view filename,
+    std::string_view content_base64,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    workspace::update_character_picture(*impl_->store, character_id, filename, content_base64);
+}
+
 CharacterDetail Application::get_character(
     std::string_view character_id,
     std::uint64_t epoch) {

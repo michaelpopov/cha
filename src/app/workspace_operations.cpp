@@ -310,6 +310,19 @@ std::optional<CharacterPicture> get_character_picture(
     }
 }
 
+void update_character_picture(
+    WorkspaceConfigStore& store,
+    std::string_view id,
+    std::string_view filename,
+    std::string_view content_base64) {
+    if (!store.snapshot()->character_settings_are_writable(id)) {
+        fail(ErrorCode::not_found, "That character was not found.");
+    }
+    with_workspace_edit([&] {
+        store.apply_character_picture(id, filename, content_base64);
+    });
+}
+
 CharacterDetail get_character(
     const Workspace& workspace,
     std::string_view id) {

@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ChangeEvent,
   type Dispatch,
   type FormEvent,
   type ReactNode,
@@ -10,6 +11,7 @@ import {
 
 import {
   publicErrorMessage,
+  ChaError,
   type ChaClient,
   type CharacterAppearance,
   type CharacterDetail,
@@ -39,6 +41,8 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   MessageIcon,
+  FileUpIcon,
+  TextLinesIcon,
   PlusIcon,
   SpeakerIcon,
   StopIcon,
@@ -568,7 +572,7 @@ export function CharacterDetailScreen({
         </div>
         <MarkdownFileList
           filenames={detail.markdown_files}
-          writable={detail.writable}
+          writable={detail.settings_writable}
           onNew={() => dispatch({ type: 'show-new-character-file' })}
           onSelect={(filename) => dispatch({ type: 'inspect-character-file', characterId: characterId!, filename })}
         />
@@ -647,112 +651,145 @@ function NewMarkdownFileScreen({
   dispatch,
   client,
 }: RosterDetailProps & { kind: 'character' | 'forum' }) {
+  const [mode, setMode] = useState<'upload' | 'text'>('upload');
   const [filename, setFilename] = useState('');
   const [content, setContent] = useState('');
+  const [picture, setPicture] = useState<{ file: File; preview: string } | null>(null);
+  const [pictureSaved, setPictureSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reading, setReading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement>(null);
   const mounted = useRef(false);
   const subjectId = (kind === 'character' ? state.inspectedCharacter.id : state.currentForumId)!;
   const subjectName = (kind === 'character' ? state.bootstrap?.characters : state.bootstrap?.forums)
     ?.find(({ id }) => id === subjectId)?.display_name;
+  const pictureFilename = picture
+    ? 'PICTURE' + picture.file.name.slice(picture.file.name.lastIndexOf('.')).toLowerCase()
+    : '';
+  const busy = saving || reading;
+  const textWritable = kind === 'forum' || state.inspectedCharacter.writable;
 
   useEffect(() => {
     mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
+    return () => { mounted.current = false; };
   }, []);
+
+  function back() {
+    dispatch(kind === 'character'
+      ? { type: 'inspect-character', characterId: subjectId } : { type: 'show-forum-detail' });
+  }
+
+  async function upload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || busy) return;
+    setError(null);
+    setReading(true);
+    try {
+      if (/\.(png|jpe?g|webp|gif)$/i.test(file.name)) {
+        if (kind !== 'character') throw new ChaError('invalid_argument', 'Pictures can only be uploaded to a character.');
+        if (file.size > 8 * 1024 * 1024) throw new ChaError('body_too_large', 'Choose a picture no larger than 8 MB.');
+        const preview = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new ChaError('invalid_argument', 'The picture file could not be read.'));
+          reader.readAsDataURL(file);
+        });
+        if (!mounted.current) return;
+        setPicture({ file, preview });
+        setPictureSaved(false);
+        setMode('upload');
+      } else {
+        if (!textWritable || file.type.startsWith('image/')
+          || (!/\.(md|txt)$/i.test(file.name) && !file.type.startsWith('text/'))) {
+          throw new ChaError('invalid_argument', kind === 'character'
+            ? 'Choose a PNG, JPEG, WebP, GIF, Markdown, or text file.'
+            : 'Choose a Markdown or text file.');
+        }
+        const text = await file.text();
+        if (!mounted.current) return;
+        setContent(text);
+        setFilename(filename || normalizeMarkdownFilename(file.name));
+        setMode('text');
+      }
+    } catch (failure: unknown) {
+      if (mounted.current) setError(publicErrorMessage(failure, 'The local file could not be read.'));
+    } finally {
+      if (mounted.current) setReading(false);
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (saving || reading || !filename.trim()) return;
-    const normalizedFilename = normalizeMarkdownFilename(filename);
-    setFilename(normalizedFilename);
+    if (busy || (mode === 'upload' ? !picture || pictureSaved : !filename.trim())) return;
     setSaving(true);
     setError(null);
     try {
-      const file = await (kind === 'character'
-        ? client.createCharacterFile(subjectId, normalizedFilename, content)
-        : client.createForumFile(subjectId, normalizedFilename, content));
-      if (mounted.current) {
-        dispatch(kind === 'character'
-          ? { type: 'inspect-character-file', characterId: subjectId, filename: file.filename }
-          : { type: 'inspect-forum-file', forumId: subjectId, filename: file.filename });
+      if (mode === 'upload' && picture) {
+        await client.updateCharacterPicture(subjectId, picture.file);
+        if (mounted.current) setPictureSaved(true);
+      } else {
+        const normalizedFilename = normalizeMarkdownFilename(filename);
+        setFilename(normalizedFilename);
+        const file = await (kind === 'character'
+          ? client.createCharacterFile(subjectId, normalizedFilename, content)
+          : client.createForumFile(subjectId, normalizedFilename, content));
+        if (mounted.current) {
+          dispatch(kind === 'character'
+            ? { type: 'inspect-character-file', characterId: subjectId, filename: file.filename }
+            : { type: 'inspect-forum-file', forumId: subjectId, filename: file.filename });
+        }
       }
     } catch (failure: unknown) {
-      setError(publicErrorMessage(failure, `${kind === 'character' ? 'Character' : 'Forum'} file could not be added.`));
-      setSaving(false);
+      if (mounted.current) setError(publicErrorMessage(failure, `${kind === 'character' ? 'Character' : 'Forum'} file could not be added.`));
+    } finally {
+      if (mounted.current) setSaving(false);
     }
   }
 
   return (
     <section className="cha-screen cha-navigation" aria-label={`New ${kind} file navigation`}>
-      <button
-        className="cha-back-row"
-        onClick={() => dispatch(kind === 'character'
-          ? { type: 'inspect-character', characterId: subjectId } : { type: 'show-forum-detail' })}
-        type="button"
-      >
+      <button className="cha-back-row" onClick={back} type="button">
         <ChevronLeftIcon />
         <span>{subjectName ?? (kind === 'character' ? 'Character' : 'Forum')}</span>
       </button>
       <form className="cha-settings-form" onSubmit={(event) => void submit(event)}>
-        <label>
-          Filename
-          <input
-            className="cha-form-control"
-            value={filename}
-            onChange={(event) => setFilename(event.target.value)}
-            disabled={saving || reading}
-            required
-          />
-        </label>
-        <label>
-          Content
-          <textarea
-            className="cha-form-control"
-            value={content}
-            onChange={(event) => setContent(event.target.value)}
-            disabled={saving || reading}
-            rows={12}
-          />
-        </label>
-        <label>
-          Upload content
-          <input
-            accept=".md,.txt,text/markdown,text/plain"
-            type="file"
-            disabled={saving || reading}
-            onChange={async (event) => {
-              const file = event.target.files?.[0];
-              if (!file) return;
-              setReading(true);
-              setError(null);
-              try {
-                const text = await file.text();
-                if (!mounted.current) return;
-                setContent(text);
-                if (!filename) {
-                  setFilename(normalizeMarkdownFilename(file.name));
-                }
-              } catch {
-                setError('The local file could not be read.');
-              } finally {
-                setReading(false);
-              }
-            }}
-          />
-        </label>
-        {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-dialog-actions">
-          <button
-            className="cha-button cha-button-primary"
-            disabled={saving || reading || !filename.trim()}
-            type="submit"
-          >
-            {saving ? 'Adding…' : 'Add file'}
+        <div className="cha-file-actions">
+          <button className="cha-button cha-button-primary cha-file-upload-button" disabled={busy}
+            onClick={() => input.current?.click()} type="button">
+            <FileUpIcon />Upload file
           </button>
+          {textWritable && <button className="cha-button" disabled={busy} onClick={() => { setMode('text'); setError(null); }} type="button">
+            <TextLinesIcon />Write text
+          </button>}
+          <input accept={kind === 'character'
+            ? '.png,.jpg,.jpeg,.webp,.gif' + (textWritable ? ',.md,.txt,text/markdown,text/plain' : '')
+            : '.md,.txt,text/markdown,text/plain'}
+            aria-label="File to upload" className="cha-file-input" disabled={busy}
+            onChange={(event) => void upload(event)} ref={input} type="file" />
+        </div>
+        {mode === 'upload' && picture && <>
+          <label>Vault filename<input className="cha-form-control" readOnly value={pictureFilename} /></label>
+          <div className="cha-uploaded-picture">
+            <img alt={`Preview of ${picture.file.name}`} src={picture.preview}
+              onError={() => { setPicture(null); setError('The picture cannot be displayed. Choose another image.'); }} />
+            <span>{picture.file.name}</span>
+          </div>
+          {pictureSaved && <p role="status">Added as {pictureFilename}</p>}
+        </>}
+        {mode === 'text' && <>
+          <label>Filename<input className="cha-form-control" value={filename}
+            onChange={(event) => setFilename(event.target.value)} disabled={busy} required /></label>
+          <label>Content<textarea className="cha-form-control" value={content}
+            onChange={(event) => setContent(event.target.value)} disabled={busy} rows={12} /></label>
+        </>}
+        {error && <p className="cha-error-message" role="alert">{error}</p>}
+        <div className="cha-dialog-actions cha-file-actions">
+          <button className="cha-button" disabled={busy} onClick={back} type="button">Cancel</button>
+          <button className="cha-button cha-button-primary"
+            disabled={busy || (mode === 'upload' ? !picture || pictureSaved : !filename.trim())}
+            type="submit">{saving ? 'Adding…' : 'Add file'}</button>
         </div>
       </form>
     </section>
@@ -1132,7 +1169,7 @@ export function CharacterSettingsScreen({
           )}
         </div>
       )}
-      {detail && (
+      {detail && characterId && (
         <form className="cha-new-session" onSubmit={(event) => void save(event)}>
           <label htmlFor="cha-character-provider">Provider</label>
           <select

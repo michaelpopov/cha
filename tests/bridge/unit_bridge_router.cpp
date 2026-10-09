@@ -5,6 +5,7 @@
 #include "support/test_workspace.h"
 #include "runtime/command_queue.h"
 #include "workspace/builtins.h"
+#include "util/base64.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -211,6 +212,42 @@ TEST_F(BridgeRouterTest, CharacterPictureReadsNullAndStoredContentWithExactParam
     reply = call("character.picture.get", {{"character_id", "guide"}});
     EXPECT_FALSE(reply["ok"]);
     EXPECT_EQ(reply["error"]["code"], "vault_changed");
+}
+
+TEST_F(BridgeRouterTest, PictureUploadsAcceptLargeFilesAndValidateParamsAndContext) {
+    bootstrap_epoch();
+    const auto content = encode_base64(std::string(2 * 1024 * 1024, '\xff'));
+    const nlohmann::json params{
+        {"character_id", "guide"}, {"filename", "PICTURE.jpeg"}, {"content_base64", content}};
+    auto reply = call("character.picture.update", params);
+    ASSERT_TRUE(reply["ok"]) << reply;
+    EXPECT_EQ(reply["context_epoch"], epoch_);
+    reply = call("character.picture.get", {{"character_id", "guide"}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"]["filename"], "PICTURE.jpeg");
+    EXPECT_EQ(reply["result"]["content_base64"], content);
+    for (const auto& invalid : std::vector<nlohmann::json>{
+             {}, {{"character_id", "guide"}, {"filename", "PICTURE.jpeg"}},
+             {{"character_id", "guide"}, {"filename", "PICTURE.png"}, {"content_base64", 42}},
+             {{"character_id", "guide"}, {"filename", "../PICTURE.png"}, {"content_base64", "AP8="}},
+             {{"character_id", "guide"}, {"filename", "PICTURE.svg"}, {"content_base64", "AP8="}},
+             {{"character_id", "guide"}, {"filename", "PICTURE.png"}, {"content_base64", "!"}},
+             {{"character_id", "guide"}, {"filename", "PICTURE.png"}, {"content_base64", "AP8="}, {"extra", true}}}) {
+        reply = call("character.picture.update", invalid);
+        EXPECT_FALSE(reply["ok"]) << invalid;
+        EXPECT_EQ(reply["error"]["code"], "invalid_argument") << invalid;
+    }
+    auto missing = params;
+    missing["character_id"] = "missing";
+    reply = call("character.picture.update", missing);
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "not_found");
+    ++epoch_;
+    reply = call("character.picture.update", params);
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "vault_changed");
+    --epoch_;
+    EXPECT_EQ(call("character.picture.get", {{"character_id", "guide"}})["result"]["content_base64"], content);
 }
 
 TEST_F(BridgeRouterTest, InfoBootstrapCreateOpenSubmitStopSnapshotAndClose) {
