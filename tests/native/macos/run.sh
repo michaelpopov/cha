@@ -81,7 +81,7 @@ case "$expect" in
         fi
         ;;
 esac
-export CHA_NATIVE_PARITY_SCRIPT="$repository/tests/native/parity.js"
+export CHA_NATIVE_PARITY_SCRIPT=${CHA_NATIVE_PARITY_SCRIPT:-"$repository/tests/native/parity.js"}
 if [ -n "$vault" ]; then
     exec "$contents/MacOS/ChaNativeTestHost" --assets "$assets" --expect "$expect" --config "$vault" "$@"
 fi

@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ChaError,
@@ -2804,4 +2804,90 @@ it('keeps form Save disabled until the newest Welcome refresh ends', async () =>
   expect(save).toBeDisabled();
   await resolveAll();
   await waitFor(() => expect(save).toBeEnabled());
+});
+
+describe('picture sizing', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  function geometry(startWidth = 900) {
+    let width = startWidth;
+    const callbacks = new Set<ResizeObserverCallback>();
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(private callback: ResizeObserverCallback) { callbacks.add(callback); }
+      observe() { this.callback([{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver); }
+      disconnect() { callbacks.delete(this.callback); }
+    });
+    return (nextWidth: number) => act(() => {
+      width = nextWidth;
+      callbacks.forEach((callback) => callback([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver));
+    });
+  }
+
+  it('clamps keyboard sizing, preserves the preferred width after shrinking and navigation, and keeps toggles independent', async () => {
+    const measure = geometry();
+    render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
+    const divider = await screen.findByRole('separator', { name: 'Resize picture' });
+    expect(divider).toHaveAttribute('aria-valuenow', '280');
+    fireEvent.keyDown(divider, { key: 'ArrowLeft' });
+    expect(divider).toHaveAttribute('aria-valuenow', '296');
+    measure(520);
+    expect(divider).toHaveAttribute('aria-valuenow', '200');
+    measure(900);
+    expect(divider).toHaveAttribute('aria-valuenow', '296');
+    for (let i = 0; i < 40; i++) fireEvent.keyDown(divider, { key: 'ArrowLeft' });
+    expect(divider).toHaveAttribute('aria-valuenow', '580');
+    for (let i = 0; i < 40; i++) fireEvent.keyDown(divider, { key: 'ArrowRight' });
+    expect(divider).toHaveAttribute('aria-valuenow', '128');
+    fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
+    expect(screen.queryByRole('separator', { name: 'Resize picture' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide sidebar' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    expect(screen.getByRole('separator', { name: 'Resize picture' })).toHaveAttribute('aria-valuenow', '128');
+    await openSettingsNavigation();
+    fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
+    expect(await screen.findByRole('separator', { name: 'Resize picture' })).toHaveAttribute('aria-valuenow', '128');
+  });
+
+  it.each(['pointerUp', 'pointerCancel', 'lostPointerCapture'] as const)('starts a drag from the displayed width and ends on %s', async (finish) => {
+    const measure = geometry(520);
+    vi.stubGlobal('PointerEvent', class extends MouseEvent {
+      pointerId: number;
+      constructor(type: string, init: PointerEventInit) { super(type, init); this.pointerId = init.pointerId ?? 0; }
+    });
+    render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
+    const divider = await screen.findByRole('separator', { name: 'Resize picture' });
+    const sidebarWidth = screen.getByRole('separator', { name: 'Resize sidebar' }).getAttribute('aria-valuenow');
+    divider.setPointerCapture = vi.fn();
+    divider.hasPointerCapture = vi.fn().mockReturnValue(true);
+    divider.releasePointerCapture = vi.fn();
+    expect(divider).toHaveAttribute('aria-valuenow', '200');
+    fireEvent.pointerDown(divider, { pointerId: 1, button: 0, clientX: 500 });
+    fireEvent.pointerMove(divider, { pointerId: 1, clientX: 510 });
+    expect(divider).toHaveAttribute('aria-valuenow', '190');
+    fireEvent[finish](divider, { pointerId: 1 });
+    fireEvent.pointerMove(divider, { pointerId: 1, clientX: 600 });
+    expect(divider).toHaveAttribute('aria-valuenow', '190');
+    measure(900);
+    expect(divider).toHaveAttribute('aria-valuenow', '190');
+    fireEvent.pointerDown(divider, { pointerId: 2, button: 0, clientX: 500 });
+    fireEvent.pointerMove(divider, { pointerId: 2, clientX: -1000 });
+    expect(divider).toHaveAttribute('aria-valuenow', '580');
+    fireEvent.pointerMove(divider, { pointerId: 2, clientX: 1000 });
+    expect(divider).toHaveAttribute('aria-valuenow', '128');
+    fireEvent.pointerUp(divider, { pointerId: 2 });
+    expect(screen.getByRole('separator', { name: 'Resize sidebar' })).toHaveAttribute('aria-valuenow', sidebarWidth!);
+  });
+
+  it('disables resizing at 128 available pixels, hides it at zero, and restores the preference', async () => {
+    const measure = geometry(448);
+    render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
+    const divider = await screen.findByRole('separator', { name: 'Resize picture' });
+    expect(divider).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.keyDown(divider, { key: 'ArrowRight' });
+    expect(divider).toHaveAttribute('aria-valuenow', '128');
+    measure(320);
+    expect(screen.queryByRole('separator', { name: 'Resize picture' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide picture' })).toHaveAttribute('aria-expanded', 'true');
+    measure(900);
+    expect(screen.getByRole('separator', { name: 'Resize picture' })).toHaveAttribute('aria-valuenow', '280');
+  });
 });

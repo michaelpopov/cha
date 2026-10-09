@@ -468,3 +468,88 @@ describe('application navigation reducer', () => {
     expect(state.bootstrap?.vaults).toEqual(['Archive', 'Personal', 'Projects']);
   });
 });
+
+describe('character picture selection', () => {
+  const snapshot = { ...snapshotFixture, characters: bootstrapFixture.characters };
+  const turn = (id: number, participant = 'guide', kind: 'human' | 'character' | 'error' | 'notice' = 'character') => ({
+    id, kind, participant_id: participant, display_name: participant,
+    addressed_to: participant, addressed_to_name: participant, text: 'reply',
+    status: 'complete' as const, request_id: id, created_at: null,
+  });
+  const open = (overrides: Partial<typeof snapshot> = {}) => appReducer(readyState(), {
+    type: 'conversation-opened', snapshot: { ...snapshot, ...overrides },
+  });
+  const update = (state: AppState, overrides: Partial<typeof snapshot> = {}) => appReducer(state, {
+    type: 'session-snapshot', snapshot: { ...state.sessionSnapshot!, ...overrides },
+  });
+
+  it.each<[string, typeof snapshot.transcript, string | null]>([
+    ['assistant', [turn(1)], 'assistant'], ['guide', [turn(1)], 'guide'], ['-', [turn(1)], null],
+    ['missing', [turn(1)], null], ['*', [turn(1)], 'guide'], ['*', [], null],
+  ])('initializes recipient %s', (recipient, transcript, expected) => {
+    expect(open({ default_character_id: recipient, transcript }).pictureCharacterId).toBe(expected);
+  });
+
+  it.each(['waiting', 'reasoning', 'answering', 'stopping'] as const)('generation wins during %s and remains after stopping', (phase) => {
+    let state = open();
+    state = update(state, { default_character_id: '-', transcript: [turn(1, 'assistant')],
+      generation: { ...snapshot.generation, active: true, character_id: 'guide', phase } });
+    expect(state.pictureCharacterId).toBe('guide');
+    state = update(state, { generation: snapshot.generation });
+    expect(state.pictureCharacterId).toBe('guide');
+  });
+
+  it.each(['character', 'error', 'human'] as const)('recovers missed %s turns without changing the recipient', (kind) => {
+    let state = update(open(), { transcript: [turn(1, 'guide', kind)] });
+    expect(state.pictureCharacterId).toBe('guide');
+    expect(state.currentDefaultCharacterId).toBe('assistant');
+    state = update(state);
+    expect(state.pictureCharacterId).toBe('guide');
+  });
+
+  it('follows multicast foreground and recovers a combined idle batch', () => {
+    let state = update(open(), { generation: { ...snapshot.generation, active: true, character_id: 'assistant' } });
+    state = update(state, { transcript: [turn(1, 'assistant')], generation: { ...snapshot.generation, active: true, character_id: 'guide' } });
+    expect(state.pictureCharacterId).toBe('guide');
+    state = update(open(), { transcript: [turn(1, 'assistant'), turn(2, 'guide')], generation: snapshot.generation });
+    expect(state.pictureCharacterId).toBe('guide');
+  });
+
+  it('changed recipient overrides recovered turns; everyone keeps the last turn', () => {
+    let state = update(open({ default_character_id: 'guide' }), { default_character_id: 'assistant', transcript: [turn(1)] });
+    expect(state.pictureCharacterId).toBe('assistant');
+    state = update(state, { default_character_id: '*', transcript: [turn(1), turn(2)] });
+    expect(state.pictureCharacterId).toBe('guide');
+    expect(update(state, { default_character_id: '-' }).pictureCharacterId).toBeNull();
+  });
+
+  it('ignores self-notes, notices, edits, deletion and cover changes after a later selection', () => {
+    let state = update(open(), { transcript: [turn(1)] });
+    state = update(state, { default_character_id: 'guide' });
+    state = update(state, { default_character_id: 'assistant' });
+    const note = { ...turn(2, 'guide', 'human'), request_id: undefined };
+    state = update(state, { transcript: [{ ...turn(1), text: 'edited', status: 'cancelled' }, note, turn(3, 'guide', 'notice')], covered_until: 3 });
+    expect(state.pictureCharacterId).toBe('assistant');
+    state = update(state, { transcript: [], covered_until: undefined });
+    expect(state.pictureCharacterId).toBe('assistant');
+  });
+
+  it('clears removed members and context selection, preserves preferences, and ignores foreign snapshots', () => {
+    let state = open({ default_character_id: 'guide' });
+    expect(update(state, { session_id: 'other' })).toBe(state);
+    expect(update(state, { characters: [bootstrapFixture.characters[0]] }).pictureCharacterId).toBeNull();
+    state = appReducer(state, { type: 'toggle-picture' });
+    state = appReducer(state, { type: 'resize-picture', width: 416 });
+    for (const action of [{ type: 'show-settings' }, { type: 'show-chat' }, { type: 'vault-context-reset' }] as AppAction[]) {
+      state = appReducer(state, action);
+      expect(state.pictureWidth).toBe(416);
+      expect(state.pictureOpen).toBe(false);
+    }
+    expect(state.pictureCharacterId).toBeNull();
+    state = appReducer(state, { type: 'conversation-opened', snapshot });
+    expect(state.pictureWidth).toBe(416);
+    expect(state.pictureOpen).toBe(false);
+    expect(appReducer(state, { type: 'show-initial-conversation' }).pictureCharacterId).toBeNull();
+    expect(appReducer(state, { type: 'session-discarded', forumId: snapshot.forum.id, sessionId: snapshot.session_id }).pictureCharacterId).toBeNull();
+  });
+});

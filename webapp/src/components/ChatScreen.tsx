@@ -25,6 +25,7 @@ import {
   type SessionSnapshot,
 } from '../api/client';
 import { useAudioDownloads } from '../audioDownloads';
+import { ChatPictureLayout } from './ChatPicture';
 import { SidebarToggle } from './TopBar';
 import type { AppAction, AppState } from '../state/view';
 import {
@@ -51,6 +52,7 @@ import {
   EyeOffIcon,
   GlobeIcon,
   MicrophoneIcon,
+  PictureIcon,
   SendIcon,
   SpeakerIcon,
   StopIcon,
@@ -1121,7 +1123,8 @@ export function ChatScreen({
       && snapshot?.shutdown_reason !== 'reloading');
 
   return (
-    <section className="cha-screen cha-chat" aria-label="Chat area" ref={chatArea}>
+    <ChatPictureLayout client={client} dispatch={dispatch} state={state}>
+    <section className="cha-chat-column" aria-label="Chat area" ref={chatArea}>
       <div
         aria-label="Conversation transcript"
         className="cha-transcript"
@@ -1345,6 +1348,14 @@ export function ChatScreen({
             disabled={!sessionAvailable}
             transliteration={transliteration}
           />
+          <button
+            aria-expanded={state.pictureOpen}
+            aria-label={state.pictureOpen ? 'Hide picture' : 'Show picture'}
+            className="cha-sidebar-toggle"
+            onClick={() => dispatch({ type: 'toggle-picture' })}
+            title={state.pictureOpen ? 'Hide picture' : 'Show picture'}
+            type="button"
+          ><PictureIcon /></button>
         </div>
       </div>
       {turnToDelete && (
@@ -1363,6 +1374,7 @@ export function ChatScreen({
         />
       )}
     </section>
+    </ChatPictureLayout>
   );
 }
 

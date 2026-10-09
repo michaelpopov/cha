@@ -101,6 +101,11 @@ private func isProbe(_ expectation: ProbeExpectation) -> Bool {
     }
 }
 
+// Picture layout checks select a narrow window with CHA_NATIVE_TEST_WIDTH.
+private func testWidth(_ fallback: Double) -> Double {
+    ProcessInfo.processInfo.environment["CHA_NATIVE_TEST_WIDTH"].flatMap { Double($0) } ?? fallback
+}
+
 private struct TestRuntimeHandle: @unchecked Sendable {
     let pointer: OpaquePointer
 }
@@ -126,7 +131,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
             let built = makeFeasibilityWebViewConfiguration(assetRoot: options.assets)
             probeReceiver = built.2
             let view = WKWebView(
-                frame: NSRect(x: 0, y: 0, width: 800, height: 600),
+                frame: NSRect(x: 0, y: 0, width: testWidth(800), height: 600),
                 configuration: built.0)
             view.navigationDelegate = self
             view.uiDelegate = self
@@ -158,7 +163,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         runtime = created
         let built = makeNativeWebViewConfiguration(assetRoot: options.assets)
         let view = WKWebView(
-            frame: NSRect(x: 0, y: 0, width: 800, height: 600),
+            frame: NSRect(x: 0, y: 0, width: testWidth(800), height: 600),
             configuration: built.0)
         view.navigationDelegate = self
         view.uiDelegate = self
@@ -177,9 +182,9 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
     }
 
     func start() {
-        if options.devOrigin != nil || options.expectation == .audio || options.expectation == .media || options.expectation == .streaming {
+        if ProcessInfo.processInfo.environment["CHA_NATIVE_TEST_ANIMATION"] == "1" || options.devOrigin != nil || options.expectation == .audio || options.expectation == .media || options.expectation == .streaming {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 1040, height: 760),
+                contentRect: NSRect(x: 0, y: 0, width: testWidth(1040), height: 760),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false)
@@ -341,7 +346,45 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
                 self?.finish(error: HostError.probeFailed(
                     "\(error.localizedDescription) \(nsError.userInfo)"))
             case .success(let result):
-                self?.handleProbe(result)
+                if ProcessInfo.processInfo.environment["CHA_NATIVE_TEST_ANIMATION"] == "1",
+                   source.contains("nativeParity()"),
+                   let report = result as? [String: Any], report["ok"] as? Bool == true {
+                    self?.checkPictureAnimation(report: result, samples: 0, colors: [Set<String>(), Set<String>()])
+                } else {
+                    self?.handleProbe(result)
+                }
+            }
+        }
+    }
+
+    // The picture probe places GIF and WebP at these coordinates. Sample the
+    // rendered webview, since canvas reads the default frame of animated images.
+    private func checkPictureAnimation(report: Any?, samples: Int, colors: [Set<String>]) {
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = NSRect(x: 0, y: 0, width: 32, height: 24)
+        webView.takeSnapshot(with: configuration) { [weak self] image, error in
+            guard let self else { return }
+            guard let data = image?.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data) else {
+                self.finish(error: error ?? HostError.probeFailed("animation snapshot failed"))
+                return
+            }
+            var observed = colors
+            for index in 0..<2 {
+                let x = (index * 16 + 4) * bitmap.pixelsWide / 32
+                let y = 6 * bitmap.pixelsHigh / 24
+                if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) {
+                    observed[index].insert("\(color.redComponent),\(color.greenComponent),\(color.blueComponent)")
+                }
+            }
+            if observed.allSatisfy({ $0.count > 1 }) {
+                FileHandle.standardError.write(Data("GIF and WebP animation verified by native snapshots\n".utf8))
+                self.handleProbe(report)
+            } else if samples >= 20 {
+                self.finish(error: HostError.probeFailed("GIF or WebP did not animate in native snapshots"))
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(40)) {
+                    self.checkPictureAnimation(report: report, samples: samples + 1, colors: observed)
+                }
             }
         }
     }

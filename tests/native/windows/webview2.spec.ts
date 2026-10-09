@@ -205,7 +205,7 @@ test.describe('WebView2 native host', () => {
     test.skip(!!devOrigin, 'The packaged host supplies the production CSP.');
     test.setTimeout(60000);
     await waitForApplication(page);
-    const source = readFileSync(join(__dirname, '..', 'parity.js'), 'utf8');
+    const source = readFileSync(process.env.CHA_NATIVE_PARITY_SCRIPT ?? join(__dirname, '..', 'parity.js'), 'utf8');
     const result = await page.evaluate(source + '\nnativeParity();');
     expect(result).toMatchObject({ok: true});
     await page.reload();

@@ -217,6 +217,23 @@ TEST_F(DaemonProcessTest, ServesBootstrapAfterActivation) {
     EXPECT_EQ(process.wait_for_exit(5s), 0);
 }
 
+TEST_F(DaemonProcessTest, ServesBootstrapWithPictureRows) {
+    const std::string bytes("\0\xffpicture", 9);
+    for (const auto& folder : {"characters/guide", "system/assistant"}) {
+        std::ofstream picture(workspace_.root() / folder / "PICTURE.png", std::ios::binary);
+        picture.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    database_ = import_test_database(workspace_.root(), workspace_.root() / "pictures.sqlite3");
+    config_ = write_config(workspace_, database_);
+    DaemonProcess process(DaemonSpawn{.config_directory = config_});
+    const std::string raw = request_bootstrap(process);
+    EXPECT_NE(raw.find("Status: 200 OK"), std::string::npos) << raw;
+    EXPECT_NE(raw.find("\"display_name\":\"The Lobby\""), std::string::npos);
+    EXPECT_EQ(raw.find("content_base64"), std::string::npos);
+    process.send_signal(SIGTERM);
+    EXPECT_EQ(process.wait_for_exit(5s), 0);
+}
+
 TEST_F(DaemonProcessTest, ProtectedVaultReadsThePasswordFile) {
     using std::filesystem::perms;
     protect_workspace_session_database(database_, "secret");

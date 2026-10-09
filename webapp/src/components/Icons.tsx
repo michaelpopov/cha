@@ -321,3 +321,13 @@ export function SkullBonesIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function PictureIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" {...stroke} />
+      <circle cx="8" cy="8" r="1.5" {...stroke} />
+      <path d="m3 17 6-6 4 4 3-3 5 5" {...stroke} />
+    </Icon>
+  );
+}

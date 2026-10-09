@@ -81,6 +81,9 @@ interface EditableInspection {
 
 export interface AppState {
   sidebarOpen: boolean;
+  pictureOpen: boolean;
+  pictureWidth: number;
+  pictureCharacterId: string | null;
   mainView: MainView;
   bootstrapStatus: BootstrapStatus;
   bootstrap: Bootstrap | null;
@@ -114,6 +117,9 @@ export interface AppState {
 
 export const initialAppState: AppState = {
   sidebarOpen: true,
+  pictureOpen: true,
+  pictureWidth: 280,
+  pictureCharacterId: null,
   mainView: 'chat',
   bootstrapStatus: 'loading',
   bootstrap: null,
@@ -147,6 +153,8 @@ export type AppAction =
   | { type: 'vault-context-reset' }
   | { type: 'vault-context-refreshed'; bootstrap: Bootstrap }
   | { type: 'toggle-sidebar' }
+  | { type: 'toggle-picture' }
+  | { type: 'resize-picture'; width: number }
   | { type: 'show-personas' }
   | { type: 'show-new-persona' }
   | { type: 'inspect-persona'; personaId: string }
@@ -249,6 +257,7 @@ function showInitialConversation(state: AppState, bootstrap: Bootstrap): AppStat
     activeConversationLabel: initialRecent?.session_label ?? null,
     currentDefaultCharacterId: initialForum?.default_character_id ?? null,
     sessionSnapshot: null,
+    pictureCharacterId: null,
     streamStatus: 'idle',
     streamMessage: null,
     ...idleSessionOperation(),
@@ -269,6 +278,32 @@ function appendSessionEvent(
     text: transcript[entryIndex].text + event.text,
   };
   return { ...snapshot, transcript };
+}
+
+// Recover only newly observed turns: edits and unchanged history must not undo
+// a later recipient choice. The existing snapshot is the sole history store.
+function selectPictureCharacter(state: AppState, snapshot: SessionSnapshot, opened: boolean) {
+  let selected = opened ? null : state.pictureCharacterId;
+  if (opened) {
+    if (snapshot.default_character_id === '*') {
+      selected = [...snapshot.transcript].reverse().find((entry) => entry.kind === 'character')?.participant_id ?? null;
+    } else {
+      selected = snapshot.default_character_id;
+    }
+  } else {
+    const previousIds = new Set(state.sessionSnapshot?.transcript.map(({ id }) => id));
+    for (const entry of snapshot.transcript) {
+      if (previousIds.has(entry.id) || entry.request_id === undefined) continue;
+      if (entry.kind === 'character' || entry.kind === 'error') selected = entry.participant_id;
+      else if (entry.kind === 'human') selected = entry.addressed_to;
+    }
+    if (snapshot.default_character_id !== state.currentDefaultCharacterId
+        && snapshot.default_character_id !== '*') selected = snapshot.default_character_id;
+  }
+  if (snapshot.generation.active && snapshot.generation.character_id) {
+    selected = snapshot.generation.character_id;
+  }
+  return snapshot.characters.some(({ id }) => id === selected) ? selected : null;
 }
 
 export function appReducer(state: AppState, action: AppAction): AppState {
@@ -302,6 +337,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         currentForumId: null,
         currentDefaultCharacterId: null,
         sessionSnapshot: null,
+        pictureCharacterId: null,
         streamStatus: 'idle',
         streamMessage: null,
         ...idleSessionOperation(),
@@ -318,6 +354,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ? action.bootstrap.vault_name : state.inspectedVaultName,
       };
     }
+    case 'toggle-picture':
+      return { ...state, pictureOpen: !state.pictureOpen };
+    case 'resize-picture':
+      return { ...state, pictureWidth: action.width };
     case 'toggle-sidebar':
       return { ...state, sidebarOpen: !state.sidebarOpen };
     case 'show-personas':
@@ -561,6 +601,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           activeConversationLabel: null,
           currentDefaultCharacterId: null,
           sessionSnapshot: null,
+          pictureCharacterId: null,
           streamStatus: 'idle' as const,
           streamMessage: null,
         } : {}),
@@ -796,6 +837,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         activeConversation: null,
         activeConversationLabel: null,
         sessionSnapshot: null,
+        pictureCharacterId: null,
         ...idleSessionOperation(),
       };
     }
@@ -812,6 +854,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         activeConversationLabel: action.snapshot.session_label,
         currentDefaultCharacterId: action.snapshot.default_character_id,
         sessionSnapshot: action.snapshot,
+        pictureCharacterId: selectPictureCharacter(state, action.snapshot, true),
         streamStatus: 'connecting',
         streamMessage: 'Connecting live updates…',
         ...idleSessionOperation(),
@@ -841,6 +884,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         activeConversationLabel: action.snapshot.session_label,
         currentDefaultCharacterId: action.snapshot.default_character_id,
         sessionSnapshot: action.snapshot,
+        pictureCharacterId: selectPictureCharacter(state, action.snapshot, false),
       };
     case 'session-audio-cache':
       if (!state.sessionSnapshot

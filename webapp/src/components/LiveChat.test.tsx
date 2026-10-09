@@ -3371,3 +3371,122 @@ describe('submission ownership after navigation', () => {
     });
   }
 });
+
+describe('chat pictures', () => {
+  const portrait = { filename: 'PICTURE.png' as const, mime_type: 'image/png' as const, content_base64: 'original-bytes' };
+  const members = { ...snapshotFixture, characters: bootstrapFixture.characters };
+  function pendingPicture() {
+    let resolve!: (picture: typeof portrait | null) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<typeof portrait | null>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  }
+
+  it('renders original data and display-name alt text, and toggles independently', async () => {
+    const events = drivableEvents();
+    const getCharacterPicture = vi.fn().mockResolvedValue(portrait);
+    render(<App client={fixtureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    expect(await screen.findByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,original-bytes');
+    fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide sidebar' })).toHaveAttribute('aria-expanded', 'true');
+    const calls = getCharacterPicture.mock.calls.length;
+    act(() => events.handlers[0].onSnapshot({ ...members, generation: { ...members.generation, active: true, character_id: 'guide' } }));
+    expect(getCharacterPicture).toHaveBeenCalledTimes(calls);
+    fireEvent.click(screen.getByRole('button', { name: 'Hide sidebar' }));
+    expect(screen.getByRole('button', { name: 'Show picture' })).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
+  });
+
+  it.each(['missing', 'request', 'decode'])('keeps chat usable for a %s picture', async (failure) => {
+    const events = drivableEvents();
+    const getCharacterPicture = vi.fn().mockImplementation(() => failure === 'request'
+      ? Promise.reject(new Error('read failed')) : Promise.resolve(failure === 'missing' ? null : portrait));
+    render(<App client={fixtureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    if (failure === 'decode') fireEvent.error(await screen.findByRole('img', { name: 'Assistant' }));
+    if (failure !== 'missing') expect(await screen.findByText('Picture unavailable')).toBeInTheDocument();
+    else await waitFor(() => expect(getCharacterPicture).toHaveBeenCalled());
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
+    expect(getCharacterPicture).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['resolve', 'reject'] as const)('ignores obsolete character %s and immediately clears a previous image', async (outcome) => {
+    const events = drivableEvents();
+    const old = pendingPicture();
+    const current = pendingPicture();
+    const getCharacterPicture = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise).mockResolvedValue(null);
+    render(<App client={fixtureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, members);
+    act(() => events.handlers[0].onSnapshot({ ...members, default_character_id: 'guide' }));
+    await waitFor(() => expect(getCharacterPicture).toHaveBeenLastCalledWith('guide'));
+    await act(async () => { if (outcome === 'resolve') old.resolve(portrait); else old.reject(new Error('obsolete')); });
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.queryByText('Picture unavailable')).not.toBeInTheDocument();
+    await act(async () => current.resolve(portrait));
+    expect(screen.getByRole('img', { name: 'Guide' })).toBeInTheDocument();
+    act(() => events.handlers[0].onSnapshot(members));
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  });
+
+  it.each(['close', 'navigate'] as const)('ignores a deferred response after %s, and reloads on return', async (action) => {
+    const events = drivableEvents();
+    const pending = pendingPicture();
+    const getCharacterPicture = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(portrait);
+    render(<App client={fixtureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    if (action === 'close') fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
+    else fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
+    await act(async () => pending.resolve(portrait));
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(getCharacterPicture).toHaveBeenCalledTimes(1);
+    if (action === 'close') fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    else fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
+    expect(await screen.findByRole('img', { name: 'Assistant' })).toBeInTheDocument();
+    expect(getCharacterPicture).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a deferred picture from a previous session', async () => {
+    const events = drivableEvents();
+    const old = pendingPicture();
+    const getCharacterPicture = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue(null);
+    render(<App client={fixtureClient({
+      getCharacterPicture,
+      getSessionSnapshot: async (forumId, sessionId) => forumId === 'lobby' ? {
+        ...snapshotFixture, forum: bootstrapFixture.forums[1], session_id: sessionId,
+        characters: [bootstrapFixture.characters[1]], default_character_id: 'guide',
+      } : snapshotFixture,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    fireEvent.click(screen.getByRole('button', { name: 'PlanningThe Lobby' }));
+    await waitFor(() => expect(getCharacterPicture).toHaveBeenLastCalledWith('guide'));
+    await act(async () => old.resolve(portrait));
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  });
+});
+
+it('clears a picture immediately on a vault change and ignores the old vault response', async () => {
+  const portrait = { filename: 'PICTURE.png' as const, mime_type: 'image/png' as const, content_base64: 'new-vault' };
+  let resolveOld!: (picture: typeof portrait) => void;
+  const old = new Promise<typeof portrait>((resolve) => { resolveOld = resolve; });
+  const getCharacterPicture = vi.fn().mockReturnValueOnce(old).mockResolvedValue(portrait);
+  const client = fixtureClient({ getCharacterPicture });
+  const chat = (vaultName: string) => <ChatScreen
+    client={client} dispatch={vi.fn()} playbackPositions={new Map()}
+    onCoverConversation={vi.fn()} onDeleteTurn={vi.fn()} onRetryStream={vi.fn()}
+    onReturnToStart={vi.fn()} onSetDefaultCharacter={vi.fn()} onStopGeneration={vi.fn()}
+    onSubmitInput={vi.fn()} onUncoverConversation={vi.fn()}
+    state={{ ...initialAppState, bootstrap: { ...bootstrapFixture, vault_name: vaultName },
+      activeConversation: { forumId: 'entrance', sessionId: 'welcome' },
+      sessionSnapshot: snapshotFixture, pictureCharacterId: 'assistant' }}
+  />;
+  const { rerender } = render(chat('Personal'));
+  rerender(chat('Projects'));
+  expect(await screen.findByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,new-vault');
+  await act(async () => resolveOld({ ...portrait, content_base64: 'old-vault' }));
+  expect(screen.getByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,new-vault');
+  expect(getCharacterPicture).toHaveBeenCalledTimes(2);
+});
