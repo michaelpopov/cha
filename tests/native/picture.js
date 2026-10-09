@@ -1,23 +1,19 @@
-// Tiny two-color fixtures verify native decoding and animation, without network access.
+// Tiny fixtures verify native decoding, without network access.
 const pictureFixtures = [
   {
     "mime": "image/png",
-    "animated": false,
     "base64": "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAMCAIAAADQ/GvKAAAAE0lEQVR4nGP8z4AdMOEQZxi5EgA5IAEXVaZ0AAAAAABJRU5ErkJggg=="
   },
   {
     "mime": "image/jpeg",
-    "animated": false,
     "base64": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAMAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z"
   },
   {
     "mime": "image/gif",
-    "animated": true,
     "base64": "R0lGODlhCAAMAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQADAAAACwAAAAACAAMAAAIEgABCBxIsKDBgwgTKlzIsGHBgAAh+QQBDAABACwAAAAACAAMAIEAAP8AAAAAAAAAAAAIEgABCBxIsKDBgwgTKlzIsGHBgAA7"
   },
   {
     "mime": "image/webp",
-    "animated": true,
     "base64": "UklGRsQAAABXRUJQVlA4WAoAAAACAAAABwAACwAAQU5JTQYAAAAAAAAAAABBTk1GSgAAAAAAAAAAAAcAAAsAAHgAAAJWUDggMgAAADABAJ0BKggADAABQCYloAADcAD+8ut///mwP/bz/wR6Af//0uD//pcH//S4P/SkAAAAQU5NRkYAAAAAAAAAAAAHAAALAAB4AAAAVlA4IC4AAAA0AQCdASoIAAwAAAAmJaAAA3AA/vtV4///S4P/+lwf/9Lg/9Lg//rV5Vesq6AA"
   }
 ];
@@ -83,15 +79,61 @@ async function nativeParity() {
     await assertLayout(false, true);
     toggle('Show sidebar').click();
     await assertLayout(true, true);
-    // The macOS host samples these rendered pixels with WKWebView snapshots.
-    // Canvas drawImage uses the default frame and cannot prove animation.
-    pictureFixtures.filter(({animated}) => animated).forEach((fixture, index) => {
-      const image = new Image();
-      image.src = `data:${fixture.mime};base64,${fixture.base64}`;
-      image.style.cssText = `position:fixed;left:${index * 16}px;top:0;width:16px;height:24px;z-index:9999`;
-      document.body.append(image);
-    });
-    await wait(200);
+    if (innerWidth >= 1000) {
+      const input = document.querySelector('textarea[aria-label="Message"]');
+      const transcript = document.querySelector('[aria-label="Conversation transcript"]');
+      const setValue = (element, value) => {
+        const textarea = element.tagName === 'TEXTAREA';
+        const prototype = textarea ? HTMLTextAreaElement.prototype : HTMLSelectElement.prototype;
+        Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+        element.dispatchEvent(new Event(textarea ? 'input' : 'change', {bubbles: true}));
+      };
+      const resizePicture = async (key, count = 1) => {
+        for (let i = 0; i < count; i++) {
+          document.querySelector('[aria-label="Resize picture"]').dispatchEvent(
+            new KeyboardEvent('keydown', {key, bubbles: true}));
+          await wait(25);
+        }
+      };
+      const gap = () => transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop;
+      const latestVisible = () => bounds(transcript.lastElementChild).bottom <= bounds(transcript).bottom + 1;
+      toggle('Hide picture').click();
+      await wait(300);
+      setValue(input, 'A moderately long draft should expand automatically when its available width changes. '.repeat(8));
+      await wait(100);
+      const wideHeight = input.clientHeight;
+      toggle('Show picture').click();
+      await wait(100);
+      check(input.clientHeight > wideHeight && input.scrollHeight <= input.clientHeight + 1,
+        'draft did not reflow after opening the picture');
+      await resizePicture('ArrowLeft', 8);
+      check(input.scrollHeight <= input.clientHeight + 1, 'draft did not reflow after resizing the picture');
+      await resizePicture('ArrowRight', 8);
+      toggle('Hide picture').click();
+      await wait(100);
+      check(Math.abs(input.clientHeight - wideHeight) <= 1, 'draft did not shrink after closing the picture');
+
+      setValue(input, '');
+      setValue(document.querySelector('select[aria-label="Choose message target"]'), '-');
+      await until(() => input.placeholder.startsWith('Self-notes'));
+      const note = 'Long transcript line that needs to wrap when the picture panel opens. '.repeat(90);
+      setValue(input, note);
+      await wait(100);
+      toggle('Send message').click();
+      await until(() => input.value === '' && transcript.textContent.includes(note.trim()));
+      transcript.scrollTop = transcript.scrollHeight;
+      await wait(100);
+      check(transcript.scrollHeight > transcript.clientHeight, 'transcript fixture does not scroll');
+      toggle('Show picture').click();
+      await wait(100);
+      check(latestVisible(), 'opening the picture lost the latest transcript text');
+      await resizePicture('ArrowLeft', 8);
+      check(latestVisible(), 'resizing the picture lost the latest transcript text');
+      transcript.scrollTop = 0;
+      await wait(100);
+      await resizePicture('ArrowRight', 8);
+      check(gap() > 100, 'resizing the picture pulled a reader away from older text');
+    }
     return {ok: true, width: innerWidth, formats: 'PNG JPEG GIF WebP', layout: 'both open, each closed, restored'};
   } catch (error) { return {ok: false, reason: String(error.message || error)}; }
 }

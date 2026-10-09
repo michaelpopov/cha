@@ -3372,6 +3372,85 @@ describe('submission ownership after navigation', () => {
   }
 });
 
+describe('chat layout changes', () => {
+  function observeSizes() {
+    const observed = new Map<Element, ResizeObserverCallback>();
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(element: Element) { observed.set(element, this.callback); }
+      disconnect() {
+        for (const [element, callback] of observed) {
+          if (callback === this.callback) observed.delete(element);
+        }
+      }
+    });
+    return (element: Element) => act(() => {
+      expect(observed.has(element)).toBe(true);
+      observed.get(element)!([{ target: element } as ResizeObserverEntry], {} as ResizeObserver);
+    });
+  }
+
+  it('follows a resized column only while the reader is at the end', async () => {
+    const resize = observeSizes();
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, transcriptSnapshot());
+    const chat = screen.getByLabelText('Chat area');
+    const transcript = screen.getByLabelText('Conversation transcript');
+    const scroll = vi.fn();
+    Object.defineProperty(transcript.lastElementChild!, 'scrollIntoView', { configurable: true, value: scroll });
+
+    resize(chat);
+    expect(scroll).toHaveBeenCalledWith({ block: 'end' });
+    placeReadingPosition(transcript, { scrollTop: 100, scrollHeight: 900, clientHeight: 300 });
+    scroll.mockClear();
+    resize(chat);
+    expect(scroll).not.toHaveBeenCalled();
+    placeReadingPosition(transcript, { scrollTop: 600, scrollHeight: 900, clientHeight: 300 });
+    resize(chat);
+    expect(scroll).toHaveBeenCalled();
+  });
+
+  it('reflows a draft, preserves its manual height, and reapplies the window height limit', async () => {
+    const resize = observeSizes();
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    const chat = screen.getByLabelText('Chat area');
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    const divider = screen.getByRole('separator', { name: 'Resize message editor' });
+    let contentHeight = 120;
+    let chatHeight = 500;
+    Object.defineProperty(chat, 'clientHeight', { configurable: true, get: () => chatHeight });
+    Object.defineProperty(input, 'offsetHeight', {
+      configurable: true, get: () => Number.parseFloat(input.style.height) || 0,
+    });
+    Object.defineProperty(input, 'scrollHeight', {
+      configurable: true,
+      get: () => input.style.height === 'auto'
+        ? contentHeight : Math.max(contentHeight, Number.parseFloat(input.style.height) || 0),
+    });
+    fireEvent.change(input, { target: { value: 'A draft that wraps as the column narrows.' } });
+    expect(input).toHaveStyle({ height: '120px' });
+    contentHeight = 240;
+    resize(chat);
+    expect(input).toHaveStyle({ height: '240px' });
+    fireEvent.keyDown(divider, { key: 'ArrowUp' });
+    expect(input).toHaveStyle({ height: '264px' });
+    contentHeight = 120;
+    resize(chat);
+    expect(input).toHaveStyle({ height: '264px' });
+    chatHeight = 250;
+    resize(chat);
+    expect(input).toHaveStyle({ height: '200px' });
+    chatHeight = 500;
+    resize(chat);
+    expect(input).toHaveStyle({ height: '264px' });
+    fireEvent.keyDown(divider, { key: 'Home' });
+    expect(input).toHaveStyle({ height: '120px' });
+  });
+});
+
 describe('chat pictures', () => {
   const portrait = { filename: 'PICTURE.png' as const, mime_type: 'image/png' as const, content_base64: 'original-bytes' };
   const members = { ...snapshotFixture, characters: bootstrapFixture.characters };

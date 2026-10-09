@@ -776,12 +776,10 @@ export function ChatScreen({
   // Following the newest text is the default, but a reader who has scrolled up
   // keeps their place: a stream that yanked the view back on every token would
   // make the transcript unreadable exactly while it was worth reading.
-  useEffect(() => {
-    if (!followingLatest.current) return;
-    if (typeof transcriptEnd.current?.scrollIntoView === 'function') {
-      transcriptEnd.current.scrollIntoView({ block: 'end' });
-    }
-  }, [conversationKey, generation?.active, generation?.phase, snapshot?.transcript]);
+  function followTranscript() {
+    if (followingLatest.current) transcriptEnd.current?.scrollIntoView?.({ block: 'end' });
+  }
+  useEffect(followTranscript, [conversationKey, generation?.active, generation?.phase, snapshot?.transcript]);
 
   function maximumComposerHeight(fallback = Number.POSITIVE_INFINITY) {
     const chatHeight = chatArea.current?.clientHeight ?? 0;
@@ -790,13 +788,26 @@ export function ChatScreen({
 
   // A textarea follows its wrapped content until the reader gives it a larger
   // floor. Both automatic and manual growth stop at 80% of the chat area.
-  useLayoutEffect(() => {
+  function fitComposer() {
     const input = composerInput.current;
     if (!input) return;
     input.style.height = 'auto';
     const maximum = maximumComposerHeight();
     input.style.height = `${Math.min(maximum, Math.max(input.scrollHeight, composerHeight ?? 0))}px`;
-  }, [composerHeight, draft]);
+    followTranscript();
+  }
+  useLayoutEffect(fitComposer, [composerHeight, draft]);
+
+  // Picture/sidebar resizing and window changes resize the column without a
+  // draft change. fitComposer reads the draft from the element, so only the
+  // manual height renews this observer, not every keystroke.
+  useLayoutEffect(() => {
+    const area = chatArea.current;
+    if (!area || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(fitComposer);
+    observer.observe(area);
+    return () => observer.disconnect();
+  }, [composerHeight]);
 
   // Growing the transcript moves the end away without moving the viewport, so
   // whether the reader is following has to be recorded when they last scrolled
