@@ -62,7 +62,7 @@ MaintenanceContext welcome_context(std::uint64_t epoch = 1) {
 // One imported vault, its store, and the process log file for one test.
 class ServiceHarness {
 public:
-    ServiceHarness() {
+    explicit ServiceHarness(bool pictures = false) {
         shutdown_diagnostic_logging();
         log_directory_ = std::filesystem::temp_directory_path()
             / ("cha_assistant_service_"
@@ -74,6 +74,13 @@ public:
         std::ofstream(log_directory_ / "test.toml")
             << "vault_name = \"Test\"\ndata = \"test.sqlite3\"\n";
         initialize_diagnostic_logging(log_directory_ / "cha.log", "info");
+        if (pictures) {
+            for (const auto directory : {"characters/guide", "system/assistant"}) {
+                std::filesystem::create_directories(workspace_.root() / directory);
+                std::ofstream(workspace_.root() / directory / "PICTURE.png", std::ios::binary)
+                    << "picture bytes";
+            }
+        }
         database_ = test::import_test_database(workspace_.root());
         store_ = WorkspaceConfigStore::open(database_);
         oauth_path_ = log_directory_ / "openai-auth.json";
@@ -314,6 +321,38 @@ Json set_arguments(std::string version, Json value, std::string key = "reasoning
 Json character_arguments(std::string version = "1", Json forum = "lobby") {
     return {{"version", version}, {"name", "Scholar"}, {"description", "A careful thinker"},
         {"provider_id", "test"}, {"profile", "# Scholar\nThink carefully.\n"}, {"forum_id", forum}};
+}
+
+TEST(AssistantService, PicturesCannotBeListedReadOrWritten) {
+    ServiceHarness harness(true);
+    for (const auto directory : {"characters/guide", "system/assistant"}) {
+        const std::string path = std::string(directory) + "/PICTURE.png";
+        const auto listed = harness.run("vault_config_list", {{"prefix", directory}});
+        EXPECT_EQ(listed.dump().find("PICTURE.png"), std::string::npos);
+        const auto read = harness.run("vault_config_read", read_arguments(path));
+        EXPECT_EQ(read["files"][0]["status"], "missing");
+        EXPECT_FALSE(read["files"][0].contains("content"));
+        for (const auto operation : {"create", "replace", "set"}) {
+            const bool set = std::string_view(operation) == "set";
+            const Json change{
+                {"path", path}, {"operation", operation},
+                {"content", set ? Json(nullptr) : Json("text")},
+                {"key", set ? Json("value") : Json(nullptr)},
+                {"value", set ? Json("text") : Json(nullptr)}};
+            const auto result = harness.run("vault_config_apply", {
+                {"action", "apply"}, {"version", "1"}, {"changes", Json::array({change})}});
+            EXPECT_EQ(result["committed"], false) << result;
+            EXPECT_EQ(result["error"], "protected_path") << result;
+        }
+        const auto absent = harness.run("vault_config_apply", {
+            {"action", "apply"}, {"version", "1"}, {"changes", Json::array({Json{
+                {"path", std::string(directory) + "/PICTURE.gif"}, {"operation", "create"},
+                {"content", "text"}, {"key", nullptr}, {"value", nullptr}}})}});
+        EXPECT_EQ(absent["committed"], false);
+        EXPECT_EQ(absent["error"], "protected_path");
+    }
+    const auto listed = harness.run("vault_config_list", {{"prefix", nullptr}});
+    EXPECT_EQ(listed.dump().find("PICTURE.png"), std::string::npos);
 }
 
 TEST(AssistantService, SetsScalarsAndRejectsMalformedArguments) {

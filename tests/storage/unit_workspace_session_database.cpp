@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -904,6 +905,44 @@ TEST(SessionStorageLayout, DetectsOnlyDirectLegacyDatabaseFiles) {
     const std::filesystem::path archived = deleted / "archived.sqlite3";
     std::ofstream(archived) << "legacy";
     EXPECT_TRUE(has_legacy_session_databases(workspace.root()));
+}
+
+TEST(WorkspaceSessionDatabase, PictureNamesAndCopiesKeepTextRowsAndSchema) {
+    test::TestWorkspace workspace;
+    const auto source = workspace.root() / "pictures.sqlite3";
+    create_empty_workspace_session_database(source);
+    std::vector<ConfigFile> rows;
+    for (const auto name : {"PICTURE.png", "PICTURE.webp", "PICTURE.jpg", "PICTURE.jpeg", "PICTURE.gif"}) {
+        const std::string path = "characters/nested/guide/" + std::string(name);
+        EXPECT_NO_THROW(validate_stored_config_name(path));
+        EXPECT_NO_THROW(validate_stored_config_name(name));
+        rows.push_back({path, "AAH/"});
+        for (const auto prefix : {"/", "../", "characters/../", "characters//", "C:", "characters\\"}) {
+            EXPECT_THROW(validate_stored_config_name(std::string(prefix) + name), std::runtime_error);
+        }
+    }
+    EXPECT_THROW(validate_stored_config_name("characters/guide/picture.png"), std::runtime_error);
+    {
+        Database database(source, Database::Mode::read_write);
+        replace_workspace_config_files(database, rows);
+        EXPECT_THROW(database.execute("INSERT INTO config VALUES ('PICTURE.png', X'00FF')"), std::runtime_error);
+    }
+    std::sort(rows.begin(), rows.end(), [](const ConfigFile& a, const ConfigFile& b) {
+        return a.name < b.name;
+    });
+    const auto copy = workspace.root() / "copy.sqlite3";
+    const auto config_copy = workspace.root() / "config-copy.sqlite3";
+    copy_workspace_session_database(source, copy);
+    create_workspace_session_database_from_configuration(source, config_copy);
+    for (const auto& path : {source, copy, config_copy}) {
+        Database database(path, Database::Mode::read_only);
+        expect_config_rows(read_workspace_config_files(database), rows);
+        EXPECT_EQ(database.pragma_integer("user_version"), workspace_session_database_version);
+        auto types = database.prepare("SELECT DISTINCT typeof(content) FROM config");
+        ASSERT_TRUE(types.step());
+        EXPECT_EQ(types.text(0), "text");
+        EXPECT_FALSE(types.step());
+    }
 }
 
 } // namespace

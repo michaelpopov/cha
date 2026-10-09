@@ -1,5 +1,6 @@
 #include "util/text_template.h"
 
+#include "util/picture.h"
 #include "util/text.h"
 #include "util/text_source.h"
 #include "util/path_name.h"
@@ -344,6 +345,9 @@ std::filesystem::path resolve_include_path(
     }
     if (!path_is_under(state.root_canonical, canonical)) {
         throw_expansion_error(state, "include path escapes containment root");
+    }
+    if (picture_format(generic_utf8_path(canonical))) {
+        throw_expansion_error(state, "picture files cannot be included in prompts");
     }
     std::error_code status_error;
     const std::filesystem::file_status status =

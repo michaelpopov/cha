@@ -4,8 +4,11 @@
 #include "storage/session_storage_layout.h"
 #include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
+#include "util/base64.h"
 #include "util/curl.h"
+#include "util/logging.h"
 #include "util/path_name.h"
+#include "util/picture.h"
 #include "util/private_filesystem.h"
 #include "workspace/builtins.h"
 #include "workspace/workspace.h"
@@ -140,7 +143,7 @@ std::filesystem::path require_existing_directory(
 
 bool is_accepted_stored_name(std::string_view name) {
     return name != "app.toml" && name != "workspace.toml"
-        && (name.ends_with(".toml") || name.ends_with(".md"));
+        && (name.ends_with(".toml") || name.ends_with(".md") || picture_format(name));
 }
 
 bool is_forum_member_directory(std::string_view name) {
@@ -161,6 +164,17 @@ std::string stored_name_from(
     const std::filesystem::path& source,
     const std::filesystem::path& file) {
     return generic_utf8_path(file.lexically_relative(source));
+}
+
+// Pictures belong only in character definition folders and the Assistant folder.
+bool is_picture_directory(
+    const std::filesystem::path& source,
+    const std::filesystem::path& directory) {
+    const std::string name = stored_name_from(source, directory);
+    return name == "system/assistant"
+        || (name.starts_with("characters/")
+            && std::filesystem::is_regular_file(
+                inspected_status(directory / "character.toml")));
 }
 
 std::filesystem::path join_stored_name(
@@ -250,6 +264,20 @@ std::vector<ConfigFile> collect_config_rows(const std::filesystem::path& source)
         if (name.empty() || name == ".") continue;
 
         const std::filesystem::file_status status = inspected_status(file);
+        if (std::filesystem::is_directory(status)) {
+            if (is_forum_member_directory(name)) {
+                forum_member_directories.insert(name);
+            }
+            continue;
+        }
+        const bool image_extension =
+            supported_picture_extension(utf8_path(file.extension()));
+        const bool picture = image_extension && picture_format(name)
+            && is_picture_directory(source, file.parent_path());
+        if (image_extension && !picture) {
+            log_warn("Ignoring picture file '" + name + "': unsupported name or location");
+            continue;
+        }
         if (std::filesystem::is_symlink(status)) {
             if (is_accepted_stored_name(name)) {
                 fail_path(
@@ -258,16 +286,12 @@ std::vector<ConfigFile> collect_config_rows(const std::filesystem::path& source)
             }
             continue;
         }
-        if (std::filesystem::is_directory(status)) {
-            if (is_forum_member_directory(name)) {
-                forum_member_directories.insert(name);
-            }
-            continue;
-        }
         if (!std::filesystem::is_regular_file(status)) continue;
         if (!is_accepted_stored_name(name)) continue;
         validate_stored_config_name(name);
-        if (!files.emplace(name, read_file_bytes(file)).second) {
+        std::string content = read_file_bytes(file);
+        if (picture) content = encode_base64(content);
+        if (!files.emplace(name, std::move(content)).second) {
             fail_path("Configuration name '" + name + "' is duplicated");
         }
     }
@@ -397,7 +421,15 @@ void materialize_config_files(
         if (std::filesystem::exists(inspected_status(path))) {
             fail_path("Path '" + utf8_path(path) + "' already exists");
         }
-        create_private_file(path, row.content);
+        std::string content = row.content;
+        if (picture_format(row.name)) {
+            try {
+                content = decode_base64(row.content);
+            } catch (const std::runtime_error&) {
+                fail_path("Picture '" + row.name + "' has malformed base64");
+            }
+        }
+        create_private_file(path, content);
     }
 }
 
@@ -1084,6 +1116,9 @@ struct ConfigPathPolicy {
 
 ConfigPathPolicy config_path_policy(
     std::string_view path, std::string_view assistant_provider) {
+    if (picture_format(path)) {
+        return {false, false, true, "Pictures are not available to configuration tools"};
+    }
     if (path.starts_with("system/assistant/")) {
         return {true, false, true, "Assistant settings are read-only"};
     }
@@ -1494,11 +1529,12 @@ struct WorkspaceConfigStore::Impl {
         result.revision = revision;
         for (const ConfigFile& row : rows) {
             if (!matches_list_prefix(row.name, prefix)) continue;
+            const ConfigPathPolicy policy = config_path_policy(row.name, provider);
+            if (!policy.readable) continue;
             if (result.entries.size() == workspace_config_list_limit) {
                 result.truncated = true;
                 break;
             }
-            const ConfigPathPolicy policy = config_path_policy(row.name, provider);
             result.entries.push_back({
                 .path = row.name,
                 .bytes = row.content.size(),
@@ -1521,7 +1557,7 @@ struct WorkspaceConfigStore::Impl {
         for (const std::string& path : paths) {
             WorkspaceConfigReadItem item{.path = path};
             const auto found = files.find(path);
-            if (found == files.end()) {
+            if (picture_format(path) || found == files.end()) {
                 item.status = WorkspaceConfigReadStatus::missing;
                 result.files.push_back(std::move(item));
                 continue;

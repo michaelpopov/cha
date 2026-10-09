@@ -2,6 +2,7 @@
 #include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
 #include "support/test_workspace.h"
+#include "util/logging.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 #include "workspace/workspace.h"
@@ -3421,6 +3422,119 @@ TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {
     expect_package_seed_subscription(
         workspace->character_definition("stoics", "seneca").provider.config);
     (void)store;
+}
+
+TEST_F(WorkspaceConfigStoreTest, PicturesRoundTripAllBytesInNestedDefinitionsAndAssistant) {
+    std::filesystem::create_directories(source() / "characters/nested");
+    std::filesystem::rename(source() / "characters/guide", source() / "characters/nested/guide");
+    std::vector<std::string> bytes{
+        std::string("\0\1\xff", 3), std::string("\x80\0", 2), std::string("\xff", 1),
+        "not an image", ""};
+    for (unsigned value = 0; value < 256; ++value) bytes[0] += static_cast<char>(value);
+    const std::vector<std::string> names{"PICTURE.png", "PICTURE.webp", "PICTURE.jpg", "PICTURE.jpeg", "PICTURE.gif"};
+    for (const auto directory : {"characters/nested/guide", "system/assistant"}) {
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            write_bytes(source() / directory / names[i], bytes[i]);
+        }
+    }
+    import_from_source();
+    const auto before = config_contents(database());
+    {
+        const auto store = WorkspaceConfigStore::open(database());
+        EXPECT_NE(store->snapshot()->find_character("guide"), nullptr);
+    }
+    export_workspace_configuration(database(), export_);
+    for (const auto directory : {"characters/nested/guide", "system/assistant"}) {
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            EXPECT_EQ(file_bytes(export_ / directory / names[i]), bytes[i]);
+        }
+    }
+    EXPECT_EQ(config_contents(database()), before);
+    import_workspace_configuration(export_, database());
+    EXPECT_EQ(config_contents(database()), before);
+    write_bytes(export_ / "characters/nested/guide/CHARACTER.md", "$$(PICTURE.png)");
+    EXPECT_THROW(import_workspace_configuration(export_, database()), std::runtime_error);
+    EXPECT_EQ(config_contents(database()), before);
+}
+
+TEST_F(WorkspaceConfigStoreTest, WarnsForEachIgnoredImageNameOrLocation) {
+    const std::vector<std::string> ignored{
+        "characters/guide/picture.png", "characters/guide/Seneca.jpg",
+        "characters/guide/PICTURE.GIF", "characters/no-definition/PICTURE.webp",
+        "forums/lobby/members/guide/PICTURE.gif", "system/PICTURE.jpeg"};
+    for (const auto& name : ignored) write_bytes(source() / name, "bytes");
+    shutdown_diagnostic_logging();
+    initialize_diagnostic_logging(source() / "pictures.log", "warn");
+    import_from_source();
+    shutdown_diagnostic_logging();
+    const auto log = file_bytes(source() / "pictures.log");
+    const auto rows = config_contents(database());
+    for (const auto& name : ignored) {
+        EXPECT_NE(log.find(name), std::string::npos) << name;
+        EXPECT_FALSE(rows.contains(name));
+    }
+}
+
+TEST_F(WorkspaceConfigStoreTest, PictureSymlinkFailsImportOnlyInDefinitionFolder) {
+    import_from_source();
+    const auto before = config_contents(database());
+    write_bytes(source() / "original.png", "bytes");
+    if (!try_create_symlink(source() / "original.png", source() / "system/PICTURE.png", false)) {
+        GTEST_SKIP() << "Symbolic links are unavailable";
+    }
+    import_from_source();
+    EXPECT_EQ(config_contents(database()), before);
+    ASSERT_TRUE(try_create_symlink(
+        source() / "original.png", source() / "characters/guide/PICTURE.png", false));
+    EXPECT_THROW(import_from_source(), std::runtime_error);
+    EXPECT_EQ(config_contents(database()), before);
+}
+
+TEST_F(WorkspaceConfigStoreTest, MalformedPictureBase64FailsExportWithoutChangingRows) {
+    import_from_source();
+    for (const auto encoded : {"bad", "!!!!", "AA=A", "AA==AAAA", "AB==", "AAB="}) {
+        {
+            Database handle(database(), Database::Mode::read_write);
+            auto statement = handle.prepare(
+                "INSERT OR REPLACE INTO config VALUES ('characters/guide/PICTURE.png', ?1)",
+                std::string_view(encoded));
+            statement.run();
+        }
+        const auto before = config_contents(database());
+        { const auto store = WorkspaceConfigStore::open(database()); }
+        try {
+            export_workspace_configuration(database(), export_);
+            ADD_FAILURE() << "export accepted " << encoded;
+        } catch (const std::runtime_error& error) {
+            EXPECT_NE(std::string_view(error.what()).find("characters/guide/PICTURE.png"),
+                std::string_view::npos) << error.what();
+        }
+        EXPECT_EQ(config_contents(database()), before);
+        std::filesystem::remove_all(export_);
+    }
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, SettingsMergeAndDeletionPreservePictureRows) {
+    write_bytes(source() / "characters/writer/PICTURE.png", std::string("\0\xff", 2));
+    import_workspace_configuration(source(), database());
+    const auto store = open_store();
+    std::filesystem::remove_all(source());
+    const auto original = stored_config(database(), "characters/writer/PICTURE.png");
+    EXPECT_EQ(original, "AP8=");
+    store->apply_character_settings("writer", "second", std::string_view{"mono"});
+    EXPECT_EQ(stored_config(database(), "characters/writer/PICTURE.png"), original);
+    test::TestWorkspace other;
+    other.add_character("writer", "Writer");
+    write_bytes(other.root() / "characters/writer/PICTURE.webp", "new bytes");
+    const auto other_database = import_source_database(other);
+    merge_from(*store, other_database);
+    EXPECT_EQ(stored_config(database(), "characters/writer/PICTURE.png"), original);
+    EXPECT_EQ(stored_config(database(), "characters/writer/PICTURE.webp"), "bmV3IGJ5dGVz");
+    store->apply_forum_members_and_persona("lobby", std::vector<std::string>{"guide"}, "reader");
+    store->apply_character_delete("writer");
+    const auto rows = config_contents(database());
+    EXPECT_FALSE(rows.contains("characters/writer/PICTURE.png"));
+    EXPECT_FALSE(rows.contains("characters/writer/PICTURE.webp"));
 }
 
 } // namespace

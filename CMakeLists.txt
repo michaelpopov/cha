@@ -270,6 +270,7 @@ add_library(cha_lib STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/assistant_maintenance.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/maintainer_guide.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/linux_packaging_readme.cpp
+    src/util/base64.cpp
     src/util/crypto.cpp
     src/util/curl.cpp
     src/util/private_filesystem.cpp

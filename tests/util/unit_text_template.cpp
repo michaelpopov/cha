@@ -768,5 +768,21 @@ TEST(TextTemplate, TruncatesIncludeBodyAtFirstCloser) {
     }
 }
 
+TEST(TextTemplate, RejectsPictureIncludesFromDiskAndStoredFiles) {
+    const TempDir root("picture");
+    for (const auto name : {"PICTURE.png", "PICTURE.webp", "PICTURE.jpg", "PICTURE.jpeg", "PICTURE.gif"}) {
+        write_file(root.path() / "CHARACTER.md", "$$(" + std::string(name) + ")");
+        write_file(root.path() / name, "not an image");
+        EXPECT_THROW(expand_in(root.path(), root.path() / "CHARACTER.md"), std::runtime_error);
+        TextFiles files{{"CHARACTER.md", "$$(" + std::string(name) + ")"}, {name, "AAH/"}};
+        const TextSource source(root.path(), files);
+        TemplateOptions options{.containment_root = root.path(), .source = &source};
+        EXPECT_THROW(expand_template_file(root.path() / "CHARACTER.md", options), std::runtime_error);
+    }
+    write_file(root.path() / "part.md", "ordinary text");
+    write_file(root.path() / "CHARACTER.md", "$$(part.md)");
+    EXPECT_EQ(expand_in(root.path(), root.path() / "CHARACTER.md"), "ordinary text");
+}
+
 } // namespace
 } // namespace cha
