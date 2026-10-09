@@ -196,6 +196,9 @@ public:
         std::string_view session_id,
         std::uint64_t epoch);
 
+    [[nodiscard]] std::optional<CharacterPicture> get_character_picture(
+        std::string_view character_id,
+        std::uint64_t epoch);
     [[nodiscard]] CharacterDetail get_character(
         std::string_view character_id,
         std::uint64_t epoch);

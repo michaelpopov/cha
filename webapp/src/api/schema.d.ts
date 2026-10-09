@@ -429,6 +429,13 @@ export interface components {
             id: components["schemas"]["Identifier"];
             label: string;
         };
+        CharacterPicture: {
+            /** @enum {string} */
+            filename: "PICTURE.png" | "PICTURE.webp" | "PICTURE.jpg" | "PICTURE.jpeg" | "PICTURE.gif";
+            /** @enum {string} */
+            mime_type: "image/png" | "image/webp" | "image/jpeg" | "image/gif";
+            content_base64: string;
+        };
         CharacterDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;

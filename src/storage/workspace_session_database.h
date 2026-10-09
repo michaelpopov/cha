@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -51,6 +52,9 @@ void ensure_session_lifecycle_columns(storage::SqliteDatabase& database);
 void validate_stored_config_name(std::string_view name);
 [[nodiscard]] std::vector<ConfigFile> read_workspace_config_files(
     storage::SqliteDatabase& database);
+[[nodiscard]] std::optional<std::string> read_workspace_config_file(
+    storage::SqliteDatabase& database,
+    std::string_view name);
 void replace_workspace_config_files(
     storage::SqliteDatabase& database,
     const std::vector<ConfigFile>& rows);

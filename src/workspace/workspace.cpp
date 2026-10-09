@@ -2261,6 +2261,14 @@ CharacterDefinition Workspace::character_definition(
     };
 }
 
+std::optional<std::filesystem::path> Workspace::character_directory(
+    std::string_view id) const {
+    if (id == workspace_assistant_id) return root_ / "system" / "assistant";
+    const auto config = character_config_paths_.find(std::string(id));
+    if (config == character_config_paths_.end()) return std::nullopt;
+    return config->second.parent_path();
+}
+
 bool Workspace::character_is_writable(std::string_view id) const noexcept {
     return character_config_paths_.contains(std::string(id));
 }

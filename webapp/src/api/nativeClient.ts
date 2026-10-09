@@ -3,6 +3,7 @@ import {
   ChaProtocolError,
   isApiKeyDetail,
   isCharacterDetail,
+  isCharacterPicture,
   isCommandResult,
   isForumDetail,
   isMarkdownFile,
@@ -36,6 +37,7 @@ import {
   type AudioDownloadBatchAcceptance,
   type AudioDownloadStatus,
   type ChaClient,
+  type CharacterPicture,
   type CoverRequest,
   type CreateApiKeyRequest,
   type CreateProviderRequest,
@@ -220,6 +222,11 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
       'session.stop',
       { forum_id: forumId, session_id: sessionId },
       isCommandResult,
+    ),
+    getCharacterPicture: (characterId) => call(
+      'character.picture.get',
+      { character_id: characterId },
+      (value): value is CharacterPicture | null => value === null || isCharacterPicture(value),
     ),
     getCharacter: (characterId) => call(
       'character.get',

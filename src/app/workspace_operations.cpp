@@ -294,6 +294,22 @@ void refresh_affected_sessions(
     }
 }
 
+std::optional<CharacterPicture> get_character_picture(
+    const WorkspaceConfigStore& store,
+    std::string_view id) {
+    try {
+        auto picture = store.get_character_picture(id);
+        if (!picture) return std::nullopt;
+        return CharacterPicture{
+            .filename = std::move(picture->filename),
+            .mime_type = std::move(picture->mime_type),
+            .content_base64 = std::move(picture->content_base64),
+        };
+    } catch (const std::out_of_range&) {
+        fail(ErrorCode::not_found, "That character was not found.");
+    }
+}
+
 CharacterDetail get_character(
     const Workspace& workspace,
     std::string_view id) {

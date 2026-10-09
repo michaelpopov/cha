@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   isCharacterDetail,
+  isCharacterPicture,
   isCommandResult,
   isNativeVoiceInputRuntime,
   isSessionSnapshot,
@@ -42,6 +43,7 @@ describe('C++ wire fixtures', () => {
     expect(error.error.code).toBe('command_timeout');
     expect(error.error.message).toBe('<script>alert(1)</script>');
 
+    expect(isCharacterPicture(loadFixture('character-picture.json'))).toBe(true);
     const character = loadFixture('character-detail.json');
     expect(isCharacterDetail(character)).toBe(true);
     expect(isCharacterDetail({

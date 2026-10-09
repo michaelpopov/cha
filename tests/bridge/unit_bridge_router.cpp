@@ -163,6 +163,56 @@ protected:
     std::uint64_t next_id_{1};
 };
 
+TEST_F(BridgeRouterTest, CharacterPictureReadsNullAndStoredContentWithExactParams) {
+    router_->shutdown();
+    application_->request_shutdown();
+    ASSERT_TRUE(application_->join_shutdown(2s));
+    router_.reset();
+    application_.reset();
+    auto command = make_command(workspace_, database_);
+    const auto modify = workspace_.root() / "modify";
+    command.vault.modify = modify;
+    command.vaults.front().modify = modify;
+    application_ = app::Application::open(std::move(command));
+    router_ = std::make_unique<BridgeRouter>(*application_);
+    connection_ = router_->open_connection();
+    bootstrap_epoch();
+    auto reply = call("character.picture.get", {{"character_id", "guide"}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_TRUE(reply["result"].is_null());
+    EXPECT_EQ(reply["context_epoch"], epoch_);
+    reply = call("character.picture.get", {{"character_id", "missing"}});
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "not_found");
+    for (const auto& params : std::vector<nlohmann::json>{
+             {}, {{"character_id", ""}}, {{"character_id", 1}},
+             {{"character_id", "../guide"}},
+             {{"character_id", "guide"}, {"path", "PICTURE.png"}},
+             {{"character_id", "guide"}, {"filename", "PICTURE.png"}}}) {
+        reply = call("character.picture.get", params);
+        EXPECT_FALSE(reply["ok"]) << params;
+        EXPECT_EQ(reply["error"]["code"], "invalid_argument") << params;
+    }
+    const auto old_epoch = epoch_;
+    reply = call("vault.export");
+    ASSERT_TRUE(reply["ok"]) << reply;
+    epoch_ = reply["result"]["context_epoch"].get<std::uint64_t>();
+    std::ofstream(modify / "characters/guide/PICTURE.png")
+        << "not an image";
+    reply = call("vault.import");
+    ASSERT_TRUE(reply["ok"]) << reply;
+    epoch_ = reply["result"]["context_epoch"].get<std::uint64_t>();
+    reply = call("character.picture.get", {{"character_id", "guide"}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"], nlohmann::json({
+        {"filename", "PICTURE.png"}, {"mime_type", "image/png"},
+        {"content_base64", "bm90IGFuIGltYWdl"}}));
+    epoch_ = old_epoch;
+    reply = call("character.picture.get", {{"character_id", "guide"}});
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "vault_changed");
+}
+
 TEST_F(BridgeRouterTest, InfoBootstrapCreateOpenSubmitStopSnapshotAndClose) {
     router_->handle_request(
         connection_,

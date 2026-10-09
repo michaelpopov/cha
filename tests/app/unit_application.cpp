@@ -17,6 +17,7 @@
 #include <iterator>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <variant>
 
 namespace cha::app {
@@ -73,6 +74,31 @@ TEST(RuntimeSettings, DefaultsHavePositiveBatchSizes) {
     EXPECT_GT(settings.command_batch_size, 0U);
     EXPECT_GT(settings.event_batch_size, 0U);
     EXPECT_TRUE(settings.monotonic_event_sequence);
+}
+
+TEST(Application, PictureReadsNeedNoSessionAndUseApplicationErrors) {
+    test::TestWorkspace workspace;
+    std::ofstream(workspace.root() / "characters/guide/PICTURE.png") << "not an image";
+    auto application = Application::open(make_command(
+        workspace, test::import_test_database(workspace.root())));
+    const auto epoch = application->context_epoch();
+    const auto picture = application->get_character_picture("guide", epoch);
+    ASSERT_TRUE(picture);
+    EXPECT_EQ(picture->filename, "PICTURE.png");
+    EXPECT_EQ(picture->content_base64, "bm90IGFuIGltYWdl");
+    EXPECT_FALSE(application->get_character_picture(assistant_id, epoch));
+    for (const auto& [id, context, expected] :
+         std::vector<std::tuple<std::string, std::uint64_t, ErrorCode>>{
+             {"missing", epoch, ErrorCode::not_found},
+             {"guide", 0, ErrorCode::vault_changed},
+             {"guide", epoch + 1, ErrorCode::vault_changed}}) {
+        try {
+            (void)application->get_character_picture(id, context);
+            FAIL() << "Expected application error";
+        } catch (const ApplicationError& error) {
+            EXPECT_EQ(error.code, expected);
+        }
+    }
 }
 
 TEST(Application, StartsWithoutAListenerAndBootstraps) {

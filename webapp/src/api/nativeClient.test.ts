@@ -18,6 +18,53 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it.each([
+    ['PICTURE.png', 'image/png'],
+    ['PICTURE.webp', 'image/webp'],
+    ['PICTURE.jpg', 'image/jpeg'],
+    ['PICTURE.jpeg', 'image/jpeg'],
+    ['PICTURE.gif', 'image/gif'],
+  ])('requests and accepts %s without decoding image data', async (filename, mime_type) => {
+    let received: unknown;
+    const picture = { filename, mime_type, content_base64: 'bad base64!' };
+    const client = createNativeChaClient(createFakeNativeBridge({
+      'character.picture.get': (params) => { received = params; return picture; },
+    }));
+    expect(await client.getCharacterPicture('guide')).toEqual(picture);
+    expect(received).toEqual({ character_id: 'guide' });
+  });
+
+  it.each([null, { filename: 'PICTURE.gif', mime_type: 'image/gif', content_base64: '' }])(
+    'accepts no picture or empty picture data', async (response) => {
+      const client = createNativeChaClient(createFakeNativeBridge({
+        'character.picture.get': () => response,
+      }));
+      expect(await client.getCharacterPicture('assistant')).toEqual(response);
+    },
+  );
+
+  it.each([
+    undefined, {}, [],
+    { filename: 'picture.png', mime_type: 'image/png', content_base64: '' },
+    { filename: 'PICTURE.png', mime_type: 'image/jpeg', content_base64: '' },
+    { filename: 'PICTURE.png', mime_type: 'image/png', content_base64: 123 },
+    { filename: 'PICTURE.png', mime_type: 'image/png' },
+    { filename: 'PICTURE.png', mime_type: 'image/png', content_base64: '', path: '/tmp' },
+  ])('rejects malformed picture responses', async (response) => {
+    const client = createNativeChaClient(createFakeNativeBridge({
+      'character.picture.get': () => response,
+    }));
+    await expect(client.getCharacterPicture('guide')).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
+  it('propagates picture read errors', async () => {
+    const error = new Error('not found');
+    const client = createNativeChaClient(createFakeNativeBridge({
+      'character.picture.get': () => { throw error; },
+    }));
+    await expect(client.getCharacterPicture('missing')).rejects.toBe(error);
+  });
+
   it('uses a guarded deletion when discarding an unused session', async () => {
     let received: unknown;
     const client = createNativeChaClient(createFakeNativeBridge({

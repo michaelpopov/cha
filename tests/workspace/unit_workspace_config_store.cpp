@@ -3,6 +3,8 @@
 #include "storage/workspace_session_database.h"
 #include "support/test_workspace.h"
 #include "util/logging.h"
+#include "util/base64.h"
+#include "util/picture.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 #include "workspace/workspace.h"
@@ -165,6 +167,62 @@ protected:
     test::TestWorkspace workspace_;
     std::filesystem::path export_;
 };
+
+TEST_F(WorkspaceConfigStoreTest, PictureLookupUsesNestedDefinitionsAndCommittedRows) {
+    const auto group = source() / "characters" / "philosophers";
+    std::filesystem::create_directories(group);
+    std::filesystem::rename(source() / "characters/guide", group / "guide");
+    write_bytes(group / "guide/PICTURE.webp", std::string("\0\xff", 2));
+    write_bytes(group / "guide/PICTURE.png", "not an image");
+    write_bytes(group / "guide/PICTURE.gif", decode_base64(
+        "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"));
+    write_bytes(source() / "system/assistant/PICTURE.gif", "");
+    import_from_source();
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute("UPDATE config SET content = 'bad base64!' "
+            "WHERE name = 'characters/philosophers/guide/PICTURE.png'");
+    }
+    auto store = WorkspaceConfigStore::open(database());
+    std::filesystem::remove_all(source() / "characters");
+    std::filesystem::remove_all(source() / "system");
+    const auto picture = store->get_character_picture("guide");
+    ASSERT_TRUE(picture);
+    EXPECT_EQ(picture->filename, "PICTURE.png");
+    EXPECT_EQ(picture->mime_type, "image/png");
+    EXPECT_EQ(picture->content_base64, "bad base64!");
+    const auto assistant = store->get_character_picture(workspace_assistant_id);
+    ASSERT_TRUE(assistant);
+    EXPECT_EQ(assistant->filename, "PICTURE.gif");
+    EXPECT_EQ(assistant->mime_type, "image/gif");
+    EXPECT_TRUE(assistant->content_base64.empty());
+    EXPECT_THROW((void)store->get_character_picture("missing"), std::out_of_range);
+}
+
+TEST_F(WorkspaceConfigStoreTest, PictureLookupSelectsEveryFormatInPriorityOrder) {
+    for (std::size_t first = 0; first < picture_formats.size(); ++first) {
+        SCOPED_TRACE(first);
+        for (std::size_t index = 0; index < picture_formats.size(); ++index) {
+            const auto path = source() / "characters/guide" / picture_formats[index].filename;
+            if (index < first) std::filesystem::remove(path);
+            else write_bytes(path, std::string("\0\xff", 2));
+        }
+        import_from_source();
+        auto store = WorkspaceConfigStore::open(database());
+        const auto picture = store->get_character_picture("guide");
+        ASSERT_TRUE(picture);
+        EXPECT_EQ(picture->filename, picture_formats[first].filename);
+        EXPECT_EQ(picture->mime_type, picture_formats[first].mime_type);
+        EXPECT_EQ(picture->content_base64, encode_base64(std::string("\0\xff", 2)));
+    }
+}
+
+TEST_F(WorkspaceConfigStoreTest, KnownCharactersWithoutPicturesReturnNoPicture) {
+    import_from_source();
+    auto store = WorkspaceConfigStore::open(database());
+    EXPECT_FALSE(store->get_character_picture("guide"));
+    EXPECT_FALSE(store->get_character_picture(workspace_assistant_id));
+}
 
 TEST_F(WorkspaceConfigStoreTest, ImportsThenReplacesConfigurationWithoutLosingSessions) {
     const std::size_t count = import_from_source();

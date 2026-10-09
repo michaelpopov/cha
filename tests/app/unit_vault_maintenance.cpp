@@ -107,6 +107,33 @@ void set_r2(Application& application, int port) {
     }, application.context_epoch());
 }
 
+TEST(ApplicationVault, PicturesFollowTheCurrentVaultAndRejectStaleEpochs) {
+    TwoVaults pair;
+    std::ofstream(pair.workspace_a.root() / "characters/guide/PICTURE.png") << "A";
+    std::ofstream(pair.workspace_b.root() / "characters/guide/PICTURE.png") << "B";
+    (void)test::import_test_database(pair.workspace_a.root(), pair.database_a);
+    (void)test::import_test_database(pair.workspace_b.root(), pair.database_b);
+    auto application = Application::open(pair.command);
+    const auto first_epoch = application->context_epoch();
+    const auto first = application->get_character_picture("guide", first_epoch);
+    ASSERT_TRUE(first);
+    EXPECT_EQ(first->content_base64, "QQ==");
+    const auto switched = application->switch_vault("B", {}, first_epoch);
+    const auto second = application->get_character_picture("guide", switched.context_epoch);
+    ASSERT_TRUE(second);
+    EXPECT_EQ(second->content_base64, "Qg==");
+    try {
+        (void)application->get_character_picture("guide", first_epoch);
+        FAIL() << "Expected stale epoch rejection";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::vault_changed);
+    }
+    const auto back = application->switch_vault("A", {}, switched.context_epoch);
+    const auto restored = application->get_character_picture("guide", back.context_epoch);
+    ASSERT_TRUE(restored);
+    EXPECT_EQ(restored->content_base64, "QQ==");
+}
+
 TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndCanFinishAfterAVaultSwitch) {
     TwoVaults pair;
     const std::string response = "HTTP/1.1 200 OK\r\nETag: \"uploaded-etag\"\r\n"

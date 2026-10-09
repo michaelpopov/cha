@@ -11,6 +11,7 @@ export type AudioDownloadStatus = components['schemas']['AudioDownloadStatus'];
 export type Bootstrap = components['schemas']['Bootstrap'] & {
   capabilities?: { can_modify: boolean; can_transfer_r2: boolean };
 };
+export type CharacterPicture = components['schemas']['CharacterPicture'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
 export type MarkdownFile = components['schemas']['MarkdownFile'];
 export type CreateCharacterRequest = components['schemas']['CreateCharacterRequest'];
@@ -106,6 +107,7 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
 
 export interface ChaClient {
   getBootstrap(): Promise<Bootstrap>;
+  getCharacterPicture(characterId: string): Promise<CharacterPicture | null>;
   getCharacter(characterId: string): Promise<CharacterDetail>;
   createCharacter(request: CreateCharacterRequest): Promise<CharacterDetail>;
   updateCharacter(characterId: string, settings: UpdateCharacterRequest): Promise<CharacterDetail>;
@@ -307,6 +309,19 @@ function isRosterSummary(value: unknown): boolean {
 export function isMarkdownFile(value: unknown): value is MarkdownFile {
   return isRecord(value) && typeof value.filename === 'string'
     && typeof value.content === 'string' && typeof value.writable === 'boolean';
+}
+
+export function isCharacterPicture(value: unknown): value is CharacterPicture {
+  if (!isRecord(value) || typeof value.content_base64 !== 'string'
+    || Object.keys(value).length !== 3) return false;
+  switch (value.filename) {
+    case 'PICTURE.png': return value.mime_type === 'image/png';
+    case 'PICTURE.webp': return value.mime_type === 'image/webp';
+    case 'PICTURE.jpg':
+    case 'PICTURE.jpeg': return value.mime_type === 'image/jpeg';
+    case 'PICTURE.gif': return value.mime_type === 'image/gif';
+    default: return false;
+  }
 }
 
 export function isCharacterDetail(value: unknown): value is CharacterDetail {

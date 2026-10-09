@@ -18,6 +18,7 @@
   "session.subscribe": {"requires_context_epoch": true, "changes_context": false},
   "session.unsubscribe": {"requires_context_epoch": true, "changes_context": false},
   "character.get": {"requires_context_epoch": true, "changes_context": false},
+  "character.picture.get": {"requires_context_epoch": true, "changes_context": false},
   "character.create": {"requires_context_epoch": true, "changes_context": false},
   "character.update": {"requires_context_epoch": true, "changes_context": false},
   "character.updateDefinition": {"requires_context_epoch": true, "changes_context": false},

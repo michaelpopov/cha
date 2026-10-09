@@ -809,6 +809,14 @@ SessionExport Application::export_session(
     }
 }
 
+std::optional<CharacterPicture> Application::get_character_picture(
+    std::string_view character_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::get_character_picture(*impl_->store, character_id);
+}
+
 CharacterDetail Application::get_character(
     std::string_view character_id,
     std::uint64_t epoch) {

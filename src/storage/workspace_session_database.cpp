@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -640,6 +641,15 @@ std::vector<ConfigFile> read_workspace_config_files(Database& database) {
         rows.push_back(std::move(row));
     }
     return rows;
+}
+
+std::optional<std::string> read_workspace_config_file(
+    Database& database,
+    std::string_view name) {
+    Statement statement = database.prepare(
+        "SELECT content FROM config WHERE name = ?1", name);
+    if (!statement.step()) return std::nullopt;
+    return statement.text(0);
 }
 
 void replace_workspace_config_files(

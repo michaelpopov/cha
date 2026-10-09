@@ -183,6 +183,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
   const audioCache = new Map<string, Set<number>>();
   const client: ChaClient = {
     getBootstrap: async () => bootstrapFixture,
+    getCharacterPicture: async () => null,
     getCharacter: async () => characterDetailFixture,
     createCharacter: async ({ display_name, description }) => ({
       ...characterDetailFixture,

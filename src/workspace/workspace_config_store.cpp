@@ -2490,6 +2490,28 @@ void WorkspaceConfigStore::apply_key_migration(
     });
 }
 
+std::optional<WorkspaceCharacterPicture> WorkspaceConfigStore::get_character_picture(
+    std::string_view character_id) const {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->require_open();
+    const auto workspace = impl_->snapshot();
+    const auto directory = workspace->character_directory(character_id);
+    if (!directory) throw std::out_of_range("That character was not found.");
+    const auto relative = directory->lexically_relative(workspace->root());
+    for (const auto& format : picture_formats) {
+        auto content = read_workspace_config_file(
+            *impl_->database, generic_utf8_path(relative / format.filename));
+        if (content) {
+            return WorkspaceCharacterPicture{
+                .filename = std::string(format.filename),
+                .mime_type = std::string(format.mime_type),
+                .content_base64 = std::move(*content),
+            };
+        }
+    }
+    return std::nullopt;
+}
+
 WorkspaceConfigRevision WorkspaceConfigStore::config_revision() const {
     const std::lock_guard lock(impl_->mutex);
     impl_->require_open();

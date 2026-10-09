@@ -329,6 +329,14 @@ void to_json(nlohmann::json& json, const VoiceOption& value) {
     json = {{"id", value.id}, {"label", value.label}};
 }
 
+void to_json(nlohmann::json& json, const CharacterPicture& value) {
+    json = {
+        {"filename", value.filename},
+        {"mime_type", value.mime_type},
+        {"content_base64", value.content_base64},
+    };
+}
+
 void to_json(nlohmann::json& json, const CharacterDetail& value) {
     json = nlohmann::json(value.summary);
     json["character_markdown"] = value.character_markdown;

@@ -35,6 +35,13 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
             require_identifier(params, "character_id"), epoch);
         break;
     }
+    case Method::character_picture_get: {
+        require_only_keys(params, {"character_id"});
+        const auto picture = application.get_character_picture(
+            require_identifier(params, "character_id"), epoch);
+        result = picture ? nlohmann::json(*picture) : nlohmann::json(nullptr);
+        break;
+    }
     case Method::character_create: {
         result = application.create_character(
             parse_create_character_request(params), epoch);

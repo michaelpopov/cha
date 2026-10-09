@@ -29,6 +29,12 @@ struct WorkspaceSessionNaming;
 struct WorkspaceWebSearch;
 struct WorkspaceVoiceOutput;
 
+struct WorkspaceCharacterPicture {
+    std::string filename;
+    std::string mime_type;
+    std::string content_base64;
+};
+
 struct WorkspaceConfigTransfer {
     std::size_t file_count{};
 };
@@ -330,6 +336,8 @@ public:
         const SessionLease& source_lease,
         std::string_view source_password = {});
 
+    [[nodiscard]] std::optional<WorkspaceCharacterPicture> get_character_picture(
+        std::string_view character_id) const;
     [[nodiscard]] WorkspaceConfigRevision config_revision() const;
     [[nodiscard]] WorkspaceConfigListResult list_config(std::string_view prefix) const;
     [[nodiscard]] WorkspaceConfigReadResult read_config(

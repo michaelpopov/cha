@@ -260,6 +260,8 @@ public:
     [[nodiscard]] CharacterDefinition character_definition(
         std::string_view forum_id,
         std::string_view character_id) const;
+    [[nodiscard]] std::optional<std::filesystem::path> character_directory(
+        std::string_view id) const;
     [[nodiscard]] bool character_is_writable(
         std::string_view id) const noexcept;
     [[nodiscard]] bool character_settings_are_writable(
