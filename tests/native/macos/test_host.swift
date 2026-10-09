@@ -866,7 +866,7 @@ return await (async () => {
   const opened = new Promise(resolve => source.addEventListener('sourceopen', resolve, {once:true}));
   const url = URL.createObjectURL(source);
   const audio = new Audio(url);
-  audio.muted = true;
+  // The synthetic MP3 is silent already; muting can suspend WebKit playback.
   let finished = false, firstPlaybackMs = null, completedMs = null;
   audio.addEventListener('playing', () => {
     if (firstPlaybackMs === null) firstPlaybackMs = performance.now() - started;
@@ -877,6 +877,10 @@ return await (async () => {
     const playing = audio.play();
     const ended = new Promise((resolve, reject) => {
       audio.onended = resolve;
+      // WebKit can reach the end without dispatching its separate ended event.
+      for (const event of ['timeupdate', 'pause']) {
+        audio.addEventListener(event, () => { if (audio.ended) resolve(); });
+      }
       audio.onerror = () => reject(new Error('MP3 playback failed'));
     });
     let offset = 0;

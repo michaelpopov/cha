@@ -246,7 +246,12 @@ export class TextToSpeechSession {
     this.audio = audio;
     const signal = this.request.signal;
     audio.addEventListener('ended', () => this.finish(true), { once: true, signal });
+    // Also recognize completion when the separate ended event is missed.
+    audio.addEventListener('timeupdate', () => {
+      if (audio.ended) this.finish(true);
+    }, { signal });
     audio.addEventListener('pause', () => {
+      if (audio.ended) { this.finish(true); return; }
       // Media controls can pause the clip without ending it or advancing the queue.
       this.clearPlaybackWait();
       this.releaseInput();

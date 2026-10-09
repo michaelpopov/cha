@@ -351,18 +351,33 @@ describe('playback position', () => {
     }
   });
 
-  it('lets the ended event reset position when the browser pauses at the end of a clip', async () => {
+  it.each(['pause', 'timeupdate'])('finishes on %s when the clip has ended without an ended event', async (event) => {
     const position = vi.fn();
     const ended = vi.fn();
+    const changes: boolean[] = [];
+    const unsubscribe = onSpeechPlaybackChange((playing) => { changes.push(playing); });
+    const release = vi.fn();
     const session = new TextToSpeechSession(null, undefined, '', ended,
-      { position: 0, onPositionChange: position }, '/media/r1');
-    await session.play();
-    audios[0].ended = true;
-    audios[0].dispatchEvent(new Event('pause'));
-    expect(ended).not.toHaveBeenCalled();
-    audios[0].dispatchEvent(new Event('ended'));
-    expect(position).toHaveBeenCalledExactlyOnceWith(0);
-    expect(ended).toHaveBeenCalledOnce();
+      { position: 0, onPositionChange: position }, '/media/r1', undefined, undefined, release);
+    try {
+      await session.play();
+      audios[0].currentTime = 60;
+      audios[0].ended = true;
+      audios[0].dispatchEvent(new Event(event));
+      expect(position).toHaveBeenCalledExactlyOnceWith(0);
+      expect(ended).toHaveBeenCalledOnce();
+      expect(release).toHaveBeenCalledOnce();
+      expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:audio');
+      await vi.advanceTimersByTimeAsync(400);
+      expect(changes).toEqual([false, true, false]);
+      // A delayed ended event must not finish or release the session twice.
+      audios[0].dispatchEvent(new Event('ended'));
+      expect(ended).toHaveBeenCalledOnce();
+      expect(release).toHaveBeenCalledOnce();
+    } finally {
+      session.stop();
+      unsubscribe();
+    }
   });
 });
 

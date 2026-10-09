@@ -327,7 +327,7 @@ VoiceOutputRequest make_fish_audio_request(
     VoiceOutputRequest request{
         .model = output.model,
         .body = {{"text", spoken}, {"reference_id", *synthesis.reference_id}, {"format", output.output_format},
-            {"temperature", 0.5}, {"latency", "normal"}},
+            {"temperature", 0.5}, {"latency", "low"}},
     };
     if (synthesis.settings.speed) {
         const double speed = *synthesis.settings.speed;

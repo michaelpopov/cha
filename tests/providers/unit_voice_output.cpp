@@ -154,7 +154,7 @@ TEST(FishAudio, IgnoresObsoleteVoiceSettingsWithoutChangingConfiguredModel) {
     EXPECT_EQ(request.body, Json({
         {"text", "Hello"}, {"reference_id", "fish-voice"},
         {"prosody", {{"speed", 0.9}}}, {"format", "mp3"},
-        {"temperature", 0.5}, {"latency", "normal"},
+        {"temperature", 0.5}, {"latency", "low"},
     }));
 }
 
@@ -169,7 +169,7 @@ TEST(FishAudio, PreservesExplicitFishAudioModelAndFormat) {
         EXPECT_EQ(request.model, "s2.1-pro-free");
         EXPECT_EQ(request.body, Json({
             {"text", "Hello"}, {"reference_id", "fish-voice"}, {"format", format},
-            {"temperature", 0.5}, {"latency", "normal"},
+            {"temperature", 0.5}, {"latency", "low"},
         }));
     }
 }

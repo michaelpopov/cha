@@ -1028,7 +1028,7 @@ describe('live chat', () => {
     expect(play).not.toHaveBeenCalled();
   });
 
-  it.each(['ended', 'stop', 'select reply'] as const)('preserves pending replies when manual playback finishes with %s', async (finish) => {
+  it.each(['ended', 'pause at end', 'timeupdate at end', 'stop', 'select reply'] as const)('preserves pending replies when manual playback finishes with %s', async (finish) => {
     const audios = mockAudioPlayback();
     const events = drivableEvents();
     const client = fixtureClient({ getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture });
@@ -1052,6 +1052,10 @@ describe('live chat', () => {
     expect(resolveAudioSource.mock.calls.map((call) => call[2])).toEqual([1]);
     expect(audios[0].pause).not.toHaveBeenCalled();
     if (finish === 'ended') act(() => audios[0].dispatchEvent(new Event('ended')));
+    else if (finish === 'pause at end' || finish === 'timeupdate at end') act(() => {
+      Object.assign(audios[0], { ended: true });
+      audios[0].dispatchEvent(new Event(finish === 'pause at end' ? 'pause' : 'timeupdate'));
+    });
     else fireEvent.click(screen.getByRole('button', { name: finish === 'stop'
       ? "Stop reading Assistant's response" : "Play cached audio for Other's response" }));
     await screen.findByRole('button', { name: "Stop reading Other's response" });
@@ -1059,6 +1063,7 @@ describe('live chat', () => {
     expect(audios).toHaveLength(2);
     act(() => audios[1].dispatchEvent(new Event('ended')));
     expect(resolveAudioSource).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('button', { name: "Stop reading Other's response" })).not.toBeInTheDocument();
   });
 
   it.each(['admission', 'status'] as const)('lets current audio finish when a download %s error disables automatic playback', async (failure) => {
