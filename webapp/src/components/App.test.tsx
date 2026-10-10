@@ -494,6 +494,30 @@ it('loads a character editor from the unexpanded editable source', async () => {
   ));
 });
 
+it('lists every character file without sending pictures or settings to the Markdown editor', async () => {
+  const user = userEvent.setup();
+  const getCharacterFile = vi.fn();
+  const files = ['CHARACTER.md', 'NOTES.md', 'PICTURE.jpg', 'PICTURE.png', 'character.toml'];
+  render(<App client={fixtureClient({
+    getCharacter: async () => ({ ...characterDetailFixture, markdown_files: files }),
+    getCharacterFile,
+  })} />);
+  await openSettingsNavigation();
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(screen.getByRole('button', { name: /Guide/ }));
+  const navigation = await screen.findByRole('region', { name: 'Character detail navigation' });
+  for (const filename of files) {
+    expect(await within(navigation).findByText(filename)).toBeVisible();
+  }
+  expect(within(navigation).getByRole('button', { name: 'NOTES.md' })).toBeEnabled();
+  for (const filename of ['PICTURE.jpg', 'PICTURE.png', 'character.toml']) {
+    expect(within(navigation).queryByRole('button', { name: filename })).not.toBeInTheDocument();
+    await user.click(within(navigation).getByText(filename));
+  }
+  expect(getCharacterFile).not.toHaveBeenCalled();
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+});
+
 it('saves the selected character file and returns to its list after deleting an optional file', async () => {
   const user = userEvent.setup();
   let content = '# Notes';

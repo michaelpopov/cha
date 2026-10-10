@@ -462,7 +462,8 @@ void to_json(nlohmann::json& json, const SessionNamingSettings& value) {
 void to_json(nlohmann::json& json, const WebSearchSettings& value) {
     json = {{"provider", value.provider}, {"api_key", value.api_key},
         {"tool_enabled", value.tool_enabled}, {"read_provider", value.read_provider},
-        {"firecrawl_api_key", value.firecrawl_api_key}};
+        {"firecrawl_api_key", value.firecrawl_api_key}, {"web_reader_url", value.web_reader_url},
+        {"web_reader_enabled", value.web_reader_enabled}, {"web_reader_api_key", value.web_reader_api_key}};
 }
 
 void to_json(nlohmann::json& json, const VoiceInputSettings& value) {

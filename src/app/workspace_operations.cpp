@@ -139,11 +139,12 @@ CharacterDetail character_detail(
         .editable_markdown = character.editable_markdown,
     };
     detail.writable = workspace.character_is_writable(character.character.id);
-    for (const auto& [filename, content] : character.markdown_files) {
-        detail.markdown_files.push_back(filename);
-    }
-    if (!detail.writable && detail.markdown_files.empty()) {
+    // Keep the existing wire field; the UI list now includes every file type.
+    detail.markdown_files = character.filenames;
+    if (!detail.writable && std::ranges::find(detail.markdown_files, "CHARACTER.md")
+        == detail.markdown_files.end()) {
         detail.markdown_files.push_back("CHARACTER.md");
+        std::ranges::sort(detail.markdown_files);
     }
     detail.settings_writable =
         workspace.character_settings_are_writable(character.character.id);

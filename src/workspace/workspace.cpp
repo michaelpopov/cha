@@ -228,6 +228,18 @@ Enum choice(
         + std::string(key) + " '" + *value + "'");
 }
 
+std::vector<std::string> direct_filenames(
+    const TextSource& source,
+    const std::filesystem::path& directory) {
+    std::vector<std::string> result;
+    for (const auto& entry : source.entries(directory)) {
+        if (source.is_regular_file(entry) && !source.is_symlink(entry)) {
+            result.push_back(utf8_path(entry.filename()));
+        }
+    }
+    return result;
+}
+
 std::vector<std::filesystem::path> direct_subdirectories(
     const TextSource& source,
     const std::filesystem::path& directory) {
@@ -1444,6 +1456,26 @@ WorkspaceSessionNaming load_session_naming_settings(
     }
 }
 
+bool valid_web_reader_url(std::string_view value) {
+    if (value.empty()) return true;
+    if (value.size() > 4096 || value.find_first_of(" \t\r\n?#") != std::string_view::npos
+        || value.find('\0') != std::string_view::npos) return false;
+    const std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> url(curl_url(), curl_url_cleanup);
+    const std::string text(value);
+    if (!url || curl_url_set(url.get(), CURLUPART_URL, text.c_str(), 0) != CURLUE_OK) return false;
+    char* raw = nullptr;
+    if (curl_url_get(url.get(), CURLUPART_SCHEME, &raw, 0) != CURLUE_OK) return false;
+    const std::unique_ptr<char, decltype(&curl_free)> scheme(raw, curl_free);
+    if (std::string_view(raw) != "http" && std::string_view(raw) != "https") return false;
+    for (const auto part : {CURLUPART_USER, CURLUPART_PASSWORD}) {
+        raw = nullptr;
+        const auto status = curl_url_get(url.get(), part, &raw, 0);
+        const std::unique_ptr<char, decltype(&curl_free)> credential(raw, curl_free);
+        if (status == CURLUE_OK) return false;
+    }
+    return true;
+}
+
 WorkspaceWebSearch load_web_search_settings(
     const TextSource& source,
     const std::filesystem::path& root,
@@ -1454,7 +1486,7 @@ WorkspaceWebSearch load_web_search_settings(
         const auto table = read_toml(source, path, "web search config");
         static constexpr std::string_view fields[]{
             "provider", "api_key", "tool_enabled",
-            "read_provider", "firecrawl_api_key"};
+            "read_provider", "firecrawl_api_key", "web_reader_url", "web_reader_enabled", "web_reader_api_key"};
         for (const auto& [key, value] : table) {
             (void)value;
             if (std::ranges::find(fields, key.str()) == std::end(fields))
@@ -1467,6 +1499,9 @@ WorkspaceWebSearch load_web_search_settings(
             .tool_enabled = table["tool_enabled"].value_or(false),
             .read_provider = table["read_provider"].value_or(std::string("off")),
             .firecrawl_api_key_id = table["firecrawl_api_key"].value_or(std::string{}),
+            .web_reader_url = table["web_reader_url"].value_or(std::string{}),
+            .web_reader_enabled = table["web_reader_enabled"].value_or(false),
+            .web_reader_api_key_id = table["web_reader_api_key"].value_or(std::string{}),
         };
         if (result.provider != "brave" && result.provider != "tavily") {
             warnings.emit(
@@ -1478,6 +1513,13 @@ WorkspaceWebSearch load_web_search_settings(
             warnings.emit(
                 path, "Ignoring unsupported page reading provider; disabling page reading");
             result.read_provider = "off";
+        }
+        result.web_reader_url = trim_view(result.web_reader_url);
+        if (!valid_web_reader_url(result.web_reader_url)
+            || (result.web_reader_enabled && result.web_reader_url.empty())) {
+            warnings.emit(path, "Ignoring invalid web_reader URL");
+            result.web_reader_url.clear();
+            result.web_reader_enabled = false;
         }
         return result;
     } catch (const std::exception& error) {
@@ -1661,6 +1703,7 @@ LoadedCharacters load_characters(
                 expand_template_file(prompt_path, description_options)),
             .editable_markdown = editable_markdown,
             .markdown_files = std::move(markdown_files),
+            .filenames = direct_filenames(source, directory),
         });
     }
     return result;
@@ -1695,6 +1738,7 @@ WorkspaceCharacter load_assistant(
         .prompt_template = std::string(embedded_application_guide()),
         .markdown = std::string(embedded_application_guide()),
         .editable_markdown = std::string(embedded_application_guide()),
+        .filenames = direct_filenames(source, assistant_path.parent_path()),
     };
 }
 
@@ -2712,6 +2756,18 @@ void WorkspaceConfigEditor::write_web_search(const WorkspaceWebSearch& settings)
     }
     table.insert("read_provider", reader);
     table.insert("firecrawl_api_key", settings.firecrawl_api_key_id);
+    std::string web_reader_url(trim_view(settings.web_reader_url));
+    if (!valid_web_reader_url(web_reader_url) || (settings.web_reader_enabled && web_reader_url.empty())) {
+        if (settings.web_reader_enabled) {
+            throw std::invalid_argument(
+                "web_reader requires an absolute HTTP or HTTPS base URL without credentials, query, or fragment.");
+        }
+        log_warn("Ignoring unused invalid web_reader URL");
+        web_reader_url.clear();
+    }
+    table.insert("web_reader_url", web_reader_url);
+    table.insert("web_reader_enabled", settings.web_reader_enabled);
+    table.insert("web_reader_api_key", settings.web_reader_api_key_id);
     write_toml(workspace_.root_ / "system" / "web-search" / "config.toml", table);
 }
 

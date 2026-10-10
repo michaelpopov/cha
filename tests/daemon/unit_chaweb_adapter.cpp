@@ -1137,44 +1137,21 @@ TEST_F(ChaWebAdapterTest, UnavailableApplicationReturns503) {
         "The application is unavailable.");
 }
 
-TEST(ChaWebAdapter, UnknownSubmissionOutcomeKeepsTheSession) {
-    test::TestWorkspace workspace;
-    MockHttpServer server({http_json(
-        R"({"answers":{"recipient":{"type":"choice","choice":"undefined"}}})")});
-    server.pause_before_response(1);
-    const auto directory = workspace.root() / "system/jev";
-    std::filesystem::create_directories(directory);
-    std::ofstream(directory / "config.toml")
-        << "url = \"http://127.0.0.1:" << server.port()
-        << "/decisions\"\nmodel = \"jev\"\napi_key = \"api_key_1\"\n";
-    RuntimeSettings settings;
-    settings.command_deadline = 200ms;
-    auto application = Application::open(
-        make_command(workspace, test::import_test_database(workspace.root())),
-        {},
-        settings);
-    ASSERT_EQ(
-        application->create_api_key(
-            {.display_name = "Jev", .value = "jev-secret"},
-            application->context_epoch())
-            .id,
-        "api_key_1");
-    server.start();
-    CgiResponse response;
-    std::thread worker([&] {
-        response = exchange(
-            *application,
-            post_request(sessions_path("lobby"), text_body("Hello").dump()));
-    });
-    ASSERT_TRUE(server.wait_for_requests(1, 5s));
-    worker.join();
-    EXPECT_EQ(response.status, 500) << response.raw;
+TEST_F(ChaWebAdapterTest, UnknownSubmissionOutcomeKeepsTheSession) {
+    const auto before = listed().size();
+    // Inject the unknown outcome: recipient detection can finish at the same
+    // deadline as submission, so waiting on a paused HTTP response is a race.
+    const CgiResponse response = exchange(
+        *application_,
+        post_request(sessions_path("lobby"), text_body("Hello").dump()),
+        nullptr,
+        [](Application&, std::string_view, std::string_view, RawCommand,
+           std::uint64_t) -> CommandSubmitResult {
+            return ErrorCode::command_timeout;
+        });
+    ASSERT_EQ(response.status, 500) << response.raw;
     EXPECT_EQ(response.json.at("error").at("code"), "command_timeout");
-    EXPECT_FALSE(
-        application->list_sessions("lobby", application->context_epoch())
-            .empty());
-    server.resume_responses();
-    server.join();
+    EXPECT_EQ(listed().size(), before + 1);
 }
 
 TEST(ChaWebAdapter, InputReturnsWhileGenerationContinues) {

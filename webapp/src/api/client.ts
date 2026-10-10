@@ -535,7 +535,10 @@ export function isWebSearchSettings(value: unknown): value is WebSearchSettings 
     && isOneOf(value.provider, ['brave', 'tavily'])
     && typeof value.api_key === 'string'
     && isOneOf(value.read_provider, ['off', 'firecrawl'])
-    && typeof value.firecrawl_api_key === 'string';
+    && typeof value.firecrawl_api_key === 'string'
+    && typeof value.web_reader_url === 'string'
+    && typeof value.web_reader_enabled === 'boolean'
+    && typeof value.web_reader_api_key === 'string';
 }
 
 export function isVoiceOutputSettings(value: unknown): value is VoiceOutputSettings {

@@ -284,6 +284,9 @@ ApiKeyDetail api_key_detail(
     if (web.read_provider == "firecrawl" && key.id == web.firecrawl_api_key_id) {
         used_by.emplace_back("Page reading");
     }
+    if (web.web_reader_enabled && key.id == web.web_reader_api_key_id) {
+        used_by.emplace_back("web_reader");
+    }
     return {
         .id = key.id,
         .display_name = key.display_name,
@@ -698,7 +701,8 @@ SessionNamingSettings save_session_naming_settings(
 WebSearchSettings get_web_search_settings(const Workspace& workspace) {
     const auto& settings = workspace.web_search();
     return {settings.provider, settings.api_key_id, settings.tool_enabled, settings.read_provider,
-        settings.firecrawl_api_key_id};
+        settings.firecrawl_api_key_id, settings.web_reader_url, settings.web_reader_enabled,
+        settings.web_reader_api_key_id};
 }
 
 WebSearchSettings save_web_search_settings(
@@ -706,7 +710,8 @@ WebSearchSettings save_web_search_settings(
     return with_settings_edit([&] {
         store.apply_web_search_update(
             WorkspaceWebSearch{update.provider, update.api_key, update.tool_enabled, update.read_provider,
-                update.firecrawl_api_key});
+                update.firecrawl_api_key, update.web_reader_url, update.web_reader_enabled,
+                update.web_reader_api_key});
         return get_web_search_settings(*store.snapshot());
     });
 }

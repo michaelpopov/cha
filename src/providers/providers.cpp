@@ -185,7 +185,8 @@ void ProviderRequest::execute(
         if (!input_.maintenance && input_.web_read_tool && web_read_executor) {
             generation.web_read_tool = [&, config = *input_.web_read_tool](
                 std::string_view url, const std::atomic_bool& cancelled) {
-                log_info("Page reading initiated: trigger=model_tool provider=" + config.read_provider);
+                log_info("Page reading initiated: trigger=model_tool provider="
+                    + (config.web_reader_enabled ? "web_reader" : config.read_provider));
                 auto result = web_read_executor(config, url, cancelled);
                 if (!cancelled.load()) {
                     log_info("Page reading completed: result_bytes=" + std::to_string(result.size()));

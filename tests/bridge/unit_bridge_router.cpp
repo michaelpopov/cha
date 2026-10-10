@@ -400,11 +400,59 @@ TEST_F(BridgeRouterTest, RemovedReaderSettingsAreIgnoredWithoutBlockingSearch) {
     EXPECT_FALSE(saved.contains("jina_api_key"));
 }
 
+TEST_F(BridgeRouterTest, WebReaderSettingsWorkWithoutKeysAndValidateTheBaseUrl) {
+    bootstrap_epoch();
+    auto settings = call("webSearch.get")["result"];
+    settings["web_reader_enabled"] = true;
+    settings["web_reader_url"] = "http://192.168.86.39:8087";
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"], settings);
+    for (const auto* url : {"relative", "ftp://host", "http://", "http://host:bad/",
+            "http://host/a b", "http://user:password@host", "http://host?token=secret", "http://host#fragment"}) {
+        auto invalid = settings;
+        invalid["web_reader_url"] = url;
+        EXPECT_FALSE(call("webSearch.save", invalid)["ok"]);
+        EXPECT_EQ(call("webSearch.get")["result"], settings);
+    }
+    const auto firecrawl = call("apiKey.create", {{"display_name", "Firecrawl"}, {"value", "fc-secret"}});
+    ASSERT_TRUE(firecrawl["ok"]);
+    settings["firecrawl_api_key"] = firecrawl["result"]["id"];
+    settings["read_provider"] = "firecrawl";
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    EXPECT_EQ(call("apiKey.list")["result"][0]["used_by"], nlohmann::json::array({"Page reading"}));
+    const auto reader = call("apiKey.create", {{"display_name", "web_reader"}, {"value", "reader-secret"}});
+    ASSERT_TRUE(reader["ok"]);
+    settings["web_reader_api_key"] = reader["result"]["id"];
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"], settings);
+    const auto key_list = call("apiKey.list")["result"];
+    for (const auto& key : key_list) {
+        if (key["id"] == reader["result"]["id"])
+            EXPECT_EQ(key["used_by"], nlohmann::json::array({"web_reader"}));
+    }
+    // This reserved key has no authentication role in the service yet.
+    settings["web_reader_api_key"] = "obsolete-reader-key";
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    settings["read_provider"] = "off";
+    settings["web_reader_enabled"] = false;
+    settings["web_reader_url"] = "ftp://obsolete";
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    settings["web_reader_url"] = "";
+    EXPECT_EQ(call("webSearch.get")["result"], settings);
+    settings.erase("web_reader_url");
+    settings.erase("web_reader_enabled");
+    settings.erase("web_reader_api_key");
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"]["web_reader_url"], "");
+    EXPECT_FALSE(call("webSearch.get")["result"]["web_reader_enabled"].get<bool>());
+    EXPECT_EQ(call("webSearch.get")["result"]["web_reader_api_key"], "");
+}
+
 TEST_F(BridgeRouterTest, WebSearchSettingsRoundTripAndIgnoreObsoletePreliminarySearchSettings) {
     bootstrap_epoch();
     const nlohmann::json disabled = {
         {"provider", "brave"}, {"api_key", ""}, {"tool_enabled", false},
-        {"read_provider", "off"}, {"firecrawl_api_key", ""}};
+        {"read_provider", "off"}, {"firecrawl_api_key", ""}, {"web_reader_url", ""}, {"web_reader_enabled", false}, {"web_reader_api_key", ""}};
     EXPECT_EQ(call("webSearch.get")["result"], disabled);
     auto obsolete = disabled;
     obsolete["enabled"] = true;

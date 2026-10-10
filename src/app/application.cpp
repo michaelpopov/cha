@@ -268,9 +268,10 @@ Application::Impl::Impl(
           [keys = api_keys.get()](const WorkspaceWebSearch& config, std::string_view url,
               const std::atomic_bool& cancelled) {
               if (cancelled.load()) return std::string{};
-              if (config.read_provider == "firecrawl")
-                  return read_firecrawl(url, keys->value(config.firecrawl_api_key_id), cancelled);
-              throw std::runtime_error("Unsupported page reading provider");
+              const auto key = config.read_provider == "firecrawl"
+                  && keys->find(config.firecrawl_api_key_id)
+                  ? keys->value(config.firecrawl_api_key_id) : std::string{};
+              return read_page(config, url, key, cancelled);
           },
           [this](std::string_view name, std::string_view arguments,
               const MaintenanceContext& context, const std::atomic_bool& cancelled) {

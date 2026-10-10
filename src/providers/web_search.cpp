@@ -182,7 +182,7 @@ nlohmann::ordered_json request_web_json(std::string_view provider, CurlHandle& c
     return parsed;
 }
 
-std::string read_url(std::string_view provider, std::string_view url, std::string_view key) {
+std::string page_url(std::string_view provider, std::string_view url) {
     url = trim_view(url);
     if (url.empty() || url.size() > 8192 || url.find_first_of(" \t\r\n") != std::string_view::npos
         || url.find('\0') != std::string_view::npos)
@@ -203,6 +203,11 @@ std::string read_url(std::string_view provider, std::string_view url, std::strin
         const std::unique_ptr<char, decltype(&curl_free)> value(raw_value, curl_free);
         if (status == CURLUE_OK) fail_web(provider, "Page reading", "Page URLs must not contain credentials");
     }
+    return text;
+}
+
+std::string read_url(std::string_view provider, std::string_view url, std::string_view key) {
+    const auto text = page_url(provider, url);
     if (key.empty() || key.find_first_of("\r\n") != std::string_view::npos
         || key.find('\0') != std::string_view::npos)
         fail_web(provider, "Page reading", "Page reading API key is missing or invalid");
@@ -420,6 +425,52 @@ std::string read_firecrawl(std::string_view url, std::string_view key,
         ? metadata["title"].get<std::string>() : std::string{};
     return page_output("Firecrawl", target, title,
         data.value("markdown", std::string{}));
+}
+
+std::string read_web_reader(std::string_view url, std::string_view base_url,
+    const std::atomic_bool& cancelled) {
+    if (cancelled.load()) return {};
+    const auto target = page_url("web_reader", url);
+    auto endpoint = page_url("web_reader", base_url);
+    while (endpoint.ends_with('/')) endpoint.pop_back();
+    endpoint += "/extract";
+    CurlHandle curl;
+    CurlHeaders headers;
+    headers.append("Accept: application/json");
+    headers.append("Content-Type: application/json");
+    // Keep the whole result so CHA can report its own truncation explicitly.
+    const auto body = nlohmann::json{{"url", target}}.dump();
+    const auto response = request_web_json("web_reader", curl, headers, endpoint,
+        body, cancelled, {}, "Page reading", 55000L, 8 * 1024 * 1024);
+    if (response.is_null()) return {};
+    if (response.size() != 3 || !response.contains("url") || !response["url"].is_string()
+        || !response.contains("title") || !response["title"].is_string()
+        || !response.contains("markdown") || !response["markdown"].is_string())
+        fail_web("web_reader", "Page reading", "Invalid page reading response");
+    const auto final_url = page_url("web_reader", response["url"].get<std::string>());
+    return page_output("web_reader", final_url, response["title"].get<std::string>(),
+        response["markdown"].get<std::string>());
+}
+
+std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
+    std::string_view firecrawl_key, const std::atomic_bool& cancelled,
+    std::string_view firecrawl_endpoint) {
+    if (cancelled.load()) return {};
+    if (config.web_reader_enabled) {
+        if (!config.web_reader_api_key_id.empty())
+            log_warn("web_reader API key is saved but unused; the service has no API-key authentication contract");
+        try {
+            return read_web_reader(url, config.web_reader_url, cancelled);
+        } catch (const WebToolError&) {
+            if (cancelled.load()) return {};
+            if (config.read_provider != "firecrawl" || firecrawl_key.empty()) throw;
+            log_info("web_reader page reading failed; trying Firecrawl");
+        }
+    }
+    if (cancelled.load()) return {};
+    if (config.read_provider == "firecrawl")
+        return read_firecrawl(url, firecrawl_key, cancelled, firecrawl_endpoint);
+    throw WebToolError("Page reading is not configured");
 }
 
 } // namespace cha

@@ -3479,6 +3479,62 @@ describe('chat pictures', () => {
     expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
   });
 
+  it.each([true, false])('selects the character whose cached audio plays and keeps the panel preference (open: %s)', async (open) => {
+    const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
+    const events = drivableEvents();
+    const snapshot: SessionSnapshot = {
+      ...members,
+      transcript: [{
+        id: 1, kind: 'character', participant_id: 'guide', display_name: 'Guide',
+        addressed_to: '', addressed_to_name: '', text: 'Recorded reply',
+        status: 'complete', created_at: 1_700_000_000, has_cached_audio: true,
+      }],
+    };
+    render(<App client={fixtureClient({
+      getCharacterPicture: async () => portrait,
+      getAudioDownloads: async () => ({ cached_entry_ids: [1], downloads: [] }),
+    })}
+      connectSessionEvents={events.connect} />);
+    await attachInitial(events, snapshot);
+    expect(await screen.findByRole('img', { name: 'Assistant' })).toBeInTheDocument();
+    if (!open) fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
+    fireEvent.click(await screen.findByRole('button', { name: "Play cached audio for Guide's response" }));
+    await screen.findByRole('button', { name: "Stop reading Guide's response" });
+    expect(play).toHaveBeenCalledOnce();
+    expect(screen.getByRole('combobox', { name: 'Choose message target' })).toHaveValue('assistant');
+    if (!open) {
+      expect(screen.queryByRole('img')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    }
+    expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: "Stop reading Guide's response" }));
+    act(() => events.handlers[0].onSnapshot(snapshot));
+    expect(screen.getByRole('img', { name: 'Guide' })).toBeInTheDocument();
+    expect(events.connections[0].close).not.toHaveBeenCalled();
+  });
+
+  it('keeps the current picture when recorded audio fails to play', async () => {
+    vi.spyOn(TextToSpeechSession.prototype, 'play').mockRejectedValue(new Error('Playback failed'));
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getCharacterPicture: async () => portrait,
+      getAudioDownloads: async () => ({ cached_entry_ids: [1], downloads: [] }),
+    })}
+      connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...members,
+      transcript: [{
+        id: 1, kind: 'character', participant_id: 'guide', display_name: 'Guide',
+        addressed_to: '', addressed_to_name: '', text: 'Recorded reply',
+        status: 'complete', created_at: 1_700_000_000, has_cached_audio: true,
+      }],
+    });
+    expect(await screen.findByRole('img', { name: 'Assistant' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: "Play cached audio for Guide's response" }));
+    await screen.findByText('This message could not be read aloud. Try again.');
+    expect(screen.getByRole('img', { name: 'Assistant' })).toBeInTheDocument();
+  });
+
   it.each(['missing', 'request', 'decode'])('keeps chat usable for a %s picture', async (failure) => {
     const events = drivableEvents();
     const getCharacterPicture = vi.fn().mockImplementation(() => failure === 'request'

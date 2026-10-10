@@ -35,4 +35,12 @@ std::string read_firecrawl(std::string_view url, std::string_view key,
     const std::atomic_bool& cancelled,
     std::string_view endpoint = "https://api.firecrawl.dev/v2/scrape");
 
+std::string read_web_reader(std::string_view url, std::string_view base_url,
+    const std::atomic_bool& cancelled);
+
+// Enabled web_reader runs first; enabled Firecrawl is the fallback.
+std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
+    std::string_view firecrawl_key, const std::atomic_bool& cancelled,
+    std::string_view firecrawl_endpoint = "https://api.firecrawl.dev/v2/scrape");
+
 } // namespace cha

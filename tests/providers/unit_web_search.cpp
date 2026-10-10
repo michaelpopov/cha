@@ -42,6 +42,145 @@ TEST(WebRead, RequestsMarkdownAndNormalizesFirecrawl) {
         "img", "picture", "video", "audio", "source", "iframe", "svg", "canvas"}));
 }
 
+TEST(WebRead, UsesWebReaderFirstAndKeepsItsFinalUrlAndEmptyTitle) {
+    using Json = nlohmann::json;
+    const Json body{{"url", "https://example.org/final?q=1"}, {"title", ""},
+        {"markdown", "# Content\n\n[Article](https://example.org/article)"}};
+    MockHttpServer server({http_response("application/json", body.dump())});
+    server.start();
+    WorkspaceWebSearch settings;
+    settings.web_reader_url = "http://127.0.0.1:" + std::to_string(server.port()) + "/";
+    settings.web_reader_enabled = true;
+    settings.read_provider = "firecrawl";
+    settings.web_reader_api_key_id = "reserved-reader-key";
+    const auto output = Json::parse(read_page(settings, "https://example.org/original#section",
+        "private-key", std::atomic_bool{false}, "invalid-fallback-endpoint"));
+    server.join();
+    EXPECT_EQ(output["url"], body["url"]);
+    EXPECT_EQ(output["title"], "");
+    EXPECT_EQ(output["markdown"], body["markdown"]);
+    EXPECT_EQ(output["truncated"], false);
+    ASSERT_EQ(server.requests().size(), 1u);
+    const auto& request = server.requests()[0];
+    EXPECT_TRUE(request.starts_with("POST /extract HTTP/1.1\r\n"));
+    EXPECT_EQ(request.find("private-key"), std::string::npos);
+    EXPECT_EQ(request.find("Authorization:"), std::string::npos);
+    EXPECT_EQ(Json::parse(request.substr(request.find("\r\n\r\n") + 4)),
+        (Json{{"url", "https://example.org/original#section"}}));
+}
+
+TEST(WebRead, SelectingFirecrawlStillReadsDirectlyDespiteASavedReaderUrl) {
+    MockHttpServer server({http_response("application/json",
+        R"({"success":true,"data":{"markdown":"Direct content"}})")});
+    server.start();
+    WorkspaceWebSearch settings;
+    settings.read_provider = "firecrawl";
+    settings.web_reader_url = "invalid-unused-url";
+    const auto output = nlohmann::json::parse(read_page(settings, "https://example.org", "key",
+        std::atomic_bool{false}, "http://127.0.0.1:" + std::to_string(server.port())));
+    server.join();
+    EXPECT_EQ(output["markdown"], "Direct content");
+    EXPECT_EQ(server.requests().size(), 1u);
+    settings.read_provider = "off";
+    EXPECT_THROW(read_page(settings, "https://example.org", "key", std::atomic_bool{false}), WebToolError);
+}
+
+TEST(WebRead, FallsBackToFirecrawlForFailedEmptyOrInvalidReaderResults) {
+    using Json = nlohmann::json;
+    const auto valid = Json{{"url", "https://example.org/final"}, {"title", "Page"},
+        {"markdown", "Reader content"}};
+    std::vector<std::string> responses{
+        http_response("text/html", "Access login page"),
+        http_response("application/json", "{}"),
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    };
+    for (const int status : {403, 422, 504}) {
+        responses.push_back("HTTP/1.1 " + std::to_string(status)
+            + " Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    }
+    for (const auto& [field, value] : std::vector<std::pair<std::string, Json>>{
+            {"url", "relative"}, {"title", nullptr}, {"markdown", " \n "},
+            {"markdown", Json::array()}, {"markdown", "![Photo](https://example.org/photo.png)"}}) {
+        auto invalid = valid;
+        invalid[field] = value;
+        responses.push_back(http_response("application/json", invalid.dump()));
+    }
+    const Json fallback{{"success", true}, {"data", {{"markdown", "Fallback content"}}}};
+    for (const auto& response : responses) {
+        MockHttpServer server({response, http_response("application/json", fallback.dump())});
+        server.start();
+        WorkspaceWebSearch settings;
+        settings.web_reader_url = "http://127.0.0.1:" + std::to_string(server.port());
+        settings.web_reader_enabled = true;
+        settings.read_provider = "firecrawl";
+        const auto output = Json::parse(read_page(settings, "https://example.org/original", "key",
+            std::atomic_bool{false}, settings.web_reader_url + "/v2/scrape"));
+        server.join();
+        EXPECT_EQ(output["markdown"], "Fallback content");
+        ASSERT_EQ(server.requests().size(), 2u);
+        EXPECT_TRUE(server.requests()[0].starts_with("POST /extract HTTP/1.1\r\n"));
+        EXPECT_TRUE(server.requests()[1].starts_with("POST /v2/scrape HTTP/1.1\r\n"));
+        EXPECT_NE(server.requests()[1].find("Authorization: Bearer key\r\n"), std::string::npos);
+    }
+}
+
+TEST(WebRead, FallsBackOnReaderConnectionFailure) {
+    // The unstarted listener closes before the read, giving a refused connection.
+    int closed_port;
+    { MockHttpServer unused({}); closed_port = unused.port(); }
+    MockHttpServer server({http_response("application/json",
+        R"({"success":true,"data":{"markdown":"Fallback content"}})")});
+    server.start();
+    WorkspaceWebSearch settings;
+    settings.web_reader_url = "http://127.0.0.1:" + std::to_string(closed_port);
+    settings.web_reader_enabled = true;
+    settings.read_provider = "firecrawl";
+    const auto output = nlohmann::json::parse(read_page(settings, "https://example.org", "key",
+        std::atomic_bool{false}, "http://127.0.0.1:" + std::to_string(server.port())));
+    server.join();
+    EXPECT_EQ(output["markdown"], "Fallback content");
+}
+
+TEST(WebRead, ReaderFailureWithoutConfiguredFallbackRemainsAnError) {
+    for (const bool enabled : {false, true}) {
+        MockHttpServer server({http_response("application/json", "{}")});
+        server.start();
+        WorkspaceWebSearch settings;
+        settings.web_reader_url = "http://127.0.0.1:" + std::to_string(server.port());
+        settings.web_reader_enabled = true;
+        settings.read_provider = "firecrawl";
+        if (enabled) settings.firecrawl_api_key_id = "obsolete-key";
+        else settings.read_provider = "off";
+        EXPECT_THROW(read_page(settings, "https://example.org", enabled ? "" : "saved-key", std::atomic_bool{false},
+            "invalid-fallback-endpoint"), WebToolError);
+        server.join();
+        EXPECT_EQ(server.requests().size(), 1u);
+    }
+}
+
+TEST(WebRead, ReaderCancellationDoesNotTriggerFallback) {
+    MockHttpServer server({http_response("application/json", "{}")});
+    server.pause_before_response(1);
+    server.start();
+    WorkspaceWebSearch settings;
+    settings.web_reader_url = "http://127.0.0.1:" + std::to_string(server.port());
+    settings.web_reader_enabled = true;
+    settings.read_provider = "firecrawl";
+    std::atomic_bool cancelled{false};
+    auto pending = std::async(std::launch::async, [&] {
+        return read_page(settings, "https://example.org", "key", cancelled,
+            "invalid-fallback-endpoint");
+    });
+    EXPECT_TRUE(server.wait_for_requests(1, 2s));
+    cancelled.store(true);
+    EXPECT_EQ(pending.wait_for(2s), std::future_status::ready);
+    server.resume_responses();
+    EXPECT_TRUE(pending.get().empty());
+    server.join();
+    EXPECT_EQ(server.requests().size(), 1u);
+    EXPECT_TRUE(read_page(settings, "", "", cancelled).empty());
+}
+
 TEST(WebRead, RemovesImagesBeforeLimitingContentAndPreservesArticleLinksAndCode) {
     using Json = nlohmann::json;
     std::string markdown = "# News\n\n";

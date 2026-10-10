@@ -322,6 +322,9 @@ export interface components {
             /** @enum {string} */
             read_provider: "off" | "firecrawl";
             firecrawl_api_key: string;
+            web_reader_url: string;
+            web_reader_enabled: boolean;
+            web_reader_api_key: string;
             tool_enabled: boolean;
             /** @enum {string} */
             provider: "brave" | "tavily";

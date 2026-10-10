@@ -683,6 +683,9 @@ export function ChatScreen({
       void session.play().then(() => {
         if (textToSpeechSession.current === session) {
           setSpokenEntry({ id: entry.id, state: 'playing' });
+          if (entry.kind === 'character') {
+            dispatch({ type: 'select-picture-character', characterId: entry.participant_id });
+          }
         }
       }).catch((failure: unknown) => {
         if (textToSpeechSession.current !== session) return;

@@ -107,6 +107,9 @@ struct WorkspaceWebSearch {
     bool tool_enabled{false};
     std::string read_provider{"off"};
     std::string firecrawl_api_key_id;
+    std::string web_reader_url;
+    bool web_reader_enabled{false};
+    std::string web_reader_api_key_id;
 };
 
 struct WorkspaceVoiceProviderOutput {
@@ -142,6 +145,8 @@ struct WorkspaceCharacter {
     std::string markdown;
     std::string editable_markdown;
     std::map<std::string, std::string, std::less<>> markdown_files;
+    // All direct files for the character file list, without binary content.
+    std::vector<std::string> filenames;
 };
 
 struct WorkspaceForumMember {

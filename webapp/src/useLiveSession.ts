@@ -70,6 +70,7 @@ const inPlaceActions = new Set<AppAction['type']>([
   'toggle-sidebar',
   'toggle-picture',
   'resize-picture',
+  'select-picture-character',
   'bootstrap-refreshed',
   'character-detail-loaded',
   'character-updated',

@@ -748,11 +748,13 @@ void SessionController::start_generation(
         const bool web_tools_allowed = !maintenance && character
             && character->web_search_tool.value_or(true);
         const bool read_requested = web_tools_allowed
-            && web.read_provider == "firecrawl";
-        const bool read_enabled = read_requested && current->find_api_key(
-            web.firecrawl_api_key_id);
+            && (web.web_reader_enabled || web.read_provider == "firecrawl");
+        const bool read_enabled = read_requested && ((web.web_reader_enabled && !web.web_reader_url.empty())
+            || (web.read_provider == "firecrawl" && current->find_api_key(web.firecrawl_api_key_id)));
         if (read_requested && !read_enabled)
-            log_warn("Page reading is unavailable: no reader API key is configured");
+            log_warn(web.web_reader_enabled
+                ? "Page reading is unavailable: no web_reader URL is configured"
+                : "Page reading is unavailable: no reader API key is configured");
         if (maintenance) {
             auto copy = std::make_shared<CharacterDefinition>(*definition);
             copy->provider.config.web_search = WebSearchMode::off;

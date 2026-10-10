@@ -1270,6 +1270,9 @@ std::set<CredentialPair> credential_destination_pairs(
             add_credential_pair(
                 pairs, "firecrawl",
                 resolve_key_reference(workspace, text(table, "firecrawl_api_key"), {}));
+            add_credential_pair(
+                pairs, url_credential_destination(text(table, "web_reader_url")),
+                resolve_key_reference(workspace, text(table, "web_reader_api_key"), {}));
         } else {
             add_credential_pair(pairs, url_credential_destination(text(table, "url")), key(table));
         }

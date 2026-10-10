@@ -2515,7 +2515,7 @@ export function SessionSettingsScreen({ client, dispatch }: SettingsScreenProps)
 
 const defaultWebSearch: WebSearchSettings = {
   provider: 'brave', api_key: '', tool_enabled: false,
-  read_provider: 'off', firecrawl_api_key: '',
+  read_provider: 'off', firecrawl_api_key: '', web_reader_url: '', web_reader_enabled: false, web_reader_api_key: '',
 };
 
 export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProps) {
@@ -2556,6 +2556,9 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
   const dirty = saved !== null && (
     settings.read_provider !== saved.read_provider
     || settings.firecrawl_api_key !== saved.firecrawl_api_key
+    || settings.web_reader_url !== saved.web_reader_url
+    || settings.web_reader_enabled !== saved.web_reader_enabled
+    || settings.web_reader_api_key !== saved.web_reader_api_key
     || settings.tool_enabled !== saved.tool_enabled
     || settings.provider !== saved.provider
     || settings.api_key !== saved.api_key
@@ -2596,25 +2599,39 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
         <option value="">Select API key</option>
         {keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}
       </select></label>
-      <label>Page reading provider<select className="cha-form-control" disabled={pending}
-        value={settings.read_provider}
-        onChange={(event) => setSettings({ ...settings,
-          read_provider: event.target.value as WebSearchSettings['read_provider'] })}>
-        <option value="off">Off</option>
-        <option value="firecrawl">Firecrawl</option>
-      </select></label>
-      {settings.read_provider === 'firecrawl' && <label>Firecrawl API key<select className="cha-form-control" disabled={pending}
-        value={settings.firecrawl_api_key}
-        onChange={(event) => setSettings({ ...settings, firecrawl_api_key: event.target.value })}>
-        <option value="">Select API key</option>
-        {keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}
-      </select></label>}
+      <hr className="cha-settings-divider" />
+      <div className="cha-reader-settings">
+        <label>Page reading provider<select className="cha-form-control" disabled={pending}
+          value={settings.read_provider}
+          onChange={(event) => setSettings({ ...settings,
+            read_provider: event.target.value as WebSearchSettings['read_provider'] })}>
+          <option value="off">Off</option>
+          <option value="firecrawl">Firecrawl</option>
+        </select></label>
+        {settings.read_provider === 'firecrawl' && <label>Firecrawl API key<select className="cha-form-control" disabled={pending}
+          value={settings.firecrawl_api_key}
+          onChange={(event) => setSettings({ ...settings, firecrawl_api_key: event.target.value })}>
+          <option value="">Select API key</option>
+          {keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}
+        </select></label>}
+      </div>
+      <div className="cha-reader-settings">
+        <label className="cha-checkbox-row"><input checked={settings.web_reader_enabled} disabled={pending}
+          onChange={(event) => setSettings({ ...settings, web_reader_enabled: event.target.checked })}
+          type="checkbox" />Use web_reader</label>
+        <label>web_reader URL<input className="cha-form-control" type="url" disabled={pending || !settings.web_reader_enabled}
+          value={settings.web_reader_url} placeholder="http://192.168.86.39:8087"
+          onChange={(event) => setSettings({ ...settings, web_reader_url: event.target.value })} /></label>
+        <label>web_reader API key<select className="cha-form-control" disabled={pending || !settings.web_reader_enabled}
+          value={settings.web_reader_api_key}
+          onChange={(event) => setSettings({ ...settings, web_reader_api_key: event.target.value })}>
+          <option value="">None</option>
+          {keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}
+        </select></label>
+      </div>
       <div className="cha-settings-form-actions">
         <button className="cha-button cha-button-primary" type="submit"
-          disabled={!dirty || pending || reload.blocked
-            || (settings.tool_enabled && !keys.some((key) => key.id === settings.api_key))
-            || (settings.read_provider === 'firecrawl'
-              && !keys.some((key) => key.id === settings.firecrawl_api_key))}>
+          disabled={!dirty || pending || reload.blocked}>
           Save
         </button>
       </div>

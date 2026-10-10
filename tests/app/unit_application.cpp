@@ -82,6 +82,8 @@ TEST(Application, PictureReadsNeedNoSessionAndUseApplicationErrors) {
     auto application = Application::open(make_command(
         workspace, test::import_test_database(workspace.root())));
     const auto epoch = application->context_epoch();
+    EXPECT_EQ(application->get_character("guide", epoch).markdown_files,
+        (std::vector<std::string>{"CHARACTER.md", "PICTURE.png", "character.toml"}));
     const auto picture = application->get_character_picture("guide", epoch);
     ASSERT_TRUE(picture);
     EXPECT_EQ(picture->filename, "PICTURE.png");
@@ -99,6 +101,32 @@ TEST(Application, PictureReadsNeedNoSessionAndUseApplicationErrors) {
             EXPECT_EQ(error.code, expected);
         }
     }
+}
+
+TEST(Application, CharacterFileListsIncludeAllDirectVaultFiles) {
+    test::TestWorkspace workspace;
+    const auto group = workspace.root() / "characters/philosophers";
+    std::filesystem::create_directory(group);
+    std::filesystem::rename(workspace.root() / "characters/guide", group / "guide");
+    std::filesystem::create_directory(group / "guide/notes");
+    std::ofstream(group / "guide/notes/CHILD.md") << "Nested note";
+    std::ofstream(group / "guide/NOTES.md") << "Direct note";
+    for (const auto* filename : {"PICTURE.png", "PICTURE.webp", "PICTURE.jpg", "PICTURE.jpeg", "PICTURE.gif"}) {
+        std::ofstream(group / "guide" / filename, std::ios::binary) << "picture bytes";
+    }
+    std::ofstream(workspace.root() / "system/assistant/PICTURE.jpg", std::ios::binary) << "assistant picture";
+    auto application = Application::open(make_command(
+        workspace, test::import_test_database(workspace.root())));
+    const auto epoch = application->context_epoch();
+    EXPECT_EQ(application->get_character("guide", epoch).markdown_files,
+        (std::vector<std::string>{"CHARACTER.md", "NOTES.md", "PICTURE.gif", "PICTURE.jpeg",
+            "PICTURE.jpg", "PICTURE.png", "PICTURE.webp", "character.toml"}));
+    EXPECT_EQ(application->get_character(assistant_id, epoch).markdown_files,
+        (std::vector<std::string>{"CHARACTER.md", "PICTURE.jpg", "character.toml"}));
+    application->update_character_picture("guide", "PICTURE.png", "cG5n", epoch);
+    EXPECT_EQ(application->get_character("guide", epoch).markdown_files,
+        (std::vector<std::string>{"CHARACTER.md", "NOTES.md", "PICTURE.png", "character.toml"}));
+    EXPECT_EQ(application->get_character_file("guide", "NOTES.md", epoch).content, "Direct note");
 }
 
 TEST(Application, StartsWithoutAListenerAndBootstraps) {

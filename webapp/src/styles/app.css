@@ -1715,6 +1715,22 @@ select:disabled {
   margin: 0.5rem auto 0;
 }
 
+.cha-settings-divider {
+  width: 100%;
+  margin: 0.35rem 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.cha-reader-settings {
+  display: grid;
+  gap: 1rem;
+}
+
+.cha-reader-settings + .cha-reader-settings {
+  margin-top: 0.5rem;
+}
+
 .cha-settings-form fieldset {
   display: grid;
   gap: 0.8rem;

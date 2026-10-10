@@ -3096,6 +3096,22 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyRejectsStaleProtectedAndCredentialC
     EXPECT_EQ(
         firecrawl.error,
         WorkspaceConfigApplyError::credential_destination_protected);
+    store->apply_web_search_update({
+        .web_reader_url = "http://reader.example:8087",
+        .web_reader_enabled = true,
+        .web_reader_api_key_id = "api_key_2",
+    });
+    const auto reader_host = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = "system/web-search/config.toml",
+            .operation = WorkspaceConfigOperation::replace,
+            .content =
+                "web_reader_enabled = true\nweb_reader_url = \"http://other.example:8087\"\n"
+                "web_reader_api_key = \"api_key_2\"\n",
+        }});
+    EXPECT_FALSE(reader_host.committed);
+    EXPECT_EQ(reader_host.error, WorkspaceConfigApplyError::credential_destination_protected);
     const auto new_host = store->apply_config(
         store->config_revision(),
         std::vector<WorkspaceConfigChange>{{

@@ -57,20 +57,23 @@ interface NavigationScreenProps {
 function RosterRow({ description, displayName, onSelect }: {
   description?: string;
   displayName: string;
-  onSelect(): void;
+  onSelect?(): void;
 }) {
-  return (
-    <button className="cha-roster-row" onClick={onSelect} type="button">
+  const content = (
+    <>
       <span className="cha-roster-copy">
         <span className="cha-roster-name">{displayName}</span>
         {description && <span className="cha-roster-description">{description}</span>}
       </span>
-      <ChevronRightIcon className="cha-chevron" />
-    </button>
+      {onSelect && <ChevronRightIcon className="cha-chevron" />}
+    </>
   );
+  return onSelect
+    ? <button className="cha-roster-row" onClick={onSelect} type="button">{content}</button>
+    : <div className="cha-roster-row">{content}</div>;
 }
 
-function MarkdownFileList({ filenames, writable, onNew, onSelect }: {
+function FileList({ filenames, writable, onNew, onSelect }: {
   filenames: string[];
   writable: boolean;
   onNew(): void;
@@ -95,11 +98,11 @@ function MarkdownFileList({ filenames, writable, onNew, onSelect }: {
         <RosterRow
           displayName={filename}
           key={filename}
-          onSelect={() => onSelect(filename)}
+          onSelect={filename.endsWith('.md') ? () => onSelect(filename) : undefined}
         />
       ))}
       {filenames.length === 0 && (
-        <p className="cha-state-message">No Markdown files.</p>
+        <p className="cha-state-message">No files.</p>
       )}
     </div>
   );
@@ -570,7 +573,7 @@ export function CharacterDetailScreen({
             }}
           />}
         </div>
-        <MarkdownFileList
+        <FileList
           filenames={detail.markdown_files}
           writable={detail.settings_writable}
           onNew={() => dispatch({ type: 'show-new-character-file' })}
@@ -1475,7 +1478,7 @@ export function ForumDetailScreen({
             onDelete={() => onDelete(detail.id)}
           />}
         </div>
-        <MarkdownFileList
+        <FileList
           filenames={detail.markdown_files}
           writable={detail.writable}
           onNew={() => dispatch({ type: 'show-new-forum-file' })}

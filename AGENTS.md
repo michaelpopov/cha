@@ -36,6 +36,13 @@ maintainability and readability. Do not overcomplicate it.
 
 Do not update documentation in the docs/ directory unless this is explicitly requested by the user.
 
+## UI approval
+
+Before making any UI change, present a visual representation of the proposed
+change to the user. Wait for the user's explicit approval before implementing
+it. A request for functionality does not itself approve a UI design. Apply
+this rule to layout, controls, labels, styling, and other visible changes.
+
 Do not add title labels or legends to the top of panels in screen designs.
 
 Do not add nonessential explanatory labels or helper text that merely narrates

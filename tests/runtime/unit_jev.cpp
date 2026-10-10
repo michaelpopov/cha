@@ -120,26 +120,41 @@ TEST(WebReadConfiguration, PersistsReaderAndKeyAcrossReloadAndExport) {
     auto store = WorkspaceConfigStore::open(database);
     WorkspaceWebSearch settings;
     settings.read_provider = "firecrawl";
+    settings.web_reader_enabled = true;
+    settings.web_reader_url = "http://192.168.86.39:8087";
     {
         ApiKeyStore keys(*store);
         settings.firecrawl_api_key_id = keys.create("Firecrawl", "fc-secret").id;
+        settings.web_reader_api_key_id = keys.create("web_reader", "reader-secret").id;
     }
     store->apply_web_search_update(settings);
     store.reset();
     auto reloaded = WorkspaceConfigStore::open(database);
     EXPECT_EQ(reloaded->snapshot()->web_search().read_provider, "firecrawl");
+    EXPECT_TRUE(reloaded->snapshot()->web_search().web_reader_enabled);
     EXPECT_EQ(reloaded->snapshot()->web_search().firecrawl_api_key_id, settings.firecrawl_api_key_id);
+    EXPECT_EQ(reloaded->snapshot()->web_search().web_reader_url, settings.web_reader_url);
+    EXPECT_EQ(reloaded->snapshot()->web_search().web_reader_api_key_id, settings.web_reader_api_key_id);
     const auto exported = fixture.root() / "exported";
     (void)export_workspace_configuration(database, exported, WorkspaceConfigLease::already_held);
     const auto copy = Workspace::load(exported).web_search();
     EXPECT_EQ(copy.read_provider, "firecrawl");
+    EXPECT_TRUE(copy.web_reader_enabled);
     EXPECT_EQ(copy.firecrawl_api_key_id, settings.firecrawl_api_key_id);
+    EXPECT_EQ(copy.web_reader_url, settings.web_reader_url);
+    EXPECT_EQ(copy.web_reader_api_key_id, settings.web_reader_api_key_id);
     // Unknown reader settings do not disable a valid search configuration.
     const auto path = exported / "system/web-search/config.toml";
     std::ofstream(path) << "provider='brave'\ntool_enabled=true\nread_provider='jina'\njina_api_key=123\n";
     const auto obsolete = Workspace::load(exported).web_search();
     EXPECT_TRUE(obsolete.tool_enabled);
     EXPECT_EQ(obsolete.read_provider, "off");
+    std::ofstream(path) << "provider='brave'\ntool_enabled=true\nweb_reader_url='ftp://invalid'\n";
+    LoadWarningCollector warnings;
+    const auto invalid_reader = Workspace::load(exported, &warnings).web_search();
+    EXPECT_TRUE(invalid_reader.tool_enabled);
+    EXPECT_TRUE(invalid_reader.web_reader_url.empty());
+    EXPECT_FALSE(warnings.empty());
 }
 
 TEST(JevConfiguration, UnknownFieldsAreIgnoredAndTargetMarkersAreNotSavedDefaults) {
@@ -870,15 +885,20 @@ TEST_F(JevRouting, PageReadingWorksWithSearchDisabledAndMarksWebUse) {
         [this](auto worker) { workers.push_back(std::move(worker)); }, JevExecutor{}, WebSearchExecutor{},
         [&](const WorkspaceWebSearch& settings, std::string_view url, const auto&) {
             EXPECT_EQ(url, "https://example.org");
-            EXPECT_NE(settings.read_provider, "off");
+            EXPECT_TRUE(!settings.web_reader_url.empty() || settings.read_provider == "firecrawl");
             ++reads;
             return "Page content";
         });
     controller = make_controller(notifier);
-    for (const auto* reader : {"firecrawl", "off"}) {
+    for (const auto* reader : {"firecrawl", "off", "web_reader"}) {
         WorkspaceWebSearch settings;
-        settings.read_provider = reader;
-        settings.firecrawl_api_key_id = config.api_key_id;
+        if (std::string_view(reader) == "web_reader") {
+            settings.web_reader_enabled = true;
+            settings.web_reader_url = "http://192.168.86.39:8087";
+        } else {
+            settings.read_provider = reader;
+            settings.firecrawl_api_key_id = config.api_key_id;
+        }
         store->apply_web_search_update(settings);
         (void)send("Read this page");
         finish();
@@ -886,31 +906,34 @@ TEST_F(JevRouting, PageReadingWorksWithSearchDisabledAndMarksWebUse) {
         EXPECT_EQ(controller->view().transcript.entries.back().web_search_used, offered);
         EXPECT_EQ(controller->view().transcript.entries.back().text, "Answer");
     }
-    EXPECT_EQ(reads, 1);
+    EXPECT_EQ(reads, 2);
     EXPECT_TRUE(classified.empty());
     // A character override must disable reading without blocking generation.
     WorkspaceWebSearch settings;
     settings.read_provider = "firecrawl";
     settings.firecrawl_api_key_id = config.api_key_id;
+    settings.web_reader_url = "http://192.168.86.39:8087";
     store->apply_web_search_update(settings);
     store->apply_character_settings("guide", "test", std::nullopt, std::nullopt,
         std::nullopt, std::nullopt, false);
     (void)send("Read with web tools disabled for this character");
     finish();
     EXPECT_FALSE(offered);
-    EXPECT_EQ(reads, 1);
+    EXPECT_EQ(reads, 2);
     EXPECT_FALSE(controller->view().transcript.entries.back().web_search_used);
     EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
     EXPECT_EQ(controller->view().transcript.entries.back().text, "Answer");
     store->apply_character_settings("guide", "test", std::nullopt, std::nullopt,
         std::nullopt, std::nullopt, std::nullopt);
     // A removed key must disable reading without blocking generation.
+    settings.web_reader_url.clear();
+    store->apply_web_search_update(settings);
     ApiKeyStore keys(*store);
     keys.remove(config.api_key_id);
     (void)send("Read with a missing key");
     finish();
     EXPECT_FALSE(offered);
-    EXPECT_EQ(reads, 1);
+    EXPECT_EQ(reads, 2);
     EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
 }
 

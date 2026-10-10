@@ -155,6 +155,7 @@ export type AppAction =
   | { type: 'toggle-sidebar' }
   | { type: 'toggle-picture' }
   | { type: 'resize-picture'; width: number }
+  | { type: 'select-picture-character'; characterId: string }
   | { type: 'show-personas' }
   | { type: 'show-new-persona' }
   | { type: 'inspect-persona'; personaId: string }
@@ -358,6 +359,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, pictureOpen: !state.pictureOpen };
     case 'resize-picture':
       return { ...state, pictureWidth: action.width };
+    case 'select-picture-character':
+      return {
+        ...state,
+        pictureCharacterId: state.sessionSnapshot?.characters.some(({ id }) => id === action.characterId)
+          ? action.characterId : null,
+      };
     case 'toggle-sidebar':
       return { ...state, sidebarOpen: !state.sidebarOpen };
     case 'show-personas':
