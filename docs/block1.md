@@ -103,3 +103,5 @@ index to make that handoff possible.
 Older builds reject vaults containing picture rows. The eventual rollout must
 update both desktop hosts and the ChaWeb daemon before users import pictures.
 This stage adds shared storage support, not a ChaWeb picture interface.
+
+COMPLETED
