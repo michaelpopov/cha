@@ -33,7 +33,7 @@ plan step, including checks not repeated in this summary.
 
 | Block | Plan steps | Result | Operator checkpoint |
 | --- | --- | --- | --- |
-| 1. Baseline and editor feasibility | 1, 2 | Known baseline, all UI approvals, tested dependencies, and editor/tree feasibility | UI approval; packaged CSP check |
+| 1. Baseline and editor feasibility | 1, 2 | Known baseline, UI approval scope and pending gates, tested dependencies, and editor/tree feasibility | UI review; packaged CSP check |
 | 2. Storage and native API | 4, 5 | Notes persistence and native calls, with compatibility and admission tests | None |
 | 3. Shared prompt | 6 | Reusable prompt and App-owned drafts, with Chat behavior preserved | None |
 | 4. Editor and save foundations | 7, 8 | Atomic editing, history, autosave, leave coordination, and history-event handling | None |
@@ -101,9 +101,10 @@ never a successful test result.
 ### UI approval
 
 Block 1 presents all remaining visual proposals and records exactly what the
-operator approved. Carry forward the approvals already recorded in design
-sections 1 and 3. Obtaining all approvals in block 1 lets blocks 5–9 run
-without stopping for design decisions.
+operator approved and what remains pending. Carry forward the approvals already
+recorded in design sections 1 and 3. Pending UI approvals do not prevent
+completion of block 1 once its technical checks and proposal review are
+complete; they gate the blocks that implement the affected visible scope.
 
 Blocks 2–4 have no visible changes and can proceed while approval is pending.
 Blocks 5, 7, 8, and 9 implement visible changes; each starts only when its
@@ -161,10 +162,12 @@ an operator checkpoint. In Windows-not-available mode, the WebView2 parts of
 step 2 move to block W; if WebView2 then rejects the dependency set, report
 it as a blocker.
 
-**Completion:** dependency and integration choices have test evidence; the
-approved UI scope is recorded; baseline failures, the Windows mode, and
-remaining environment gates are explicit. Resolve a failed feasibility
-assumption before building the dependent feature.
+**Completion:** dependency and integration choices have test evidence; all
+remaining visual proposals have been presented and their approved or pending
+status is recorded; baseline failures, the Windows mode, and remaining
+environment gates are explicit. Pending UI approvals gate the affected visible
+work. Resolve a failed feasibility assumption before building the dependent
+feature.
 
 ## Block 2. Implement storage and the native API
 
@@ -208,9 +211,12 @@ entry checks belong to block 8.
 
 Verify root and appended transactions together, Undo/Redo boundaries,
 rejection without lost selection or history, save ordering, late replies,
-and Retry/Stay/Discard. Include the paired `popstate` and `hashchange` case
-and the rule that Notes adds no URL route. Implement the page-side close
-deferral that step 8 requires; native close follows in block 6.
+and Retry/Stay/Discard. Consume empty paste slices without dispatch or fallback
+before block 5 enables editing; block 8 adds supported fallbacks. Include the
+paired `popstate` and `hashchange` case and the rule that Notes adds no URL route.
+Provide the operation slot, its release point, and the decision state that the
+close handler uses; block 6 implements the page-side close deferral of step 8
+together with native close.
 
 **Completion:** editor and save/leave behavior pass focused tests in the
 existing suites. The screen can use these foundations without inventing
@@ -237,8 +243,9 @@ editor for block 6. Normal-close safety is not established yet.
 
 **Scope: step 3, followed by step 9.** This order is required. First run the
 macOS termination experiment in a packaged build and select one supported
-termination path. Then implement close negotiation against the block 5
-screen, using block 4's leave coordination and page-side deferral.
+termination path. Then implement close negotiation, including the page-side
+close deferral, against the block 5 screen, using block 4's leave
+coordination.
 
 Cover both host entry points, the no-runtime and no-page-connection fast
 paths, the response timer, deferred attempts, Retry, and late replies. Set
