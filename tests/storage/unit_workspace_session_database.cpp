@@ -46,6 +46,7 @@ mode_t posix_mode(const std::filesystem::path& path) {
 void make_v1_database(const std::filesystem::path& path) {
     create_empty_workspace_session_database(path);
     Database database(path, Database::Mode::read_write);
+    database.execute("DROP TABLE note_items");
     database.execute("DROP TABLE config");
     database.execute("ALTER TABLE entries DROP COLUMN output_tokens");
     database.execute("ALTER TABLE entries DROP COLUMN input_tokens");
@@ -697,6 +698,9 @@ TEST(WorkspaceSessionDatabase, UpgradesV1WhilePreservingSessions) {
     EXPECT_EQ(
         database.pragma_integer("user_version"),
         workspace_session_database_version);
+    Statement note_items = database.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'note_items'");
+    EXPECT_FALSE(note_items.step());
     EXPECT_EQ(
         inspect_workspace_session_database(path),
         WorkspaceDatabaseState::valid_v2);

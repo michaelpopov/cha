@@ -84,6 +84,8 @@ describe('C++ wire fixtures', () => {
     expect(dto).toContain('NativeRequest:');
     expect(dto).toContain('MediaResource:');
     expect(dto).toContain('Bootstrap:');
+    expect(dto).toContain('NoteItem:');
+    expect(dto).toContain('NoteDocument:');
   });
 });
 

@@ -81,6 +81,7 @@ bool try_create_symlink(
 void make_v1_database(const std::filesystem::path& path) {
     create_empty_workspace_session_database(path);
     Database database(path, Database::Mode::read_write);
+    database.execute("DROP TABLE note_items");
     database.execute("DROP TABLE config");
     database.execute("ALTER TABLE entries DROP COLUMN output_tokens");
     database.execute("ALTER TABLE entries DROP COLUMN input_tokens");

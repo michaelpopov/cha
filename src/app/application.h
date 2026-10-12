@@ -10,6 +10,7 @@
 #include "runtime/live_session_manager.h"
 #include "runtime/protocol.h"
 #include "app/r2_database_transfer.h"
+#include "storage/note_storage.h"
 #include "workspace/workspace_config_store.h"
 
 #include <chrono>
@@ -532,6 +533,28 @@ public:
     [[nodiscard]] R2DatabaseTransfer download_database(std::uint64_t epoch);
     [[nodiscard]] WorkspaceConfigTransfer import_configuration(std::uint64_t epoch);
     [[nodiscard]] WorkspaceConfigTransfer export_configuration(std::uint64_t epoch);
+
+    [[nodiscard]] std::vector<NoteItem> list_note_items(std::uint64_t epoch);
+    [[nodiscard]] NoteItem create_note_item(
+        std::optional<std::int64_t> parent_id,
+        NoteItemKind kind,
+        std::string name,
+        std::uint64_t epoch);
+    [[nodiscard]] NoteContent get_note(std::int64_t id, std::uint64_t epoch);
+    void save_note(
+        std::int64_t id,
+        nlohmann::json document,
+        std::uint64_t epoch);
+    [[nodiscard]] NoteItem rename_note_item(
+        std::int64_t id,
+        std::string name,
+        std::uint64_t epoch);
+    [[nodiscard]] NoteItem move_note_item(
+        std::int64_t id,
+        std::optional<std::int64_t> parent_id,
+        std::uint64_t epoch);
+    void delete_note_item(std::int64_t id, std::uint64_t epoch);
+
     void save_file(
         std::uint64_t epoch,
         const std::filesystem::path& destination,

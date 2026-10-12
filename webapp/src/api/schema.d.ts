@@ -706,6 +706,25 @@ export interface components {
             };
         };
         NativeSafeInteger: number;
+        NoteId: number;
+        /** @enum {string} */
+        NoteItemKind: "folder" | "note";
+        NoteItem: {
+            id: components["schemas"]["NoteId"];
+            parent_id: number | null;
+            kind: components["schemas"]["NoteItemKind"];
+            name: string;
+        };
+        NoteItemList: {
+            items: components["schemas"]["NoteItem"][];
+        };
+        NoteDocument: {
+            [key: string]: unknown;
+        };
+        NoteContent: {
+            id: components["schemas"]["NoteId"];
+            document: components["schemas"]["NoteDocument"];
+        };
         BridgeInfo: {
             /** @enum {integer} */
             protocol_version: 1;

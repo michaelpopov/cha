@@ -1,6 +1,8 @@
 #include "app/application.h"
 #include "bridge/bridge_router.h"
+#include "storage/note_storage.h"
 #include "storage/session_lease.h"
+#include "storage/sqlite_storage.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "runtime/command_queue.h"
@@ -12,10 +14,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <iterator>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -1928,6 +1933,345 @@ TEST_F(BridgeRouterTest, StaleOauthCompletionDoesNotPublishAfterContextChange) {
         }
         ack_delivery(*router_, connection_, *batch);
     }
+}
+
+void expect_note_error(
+    const nlohmann::json& reply,
+    std::string_view code,
+    std::string_view message) {
+    ASSERT_TRUE(reply.contains("ok"));
+    EXPECT_FALSE(reply.at("ok").get<bool>());
+    EXPECT_EQ(reply.at("error").at("code").get<std::string>(), code);
+    EXPECT_EQ(reply.at("error").at("message").get<std::string>(), message);
+}
+
+std::string stored_note_content(
+    const std::filesystem::path& path,
+    std::int64_t id) {
+    storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
+    auto statement = database.prepare(
+        "SELECT content_json FROM note_items WHERE id = ?1");
+    statement.bind(1, id);
+    EXPECT_TRUE(statement.step());
+    return statement.text(0);
+}
+
+nlohmann::json note_byte_fixture() {
+    std::ifstream input(
+        std::filesystem::path(CHA_SOURCE_DIRECTORY)
+        / "tests/fixtures/notes/document-byte-limits.json");
+    EXPECT_TRUE(input);
+    return nlohmann::json::parse(input);
+}
+
+nlohmann::json padded_note_document(const nlohmann::json& base, std::size_t count) {
+    nlohmann::json document = base;
+    document["content"][0]["content"][0]["text"] = std::string(count, 'a');
+    return document;
+}
+
+TEST_F(BridgeRouterTest, NotesWireContract) {
+    bootstrap_epoch();
+    const auto empty = call("notes.list");
+    ASSERT_TRUE(empty["ok"]);
+    EXPECT_TRUE(empty["result"]["items"].empty());
+
+    const auto folder = call("notes.create", {
+        {"parent_id", nullptr}, {"kind", "folder"}, {"name", "Plan"},
+    });
+    ASSERT_TRUE(folder["ok"]);
+    EXPECT_EQ(folder["result"]["parent_id"], nullptr);
+    EXPECT_EQ(folder["result"]["kind"], "folder");
+    EXPECT_EQ(folder["result"]["name"], "Plan");
+    EXPECT_EQ(folder["result"].size(), 4);
+    const auto folder_id = folder["result"]["id"].get<std::int64_t>();
+
+    const auto note = call("notes.create", {
+        {"parent_id", folder_id}, {"kind", "note"}, {"name", "Draft"},
+    });
+    ASSERT_TRUE(note["ok"]);
+    const auto note_id = note["result"]["id"].get<std::int64_t>();
+    const auto loaded = call("notes.get", {{"id", note_id}});
+    ASSERT_TRUE(loaded["ok"]);
+    EXPECT_EQ(loaded["result"]["id"], note_id);
+    EXPECT_EQ(
+        loaded["result"]["document"],
+        nlohmann::json::parse(std::string(empty_note_document)));
+
+    const auto document = nlohmann::json::parse(R"({"type":"doc","extra":true})");
+    ASSERT_TRUE(call("notes.save", {{"id", note_id}, {"document", document}})["ok"]);
+    ASSERT_TRUE(call("notes.save", {{"id", note_id}, {"document", document}})["ok"]);
+    EXPECT_EQ(call("notes.get", {{"id", note_id}})["result"]["document"], document);
+
+    const auto renamed = call("notes.rename", {{"id", note_id}, {"name", "Final"}});
+    ASSERT_TRUE(renamed["ok"]);
+    EXPECT_EQ(renamed["result"]["name"], "Final");
+    const auto moved = call("notes.move", {{"id", note_id}, {"parent_id", nullptr}});
+    ASSERT_TRUE(moved["ok"]);
+    EXPECT_EQ(moved["result"]["parent_id"], nullptr);
+    expect_note_error(
+        call("notes.get", {{"id", folder_id}}),
+        "invalid_argument",
+        "That item is not a note.");
+    ASSERT_TRUE(call("notes.delete", {{"id", note_id}})["ok"]);
+    expect_note_error(
+        call("notes.get", {{"id", note_id}}),
+        "not_found",
+        "That note was not found.");
+    expect_note_error(
+        call("notes.save", {{"id", note_id}, {"document", document}}),
+        "not_found",
+        "That note was not found.");
+
+    expect_note_error(
+        call("notes.create", {
+            {"parent_id", nullptr}, {"kind", "folder"}, {"name", "Plan"}, {"extra", true},
+        }),
+        "invalid_argument",
+        "The request was not valid.");
+    expect_note_error(
+        call("notes.get", {{"id", 0}}),
+        "invalid_argument",
+        "The note id is not valid.");
+    expect_note_error(
+        call("notes.get", {{"id", -1}}),
+        "invalid_argument",
+        "The note id is not valid.");
+    expect_note_error(
+        call("notes.get", {{"id", 1.5}}),
+        "invalid_argument",
+        "The note id is not valid.");
+    expect_note_error(
+        call("notes.get", {{"id", "4"}}),
+        "invalid_argument",
+        "The note id is not valid.");
+    expect_note_error(
+        call("notes.get", {{"id", nullptr}}),
+        "invalid_argument",
+        "The note id is not valid.");
+    expect_note_error(
+        call("notes.get", {{"id", 9007199254740992ULL}}),
+        "invalid_argument",
+        "The note id is not valid.");
+    expect_note_error(
+        call("notes.create", {
+            {"parent_id", 0}, {"kind", "note"}, {"name", "Draft"},
+        }),
+        "invalid_argument",
+        "The parent is not valid.");
+    expect_note_error(
+        call("notes.create", {
+            {"parent_id", nullptr}, {"kind", "file"}, {"name", "Draft"},
+        }),
+        "invalid_argument",
+        "Kind must be folder or note.");
+    expect_note_error(
+        call("notes.create", {
+            {"parent_id", nullptr}, {"kind", "note"}, {"name", ""},
+        }),
+        "invalid_argument",
+        "Name must not be empty");
+    expect_note_error(
+        call("notes.save", {{"id", note_id}, {"document", nlohmann::json::array()}}),
+        "invalid_argument",
+        "Note content must be a JSON object.");
+    expect_note_error(
+        call("notes.create", {
+            {"parent_id", nullptr}, {"kind", "folder"}, {"name", "Plan"},
+        }),
+        "invalid_argument",
+        "An item with this name already exists here.");
+
+    const auto kept = call("notes.create", {
+        {"parent_id", nullptr}, {"kind", "note"}, {"name", "Kept"},
+    });
+    ASSERT_TRUE(kept["ok"]);
+    const auto kept_id = kept["result"]["id"].get<std::int64_t>();
+    {
+        storage::SqliteDatabase database(
+            database_, storage::SqliteDatabase::Mode::read_write);
+        auto statement = database.prepare(
+            "UPDATE note_items SET content_json = ?1 WHERE id = ?2");
+        statement.bind(1, std::string_view{"{"});
+        statement.bind(2, kept_id);
+        statement.run();
+    }
+    expect_note_error(
+        call("notes.get", {{"id", kept_id}}),
+        "internal_error",
+        "The note could not be opened.");
+    {
+        storage::SqliteDatabase database(
+            database_, storage::SqliteDatabase::Mode::read_write);
+        auto statement = database.prepare(
+            "UPDATE note_items SET content_json = ?1 WHERE id = ?2");
+        statement.bind(1, std::string_view{"[]"});
+        statement.bind(2, kept_id);
+        statement.run();
+    }
+    expect_note_error(
+        call("notes.get", {{"id", kept_id}}),
+        "invalid_argument",
+        "Note content must be a JSON object.");
+    const auto listed = call("notes.list");
+    ASSERT_TRUE(listed["ok"]);
+    EXPECT_GE(listed["result"]["items"].size(), 1);
+}
+
+TEST_F(BridgeRouterTest, NotesRejectOneByteOverTheDocumentLimit) {
+    bootstrap_epoch();
+    const auto created = call("notes.create", {
+        {"parent_id", nullptr}, {"kind", "note"}, {"name", "Large"},
+    });
+    ASSERT_TRUE(created["ok"]);
+    const auto id = created["result"]["id"].get<std::int64_t>();
+    const auto fixture = note_byte_fixture();
+    const auto limit = fixture["limit"].get<std::size_t>();
+    const auto base = fixture["padding"]["document"];
+    const auto overhead = padded_note_document(base, 0).dump().size();
+    const auto exact = padded_note_document(base, limit - overhead);
+    const auto over = padded_note_document(base, limit - overhead + 1);
+    ASSERT_EQ(exact.dump().size(), limit);
+    ASSERT_TRUE(call("notes.save", {{"id", id}, {"document", exact}})["ok"]);
+    expect_note_error(
+        call("notes.save", {{"id", id}, {"document", over}}),
+        "body_too_large",
+        "Note exceeds 12 MiB. Remove content or use a smaller picture.");
+    EXPECT_EQ(stored_note_content(database_, id), exact.dump());
+}
+
+TEST_F(BridgeRouterTest, NotesRejectStaleVaultContext) {
+    const auto old_epoch = bootstrap_epoch();
+    const auto created_note = call("notes.create", {
+        {"parent_id", nullptr}, {"kind", "note"}, {"name", "Shared"},
+    });
+    ASSERT_TRUE(created_note["ok"]);
+    const auto id = created_note["result"]["id"].get<std::int64_t>();
+    const auto original = nlohmann::json::parse(R"({"type":"doc","text":"original"})");
+    ASSERT_TRUE(call("notes.save", {{"id", id}, {"document", original}})["ok"]);
+    const auto original_bytes = stored_note_content(database_, id);
+
+    const auto created = application_->create_vault(VaultCreate{
+        .display_name = "Copied",
+        .copy_from = "Test",
+        .password = {},
+    }, old_epoch);
+    const auto switched = application_->switch_vault(created.name, {}, old_epoch);
+    auto notification = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(notification);
+    ack_delivery(*router_, connection_, *notification);
+
+    epoch_ = switched.context_epoch;
+    const auto changed = nlohmann::json::parse(R"({"type":"doc","text":"copy"})");
+    ASSERT_TRUE(call("notes.save", {{"id", id}, {"document", changed}})["ok"]);
+    epoch_ = old_epoch;
+    expect_note_error(
+        call("notes.save", {{"id", id}, {"document", original}}),
+        "vault_changed",
+        "The vault context has changed.");
+    epoch_ = switched.context_epoch;
+    EXPECT_EQ(call("notes.get", {{"id", id}})["result"]["document"], changed);
+    EXPECT_EQ(stored_note_content(created.data, id), changed.dump());
+    EXPECT_EQ(stored_note_content(database_, id), original_bytes);
+
+    const auto back = application_->switch_vault("Test", {}, switched.context_epoch);
+    notification = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(notification);
+    ack_delivery(*router_, connection_, *notification);
+    epoch_ = back.context_epoch;
+    EXPECT_EQ(call("notes.get", {{"id", id}})["result"]["document"], original);
+    EXPECT_EQ(stored_note_content(database_, id), original_bytes);
+    EXPECT_EQ(stored_note_content(created.data, id), changed.dump());
+}
+
+TEST_F(BridgeRouterTest, NotesAdmissionRejectsMaintenanceAndStopping) {
+    const auto old_epoch = bootstrap_epoch();
+    const auto created_note = application_->create_note_item(
+        std::nullopt, NoteItemKind::note, "Held", old_epoch);
+    const auto original = stored_note_content(database_, created_note.id);
+    const auto created = application_->create_vault(VaultCreate{
+        .display_name = "Copied",
+        .copy_from = "Test",
+        .password = {},
+    }, old_epoch);
+
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool paused = false;
+    bool release = false;
+    application_->set_resource_hooks({
+        .pause = [&](bool) {
+            std::unique_lock lock(mutex);
+            paused = true;
+            changed.notify_all();
+            changed.wait(lock, [&] { return release; });
+        },
+        .resume = [] {},
+    });
+    auto switching = std::async(std::launch::async, [&] {
+        return application_->switch_vault(created.name, {}, old_epoch);
+    });
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(changed.wait_for(lock, 2s, [&] { return paused; }));
+    }
+    auto saving = std::async(std::launch::async, [&] {
+        application_->save_note(
+            created_note.id,
+            nlohmann::json::parse(R"({"type":"doc","text":"rejected"})"),
+            old_epoch);
+    });
+    EXPECT_EQ(saving.wait_for(200ms), std::future_status::timeout);
+    {
+        std::lock_guard lock(mutex);
+        release = true;
+    }
+    changed.notify_all();
+    EXPECT_EQ(switching.get().state, app::ApplicationState::running);
+    auto notification = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(notification);
+    ack_delivery(*router_, connection_, *notification);
+    try {
+        saving.get();
+        FAIL() << "expected vault_changed";
+    } catch (const app::ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::vault_changed);
+    }
+    EXPECT_EQ(stored_note_content(database_, created_note.id), original);
+    EXPECT_EQ(stored_note_content(created.data, created_note.id), original);
+
+    application_->set_resource_hooks({});
+    application_->request_shutdown();
+    try {
+        (void)application_->list_note_items(application_->context_epoch());
+        FAIL() << "expected application_unavailable";
+    } catch (const app::ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::application_unavailable);
+    }
+}
+
+TEST_F(BridgeRouterTest, NotesListUsesTheOrdinaryRequestLimit) {
+    router_ = std::make_unique<BridgeRouter>(
+        *application_,
+        BridgeRouter::Options{.platform = "test", .ordinary_limit = 1});
+    connection_ = router_->open_connection();
+    router_->handle_request(
+        connection_, request_json(connection_, 1, 0, "bridge.info").dump());
+    router_->run_tasks();
+    auto first = router_->take_delivery(connection_);
+    ASSERT_TRUE(first);
+    router_->handle_request(
+        connection_, request_json(connection_, 2, 1, "notes.list").dump());
+    EXPECT_FALSE(router_->take_delivery(connection_));
+    ack_delivery(*router_, connection_, *first);
+    auto overflow = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(overflow);
+    const auto reply = reply_with_id(*overflow, 2);
+    ASSERT_FALSE(reply.empty());
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "command_queue_full");
+    EXPECT_EQ(reply["error"]["message"], "Too many in-flight requests.");
+    ack_delivery(*router_, connection_, *overflow);
 }
 
 } // namespace

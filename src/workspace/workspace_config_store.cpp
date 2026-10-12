@@ -1,5 +1,6 @@
 #include "workspace/workspace_config_store.h"
 
+#include "storage/note_storage.h"
 #include "storage/session_lease.h"
 #include "storage/session_storage_layout.h"
 #include "storage/sqlite_storage.h"
@@ -1988,6 +1989,11 @@ void WorkspaceConfigStore::MaintenanceGuard::reopen() {
         validate_workspace_session_database_identity(*store.database);
         ensure_entry_metadata_columns(*store.database);
         ensure_session_lifecycle_columns(*store.database);
+        {
+            storage::SqliteTransaction transaction(*store.database);
+            create_note_items_schema(*store.database);
+            transaction.commit();
+        }
         validate_workspace_session_contents(*store.database);
         store.database->execute("PRAGMA journal_mode = WAL");
         secure_workspace_session_database_files(store.database_path);
@@ -2031,6 +2037,11 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
     validate_workspace_session_database_identity(*impl->database);
     ensure_entry_metadata_columns(*impl->database);
     ensure_session_lifecycle_columns(*impl->database);
+    {
+        storage::SqliteTransaction transaction(*impl->database);
+        create_note_items_schema(*impl->database);
+        transaction.commit();
+    }
     validate_workspace_session_contents(*impl->database);
     impl->database->execute("PRAGMA journal_mode = WAL");
     secure_workspace_session_database_files(impl->database_path);
@@ -2501,6 +2512,57 @@ void WorkspaceConfigStore::apply_key_migration(
         editor.write_next_api_key_id(next_id);
         return std::vector<std::string>{};
     });
+}
+
+std::vector<NoteItem> WorkspaceConfigStore::list_note_items() const {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->require_open();
+    return note_list(*impl_->database);
+}
+
+NoteItem WorkspaceConfigStore::create_note_item(
+    std::optional<std::int64_t> parent_id,
+    NoteItemKind kind,
+    std::string_view name) {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->require_open();
+    return note_create(*impl_->database, parent_id, kind, name);
+}
+
+NoteContent WorkspaceConfigStore::get_note(std::int64_t id) const {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->require_open();
+    return note_get(*impl_->database, id);
+}
+
+void WorkspaceConfigStore::save_note(
+    std::int64_t id,
+    const nlohmann::json& document) {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->require_open();
+    note_save(*impl_->database, id, document);
+}
+
+NoteItem WorkspaceConfigStore::rename_note_item(
+    std::int64_t id,
+    std::string_view name) {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->require_open();
+    return note_rename(*impl_->database, id, name);
+}
+
+NoteItem WorkspaceConfigStore::move_note_item(
+    std::int64_t id,
+    std::optional<std::int64_t> parent_id) {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->require_open();
+    return note_move(*impl_->database, id, parent_id);
+}
+
+void WorkspaceConfigStore::delete_note_item(std::int64_t id) {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->require_open();
+    note_delete(*impl_->database, id);
 }
 
 std::optional<WorkspaceCharacterPicture> WorkspaceConfigStore::get_character_picture(

@@ -1,5 +1,6 @@
 #include "storage/workspace_session_database.h"
 
+#include "storage/note_storage.h"
 #include "util/path_name.h"
 #include "util/picture.h"
 #include "util/private_filesystem.h"
@@ -457,6 +458,7 @@ void create_workspace_session_schema(Database& database) {
     )sql");
     create_config_table(database);
     create_entry_audio_table(database);
+    create_note_items_schema(database);
 }
 
 void set_workspace_session_database_identity(Database& database) {

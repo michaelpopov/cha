@@ -1305,6 +1305,9 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 } else if (auto settings_result = dispatch_settings_operation(
                                application, method, params, epoch)) {
                     result = std::move(*settings_result);
+                } else if (auto notes_result = dispatch_notes_operation(
+                               application, method, params, epoch)) {
+                    result = std::move(*notes_result);
                 } else {
                     fail(ErrorCode::invalid_argument, "That method is not available.");
                     return;

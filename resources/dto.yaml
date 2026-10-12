@@ -1618,6 +1618,51 @@ components:
       minimum: 0
       maximum: 9007199254740991
 
+    NoteId:
+      type: integer
+      minimum: 1
+      maximum: 9007199254740991
+
+    NoteItemKind:
+      type: string
+      enum: [folder, note]
+
+    NoteItem:
+      type: object
+      additionalProperties: false
+      required: [id, parent_id, kind, name]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+        parent_id:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 9007199254740991
+        kind: {$ref: "#/components/schemas/NoteItemKind"}
+        name:
+          type: string
+          minLength: 1
+
+    NoteItemList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/NoteItem"}
+
+    NoteDocument:
+      type: object
+      additionalProperties: true
+
+    NoteContent:
+      type: object
+      additionalProperties: false
+      required: [id, document]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+        document: {$ref: "#/components/schemas/NoteDocument"}
+
     BridgeInfo:
       type: object
       additionalProperties: false

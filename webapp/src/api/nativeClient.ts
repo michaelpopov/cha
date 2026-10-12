@@ -128,6 +128,72 @@ function isVaultDetail(value: unknown): value is VaultDetail {
     && typeof value.can_delete === 'boolean';
 }
 
+export interface NoteItem {
+  id: number;
+  parent_id: number | null;
+  kind: 'folder' | 'note';
+  name: string;
+}
+
+export interface NoteContent {
+  id: number;
+  document: Record<string, unknown>;
+}
+
+export interface NotesClient {
+  listNoteItems: () => Promise<NoteItem[]>;
+  createNoteItem: (
+    parentId: number | null,
+    kind: NoteItem['kind'],
+    name: string,
+  ) => Promise<NoteItem>;
+  getNote: (id: number) => Promise<NoteContent>;
+  saveNote: (id: number, document: Record<string, unknown>) => Promise<void>;
+  renameNoteItem: (id: number, name: string) => Promise<NoteItem>;
+  moveNoteItem: (id: number, parentId: number | null) => Promise<NoteItem>;
+  deleteNoteItem: (id: number) => Promise<void>;
+}
+
+function isNoteId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+}
+
+function isNoteParent(value: unknown): value is number | null {
+  return value === null || isNoteId(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value);
+  return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
+
+function isNoteItem(value: unknown): value is NoteItem {
+  return isRecord(value)
+    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name'])
+    && isNoteId(value.id)
+    && isNoteParent(value.parent_id)
+    && (value.kind === 'folder' || value.kind === 'note')
+    && typeof value.name === 'string';
+}
+
+function isNoteItemList(value: unknown): value is { items: NoteItem[] } {
+  return isRecord(value)
+    && hasExactKeys(value, ['items'])
+    && Array.isArray(value.items)
+    && value.items.every(isNoteItem);
+}
+
+function isNoteContent(value: unknown): value is NoteContent {
+  return isRecord(value)
+    && hasExactKeys(value, ['id', 'document'])
+    && isNoteId(value.id)
+    && isRecord(value.document);
+}
+
+function isEmptyResult(value: unknown): value is Record<string, never> {
+  return isRecord(value) && Object.keys(value).length === 0;
+}
+
 function isMaintenanceResult(value: unknown): value is {
   state: string;
   context_epoch: number;
@@ -155,7 +221,7 @@ export async function connectNativeBridge(bridge: NativeBridge): Promise<void> {
   if (!isBridgeInfo(info)) throw new ChaProtocolError();
 }
 
-export function createNativeChaClient(bridge: NativeBridge): ChaClient {
+export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesClient {
   const call = async <T>(
     method: string,
     params: unknown,
@@ -725,5 +791,24 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
     downloadVault: () => transferVault('vault.download', 'byte_count'),
     importVault: () => transferVault('vault.import', 'file_count'),
     exportVault: () => transferVault('vault.export', 'file_count'),
+    listNoteItems: async () => (await call('notes.list', {}, isNoteItemList)).items,
+    createNoteItem: (parentId, kind, name) => call(
+      'notes.create',
+      { parent_id: parentId, kind, name },
+      isNoteItem,
+    ),
+    getNote: (id) => call('notes.get', { id }, isNoteContent),
+    saveNote: async (id, document) => {
+      await call('notes.save', { id, document }, isEmptyResult);
+    },
+    renameNoteItem: (id, name) => call('notes.rename', { id, name }, isNoteItem),
+    moveNoteItem: (id, parentId) => call(
+      'notes.move',
+      { id, parent_id: parentId },
+      isNoteItem,
+    ),
+    deleteNoteItem: async (id) => {
+      await call('notes.delete', { id }, isEmptyResult);
+    },
   };
 }

@@ -132,6 +132,13 @@ enum class Method {
     openai_auth_start,
     openai_auth_poll,
     openai_auth_disconnect,
+    notes_list,
+    notes_create,
+    notes_get,
+    notes_save,
+    notes_rename,
+    notes_move,
+    notes_delete,
     count,
 };
 

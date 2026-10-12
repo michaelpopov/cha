@@ -301,6 +301,7 @@ add_library(cha_lib STATIC
     src/session/controller_update.cpp
     src/session/session_controller.cpp
     src/storage/session_database.cpp
+    src/storage/note_storage.cpp
     src/storage/session_label.cpp
     src/storage/session_lease.cpp
     src/storage/session_repository.cpp
@@ -323,6 +324,7 @@ add_library(cha_lib STATIC
     src/runtime/session_output.cpp
     src/media/audio_download.cpp
     src/app/media_operations.cpp
+    src/app/notes_operations.cpp
     src/media/media_resources.cpp
     src/media/pending_media_registry.cpp
     src/media/xai_transcript.cpp
@@ -340,6 +342,7 @@ add_library(cha_lib STATIC
     src/bridge/bridge_protocol.cpp
     src/bridge/bridge_router.cpp
     src/bridge/settings_dispatch.cpp
+    src/bridge/notes_dispatch.cpp
     src/bridge/workspace_dispatch.cpp
 )
 
@@ -492,6 +495,7 @@ if(BUILD_TESTING)
         tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_session_controller.cpp
         tests/storage/unit_session_lease.cpp
+        tests/storage/unit_note_storage.cpp
         tests/storage/unit_session_repository.cpp
         tests/storage/unit_workspace_session_database.cpp
         tests/session/unit_controller_update.cpp
@@ -533,7 +537,8 @@ if(BUILD_TESTING)
     target_compile_definitions(
         cha_tests
         PRIVATE
-            CHA_IMPORT_SEED_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/packaging/shared/import-seed")
+            CHA_IMPORT_SEED_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/packaging/shared/import-seed"
+            CHA_SOURCE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}")
     if(TARGET cha_lease_test_helper)
         target_compile_definitions(
             cha_tests
@@ -626,7 +631,8 @@ if(BUILD_TESTING)
     target_compile_definitions(
         cha_bridge_tests
         PRIVATE
-            CHA_WIRE_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wire")
+            CHA_WIRE_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wire"
+            CHA_SOURCE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}")
     if(TARGET cha_lease_test_helper)
         target_compile_definitions(
             cha_bridge_tests

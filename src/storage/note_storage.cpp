@@ -1,0 +1,426 @@
+#include "storage/note_storage.h"
+
+#include "storage/session_label.h"
+#include "util/logging.h"
+
+#include <utility>
+
+namespace cha {
+namespace {
+
+constexpr std::string_view duplicate_name_message =
+    "An item with this name already exists here.";
+constexpr std::string_view missing_parent_message =
+    "The parent folder was not found.";
+constexpr std::string_view parent_kind_message =
+    "The parent must be a folder.";
+constexpr std::string_view cycle_message =
+    "An item cannot be moved into itself or its descendant.";
+constexpr std::string_view kind_message =
+    "Kind must be folder or note.";
+constexpr std::string_view object_message =
+    "Note content must be a JSON object.";
+constexpr std::string_view missing_note_message =
+    "That note was not found.";
+constexpr std::string_view missing_item_message =
+    "That note or folder was not found.";
+constexpr std::string_view not_note_message =
+    "That item is not a note.";
+constexpr std::string_view too_large_message =
+    "Note exceeds 12 MiB. Remove content or use a smaller picture.";
+constexpr std::string_view opening_message =
+    "The note could not be opened.";
+constexpr std::string_view saving_message =
+    "The note could not be saved.";
+
+constexpr std::string_view ancestor_sql = R"sql(
+WITH RECURSIVE ancestors(id, parent_id) AS (
+    SELECT id, parent_id FROM note_items WHERE id = ?1
+    UNION
+    SELECT p.id, p.parent_id
+    FROM note_items AS p JOIN ancestors AS a ON p.id = a.parent_id
+)
+SELECT 1 FROM ancestors WHERE id = ?2 LIMIT 1
+)sql";
+
+[[noreturn]] void fail(NoteFailure failure, std::string_view message) {
+    throw NoteError(failure, std::string(message));
+}
+
+std::string_view kind_name(NoteItemKind kind) {
+    switch (kind) {
+    case NoteItemKind::folder: return "folder";
+    case NoteItemKind::note: return "note";
+    }
+    fail(NoteFailure::invalid, kind_message);
+}
+
+void require_name(std::string_view name) {
+    try {
+        validate_display_label(name, "Name");
+    } catch (const std::invalid_argument& error) {
+        fail(NoteFailure::invalid, error.what());
+    }
+}
+
+std::int64_t parent_key(const std::optional<std::int64_t>& parent_id) {
+    return parent_id.value_or(0);
+}
+
+NoteError sql_failure(const std::runtime_error& error, bool saving) {
+    const std::string message = error.what();
+    if (message.find("UNIQUE constraint failed") != std::string::npos) {
+        return NoteError(NoteFailure::invalid, std::string(duplicate_name_message));
+    }
+    if (message.find("FOREIGN KEY constraint failed") != std::string::npos) {
+        return NoteError(NoteFailure::invalid, std::string(missing_parent_message));
+    }
+    log_error(std::string("Note storage failed: ") + message);
+    return NoteError(
+        saving ? NoteFailure::saving : NoteFailure::opening,
+        std::string(saving ? saving_message : opening_message));
+}
+
+NoteItem read_item(storage::SqliteStatement& statement) {
+    NoteItem item;
+    item.id = statement.integer(0);
+    if (!statement.is_null(1)) item.parent_id = statement.integer(1);
+    const std::string kind = statement.text(2);
+    if (kind == "folder") item.kind = NoteItemKind::folder;
+    else if (kind == "note") item.kind = NoteItemKind::note;
+    else fail(NoteFailure::opening, opening_message);
+    item.name = statement.text(3);
+    if (item.id <= 0 || item.id > note_id_limit) {
+        fail(NoteFailure::opening, opening_message);
+    }
+    return item;
+}
+
+bool name_taken(
+    storage::SqliteDatabase& database,
+    std::optional<std::int64_t> parent_id,
+    std::string_view name,
+    std::int64_t except_id) {
+    storage::SqliteStatement statement = database.prepare(
+        "SELECT 1 FROM note_items "
+        "WHERE IFNULL(parent_id, 0) = ?1 AND name = ?2 AND id <> ?3 LIMIT 1");
+    statement.bind(1, parent_key(parent_id));
+    statement.bind(2, name);
+    statement.bind(3, except_id);
+    return statement.step();
+}
+
+void require_folder(
+    storage::SqliteDatabase& database,
+    std::int64_t parent_id) {
+    storage::SqliteStatement statement = database.prepare(
+        "SELECT kind FROM note_items WHERE id = ?1");
+    statement.bind(1, parent_id);
+    if (!statement.step()) fail(NoteFailure::invalid, missing_parent_message);
+    if (statement.text(0) != "folder") fail(NoteFailure::invalid, parent_kind_message);
+}
+
+bool destination_contains(
+    storage::SqliteDatabase& database,
+    std::int64_t destination,
+    std::int64_t id) {
+    storage::SqliteStatement statement = database.prepare(ancestor_sql);
+    statement.bind(1, destination);
+    statement.bind(2, id);
+    return statement.step();
+}
+
+std::optional<NoteItem> find_item(
+    storage::SqliteDatabase& database,
+    std::int64_t id) {
+    storage::SqliteStatement statement = database.prepare(
+        "SELECT id, parent_id, kind, name FROM note_items WHERE id = ?1");
+    statement.bind(1, id);
+    if (!statement.step()) return std::nullopt;
+    return read_item(statement);
+}
+
+std::string compact_document(
+    const nlohmann::json& document,
+    std::int64_t id,
+    bool saving) {
+    if (!document.is_object()) fail(NoteFailure::invalid, object_message);
+    try {
+        std::string compact = document.dump();
+        if (compact.size() > note_document_byte_limit) {
+            fail(NoteFailure::too_large, too_large_message);
+        }
+        return compact;
+    } catch (const NoteError&) {
+        throw;
+    } catch (const std::exception&) {
+        log_error(
+            "Note content could not be serialized for id "
+            + std::to_string(id));
+        fail(saving ? NoteFailure::saving : NoteFailure::opening,
+            saving ? saving_message : opening_message);
+    }
+}
+
+nlohmann::json parse_document(std::string_view text, std::int64_t id) {
+    nlohmann::json parsed;
+    try {
+        parsed = nlohmann::json::parse(std::string(text));
+    } catch (const std::exception&) {
+        log_error(
+            "Note content is not valid JSON for id " + std::to_string(id));
+        fail(NoteFailure::opening, opening_message);
+    }
+    (void)compact_document(parsed, id, false);
+    return parsed;
+}
+
+} // namespace
+
+NoteError::NoteError(NoteFailure failure, std::string message)
+    : failure(failure), message_(std::move(message)) {}
+
+const char* NoteError::what() const noexcept {
+    return message_.c_str();
+}
+
+void to_json(nlohmann::json& json, const NoteItem& item) {
+    json = nlohmann::json{
+        {"id", item.id},
+        {"parent_id", item.parent_id
+            ? nlohmann::json(*item.parent_id)
+            : nlohmann::json(nullptr)},
+        {"kind", kind_name(item.kind)},
+        {"name", item.name},
+    };
+}
+
+void to_json(nlohmann::json& json, const NoteContent& content) {
+    json = nlohmann::json{
+        {"id", content.id},
+        {"document", content.document},
+    };
+}
+
+void create_note_items_schema(storage::SqliteDatabase& database) {
+    database.execute(R"sql(
+CREATE TABLE IF NOT EXISTS note_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT
+        CHECK (id > 0 AND id <= 9007199254740991),
+    parent_id INTEGER REFERENCES note_items(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('folder', 'note')),
+    name TEXT NOT NULL COLLATE BINARY,
+    content_json TEXT,
+    CHECK (
+        (kind = 'folder' AND content_json IS NULL)
+        OR (kind = 'note' AND content_json IS NOT NULL)
+    )
+) STRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS note_items_sibling_name
+    ON note_items(IFNULL(parent_id, 0), name);
+CREATE INDEX IF NOT EXISTS note_items_parent
+    ON note_items(parent_id);
+)sql");
+}
+
+std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {
+    try {
+        storage::SqliteTransaction transaction(database);
+        storage::SqliteStatement statement = database.prepare(
+            "SELECT id, parent_id, kind, name FROM note_items ORDER BY id");
+        std::vector<NoteItem> items;
+        while (statement.step()) items.push_back(read_item(statement));
+        transaction.commit();
+        return items;
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, false);
+    }
+}
+
+NoteItem note_create(
+    storage::SqliteDatabase& database,
+    std::optional<std::int64_t> parent_id,
+    NoteItemKind kind,
+    std::string_view name) {
+    require_name(name);
+    const std::string kind_text(kind_name(kind));
+    try {
+        storage::SqliteTransaction transaction(database);
+        if (parent_id) require_folder(database, *parent_id);
+        if (name_taken(database, parent_id, name, 0)) {
+            fail(NoteFailure::invalid, duplicate_name_message);
+        }
+        storage::SqliteStatement statement = database.prepare(
+            "INSERT INTO note_items (parent_id, kind, name, content_json) "
+            "VALUES (?1, ?2, ?3, ?4)");
+        if (parent_id) statement.bind(1, *parent_id);
+        else statement.bind_null(1);
+        statement.bind(2, kind_text);
+        statement.bind(3, name);
+        if (kind == NoteItemKind::folder) statement.bind_null(4);
+        else statement.bind(4, empty_note_document);
+        statement.run();
+        const std::int64_t id = database.last_insert_rowid();
+        if (database.changes() != 1 || id <= 0 || id > note_id_limit) {
+            log_error(
+                "Note insert did not allocate an id for '"
+                + std::string(name) + "'");
+            fail(NoteFailure::saving, saving_message);
+        }
+        transaction.commit();
+        return NoteItem{id, parent_id, kind, std::string(name)};
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, true);
+    }
+}
+
+NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id) {
+    try {
+        storage::SqliteTransaction transaction(database);
+        storage::SqliteStatement statement = database.prepare(
+            "SELECT kind, content_json FROM note_items WHERE id = ?1");
+        statement.bind(1, id);
+        if (!statement.step()) fail(NoteFailure::not_found, missing_note_message);
+        if (statement.text(0) != "note") {
+            fail(NoteFailure::invalid, not_note_message);
+        }
+        if (statement.is_null(1)) fail(NoteFailure::opening, opening_message);
+        nlohmann::json document = parse_document(statement.text(1), id);
+        NoteContent content{id, std::move(document)};
+        transaction.commit();
+        return content;
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, false);
+    }
+}
+
+void note_save(
+    storage::SqliteDatabase& database,
+    std::int64_t id,
+    const nlohmann::json& document) {
+    const std::string compact = compact_document(document, id, true);
+    try {
+        storage::SqliteTransaction transaction(database);
+        storage::SqliteStatement update = database.prepare(
+            "UPDATE note_items SET content_json = ?1 "
+            "WHERE id = ?2 AND kind = 'note'");
+        update.bind(1, compact);
+        update.bind(2, id);
+        update.run();
+        const int changed = database.changes();
+        if (changed != 1) {
+            storage::SqliteStatement existing = database.prepare(
+                "SELECT kind, content_json FROM note_items WHERE id = ?1");
+            existing.bind(1, id);
+            if (!existing.step()) fail(NoteFailure::not_found, missing_note_message);
+            if (existing.text(0) != "note") {
+                fail(NoteFailure::invalid, not_note_message);
+            }
+            if (changed != 0 || existing.is_null(1)
+                || existing.text(1) != compact) {
+                log_error(
+                    "Note save affected " + std::to_string(changed)
+                    + " rows for id " + std::to_string(id));
+                fail(NoteFailure::saving, saving_message);
+            }
+        }
+        transaction.commit();
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, true);
+    }
+}
+
+NoteItem note_rename(
+    storage::SqliteDatabase& database,
+    std::int64_t id,
+    std::string_view name) {
+    require_name(name);
+    try {
+        storage::SqliteTransaction transaction(database);
+        const std::optional<NoteItem> current = find_item(database, id);
+        if (!current) fail(NoteFailure::not_found, missing_item_message);
+        NoteItem item = *current;
+        if (item.name != name) {
+            if (name_taken(database, item.parent_id, name, id)) {
+                fail(NoteFailure::invalid, duplicate_name_message);
+            }
+            storage::SqliteStatement update = database.prepare(
+                "UPDATE note_items SET name = ?1 WHERE id = ?2");
+            update.bind(1, name);
+            update.bind(2, id);
+            update.run();
+            if (database.changes() != 1) {
+                log_error(
+                    "Note rename affected " + std::to_string(database.changes())
+                    + " rows for id " + std::to_string(id));
+                fail(NoteFailure::saving, saving_message);
+            }
+            item.name = std::string(name);
+        }
+        transaction.commit();
+        return item;
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, true);
+    }
+}
+
+NoteItem note_move(
+    storage::SqliteDatabase& database,
+    std::int64_t id,
+    std::optional<std::int64_t> parent_id) {
+    try {
+        storage::SqliteTransaction transaction(database);
+        const std::optional<NoteItem> current = find_item(database, id);
+        if (!current) fail(NoteFailure::not_found, missing_item_message);
+        NoteItem item = *current;
+        if (item.parent_id != parent_id) {
+            if (parent_id && *parent_id == id) {
+                fail(NoteFailure::invalid, cycle_message);
+            }
+            if (parent_id) {
+                require_folder(database, *parent_id);
+                if (destination_contains(database, *parent_id, id)) {
+                    fail(NoteFailure::invalid, cycle_message);
+                }
+            }
+            if (name_taken(database, parent_id, item.name, id)) {
+                fail(NoteFailure::invalid, duplicate_name_message);
+            }
+            storage::SqliteStatement update = database.prepare(
+                "UPDATE note_items SET parent_id = ?1 WHERE id = ?2");
+            if (parent_id) update.bind(1, *parent_id);
+            else update.bind_null(1);
+            update.bind(2, id);
+            update.run();
+            if (database.changes() != 1) {
+                log_error(
+                    "Note move affected " + std::to_string(database.changes())
+                    + " rows for id " + std::to_string(id));
+                fail(NoteFailure::saving, saving_message);
+            }
+            item.parent_id = parent_id;
+        }
+        transaction.commit();
+        return item;
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, true);
+    }
+}
+
+void note_delete(storage::SqliteDatabase& database, std::int64_t id) {
+    try {
+        storage::SqliteTransaction transaction(database);
+        storage::SqliteStatement statement = database.prepare(
+            "DELETE FROM note_items WHERE id = ?1");
+        statement.bind(1, id);
+        statement.run();
+        if (database.changes() != 1) {
+            fail(NoteFailure::not_found, missing_item_message);
+        }
+        transaction.commit();
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, true);
+    }
+}
+
+} // namespace cha

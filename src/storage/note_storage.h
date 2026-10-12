@@ -1,0 +1,82 @@
+#pragma once
+
+#include "storage/sqlite_storage.h"
+
+#include <cstdint>
+#include <exception>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+
+namespace cha {
+
+inline constexpr std::int64_t note_id_limit = 9007199254740991LL;
+inline constexpr std::size_t note_document_byte_limit = 12582912;
+inline constexpr std::string_view empty_note_document =
+    R"({"type":"doc","content":[{"type":"paragraph"}]})";
+
+enum class NoteItemKind { folder, note };
+
+enum class NoteFailure {
+    invalid,
+    not_found,
+    too_large,
+    opening,
+    saving,
+};
+
+class NoteError : public std::exception {
+public:
+    NoteError(NoteFailure failure, std::string message);
+    NoteFailure failure;
+    [[nodiscard]] const char* what() const noexcept override;
+
+private:
+    std::string message_;
+};
+
+struct NoteItem {
+    std::int64_t id{};
+    std::optional<std::int64_t> parent_id;
+    NoteItemKind kind{NoteItemKind::folder};
+    std::string name;
+};
+
+struct NoteContent {
+    std::int64_t id{};
+    nlohmann::json document = nlohmann::json::object();
+};
+
+void to_json(nlohmann::json& json, const NoteItem& item);
+void to_json(nlohmann::json& json, const NoteContent& content);
+
+// Caller owns the transaction. The statements are idempotent.
+void create_note_items_schema(storage::SqliteDatabase& database);
+
+[[nodiscard]] std::vector<NoteItem> note_list(storage::SqliteDatabase& database);
+[[nodiscard]] NoteItem note_create(
+    storage::SqliteDatabase& database,
+    std::optional<std::int64_t> parent_id,
+    NoteItemKind kind,
+    std::string_view name);
+[[nodiscard]] NoteContent note_get(
+    storage::SqliteDatabase& database,
+    std::int64_t id);
+void note_save(
+    storage::SqliteDatabase& database,
+    std::int64_t id,
+    const nlohmann::json& document);
+[[nodiscard]] NoteItem note_rename(
+    storage::SqliteDatabase& database,
+    std::int64_t id,
+    std::string_view name);
+[[nodiscard]] NoteItem note_move(
+    storage::SqliteDatabase& database,
+    std::int64_t id,
+    std::optional<std::int64_t> parent_id);
+void note_delete(storage::SqliteDatabase& database, std::int64_t id);
+
+} // namespace cha

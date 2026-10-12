@@ -384,3 +384,89 @@ describe('native CHA client', () => {
     ]);
   });
 });
+
+describe('notes native client', () => {
+  const folder = { id: 1, parent_id: null, kind: 'folder', name: 'Plan' };
+  const note = { id: 4, parent_id: 1, kind: 'note', name: 'Draft' };
+  const document = { type: 'doc', content: [{ type: 'paragraph' }] };
+
+  function clientFor(handlers: Record<string, (params: unknown) => unknown>) {
+    return createNativeChaClient(createFakeNativeBridge(handlers));
+  }
+
+  it('sends the seven methods and accepts guarded replies', async () => {
+    const calls: unknown[] = [];
+    const client = clientFor({
+      'notes.list': (params) => {
+        calls.push(['list', params]);
+        return { items: [folder, note] };
+      },
+      'notes.create': (params) => {
+        calls.push(['create', params]);
+        return note;
+      },
+      'notes.get': (params) => {
+        calls.push(['get', params]);
+        return { id: 4, document };
+      },
+      'notes.save': (params) => {
+        calls.push(['save', params]);
+        return {};
+      },
+      'notes.rename': (params) => {
+        calls.push(['rename', params]);
+        return { ...note, name: 'Final' };
+      },
+      'notes.move': (params) => {
+        calls.push(['move', params]);
+        return { ...note, parent_id: null };
+      },
+      'notes.delete': (params) => {
+        calls.push(['delete', params]);
+        return {};
+      },
+    });
+
+    expect(await client.listNoteItems()).toEqual([folder, note]);
+    expect(await client.createNoteItem(1, 'note', 'Draft')).toEqual(note);
+    expect(await client.getNote(4)).toEqual({ id: 4, document });
+    await client.saveNote(4, document);
+    await client.saveNote(4, { type: 'doc', extra: true });
+    expect(await client.renameNoteItem(4, 'Final')).toEqual({ ...note, name: 'Final' });
+    expect(await client.moveNoteItem(4, null)).toEqual({ ...note, parent_id: null });
+    await client.deleteNoteItem(4);
+    expect(calls).toEqual([
+      ['list', {}],
+      ['create', { parent_id: 1, kind: 'note', name: 'Draft' }],
+      ['get', { id: 4 }],
+      ['save', { id: 4, document }],
+      ['save', { id: 4, document: { type: 'doc', extra: true } }],
+      ['rename', { id: 4, name: 'Final' }],
+      ['move', { id: 4, parent_id: null }],
+      ['delete', { id: 4 }],
+    ]);
+  });
+
+  it.each([
+    ['notes.list', { items: [{ ...folder, extra: true }] }],
+    ['notes.list', { items: [{ ...folder, id: 0 }] }],
+    ['notes.list', { items: [{ ...folder, id: 1.5 }] }],
+    ['notes.list', { items: [{ ...folder, parent_id: 0 }] }],
+    ['notes.list', { items: [{ ...folder, kind: 'file' }] }],
+    ['notes.list', { item: [] }],
+    ['notes.get', { id: 4, document: [] }],
+    ['notes.get', { id: 4, document, extra: true }],
+    ['notes.get', { id: 4 }],
+    ['notes.save', { ok: true }],
+    ['notes.delete', []],
+    ['notes.create', { ...note, name: 1 }],
+  ])('rejects a malformed %s reply', async (method, result) => {
+    const client = clientFor({ [method]: () => result });
+    const action = method === 'notes.list' ? client.listNoteItems()
+      : method === 'notes.get' ? client.getNote(4)
+      : method === 'notes.save' ? client.saveNote(4, document)
+      : method === 'notes.delete' ? client.deleteNoteItem(4)
+      : client.createNoteItem(null, 'folder', 'Plan');
+    await expect(action).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+});

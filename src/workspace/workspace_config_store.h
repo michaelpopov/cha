@@ -3,6 +3,7 @@
 #include "characters/character_config.h"
 #include "chat/character_metadata.h"
 #include "providers/credentials.h"
+#include "storage/note_storage.h"
 #include "storage/session_lease.h"
 #include "workspace/workspace.h"
 
@@ -339,6 +340,21 @@ public:
         const std::filesystem::path& source_database_path,
         const SessionLease& source_lease,
         std::string_view source_password = {});
+
+    [[nodiscard]] std::vector<NoteItem> list_note_items() const;
+    [[nodiscard]] NoteItem create_note_item(
+        std::optional<std::int64_t> parent_id,
+        NoteItemKind kind,
+        std::string_view name);
+    [[nodiscard]] NoteContent get_note(std::int64_t id) const;
+    void save_note(std::int64_t id, const nlohmann::json& document);
+    [[nodiscard]] NoteItem rename_note_item(
+        std::int64_t id,
+        std::string_view name);
+    [[nodiscard]] NoteItem move_note_item(
+        std::int64_t id,
+        std::optional<std::int64_t> parent_id);
+    void delete_note_item(std::int64_t id);
 
     [[nodiscard]] std::optional<WorkspaceCharacterPicture> get_character_picture(
         std::string_view character_id) const;

@@ -118,6 +118,13 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::openai_auth_start, "openaiAuth.start"},
     {Method::openai_auth_poll, "openaiAuth.poll"},
     {Method::openai_auth_disconnect, "openaiAuth.disconnect"},
+    {Method::notes_list, "notes.list"},
+    {Method::notes_create, "notes.create"},
+    {Method::notes_get, "notes.get"},
+    {Method::notes_save, "notes.save"},
+    {Method::notes_rename, "notes.rename"},
+    {Method::notes_move, "notes.move"},
+    {Method::notes_delete, "notes.delete"},
 };
 static_assert(std::size(kMethods) == static_cast<std::size_t>(Method::count));
 

@@ -18,8 +18,10 @@ inline bool is_temporary_session_label(std::string_view label) {
             == std::string_view::npos;
 }
 
-// Session labels are user-authored, single-line display text. Validation does
-// not normalize or otherwise alter their spelling.
+// Session labels and note names share these rules. Validation does not
+// normalize or otherwise alter their spelling. field is the public name used
+// in each error, such as "Session label" or "Name".
+void validate_display_label(std::string_view label, std::string_view field);
 void validate_session_label(std::string_view label);
 
 // Local timestamp shared by generated session labels and session IDs.

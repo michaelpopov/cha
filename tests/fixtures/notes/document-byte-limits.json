@@ -1,0 +1,83 @@
+{
+  "limit": 12582912,
+  "samples": {
+    "multilingual": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {"type": "text", "text": "café 日本語 — naïve"}
+          ]
+        }
+      ]
+    },
+    "escaping": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {"type": "text", "text": "line\nquote\"slash\\end"}
+          ]
+        }
+      ]
+    },
+    "editor_attributes": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "See the plan",
+              "marks": [
+                {
+                  "type": "link",
+                  "attrs": {
+                    "href": "https://example.com/notes?q=a&b=1",
+                    "target": "_blank"
+                  }
+                },
+                {"type": "bold"}
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "image": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "image",
+          "attrs": {
+            "src": "data:image/png;base64,iVBORw0KGgo=",
+            "alt": "dot",
+            "title": null
+          }
+        }
+      ]
+    }
+  },
+  "sample_bytes": {
+    "multilingual": 111,
+    "escaping": 108,
+    "editor_attributes": 210,
+    "image": 121
+  },
+  "padding": {
+    "document": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {"type": "text", "text": ""}
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -8,7 +8,14 @@
 namespace cha {
 namespace {
 
-char32_t next_code_point(std::string_view text, std::size_t& offset) {
+[[noreturn]] void invalid_utf8(std::string_view field) {
+    throw std::invalid_argument(std::string(field) + " must be valid UTF-8");
+}
+
+char32_t next_code_point(
+    std::string_view text,
+    std::size_t& offset,
+    std::string_view field) {
     const auto byte = [&text](std::size_t index) {
         return static_cast<unsigned char>(text[index]);
     };
@@ -27,16 +34,12 @@ char32_t next_code_point(std::string_view text, std::size_t& offset) {
         continuation_count = 3;
         result = first & 0x07;
     } else {
-        throw std::invalid_argument("Session label must be valid UTF-8");
+        invalid_utf8(field);
     }
-    if (continuation_count > text.size() - offset) {
-        throw std::invalid_argument("Session label must be valid UTF-8");
-    }
+    if (continuation_count > text.size() - offset) invalid_utf8(field);
     for (std::size_t index{}; index < continuation_count; ++index) {
         const unsigned char continuation = byte(offset++);
-        if ((continuation & 0xc0) != 0x80) {
-            throw std::invalid_argument("Session label must be valid UTF-8");
-        }
+        if ((continuation & 0xc0) != 0x80) invalid_utf8(field);
         result = (result << 6) | (continuation & 0x3f);
     }
     if ((continuation_count == 1 && result < 0x80)
@@ -44,7 +47,7 @@ char32_t next_code_point(std::string_view text, std::size_t& offset) {
         || (continuation_count == 3 && result < 0x10000)
         || result > 0x10ffff
         || (result >= 0xd800 && result <= 0xdfff)) {
-        throw std::invalid_argument("Session label must be valid UTF-8");
+        invalid_utf8(field);
     }
     return result;
 }
@@ -73,32 +76,32 @@ bool local_time(std::time_t now, std::tm& result) {
 
 } // namespace
 
-void validate_session_label(std::string_view label) {
-    if (label.empty()) {
-        throw std::invalid_argument("Session label must not be empty");
-    }
+void validate_display_label(std::string_view label, std::string_view field) {
+    const auto reject = [field](std::string_view tail) {
+        throw std::invalid_argument(std::string(field) + std::string(tail));
+    };
+    if (label.empty()) reject(" must not be empty");
 
     char32_t first{};
     char32_t last{};
     std::size_t count{};
     for (std::size_t offset{}; offset < label.size();) {
-        const char32_t point = next_code_point(label, offset);
+        const char32_t point = next_code_point(label, offset, field);
         if (control(point)) {
-            throw std::invalid_argument(
-                "Session label cannot contain a control character or line break");
+            reject(" cannot contain a control character or line break");
         }
         if (count == 0) first = point;
         last = point;
         ++count;
-        if (count > 200) {
-            throw std::invalid_argument(
-                "Session label cannot exceed 200 Unicode characters");
-        }
+        if (count > 200) reject(" cannot exceed 200 Unicode characters");
     }
     if (whitespace(first) || whitespace(last)) {
-        throw std::invalid_argument(
-            "Session label cannot start or end with whitespace");
+        reject(" cannot start or end with whitespace");
     }
+}
+
+void validate_session_label(std::string_view label) {
+    validate_display_label(label, "Session label");
 }
 
 std::string session_timestamp_name(std::time_t now) {
