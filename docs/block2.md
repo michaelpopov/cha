@@ -1,108 +1,178 @@
-# Block 2: Picture lookup and native bridge
+# Block 2: Notes storage and native API
 
-Status: implementation plan; this stage is not implemented.
+Status: execution guide; this document does not establish implementation,
+approval, or a passing test result.
 
-Prerequisite: [block 1](block1.md) and its storage checks are complete.
-Read [picture.md](picture.md) and the repository instructions. This stage
-adds the read interface used by [block 3](block3.md), with no visible UI change.
+Split block 2; plan steps 4–5. Next: [block 3](notes-block3.md).
 
-## Outcome and interface
+Sources: [implementation split](notes-split.md), [full plan](notes-plan.md),
+[detailed design](notes-design.md), [PRD](notes-prd.md), and
+[repository instructions](../AGENTS.md). The PRD defines acceptance; for
+implementation follow the plan, then design, then architecture as background.
+This guide expands the split and does not replace any source step/check.
+Report conflicts that this precedence does not resolve.
 
-Add `character.picture.get` with params `{ "character_id": "..." }` and the
-normal context epoch in the bridge envelope. Expose it to components as
-`ChaClient.getCharacterPicture(characterId)`.
+## Outcome and scope
 
-Return JSON `null` for a known character without a picture. Otherwise return:
+Implement plan **steps 4–5**, storage before native exposure. All seven Notes
+operations work through the production trusted bridge, using the existing
+vault database/locks. Older vaults gain the additive table without a new schema
+version. This block introduces no visible Notes interface or HTTP API.
 
-```json
-{
-  "filename": "PICTURE.png",
-  "mime_type": "image/png",
-  "content_base64": "..."
-}
-```
+## Prerequisites and reading
 
-An unknown character uses the existing not-found error. Invalid arguments and
-stale vault contexts use existing application/bridge errors. Empty or corrupt
-image content is still a picture result; rendering failure belongs to the UI.
+Read block 1's baseline/platform handoff and inspect its commit/results.
+Complete its technical baseline; unresolved visible approval does not prevent
+this nonvisible work. Read plan steps 4–5, design sections 5–6 and 9.3/14, and
+PRD sections 3, 5.1–5.2, and 9. Use disposable plain/protected vaults.
 
-## Implementation
+## Main code paths
 
-1. Resolve a character's definition directory from the existing workspace
-   lookup in `src/workspace/workspace.h` and `.cpp`. The retained
-   `character_config_paths_` map already identifies nested definitions. Add
-   only the narrow accessor needed to obtain its parent directory. Resolve
-   Assistant to `system/assistant/`, as character settings already do. Do not
-   reconstruct `characters/<id>` or search forum-member directories.
-2. Read picture data through `WorkspaceConfigStore` using the published
-   workspace and committed configuration rows under its existing locking
-   rules. `Workspace` retains resolved definitions, not the complete raw file
-   map passed to `Workspace::load`; do not retain a second full map or a
-   borrowed `TextSource` to implement this read. Reuse the configuration-row
-   reader and select exact candidate paths in the documented priority order.
-3. Return the first existing supported row, with its basename, MIME type,
-   and stored base64 unchanged. Do not decode it, inspect image dimensions,
-   fall back after a corrupt row, or read from the exported modify folder.
-   Use a small result value rather than adding image fields to character
-   metadata or session state.
-4. Add the application operation in `src/app/application.h` and `.cpp`, with
-   any necessary mapping in `src/app/workspace_operations.h` and `.cpp`.
-   Follow `Application::get_character`: take the lifecycle lock and check
-   admission with the request's context epoch before reading the store.
-5. Define the response DTO and serialization beside the existing character
-   DTOs in `src/runtime/protocol.h` and `.cpp`, and in `resources/dto.yaml`.
-   Keep the workspace-layer result independent of the native bridge. Add the
-   method enum/name in `src/bridge/bridge_protocol.h` and `.cpp`, then dispatch
-   through `src/bridge/workspace_dispatch.cpp`. Accept only `character_id`;
-   reject extra keys and arbitrary path parameters. Keep the operation scoped
-   to the current vault, with no context change or media-release lifecycle.
-6. Add the DTO alias, response guard, and method to
-   `webapp/src/api/client.ts`. Map the method in
-   `webapp/src/api/nativeClient.ts`. Validate the response shape and supported
-   filename/MIME pairing, including `null`; leave image decoding to the
-   renderer. Regenerate `webapp/src/api/schema.d.ts` from the schema.
-7. Update `webapp/src/test/fixtures.ts` with a default no-picture response and
-   update affected client mocks and wire fixtures. The separate ChaWeb client
-   does not need a picture endpoint. Both native hosts use the shared bridge;
-   add host-specific code only if the existing generic transport needs it.
+- New `src/storage/note_storage.{h,cpp}`: SQL, item structures, schema creation.
+- `workspace_session_database.cpp`, `WorkspaceConfigStore` open/forwarders and
+  maintenance reopen, `session_label.{h,cpp}`, and existing CMake targets.
+- `Application`, bridge protocol/operation dispatch, new `notes_dispatch.cpp`.
+- `resources/dto.yaml`, generated `webapp/src/api/schema.d.ts`, client/native
+  client/guards, test mocks, wire fixtures, and method-policy fixtures.
 
-Do not add picture data to bootstrap, `CharacterDetail`, session snapshots,
-transcript entries, or live events. Do not add a resource server, temporary
-image files, a media handle, or a cache.
+## Implementation sequence
 
-## Focused verification
+### 1. Add the shared schema on the existing connection
 
-- Extend workspace/store tests for nested definitions, Assistant, no picture,
-  unknown character, and every filename priority. When the preferred file
-  contains bad image data and another format is valid, return the preferred
-  file unchanged. Test reading from the stored vault after removing or
-  changing the external import directory.
-- Extend `tests/app/unit_application.cpp` and relevant vault tests for current
-  vault reads and stale-epoch rejection. Include two vaults with the same
-  character ID and different picture bytes.
-- Extend `tests/bridge/unit_bridge_protocol.cpp` and
-  `tests/bridge/unit_bridge_router.cpp` for method registration, exact params,
-  null and picture serialization, invalid arguments, and context checks.
-- Extend `webapp/src/api/nativeClient.test.ts` for request mapping, valid and
-  malformed responses, null, and propagated errors. Keep fixtures and generated
-  DTO types consistent. Verify existing bootstrap and snapshot fixtures gain
-  no picture payload.
+Implement design section 5.1's strict `note_items` table: positive safe
+`INTEGER PRIMARY KEY AUTOINCREMENT` ID bounded by 9,007,199,254,740,991; nullable
+parent foreign key with `ON DELETE CASCADE`; immutable note/folder kind; binary
+name; folder null content and note non-null content. The sibling unique index
+uses `IFNULL(parent_id, 0), name`; add the parent index for child/cascade access.
+The root is not a row. Notes/folders share one exact sibling namespace.
 
-Run from the repository root:
+Call shared `create_note_items_schema(Database&)` from new-database creation,
+store open, and maintenance reopen after identity checks. Each caller owns its
+transaction; nest none. Preserve schema-2 identity, `user_version`, schema-1
+import behavior, integrity checks, and database protection. Do not scan all note
+JSON at startup/transfer, add migrations, open another connection, or publish
+configuration snapshots/revisions for Notes mutations.
 
-```sh
-npm --prefix webapp run api-types
-cmake --preset ninja
-cmake --build --preset ninja
-ctest --test-dir build/ninja --output-on-failure -R '^(WorkspaceConfigStore.*|RuntimeWorkspaceConfigStoreTest|Workspace|Application|ApplicationVault|BridgeProtocol|BridgeRouterTest)\.'
-npm --prefix webapp run api-types:check
-npm --prefix webapp run typecheck
-npm --prefix webapp test -- src/api/nativeClient.test.ts src/api/wireFixtures.test.ts
-```
+Keep normal lock order: Application lifecycle mutex → store mutex → transaction.
+Add small store forwarding methods under existing ownership/maintenance rules.
+
+### 2. Reuse label validation and implement atomic operations
+
+Share session-label validation with narrow Notes-specific field/error wording,
+leaving session errors unchanged. Require nonempty valid UTF-8, at most 200
+Unicode code points, prohibited control/line breaks absent, and no leading/
+trailing whitespace. Preserve spelling; do not trim/normalize or impose filename
+rules. Compare siblings case-sensitively across kinds, including Top level.
+
+| Operation | Storage behavior |
+| --- | --- |
+| List | Select metadata only: id, parent, kind, name. |
+| Create | Validate kind/name/folder parent/duplicates; insert folder null or valid empty note; commit and return metadata. |
+| Get | Require an existing note, parse content as an object, enforce byte limit, return it; never substitute empty content. |
+| Save | Compact-serialize object, enforce limit, update existing note only, require one affected row and commit. |
+| Rename | Validate sibling uniqueness excluding self; update only name and return metadata. |
+| Move | Validate destination folder/uniqueness/cycles; update only parent and return metadata. |
+| Delete | Require existing item; cascade subtree deletion and commit. |
+
+New notes use `{"type":"doc","content":[{"type":"paragraph"}]}`.
+Use SQLite ID allocation, never MAX+1 or INSERT OR REPLACE. Deleted IDs are not
+reused. Unchanged rename/move succeeds as a no-op. Rename/move preserve bodies.
+
+Put source/parent/uniqueness checks and mutations in one locked transaction.
+Use the design's recursive destination-ancestor CTE with `UNION` to terminate
+on damaged ancestry; root moves need no ancestry query. Reject self/descendant
+moves without overwrite/merge/automatic rename. Let the index enforce final
+uniqueness and map constraint failures to specific public errors.
+
+### 3. Enforce the opaque document contract
+
+Core accepts JSON objects and measures compact UTF-8 `nlohmann::json` output.
+Allow exactly **12,582,912 bytes**; reject one byte over. Include keys, marks,
+attributes, escapes, and encoded images, excluding bridge envelope bytes.
+Do not validate Tiptap schema, URL policy, image headers, or picture limits in
+C++; those belong to frontend entry points. Bad stored JSON is an opening
+failure. Saves never create deleted IDs and report success only after commit.
+
+Add byte-limit fixtures for the core with multilingual text, escaping, actual
+editor attributes, exactly 12,582,912 bytes, and one byte over. Generate the
+large documents in the tests from a small description, for example a base
+document and a padding length; do not commit multi-megabyte files. Keep that
+description where the C++ and Vitest tests can both read it, so block 4 can
+reuse it for frontend parity. Marked-node splitting is an editor case; block 4
+adds it. An early full-copy round trip must preserve embedded image documents
+and SQLite's non-reuse sequence.
+
+### 4. Expose ordinary native operations
+
+Define transport-neutral `NoteItem`, `NoteItemList`, object `NoteDocument`, and
+`NoteContent` DTOs; regenerate TypeScript using the existing generator.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `notes.list` | `{}` | `{items: NoteItem[]}` |
+| `notes.create` | `{parent_id, kind, name}` | `NoteItem` |
+| `notes.get` | `{id}` | `{id, document}` |
+| `notes.save` | `{id, document}` | `{}` after commit |
+| `notes.rename` | `{id, name}` | `NoteItem` |
+| `notes.move` | `{id, parent_id}` | `NoteItem` |
+| `notes.delete` | `{id}` | `{}` after commit |
+
+Use positive JavaScript-safe integers and null root parents, and send documents
+as objects, not escaped JSON strings. Register method names in shared bridge
+protocol; the thin dispatcher validates exact shapes/IDs/kind/nullable parent.
+Application admits the supplied epoch under `lifecycle_mutex` before store
+access. Keep trusted connection, nonzero epoch, protocol version, 16 MiB request
+limit, and 16 ordinary in-flight request behavior. Notes is ordinary traffic,
+not control/context-changing traffic. No routes, event stream, cancel method,
+revision field, or custom queue is required.
+
+Expose `listNoteItems`, `createNoteItem`, `getNote`, `saveNote`, `renameNoteItem`,
+`moveNoteItem`, and `deleteNoteItem` in the native client with shape/safe-ID
+response guards. Update all affected mocks/wire/method fixtures. ChaWeb gets
+no Notes endpoint/editor. Existing generic hosts need no Notes-only transport.
+
+Map invalid arguments, missing rows, document size, stale vault, maintenance,
+and stopping through existing codes with specific Notes public wording.
+Unexpected SQL/corrupt content uses safe opening/saving errors. Log technical
+failures without document content. Queue admission is never save success; a
+lost/rejected reply remains unacknowledged and retry sends the current full
+object. Preserve existing fatal queue-overflow recovery rather than inventing
+another request scheduler.
+
+## Verification
+
+Extend existing storage/store/application/bridge suites and native client/wire
+fixtures. Register new source/test files with existing targets. Cover:
+
+- New/older schema-2 plain/protected vaults, schema-1 compatibility, maintenance
+  reopen, unchanged identity/integrity rules, full copy and ID sequence.
+- Root/nested cross-kind duplicate create/rename/move, case distinction, same
+  names in different parents, UTF-8/code-point/whitespace boundaries, rollback,
+  missing/non-folder parents, cycles, no-ops, cascade delete, and deleted-ID
+  save failure/non-reuse. Metadata listing must not load bodies.
+- Object/non-object/corrupt JSON and exact byte fixtures, both get/save;
+  committed update-only success, repeated full-document saves, opaque foreign
+  content, and no configuration revision/undo/snapshot effect.
+- All seven wire methods, strict params, safe/unsafe/null IDs, malformed replies,
+  public errors, stale epochs between vaults with equal numeric IDs, and
+  maintenance/stopping admission. Failed old-context writes leave both vaults
+  unchanged.
+
+Run relevant C++ suites, DTO generation/check, targeted frontend API suites,
+and normal affected builds from plan section 5. Full-copy/protection checks use
+disposable data. Record actual results rather than a written test matrix.
 
 ## Completion and handoff
 
-Confirm the interface above is implemented and the checks pass. Summarize any
-necessary naming adjustment so block 3 uses the actual method and DTO. The
-native client must be able to request a portrait without loading a session or
-using any filesystem path. Image content still has no UI consumer until block 3.
+Storage, compatibility, API, admission, and boundary tests pass; production
+native calls can list/create/load/save before a screen exists. Hand off exact
+contracts, schema entry points, error mapping, byte fixtures, copy/sequence
+evidence, and pending platform gates. Block 3 can proceed independently of
+visible Notes approval; block 4 consumes storage/API and boundary fixtures.
+
+## Execution and reporting rules
+
+Apply the split's [execution rules](notes-split.md#execution-rules), including
+its operator checkpoint, Windows mode, and end-of-block rules, and its
+[handoff contents](notes-split.md#handoff-between-blocks). Apply the scope
+rules in plan section 1 and the KISS rules in the repository instructions.
