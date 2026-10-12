@@ -18,6 +18,14 @@ import {
 import type { NativeBridge } from '../api/nativeBridge';
 import { DetailRefreshProvider } from '../detailRefresh';
 import { validateBootstrap } from '../state/bootstrap';
+import {
+  adoptChatDraft,
+  chatDraftKey,
+  clearPromptDrafts,
+  editChatDraft,
+  emptyPromptDrafts,
+  visibleChatDraft,
+} from '../state/promptDrafts';
 import { saveMarkdownDownload } from '../download';
 import { reloadApplication, writeAppRoute } from '../state/route';
 import { useLiveSession, type SessionEventsConnector } from '../useLiveSession';
@@ -82,6 +90,8 @@ interface ScreenProps extends ChatActions {
   state: AppState;
   dispatch: Dispatch<AppAction>;
   client: ChaClient;
+  draft: string;
+  onDraftChange(next: string): void;
   onDeleteForum(forumId: string): Promise<void>;
   onCreateSession(forumId: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
@@ -98,6 +108,8 @@ function Screen({
   onOpenSession,
   onCoverConversation,
   onDeleteTurn,
+  draft,
+  onDraftChange,
   onRetryStream,
   onReturnToStart,
   onSetDefaultCharacter,
@@ -115,6 +127,8 @@ function Screen({
         dispatch={dispatch}
         onCoverConversation={onCoverConversation}
         onDeleteTurn={onDeleteTurn}
+        draft={draft}
+        onDraftChange={onDraftChange}
         onRetryStream={onRetryStream}
         onReturnToStart={onReturnToStart}
         onSetDefaultCharacter={onSetDefaultCharacter}
@@ -426,6 +440,7 @@ export function App({
   const request = useRef<{ client: ChaClient; promise: Promise<Bootstrap> } | null>(null);
   const playbackPositions = useRef(new Map<string, Map<number, number>>());
   const pendingMutations = useRef(new Set<string>());
+  const [drafts, setDrafts] = useState(emptyPromptDrafts);
   const [submissionErrors, setSubmissionErrors] = useState<{ id: number; message: string }[]>([]);
   const nextSubmissionError = useRef(0);
   const composerKey = `${state.bootstrap?.vault_name}/${state.activeConversation?.forumId}/${state.activeConversation?.sessionId}/${state.mainView}`;
@@ -523,6 +538,18 @@ export function App({
 
   const sessionDiscarded = useCallback(() => setCatalogRevision((revision) => revision + 1), []);
 
+  const activeChatKey = state.activeConversation
+    ? chatDraftKey(
+      state.bootstrap?.vault_name,
+      state.activeConversation.forumId,
+      state.activeConversation.sessionId,
+    )
+    : '';
+  const chatDraftText = visibleChatDraft(drafts, activeChatKey);
+  const editChat = useCallback((text: string) => {
+    setDrafts((current) => editChatDraft(current, activeChatKey, text));
+  }, [activeChatKey]);
+
   const {
     navigate,
     openConversation,
@@ -530,6 +557,7 @@ export function App({
     retrySessionOpen,
     retryStream,
     clearLiveSession,
+    noteDraftAdoption,
     clearVaultContext,
     retainSession,
     abandonUnusedSession,
@@ -540,6 +568,12 @@ export function App({
     refreshBootstrap,
     onSessionDiscarded: sessionDiscarded,
     onWelcomeRefresh: () => { void refreshAfterWelcome(); },
+    onConversationOpened: (forumId, sessionId) => {
+      setDrafts((current) => adoptChatDraft(
+        current,
+        chatDraftKey(state.bootstrap?.vault_name, forumId, sessionId),
+      ));
+    },
   });
 
   useEffect(() => {
@@ -589,10 +623,12 @@ export function App({
   }, [clearVaultContext, client, contextEvents, navigate]);
 
   const returnToStart = useCallback(() => {
+    const bootstrap = state.bootstrap;
+    if (bootstrap) noteDraftAdoption(bootstrap.initial_forum_id, bootstrap.initial_session_id);
     clearLiveSession();
     navigate({ type: 'show-initial-conversation' });
     writeAppRoute('/');
-  }, [clearLiveSession, navigate]);
+  }, [clearLiveSession, navigate, noteDraftAdoption, state.bootstrap]);
 
   const browseSessions = useCallback(() => {
     clearLiveSession();
@@ -602,6 +638,7 @@ export function App({
   const switchVault = useCallback(async (vaultName: string, password?: string) => {
     await abandonUnusedSession({ refresh: false });
     await client.switchVault(vaultName, password);
+    setDrafts(clearPromptDrafts());
     writeAppRoute('/', 'replace');
     if (!contextEvents) reload();
   }, [abandonUnusedSession, client, contextEvents, reload]);
@@ -841,6 +878,8 @@ export function App({
                 catalogRevision={catalogRevision}
                 client={client}
                 dispatch={navigate}
+                draft={chatDraftText}
+                onDraftChange={editChat}
                 onCoverConversation={coverConversation}
                 onDeleteTurn={deleteTurn}
                 onDeleteForum={deleteForum}

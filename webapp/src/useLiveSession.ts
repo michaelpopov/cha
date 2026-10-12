@@ -94,6 +94,7 @@ interface LiveSessionOptions {
   refreshBootstrap(): Promise<boolean | void>;
   onSessionDiscarded?(): void;
   onWelcomeRefresh?(): void;
+  onConversationOpened?(forumId: string, sessionId: string): void;
 }
 
 export function useLiveSession(
@@ -106,6 +107,7 @@ export function useLiveSession(
     refreshBootstrap,
     onSessionDiscarded,
     onWelcomeRefresh,
+    onConversationOpened,
   }: LiveSessionOptions,
 ) {
   // The epoch this render was built from. The ref below is what asynchronous
@@ -142,6 +144,16 @@ export function useLiveSession(
   const welcomeTurn = useRef<WelcomeTurn | null>(null);
   const welcomeRefresh = useRef(onWelcomeRefresh);
   welcomeRefresh.current = onWelcomeRefresh;
+  const conversationOpened = useRef(onConversationOpened);
+  conversationOpened.current = onConversationOpened;
+  const draftAdoption = useRef<string | null>(null);
+  const initialConversation = useRef<{ forumId: string; sessionId: string } | null>(null);
+  initialConversation.current = state.bootstrap
+    ? {
+      forumId: state.bootstrap.initial_forum_id,
+      sessionId: state.bootstrap.initial_session_id,
+    }
+    : null;
 
   const isWelcome = useCallback((forumId: string, sessionId: string) => {
     if (sessionId !== welcomeSessionId) return false;
@@ -488,11 +500,19 @@ export function useLiveSession(
     sessionId: string,
     updateHistory = true,
     refreshRecent = true,
+    adoptDraft = true,
   ) => {
     const target = `${forumId}/${sessionId}`;
+    if (adoptDraft && draftAdoption.current && draftAdoption.current !== target) {
+      draftAdoption.current = null;
+    }
     retryTarget.current = { forumId, sessionId, updateHistory };
     if (connection.current?.key === target) {
       dispatch({ type: 'show-chat' });
+      if (adoptDraft) {
+        if (draftAdoption.current === target) draftAdoption.current = null;
+        conversationOpened.current?.(forumId, sessionId);
+      }
       return true;
     }
     if (pendingTarget.current?.key === target) return false;
@@ -504,6 +524,7 @@ export function useLiveSession(
       const opened = await performOpen(
         epoch, forumId, sessionId, updateHistory, refreshRecent,
       );
+      if (opened && adoptDraft) conversationOpened.current?.(forumId, sessionId);
       if (!opened && navigation.current === epoch) {
         dispatch({
           type: 'session-operation-failed',
@@ -527,11 +548,13 @@ export function useLiveSession(
       return false;
     } finally {
       if (pendingTarget.current === pending) pendingTarget.current = null;
+      if (draftAdoption.current === target) draftAdoption.current = null;
     }
   }, [beginNavigation, dispatch, performOpen]);
 
   const createConversation = useCallback(async (forumId: string) => {
     const target = `${forumId}/new`;
+    draftAdoption.current = null;
     if (pendingTarget.current?.key === target) return false;
     const pending = { key: target };
     pendingTarget.current = pending;
@@ -551,6 +574,7 @@ export function useLiveSession(
       retryTarget.current = { forumId, sessionId: created.id, updateHistory: true };
       dispatch({ type: 'session-operation-started', message: 'Opening session…' });
       const opened = await performOpen(epoch, forumId, created.id, true, true);
+      if (opened) conversationOpened.current?.(forumId, created.id);
       if (!opened && navigation.current === epoch) {
         dispatch({
           type: 'session-operation-failed',
@@ -627,9 +651,16 @@ export function useLiveSession(
     if (state.mainView !== 'chat') return;
     if (state.sessionOperation !== 'idle') return;
     if (pendingTarget.current || connection.current || recovery.current) return;
+    const target = `${active.forumId}/${active.sessionId}`;
+    const adopt = draftAdoption.current === target;
+    if (draftAdoption.current && !adopt) draftAdoption.current = null;
     const snapshotMatches = state.sessionSnapshot?.forum.id === active.forumId
       && state.sessionSnapshot.session_id === active.sessionId;
     if (snapshotMatches) {
+      if (adopt) {
+        draftAdoption.current = null;
+        conversationOpened.current?.(active.forumId, active.sessionId);
+      }
       if (state.sessionSnapshot?.lifecycle !== 'running'
           || state.streamStatus === 'retry'
           || state.streamStatus === 'moved') return;
@@ -641,7 +672,7 @@ export function useLiveSession(
       );
       return;
     }
-    void openConversation(active.forumId, active.sessionId, false, false);
+    void openConversation(active.forumId, active.sessionId, false, false, adopt);
   }, [connectStream, initialRouteReady, openConversation, renderedEpoch,
     state.activeConversation, state.bootstrapStatus, state.mainView,
     state.sessionOperation, state.sessionSnapshot, state.streamStatus]);
@@ -650,6 +681,8 @@ export function useLiveSession(
     const visitHistoryRoute = () => {
       const route = currentAppRoute();
       if (route.kind === 'root') {
+        const initial = initialConversation.current;
+        if (initial) draftAdoption.current = `${initial.forumId}/${initial.sessionId}`;
         clearLiveSession();
         navigate({ type: 'show-initial-conversation' });
       } else if (route.kind === 'session') {
@@ -673,6 +706,10 @@ export function useLiveSession(
     resetLiveSession();
   }, [resetLiveSession]);
 
+  const noteDraftAdoption = useCallback((forumId: string, sessionId: string) => {
+    draftAdoption.current = `${forumId}/${sessionId}`;
+  }, []);
+
   return {
     navigate,
     openConversation,
@@ -680,6 +717,7 @@ export function useLiveSession(
     retrySessionOpen,
     retryStream,
     clearLiveSession,
+    noteDraftAdoption,
     clearVaultContext,
     retainSession,
     abandonUnusedSession,

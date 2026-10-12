@@ -1,16 +1,11 @@
-import { withoutVoiceSendPhrase } from '../dictationText';
 import {
   Fragment,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type Dispatch,
-  type FormEvent,
-  type KeyboardEvent,
-  type PointerEvent,
   type UIEvent,
 } from 'react';
 
@@ -21,7 +16,6 @@ import {
   type ChaClient,
   type CharacterAppearance,
   type CommandResult,
-  type NativeVoiceInputRuntime,
   type SessionSnapshot,
 } from '../api/client';
 import { useAudioDownloads } from '../audioDownloads';
@@ -34,15 +28,6 @@ import {
   TextToSpeechSession,
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
-import {
-  appendPreparedTranscription,
-  appendTranscription,
-  unsupportedAudioFormat,
-  VoiceInputSession,
-  type VoiceInputConfiguration,
-  type VoiceInputTransport,
-  type VoiceInputXaiBridge,
-} from '../voiceInput';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Markdown } from './Markdown';
 import {
@@ -51,15 +36,13 @@ import {
   EyeIcon,
   EyeOffIcon,
   GlobeIcon,
-  MicrophoneIcon,
   PictureIcon,
-  SendIcon,
   SpeakerIcon,
   StopIcon,
   TargetIcon,
   TrashIcon,
 } from './Icons';
-import { TransliterationToggle, useTransliteration } from './TransliterationMode';
+import { PromptInput, type PromptVoiceControls } from './PromptInput';
 import { voiceClasses } from './characterAppearance';
 
 // The chat controls App owns, declared once so the screen and the router that
@@ -78,33 +61,14 @@ export interface ChatActions {
 interface ChatScreenProps extends ChatActions {
   playbackPositions: Map<string, Map<number, number>>;
   client: ChaClient;
+  draft: string;
+  onDraftChange(next: string): void;
   state: AppState;
   dispatch: Dispatch<AppAction>;
 }
 
 function actionMessage(failure: unknown): string {
   return publicErrorMessage(failure, 'The action could not be completed. Try again.');
-}
-
-function voiceInputMessage(failure: unknown): string {
-  if (failure instanceof DOMException && failure.name === 'NotAllowedError') {
-    return 'Microphone access was denied. Allow it in System Settings and try again.';
-  }
-  if (failure instanceof Error && failure.message === unsupportedAudioFormat) {
-    return failure.message;
-  }
-  return 'Voice input stopped because transcription failed. Try again.';
-}
-
-function xaiBridgeFromClient(client: ChaClient): VoiceInputXaiBridge {
-  return {
-    start: (sessionId, languages, signal) => client.startXaiVoiceInput(sessionId, languages, signal),
-    audio: (sessionId, pcmBase64, signal) => client.sendXaiVoiceAudio(sessionId, pcmBase64, signal),
-    stop: (sessionId, remainingMs, signal) => (
-      client.stopXaiVoiceInput(sessionId, remainingMs, signal)
-    ),
-    cancel: (sessionId) => client.cancelXaiVoiceInput(sessionId),
-  };
 }
 
 // How close to the end still counts as following the conversation. A few pixels
@@ -348,6 +312,8 @@ function endedMessage(snapshot: SessionSnapshot): string {
 export function ChatScreen({
   playbackPositions,
   client,
+  draft,
+  onDraftChange,
   state,
   dispatch,
   onRetryStream,
@@ -359,37 +325,15 @@ export function ChatScreen({
   onSubmitInput,
   onUncoverConversation,
 }: ChatScreenProps) {
-  const [draft, setDraft] = useState('');
-  const draftRef = useRef('');
-
-  function updateDraft(next: string) {
-    draftRef.current = next;
-    setDraft(next);
-  }
-
-  const transliteration = useTransliteration<HTMLTextAreaElement>(draft);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<
     'target' | 'cover' | 'delete' | null
   >(null);
   const [sendPending, setSendPending] = useState(false);
   const [stopPending, setStopPending] = useState(false);
-  const sending = useRef(false);
   const stopping = useRef(false);
   const composerEpoch = useRef(0);
   const actionPending = pendingAction !== null || sendPending || stopPending;
-  const [voiceInputState, setVoiceInputState] = useState<
-    'idle' | 'starting' | 'recording' | 'finishing'
-  >('idle');
-  const [voiceSendPending, setVoiceSendPending] = useState(false);
-  const [voiceConfiguration, setVoiceConfiguration] =
-    useState<VoiceInputConfiguration | null>(null);
-  const voiceInputSession = useRef<VoiceInputTransport | null>(null);
-  const voiceSendPhrase = useRef('over to you');
-  const voiceInputStartup = useRef<AbortController | null>(null);
-  const voiceInputAttempt = useRef(0);
-  const voiceLanguage = useRef<'en' | 'ru'>('en');
-  voiceLanguage.current = transliteration.enabled ? 'ru' : 'en';
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const textToSpeechSession = useRef<TextToSpeechSession | null>(null);
   const [autoAudioEnabled, setAutoAudioEnabled] = useState(false);
@@ -410,14 +354,6 @@ export function ChatScreen({
     displayName: string;
     isError: boolean;
   } | null>(null);
-  const composerInput = transliteration.field;
-  const chatArea = useRef<HTMLElement | null>(null);
-  const composerResize = useRef<{
-    pointerId: number;
-    startHeight: number;
-    startY: number;
-  } | null>(null);
-  const [composerHeight, setComposerHeight] = useState<number | null>(null);
   const followingLatest = useRef(true);
   const snapshot = state.sessionSnapshot;
   const generation = snapshot?.generation;
@@ -437,19 +373,18 @@ export function ChatScreen({
   const connected = state.streamStatus === 'connected' && snapshot !== null && !ended;
   const generationActive = generation?.active === true;
   const sessionAvailable = snapshot !== null && !ended;
-  const voiceInputAvailable = voiceConfiguration !== null
-    && VoiceInputSession.supported(voiceConfiguration.provider);
+  // A new object tells PromptInput the vault changed without remounting the field.
+  const voiceClient = useMemo<ChaClient>(
+    () => ({ ...client }),
+    [client, state.bootstrap?.vault_name],
+  );
   const textToSpeechConfiguration = useTextToSpeechConfiguration(client, state.bootstrap?.vault_name);
   const downloads = useAudioDownloads(client, snapshot?.forum.id, snapshot?.session_id,
     state.bootstrap?.vault_name, state.audioCacheClearCount);
   const speechSelection = useRef<number | null>(null);
   const speechAttempt = useRef(0);
-  const voiceInputActive = voiceInputState !== 'idle';
-  const canSend = connected
-    && !actionPending
-    && voiceInputState !== 'starting'
-    && voiceInputState !== 'finishing'
-    && (draft.trim().length > 0 || voiceInputState === 'recording');
+  const submitEnabled = connected && pendingAction === null && !stopPending;
+  const microphoneEnabled = pendingAction === null && !stopPending;
   const appearances = useMemo(
     () => new Map((snapshot?.characters ?? []).map(({ id, appearance }) => [id, appearance])),
     [snapshot?.characters],
@@ -482,44 +417,16 @@ export function ChatScreen({
     : null;
 
   useEffect(() => {
-    let current = true;
-    void client.getVoiceInputRuntime().then(
-      (configuration) => {
-        if (!current) return;
-        setVoiceConfiguration(configuration ? {
-          provider: configuration.provider,
-          model: configuration.model,
-          delay: configuration.delay,
-          prompt: configuration.prompt,
-        } : null);
-      },
-      () => { if (current) setVoiceConfiguration(null); },
-    );
-    return () => { current = false; };
-  }, [client, state.bootstrap?.vault_name]);
-
-  // A different conversation starts with a fresh composer at its own end.
-  useEffect(() => {
     composerEpoch.current += 1;
     followingLatest.current = true;
-    setSendPending(false); setStopPending(false); setPendingAction(null); setActionError(null);
-    sending.current = false; stopping.current = false;
+    setSendPending(false);
+    setStopPending(false);
+    setPendingAction(null);
+    setActionError(null);
+    stopping.current = false;
     setTurnToDelete(null);
-    setVoiceSendPending(false);
-    updateDraft('');
     return () => { composerEpoch.current += 1; };
   }, [conversationKey]);
-
-  // A recording belongs to the conversation in which it started.
-  useEffect(() => () => {
-    voiceInputSession.current?.cancel();
-    voiceInputSession.current = null;
-    voiceInputAttempt.current += 1;
-    voiceInputStartup.current?.abort();
-    voiceInputStartup.current = null;
-    setVoiceSendPending(false);
-    setVoiceInputState('idle');
-  }, [conversationKey, sessionAvailable, state.bootstrap?.vault_name]);
 
   function stopSpeech() {
     speechAttempt.current += 1;
@@ -585,7 +492,7 @@ export function ChatScreen({
     textToSpeechConfiguration, transcriptEntries, cachedAudioIds, audioJobs, downloads.status,
     downloads.unavailable, downloads.submitBatch, speechRequest, canStreamSpeech, state.bootstrap?.vault_name]);
 
-  function toggleAutoAudio() {
+  function toggleAutoAudio(voice: PromptVoiceControls) {
     setActionError(null);
     if (!autoAudioEnabled) {
       // Only replies completed after enabling need automatic audio.
@@ -598,8 +505,8 @@ export function ChatScreen({
       stopSpeech();
     }
     setAutoAudioEnabled(!autoAudioEnabled);
-    if (voiceInputAvailable && voiceInputState !== 'finishing' && voiceInputActive === autoAudioEnabled) {
-      void toggleVoiceInput();
+    if (voice.available && voice.state !== 'finishing' && (voice.state !== 'idle') === autoAudioEnabled) {
+      void voice.toggle();
     }
   }
 
@@ -784,169 +691,13 @@ export function ChatScreen({
   }
   useEffect(followTranscript, [conversationKey, generation?.active, generation?.phase, snapshot?.transcript]);
 
-  function maximumComposerHeight(fallback = Number.POSITIVE_INFINITY) {
-    const chatHeight = chatArea.current?.clientHeight ?? 0;
-    return chatHeight > 0 ? chatHeight * 0.8 : fallback;
-  }
-
-  // A textarea follows its wrapped content until the reader gives it a larger
-  // floor. Both automatic and manual growth stop at 80% of the chat area.
-  function fitComposer() {
-    const input = composerInput.current;
-    if (!input) return;
-    input.style.height = 'auto';
-    const maximum = maximumComposerHeight();
-    input.style.height = `${Math.min(maximum, Math.max(input.scrollHeight, composerHeight ?? 0))}px`;
-    followTranscript();
-  }
-  useLayoutEffect(fitComposer, [composerHeight, draft]);
-
-  // Picture/sidebar resizing and window changes resize the column without a
-  // draft change. fitComposer reads the draft from the element, so only the
-  // manual height renews this observer, not every keystroke.
-  useLayoutEffect(() => {
-    const area = chatArea.current;
-    if (!area || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(fitComposer);
-    observer.observe(area);
-    return () => observer.disconnect();
-  }, [composerHeight]);
-
   // Growing the transcript moves the end away without moving the viewport, so
   // whether the reader is following has to be recorded when they last scrolled
   // rather than measured after new text has already landed.
   function noteReadingPosition(event: UIEvent<HTMLDivElement>) {
     const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
     followingLatest.current = scrollHeight - scrollTop - clientHeight <= followSlack;
-  }
-
-  function resizeComposer(height: number) {
-    const input = composerInput.current;
-    if (!input) return;
-    const maximum = maximumComposerHeight(height);
-    // Once the textarea is taller than its contents, browsers include that
-    // assigned height in scrollHeight. Measure it without the assigned height
-    // so dragging down can reach the real content height again.
-    const assignedHeight = input.style.height;
-    input.style.height = 'auto';
-    const minimum = Math.min(input.scrollHeight, maximum);
-    input.style.height = assignedHeight;
-    setComposerHeight(Math.min(maximum, Math.max(minimum, height)));
-  }
-
-  function startComposerResize(event: PointerEvent<HTMLDivElement>) {
-    const input = composerInput.current;
-    if (!input) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    composerResize.current = {
-      pointerId: event.pointerId,
-      startHeight: input.offsetHeight || input.scrollHeight,
-      startY: event.clientY,
-    };
-  }
-
-  function continueComposerResize(event: PointerEvent<HTMLDivElement>) {
-    const resize = composerResize.current;
-    if (!resize || resize.pointerId !== event.pointerId) return;
-    resizeComposer(resize.startHeight + resize.startY - event.clientY);
-  }
-
-  function finishComposerResize(event: PointerEvent<HTMLDivElement>) {
-    if (composerResize.current?.pointerId !== event.pointerId) return;
-    composerResize.current = null;
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
-  }
-
-  function resizeComposerWithKeyboard(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === 'Home') {
-      event.preventDefault();
-      setComposerHeight(null);
-      return;
-    }
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-    event.preventDefault();
-    const input = composerInput.current;
-    if (!input) return;
-    resizeComposer((input.offsetHeight || input.scrollHeight)
-      + (event.key === 'ArrowUp' ? 24 : -24));
-  }
-
-  async function send(voiceCommand = false) {
-    if (generationActive || !canSend || sending.current || stopping.current) return;
-    const epoch = composerEpoch.current;
-    sending.current = true;
-    const wasRecording = voiceInputSession.current !== null;
-    setVoiceSendPending(false);
-    setSendPending(true);
-    setActionError(null);
-    try {
-      // A spoken command leaves the microphone on for the next prompt.
-      if (!voiceCommand && !await finishVoiceInput()) return;
-      if (composerEpoch.current !== epoch) return;
-      const withoutCommand = voiceCommand || wasRecording
-        ? withoutVoiceSendPhrase(draftRef.current, voiceSendPhrase.current) : null;
-      if (voiceCommand && withoutCommand === null) return;
-      const submitted = withoutCommand ?? draftRef.current;
-      if (withoutCommand !== null) {
-        updateDraft(submitted.trim() ? submitted : '');
-      }
-      if (!submitted.trim()) return;
-      const result = await onSubmitInput(submitted);
-      if (composerEpoch.current !== epoch) return;
-      if (result.clear_input) {
-        // Speech or typing may continue during the send. Clear only its prefix.
-        const current = draftRef.current;
-        updateDraft(current.startsWith(submitted)
-          ? current.slice(submitted.length).replace(/^[ \t]+/, '') : current);
-      } else {
-        setVoiceSendPending(false);
-      }
-    } catch (failure: unknown) {
-      if (composerEpoch.current !== epoch) return;
-      setVoiceSendPending(false);
-      setActionError(actionMessage(failure));
-    } finally {
-      if (composerEpoch.current === epoch) {
-        sending.current = false;
-        setSendPending(false);
-      }
-    }
-  }
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    void send();
-  }
-
-  useEffect(() => {
-    if (!voiceSendPending) return;
-    if (withoutVoiceSendPhrase(draft, voiceSendPhrase.current) === null) {
-      setVoiceSendPending(false);
-      return;
-    }
-    // Wait until generation ends before sending a spoken command.
-    if (!canSend || generationActive) return;
-    const timer = setTimeout(() => void send(true), 1000);
-    return () => clearTimeout(timer);
-  }, [voiceSendPending, draft, canSend, generationActive, sendToAll]);
-
-  // Enter is the quick way to send. Ctrl+Enter inserts a line explicitly: it
-  // is not a consistently native textarea shortcut, so relying on the browser
-  // would make multiline drafts depend on the platform. IME composition has to
-  // finish before Enter can be interpreted as the command.
-  function submitOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
-    if (event.ctrlKey) {
-      event.preventDefault();
-      const { selectionEnd, selectionStart } = event.currentTarget;
-      const current = draftRef.current;
-      updateDraft(`${current.slice(0, selectionStart)}\n${current.slice(selectionEnd)}`);
-      return;
-    }
-    event.preventDefault();
-    if (!canSend || generationActive) return;
-    event.currentTarget.form?.requestSubmit();
+    event.currentTarget.dataset.following = followingLatest.current ? 'true' : 'false';
   }
 
   async function stop() {
@@ -968,7 +719,7 @@ export function ChatScreen({
   }
 
   async function chooseTarget(characterId: string) {
-    if (!characterId || generationActive || actionPending || sending.current || stopping.current) return;
+    if (!characterId || generationActive || actionPending || stopping.current) return;
     if (characterId === state.currentDefaultCharacterId) return;
     setPendingAction('target');
     setActionError(null);
@@ -980,148 +731,6 @@ export function ChatScreen({
       setPendingAction(null);
     }
   }
-
-  async function finishVoiceInput(): Promise<boolean> {
-    const session = voiceInputSession.current;
-    if (!session) return true;
-    setVoiceInputState('finishing');
-    try {
-      await session.stop();
-      if (voiceInputSession.current === session) voiceInputSession.current = null;
-      setVoiceInputState('idle');
-      return true;
-    } catch (failure: unknown) {
-      if (voiceInputSession.current === session) voiceInputSession.current = null;
-      setVoiceInputState('idle');
-      setActionError(voiceInputMessage(failure));
-      return false;
-    }
-  }
-
-  async function toggleVoiceInput() {
-    if (voiceInputState === 'starting') {
-      voiceInputAttempt.current += 1;
-      voiceInputStartup.current?.abort();
-      voiceInputStartup.current = null;
-      setVoiceInputState('idle');
-      return;
-    }
-    if (voiceInputSession.current) {
-      await finishVoiceInput();
-      return;
-    }
-    if (!voiceConfiguration || !voiceInputAvailable || !sessionAvailable) return;
-
-    const attempt = ++voiceInputAttempt.current;
-    const startup = new AbortController();
-    voiceInputStartup.current = startup;
-    let receivedVoiceDelta = false;
-    let voicePreview = '';
-    let openAiTranscript = '';
-    setVoiceSendPending(false);
-    setVoiceInputState('starting');
-    setActionError(null);
-    let runtime: NativeVoiceInputRuntime | null;
-    try {
-      runtime = await client.getVoiceInputRuntime();
-    } catch (failure: unknown) {
-      if (voiceInputAttempt.current !== attempt) return;
-      voiceInputStartup.current = null;
-      setVoiceInputState('idle');
-      setActionError(voiceInputMessage(failure));
-      return;
-    }
-    if (voiceInputAttempt.current !== attempt || startup.signal.aborted) return;
-    if (!runtime) {
-      voiceInputStartup.current = null;
-      setVoiceInputState('idle');
-      setActionError('Voice input is unavailable.');
-      return;
-    }
-    voiceSendPhrase.current = runtime.send_phrase;
-    const configuration: VoiceInputConfiguration = {
-      provider: runtime.provider,
-      model: runtime.model,
-      delay: runtime.delay,
-      prompt: runtime.prompt,
-      languages: [voiceLanguage.current],
-    };
-    let session: VoiceInputTransport | null = null;
-    try {
-      session = await VoiceInputSession.start(
-        configuration,
-        (text, provisional) => {
-          if (voiceInputAttempt.current !== attempt) return;
-          if (configuration.provider === 'openai') {
-            // Native spoken sends keep recording. Consume only new text so
-            // cumulative previews cannot restore an already submitted prompt.
-            if (provisional && !text) return;
-            const transcript = text;
-            text = transcript.startsWith(openAiTranscript)
-              ? transcript.slice(openAiTranscript.length) : '';
-            openAiTranscript = provisional ? transcript : '';
-            provisional = false;
-          }
-          if (provisional) {
-            const current = draftRef.current;
-            const at = voicePreview ? current.lastIndexOf(voicePreview) : -1;
-            const base = at < 0 ? current
-              : current.slice(0, at) + current.slice(at + voicePreview.length);
-            voicePreview = '';
-            if (base !== current || text) {
-              const next = appendPreparedTranscription(base, text);
-              voicePreview = next.slice(base.length);
-              updateDraft(next);
-              if (!text && withoutVoiceSendPhrase(next, voiceSendPhrase.current) !== null) {
-                setVoiceSendPending(true);
-              }
-            }
-            return;
-          }
-          if (!text) return;
-          const current = draftRef.current;
-          updateDraft(receivedVoiceDelta && current ? current + text
-            : configuration.provider === 'xai'
-              ? appendPreparedTranscription(current, text)
-              : appendTranscription(current, text));
-          if (withoutVoiceSendPhrase(draftRef.current, voiceSendPhrase.current) !== null) {
-            setVoiceSendPending(true);
-          }
-          receivedVoiceDelta = true;
-        },
-        (failure) => {
-          if (voiceInputAttempt.current !== attempt) return;
-          voiceInputSession.current = null;
-          setVoiceSendPending(false);
-          setVoiceInputState('idle');
-          setActionError(voiceInputMessage(failure));
-        },
-        client.connectVoiceInput,
-        xaiBridgeFromClient(client),
-        startup.signal,
-      );
-      if (voiceInputAttempt.current !== attempt) {
-        session.cancel();
-        return;
-      }
-      voiceInputSession.current = session;
-      voiceInputStartup.current = null;
-      setVoiceInputState('recording');
-    } catch (failure: unknown) {
-      if (voiceInputAttempt.current !== attempt) return;
-      voiceInputStartup.current = null;
-      setVoiceInputState('idle');
-      setActionError(voiceInputMessage(failure));
-    }
-  }
-
-  const voiceInputLabel = voiceInputState === 'idle'
-    ? 'Start voice input'
-    : voiceInputState === 'recording'
-      ? 'Stop voice input'
-      : voiceInputState === 'starting'
-        ? 'Cancel voice input setup'
-        : 'Finishing transcription';
 
   // While the stream is down its own narration is the more useful message, so
   // the ended notice speaks only for a session whose end arrived intact.
@@ -1138,7 +747,7 @@ export function ChatScreen({
 
   return (
     <ChatPictureLayout client={client} dispatch={dispatch} state={state}>
-    <section className="cha-chat-column" aria-label="Chat area" ref={chatArea}>
+    <section className="cha-chat-column" aria-label="Chat area">
       <div
         aria-label="Conversation transcript"
         className="cha-transcript"
@@ -1256,122 +865,86 @@ export function ChatScreen({
       {actionError && (
         <p className="cha-chat-action-error cha-error-message" role="alert">{actionError}</p>
       )}
-      <div className="cha-composer-area">
-        <div
-          aria-label="Resize message editor"
-          aria-orientation="horizontal"
-          className="cha-composer-resize"
-          onDoubleClick={() => setComposerHeight(null)}
-          onKeyDown={resizeComposerWithKeyboard}
-          onPointerCancel={finishComposerResize}
-          onPointerDown={startComposerResize}
-          onPointerMove={continueComposerResize}
-          onPointerUp={finishComposerResize}
-          role="separator"
-          tabIndex={0}
-          title="Drag to resize; double-click to reset"
-        />
-        <form className="cha-composer" onSubmit={submit}>
-          <textarea
-            aria-label="Message"
-            autoComplete="off"
-            disabled={!sessionAvailable}
-            onChange={(event) => {
-              const next = transliteration.convert(event, draft);
-              updateDraft(next);
-            }}
-            onKeyDown={submitOnEnter}
-            placeholder={sendToAll
-              ? 'Message all characters'
-              : recordingTarget
-              ? 'Self-notes — saved, not sent'
-              : `Message ${character?.display_name ?? 'character'}`}
-            ref={composerInput}
-            rows={1}
-            value={draft}
-          />
-          <div className="cha-composer-controls">
-            <label className="cha-target-select" title="Choose message target">
-              <TargetIcon />
-              <select
-                aria-label="Choose message target"
-                disabled={!connected || generationActive || actionPending}
-                onChange={(event) => void chooseTarget(event.target.value)}
-                value={state.currentDefaultCharacterId ?? ''}
-              >
-                <option value={allCharactersTarget}>All characters</option>
-                <option value="-">Self-notes</option>
-                {snapshot?.characters.map((member) => (
-                  <option key={member.id} value={member.id}>{member.display_name}</option>
-                ))}
-              </select>
-            </label>
-            <div className="cha-composer-actions">
-              {voiceInputAvailable && (
-                <button
-                  aria-label={voiceInputLabel}
-                  aria-pressed={voiceInputActive}
-                  className={`cha-composer-action cha-voice-input${voiceInputState === 'starting' ? ' is-starting' : voiceInputActive ? ' is-active' : ''}`}
-                  disabled={!sessionAvailable
-                    || actionPending
-                    || voiceInputState === 'finishing'}
-                  onClick={() => void toggleVoiceInput()}
-                  title={voiceInputLabel}
-                  type="button"
-                >
-                  <MicrophoneIcon />
-                </button>
-              )}
-              <button
-                aria-label={generationActive ? 'Stop generation' : 'Send message'}
-                className={`cha-composer-action ${generationActive ? 'cha-stop' : 'cha-send'}`}
-                disabled={generationActive
-                  ? stopPending || pendingAction !== null || !sessionAvailable
-                  : !canSend}
-                onClick={generationActive ? () => void stop() : undefined}
-                type={generationActive ? 'button' : 'submit'}
-              >
-                {generationActive ? <StopIcon /> : <SendIcon />}
-              </button>
-            </div>
-          </div>
-        </form>
-        <div className="cha-chat-status" aria-label="Current chat context">
-          <SidebarToggle className="cha-sidebar-toggle" dispatch={dispatch} sidebarOpen={state.sidebarOpen} />
-          <span>{forum?.display_name ?? 'Unknown forum'}</span>
-          <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
-          <span>To: {sendToAll
-            ? 'All characters'
-            : recordingTarget
-              ? 'Self-notes'
-              : (character?.display_name ?? 'Unknown character')}</span>
-          {textToSpeechConfiguration && (
-            <button
-              aria-label="Auto audio response"
-              aria-pressed={autoAudioEnabled}
-              className="cha-speech-cache-toggle"
-              disabled={!sessionAvailable || downloads.unavailable !== null}
-              onClick={toggleAutoAudio}
-              title={downloads.unavailable ?? "Auto audio response"}
-              type="button"
+      <PromptInput
+        client={voiceClient}
+        enabled={sessionAvailable}
+        formControls={(
+          <label className="cha-target-select" title="Choose message target">
+            <TargetIcon />
+            <select
+              aria-label="Choose message target"
+              disabled={!connected || generationActive || actionPending}
+              onChange={(event) => void chooseTarget(event.target.value)}
+              value={state.currentDefaultCharacterId ?? ''}
             >
-              <SpeakerIcon />
-            </button>
-          )}
-          <TransliterationToggle
-            disabled={!sessionAvailable}
-            transliteration={transliteration}
-          />
+              <option value={allCharactersTarget}>All characters</option>
+              <option value="-">Self-notes</option>
+              {snapshot?.characters.map((member) => (
+                <option key={member.id} value={member.id}>{member.display_name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        inputLabel="Message"
+        microphoneEnabled={microphoneEnabled}
+        onChange={onDraftChange}
+        onError={setActionError}
+        onSubmit={onSubmitInput}
+        onSubmittingChange={setSendPending}
+        placeholder={sendToAll
+          ? 'Message all characters'
+          : recordingTarget
+            ? 'Self-notes — saved, not sent'
+            : `Message ${character?.display_name ?? 'character'}`}
+        statusRow={({ transliteration, voice }) => (
+          <div className="cha-chat-status" aria-label="Current chat context">
+            <SidebarToggle className="cha-sidebar-toggle" dispatch={dispatch} sidebarOpen={state.sidebarOpen} />
+            <span>{forum?.display_name ?? 'Unknown forum'}</span>
+            <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
+            <span>To: {sendToAll
+              ? 'All characters'
+              : recordingTarget
+                ? 'Self-notes'
+                : (character?.display_name ?? 'Unknown character')}</span>
+            {textToSpeechConfiguration && (
+              <button
+                aria-label="Auto audio response"
+                aria-pressed={autoAudioEnabled}
+                className="cha-speech-cache-toggle"
+                disabled={!sessionAvailable || downloads.unavailable !== null}
+                onClick={() => toggleAutoAudio(voice)}
+                title={downloads.unavailable ?? "Auto audio response"}
+                type="button"
+              >
+                <SpeakerIcon />
+              </button>
+            )}
+            {transliteration}
+            <button
+              aria-expanded={state.pictureOpen}
+              aria-label={state.pictureOpen ? 'Hide picture' : 'Show picture'}
+              className="cha-sidebar-toggle"
+              onClick={() => dispatch({ type: 'toggle-picture' })}
+              title={state.pictureOpen ? 'Hide picture' : 'Show picture'}
+              type="button"
+            ><PictureIcon /></button>
+          </div>
+        )}
+        stopAction={generationActive ? (
           <button
-            aria-expanded={state.pictureOpen}
-            aria-label={state.pictureOpen ? 'Hide picture' : 'Show picture'}
-            className="cha-sidebar-toggle"
-            onClick={() => dispatch({ type: 'toggle-picture' })}
-            title={state.pictureOpen ? 'Hide picture' : 'Show picture'}
+            aria-label="Stop generation"
+            className="cha-composer-action cha-stop"
+            disabled={stopPending || pendingAction !== null || !sessionAvailable}
+            onClick={() => void stop()}
             type="button"
-          ><PictureIcon /></button>
-        </div>
-      </div>
+          >
+            <StopIcon />
+          </button>
+        ) : undefined}
+        submitEnabled={submitEnabled}
+        submitLabel="Send message"
+        value={draft}
+      />
       {turnToDelete && (
         <ConfirmDialog
           confirmLabel={turnToDelete.isError ? 'Delete error report' : 'Delete response'}

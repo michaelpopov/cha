@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChaError, type AudioDownloadAcceptance, type AudioDownloadBatchAcceptance, type AudioDownloadBatchRequest, type ChaClient, type MediaResource, type SessionSnapshot } from '../api/client';
+import type { NativeBridge } from '../api/nativeBridge';
 import type { SessionEventHandlers } from '../api/events';
 import { initialAppState } from '../state/view';
 import {
@@ -2517,6 +2519,8 @@ describe('live chat', () => {
       <ChatScreen
         client={client}
         dispatch={vi.fn()}
+        draft=""
+        onDraftChange={() => {}}
         onCoverConversation={vi.fn()}
         onDeleteTurn={vi.fn()}
         onRetryStream={vi.fn()}
@@ -2647,42 +2651,49 @@ describe('live chat', () => {
     expect(input).toHaveValue('Second message');
   });
 
-  it('resets the draft on a conversation change even when the chat stays mounted', async () => {
+  it('keeps the parent draft when the snapshot session changes without remounting', async () => {
     const user = userEvent.setup();
-    const props = {
-      client: fixtureClient(),
-      playbackPositions: new Map<string, Map<number, number>>(),
-      dispatch: vi.fn(),
-      onCoverConversation: vi.fn(),
-      onDeleteTurn: vi.fn(),
-      onRetryStream: vi.fn(),
-      onReturnToStart: vi.fn(),
-      onSetDefaultCharacter: vi.fn(),
-      onStopGeneration: vi.fn(),
-      onSubmitInput: vi.fn(async () => ({ clear_input: true })),
-      onUncoverConversation: vi.fn(),
-    };
-    const chat = (snapshot: SessionSnapshot) => <ChatScreen {...props} state={{
-      ...initialAppState,
-      bootstrap: bootstrapFixture,
-      sessionSnapshot: snapshot,
-      streamStatus: 'connected',
-      currentDefaultCharacterId: snapshot.default_character_id,
-    }} />;
-    const { rerender } = render(chat(snapshotFixture));
+    const onSubmitInput = vi.fn(async () => ({ clear_input: true }));
+    const client = fixtureClient();
+    function StayMounted({ snapshot }: { snapshot: SessionSnapshot }) {
+      const [draft, setDraft] = useState('');
+      return (
+        <ChatScreen
+          client={client}
+          dispatch={vi.fn()}
+          draft={draft}
+          onDraftChange={setDraft}
+          onCoverConversation={vi.fn()}
+          onDeleteTurn={vi.fn()}
+          onRetryStream={vi.fn()}
+          onReturnToStart={vi.fn()}
+          onSetDefaultCharacter={vi.fn()}
+          onStopGeneration={vi.fn()}
+          onSubmitInput={onSubmitInput}
+          onUncoverConversation={vi.fn()}
+          playbackPositions={new Map()}
+          state={{
+            ...initialAppState,
+            bootstrap: bootstrapFixture,
+            sessionSnapshot: snapshot,
+            streamStatus: 'connected',
+            currentDefaultCharacterId: snapshot.default_character_id,
+          }}
+        />
+      );
+    }
+    const { rerender } = render(<StayMounted snapshot={snapshotFixture} />);
     const input = screen.getByRole('textbox', { name: 'Message' });
     await user.type(input, 'Only for Welcome');
 
-    rerender(chat({ ...snapshotFixture, session_label: 'Renamed' }));
+    rerender(<StayMounted snapshot={{ ...snapshotFixture, session_label: 'Renamed' }} />);
     expect(input).toHaveValue('Only for Welcome');
 
-    rerender(chat({ ...snapshotFixture, session_id: 'another-session' }));
+    rerender(<StayMounted snapshot={{ ...snapshotFixture, session_id: 'another-session' }} />);
     expect(screen.getByRole('textbox', { name: 'Message' })).toBe(input);
-    expect(input).toHaveValue('');
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
-    await user.type(input, 'New message');
+    expect(input).toHaveValue('Only for Welcome');
     await user.click(screen.getByRole('button', { name: 'Send message' }));
-    expect(props.onSubmitInput).toHaveBeenCalledExactlyOnceWith('New message');
+    expect(onSubmitInput).toHaveBeenCalledExactlyOnceWith('Only for Welcome');
   });
 
   it('opens a new conversation with an empty composer', async () => {
@@ -2711,6 +2722,14 @@ describe('live chat', () => {
     const input = await screen.findByRole('textbox', { name: 'Message' });
     await waitFor(() => expect(input).toBeEnabled());
     expect(input).toHaveValue('');
+
+    await user.click(recent.getByRole('button', { name: /Welcome/ }));
+    await waitFor(() => expect(events.connections.at(-1)?.key).toBe('entrance/welcome'));
+    const welcome = events.handlers.at(-1);
+    act(() => welcome?.onSnapshot(snapshotFixture));
+    const welcomeInput = await screen.findByRole('textbox', { name: 'Message' });
+    await waitFor(() => expect(welcomeInput).toBeEnabled());
+    expect(welcomeInput).toHaveValue('');
   });
 
   // The server holds a mutation until its command deadline, so a request left
@@ -3299,11 +3318,12 @@ describe('pending recipient detection', () => {
     await user.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
     await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /Welcome/ }));
     const input = await screen.findByRole('textbox', { name: 'Message' });
+    expect(input).toHaveValue('Original');
     await user.type(input, 'New draft');
     await act(async () => { rejectSend(new ChaError('invalid_argument', 'Recipient was removed.')); });
     expect(screen.getByRole('alert')).toHaveTextContent('Message to');
     expect(screen.getByRole('alert')).toHaveTextContent('Recipient was removed.');
-    expect(input).toHaveValue('New draft');
+    expect(input).toHaveValue('OriginalNew draft');
   });
 
   it('does not submit after voice finalization if the composer was left', async () => {
@@ -3611,6 +3631,7 @@ it('clears a picture immediately on a vault change and ignores the old vault res
   const client = fixtureClient({ getCharacterPicture });
   const chat = (vaultName: string) => <ChatScreen
     client={client} dispatch={vi.fn()} playbackPositions={new Map()}
+    draft="" onDraftChange={() => {}}
     onCoverConversation={vi.fn()} onDeleteTurn={vi.fn()} onRetryStream={vi.fn()}
     onReturnToStart={vi.fn()} onSetDefaultCharacter={vi.fn()} onStopGeneration={vi.fn()}
     onSubmitInput={vi.fn()} onUncoverConversation={vi.fn()}
@@ -3624,4 +3645,207 @@ it('clears a picture immediately on a vault change and ignores the old vault res
   await act(async () => resolveOld({ ...portrait, content_base64: 'old-vault' }));
   expect(screen.getByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,new-vault');
   expect(getCharacterPicture).toHaveBeenCalledTimes(2);
+});
+
+const planningSnapshot: SessionSnapshot = {
+  ...snapshotFixture,
+  forum: bootstrapFixture.forums[1],
+  session_id: 'planning',
+  session_label: 'Planning',
+  characters: [bootstrapFixture.characters[1]],
+  default_character_id: 'guide',
+};
+
+function contextChangeSource() {
+  let notify: ((payload: { causing_request_id?: number; state?: string }) => void) | null = null;
+  const contextEvents: Pick<NativeBridge, 'on'> = {
+    on(_event, handler) {
+      notify = handler as typeof notify;
+      return () => {
+        if (notify === handler) notify = null;
+      };
+    },
+  };
+  return {
+    contextEvents,
+    emit() {
+      notify?.({ causing_request_id: 1, state: 'running' });
+    },
+  };
+}
+
+describe('prompt draft ownership', () => {
+  it('keeps a chat draft across the settings panel and restores the same conversation', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Still here');
+    await user.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
+    await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /Welcome/ }));
+    const input = await screen.findByRole('textbox', { name: 'Message' });
+    expect(input).toHaveValue('Still here');
+  });
+
+  it('keeps the chat draft when a different conversation fails to open', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      openSession: async (forumId, sessionId) => {
+        if (sessionId === 'planning') throw new ChaError('invalid_argument', 'That session is missing.');
+        return { forum_id: forumId, session_id: sessionId };
+      },
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Keep this');
+    await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Planning/ }));
+    expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('That session is missing.')).toBeInTheDocument();
+
+    await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /Welcome/ }));
+    const input = await screen.findByRole('textbox', { name: 'Message' });
+    await waitFor(() => expect(input).toBeEnabled());
+    expect(input).toHaveValue('Keep this');
+  });
+
+  it('keeps a chat draft through maintenance and shows it again in the same conversation', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const maintenance = contextChangeSource();
+    render(<App
+      client={fixtureClient({
+        getSessionSnapshot: async (forumId) => forumId === 'lobby' ? planningSnapshot : snapshotFixture,
+      })}
+      connectSessionEvents={events.connect}
+      contextEvents={maintenance.contextEvents}
+    />);
+    await attachInitial(events);
+    await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Planning/ }));
+    await waitFor(() => expect(events.connections.at(-1)?.key).toBe('lobby/planning'));
+    act(() => events.handlers.at(-1)?.onSnapshot(planningSnapshot));
+    const planningInput = await screen.findByRole('textbox', { name: 'Message' });
+    await waitFor(() => expect(planningInput).toBeEnabled());
+    await user.type(planningInput, 'Plan text');
+
+    act(() => maintenance.emit());
+    await waitFor(() => expect(events.connections.at(-1)?.key).toBe('entrance/welcome'));
+    act(() => events.handlers.at(-1)?.onSnapshot(snapshotFixture));
+    const welcomeInput = await screen.findByRole('textbox', { name: 'Message' });
+    await waitFor(() => expect(welcomeInput).toBeEnabled());
+    expect(welcomeInput).toHaveValue('');
+
+    await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Planning/ }));
+    await waitFor(() => expect(events.connections.at(-1)?.key).toBe('lobby/planning'));
+    act(() => events.handlers.at(-1)?.onSnapshot(planningSnapshot));
+    const restored = await screen.findByRole('textbox', { name: 'Message' });
+    await waitFor(() => expect(restored).toBeEnabled());
+    expect(restored).toHaveValue('Plan text');
+  });
+
+  it('clears both drafts only after a vault switch succeeds', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const switchVault = vi.fn(async () => undefined);
+    render(<App
+      client={fixtureClient({ switchVault })}
+      connectSessionEvents={events.connect}
+      contextEvents={contextChangeSource().contextEvents}
+    />);
+    await attachInitial(events);
+    await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Personal draft');
+    await user.selectOptions(screen.getByLabelText('Vault'), 'Projects');
+    await waitFor(() => expect(switchVault).toHaveBeenCalledWith('Projects', undefined));
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+  });
+
+  it('keeps the draft when a vault switch fails or the password dialog is canceled', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    let requirePassword = false;
+    const switchVault = vi.fn(async () => {
+      if (requirePassword) throw new ChaError('vault_password_required', 'Password required.');
+      throw new ChaError('invalid_argument', 'The vault could not be switched.');
+    });
+    render(<App
+      client={fixtureClient({ switchVault })}
+      connectSessionEvents={events.connect}
+    />);
+    await attachInitial(events);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    await user.type(input, 'Personal draft');
+    await user.selectOptions(screen.getByLabelText('Vault'), 'Projects');
+    await waitFor(() => expect(switchVault).toHaveBeenCalledOnce());
+    expect(input).toHaveValue('Personal draft');
+
+    requirePassword = true;
+    await user.selectOptions(screen.getByLabelText('Vault'), 'Projects');
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(switchVault).toHaveBeenCalledTimes(2);
+    expect(input).toHaveValue('Personal draft');
+  });
+});
+
+describe('spoken send while the session closes', () => {
+  it('cancels recording and does not send the phrase when availability returns', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let appendVoice: (text: string, provisional?: boolean) => void = () => {};
+    const cancel = vi.fn();
+    vi.spyOn(VoiceInputSession, 'start').mockImplementation(async (_configuration, onTranscription) => {
+      appendVoice = onTranscription;
+      return { stop: vi.fn(async () => {}), cancel };
+    });
+    const onSubmitInput = vi.fn(async () => ({ clear_input: true }));
+    const client = fixtureClient({
+      getVoiceInputRuntime: async () => ({
+        provider: 'openai' as const,
+        url: 'https://api.openai.com/v1/realtime/calls',
+        model: 'gpt-live-transcribe',
+        delay: 'low' as const,
+        prompt: '',
+        send_phrase: 'over to you',
+      }),
+    });
+    function Harness({ lifecycle }: { lifecycle: 'running' | 'stopping' }) {
+      const [draft, setDraft] = useState('');
+      return (
+        <ChatScreen
+          client={client}
+          dispatch={vi.fn()}
+          draft={draft}
+          onDraftChange={setDraft}
+          onCoverConversation={vi.fn()}
+          onDeleteTurn={vi.fn()}
+          onRetryStream={vi.fn()}
+          onReturnToStart={vi.fn()}
+          onSetDefaultCharacter={vi.fn()}
+          onStopGeneration={vi.fn()}
+          onSubmitInput={onSubmitInput}
+          onUncoverConversation={vi.fn()}
+          playbackPositions={new Map()}
+          state={{
+            ...initialAppState,
+            bootstrap: bootstrapFixture,
+            sessionSnapshot: { ...snapshotFixture, lifecycle },
+            streamStatus: 'connected',
+            currentDefaultCharacterId: snapshotFixture.default_character_id,
+          }}
+        />
+      );
+    }
+    const { rerender } = render(<Harness lifecycle="running" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    act(() => appendVoice('Question over to you'));
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Question over to you');
+
+    rerender(<Harness lifecycle="stopping" />);
+    expect(cancel).toHaveBeenCalled();
+    act(() => appendVoice(' late'));
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Question over to you');
+
+    rerender(<Harness lifecycle="running" />);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1200)); });
+    expect(onSubmitInput).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Question over to you');
+  });
 });

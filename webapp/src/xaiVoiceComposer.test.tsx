@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChaClient } from './api/client';
@@ -124,12 +125,23 @@ function renderChat(
     streamStatus: 'connected' as const,
     currentDefaultCharacterId: snapshotFixture.default_character_id,
   });
-  const view = render(<ChatScreen {...props} state={state(vaultName)} />);
+  function Harness({ vaultName: name }: { vaultName: string }) {
+    const [draft, setDraft] = useState('');
+    return (
+      <ChatScreen
+        {...props}
+        draft={draft}
+        onDraftChange={setDraft}
+        state={state(name)}
+      />
+    );
+  }
+  const view = render(<Harness vaultName={vaultName} />);
   return {
     ...view,
     props,
     rerenderVault(name: string) {
-      view.rerender(<ChatScreen {...props} state={state(name)} />);
+      view.rerender(<Harness vaultName={name} />);
     },
   };
 }
