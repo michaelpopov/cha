@@ -44,6 +44,22 @@ export function appHref(
   return `${location.pathname}${location.search}#${path}`;
 }
 
+let rememberedUrl: string | undefined;
+
+export function rememberedAppUrl(): string {
+  rememberedUrl ??= window.location.href;
+  return rememberedUrl;
+}
+
+export function rememberAppUrl(href: string = window.location.href): void {
+  rememberedUrl = href;
+}
+
+export function restoreAppUrl(previousUrl: string): void {
+  window.history.replaceState(null, '', previousUrl);
+  rememberedUrl = window.location.href;
+}
+
 export function writeAppRoute(
   path: string,
   mode: 'push' | 'replace' = 'push',
@@ -52,6 +68,7 @@ export function writeAppRoute(
   const href = appHref(path, location);
   if (mode === 'replace') window.history.replaceState(null, '', href);
   else window.history.pushState(null, '', href);
+  rememberedUrl = window.location.href;
 }
 
 // Hash hrefs are same-document. Native post-maintenance reload must replace

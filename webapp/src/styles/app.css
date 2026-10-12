@@ -1,3 +1,5 @@
+@import '../notes/editor.css';
+
 :root {
   color-scheme: light dark;
   --background: light-dark(rgb(255 255 255), rgb(24 24 24));

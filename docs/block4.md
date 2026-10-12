@@ -209,3 +209,5 @@ Apply the split's [execution rules](notes-split.md#execution-rules), including
 its operator checkpoint, Windows mode, and end-of-block rules, and its
 [handoff contents](notes-split.md#handoff-between-blocks). Apply the scope
 rules in plan section 1 and the KISS rules in the repository instructions.
+
+COMPLETED

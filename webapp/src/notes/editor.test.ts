@@ -1,6 +1,7 @@
 import type { JSONContent } from '@tiptap/core';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import { redoDepth, undoDepth } from '@tiptap/pm/history';
+import { Fragment, Slice } from '@tiptap/pm/model';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { afterEach, describe, expect, it } from 'vitest';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
@@ -82,6 +83,35 @@ function selectBetween(
 
 function insertText(created: Editor, text: string): void {
   created.view.dispatch(created.state.tr.insertText(text));
+}
+
+function pasteSlice(created: Editor, slice: Slice): boolean {
+  const event = new Event('paste') as ClipboardEvent;
+  let handled = false;
+  created.view.someProp('handlePaste', (fn) => {
+    handled = !!fn(created.view, event, slice);
+    return handled;
+  });
+  return handled;
+}
+
+function dropSlice(
+  created: Editor,
+  slice: Slice,
+  transfer: { files?: { length: number }; types?: string[] },
+): boolean {
+  const event = { dataTransfer: transfer } as unknown as DragEvent;
+  let handled = false;
+  created.view.someProp('handleDrop', (fn) => {
+    handled = !!fn(created.view, event, slice, false);
+    return handled;
+  });
+  return handled;
+}
+
+function imageSlice(created: Editor): Slice {
+  const image = created.schema.nodes.image.create({ src: 'data:image/png;base64,aa' });
+  return new Slice(Fragment.from(image), 0, 0);
 }
 
 describe('note link predicate', () => {
@@ -298,6 +328,51 @@ describe('atomic document acceptance', () => {
     expect(created.getText()).toBe('a');
     created.commands.undo();
     expect(created.getText()).toBe('');
+  });
+
+  it('does not notify a save when opening content', () => {
+    const saves: string[] = [];
+    const created = editor({
+      content: '<p>https://example.com already here</p>',
+      onAcceptedDocument: () => saves.push('save'),
+    });
+    expect(created.getText()).toBe('https://example.com already here');
+    expect(JSON.stringify(created.getJSON())).not.toContain('"type":"link"');
+    expect(saves).toEqual([]);
+  });
+
+  it('rejects a document change while editing is disabled', () => {
+    const saves: string[] = [];
+    const created = editor({
+      content: 'hello',
+      onAcceptedDocument: () => saves.push('save'),
+    });
+    created.setEditable(false, false);
+    const before = created.getJSON();
+    const selection = created.state.selection.toJSON();
+    const depth = undoDepth(created.state);
+    insertText(created, 'x');
+    expect(created.getJSON()).toEqual(before);
+    expect(created.state.selection.toJSON()).toEqual(selection);
+    expect(undoDepth(created.state)).toBe(depth);
+    expect(saves).toEqual([]);
+  });
+
+  it('supports headings, underline, and ordered list start values', () => {
+    const created = editor();
+    created.commands.setContent('<h1>One</h1><h6>Six</h6><p>mark</p><ol start="4"><li><p>item</p></li></ol>');
+    selectText(created, 'mark', 0, 4);
+    expect(created.chain().toggleUnderline().run()).toBe(true);
+    expect(docOf(created)).toEqual([
+      { type: 'heading', level: 1, content: ['One'] },
+      { type: 'heading', level: 6, content: ['Six'] },
+      { type: 'paragraph', content: [{ text: 'mark', marks: ['underline'] }] },
+      {
+        type: 'orderedList',
+        start: 4,
+        content: [{ type: 'listItem', content: [{ type: 'paragraph', content: ['item'] }] }],
+      },
+    ]);
   });
 
   it('blocks editing and save notification when content is invalid', () => {
@@ -802,6 +877,51 @@ describe('find and replace', () => {
     expect(saves).toEqual(['save']);
     created.commands.undo();
     expect(created.getText()).toBe('a a');
+  });
+
+  it('rejects paste and non-file drop content that contains images', () => {
+    const saves: string[] = [];
+    const created = editor({
+      content: '<p>keep</p>',
+      onAcceptedDocument: () => saves.push('save'),
+    });
+    selectText(created, 'keep', 0, 4);
+    const before = created.getJSON();
+    const selection = created.state.selection.toJSON();
+    const depth = undoDepth(created.state);
+    const slice = imageSlice(created);
+    expect(pasteSlice(created, slice)).toBe(true);
+    expect(dropSlice(created, slice, { files: { length: 0 }, types: ['text/html'] })).toBe(true);
+    expect(created.getJSON()).toEqual(before);
+    expect(created.state.selection.toJSON()).toEqual(selection);
+    expect(undoDepth(created.state)).toBe(depth);
+    expect(saves).toEqual([]);
+  });
+
+  it('consumes file drops without insertion', () => {
+    const created = editor({ content: '<p>keep</p>' });
+    const before = created.getJSON();
+    expect(dropSlice(created, imageSlice(created), {
+      files: { length: 1 }, types: ['Files'],
+    })).toBe(true);
+    expect(created.getJSON()).toEqual(before);
+  });
+
+  it('consumes an empty paste slice over selected text without dispatch', () => {
+    const saves: string[] = [];
+    const created = editor({
+      content: '<p>keep this</p>',
+      onAcceptedDocument: () => saves.push('save'),
+    });
+    selectText(created, 'keep this', 0, 9);
+    const before = created.getJSON();
+    const selection = created.state.selection.toJSON();
+    const depth = undoDepth(created.state);
+    expect(pasteSlice(created, Slice.empty)).toBe(true);
+    expect(created.getJSON()).toEqual(before);
+    expect(created.state.selection.toJSON()).toEqual(selection);
+    expect(undoDepth(created.state)).toBe(depth);
+    expect(saves).toEqual([]);
   });
 
   it('serializes a highlighted selection for the clipboard', () => {

@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef, useState, type Dispatch } from 'react';
 
 import { ChaError, publicErrorMessage, type ChaClient } from './api/client';
 import type { SessionEventConnection, SessionEventHandlers } from './api/events';
+import type { LeaveNoteThen } from './notes/useNoteLeave';
 import {
   currentAppRoute,
+  rememberAppUrl,
+  rememberedAppUrl,
   sessionRoute,
   welcomeSessionId,
   writeAppRoute,
@@ -88,6 +91,8 @@ const inPlaceActions = new Set<AppAction['type']>([
   'api-key-updated',
 ]);
 
+const passthroughLeave: LeaveNoteThen = async (action) => await action();
+
 interface LiveSessionOptions {
   connectSessionEvents?: SessionEventsConnector;
   retryDelays?: readonly number[];
@@ -95,6 +100,7 @@ interface LiveSessionOptions {
   onSessionDiscarded?(): void;
   onWelcomeRefresh?(): void;
   onConversationOpened?(forumId: string, sessionId: string): void;
+  leaveNoteThen?: LeaveNoteThen;
 }
 
 export function useLiveSession(
@@ -108,8 +114,11 @@ export function useLiveSession(
     onSessionDiscarded,
     onWelcomeRefresh,
     onConversationOpened,
+    leaveNoteThen = passthroughLeave,
   }: LiveSessionOptions,
 ) {
+  const leaveRef = useRef(leaveNoteThen);
+  leaveRef.current = leaveNoteThen;
   // The epoch this render was built from. The ref below is what asynchronous
   // work compares against; this is what a render can compare against without
   // reading that ref while rendering.
@@ -253,8 +262,19 @@ export function useLiveSession(
   }, [abandonUnusedSession]);
 
   const navigate = useCallback((action: AppAction) => {
-    if (!inPlaceActions.has(action.type)) beginNavigation();
-    dispatch(action);
+    if (inPlaceActions.has(action.type)) {
+      dispatch(action);
+      return;
+    }
+    if (action.type === 'vault-context-reset') {
+      beginNavigation();
+      dispatch(action);
+      return;
+    }
+    void leaveRef.current(() => {
+      beginNavigation();
+      dispatch(action);
+    });
   }, [beginNavigation, dispatch]);
 
   // Welcome and deletion also discard the last open target.
@@ -501,7 +521,7 @@ export function useLiveSession(
     updateHistory = true,
     refreshRecent = true,
     adoptDraft = true,
-  ) => {
+  ) => leaveRef.current(async () => {
     const target = `${forumId}/${sessionId}`;
     if (adoptDraft && draftAdoption.current && draftAdoption.current !== target) {
       draftAdoption.current = null;
@@ -550,9 +570,9 @@ export function useLiveSession(
       if (pendingTarget.current === pending) pendingTarget.current = null;
       if (draftAdoption.current === target) draftAdoption.current = null;
     }
-  }, [beginNavigation, dispatch, performOpen]);
+  }), [beginNavigation, dispatch, performOpen]);
 
-  const createConversation = useCallback(async (forumId: string) => {
+  const createConversation = useCallback(async (forumId: string) => leaveRef.current(async () => {
     const target = `${forumId}/new`;
     draftAdoption.current = null;
     if (pendingTarget.current?.key === target) return false;
@@ -599,7 +619,7 @@ export function useLiveSession(
     } finally {
       if (pendingTarget.current === pending) pendingTarget.current = null;
     }
-  }, [beginNavigation, client, dispatch, onSessionDiscarded, performOpen]);
+  }), [beginNavigation, client, dispatch, onSessionDiscarded, performOpen]);
 
   const retrySessionOpen = useCallback(() => {
     const target = retryTarget.current;
@@ -679,20 +699,25 @@ export function useLiveSession(
 
   useEffect(() => {
     const visitHistoryRoute = () => {
-      const route = currentAppRoute();
-      if (route.kind === 'root') {
-        const initial = initialConversation.current;
-        if (initial) draftAdoption.current = `${initial.forumId}/${initial.sessionId}`;
-        clearLiveSession();
-        navigate({ type: 'show-initial-conversation' });
-      } else if (route.kind === 'session') {
-        void openConversation(route.forumId, route.sessionId, false);
-      } else {
-        navigate({
-          type: 'session-operation-failed',
-          message: 'This address does not identify a CHA session.',
-        });
-      }
+      const previousUrl = rememberedAppUrl();
+      rememberAppUrl(window.location.href);
+      if (previousUrl === rememberedAppUrl()) return;
+      void leaveRef.current(() => {
+        const route = currentAppRoute();
+        if (route.kind === 'root') {
+          const initial = initialConversation.current;
+          if (initial) draftAdoption.current = `${initial.forumId}/${initial.sessionId}`;
+          clearLiveSession();
+          navigate({ type: 'show-initial-conversation' });
+        } else if (route.kind === 'session') {
+          return openConversation(route.forumId, route.sessionId, false);
+        } else {
+          navigate({
+            type: 'session-operation-failed',
+            message: 'This address does not identify a CHA session.',
+          });
+        }
+      }, { previousUrl });
     };
     window.addEventListener('popstate', visitHistoryRoute);
     window.addEventListener('hashchange', visitHistoryRoute);

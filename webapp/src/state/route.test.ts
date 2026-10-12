@@ -5,6 +5,9 @@ import {
   currentAppRoute,
   parseAppRoute,
   reloadApplication,
+  rememberAppUrl,
+  rememberedAppUrl,
+  restoreAppUrl,
   sessionRoute,
   writeAppRoute,
 } from './route';
@@ -53,6 +56,25 @@ describe('application routes', () => {
     });
     expect(window.location.pathname).toBe('/shell');
     expect(window.location.hash).toBe('#/s/lobby/planning/');
+    expect(rememberedAppUrl()).toBe(window.location.href);
+  });
+
+  it('restores a captured URL without adding a history entry', () => {
+    window.history.replaceState(null, '', '/#/s/lobby/planning/');
+    rememberAppUrl();
+    const previous = rememberedAppUrl();
+    const length = window.history.length;
+    window.history.replaceState(null, '', '/#/');
+    rememberAppUrl();
+    restoreAppUrl(previous);
+    expect(window.location.hash).toBe('#/s/lobby/planning/');
+    expect(rememberedAppUrl()).toBe(previous);
+    expect(window.history.length).toBe(length);
+  });
+
+  it('does not treat a notes path as a route', () => {
+    expect(parseAppRoute('/notes')).toEqual({ kind: 'invalid' });
+    expect(parseAppRoute('/s/lobby/planning/notes/')).toEqual({ kind: 'invalid' });
   });
 
   it('reloads the document', () => {

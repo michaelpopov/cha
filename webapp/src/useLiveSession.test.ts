@@ -4,8 +4,11 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 import type { ChaClient, OpenSessionResult } from './api/client';
 import type { SessionEventHandlers } from './api/events';
+import type { LeaveNoteThen } from './notes/useNoteLeave';
+import { useNoteLeave } from './notes/useNoteLeave';
+import type { NoteSaveHandle } from './notes/useNoteSave';
 import { appReducer, initialAppState } from './state/view';
-import { welcomeSessionId } from './state/route';
+import { rememberAppUrl, rememberedAppUrl, welcomeSessionId, writeAppRoute } from './state/route';
 import { fixtureClient, snapshotFixture } from './test/fixtures';
 import { useLiveSession } from './useLiveSession';
 
@@ -33,7 +36,7 @@ function drivableSessionEvents() {
 // aside and each test drives the ladder through the calls it names.
 function harness(
   overrides: Partial<ChaClient> = {},
-  options: { onWelcomeRefresh?: () => void } = {},
+  options: { onWelcomeRefresh?: () => void; leaveNoteThen?: LeaveNoteThen } = {},
 ) {
   const events = drivableSessionEvents();
   const client = fixtureClient(overrides);
@@ -47,10 +50,40 @@ function harness(
         connectSessionEvents: events.connect,
         refreshBootstrap,
         onWelcomeRefresh: options.onWelcomeRefresh,
+        leaveNoteThen: options.leaveNoteThen,
       }),
     };
   });
   return { events, view, reducer, refreshBootstrap };
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((ok) => {
+    resolve = ok;
+  });
+  return { promise, resolve };
+}
+
+function openSave(overrides: Partial<NoteSaveHandle> = {}): NoteSaveHandle {
+  return {
+    isOpen: true,
+    frozen: false,
+    saveError: null,
+    editSerial: () => 1,
+    savedSerial: () => 0,
+    isSaveDue: () => false,
+    hasUnsaved: () => true,
+    inFlightSerial: () => null,
+    waitInFlight: async () => undefined,
+    freeze: vi.fn(() => false),
+    unfreeze: vi.fn(),
+    retry: vi.fn(),
+    submitNow: vi.fn(),
+    flushRemaining: vi.fn(async () => true),
+    dispose: vi.fn(),
+    ...overrides,
+  };
 }
 
 // Holds openSession open so a test can navigate while the open is in flight.
@@ -388,3 +421,142 @@ it('drops a Welcome snapshot that arrives after the vault context changes', asyn
   act(() => handler.onSnapshot(welcomeGeneration(false)));
   expect(onWelcomeRefresh).not.toHaveBeenCalled();
 });
+
+it('guards session open, including the already-open shortcut, before side effects', async () => {
+  const gate = { current: Promise.resolve() };
+  const leaveNoteThen: LeaveNoteThen = async (action) => {
+    await gate.current;
+    return action();
+  };
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => (
+    { forum_id: forumId, session_id: sessionId }
+  ));
+  const { view } = harness({ openSession }, { leaveNoteThen });
+  const held = deferred();
+  gate.current = held.promise;
+  let opened: Promise<boolean | false> | undefined;
+  act(() => {
+    opened = view.result.current.live.openConversation('entrance', 'welcome');
+  });
+  expect(openSession).not.toHaveBeenCalled();
+  await act(async () => {
+    held.resolve();
+    await opened;
+  });
+  expect(openSession).toHaveBeenCalledOnce();
+
+  const shortcutHold = deferred();
+  gate.current = shortcutHold.promise;
+  let shortcut: Promise<boolean | false> | undefined;
+  act(() => {
+    shortcut = view.result.current.live.openConversation('entrance', 'welcome');
+  });
+  expect(openSession).toHaveBeenCalledOnce();
+  await act(async () => {
+    shortcutHold.resolve();
+    await shortcut;
+  });
+  expect(openSession).toHaveBeenCalledOnce();
+  expect(view.result.current.state.mainView).toBe('chat');
+});
+
+it('guards Settings navigation before changing the screen', async () => {
+  const gate = deferred();
+  const leaveNoteThen: LeaveNoteThen = async (action) => {
+    await gate.promise;
+    return action();
+  };
+  const { view } = harness({}, { leaveNoteThen });
+  act(() => {
+    view.result.current.live.navigate({ type: 'show-settings' });
+  });
+  expect(view.result.current.state.mainView).toBe('chat');
+  await act(async () => {
+    gate.resolve();
+    await Promise.resolve();
+  });
+  expect(view.result.current.state.mainView).toBe('settings');
+});
+
+it('runs one history leave for popstate then hashchange and restores the prior URL on Stay', async () => {
+  const save = openSave({
+    flushRemaining: vi.fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false),
+  });
+  const client = fixtureClient();
+  const events = drivableSessionEvents();
+  const refreshBootstrap = vi.fn(async () => undefined);
+  const view = renderHook(() => {
+    const [state, dispatch] = useReducer(appReducer, initialAppState);
+    const leave = useNoteLeave(() => save);
+    return {
+      state,
+      leave,
+      live: useLiveSession(client, state, dispatch, {
+        connectSessionEvents: events.connect,
+        refreshBootstrap,
+        leaveNoteThen: leave.leaveNoteThen,
+      }),
+    };
+  });
+  await act(async () => {
+    await view.result.current.live.openConversation('lobby', 'planning');
+  });
+  writeAppRoute('/s/lobby/planning/', 'replace');
+  expect(window.location.hash).toBe('#/s/lobby/planning/');
+  vi.mocked(save.flushRemaining).mockClear();
+  const prior = rememberedAppUrl();
+  window.history.replaceState(null, '', '/#/');
+  act(() => {
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  });
+  await waitFor(() => expect(view.result.current.leave.decisionOpen).toBe(true));
+  expect(save.flushRemaining).toHaveBeenCalledOnce();
+  expect(view.result.current.state.mainView).toBe('chat');
+  await act(async () => {
+    view.result.current.leave.stay();
+  });
+  expect(window.location.href).toBe(prior);
+  expect(rememberedAppUrl()).toBe(prior);
+  expect(view.result.current.state.mainView).toBe('chat');
+});
+
+it('keeps the reached URL after a successful paired history leave', async () => {
+  const save = openSave();
+  const client = fixtureClient();
+  const events = drivableSessionEvents();
+  const refreshBootstrap = vi.fn(async () => undefined);
+  const view = renderHook(() => {
+    const [state, dispatch] = useReducer(appReducer, initialAppState);
+    const leave = useNoteLeave(() => save);
+    return {
+      state,
+      leave,
+      live: useLiveSession(client, state, dispatch, {
+        connectSessionEvents: events.connect,
+        refreshBootstrap,
+        leaveNoteThen: leave.leaveNoteThen,
+      }),
+    };
+  });
+  await act(async () => {
+    await view.result.current.live.openConversation('lobby', 'planning');
+  });
+  vi.mocked(save.flushRemaining).mockClear();
+  writeAppRoute('/s/lobby/planning/', 'replace');
+  window.history.replaceState(null, '', '/#/');
+  act(() => {
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(save.flushRemaining).toHaveBeenCalledOnce();
+  expect(view.result.current.state.mainView).toBe('chat');
+  expect(window.location.hash === '#/' || window.location.hash === '').toBe(true);
+  expect(view.result.current.leave.pendingKind).toBeNull();
+});
+

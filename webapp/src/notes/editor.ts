@@ -4,7 +4,7 @@ import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import { closeHistory, isHistoryTransaction } from '@tiptap/pm/history';
 import { GapCursor } from '@tiptap/pm/gapcursor';
-import { type Node as PmNode, type Schema } from '@tiptap/pm/model';
+import { type Node as PmNode, type Schema, type Slice } from '@tiptap/pm/model';
 import {
   AllSelection,
   NodeSelection,
@@ -78,6 +78,17 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
   const editorProps = {
     dispatchTransaction(transaction: Transaction) {
       acceptNotesTransaction(editor, transaction, byteLimit, gate);
+    },
+    handlePaste(_view: EditorView, _event: ClipboardEvent, slice: Slice) {
+      if (slice.size === 0) return true;
+      if (fragmentHasImage(slice.content)) return true;
+      return false;
+    },
+    handleDrop(_view: EditorView, event: DragEvent, slice: Slice) {
+      if (dropHasFiles(event)) return true;
+      if (slice.size === 0) return true;
+      if (fragmentHasImage(slice.content)) return true;
+      return false;
     },
   };
   editor = new Editor({
@@ -176,6 +187,7 @@ function acceptNotesTransaction(
     return;
   }
   const changed = transactions.some((item) => item.docChanged) && !prevState.doc.eq(state.doc);
+  if (changed && !editor.isEditable) return;
   if (changed && noteDocumentByteLength(state.doc) > byteLimit) return;
   publishNotesTransaction(editor, transaction, prevState, state, transactions);
   if (
@@ -187,6 +199,24 @@ function acceptNotesTransaction(
     closeTr.setMeta(notesIsolatedCloseMeta, true);
     editor.view.dispatch(closeTr);
   }
+}
+
+function fragmentHasImage(fragment: { descendants: (fn: (node: PmNode) => boolean | void) => void }): boolean {
+  let found = false;
+  fragment.descendants((node) => {
+    if (node.type.name === 'image') {
+      found = true;
+      return false;
+    }
+  });
+  return found;
+}
+
+function dropHasFiles(event: DragEvent): boolean {
+  const transfer = event.dataTransfer;
+  if (!transfer) return false;
+  if (transfer.files && transfer.files.length > 0) return true;
+  return Array.from(transfer.types).includes('Files');
 }
 
 function tagIsolated(transaction: Transaction): void {

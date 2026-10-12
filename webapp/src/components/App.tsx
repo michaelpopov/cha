@@ -27,6 +27,8 @@ import {
   visibleChatDraft,
 } from '../state/promptDrafts';
 import { saveMarkdownDownload } from '../download';
+import { useNoteLeave } from '../notes/useNoteLeave';
+import type { NoteSaveHandle } from '../notes/useNoteSave';
 import { reloadApplication, writeAppRoute } from '../state/route';
 import { useLiveSession, type SessionEventsConnector } from '../useLiveSession';
 import {
@@ -537,6 +539,8 @@ export function App({
   }, [refreshBootstrap]);
 
   const sessionDiscarded = useCallback(() => setCatalogRevision((revision) => revision + 1), []);
+  const noteSaveRef = useRef<NoteSaveHandle | null>(null);
+  const noteLeave = useNoteLeave(() => noteSaveRef.current);
 
   const activeChatKey = state.activeConversation
     ? chatDraftKey(
@@ -574,6 +578,7 @@ export function App({
         chatDraftKey(state.bootstrap?.vault_name, forumId, sessionId),
       ));
     },
+    leaveNoteThen: noteLeave.leaveNoteThen,
   });
 
   useEffect(() => {
@@ -623,25 +628,31 @@ export function App({
   }, [clearVaultContext, client, contextEvents, navigate]);
 
   const returnToStart = useCallback(() => {
-    const bootstrap = state.bootstrap;
-    if (bootstrap) noteDraftAdoption(bootstrap.initial_forum_id, bootstrap.initial_session_id);
-    clearLiveSession();
-    navigate({ type: 'show-initial-conversation' });
-    writeAppRoute('/');
-  }, [clearLiveSession, navigate, noteDraftAdoption, state.bootstrap]);
+    void noteLeave.leaveNoteThen(() => {
+      const bootstrap = state.bootstrap;
+      if (bootstrap) noteDraftAdoption(bootstrap.initial_forum_id, bootstrap.initial_session_id);
+      clearLiveSession();
+      navigate({ type: 'show-initial-conversation' });
+      writeAppRoute('/');
+    });
+  }, [clearLiveSession, navigate, noteDraftAdoption, noteLeave.leaveNoteThen, state.bootstrap]);
 
   const browseSessions = useCallback(() => {
-    clearLiveSession();
-    navigate({ type: 'show-forums' });
-  }, [clearLiveSession, navigate]);
+    void noteLeave.leaveNoteThen(() => {
+      clearLiveSession();
+      navigate({ type: 'show-forums' });
+    });
+  }, [clearLiveSession, navigate, noteLeave.leaveNoteThen]);
 
   const switchVault = useCallback(async (vaultName: string, password?: string) => {
-    await abandonUnusedSession({ refresh: false });
-    await client.switchVault(vaultName, password);
-    setDrafts(clearPromptDrafts());
-    writeAppRoute('/', 'replace');
-    if (!contextEvents) reload();
-  }, [abandonUnusedSession, client, contextEvents, reload]);
+    await noteLeave.leaveNoteThen(async () => {
+      await abandonUnusedSession({ refresh: false });
+      await client.switchVault(vaultName, password);
+      setDrafts(clearPromptDrafts());
+      writeAppRoute('/', 'replace');
+      if (!contextEvents) reload();
+    });
+  }, [abandonUnusedSession, client, contextEvents, noteLeave.leaveNoteThen, reload]);
 
   // Keyed by conversation as well as action: the server gives a mutation up to
   // its command deadline, and a request left behind in one conversation must
