@@ -347,6 +347,20 @@ TEST_F(NoteStorageTest, DamagedAncestryTerminates) {
     EXPECT_EQ(moved.kind, NoteItemKind::note);
 }
 
+TEST_F(NoteStorageTest, DamagedRowUsesTheOperationMessage) {
+    database_->execute("PRAGMA ignore_check_constraints = ON");
+    database_->execute(
+        "INSERT INTO note_items (id, kind, name, content_json) "
+        "VALUES (1, 'file', 'Damaged', NULL)");
+    database_->execute("PRAGMA ignore_check_constraints = OFF");
+    expect_note_error(NoteFailure::opening, "The notes could not be loaded.", [&] {
+        (void)note_list(*database_);
+    });
+    expect_note_error(NoteFailure::saving, "The change could not be saved.", [&] {
+        (void)note_rename(*database_, 1, "Renamed");
+    });
+}
+
 TEST_F(NoteStorageTest, DocumentsAndByteLimit) {
     const auto fixture = load_byte_fixture();
     for (const auto& [name, document] : fixture["samples"].items()) {
@@ -413,8 +427,8 @@ TEST_F(NoteStorageTest, DocumentsAndByteLimit) {
 
     write_content("[]");
     expect_note_error(
-        NoteFailure::invalid,
-        "Note content must be a JSON object.",
+        NoteFailure::opening,
+        "The note could not be opened.",
         [&] { (void)note_get(*database_, note.id); });
 
     write_content(over.dump());

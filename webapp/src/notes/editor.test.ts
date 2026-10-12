@@ -3,12 +3,11 @@ import { GapCursor } from '@tiptap/pm/gapcursor';
 import { redoDepth, undoDepth } from '@tiptap/pm/history';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { afterEach, describe, expect, it } from 'vitest';
+import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 import {
   createNotesEditor,
-  documentUtf8Bytes,
   insertPromptParagraph,
   isAllowedNoteLink,
-  noteByteLimit,
   withIsolatedHistory,
   type NotesEditorOptions,
 } from './editor';
@@ -67,6 +66,20 @@ function selectText(created: Editor, text: string, fromOffset: number, toOffset 
   )));
 }
 
+function selectBetween(
+  created: Editor,
+  fromText: string,
+  fromOffset: number,
+  toText: string,
+  toOffset: number,
+): void {
+  selectText(created, fromText, fromOffset);
+  const from = created.state.selection.from;
+  selectText(created, toText, toOffset);
+  const to = created.state.selection.from;
+  created.view.dispatch(created.state.tr.setSelection(TextSelection.create(created.state.doc, from, to)));
+}
+
 function insertText(created: Editor, text: string): void {
   created.view.dispatch(created.state.tr.insertText(text));
 }
@@ -95,13 +108,13 @@ describe('atomic document acceptance', () => {
     const sample = ' https://example.com ';
     insertText(high, sample);
     expect(saves).toEqual(['high']);
-    const linked = documentUtf8Bytes(high.state.doc);
+    const linked = noteDocumentByteLength(high.state.doc);
     const plain = high.schema.node(
       'doc',
       null,
       high.schema.node('paragraph', null, high.schema.text(sample)),
     );
-    expect(documentUtf8Bytes(plain)).toBeLessThan(linked);
+    expect(noteDocumentByteLength(plain)).toBeLessThan(linked);
     expect(JSON.stringify(high.getJSON())).toContain('https://example.com');
 
     const limited = editor({
@@ -132,7 +145,7 @@ describe('atomic document acceptance', () => {
     high.commands.setContent(content);
     high.view.dispatch(high.state.tr.replaceWith(2, 2, high.schema.text('Z')));
     expect(JSON.stringify(high.getJSON()).split(href).length - 1).toBe(2);
-    const grown = documentUtf8Bytes(high.state.doc);
+    const grown = noteDocumentByteLength(high.state.doc);
 
     const saves: string[] = [];
     const limited = editor({
@@ -152,7 +165,7 @@ describe('atomic document acceptance', () => {
     const created = editor();
     insertText(created, '"\\\u4f60');
     const json = JSON.stringify(created.getJSON());
-    expect(documentUtf8Bytes(created.state.doc)).toBe(new TextEncoder().encode(json).byteLength);
+    expect(noteDocumentByteLength(created.state.doc)).toBe(new TextEncoder().encode(json).byteLength);
     expect(json).toContain('\\"');
     expect(json).toContain('\\\\');
     expect(new TextEncoder().encode('\u4f60')).toHaveLength(3);
@@ -161,59 +174,66 @@ describe('atomic document acceptance', () => {
 
   it('accepts a document at the 12 MiB limit and rejects one more byte', () => {
     const probe = editor();
-    const one = documentUtf8Bytes(probe.schema.node(
+    const one = noteDocumentByteLength(probe.schema.node(
       'doc',
       null,
       probe.schema.node('paragraph', null, probe.schema.text('a')),
     ));
-    const two = documentUtf8Bytes(probe.schema.node(
+    const two = noteDocumentByteLength(probe.schema.node(
       'doc',
       null,
       probe.schema.node('paragraph', null, probe.schema.text('aa')),
     ));
     expect(two - one).toBe(1);
-    const length = noteByteLimit - (one - 1);
+    const length = noteDocumentByteLimit - (one - 1);
     const text = 'a'.repeat(length);
-    expect(documentUtf8Bytes(probe.schema.node(
+    expect(noteDocumentByteLength(probe.schema.node(
       'doc',
       null,
       probe.schema.node('paragraph', null, probe.schema.text(text)),
-    ))).toBe(noteByteLimit);
+    ))).toBe(noteDocumentByteLimit);
 
-    const created = editor({ byteLimit: noteByteLimit });
+    const created = editor({ byteLimit: noteDocumentByteLimit });
     created.commands.setContent({
       type: 'doc',
       content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
     });
-    expect(documentUtf8Bytes(created.state.doc)).toBe(noteByteLimit);
+    expect(noteDocumentByteLength(created.state.doc)).toBe(noteDocumentByteLimit);
     const depth = undoDepth(created.state);
     insertText(created, 'b');
-    expect(documentUtf8Bytes(created.state.doc)).toBe(noteByteLimit);
+    expect(noteDocumentByteLength(created.state.doc)).toBe(noteDocumentByteLimit);
     expect(created.state.doc.textContent).toBe(text);
     expect(undoDepth(created.state)).toBe(depth);
   }, 60_000);
 
-  it('redraws a rejected composition over a dirty contenteditable', () => {
+  it('redraws a rejected browser text change through the DOM observer', async () => {
+    const changeDomText = async (created: Editor) => {
+      const text = created.view.dom.querySelector('p')?.firstChild;
+      expect(text).toBeInstanceOf(Text);
+      (text as Text).data = `hello${'x'.repeat(80)}`;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    const accepted = editor({ content: 'hello' });
+    await changeDomText(accepted);
+    expect(accepted.getText()).toBe(`hello${'x'.repeat(80)}`);
+
     const saves: string[] = [];
     const created = editor({
-      byteLimit: 40,
+      byteLimit: 120,
       content: 'hello',
       onAcceptedDocument: () => saves.push('save'),
     });
-    const dom = created.view.dom;
-    dom.textContent = 'hello COMPOSITION';
     const selection = created.state.selection.toJSON();
     const depth = undoDepth(created.state);
     const redo = redoDepth(created.state);
-    const notified = saves.length;
-    insertText(created, 'x'.repeat(80));
+    await changeDomText(created);
     expect(created.getText()).toBe('hello');
     expect(created.state.selection.toJSON()).toEqual(selection);
     expect(undoDepth(created.state)).toBe(depth);
     expect(redoDepth(created.state)).toBe(redo);
-    expect(saves).toHaveLength(notified);
-    expect(dom.textContent).toContain('hello');
-    expect(dom.textContent).not.toContain('COMPOSITION');
+    expect(saves).toEqual([]);
+    expect(created.view.dom.textContent).toBe('hello');
   });
 
   it('keeps typing grouped and isolates a tagged action', () => {
@@ -320,9 +340,9 @@ describe('atomic document acceptance', () => {
 describe('prompt insertion', () => {
   it('fills an empty paragraph and rejects whitespace', () => {
     const created = editor();
-    expect(created.commands.insertPromptParagraph('  \n\t')).toBe(false);
+    expect(insertPromptParagraph(created, '  \n\t')).toBe(false);
     expect(docOf(created)).toEqual([{ type: 'paragraph' }]);
-    expect(created.commands.insertPromptParagraph('X')).toBe(true);
+    expect(insertPromptParagraph(created, 'X')).toBe(true);
     expect(docOf(created)).toEqual([{ type: 'paragraph', content: ['X'] }]);
   });
 
@@ -330,7 +350,7 @@ describe('prompt insertion', () => {
     const created = editor();
     created.commands.setContent('<p>abcd</p>');
     selectText(created, 'abcd', 2);
-    expect(created.commands.insertPromptParagraph('X\nY')).toBe(true);
+    expect(insertPromptParagraph(created, 'X\nY')).toBe(true);
     expect(docOf(created)).toEqual([
       { type: 'paragraph', content: ['ab'] },
       { type: 'paragraph', content: ['X', { type: 'hardBreak' }, 'Y'] },
@@ -339,7 +359,7 @@ describe('prompt insertion', () => {
 
     created.commands.setContent('<h2>abcd</h2>');
     selectText(created, 'abcd', 2);
-    expect(created.commands.insertPromptParagraph('X')).toBe(true);
+    expect(insertPromptParagraph(created, 'X')).toBe(true);
     expect(docOf(created)).toEqual([
       { type: 'heading', level: 2, content: ['ab'] },
       { type: 'paragraph', content: ['X'] },
@@ -348,7 +368,7 @@ describe('prompt insertion', () => {
 
     created.commands.setContent('<p>abcd</p>');
     selectText(created, 'abcd', 1, 3);
-    expect(created.commands.insertPromptParagraph('X')).toBe(true);
+    expect(insertPromptParagraph(created, 'X')).toBe(true);
     expect(docOf(created)).toEqual([
       { type: 'paragraph', content: ['a'] },
       { type: 'paragraph', content: ['X'] },
@@ -360,14 +380,14 @@ describe('prompt insertion', () => {
     const created = editor();
     created.commands.setContent('<p>abcd</p>');
     selectText(created, 'abcd', 0);
-    created.commands.insertPromptParagraph('X');
+    insertPromptParagraph(created, 'X');
     expect(docOf(created)).toEqual([
       { type: 'paragraph', content: ['X'] },
       { type: 'paragraph', content: ['abcd'] },
     ]);
     created.commands.setContent('<p>abcd</p>');
     selectText(created, 'abcd', 4);
-    created.commands.insertPromptParagraph('X');
+    insertPromptParagraph(created, 'X');
     expect(docOf(created)).toEqual([
       { type: 'paragraph', content: ['abcd'] },
       { type: 'paragraph', content: ['X'] },
@@ -378,7 +398,7 @@ describe('prompt insertion', () => {
     const created = editor();
     created.commands.setContent('<ul><li><p>abcd</p><ul><li><p>nested</p></li></ul></li></ul>');
     selectText(created, 'abcd', 2);
-    created.commands.insertPromptParagraph('X');
+    insertPromptParagraph(created, 'X');
     expect(docOf(created)).toEqual([{
       type: 'bulletList',
       content: [{
@@ -400,7 +420,7 @@ describe('prompt insertion', () => {
     const created = editor();
     created.commands.setContent('<p><strong>abcd</strong></p>');
     selectText(created, 'abcd', 2);
-    created.commands.insertPromptParagraph('X');
+    insertPromptParagraph(created, 'X');
     expect(docOf(created)).toEqual([
       { type: 'paragraph', content: [{ text: 'ab', marks: ['bold'] }] },
       { type: 'paragraph', content: ['X'] },
@@ -420,7 +440,7 @@ describe('prompt insertion', () => {
     });
     const imagePos = created.state.doc.firstChild!.nodeSize;
     created.view.dispatch(created.state.tr.setSelection(NodeSelection.create(created.state.doc, imagePos)));
-    expect(created.commands.insertPromptParagraph('X')).toBe(true);
+    expect(insertPromptParagraph(created, 'X')).toBe(true);
     expect(docOf(created)).toEqual([
       { type: 'paragraph', content: ['keep'] },
       { type: 'paragraph', content: ['X'] },
@@ -438,7 +458,7 @@ describe('prompt insertion', () => {
     const gap = created.state.doc.resolve(gapValid(created.state.doc.resolve(0)) ? 0 : after);
     expect(gapValid(gap)).toBe(true);
     created.view.dispatch(created.state.tr.setSelection(new GapCursor(gap)));
-    expect(created.commands.insertPromptParagraph('Y')).toBe(true);
+    expect(insertPromptParagraph(created, 'Y')).toBe(true);
     const blocks = docOf(created) as { type: string }[];
     expect(blocks.map((block) => block.type).sort()).toEqual(['image', 'paragraph']);
   });
@@ -456,7 +476,7 @@ describe('prompt insertion', () => {
       return false;
     });
     created.view.dispatch(created.state.tr.setSelection(TextSelection.create(created.state.doc, from, to)));
-    created.commands.insertPromptParagraph('X');
+    insertPromptParagraph(created, 'X');
     expect(docOf(created)).toEqual([
       { type: 'paragraph', content: ['ab'] },
       { type: 'paragraph', content: ['X'] },
@@ -474,7 +494,7 @@ describe('prompt insertion', () => {
       return false;
     });
     created.view.dispatch(created.state.tr.setSelection(TextSelection.create(created.state.doc, start, end)));
-    created.commands.insertPromptParagraph('X');
+    insertPromptParagraph(created, 'X');
     expect(docOf(created)).toEqual([{
       type: 'bulletList',
       content: [
@@ -505,7 +525,7 @@ describe('prompt insertion', () => {
       return false;
     });
     created.view.dispatch(created.state.tr.setSelection(TextSelection.create(created.state.doc, start, end)));
-    created.commands.insertPromptParagraph('X');
+    insertPromptParagraph(created, 'X');
     expect(docOf(created)).toEqual([{
       type: 'bulletList',
       content: [
@@ -524,12 +544,76 @@ describe('prompt insertion', () => {
     }]);
   });
 
+  it('replaces the whole note after Select All', () => {
+    const created = editor({ content: '<p>abc</p><ul><li><p>def</p></li></ul>' });
+    const before = docOf(created);
+    created.commands.selectAll();
+    expect(insertPromptParagraph(created, 'X')).toBe(true);
+    expect(docOf(created)).toEqual([{ type: 'paragraph', content: ['X'] }]);
+    expect(created.state.selection.from).toBe(created.state.doc.content.size - 1);
+    created.commands.undo();
+    expect(docOf(created)).toEqual(before);
+  });
+
+  it('keeps the insertion in a nested start item', () => {
+    const nestedItem = {
+      type: 'bulletList',
+      content: [{
+        type: 'listItem',
+        content: [
+          { type: 'paragraph', content: ['b'] },
+          { type: 'paragraph', content: ['X'] },
+        ],
+      }],
+    };
+    const created = editor();
+    created.commands.setContent('<ul><li><p>A</p><ul><li><p>bc</p></li></ul></li></ul><p>de</p>');
+    selectBetween(created, 'bc', 1, 'de', 1);
+    expect(insertPromptParagraph(created, 'X')).toBe(true);
+    expect(docOf(created)).toEqual([
+      {
+        type: 'bulletList',
+        content: [{ type: 'listItem', content: [{ type: 'paragraph', content: ['A'] }, nestedItem] }],
+      },
+      { type: 'paragraph', content: ['e'] },
+    ]);
+
+    created.commands.setContent(
+      '<ul><li><p>A</p><ul><li><p>bc</p></li></ul></li><li><p>de</p></li></ul>',
+    );
+    selectBetween(created, 'bc', 1, 'de', 1);
+    expect(insertPromptParagraph(created, 'X')).toBe(true);
+    expect(docOf(created)).toEqual([{
+      type: 'bulletList',
+      content: [
+        { type: 'listItem', content: [{ type: 'paragraph', content: ['A'] }, nestedItem] },
+        { type: 'listItem', content: [{ type: 'paragraph', content: ['e'] }] },
+      ],
+    }]);
+  });
+
+  it('replaces across two blocks that share one node object', () => {
+    const created = editor({ content: '<p>abcd</p>' });
+    const first = created.state.doc.firstChild!;
+    created.view.dispatch(created.state.tr.insert(created.state.doc.content.size, first));
+    expect(created.state.doc.child(1)).toBe(first);
+    created.view.dispatch(created.state.tr.setSelection(
+      TextSelection.create(created.state.doc, 3, first.nodeSize + 3),
+    ));
+    expect(insertPromptParagraph(created, 'X')).toBe(true);
+    expect(docOf(created)).toEqual([
+      { type: 'paragraph', content: ['ab'] },
+      { type: 'paragraph', content: ['X'] },
+      { type: 'paragraph', content: ['cd'] },
+    ]);
+  });
+
   it('keeps literal text, links the final url, and continues before the old suffix', () => {
     const created = editor();
     created.commands.setContent('<p>abcd</p>');
     selectText(created, 'abcd', 2);
     const original = created.state.selection.toJSON();
-    expect(created.commands.insertPromptParagraph('**bold**\r\nsee https://example.com/a')).toBe(true);
+    expect(insertPromptParagraph(created, '**bold**\r\nsee https://example.com/a')).toBe(true);
     expect(docOf(created)).toEqual([
       { type: 'paragraph', content: ['ab'] },
       {
@@ -543,7 +627,7 @@ describe('prompt insertion', () => {
       },
       { type: 'paragraph', content: ['cd'] },
     ]);
-    expect(created.commands.insertPromptParagraph('Z')).toBe(true);
+    expect(insertPromptParagraph(created, 'Z')).toBe(true);
     expect(docOf(created)).toEqual([
       { type: 'paragraph', content: ['ab'] },
       {
@@ -565,20 +649,19 @@ describe('prompt insertion', () => {
     expect(created.state.selection.toJSON()).toEqual(original);
   });
 
-  it('links http, bare domains, and normalized urls without repairing other schemes', () => {
+  it('links only explicit http and https urls, like typing and paste', () => {
     const created = editor();
-    created.commands.insertPromptParagraph(
-      'http://example.com example.com HTTP://Example.COM/a mailto:user@example.com javascript:alert(1) file:///tmp/a data:text/plain,hi cha://app https://example.com/a.',
+    insertPromptParagraph(
+      created,
+      'http://example.com example.com file.txt HTTP://Example.COM/a mailto:user.name@example.com javascript:alert(1) file:///tmp/a data:text/plain,hi cha://app https://example.com/a.',
     );
     expect(docOf(created)).toEqual([{
       type: 'paragraph',
       content: [
         { text: 'http://example.com', marks: ['link:http://example.com/'] },
-        ' ',
-        { text: 'example.com', marks: ['link:http://example.com/'] },
-        ' ',
+        ' example.com file.txt ',
         { text: 'HTTP://Example.COM/a', marks: ['link:http://example.com/a'] },
-        ' mailto:user@example.com javascript:alert(1) file:///tmp/a data:text/plain,hi cha://app ',
+        ' mailto:user.name@example.com javascript:alert(1) file:///tmp/a data:text/plain,hi cha://app ',
         { text: 'https://example.com/a', marks: ['link:https://example.com/a'] },
         '.',
       ],
@@ -590,7 +673,7 @@ describe('prompt insertion', () => {
     created.commands.setContent('<ol start="3"><li><p>abcd</p></li></ol>');
     selectText(created, 'abcd', 2);
     const selection = created.state.selection.toJSON();
-    created.commands.insertPromptParagraph('X');
+    insertPromptParagraph(created, 'X');
     expect(docOf(created)).toEqual([{
       type: 'orderedList',
       start: 3,
@@ -614,7 +697,7 @@ describe('prompt insertion', () => {
 
   it('rejects an over-limit insertion without clearing the submitted result', () => {
     const created = editor({ byteLimit: 80 });
-    expect(created.commands.insertPromptParagraph('x'.repeat(200))).toBe(false);
+    expect(insertPromptParagraph(created, 'x'.repeat(200))).toBe(false);
     expect(docOf(created)).toEqual([{ type: 'paragraph' }]);
     expect(undoDepth(created.state)).toBe(0);
   });
@@ -624,7 +707,7 @@ describe('prompt insertion', () => {
     insertText(created, 'https://example.com/a');
     expect(JSON.stringify(created.getJSON())).not.toContain('"type":"link"');
     created.commands.setContent('<p></p>');
-    created.commands.insertPromptParagraph('https://example.com/a');
+    insertPromptParagraph(created, 'https://example.com/a');
     expect(docOf(created)).toEqual([{
       type: 'paragraph',
       content: [{ text: 'https://example.com/a', marks: ['link:https://example.com/a'] }],

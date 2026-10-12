@@ -68,6 +68,7 @@ import {
 } from './client';
 import { nativeProtocolVersion, type NativeBridge } from './nativeBridge';
 import { isRecord } from './guards';
+import type { components } from './schema';
 import { validateBootstrap } from '../state/bootstrap';
 
 function isOpenSessionResult(value: unknown): value is OpenSessionResult {
@@ -128,17 +129,8 @@ function isVaultDetail(value: unknown): value is VaultDetail {
     && typeof value.can_delete === 'boolean';
 }
 
-export interface NoteItem {
-  id: number;
-  parent_id: number | null;
-  kind: 'folder' | 'note';
-  name: string;
-}
-
-export interface NoteContent {
-  id: number;
-  document: Record<string, unknown>;
-}
+export type NoteItem = components['schemas']['NoteItem'];
+export type NoteContent = components['schemas']['NoteContent'];
 
 export interface NotesClient {
   listNoteItems: () => Promise<NoteItem[]>;

@@ -1,23 +1,24 @@
-import { Editor, Extension, type CommandProps, type Content } from '@tiptap/core';
+import { Editor, type Content } from '@tiptap/core';
 import FindAndReplace from '@tiptap/extension-find-and-replace';
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import { closeHistory, isHistoryTransaction } from '@tiptap/pm/history';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import { type Node as PmNode, type Schema } from '@tiptap/pm/model';
-import { NodeSelection, TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state';
+import {
+  AllSelection,
+  NodeSelection,
+  TextSelection,
+  type EditorState,
+  type Transaction,
+} from '@tiptap/pm/state';
 import type { EditorProps, EditorView } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
+import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 import './editor.css';
-
-export const noteByteLimit = 12_582_912;
 
 const notesIsolatedMeta = 'notesIsolated';
 const notesIsolatedCloseMeta = 'notesIsolatedClose';
-
-// prosemirror-view bundled with Tiptap 3.30.3. matchesNode ignores live DOM
-// text while dirty is 0, so a rejected composition needs this redraw.
-const nodeDirty = 3;
 
 // Tiptap 3.30.3 types `capturedTransaction` as private. The capture path
 // still reads and writes that runtime field.
@@ -41,18 +42,6 @@ export type NotesEditorOptions = {
   element?: HTMLElement | null;
 };
 
-declare module '@tiptap/core' {
-  interface Commands<ReturnType> {
-    notesPrompt: {
-      insertPromptParagraph: (text: string) => ReturnType;
-    };
-  }
-}
-
-export function documentUtf8Bytes(doc: PmNode): number {
-  return new TextEncoder().encode(JSON.stringify(doc.toJSON())).byteLength;
-}
-
 // Absolute http(s) only. An explicit other scheme is not rewritten.
 export function isAllowedNoteLink(href: string): boolean {
   try {
@@ -61,12 +50,6 @@ export function isAllowedNoteLink(href: string): boolean {
   } catch {
     return false;
   }
-}
-
-function shouldAutoLinkNoteText(value: string): boolean {
-  if (isAllowedNoteLink(value)) return true;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return false;
-  return isAllowedNoteLink(`http://${value}`);
 }
 
 export function withIsolatedHistory(editor: Editor, run: () => boolean): boolean {
@@ -89,7 +72,7 @@ export function withIsolatedHistory(editor: Editor, run: () => boolean): boolean
 }
 
 export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
-  const byteLimit = options.byteLimit ?? noteByteLimit;
+  const byteLimit = options.byteLimit ?? noteDocumentByteLimit;
   const gate: Gate = { blocked: false };
   let editor!: Editor;
   const editorProps = {
@@ -152,28 +135,14 @@ function notesExtensions() {
         protocols: [],
         defaultProtocol: 'http',
         isAllowedUri: (url) => isAllowedNoteLink(url),
-        shouldAutoLink: (url) => shouldAutoLinkNoteText(url),
+        shouldAutoLink: (url) => isAllowedNoteLink(url),
       },
     }),
     Image.configure({ allowBase64: true, inline: false, resize: false }),
     Highlight.configure({ multicolor: false }),
     FindAndReplace.configure({ injectCSS: false, searchDebounceMs: 0 }),
-    NotesPrompt,
   ];
 }
-
-const NotesPrompt = Extension.create({
-  name: 'notesPrompt',
-  addCommands() {
-    return {
-      insertPromptParagraph: (text: string) => ({ editor, tr, dispatch }: CommandProps) => {
-        if (!dispatch) return Boolean(text.replace(/\r\n?/g, '\n').trim());
-        tr.setMeta('preventDispatch', true);
-        return insertPromptParagraph(editor, text);
-      },
-    };
-  },
-});
 
 // Dispatch adapter for Tiptap 3.30.3 Editor.dispatchTransaction.
 // applyTransaction already folded plugin appends (including autolink) into
@@ -207,10 +176,7 @@ function acceptNotesTransaction(
     return;
   }
   const changed = transactions.some((item) => item.docChanged) && !prevState.doc.eq(state.doc);
-  if (changed && documentUtf8Bytes(state.doc) > byteLimit) {
-    reconcileRejectedView(editor.view);
-    return;
-  }
+  if (changed && noteDocumentByteLength(state.doc) > byteLimit) return;
   publishNotesTransaction(editor, transaction, prevState, state, transactions);
   if (
     changed
@@ -271,15 +237,9 @@ function publishNotesTransaction(
   });
 }
 
-function reconcileRejectedView(view: EditorView): void {
-  const docView = (view as EditorView & { docView?: { dirty: number } }).docView;
-  if (!docView) return;
-  docView.dirty = nodeDirty;
-  view.updateState(view.state);
-}
-
 const trailingLinkPunctuation = /[.,;:!?\])]+$/u;
-const linkPattern = /([a-z][a-z0-9+.-]*:)([^\s]*)|((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?:[/?#][^\s]*)?)/giu;
+// Explicit http(s) only, the same links that typing and paste create.
+const linkPattern = /\bhttps?:\/\/[^\s]+/giu;
 
 function buildParagraph(schema: Schema, text: string): PmNode {
   const lines = text.split('\n');
@@ -310,29 +270,21 @@ type LinkRange = { from: number; to: number; href: string };
 function findLinkRanges(line: string): LinkRange[] {
   const ranges: LinkRange[] = [];
   for (const match of line.matchAll(linkPattern)) {
-    const raw = match[0];
     const index = match.index ?? 0;
-    const trimmed = raw.replace(trailingLinkPunctuation, '');
-    if (!trimmed) continue;
-    const explicit = match[1];
-    if (explicit) {
-      const scheme = explicit.slice(0, -1).toLowerCase();
-      if (scheme !== 'http' && scheme !== 'https') continue;
-      if (!isAllowedNoteLink(trimmed)) continue;
-      ranges.push({ from: index, to: index + trimmed.length, href: new URL(trimmed).href });
-      continue;
-    }
-    const previous = index > 0 ? line[index - 1] : '';
-    if (previous === ':' || previous === '@' || previous === '/') continue;
-    const href = `http://${trimmed}`;
-    if (!isAllowedNoteLink(href)) continue;
-    ranges.push({ from: index, to: index + trimmed.length, href: new URL(href).href });
+    const trimmed = match[0].replace(trailingLinkPunctuation, '');
+    if (!isAllowedNoteLink(trimmed)) continue;
+    ranges.push({ from: index, to: index + trimmed.length, href: new URL(trimmed).href });
   }
   return ranges;
 }
 
 function placeParagraph(tr: Transaction, paragraph: PmNode): boolean {
   const { selection } = tr;
+  if (selection instanceof AllSelection) {
+    tr.replaceWith(0, tr.doc.content.size, paragraph);
+    setCursorAtEnd(tr, 0);
+    return true;
+  }
   if (selection instanceof NodeSelection) {
     if (selection.node.type.name !== 'image') return false;
     const pos = selection.from;
@@ -369,9 +321,7 @@ function replaceTextblock(tr: Transaction, paragraph: PmNode): boolean {
 
 function replaceAcross(tr: Transaction, paragraph: PmNode): boolean {
   const { $from, $to } = tr.selection;
-  let depth = 0;
-  const limit = Math.min($from.depth, $to.depth);
-  while (depth < limit && $from.node(depth + 1) === $to.node(depth + 1)) depth += 1;
+  const depth = $from.sharedDepth($to.pos);
   if (depth >= $from.depth || depth >= $to.depth) return false;
   const parent = $from.node(depth);
   const startPos = $from.before(depth + 1);
@@ -423,11 +373,13 @@ function fitBlock(parent: PmNode, paragraph: PmNode): PmNode {
   return paragraph;
 }
 
+// Follows the last child down to the item that held the selection start.
 function insertIntoSurviving(node: PmNode, paragraph: PmNode): { node: PmNode; offset: number } {
   const children: PmNode[] = [];
   node.forEach((child) => children.push(child));
-  if (node.type.name === 'bulletList' || node.type.name === 'orderedList') {
-    const lastIndex = children.length - 1;
+  const lastIndex = children.length - 1;
+  const isList = (item: PmNode) => item.type.name === 'bulletList' || item.type.name === 'orderedList';
+  if (isList(node) || isList(children[lastIndex])) {
     const inserted = insertIntoSurviving(children[lastIndex], paragraph);
     children[lastIndex] = inserted.node;
     let offset = 1;

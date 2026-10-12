@@ -543,7 +543,7 @@ public:
     [[nodiscard]] NoteContent get_note(std::int64_t id, std::uint64_t epoch);
     void save_note(
         std::int64_t id,
-        nlohmann::json document,
+        const nlohmann::json& document,
         std::uint64_t epoch);
     [[nodiscard]] NoteItem rename_note_item(
         std::int64_t id,

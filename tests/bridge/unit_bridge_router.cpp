@@ -2032,27 +2032,27 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
     expect_note_error(
         call("notes.get", {{"id", 0}}),
         "invalid_argument",
-        "The note id is not valid.");
+        "The item id is not valid.");
     expect_note_error(
         call("notes.get", {{"id", -1}}),
         "invalid_argument",
-        "The note id is not valid.");
+        "The item id is not valid.");
     expect_note_error(
         call("notes.get", {{"id", 1.5}}),
         "invalid_argument",
-        "The note id is not valid.");
+        "The item id is not valid.");
     expect_note_error(
         call("notes.get", {{"id", "4"}}),
         "invalid_argument",
-        "The note id is not valid.");
+        "The item id is not valid.");
     expect_note_error(
         call("notes.get", {{"id", nullptr}}),
         "invalid_argument",
-        "The note id is not valid.");
+        "The item id is not valid.");
     expect_note_error(
         call("notes.get", {{"id", 9007199254740992ULL}}),
         "invalid_argument",
-        "The note id is not valid.");
+        "The item id is not valid.");
     expect_note_error(
         call("notes.create", {
             {"parent_id", 0}, {"kind", "note"}, {"name", "Draft"},
@@ -2111,8 +2111,8 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
     }
     expect_note_error(
         call("notes.get", {{"id", kept_id}}),
-        "invalid_argument",
-        "Note content must be a JSON object.");
+        "internal_error",
+        "The note could not be opened.");
     const auto listed = call("notes.list");
     ASSERT_TRUE(listed["ok"]);
     EXPECT_GE(listed["result"]["items"].size(), 1);

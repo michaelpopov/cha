@@ -59,7 +59,7 @@ NoteContent Application::get_note(std::int64_t id, std::uint64_t epoch) {
 
 void Application::save_note(
     std::int64_t id,
-    nlohmann::json document,
+    const nlohmann::json& document,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);

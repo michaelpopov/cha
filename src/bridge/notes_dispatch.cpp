@@ -15,7 +15,7 @@ std::int64_t require_note_id(const nlohmann::json& params) {
     }
     const auto id = as_safe_uint(params.at("id"));
     if (!id || *id < 1) {
-        throw std::invalid_argument("The note id is not valid.");
+        throw std::invalid_argument("The item id is not valid.");
     }
     return static_cast<std::int64_t>(*id);
 }
@@ -43,7 +43,7 @@ NoteItemKind require_kind(const nlohmann::json& params) {
     throw std::invalid_argument("Kind must be folder or note.");
 }
 
-nlohmann::json require_document(const nlohmann::json& params) {
+const nlohmann::json& require_document(const nlohmann::json& params) {
     if (!params.contains("document")) {
         throw std::invalid_argument("The request was not valid.");
     }

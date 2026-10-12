@@ -3,6 +3,7 @@
 #include "storage/session_label.h"
 #include "util/logging.h"
 
+#include <stdexcept>
 #include <utility>
 
 namespace cha {
@@ -32,6 +33,10 @@ constexpr std::string_view opening_message =
     "The note could not be opened.";
 constexpr std::string_view saving_message =
     "The note could not be saved.";
+constexpr std::string_view loading_message =
+    "The notes could not be loaded.";
+constexpr std::string_view change_message =
+    "The change could not be saved.";
 
 constexpr std::string_view ancestor_sql = R"sql(
 WITH RECURSIVE ancestors(id, parent_id) AS (
@@ -67,7 +72,10 @@ std::int64_t parent_key(const std::optional<std::int64_t>& parent_id) {
     return parent_id.value_or(0);
 }
 
-NoteError sql_failure(const std::runtime_error& error, bool saving) {
+NoteError sql_failure(
+    const std::runtime_error& error,
+    NoteFailure failure,
+    std::string_view public_message) {
     const std::string message = error.what();
     if (message.find("UNIQUE constraint failed") != std::string::npos) {
         return NoteError(NoteFailure::invalid, std::string(duplicate_name_message));
@@ -76,11 +84,11 @@ NoteError sql_failure(const std::runtime_error& error, bool saving) {
         return NoteError(NoteFailure::invalid, std::string(missing_parent_message));
     }
     log_error(std::string("Note storage failed: ") + message);
-    return NoteError(
-        saving ? NoteFailure::saving : NoteFailure::opening,
-        std::string(saving ? saving_message : opening_message));
+    return NoteError(failure, std::string(public_message));
 }
 
+// A damaged row fails as a storage error, so the caller logs it and uses
+// the public message of its operation.
 NoteItem read_item(storage::SqliteStatement& statement) {
     NoteItem item;
     item.id = statement.integer(0);
@@ -88,10 +96,12 @@ NoteItem read_item(storage::SqliteStatement& statement) {
     const std::string kind = statement.text(2);
     if (kind == "folder") item.kind = NoteItemKind::folder;
     else if (kind == "note") item.kind = NoteItemKind::note;
-    else fail(NoteFailure::opening, opening_message);
+    else throw std::runtime_error(
+        "Note item " + std::to_string(item.id) + " has an invalid kind");
     item.name = statement.text(3);
     if (item.id <= 0 || item.id > note_id_limit) {
-        fail(NoteFailure::opening, opening_message);
+        throw std::runtime_error(
+            "Note item " + std::to_string(item.id) + " has an invalid id");
     }
     return item;
 }
@@ -171,6 +181,11 @@ nlohmann::json parse_document(std::string_view text, std::int64_t id) {
             "Note content is not valid JSON for id " + std::to_string(id));
         fail(NoteFailure::opening, opening_message);
     }
+    if (!parsed.is_object()) {
+        log_error(
+            "Note content is not a JSON object for id " + std::to_string(id));
+        fail(NoteFailure::opening, opening_message);
+    }
     (void)compact_document(parsed, id, false);
     return parsed;
 }
@@ -233,7 +248,7 @@ std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {
         transaction.commit();
         return items;
     } catch (const std::runtime_error& error) {
-        throw sql_failure(error, false);
+        throw sql_failure(error, NoteFailure::opening, loading_message);
     }
 }
 
@@ -261,16 +276,10 @@ NoteItem note_create(
         else statement.bind(4, empty_note_document);
         statement.run();
         const std::int64_t id = database.last_insert_rowid();
-        if (database.changes() != 1 || id <= 0 || id > note_id_limit) {
-            log_error(
-                "Note insert did not allocate an id for '"
-                + std::string(name) + "'");
-            fail(NoteFailure::saving, saving_message);
-        }
         transaction.commit();
         return NoteItem{id, parent_id, kind, std::string(name)};
     } catch (const std::runtime_error& error) {
-        throw sql_failure(error, true);
+        throw sql_failure(error, NoteFailure::saving, change_message);
     }
 }
 
@@ -290,7 +299,7 @@ NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id) {
         transaction.commit();
         return content;
     } catch (const std::runtime_error& error) {
-        throw sql_failure(error, false);
+        throw sql_failure(error, NoteFailure::opening, opening_message);
     }
 }
 
@@ -307,26 +316,16 @@ void note_save(
         update.bind(1, compact);
         update.bind(2, id);
         update.run();
-        const int changed = database.changes();
-        if (changed != 1) {
+        if (database.changes() != 1) {
             storage::SqliteStatement existing = database.prepare(
-                "SELECT kind, content_json FROM note_items WHERE id = ?1");
+                "SELECT 1 FROM note_items WHERE id = ?1");
             existing.bind(1, id);
             if (!existing.step()) fail(NoteFailure::not_found, missing_note_message);
-            if (existing.text(0) != "note") {
-                fail(NoteFailure::invalid, not_note_message);
-            }
-            if (changed != 0 || existing.is_null(1)
-                || existing.text(1) != compact) {
-                log_error(
-                    "Note save affected " + std::to_string(changed)
-                    + " rows for id " + std::to_string(id));
-                fail(NoteFailure::saving, saving_message);
-            }
+            fail(NoteFailure::invalid, not_note_message);
         }
         transaction.commit();
     } catch (const std::runtime_error& error) {
-        throw sql_failure(error, true);
+        throw sql_failure(error, NoteFailure::saving, saving_message);
     }
 }
 
@@ -349,18 +348,12 @@ NoteItem note_rename(
             update.bind(1, name);
             update.bind(2, id);
             update.run();
-            if (database.changes() != 1) {
-                log_error(
-                    "Note rename affected " + std::to_string(database.changes())
-                    + " rows for id " + std::to_string(id));
-                fail(NoteFailure::saving, saving_message);
-            }
             item.name = std::string(name);
         }
         transaction.commit();
         return item;
     } catch (const std::runtime_error& error) {
-        throw sql_failure(error, true);
+        throw sql_failure(error, NoteFailure::saving, change_message);
     }
 }
 
@@ -392,18 +385,12 @@ NoteItem note_move(
             else update.bind_null(1);
             update.bind(2, id);
             update.run();
-            if (database.changes() != 1) {
-                log_error(
-                    "Note move affected " + std::to_string(database.changes())
-                    + " rows for id " + std::to_string(id));
-                fail(NoteFailure::saving, saving_message);
-            }
             item.parent_id = parent_id;
         }
         transaction.commit();
         return item;
     } catch (const std::runtime_error& error) {
-        throw sql_failure(error, true);
+        throw sql_failure(error, NoteFailure::saving, change_message);
     }
 }
 
@@ -419,7 +406,7 @@ void note_delete(storage::SqliteDatabase& database, std::int64_t id) {
         }
         transaction.commit();
     } catch (const std::runtime_error& error) {
-        throw sql_failure(error, true);
+        throw sql_failure(error, NoteFailure::saving, change_message);
     }
 }
 

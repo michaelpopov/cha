@@ -3,11 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import {
-  noteDocumentByteLength,
-  noteDocumentByteLimit,
-  paddedNoteDocument,
-} from './documentBytes';
+import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 
 const fixture = JSON.parse(readFileSync(join(
   dirname(fileURLToPath(import.meta.url)),
@@ -18,6 +14,14 @@ const fixture = JSON.parse(readFileSync(join(
   sample_bytes: Record<string, number>;
   padding: { document: unknown };
 };
+
+function paddedNoteDocument(base: unknown, text: string): unknown {
+  const document = JSON.parse(JSON.stringify(base)) as {
+    content: Array<{ content: Array<{ text: string }> }>;
+  };
+  document.content[0].content[0].text = text;
+  return document;
+}
 
 describe('note document bytes', () => {
   it('measures the shared samples', () => {
