@@ -313,13 +313,16 @@ export function PromptInput({
     onSubmittingChangeRef.current?.(true);
     onErrorRef.current(null);
     try {
+      // Read a typed prompt before the first await. Later keystrokes stay
+      // in the field and clear only as a prefix of this text.
+      const typedAtSend = draftRef.current;
       // A spoken command leaves the microphone on for the next prompt.
       if (!voiceCommand && !await finishVoiceInput()) return;
       if (composerEpoch.current !== epoch) return;
       const withoutCommand = voiceCommand || wasRecording
         ? withoutVoiceSendPhrase(draftRef.current, voiceSendPhrase.current) : null;
       if (voiceCommand && withoutCommand === null) return;
-      const submitted = withoutCommand ?? draftRef.current;
+      const submitted = withoutCommand ?? (wasRecording ? draftRef.current : typedAtSend);
       if (withoutCommand !== null) {
         updateDraft(submitted.trim() ? submitted : '');
       }

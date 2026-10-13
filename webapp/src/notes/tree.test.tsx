@@ -6,7 +6,9 @@ import { describe, expect, it } from 'vitest';
 import {
   buildNoteIndex,
   compareNoteSiblings,
+  focusAfterRemoval,
   noteFolderOptions,
+  noteInSubtree,
   noteItemPath,
   type NoteSibling,
   type NoteTreeItem,
@@ -67,6 +69,23 @@ describe('note metadata index', () => {
     ]);
     expect(noteItemPath(items, 4)).toBe('Study / Philosophy / Plan');
     expect(noteItemPath(items, 8)).toBe('Orphan');
+  });
+
+  it('excludes a moved folder subtree and reports membership and focus', () => {
+    expect(noteFolderOptions(items, 1)).toEqual([]);
+    expect(noteFolderOptions(items, 3)).toEqual([{ id: 1, path: 'Study' }]);
+    expect(noteFolderOptions(items, 2)).toEqual([
+      { id: 1, path: 'Study' },
+      { id: 3, path: 'Study / Philosophy' },
+    ]);
+    expect(noteInSubtree(items, 1, 4)).toBe(true);
+    expect(noteInSubtree(items, 1, 2)).toBe(false);
+    expect(noteInSubtree(items, 4, 4)).toBe(true);
+    expect(noteInSubtree(items, 1, null)).toBe(false);
+    expect(focusAfterRemoval(items, 4)).toBe(3);
+    expect(focusAfterRemoval(items, 3)).toBe(1);
+    expect(focusAfterRemoval(items, 1)).toBe(2);
+    expect(focusAfterRemoval(items, 2)).toBe(8);
   });
 });
 

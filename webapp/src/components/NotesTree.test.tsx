@@ -1,10 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ChaError } from '../api/client';
 import type { NoteItem, NotesClient } from '../api/nativeClient';
-import { NotesTree } from './NotesTree';
+import { NotesTree, type DeleteNoteItem } from './NotesTree';
 
 const study: NoteItem = { id: 1, parent_id: null, kind: 'folder', name: 'Study' };
 const aardvark: NoteItem = { id: 2, parent_id: null, kind: 'note', name: 'Aardvark' };
@@ -46,12 +46,16 @@ function renderTree({
   activeNoteId = null as number | null,
   onOpenNote = vi.fn(),
   onBeforeCreateNote = vi.fn(async () => true),
+  onDeleteItem,
+  onRegisterCreateNote,
 }: {
   items?: NoteItem[];
   notes?: NotesClient;
   activeNoteId?: number | null;
   onOpenNote?: (id: number) => void;
   onBeforeCreateNote?: () => Promise<boolean>;
+  onDeleteItem?: DeleteNoteItem;
+  onRegisterCreateNote?: (create: () => void) => void;
 } = {}) {
   const onNoteItems = vi.fn();
   render(
@@ -60,11 +64,19 @@ function renderTree({
       browsing
       client={notes ?? client({ listNoteItems: async () => items })}
       onBeforeCreateNote={onBeforeCreateNote}
+      onDeleteItem={onDeleteItem}
       onNoteItems={onNoteItems}
       onOpenNote={onOpenNote}
+      onRegisterCreateNote={onRegisterCreateNote}
     />,
   );
   return { onOpenNote, onBeforeCreateNote, onNoteItems };
+}
+
+async function chooseAction(name: string, action: string) {
+  fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
+  const menu = await screen.findByRole('menu');
+  fireEvent.click(within(menu).getByRole('menuitem', { name: action }));
 }
 
 describe('Notes tree', () => {
@@ -73,7 +85,9 @@ describe('Notes tree', () => {
     renderTree({ onOpenNote });
     expect(await screen.findByRole('tree', { name: 'Notes' })).toBeInTheDocument();
     const root = screen.getAllByRole('treeitem');
-    expect(root.map((item) => item.textContent)).toEqual(['▸Study', 'Aardvark']);
+    expect(root.map((item) => item.getAttribute('aria-label'))).toEqual(['Study', 'Aardvark']);
+    expect(root[0].textContent).toContain('Study');
+    expect(root[1].textContent).toContain('Aardvark');
     expect(root[0]).toHaveAttribute('aria-level', '1');
     expect(root[0]).toHaveAttribute('aria-expanded', 'false');
     expect(root[1]).not.toHaveAttribute('aria-expanded');
@@ -298,5 +312,262 @@ describe('Notes tree', () => {
     expect(await screen.findByLabelText('In')).toHaveValue('1');
     fireEvent.click(screen.getByRole('treeitem', { name: 'Aardvark' }));
     expect(screen.getByLabelText('In')).toHaveValue('1');
+  });
+
+  it('opens the same menu from the row button and the keyboard', async () => {
+    renderTree();
+    const study = await screen.findByRole('treeitem', { name: 'Study' });
+    expect(study).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    expect(study).toHaveAttribute('aria-expanded', 'false');
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: 'Rename' })).toHaveFocus();
+    expect(within(menu).getByRole('menuitem', { name: 'Move' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole('tree'), { key: 'F10', shiftKey: true });
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(study).toHaveFocus();
+
+    press('ArrowDown');
+    fireEvent.keyDown(screen.getByRole('tree'), { key: 'ContextMenu' });
+    expect(await screen.findByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'Aardvark' })).not.toHaveAttribute('aria-expanded');
+  });
+
+  it('renames and moves metadata without opening or leaving the note', async () => {
+    const renameNoteItem = vi.fn(async (id: number, name: string) => (
+      { id, parent_id: null, kind: 'note' as const, name }
+    ));
+    const moveNoteItem = vi.fn(async (id: number, parentId: number | null) => (
+      { ...philosophy, id, parent_id: parentId }
+    ));
+    let renamed = false;
+    let moved = false;
+    const onBeforeCreateNote = vi.fn(async () => true);
+    const onOpenNote = vi.fn();
+    renderTree({
+      onBeforeCreateNote,
+      onOpenNote,
+      notes: client({
+        listNoteItems: async () => {
+          if (moved) return [study, { ...philosophy, parent_id: null }, aardvark, plan];
+          if (renamed) return [study, { ...aardvark, name: '  Zebra  ' }, philosophy, plan];
+          return [study, aardvark, philosophy, plan];
+        },
+        renameNoteItem: async (id, name) => {
+          renamed = true;
+          return renameNoteItem(id, name);
+        },
+        moveNoteItem: async (id, parentId) => {
+          moved = true;
+          return moveNoteItem(id, parentId);
+        },
+      }),
+    });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Rename');
+    const dialog = await screen.findByRole('dialog', { name: 'Rename “Aardvark”' });
+    const input = within(dialog).getByLabelText('Name');
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue('Aardvark');
+    expect((input as HTMLInputElement).selectionStart).toBe(0);
+    expect((input as HTMLInputElement).selectionEnd).toBe('Aardvark'.length);
+    fireEvent.change(input, { target: { value: '' } });
+    expect(within(dialog).getByRole('button', { name: 'Rename' })).toBeDisabled();
+    fireEvent.change(input, { target: { value: '  Zebra  ' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Rename' }));
+    await waitFor(() => expect(renameNoteItem).toHaveBeenCalledExactlyOnceWith(2, '  Zebra  '));
+    const renamedRow = await screen.findByRole('treeitem', { name: 'Zebra' });
+    expect(renamedRow).toHaveAttribute('aria-label', '  Zebra  ');
+    expect(renamedRow).toHaveAttribute('tabindex', '0');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(onBeforeCreateNote).not.toHaveBeenCalled();
+    expect(onOpenNote).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Study' }));
+    await screen.findByRole('treeitem', { name: 'Philosophy' });
+    await chooseAction('Philosophy', 'Move');
+    const move = await screen.findByRole('dialog', { name: 'Move “Philosophy” to' });
+    const destination = within(move).getByRole('combobox', { name: 'Move “Philosophy” to' });
+    expect(within(destination).queryByRole('option', { name: 'Study / Philosophy' })).not.toBeInTheDocument();
+    expect(within(destination).getByRole('option', { name: 'Study' })).toBeInTheDocument();
+    fireEvent.change(destination, { target: { value: 'root' } });
+    fireEvent.click(within(move).getByRole('button', { name: 'Move' }));
+    await waitFor(() => expect(moveNoteItem).toHaveBeenCalledExactlyOnceWith(3, null));
+    expect(onOpenNote).not.toHaveBeenCalled();
+  });
+
+  it('keeps a duplicate name and a folder cycle in the dialog', async () => {
+    renderTree({
+      notes: client({
+        listNoteItems: async () => [study, aardvark, philosophy],
+        renameNoteItem: async () => {
+          throw new ChaError('invalid_argument', 'An item with that name already exists.');
+        },
+        moveNoteItem: async () => {
+          throw new ChaError('invalid_argument', 'A folder cannot contain itself.');
+        },
+      }),
+    });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Rename');
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Study' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('An item with that name already exists.');
+    expect(screen.getByRole('dialog', { name: 'Rename “Aardvark”' })).toBeInTheDocument();
+    expect(screen.getAllByRole('treeitem')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await chooseAction('Study', 'Move');
+    const destination = screen.getByRole('combobox', { name: 'Move “Study” to' });
+    expect(within(destination).queryByRole('option', { name: 'Study' })).not.toBeInTheDocument();
+    expect(within(destination).queryByRole('option', { name: 'Study / Philosophy' })).not.toBeInTheDocument();
+    expect(within(destination).getByRole('option', { name: 'Top level' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('A folder cannot contain itself.');
+    expect(screen.getByRole('treeitem', { name: 'Study' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('focuses Cancel, keeps rows on cancel, and deletes an empty folder with the contents warning', async () => {
+    const deleteNoteItem = vi.fn(async (_id: number) => undefined);
+    let removed = false;
+    renderTree({
+      items: [study],
+      notes: client({
+        listNoteItems: async () => (removed ? [] : [study]),
+        deleteNoteItem: async (id) => {
+          removed = true;
+          await deleteNoteItem(id);
+        },
+      }),
+    });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    await chooseAction('Study', 'Delete');
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Delete “Study” and all notes and folders inside it? This cannot be undone in CHA.',
+    });
+    expect(dialog).toHaveTextContent('Delete “Study” and all notes and folders inside it? This cannot be undone in CHA.');
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(deleteNoteItem).not.toHaveBeenCalled();
+    expect(screen.getByRole('treeitem', { name: 'Study' })).toBeInTheDocument();
+
+    await chooseAction('Study', 'Delete');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete folder' }));
+    await waitFor(() => expect(deleteNoteItem).toHaveBeenCalledExactlyOnceWith(1));
+    await waitFor(() => expect(screen.queryByRole('treeitem')).not.toBeInTheDocument());
+  });
+
+  it('focuses a nearby row after deletion and reports a missing item', async () => {
+    const onDeleteItem = vi.fn<DeleteNoteItem>(async (_id, _listing, refresh) => {
+      await refresh();
+      return 'deleted';
+    });
+    let present = true;
+    renderTree({
+      items: [study, aardvark],
+      onDeleteItem,
+      notes: client({
+        listNoteItems: async () => (present ? [study, aardvark] : [study]),
+      }),
+    });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Delete');
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Delete “Aardvark”? This cannot be undone in CHA.',
+    });
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    present = false;
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete note' }));
+    await waitFor(() => expect(screen.queryByRole('treeitem', { name: 'Aardvark' })).not.toBeInTheDocument());
+    expect(screen.getByRole('treeitem', { name: 'Study' })).toHaveAttribute('tabindex', '0');
+    cleanup();
+
+    renderTree({
+      items: [study],
+      notes: client({
+        listNoteItems: async () => [study],
+        deleteNoteItem: async () => {
+          throw new ChaError('not_found', 'That item is no longer in the list.');
+        },
+      }),
+    });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    await chooseAction('Study', 'Delete');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete folder' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('That item is no longer in the list.');
+    expect(screen.getByRole('treeitem', { name: 'Study' })).toBeInTheDocument();
+  });
+
+  it('requires a fresh listing before deleting a folder after a failed move refresh', async () => {
+    let phase: 'old' | 'fail' | 'fresh' | 'gone' = 'old';
+    const captured: NoteItem[][] = [];
+    const onDeleteItem = vi.fn<DeleteNoteItem>(async (_id, listing, refresh) => {
+      captured.push([...listing]);
+      phase = 'gone';
+      await refresh();
+      return 'deleted';
+    });
+    renderTree({
+      items: [study, aardvark],
+      onDeleteItem,
+      notes: client({
+        listNoteItems: async () => {
+          if (phase === 'fail') throw new Error('offline');
+          if (phase === 'gone') return [];
+          if (phase === 'fresh') return [study, { ...aardvark, parent_id: 1 }];
+          return [study, aardvark];
+        },
+        moveNoteItem: async () => {
+          phase = 'fail';
+          return { ...aardvark, parent_id: 1 };
+        },
+      }),
+    });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Move');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Move “Aardvark” to' }), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load notes.');
+    expect(screen.getByRole('treeitem', { name: 'Aardvark' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions for Study' })).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole('tree'), { key: 'F10', shiftKey: true });
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(onDeleteItem).not.toHaveBeenCalled();
+
+    phase = 'fresh';
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    await chooseAction('Study', 'Delete');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete folder' }));
+    await waitFor(() => expect(onDeleteItem).toHaveBeenCalledOnce());
+    expect(captured[0]?.find((item) => item.id === 2)?.parent_id).toBe(1);
+  });
+
+  it('reports a busy deletion and keeps the captured source', async () => {
+    const onDeleteItem = vi.fn<DeleteNoteItem>(async () => 'busy');
+    renderTree({ items: [study, aardvark], onDeleteItem });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Delete');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete note' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('A notes action is already in progress.');
+    expect(screen.getByRole('dialog', { name: 'Delete “Aardvark”? This cannot be undone in CHA.' })).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'Aardvark' })).toBeInTheDocument();
+    expect(onDeleteItem).toHaveBeenCalledExactlyOnceWith(2, [study, aardvark], expect.any(Function));
+  });
+
+  it('starts a note from the registered create action', async () => {
+    const registered = vi.fn();
+    renderTree({
+      onRegisterCreateNote: (create) => registered.mockImplementation(create),
+    });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    registered();
+    expect(await screen.findByRole('dialog', { name: 'New note' })).toBeInTheDocument();
   });
 });

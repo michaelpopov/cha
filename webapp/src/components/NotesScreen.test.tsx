@@ -1,5 +1,5 @@
 import type { Editor } from '@tiptap/core';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -44,6 +44,8 @@ function Harness({
   saveNote = async () => undefined,
   draft = '',
   voice = false,
+  sendPhrase = '',
+  onNewNote,
 }: {
   initialId?: number | null;
   items?: NoteItem[];
@@ -51,6 +53,8 @@ function Harness({
   saveNote?: (id: number, document: Record<string, unknown>) => Promise<void>;
   draft?: string;
   voice?: boolean;
+  sendPhrase?: string;
+  onNewNote?: () => void;
 }) {
   const [noteId, setNoteId] = useState(initialId);
   const [request, setRequest] = useState(1);
@@ -67,7 +71,7 @@ function Harness({
   const client = useRef(fixtureClient({
     getNote: (id) => getNoteRef.current(id),
     saveNote: (id, document) => saveNoteRef.current(id, document),
-    getVoiceInputRuntime: async () => (voice ? voiceRuntime : null),
+    getVoiceInputRuntime: async () => (voice ? { ...voiceRuntime, send_phrase: sendPhrase } : null),
   })).current;
   const leave = useNoteLeave(() => saveRef.current, {
     disposeEditor: () => disposeRef.current(),
@@ -94,6 +98,7 @@ function Harness({
         noteRequest={request}
         notesEpoch={1}
         onDraftChange={setText}
+        onNewNote={onNewNote}
         onRegisterDispose={(dispose) => { disposeRef.current = dispose; }}
         onRegisterSave={(save) => { saveRef.current = save; }}
         sidebarOpen
@@ -219,6 +224,134 @@ describe('Notes screen', () => {
     expect(await screen.findByText('Essay text')).toBeInTheDocument();
     expect(cancel).toHaveBeenCalled();
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Spoken');
-    expect(screen.getByRole('button', { name: 'Send to Essay' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send to Essay' })).toBeEnabled();
+    expect((await openedEditor()).getText()).toBe('Essay text');
+  });
+
+  it('exposes New note and keeps Send disabled when no note is open', () => {
+    const onNewNote = vi.fn();
+    render(<Harness draft="Keep this" initialId={null} items={[]} onNewNote={onNewNote} />);
+    expect(screen.queryByRole('combobox', { name: 'Paragraph style' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'New note' }));
+    expect(onNewNote).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this');
+  });
+
+  it('formats the retained selection, ignores a repeated style, and leaves the draft', async () => {
+    render(<Harness />);
+    const editor = await openedEditor();
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+    fireEvent.change(prompt, { target: { value: 'Keep' } });
+    editor.commands.setTextSelection({ from: 1, to: 4 });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Paragraph style' }), { target: { value: 'paragraph' } });
+    expect(editor.can().undo()).toBe(false);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Paragraph style' }), { target: { value: '2' } });
+    expect(editor.isActive('heading', { level: 2 })).toBe(true);
+    expect(editor.can().undo()).toBe(true);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Paragraph style' }), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+    expect(editor.getJSON().content?.[0]?.content?.[0]?.marks?.[0]?.type).toBe('bold');
+    expect(prompt).toHaveValue('Keep');
+    expect(prompt).not.toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(editor.isActive('bold')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(editor.isActive('heading', { level: 2 })).toBe(false);
+    expect(editor.can().undo()).toBe(false);
+    expect(prompt).toHaveValue('Keep');
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    expect(editor.isActive('heading', { level: 2 })).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Bullet list' }));
+    expect(editor.isActive('bulletList')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Numbered list' }));
+    expect(editor.isActive('orderedList')).toBe(true);
+    expect(prompt).toHaveValue('Keep');
+  });
+
+  it('inserts literal prompts from Send and Enter and keeps later typing', async () => {
+    render(<Harness />);
+    const editor = await openedEditor();
+    editor.commands.setTextSelection(3);
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+    fireEvent.change(prompt, { target: { value: 'One' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
+    fireEvent.change(prompt, { target: { value: 'One tail' } });
+    await waitFor(() => expect(prompt).toHaveValue('tail'));
+    expect(editor.getText({ blockSeparator: '\n' })).toBe('Al\nOne\npha');
+    expect(document.activeElement).not.toBe(editor.view.dom);
+
+    fireEvent.change(prompt, { target: { value: 'ab' } });
+    (prompt as HTMLTextAreaElement).setSelectionRange(1, 1);
+    fireEvent.keyDown(prompt, { key: 'Enter', ctrlKey: true });
+    expect(prompt).toHaveValue('a\nb');
+    const composing = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    Object.defineProperty(composing, 'isComposing', { value: true });
+    prompt.dispatchEvent(composing);
+    expect(prompt).toHaveValue('a\nb');
+    fireEvent.click(screen.getByRole('button', { name: 'Latin to Russian transliteration' }));
+    fireEvent.change(prompt, { target: { value: 'a\nbx' } });
+    expect(prompt).toHaveValue('a\nbх');
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    await waitFor(() => expect(prompt).toHaveValue(''));
+    expect(editor.getText({ blockSeparator: '\n' })).toBe('Al\nOne\na\nbх\npha');
+    expect(document.activeElement).toBe(prompt);
+  });
+
+  it('keeps one insertion when the later save fails', async () => {
+    vi.useFakeTimers();
+    const saveNote = vi.fn()
+      .mockRejectedValueOnce(new ChaError('invalid_argument', 'The vault is locked.'))
+      .mockResolvedValue(undefined);
+    render(<Harness saveNote={saveNote} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const editor = await openedEditor();
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+    fireEvent.change(prompt, { target: { value: 'Hello' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(prompt).toHaveValue('');
+    expect(editor.getText()).toContain('Hello');
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    expect(saveNote).toHaveBeenCalledOnce();
+    expect(editor.getText().match(/Hello/g)).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(editor.getText().match(/Hello/g)).toHaveLength(1);
+    expect(prompt).toHaveValue('');
+  });
+
+  it('sends a spoken prompt once and cancels it when the note changes', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let appendVoice: (text: string, provisional?: boolean) => void = () => {};
+    vi.spyOn(VoiceInputSession, 'start').mockImplementation(async (_configuration, onTranscription) => {
+      appendVoice = onTranscription;
+      return { stop: async () => undefined, cancel: vi.fn() };
+    });
+    const getNote = vi.fn(async (id: number) => ({
+      id,
+      document: documentWith(id === 5 ? 'Essay text' : 'Alpha'),
+    }));
+    render(<Harness getNote={getNote} sendPhrase="over to you" voice />);
+    const editor = await openedEditor();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    act(() => appendVoice('Next line. Over to you'));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1100)); });
+    expect(editor.getText()).toContain('Next line.');
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+
+    act(() => appendVoice(' Keep this over to you'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
+    expect(await screen.findByText('Essay text')).toBeInTheDocument();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1200)); });
+    expect((await openedEditor()).getText()).toBe('Essay text');
   });
 });

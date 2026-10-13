@@ -66,13 +66,26 @@ export function buildNoteIndex(items: readonly NoteTreeItem[]): {
   return { rows, children };
 }
 
-export function noteFolderOptions(items: readonly NoteTreeItem[]): { id: number; path: string }[] {
+export function noteFolderOptions(
+  items: readonly NoteTreeItem[],
+  excludeId?: number | null,
+): { id: number; path: string }[] {
   const { rows, children } = buildNoteIndex(items);
+  const excluded = new Set<string>();
+  if (excludeId != null && rows[String(excludeId)]?.kind === 'folder') {
+    const skip = (key: string) => {
+      excluded.add(key);
+      for (const child of children[key] ?? []) {
+        if (rows[child]?.kind === 'folder') skip(child);
+      }
+    };
+    skip(String(excludeId));
+  }
   const options: { id: number; path: string }[] = [];
   const walk = (parentKey: string, prefix: string[]) => {
     for (const id of children[parentKey] ?? []) {
       const row = rows[id];
-      if (row.kind !== 'folder' || row.noteId === null) continue;
+      if (row.kind !== 'folder' || row.noteId === null || excluded.has(id)) continue;
       const path = [...prefix, row.name];
       options.push({ id: row.noteId, path: path.join(' / ') });
       walk(id, path);
@@ -80,6 +93,39 @@ export function noteFolderOptions(items: readonly NoteTreeItem[]): { id: number;
   };
   walk('root', []);
   return options;
+}
+
+// True when noteId is the item or sits inside its current metadata subtree.
+export function noteInSubtree(
+  items: readonly NoteTreeItem[],
+  rootId: number,
+  noteId: number | null,
+): boolean {
+  if (noteId === null) return false;
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const seen = new Set<number>();
+  let current: number | null = noteId;
+  while (current !== null) {
+    if (seen.has(current)) return false;
+    seen.add(current);
+    if (current === rootId) return true;
+    const item = byId.get(current);
+    if (!item) return false;
+    current = item.parent_id;
+  }
+  return false;
+}
+
+// After a deletion, focus the next sibling, the previous sibling, or the parent.
+export function focusAfterRemoval(items: readonly NoteTreeItem[], removedId: number): number | null {
+  const { rows, children } = buildNoteIndex(items);
+  const row = rows[String(removedId)];
+  if (!row) return null;
+  const siblings = children[row.parentKey ?? 'root'] ?? [];
+  const index = siblings.indexOf(String(removedId));
+  const next = siblings[index + 1] ?? siblings[index - 1];
+  if (next && rows[next]?.noteId != null) return rows[next].noteId;
+  return row.parentId;
 }
 
 export function noteItemPath(items: readonly NoteTreeItem[], id: number): string {

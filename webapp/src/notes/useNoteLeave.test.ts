@@ -791,6 +791,80 @@ describe('native close', () => {
   });
 });
 
+describe('deletion slot', () => {
+  afterEach(() => {
+    delete window.__CHA_NATIVE_POST__;
+    delete window.__CHA_NATIVE_CONNECTION_ID__;
+  });
+
+  function host() {
+    window.__CHA_NATIVE_CONNECTION_ID__ = 'view-4';
+    window.__CHA_NATIVE_POST__ = vi.fn();
+  }
+
+  it('refuses navigation and a second deletion while delete holds the slot', async () => {
+    const hang = deferred<boolean>();
+    const save = openSave({ flushRemaining: () => hang.promise });
+    const view = renderHook(() => useNoteLeave(() => save));
+    let started: Promise<unknown> = Promise.resolve();
+    act(() => {
+      started = view.result.current.leaveNoteThen(async () => true);
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(view.result.current.beginDelete()).toBe(false);
+    const action = vi.fn(async () => true);
+    await expect(view.result.current.leaveNoteThen(action)).resolves.toBe(false);
+    expect(action).not.toHaveBeenCalled();
+    await act(async () => {
+      hang.resolve(true);
+      await started;
+    });
+    expect(view.result.current.beginDelete()).toBe(true);
+    expect(view.result.current.beginDelete()).toBe(false);
+    const duringDelete = vi.fn(async () => true);
+    await expect(view.result.current.leaveNoteThen(duringDelete)).resolves.toBe(false);
+    expect(duringDelete).not.toHaveBeenCalled();
+    act(() => view.result.current.endDelete());
+    expect(view.result.current.pendingKind).toBeNull();
+  });
+
+  it('resumes the newest deferred close after deletion and ignores an aborted attempt', () => {
+    host();
+    const save = openSave({ hasUnsaved: () => false, inFlightSerial: () => null });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      expect(view.result.current.beginDelete()).toBe(true);
+      view.result.current.prepareClose(30);
+      view.result.current.prepareClose(31);
+      view.result.current.closeAborted(30);
+    });
+    expect(closePosts()).toEqual([]);
+    expect(view.result.current.pendingKind).toBe('delete');
+    act(() => view.result.current.endDelete());
+    expect(closePosts()).toEqual([{
+      native_action: 'close_reply',
+      connection_id: 'view-4',
+      attempt_id: 31,
+      result: 'ready',
+    }]);
+  });
+
+  it('does not resume a close aborted during deletion', () => {
+    host();
+    const save = openSave({ hasUnsaved: () => true });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      view.result.current.beginDelete();
+      view.result.current.prepareClose(32);
+      view.result.current.closeAborted(32);
+      view.result.current.endDelete();
+    });
+    expect(closePosts()).toEqual([]);
+    expect(save.freeze).not.toHaveBeenCalled();
+    expect(view.result.current.pendingKind).toBeNull();
+  });
+});
+
 describe('captured leave URLs', () => {
   it('restores a captured address with replaceState', () => {
     window.history.replaceState(null, '', '/#/s/lobby/planning/');

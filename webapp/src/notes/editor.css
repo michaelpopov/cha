@@ -45,3 +45,33 @@ img.ProseMirror-separator {
 .find-and-replace-result-current {
   background-color: rgb(255 165 0 / 0.55);
 }
+
+.cha-notes-inactive-selection {
+  background-color: color-mix(in srgb, var(--ring) 45%, transparent);
+}
+
+span.cha-notes-inactive-caret {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-right: -1px;
+  background: currentColor;
+  pointer-events: none;
+  vertical-align: text-bottom;
+}
+
+.cha-notes-inactive-caret:not(span)::before {
+  content: "";
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-right: -1px;
+  background: currentColor;
+  pointer-events: none;
+  vertical-align: text-bottom;
+}
+
+.cha-notes-inactive-node {
+  outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent);
+  outline-offset: 1px;
+}

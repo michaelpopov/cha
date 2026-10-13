@@ -1,4 +1,4 @@
-import { Editor, type Content } from '@tiptap/core';
+import { Editor, Extension, type Content } from '@tiptap/core';
 import FindAndReplace from '@tiptap/extension-find-and-replace';
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
@@ -8,11 +8,13 @@ import { type Node as PmNode, type Schema, type Slice } from '@tiptap/pm/model';
 import {
   AllSelection,
   NodeSelection,
+  Plugin,
+  PluginKey,
   TextSelection,
   type EditorState,
   type Transaction,
 } from '@tiptap/pm/state';
-import type { EditorProps, EditorView } from '@tiptap/pm/view';
+import { Decoration, DecorationSet, type EditorProps, type EditorView } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 
@@ -131,6 +133,97 @@ export function selectNoteEnd(editor: Editor): void {
   editor.view.dispatch(tr);
 }
 
+const inactiveSelectionKey = new PluginKey<boolean>('notesInactiveSelection');
+
+// The browser hides a selection when the editor blurs. This decoration redraws
+// that same selection. A microtask avoids dispatching inside the focus event.
+function inactiveSelectionPlugin(): Plugin {
+  return new Plugin<boolean>({
+    key: inactiveSelectionKey,
+    state: {
+      init: () => false,
+      apply(tr, value) {
+        const next = tr.getMeta(inactiveSelectionKey);
+        return typeof next === 'boolean' ? next : value;
+      },
+    },
+    props: {
+      decorations(state) {
+        if (inactiveSelectionKey.getState(state) === true) return null;
+        return inactiveDecorations(state);
+      },
+    },
+    view(view) {
+      const refresh = () => {
+        if (view.isDestroyed) return;
+        const focused = view.hasFocus();
+        if (inactiveSelectionKey.getState(view.state) === focused) return;
+        view.dispatch(
+          view.state.tr.setMeta(inactiveSelectionKey, focused).setMeta('addToHistory', false),
+        );
+      };
+      const schedule = () => {
+        queueMicrotask(refresh);
+      };
+      view.dom.addEventListener('focus', schedule, true);
+      view.dom.addEventListener('blur', schedule, true);
+      queueMicrotask(refresh);
+      return {
+        destroy() {
+          view.dom.removeEventListener('focus', schedule, true);
+          view.dom.removeEventListener('blur', schedule, true);
+        },
+      };
+    },
+  });
+}
+
+// A widget at the start of a textblock becomes that block's first DOM child.
+// Mark the block itself so the text node stays first.
+function collapsedCaret(state: EditorState): Decoration {
+  const $head = state.selection.$head;
+  if ($head.parent.isTextblock && $head.parentOffset === 0) {
+    const from = $head.before();
+    return Decoration.node(from, from + $head.parent.nodeSize, {
+      class: 'cha-notes-inactive-caret',
+    });
+  }
+  return Decoration.widget(state.selection.head, () => {
+    const caret = document.createElement('span');
+    caret.className = 'cha-notes-inactive-caret';
+    caret.setAttribute('aria-hidden', 'true');
+    return caret;
+  }, { side: -1, ignoreSelection: true, key: 'notes-caret' });
+}
+
+function inactiveDecorations(state: EditorState): DecorationSet {
+  const selection = state.selection;
+  if (selection instanceof NodeSelection) {
+    return DecorationSet.create(state.doc, [
+      Decoration.node(selection.from, selection.to, { class: 'cha-notes-inactive-node' }),
+    ]);
+  }
+  if (selection.empty) {
+    return DecorationSet.create(state.doc, [collapsedCaret(state)]);
+  }
+  const marks: Decoration[] = [];
+  state.doc.nodesBetween(selection.from, selection.to, (node, pos) => {
+    if (node.isText) {
+      const from = Math.max(pos, selection.from);
+      const to = Math.min(pos + node.nodeSize, selection.to);
+      if (from < to) {
+        marks.push(Decoration.inline(from, to, { class: 'cha-notes-inactive-selection' }));
+      }
+      return false;
+    }
+    if (node.type.name === 'image' && pos >= selection.from && pos + node.nodeSize <= selection.to) {
+      marks.push(Decoration.node(pos, pos + node.nodeSize, { class: 'cha-notes-inactive-node' }));
+    }
+  });
+  if (marks.length === 0) return DecorationSet.empty;
+  return DecorationSet.create(state.doc, marks);
+}
+
 export function insertPromptParagraph(editor: Editor, text: string): boolean {
   if (editor.isDestroyed || !editor.isEditable) return false;
   const normalized = text.replace(/\r\n?/g, '\n');
@@ -170,6 +263,12 @@ function notesExtensions() {
     Image.configure({ allowBase64: true, inline: false, resize: false }),
     Highlight.configure({ multicolor: false }),
     FindAndReplace.configure({ injectCSS: false, searchDebounceMs: 0 }),
+    Extension.create({
+      name: 'notesInactiveSelection',
+      addProseMirrorPlugins() {
+        return [inactiveSelectionPlugin()];
+      },
+    }),
   ];
 }
 

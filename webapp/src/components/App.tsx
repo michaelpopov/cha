@@ -30,6 +30,7 @@ import {
   visibleChatDraft,
 } from '../state/promptDrafts';
 import { saveMarkdownDownload } from '../download';
+import { noteInSubtree } from '../notes/tree';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import type { NoteSaveHandle } from '../notes/useNoteSave';
 import { reloadApplication, writeAppRoute } from '../state/route';
@@ -65,7 +66,7 @@ import {
   SessionsScreen,
 } from './Screens';
 import { NotesScreen } from './NotesScreen';
-import { NotesTree } from './NotesTree';
+import { NotesTree, type DeleteNoteItem } from './NotesTree';
 import { Sidebar } from './Sidebar';
 import { TransliterationProvider } from './TransliterationMode';
 import {
@@ -110,6 +111,7 @@ interface ScreenProps extends ChatActions {
   };
   onRegisterSave(save: NoteSaveHandle | null): void;
   onRegisterDispose(dispose: () => void): void;
+  onNewNote(): void;
   onDraftChange(next: string): void;
   onDeleteForum(forumId: string): Promise<void>;
   onCreateSession(forumId: string): Promise<boolean>;
@@ -136,6 +138,7 @@ function Screen({
   leave,
   onRegisterSave,
   onRegisterDispose,
+  onNewNote,
   onRetryStream,
   onReturnToStart,
   onSetDefaultCharacter,
@@ -365,6 +368,7 @@ function Screen({
         noteRequest={state.noteRequest}
         notesEpoch={state.notesEpoch}
         onDraftChange={onNotesDraftChange}
+        onNewNote={onNewNote}
         onRegisterDispose={onRegisterDispose}
         onRegisterSave={onRegisterSave}
         sidebarOpen={state.sidebarOpen}
@@ -583,6 +587,11 @@ export function App({
   const noteSaveRef = useRef<NoteSaveHandle | null>(null);
   const editorLiveRef = useRef<Editor | null>(null);
   const disposeEditorRef = useRef<() => void>(() => undefined);
+  const notesEpochRef = useRef(state.notesEpoch);
+  const activeNoteIdRef = useRef(state.activeNoteId);
+  const createNoteRef = useRef<() => void>(() => undefined);
+  notesEpochRef.current = state.notesEpoch;
+  activeNoteIdRef.current = state.activeNoteId;
   const noteLeave = useNoteLeave(() => noteSaveRef.current, {
     disposeEditor: () => {
       disposeEditorRef.current();
@@ -672,6 +681,54 @@ export function App({
     noteSaveRef.current?.unfreeze();
     return true;
   }, [noteLeave.leaveNoteThen]);
+
+  const deleteNoteItem = useCallback<DeleteNoteItem>(async (sourceId, listing, refresh) => {
+    if (!noteLeave.beginDelete()) return 'busy';
+    const epoch = notesEpochRef.current;
+    const noteId = activeNoteIdRef.current;
+    const affected = noteInSubtree(listing, sourceId, noteId);
+    const save = noteSaveRef.current;
+    let canceledUncovered = false;
+    const sameNote = () => (
+      notesEpochRef.current === epoch && activeNoteIdRef.current === noteId
+    );
+    try {
+      if (affected && save?.isOpen && sameNote()) {
+        canceledUncovered = save.freeze();
+        await save.waitInFlight();
+      }
+      if (notesEpochRef.current !== epoch) return 'failed';
+      await client.deleteNoteItem(sourceId);
+      if (affected && sameNote()) {
+        noteSaveRef.current?.dispose();
+        disposeEditorRef.current();
+        dispatch({ type: 'close-note' });
+      }
+      if (notesEpochRef.current !== epoch) return 'deleted';
+      try {
+        await refresh();
+        return 'deleted';
+      } catch {
+        return 'refresh-failed';
+      }
+    } catch (error) {
+      if (affected && sameNote()) {
+        const current = noteSaveRef.current;
+        current?.unfreeze();
+        if (canceledUncovered) current?.submitNow();
+      }
+      throw error;
+    } finally {
+      noteLeave.endDelete();
+    }
+  }, [client, dispatch, noteLeave.beginDelete, noteLeave.endDelete]);
+
+  const registerCreateNote = useCallback((create: () => void) => {
+    createNoteRef.current = create;
+  }, []);
+  const requestNewNote = useCallback(() => {
+    createNoteRef.current();
+  }, []);
 
   useEffect(() => {
     if (!contextEvents) return;
@@ -934,8 +991,10 @@ export function App({
                 browsing={state.sidebarTab === 'notes'}
                 client={client}
                 onBeforeCreateNote={beforeCreateNote}
+                onDeleteItem={deleteNoteItem}
                 onNoteItems={setNoteItems}
                 onOpenNote={requestOpenNote}
+                onRegisterCreateNote={registerCreateNote}
               />
             )}
             onSwitchVault={switchVault}
@@ -1002,6 +1061,7 @@ export function App({
                 onNotesDraftChange={editNotes}
                 onRegisterDispose={registerDispose}
                 onRegisterSave={registerSave}
+                onNewNote={requestNewNote}
                 onCoverConversation={coverConversation}
                 onDeleteTurn={deleteTurn}
                 onDeleteForum={deleteForum}

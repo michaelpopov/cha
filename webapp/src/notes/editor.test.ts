@@ -955,4 +955,50 @@ describe('find and replace', () => {
     expect(copied.dom.querySelector('mark')?.textContent).toBe('this');
     expect(created.view.dom.querySelector('mark')).not.toBeNull();
   });
+
+  it('marks the current selection while the editor is inactive', async () => {
+    const created = editor({ content: '<p>hello</p>' });
+    const before = created.getJSON();
+    expect(created.view.dom.querySelector('.cha-notes-inactive-caret')).not.toBeNull();
+    selectText(created, 'hello', 1, 4);
+    expect(created.state.doc.textBetween(created.state.selection.from, created.state.selection.to)).toBe('ell');
+    expect(created.view.dom.querySelector('.cha-notes-inactive-selection')).not.toBeNull();
+    expect(created.getJSON()).toEqual(before);
+    expect(undoDepth(created.state)).toBe(0);
+
+    created.commands.setSearchTerm('ell');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(created.state.doc.textBetween(created.state.selection.from, created.state.selection.to)).toBe('ell');
+    expect(created.view.dom.querySelector('.cha-notes-inactive-selection')).not.toBeNull();
+    expect(undoDepth(created.state)).toBe(0);
+
+    created.view.focus();
+    await Promise.resolve();
+    expect(created.view.dom.querySelector('.cha-notes-inactive-selection')).toBeNull();
+    expect(created.view.dom.querySelector('.cha-notes-inactive-caret')).toBeNull();
+    created.view.dom.blur();
+    await Promise.resolve();
+    expect(created.view.dom.querySelector('.cha-notes-inactive-selection')).not.toBeNull();
+    expect(created.getJSON()).toEqual(before);
+    expect(undoDepth(created.state)).toBe(0);
+  });
+
+  it('marks a selected image and a gap cursor without saving the marker', () => {
+    const saves: string[] = [];
+    const created = editor({
+      content: {
+        type: 'doc',
+        content: [{ type: 'image', attrs: { src: 'data:image/png;base64,aaaa' } }],
+      },
+      onAcceptedDocument: () => saves.push('save'),
+    });
+    const imagePos = 0;
+    created.view.dispatch(created.state.tr.setSelection(NodeSelection.create(created.state.doc, imagePos)).setMeta('addToHistory', false));
+    expect(created.view.dom.querySelector('.cha-notes-inactive-node')).not.toBeNull();
+    selectNoteEnd(created);
+    expect(created.state.selection).toBeInstanceOf(GapCursor);
+    expect(created.view.dom.querySelector('.cha-notes-inactive-caret')).not.toBeNull();
+    expect(undoDepth(created.state)).toBe(0);
+    expect(saves).toEqual([]);
+  });
 });

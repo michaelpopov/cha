@@ -181,9 +181,21 @@ export function useNoteLeave(
     return false;
   }, [finish, stayIntent, waitForChoice]);
 
+  const beginDelete = useCallback(() => {
+    if (intentRef.current || pendingKindRef.current !== null || runningAction.current) return false;
+    setSlot('delete');
+    return true;
+  }, [setSlot]);
+
+  const endDelete = useCallback(() => {
+    if (pendingKindRef.current !== 'delete') return;
+    setSlot(null);
+    resumeDeferredClose();
+  }, [resumeDeferredClose, setSlot]);
+
   const leaveNoteThen = useCallback<LeaveNoteThen>(async (action, leaveOptions) => {
     if (runningAction.current) return await action();
-    if (intentRef.current) {
+    if (intentRef.current || pendingKindRef.current !== null) {
       if (leaveOptions?.previousUrl !== undefined) restoreAppUrl(leaveOptions.previousUrl);
       return false;
     }
@@ -388,6 +400,8 @@ export function useNoteLeave(
 
   return {
     leaveNoteThen,
+    beginDelete,
+    endDelete,
     retry,
     stay,
     discard,
