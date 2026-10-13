@@ -207,13 +207,6 @@ export function PromptInput({
     return chatHeight > 0 ? chatHeight * 0.8 : fallback;
   }
 
-  function followTranscript() {
-    const transcript = composerArea.current?.parentElement?.querySelector('.cha-transcript');
-    if (!transcript || transcript.getAttribute('data-following') === 'false') return;
-    const end = transcript.lastElementChild;
-    if (end instanceof HTMLElement) end.scrollIntoView?.({ block: 'end' });
-  }
-
   // A textarea follows its wrapped content until the reader gives it a larger
   // floor. Both automatic and manual growth stop at 80% of the chat area.
   function fitComposer() {
@@ -222,7 +215,6 @@ export function PromptInput({
     input.style.height = 'auto';
     const maximum = maximumComposerHeight();
     input.style.height = `${Math.min(maximum, Math.max(input.scrollHeight, composerHeight ?? 0))}px`;
-    followTranscript();
   }
   useLayoutEffect(fitComposer, [composerHeight, value]);
 

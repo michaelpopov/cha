@@ -334,6 +334,7 @@ export function ChatScreen({
   const stopping = useRef(false);
   const composerEpoch = useRef(0);
   const actionPending = pendingAction !== null || sendPending || stopPending;
+  const transcriptArea = useRef<HTMLDivElement | null>(null);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const textToSpeechSession = useRef<TextToSpeechSession | null>(null);
   const [autoAudioEnabled, setAutoAudioEnabled] = useState(false);
@@ -373,11 +374,6 @@ export function ChatScreen({
   const connected = state.streamStatus === 'connected' && snapshot !== null && !ended;
   const generationActive = generation?.active === true;
   const sessionAvailable = snapshot !== null && !ended;
-  // A new object tells PromptInput the vault changed without remounting the field.
-  const voiceClient = useMemo<ChaClient>(
-    () => ({ ...client }),
-    [client, state.bootstrap?.vault_name],
-  );
   const textToSpeechConfiguration = useTextToSpeechConfiguration(client, state.bootstrap?.vault_name);
   const downloads = useAudioDownloads(client, snapshot?.forum.id, snapshot?.session_id,
     state.bootstrap?.vault_name, state.audioCacheClearCount);
@@ -691,13 +687,22 @@ export function ChatScreen({
   }
   useEffect(followTranscript, [conversationKey, generation?.active, generation?.phase, snapshot?.transcript]);
 
+  // The composer and window resizing change the transcript height without
+  // new text, so a following reader must stay at the end then as well.
+  useEffect(() => {
+    const transcript = transcriptArea.current;
+    if (!transcript || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(followTranscript);
+    observer.observe(transcript);
+    return () => observer.disconnect();
+  }, []);
+
   // Growing the transcript moves the end away without moving the viewport, so
   // whether the reader is following has to be recorded when they last scrolled
   // rather than measured after new text has already landed.
   function noteReadingPosition(event: UIEvent<HTMLDivElement>) {
     const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
     followingLatest.current = scrollHeight - scrollTop - clientHeight <= followSlack;
-    event.currentTarget.dataset.following = followingLatest.current ? 'true' : 'false';
   }
 
   async function stop() {
@@ -752,6 +757,7 @@ export function ChatScreen({
         aria-label="Conversation transcript"
         className="cha-transcript"
         onScroll={noteReadingPosition}
+        ref={transcriptArea}
       >
         {(!snapshot || (snapshot.transcript.length === 0 && !generationActive)) && (
           <div className="cha-chat-welcome">
@@ -866,7 +872,7 @@ export function ChatScreen({
         <p className="cha-chat-action-error cha-error-message" role="alert">{actionError}</p>
       )}
       <PromptInput
-        client={voiceClient}
+        client={client}
         enabled={sessionAvailable}
         formControls={(
           <label className="cha-target-select" title="Choose message target">

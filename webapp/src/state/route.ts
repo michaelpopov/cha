@@ -44,10 +44,10 @@ export function appHref(
   return `${location.pathname}${location.search}#${path}`;
 }
 
-let rememberedUrl: string | undefined;
+// The history listener stores the loaded address before it handles events.
+let rememberedUrl = '';
 
 export function rememberedAppUrl(): string {
-  rememberedUrl ??= window.location.href;
   return rememberedUrl;
 }
 

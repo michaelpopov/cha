@@ -14,15 +14,11 @@ export type NoteSaveHandle = {
   isOpen: boolean;
   frozen: boolean;
   saveError: NoteSaveError | null;
-  editSerial(): number;
-  savedSerial(): number;
-  isSaveDue(): boolean;
   hasUnsaved(): boolean;
   inFlightSerial(): number | null;
   waitInFlight(): Promise<void>;
   freeze(): boolean;
   unfreeze(): void;
-  retry(): void;
   submitNow(): void;
   flushRemaining(): Promise<boolean>;
   dispose(): void;
@@ -236,15 +232,11 @@ export function useNoteSave({
     get saveError() {
       return saveErrorRef.current;
     },
-    editSerial: () => editSerial.current,
-    savedSerial: () => savedSerial.current,
-    isSaveDue: () => saveDue.current,
     hasUnsaved: () => editSerial.current > savedSerial.current,
     inFlightSerial: () => inFlight.current?.serial ?? null,
     waitInFlight,
     freeze,
     unfreeze,
-    retry: submitNow,
     submitNow,
     flushRemaining,
     dispose,

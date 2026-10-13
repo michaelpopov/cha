@@ -38,7 +38,3 @@ export function adoptChatDraft(drafts: PromptDrafts, key: string): PromptDrafts 
   if (drafts.chat.key === key) return drafts;
   return { ...drafts, chat: { key, text: '' } };
 }
-
-export function clearPromptDrafts(): PromptDrafts {
-  return emptyPromptDrafts();
-}

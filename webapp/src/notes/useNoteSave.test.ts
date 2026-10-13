@@ -62,8 +62,7 @@ describe('note save scheduling', () => {
     });
     expect(save).toHaveBeenCalledOnce();
     expect(JSON.stringify(save.mock.calls[0][0])).toContain('ab');
-    expect(view.result.current.editSerial()).toBe(2);
-    expect(view.result.current.savedSerial()).toBe(2);
+    expect(view.result.current.hasUnsaved()).toBe(false);
   });
 
   it('marks a save due when the deadline expires during a pending write', async () => {
@@ -83,18 +82,18 @@ describe('note save scheduling', () => {
       await vi.advanceTimersByTimeAsync(noteSaveDelayMs);
     });
     expect(save).toHaveBeenCalledOnce();
-    expect(view.result.current.isSaveDue()).toBe(true);
     await act(async () => {
       first.resolve();
       await first.promise;
     });
     expect(save).toHaveBeenCalledTimes(2);
-    expect(view.result.current.savedSerial()).toBe(1);
+    expect(JSON.stringify(save.mock.calls[1][0])).toContain('ab');
+    expect(view.result.current.hasUnsaved()).toBe(true);
     await act(async () => {
       second.resolve();
       await second.promise;
     });
-    expect(view.result.current.savedSerial()).toBe(2);
+    expect(view.result.current.hasUnsaved()).toBe(false);
   });
 
   it('covers only the committed serial and keeps later edits unsaved', async () => {
@@ -110,8 +109,6 @@ describe('note save scheduling', () => {
       first.resolve();
       await first.promise;
     });
-    expect(view.result.current.savedSerial()).toBe(1);
-    expect(view.result.current.editSerial()).toBe(2);
     expect(view.result.current.hasUnsaved()).toBe(true);
   });
 
@@ -127,7 +124,7 @@ describe('note save scheduling', () => {
       await vi.advanceTimersByTimeAsync(noteSaveDelayMs);
     });
     act(() => {
-      view.result.current.retry();
+      view.result.current.submitNow();
     });
     expect(view.result.current.saveError).toBeNull();
     await act(async () => {
@@ -141,7 +138,7 @@ describe('note save scheduling', () => {
       await second.promise;
     });
     expect(view.result.current.saveError).toBeNull();
-    expect(view.result.current.savedSerial()).toBe(1);
+    expect(view.result.current.hasUnsaved()).toBe(false);
   });
 
   it('reports the failed serial on the handle captured before the reply', async () => {
@@ -190,7 +187,7 @@ describe('note save scheduling', () => {
       await second.promise;
     });
     expect(view.result.current.saveError).toBeNull();
-    expect(view.result.current.savedSerial()).toBe(2);
+    expect(view.result.current.hasUnsaved()).toBe(false);
   });
 
   it('does not start a retry loop from failure alone', async () => {
@@ -219,12 +216,10 @@ describe('note save scheduling', () => {
       await vi.advanceTimersByTimeAsync(noteSaveDelayMs);
     });
     editor.commands.undo();
-    expect(view.result.current.editSerial()).toBe(2);
     await act(async () => {
       first.resolve();
       await first.promise;
     });
-    expect(view.result.current.savedSerial()).toBe(1);
     expect(view.result.current.hasUnsaved()).toBe(true);
   });
 
@@ -243,8 +238,10 @@ describe('note save scheduling', () => {
       first.resolve();
       await first.promise;
     });
-    expect(view.result.current.savedSerial()).toBe(0);
     expect(view.result.current.saveError).toBeNull();
+    // A stale reply must not cover the first edit in the new context.
+    insertText(editor, 'b');
+    expect(view.result.current.hasUnsaved()).toBe(true);
   });
 
   it('does not save a selection-only change', async () => {
@@ -262,6 +259,6 @@ describe('note save scheduling', () => {
       await vi.advanceTimersByTimeAsync(noteSaveDelayMs);
     });
     expect(save).not.toHaveBeenCalled();
-    expect(view.result.current.editSerial()).toBe(1);
+    expect(view.result.current.hasUnsaved()).toBe(false);
   });
 });

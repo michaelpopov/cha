@@ -129,6 +129,7 @@ function renderChat(
     const [draft, setDraft] = useState('');
     return (
       <ChatScreen
+        key={name}
         {...props}
         draft={draft}
         onDraftChange={setDraft}
@@ -467,7 +468,7 @@ describe('xAI composer', () => {
     await waitFor(() => expect(input).toHaveValue('Draft maybe wrong'));
 
     view.rerenderVault('Projects');
-    await waitFor(() => expect(input).toHaveValue('Draft'));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Draft'));
     expect(screen.getByRole('button', { name: 'Start voice input' })).toBeEnabled();
   });
 

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   adoptChatDraft,
   chatDraftKey,
-  clearPromptDrafts,
   editChatDraft,
   editNotesDraft,
   emptyPromptDrafts,
@@ -44,14 +43,5 @@ describe('prompt drafts', () => {
       chat: { key: planning, text: '' },
       notes: 'A note',
     });
-  });
-
-  it('clears both drafts together', () => {
-    const drafts = editNotesDraft(
-      editChatDraft(emptyPromptDrafts(), chatDraftKey('Personal', 'entrance', 'welcome'), 'Hello'),
-      'A note',
-    );
-    expect(clearPromptDrafts()).toEqual(emptyPromptDrafts());
-    expect(clearPromptDrafts()).not.toBe(drafts);
   });
 });

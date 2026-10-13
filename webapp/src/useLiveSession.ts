@@ -719,6 +719,7 @@ export function useLiveSession(
         }
       }, { previousUrl });
     };
+    rememberAppUrl();
     window.addEventListener('popstate', visitHistoryRoute);
     window.addEventListener('hashchange', visitHistoryRoute);
     return () => {

@@ -21,7 +21,6 @@ import { validateBootstrap } from '../state/bootstrap';
 import {
   adoptChatDraft,
   chatDraftKey,
-  clearPromptDrafts,
   editChatDraft,
   emptyPromptDrafts,
   visibleChatDraft,
@@ -648,7 +647,7 @@ export function App({
     await noteLeave.leaveNoteThen(async () => {
       await abandonUnusedSession({ refresh: false });
       await client.switchVault(vaultName, password);
-      setDrafts(clearPromptDrafts());
+      setDrafts(emptyPromptDrafts());
       writeAppRoute('/', 'replace');
       if (!contextEvents) reload();
     });

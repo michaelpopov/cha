@@ -15,7 +15,6 @@ import {
 import type { EditorProps, EditorView } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
-import './editor.css';
 
 const notesIsolatedMeta = 'notesIsolated';
 const notesIsolatedCloseMeta = 'notesIsolatedClose';

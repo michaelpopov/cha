@@ -70,15 +70,11 @@ function openSave(overrides: Partial<NoteSaveHandle> = {}): NoteSaveHandle {
     isOpen: true,
     frozen: false,
     saveError: null,
-    editSerial: () => 1,
-    savedSerial: () => 0,
-    isSaveDue: () => false,
     hasUnsaved: () => true,
     inFlightSerial: () => null,
     waitInFlight: async () => undefined,
     freeze: vi.fn(() => false),
     unfreeze: vi.fn(),
-    retry: vi.fn(),
     submitNow: vi.fn(),
     flushRemaining: vi.fn(async () => true),
     dispose: vi.fn(),
@@ -558,5 +554,18 @@ it('keeps the reached URL after a successful paired history leave', async () => 
   expect(view.result.current.state.mainView).toBe('chat');
   expect(window.location.hash === '#/' || window.location.hash === '').toBe(true);
   expect(view.result.current.leave.pendingKind).toBeNull();
+});
+
+it('handles the first history event after a page load', () => {
+  // The page loads at a session URL that no app route write recorded.
+  window.history.replaceState(null, '', '/#/s/lobby/planning/');
+  const { reducer } = harness();
+  reducer.mockClear();
+  window.history.replaceState(null, '', '/');
+  act(() => {
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  expect(reducer.mock.calls.map(([, action]) => action.type))
+    .toContain('show-initial-conversation');
 });
 

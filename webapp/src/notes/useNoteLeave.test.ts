@@ -23,15 +23,11 @@ function openSave(overrides: Partial<NoteSaveHandle> = {}): NoteSaveHandle {
     isOpen: true,
     frozen: false,
     saveError: null,
-    editSerial: () => 1,
-    savedSerial: () => 0,
-    isSaveDue: () => false,
     hasUnsaved: () => true,
     inFlightSerial: () => null,
     waitInFlight: async () => undefined,
     freeze: vi.fn(() => false),
     unfreeze: vi.fn(),
-    retry: vi.fn(),
     submitNow: vi.fn(),
     flushRemaining: vi.fn(async () => true),
     dispose: vi.fn(),
@@ -225,7 +221,7 @@ describe('leaveNoteThen', () => {
     expect(view.result.current.pendingKind).toBeNull();
   });
 
-  it('restores the captured URL and uncovered save on Stay', async () => {
+  it('restores the captured URL on Stay without resending a failed final flush', async () => {
     const save = openSave({
       freeze: vi.fn(() => true),
       flushRemaining: vi.fn(async () => false),
@@ -250,10 +246,36 @@ describe('leaveNoteThen', () => {
     });
     expect(action).not.toHaveBeenCalled();
     expect(save.unfreeze).toHaveBeenCalled();
-    expect(save.submitNow).toHaveBeenCalledOnce();
+    expect(save.flushRemaining).toHaveBeenCalledOnce();
+    expect(save.submitNow).not.toHaveBeenCalled();
     expect(window.location.hash).toBe('#/s/lobby/planning/');
     expect(rememberedAppUrl()).toBe(window.location.href);
     expect(view.result.current.pendingKind).toBeNull();
+  });
+
+  it('submits canceled uncovered changes on Stay after an admitted save fails', async () => {
+    const save = openSave({
+      freeze: vi.fn(() => true),
+      inFlightSerial: () => 3,
+      saveError: { serial: 3, message: 'The note could not be saved.' },
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    const action = vi.fn();
+    let finished: Promise<unknown> | undefined;
+    act(() => {
+      finished = view.result.current.leaveNoteThen(action);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(view.result.current.decisionOpen).toBe(true);
+    await act(async () => {
+      view.result.current.stay();
+      await finished;
+    });
+    expect(action).not.toHaveBeenCalled();
+    expect(save.flushRemaining).not.toHaveBeenCalled();
+    expect(save.submitNow).toHaveBeenCalledOnce();
   });
 
   it('discards after settling, disposes the editor, then runs the action', async () => {

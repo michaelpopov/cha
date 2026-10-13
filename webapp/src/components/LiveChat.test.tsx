@@ -2504,7 +2504,8 @@ describe('live chat', () => {
           });
         }
         return new Promise((resolve) => {
-          release = () => resolve({
+          // Keep the read started before the vault change.
+          release ??= () => resolve({
             provider: 'xai',
             url: 'wss://api.x.ai/v1/stt',
             model: 'grok-voice-transcribe-2.0',
@@ -2517,6 +2518,7 @@ describe('live chat', () => {
     });
     const chat = (vaultName: string) => (
       <ChatScreen
+        key={vaultName}
         client={client}
         dispatch={vi.fn()}
         draft=""
@@ -3410,24 +3412,23 @@ describe('chat layout changes', () => {
     });
   }
 
-  it('follows a resized column only while the reader is at the end', async () => {
+  it('follows a resized transcript only while the reader is at the end', async () => {
     const resize = observeSizes();
     const events = drivableEvents();
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
     await attachInitial(events, transcriptSnapshot());
-    const chat = screen.getByLabelText('Chat area');
     const transcript = screen.getByLabelText('Conversation transcript');
     const scroll = vi.fn();
     Object.defineProperty(transcript.lastElementChild!, 'scrollIntoView', { configurable: true, value: scroll });
 
-    resize(chat);
+    resize(transcript);
     expect(scroll).toHaveBeenCalledWith({ block: 'end' });
     placeReadingPosition(transcript, { scrollTop: 100, scrollHeight: 900, clientHeight: 300 });
     scroll.mockClear();
-    resize(chat);
+    resize(transcript);
     expect(scroll).not.toHaveBeenCalled();
     placeReadingPosition(transcript, { scrollTop: 600, scrollHeight: 900, clientHeight: 300 });
-    resize(chat);
+    resize(transcript);
     expect(scroll).toHaveBeenCalled();
   });
 

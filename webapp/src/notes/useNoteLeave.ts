@@ -13,7 +13,6 @@ export type PendingOperationKind = 'leave' | 'delete' | null;
 type LeaveChoice = 'retry' | 'stay' | 'discard';
 
 type LeaveIntent = {
-  id: number;
   action: () => unknown;
   previousUrl?: string;
   canceledUncovered: boolean;
@@ -30,7 +29,6 @@ export function useNoteLeave(
   disposeEditorRef.current = options?.disposeEditor;
   const intentRef = useRef<LeaveIntent | null>(null);
   const runningAction = useRef(false);
-  const nextId = useRef(0);
   const [pendingKind, setPendingKind] = useState<PendingOperationKind>(null);
   const [decisionOpen, setDecisionOpen] = useState(false);
 
@@ -117,6 +115,8 @@ export function useNoteLeave(
         return finish(intent, save, 'discard');
       }
       if (save.hasUnsaved()) {
+        // This flush submits the changes whose deadline the freeze canceled.
+        intent.canceledUncovered = false;
         const ok = await save.flushRemaining();
         if (intentRef.current !== intent) return false;
         if (!ok) {
@@ -143,7 +143,6 @@ export function useNoteLeave(
     const save = getSaveRef.current();
     if (!save?.isOpen) return await invokeAction(action);
     const intent: LeaveIntent = {
-      id: ++nextId.current,
       action,
       previousUrl: leaveOptions?.previousUrl,
       canceledUncovered: false,
@@ -197,6 +196,5 @@ export function useNoteLeave(
     decisionOpen,
     pendingKind,
     holdsLeave: pendingKind === 'leave',
-    flushWithContinuation: leaveNoteThen,
   };
 }
