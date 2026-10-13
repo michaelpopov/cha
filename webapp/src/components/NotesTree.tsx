@@ -391,7 +391,9 @@ export function NotesTree({
     if (!canMutateNow()) return;
     const item = treeRef.current.getItemInstance(String(sourceId));
     item.setFocused();
-    treeRef.current.updateDomFocus();
+    // The row already exists. A deferred tree focus would steal focus back
+    // after the menu (or its dialog) has focused its first control.
+    item.getElement()?.focus();
     const rect = anchor.getBoundingClientRect();
     setMenu({ sourceId, x: rect.left, y: rect.bottom, restore: anchor });
   }

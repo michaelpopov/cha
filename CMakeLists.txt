@@ -795,10 +795,12 @@ if(WIN32)
         PRIVATE
             cha_lib
             cha_webview2_loader
+            comctl32
             comdlg32
             ole32
             shell32
             shlwapi
+            urlmon
             user32)
     set_target_properties(cha_windows_app PROPERTIES OUTPUT_NAME CHA)
     cha_enable_warnings(cha_windows_app)
@@ -819,10 +821,12 @@ if(WIN32)
         PRIVATE
             cha_lib
             cha_webview2_loader
+            comctl32
             comdlg32
             ole32
             shell32
             shlwapi
+            urlmon
             user32)
     set_target_properties(cha_windows_test_app PROPERTIES OUTPUT_NAME CHATest)
     cha_enable_warnings(cha_windows_test_app)

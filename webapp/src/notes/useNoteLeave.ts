@@ -334,6 +334,8 @@ export function useNoteLeave(
   }, [runClose, setSlot]);
 
   const prepareClose = useCallback((attemptId: number) => {
+    // A paused renderer can receive the abort before the queued prepare call.
+    if (attemptId <= retiredCloseAttempt.current) return;
     if (decisionOpenRef.current) {
       if (deferredCloseAttemptId.current === attemptId) {
         deferredCloseAttemptId.current = null;
@@ -382,6 +384,8 @@ export function useNoteLeave(
   }, [setDecision, setSlot]);
 
   const closeAborted = useCallback((attemptId: number) => {
+    const newerAttempt = attemptId > retiredCloseAttempt.current;
+    retiredCloseAttempt.current = Math.max(retiredCloseAttempt.current, attemptId);
     if (deferredCloseAttemptId.current === attemptId) {
       deferredCloseAttemptId.current = null;
     }
@@ -393,7 +397,7 @@ export function useNoteLeave(
     }
     const waitingForNextAttempt = closePhase.current === 'retry-handoff'
       || closePhase.current === 'discard-handoff';
-    if (waitingForNextAttempt && attemptId > retiredCloseAttempt.current) {
+    if (waitingForNextAttempt && newerAttempt) {
       abortOwnedClose(intent);
     }
   }, [abortOwnedClose]);

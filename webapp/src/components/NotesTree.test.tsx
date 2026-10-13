@@ -347,21 +347,14 @@ describe('Notes tree', () => {
   });
 
   it('returns focus to the row when a dialog from the menu is canceled', async () => {
-    // openMenu calls headless-tree's updateDomFocus. It focuses the row from a
-    // 20 ms interval timer, so the test lets that timer finish first.
-    const runTreeFocusTimer = () => act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
     renderTree();
     const study = await screen.findByRole('treeitem', { name: 'Study' });
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
-    await runTreeFocusTimer();
     fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Rename' }));
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
     expect(study).toHaveFocus();
 
     fireEvent.keyDown(screen.getByRole('tree'), { key: 'F10', shiftKey: true });
-    await runTreeFocusTimer();
     fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Delete' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();

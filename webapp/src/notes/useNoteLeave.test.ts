@@ -450,6 +450,24 @@ describe('native close', () => {
     expect(view.result.current.pendingKind).toBeNull();
   });
 
+  it('ignores a prepare delivered after its abort and accepts the next attempt', async () => {
+    host();
+    const save = openSave({ hasUnsaved: () => false });
+    const view = renderHook(() => useNoteLeave(() => save));
+    await act(async () => {
+      view.result.current.closeAborted(1);
+      view.result.current.prepareClose(1);
+    });
+    expect(save.freeze).not.toHaveBeenCalled();
+    expect(closePosts()).toEqual([]);
+    expect(view.result.current.pendingKind).toBeNull();
+    await act(async () => view.result.current.prepareClose(2));
+    expect(save.freeze).toHaveBeenCalledOnce();
+    expect(closePosts()).toEqual([{
+      native_action: 'close_reply', connection_id: 'view-4', attempt_id: 2, result: 'ready',
+    }]);
+  });
+
   it('freezes a clean open note until shutdown or a matching close abort', async () => {
     host();
     const save = openSave({

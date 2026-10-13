@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <shellapi.h>
+#include <commctrl.h>
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <wrl.h>
@@ -15,6 +16,7 @@
 
 #include <nlohmann/json.hpp>
 #include <shlwapi.h>
+#include <urlmon.h>
 
 #include <algorithm>
 #include <chrono>
@@ -306,6 +308,10 @@ struct LaunchOptions {
     std::optional<std::filesystem::path> assets;
     std::optional<int> cdp_port;
     std::optional<std::wstring> dev_origin;
+#if defined(CHA_NATIVE_INSTRUMENTATION)
+    enum class StartupClose { none, no_runtime, no_page };
+    StartupClose startup_close{};
+#endif
 };
 
 struct DeliveryPayload {
@@ -347,6 +353,11 @@ std::wstring native_bootstrap_script(std::string_view connection_id) {
         L"if(!pending)return;"
         L"delete window.__CHA_NATIVE_SAVE_PENDING__[id];"
         L"if(ok)pending.resolve();else pending.reject(new Error(message||'Save failed'));};"
+        L"window.__CHA_NATIVE_PREPARE_CLOSE__=function(attemptId){"
+        L"window.__CHA_NATIVE_POST__(JSON.stringify({native_action:'close_reply',"
+        L"connection_id:window.__CHA_NATIVE_CONNECTION_ID__,"
+        L"attempt_id:attemptId,result:'ready'}));};"
+        L"window.__CHA_NATIVE_CLOSE_ABORTED__=function(attemptId){};"
         L"if(window.chrome&&window.chrome.webview){"
         L"window.chrome.webview.addEventListener('message',function(event){"
         L"var batch=event.data;"
@@ -408,6 +419,10 @@ LaunchOptions parse_launch_options() {
                 throw std::runtime_error("CHA does not accept command-line arguments");
             }
             options.dev_origin = value;
+        } else if (argument == L"--close-without-runtime") {
+            options.startup_close = LaunchOptions::StartupClose::no_runtime;
+        } else if (argument == L"--close-without-page") {
+            options.startup_close = LaunchOptions::StartupClose::no_page;
         } else {
             throw std::runtime_error("CHA does not accept command-line arguments");
         }
@@ -444,8 +459,20 @@ public:
             assets_ = cha::executable_directory() / "web";
         }
         create_window(show_command);
+#if defined(CHA_NATIVE_INSTRUMENTATION)
+        if (options.startup_close == LaunchOptions::StartupClose::no_runtime) {
+            request_close();
+            return;
+        }
+#endif
         prepare_application_data(options.data_root);
         start_runtime();
+#if defined(CHA_NATIVE_INSTRUMENTATION)
+        if (options.startup_close == LaunchOptions::StartupClose::no_page) {
+            request_close();
+            return;
+        }
+#endif
         start_webview();
     }
 
@@ -499,6 +526,9 @@ private:
             return 0;
         case WM_CLOSE:
             request_close();
+            return 0;
+        case WM_TIMER:
+            close_timed_out(static_cast<uint64_t>(wparam));
             return 0;
         case kFatalError:
             show_fatal_error(
@@ -778,7 +808,7 @@ private:
                     const std::wstring uri = take_com_string(raw_uri);
                     if (!is_application_uri(uri)) {
                         args->put_Cancel(TRUE);
-                        open_https(uri);
+                        open_web_link(uri);
                         return S_OK;
                     }
                     wchar_t* raw_current = nullptr;
@@ -803,6 +833,12 @@ private:
                 [this](ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs* args) {
                     COREWEBVIEW2_PROCESS_FAILED_KIND kind{};
                     if (FAILED(args->get_ProcessFailedKind(&kind))) return S_OK;
+                    if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE
+                        && (waiting_close_attempt_ != 0 || close_decision_)) {
+                        // Keep the waiting attempt alive so the user gets the
+                        // native close choice rather than a recovery reload.
+                        return S_OK;
+                    }
                     if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED
                         || kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED
                         || kind
@@ -821,7 +857,7 @@ private:
                         if (is_application_uri(uri)) {
                             webview_->Navigate(uri.c_str());
                         } else {
-                            open_https(uri);
+                            open_web_link(uri);
                         }
                     }
                     args->put_Handled(TRUE);
@@ -1166,6 +1202,7 @@ private:
     // identifier is in place before the application starts.
     HRESULT replace_document_connection() {
         if (runtime_ == nullptr) return E_UNEXPECTED;
+        abort_close_wait();
         if (!connection_id_.empty()) {
             cha_runtime_close_connection(runtime_, connection_id_.c_str());
             connection_id_.clear();
@@ -1199,13 +1236,13 @@ private:
             if (FAILED(args->get_WebMessageAsJson(&raw_json))) return S_OK;
             payload = cha::utf8_from_wide(take_com_string(raw_json));
         }
-        if (handle_native_save(payload)) return S_OK;
+        if (handle_native_action(payload)) return S_OK;
         cha_runtime_handle_message(
             runtime_, connection_id_.c_str(), payload.c_str());
         return S_OK;
     }
 
-    bool handle_native_save(const std::string& payload) {
+    bool handle_native_action(const std::string& payload) {
         nlohmann::json json;
         try {
             json = nlohmann::json::parse(payload);
@@ -1217,6 +1254,31 @@ private:
         }
         const auto action = json.find("native_action");
         if (action == json.end()) return false;
+        if (action->is_string()
+            && (*action == "close" || *action == "close_reply")) {
+            if (!json.contains("connection_id") || !json["connection_id"].is_string()
+                || json["connection_id"].get<std::string>() != connection_id_) {
+                return true;
+            }
+            if (*action == "close") {
+                request_close();
+                return true;
+            }
+            if (!json.contains("attempt_id") || !json["attempt_id"].is_number_unsigned()
+                || !json.contains("result") || !json["result"].is_string()) {
+                return true;
+            }
+            const auto attempt = json["attempt_id"].get<uint64_t>();
+            const auto result = json["result"].get<std::string>();
+            if (closing_ || attempt == 0 || attempt != waiting_close_attempt_
+                || attempt > 9007199254740991ULL
+                || (result != "ready" && result != "cancelled")) {
+                return true;
+            }
+            stop_close_wait();
+            if (result == "ready") begin_shutdown();
+            return true;
+        }
         if (!action->is_string() || action->get<std::string>() != "save_session") {
             return true;
         }
@@ -1450,9 +1512,20 @@ private:
             || (dev_origin_ && matches_shell(kAssetOrigin));
     }
 
-    static void open_https(std::wstring_view uri) {
-        if (!starts_with_case_insensitive(uri, L"https://")) return;
+    static void open_web_link(std::wstring_view uri) {
         const std::wstring address(uri);
+        ComPtr<IUri> parsed;
+        if (FAILED(::CreateUri(address.c_str(), Uri_CREATE_CANONICALIZE, 0, &parsed))) {
+            return;
+        }
+        DWORD scheme = URL_SCHEME_UNKNOWN;
+        DWORD host_length = 0;
+        if (FAILED(parsed->GetScheme(&scheme))
+            || (scheme != URL_SCHEME_HTTP && scheme != URL_SCHEME_HTTPS)
+            || FAILED(parsed->GetPropertyLength(Uri_PROPERTY_HOST, &host_length, 0))
+            || host_length == 0) {
+            return;
+        }
         ::ShellExecuteW(nullptr, L"open", address.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
 
@@ -1525,12 +1598,70 @@ private:
     }
 
     void request_close() {
-        if (closing_) return;
-        begin_shutdown();
+        if (closing_ || fatal_error_posted_ || waiting_close_attempt_ != 0 || close_decision_) return;
+        if (smoke_test_ || runtime_ == nullptr || connection_id_.empty()) {
+            begin_shutdown();
+            return;
+        }
+        waiting_close_attempt_ = ++close_attempt_sequence_;
+        const auto timer = static_cast<UINT_PTR>(waiting_close_attempt_);
+        if (::SetTimer(window_, timer, 15000, nullptr) == 0) {
+            // A timer failure must not silently authorize losing changes.
+            ::PostMessageW(window_, WM_TIMER, timer, 0);
+        }
+        call_close_handler("__CHA_NATIVE_PREPARE_CLOSE__", waiting_close_attempt_);
+    }
+
+    void call_close_handler(const char* handler, uint64_t attempt) {
+        if (!webview_) return;
+        const std::wstring script = wide_from_utf8(
+            "if(typeof window." + std::string(handler) + "==='function'){window."
+            + handler + "(" + std::to_string(attempt) + ");}");
+        // Failure or a missing page handler still reaches the native timeout.
+        webview_->ExecuteScript(script.c_str(), nullptr);
+    }
+
+    void stop_close_wait() {
+        if (waiting_close_attempt_ != 0) {
+            ::KillTimer(window_, static_cast<UINT_PTR>(waiting_close_attempt_));
+            waiting_close_attempt_ = 0;
+        }
+    }
+
+    void abort_close_wait() {
+        const auto attempt = waiting_close_attempt_;
+        stop_close_wait();
+        if (attempt != 0) call_close_handler("__CHA_NATIVE_CLOSE_ABORTED__", attempt);
+    }
+
+    void close_timed_out(uint64_t attempt) {
+        if (closing_ || attempt == 0 || attempt != waiting_close_attempt_) return;
+        close_decision_ = true;
+        abort_close_wait();
+        const TASKDIALOG_BUTTON buttons[] = {
+            {IDCANCEL, L"Cancel close"},
+            {IDOK, L"Close anyway"},
+        };
+        TASKDIALOGCONFIG dialog{};
+        dialog.cbSize = sizeof(dialog);
+        dialog.hwndParent = window_;
+        dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+        dialog.pszWindowTitle = kApplicationName;
+        dialog.pszMainInstruction = L"CHA did not finish preparing to close.";
+        dialog.pszContent = L"Closing now may lose unsaved changes.";
+        dialog.cButtons = static_cast<UINT>(std::size(buttons));
+        dialog.pButtons = buttons;
+        dialog.nDefaultButton = IDCANCEL;
+        int selected = IDCANCEL;
+        const HRESULT result = ::TaskDialogIndirect(&dialog, &selected, nullptr, nullptr);
+        close_decision_ = false;
+        // An unavailable dialog leaves the application open.
+        if (SUCCEEDED(result) && selected == IDOK) begin_shutdown();
     }
 
     void begin_shutdown() {
         if (closing_) return;
+        stop_close_wait();
         closing_ = true;
         if (window_ != nullptr) ::SetWindowTextW(window_, L"Closing CHA\u2026");
         if (save_dialog_) {
@@ -1601,10 +1732,6 @@ private:
         }
     }
 
-    void close_now() {
-        begin_shutdown();
-    }
-
     void shutdown_runtime() {
         webview_.Reset();
         if (controller_) controller_->Close();
@@ -1631,8 +1758,9 @@ private:
     }
 
     void show_fatal_error(std::unique_ptr<std::wstring> message) {
-        fatal_error_posted_ = false;
         if (closing_) return;
+        fatal_error_posted_ = true;
+        stop_close_wait();
         exit_code_ = 1;
         if (!smoke_test_) {
             ::MessageBoxW(
@@ -1641,7 +1769,7 @@ private:
                 L"CHA cannot continue",
                 MB_OK | MB_ICONERROR);
         }
-        request_close();
+        begin_shutdown();
     }
 
     void show_notice(
@@ -1674,6 +1802,9 @@ private:
     bool initial_navigation_pending_{};
     bool save_operation_in_progress_{};
     bool closing_{};
+    uint64_t close_attempt_sequence_{};
+    uint64_t waiting_close_attempt_{};
+    bool close_decision_{};
     bool fatal_error_posted_{};
     int exit_code_{};
 };
