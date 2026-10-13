@@ -44,12 +44,10 @@ export function useNoteLeave(
   const pendingKindRef = useRef<PendingOperationKind>(null);
   const decisionOpenRef = useRef(false);
   const deferredCloseAttemptId = useRef<number | null>(null);
-  const pendingResume = useRef<number | null>(null);
   const closePhase = useRef<ClosePhase | null>(null);
   const closeAttempt = useRef<number | null>(null);
   const retiredCloseAttempt = useRef(0);
   const closeToken = useRef(0);
-  const seenConnection = useRef<string | undefined>(undefined);
   const prepareCloseRef = useRef<(attemptId: number) => void>(() => undefined);
   const [pendingKind, setPendingKind] = useState<PendingOperationKind>(null);
   const [decisionOpen, setDecisionOpen] = useState(false);
@@ -64,27 +62,11 @@ export function useNoteLeave(
     setDecisionOpen(open);
   }, []);
 
-  const noteConnection = useCallback(() => {
-    const current = window.__CHA_NATIVE_CONNECTION_ID__;
-    if (seenConnection.current !== undefined && seenConnection.current !== current) {
-      deferredCloseAttemptId.current = null;
-      pendingResume.current = null;
-    }
-    seenConnection.current = current;
-  }, []);
-
-  const scheduleDeferredResume = useCallback(() => {
+  const resumeDeferredClose = useCallback(() => {
     const attemptId = deferredCloseAttemptId.current;
     if (attemptId === null) return;
     deferredCloseAttemptId.current = null;
-    pendingResume.current = attemptId;
-    // The leave action's editor disposal runs in layout effects after this
-    // call returns. Resume on the next turn so the handler sees that editor.
-    setTimeout(() => {
-      if (pendingResume.current !== attemptId) return;
-      pendingResume.current = null;
-      prepareCloseRef.current(attemptId);
-    }, 0);
+    prepareCloseRef.current(attemptId);
   }, []);
 
   const release = useCallback((intent: LeaveIntent) => {
@@ -96,8 +78,8 @@ export function useNoteLeave(
     closeAttempt.current = null;
     setDecision(false);
     setSlot(null);
-    scheduleDeferredResume();
-  }, [scheduleDeferredResume, setDecision, setSlot]);
+    resumeDeferredClose();
+  }, [resumeDeferredClose, setDecision, setSlot]);
 
   const invokeAction = useCallback(<T>(action: () => T | Promise<T>): T | Promise<T> => {
     runningAction.current = true;
@@ -340,7 +322,6 @@ export function useNoteLeave(
   }, [runClose, setSlot]);
 
   const prepareClose = useCallback((attemptId: number) => {
-    noteConnection();
     if (decisionOpenRef.current) {
       if (deferredCloseAttemptId.current === attemptId) {
         deferredCloseAttemptId.current = null;
@@ -368,7 +349,7 @@ export function useNoteLeave(
       return;
     }
     startClose(attemptId);
-  }, [noteConnection, startClose]);
+  }, [startClose]);
   prepareCloseRef.current = prepareClose;
 
   const abortOwnedClose = useCallback((intent: LeaveIntent) => {
@@ -380,8 +361,8 @@ export function useNoteLeave(
     handoff?.(null);
     if (intentRef.current !== intent) return;
     const save = getSaveRef.current();
-    if (intent.canceledUncovered && !intent.submitted) save?.submitNow();
     save?.unfreeze();
+    if (intent.canceledUncovered && !intent.submitted) save?.submitNow();
     intentRef.current = null;
     intent.choose = undefined;
     setDecision(false);
@@ -389,11 +370,9 @@ export function useNoteLeave(
   }, [setDecision, setSlot]);
 
   const closeAborted = useCallback((attemptId: number) => {
-    noteConnection();
     if (deferredCloseAttemptId.current === attemptId) {
       deferredCloseAttemptId.current = null;
     }
-    if (pendingResume.current === attemptId) pendingResume.current = null;
     const intent = intentRef.current;
     if (intent?.kind !== 'close') return;
     if (closeAttempt.current === attemptId) {
@@ -405,7 +384,7 @@ export function useNoteLeave(
     if (waitingForNextAttempt && attemptId > retiredCloseAttempt.current) {
       abortOwnedClose(intent);
     }
-  }, [abortOwnedClose, noteConnection]);
+  }, [abortOwnedClose]);
 
   return {
     leaveNoteThen,

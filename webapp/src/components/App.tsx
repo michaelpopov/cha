@@ -356,7 +356,6 @@ function Screen({
     case 'notes': return (
       <NotesScreen
         activeNoteId={state.activeNoteId}
-        activeNoteName={state.activeNoteName}
         client={client}
         dispatch={dispatch}
         draft={notesDraft}
@@ -585,7 +584,10 @@ export function App({
   const editorLiveRef = useRef<Editor | null>(null);
   const disposeEditorRef = useRef<() => void>(() => undefined);
   const noteLeave = useNoteLeave(() => noteSaveRef.current, {
-    disposeEditor: () => disposeEditorRef.current(),
+    disposeEditor: () => {
+      disposeEditorRef.current();
+      dispatch({ type: 'close-note' });
+    },
   });
   const closeHost = useRef(noteLeave);
   closeHost.current = noteLeave;
@@ -648,7 +650,7 @@ export function App({
     setNoteItems([]);
   }, [state.notesEpoch]);
 
-  const requestOpenNote = useCallback((id: number, name: string) => {
+  const requestOpenNote = useCallback((id: number) => {
     const live = editorLiveRef.current;
     if (
       state.mainView === 'notes'
@@ -660,12 +662,15 @@ export function App({
       live.commands.focus();
       return;
     }
-    navigate({ type: 'open-note', noteId: id, name });
+    navigate({ type: 'open-note', noteId: id });
   }, [navigate, state.activeNoteId, state.mainView]);
 
   const beforeCreateNote = useCallback(async () => {
     const result = await noteLeave.leaveNoteThen(() => true);
-    return result !== false;
+    if (result === false) return false;
+    // The leave only saved the open note. It stays editable until a new note opens.
+    noteSaveRef.current?.unfreeze();
+    return true;
   }, [noteLeave.leaveNoteThen]);
 
   useEffect(() => {

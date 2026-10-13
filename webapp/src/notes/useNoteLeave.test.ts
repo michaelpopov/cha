@@ -789,33 +789,6 @@ describe('native close', () => {
       result: 'ready',
     }]);
   });
-
-  it('drops a deferred attempt when the native connection is replaced', async () => {
-    host();
-    const hang = deferred();
-    const save = openSave({
-      waitInFlight: () => hang.promise,
-      inFlightSerial: () => 1,
-      saveError: null,
-    });
-    const view = renderHook(() => useNoteLeave(() => save));
-    act(() => {
-      void view.result.current.leaveNoteThen(vi.fn(() => true));
-    });
-    act(() => {
-      view.result.current.prepareClose(16);
-    });
-    window.__CHA_NATIVE_CONNECTION_ID__ = 'view-5';
-    act(() => {
-      view.result.current.closeAborted(16);
-    });
-    await act(async () => {
-      hang.resolve();
-      await hang.promise;
-      await Promise.resolve();
-    });
-    expect(closePosts()).toEqual([]);
-  });
 });
 
 describe('captured leave URLs', () => {

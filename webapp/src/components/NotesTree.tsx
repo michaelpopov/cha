@@ -1,4 +1,4 @@
-import { hotkeysCoreFeature, syncDataLoaderFeature, type ItemInstance } from '@headless-tree/core';
+import { hotkeysCoreFeature, syncDataLoaderFeature } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
@@ -29,7 +29,7 @@ export function NotesTree({
   client: NotesClient;
   browsing: boolean;
   activeNoteId: number | null;
-  onOpenNote(id: number, name: string): void;
+  onOpenNote(id: number): void;
   onBeforeCreateNote(): Promise<boolean>;
   onNoteItems(items: NoteItem[]): void;
 }) {
@@ -91,7 +91,7 @@ export function NotesTree({
     onPrimaryAction: (item) => {
       const data = item.getItemData();
       if (data.kind !== 'note' || data.noteId === null) return;
-      openRef.current(data.noteId, data.name);
+      openRef.current(data.noteId);
     },
   });
   const treeRef = useRef(tree);
@@ -103,8 +103,11 @@ export function NotesTree({
     if (!first) tree.scheduleRebuildTree();
   }
 
-  useEffect(() => () => {
-    alive.current = false;
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
   }, []);
 
   async function runList(gen: number) {
@@ -164,16 +167,10 @@ export function NotesTree({
     void target.scrollTo().catch(() => undefined);
   });
 
+  // Use the tree state, not getFocusedItem(): that falls back to the first row.
   function destinationParent(): number | null {
-    const visible = tree.getItems();
-    if (visible.length === 0) return null;
-    let focused: ItemInstance<NoteTreeRow> | undefined;
-    try {
-      focused = tree.getFocusedItem();
-    } catch {
-      focused = visible[0];
-    }
-    const data = focused?.getItemData();
+    const focusedId = tree.getState().focusedItem;
+    const data = focusedId === null ? undefined : dataRef.current.rows[focusedId];
     if (!data) return null;
     if (data.kind === 'folder' && data.noteId !== null) return data.noteId;
     return data.parentId;
@@ -228,7 +225,7 @@ export function NotesTree({
       onNoteItemsRef.current(next);
       setDialog(null);
       revealId.current = created.id;
-      if (created.kind === 'note') openRef.current(created.id, created.name);
+      if (created.kind === 'note') openRef.current(created.id);
     } catch (failure: unknown) {
       if (!alive.current || gen !== generation.current) return;
       setStale(true);

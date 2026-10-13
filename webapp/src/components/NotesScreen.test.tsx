@@ -39,7 +39,6 @@ let liveEditor: { current: Editor | null } | null = null;
 
 function Harness({
   initialId = 4 as number | null,
-  initialName = 'Plan' as string | null,
   items = [plan],
   getNote = async (id: number) => ({ id, document: documentWith(id === 5 ? 'Essay text' : 'Alpha') }),
   saveNote = async () => undefined,
@@ -47,7 +46,6 @@ function Harness({
   voice = false,
 }: {
   initialId?: number | null;
-  initialName?: string | null;
   items?: NoteItem[];
   getNote?: (id: number) => Promise<NoteContent>;
   saveNote?: (id: number, document: Record<string, unknown>) => Promise<void>;
@@ -55,7 +53,6 @@ function Harness({
   voice?: boolean;
 }) {
   const [noteId, setNoteId] = useState(initialId);
-  const [noteName, setNoteName] = useState(initialName);
   const [request, setRequest] = useState(1);
   const [text, setText] = useState(draft);
   const [left, setLeft] = useState(false);
@@ -78,18 +75,16 @@ function Harness({
   function dispatch(action: AppAction) {
     if (action.type === 'open-note') {
       setNoteId(action.noteId);
-      setNoteName(action.name);
       setRequest((current) => current + 1);
     }
   }
   return (
     <div>
       <button type="button" onClick={() => void leave.leaveNoteThen(() => setLeft(true))}>Leave</button>
-      <button type="button" onClick={() => dispatch({ type: 'open-note', noteId: 5, name: 'Essay' })}>Open essay</button>
+      <button type="button" onClick={() => dispatch({ type: 'open-note', noteId: 5 })}>Open essay</button>
       {left && <p>Left the note</p>}
       <NotesScreen
         activeNoteId={noteId}
-        activeNoteName={noteName}
         client={client}
         dispatch={dispatch}
         draft={text}
@@ -186,7 +181,7 @@ describe('Notes screen', () => {
   });
 
   it('keeps the Notes draft and disables Send when no note is open', () => {
-    render(<Harness initialId={null} initialName={null} items={[]} />);
+    render(<Harness initialId={null} items={[]} />);
     const prompt = screen.getByRole('textbox', { name: 'Prompt' });
     const send = screen.getByRole('button', { name: 'Send' });
     expect(send).toBeDisabled();

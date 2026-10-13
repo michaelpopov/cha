@@ -116,19 +116,29 @@ private final class TerminationProbe: @unchecked Sendable {
     var restored = false
 }
 
+private final class TerminationMessageReceiver: NSObject, WKScriptMessageHandler {
+    private let probe: TerminationProbe
+
+    init(probe: TerminationProbe) {
+        self.probe = probe
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        if message.body as? String == "ping" { probe.pageToHost = true }
+        if message.body as? String == "rpc" { probe.rpcReply = true }
+    }
+}
+
 private let terminationProbeSource = """
 const original = window.__CHA_NATIVE_RECEIVE__;
 window.__CHA_NATIVE_RECEIVE__ = function(batch) {
   if (typeof original === "function") original(batch);
-  window.__CHA_NATIVE_POST__(JSON.stringify({
-    native_action: "experiment_rpc",
-    connection_id: window.__CHA_NATIVE_CONNECTION_ID__
-  }));
+  window.webkit.messageHandlers.chaExperiment.postMessage("rpc");
 };
-window.__CHA_NATIVE_POST__(JSON.stringify({
-  native_action: "experiment_ping",
-  connection_id: window.__CHA_NATIVE_CONNECTION_ID__
-}));
+window.webkit.messageHandlers.chaExperiment.postMessage("ping");
 window.__CHA_NATIVE_POST__(JSON.stringify({
   connection_id: window.__CHA_NATIVE_CONNECTION_ID__,
   id: 1,
@@ -210,10 +220,9 @@ private final class NativeTestHost: NSObject, NSApplicationDelegate, WKNavigatio
                         && securityOrigin.port == (origin.port ?? 5173))
             }
         }
-        let probe = terminationProbe
-        receiver.onNativeAction = { action, _ in
-            if action == "experiment_ping" { probe.pageToHost = true }
-            if action == "experiment_rpc" { probe.rpcReply = true }
+        if options.expectation == .terminate {
+            view.configuration.userContentController.add(
+                TerminationMessageReceiver(probe: terminationProbe), name: "chaExperiment")
         }
         receiver.attach(to: view, mediaHandler: built.1)
         nativeBridge = receiver

@@ -188,6 +188,18 @@ describe('Notes in the application', () => {
     expect(getNote).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps the open note editable when New note is canceled', async () => {
+    render(<App client={notesClient('Alpha')} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Alpha');
+    fireEvent.click(screen.getByRole('button', { name: 'New note' }));
+    await screen.findByRole('dialog', { name: 'New note' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(noteEditor().isEditable).toBe(true);
+  });
+
   it('shows Stay with focus and discards unsaved changes on request', async () => {
     const saveNote = vi.fn(async () => {
       throw new ChaError('invalid_argument', 'The note could not be saved.');

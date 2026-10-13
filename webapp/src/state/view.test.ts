@@ -569,14 +569,13 @@ describe('character picture selection', () => {
   it('opens a note beside the current conversation and releases it when the main panel leaves', () => {
     let state = readyState();
     const conversation = state.activeConversation;
-    state = appReducer(state, { type: 'open-note', noteId: 4, name: 'Plan' });
+    state = appReducer(state, { type: 'open-note', noteId: 4 });
     expect(state.mainView).toBe('notes');
     expect(state.activeNoteId).toBe(4);
-    expect(state.activeNoteName).toBe('Plan');
     expect(state.noteRequest).toBe(1);
     expect(state.activeConversation).toEqual(conversation);
     expect(navigationTitle(state)).toBeNull();
-    state = appReducer(state, { type: 'open-note', noteId: 4, name: 'Plan' });
+    state = appReducer(state, { type: 'open-note', noteId: 4 });
     expect(state.noteRequest).toBe(2);
     state = appReducer(state, { type: 'show-settings' });
     expect(state.mainView).toBe('settings');
@@ -585,13 +584,12 @@ describe('character picture selection', () => {
   });
 
   it('clears the open note and advances the notes epoch on vault replacement', () => {
-    let state = appReducer(readyState(), { type: 'open-note', noteId: 4, name: 'Plan' });
+    let state = appReducer(readyState(), { type: 'open-note', noteId: 4 });
     state = appReducer(state, { type: 'show-notes-tab' });
     state = appReducer(state, { type: 'vault-context-reset' });
     expect(state.mainView).toBe('notes');
     expect(state.sidebarTab).toBe('notes');
     expect(state.activeNoteId).toBeNull();
-    expect(state.activeNoteName).toBeNull();
     expect(state.notesEpoch).toBe(1);
     expect(state.activeConversation).toBeNull();
   });

@@ -36,7 +36,6 @@ export function NotesScreen({
   notesEpoch,
   noteRequest,
   activeNoteId,
-  activeNoteName,
   noteItems,
   draft,
   onDraftChange,
@@ -51,7 +50,6 @@ export function NotesScreen({
   notesEpoch: number;
   noteRequest: number;
   activeNoteId: number | null;
-  activeNoteName: string | null;
   noteItems: readonly NoteItem[];
   draft: string;
   onDraftChange(next: string): void;
@@ -68,13 +66,13 @@ export function NotesScreen({
   const [editor, setEditor] = useState<Editor | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const name = noteItems.find((item) => item.id === activeNoteId)?.name ?? 'note';
   const noteIdRef = useRef(activeNoteId);
-  const nameRef = useRef(activeNoteName);
+  const nameRef = useRef(name);
   const clientRef = useRef(client);
   noteIdRef.current = activeNoteId;
-  nameRef.current = activeNoteName;
+  nameRef.current = name;
   clientRef.current = client;
-  const name = activeNoteName ?? 'note';
 
   const save = useNoteSave({
     editor: phase === 'ready' ? editor : null,
@@ -99,7 +97,7 @@ export function NotesScreen({
       return;
     }
     const noteId = activeNoteId;
-    const noteName = nameRef.current ?? 'note';
+    const noteName = nameRef.current;
     let cancelled = false;
     setPhase('loading');
     setOpenError(null);
@@ -203,7 +201,7 @@ export function NotesScreen({
               className="cha-button"
               onClick={() => {
                 if (activeNoteId === null) return;
-                dispatch({ type: 'open-note', noteId: activeNoteId, name });
+                dispatch({ type: 'open-note', noteId: activeNoteId });
               }}
               type="button"
             >

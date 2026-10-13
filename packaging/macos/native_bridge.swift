@@ -137,7 +137,6 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
     var saveSession: ((String, String, UInt64, String, String, String) -> Void)?
     var onCloseReply: ((String, Int, String) -> Void)?
     var onPageClose: (() -> Void)?
-    var onNativeAction: ((String, [String: Any]) -> Void)?
 
     init(runtime: OpaquePointer) {
         self.runtime = runtime
@@ -276,7 +275,6 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
         if let data = body.data(using: .utf8),
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let action = object["native_action"] as? String {
-            onNativeAction?(action, object)
             if action == "close_reply" {
                 guard let attempt = nativeAttemptId(object["attempt_id"]),
                       let result = object["result"] as? String,

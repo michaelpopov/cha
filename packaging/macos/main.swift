@@ -107,9 +107,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 self?.closeTimedOut(attempt)
             }
         }
-        // The test-host experiment showed page messages, JavaScript calls,
-        // bridge replies, and this common-mode timer all run while AppKit
-        // termination is pending. Cancellation restored the page.
         return .terminateLater
     }
 

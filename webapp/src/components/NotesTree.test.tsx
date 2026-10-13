@@ -50,7 +50,7 @@ function renderTree({
   items?: NoteItem[];
   notes?: NotesClient;
   activeNoteId?: number | null;
-  onOpenNote?: (id: number, name: string) => void;
+  onOpenNote?: (id: number) => void;
   onBeforeCreateNote?: () => Promise<boolean>;
 } = {}) {
   const onNoteItems = vi.fn();
@@ -93,7 +93,7 @@ describe('Notes tree', () => {
     expect(planRow).toHaveAttribute('aria-level', '3');
     expect(planRow).not.toHaveAttribute('aria-expanded');
     press('Enter');
-    expect(onOpenNote).toHaveBeenCalledExactlyOnceWith(4, 'Plan');
+    expect(onOpenNote).toHaveBeenCalledExactlyOnceWith(4);
     press('ArrowLeft');
     expect(screen.getByRole('treeitem', { name: 'Philosophy' })).toHaveAttribute('tabindex', '0');
   });
@@ -169,13 +169,13 @@ describe('Notes tree', () => {
     });
     await screen.findByRole('treeitem', { name: 'Study' });
     fireEvent.click(screen.getByRole('button', { name: 'New note' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New note' });
-    expect(dialog).toHaveTextContent('Top level');
+    await screen.findByRole('dialog', { name: 'New note' });
+    expect(screen.getByLabelText('In')).toHaveValue('root');
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: '  Plan  ' } });
     fireEvent.change(screen.getByLabelText('In'), { target: { value: 'root' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(createNoteItem).toHaveBeenCalledExactlyOnceWith(null, 'note', '  Plan  '));
-    await waitFor(() => expect(onOpenNote).toHaveBeenCalledWith(10, '  Plan  '));
+    await waitFor(() => expect(onOpenNote).toHaveBeenCalledWith(10));
     expect(screen.getByRole('treeitem', { name: 'Plan' })).toHaveAttribute('tabindex', '0');
 
     fireEvent.click(screen.getByRole('treeitem', { name: 'Study' }));
@@ -220,7 +220,7 @@ describe('Notes tree', () => {
       }),
       onBeforeCreateNote,
     });
-    await screen.findByRole('treeitem', { name: 'Study' });
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
     fireEvent.click(screen.getByRole('button', { name: 'New folder' }));
     expect(onBeforeCreateNote).not.toHaveBeenCalled();
     fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Archive' } });
@@ -293,7 +293,7 @@ describe('Notes tree', () => {
       );
     }
     render(<Host />);
-    await screen.findByRole('treeitem', { name: 'Study' });
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
     fireEvent.click(screen.getByRole('button', { name: 'New folder' }));
     expect(await screen.findByLabelText('In')).toHaveValue('1');
     fireEvent.click(screen.getByRole('treeitem', { name: 'Aardvark' }));
