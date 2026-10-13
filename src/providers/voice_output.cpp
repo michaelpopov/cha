@@ -21,13 +21,11 @@ using Json = nlohmann::json;
 
 std::string prepare_speech_text(std::string_view source, const char* pause = " [long pause] ") {
     std::string text = remove_url_references(source);
-    const auto multiline = std::regex::ECMAScript | std::regex::multiline;
     static const std::regex line_prefix(
-        R"(^[ \t]*(#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+(\[[ xX]\][ \t]+)?|[0-9]{1,9}[.)][ \t]+))",
-        multiline);
-    static const std::regex fence(R"(^[ \t]*(`{3,}|~{3,})[^\r\n]*(\r?\n|$))", multiline);
-    static const std::regex rule(R"(^[ \t]*((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,}|=+)[ \t]*\r?$)", multiline);
-    static const std::regex heading_end(R"((^[ \t]*#{1,6}[ \t]+[^\r\n]*?)[ \t]+#+[ \t]*\r?$)", multiline);
+        R"((^|\n)[ \t]*(#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+(\[[ xX]\][ \t]+)?|[0-9]{1,9}[.)][ \t]+))");
+    static const std::regex fence(R"((^|\n)[ \t]*(`{3,}|~{3,})[^\r\n]*(\r?\n|$))");
+    static const std::regex rule(R"((^|\n)[ \t]*((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,}|=+)[ \t]*\r?(?=\n|$))");
+    static const std::regex heading_end(R"(((^|\n)[ \t]*#{1,6}[ \t]+[^\r\n]*?)[ \t]+#+[ \t]*\r?(?=\n|$))");
     static const std::regex link(R"(!?\[([^\]\r\n]*)\]\([^\r\n)]*\))");
     static const std::regex reference_link(R"(\[([^\]\r\n]+)\]\[[^\]\r\n]*\])");
     static const std::regex code(R"((`+)([\s\S]*?)\1)");
@@ -37,15 +35,15 @@ std::string prepare_speech_text(std::string_view source, const char* pause = " [
         R"regex((^|[\s("'])(_{1,3})(\S([\s\S]*?\S)?)\2(?=$|[\s.,!?;:)"']))regex");
     static const std::regex escape(R"(\\([\\`*_{}\[\]()#+.!>~-]))");
     static const std::regex paragraph_break(R"(\s*\n\s*\n\s*)");
-    text = std::regex_replace(text, rule, "");
+    text = std::regex_replace(text, rule, "$1");
     text = std::regex_replace(text, heading_end, "$1");
     // Remove nested quote/list prefixes as well as headings.
     for (;;) {
-        auto plain = std::regex_replace(text, line_prefix, "");
+        auto plain = std::regex_replace(text, line_prefix, "$1");
         if (plain == text) break;
         text = std::move(plain);
     }
-    text = std::regex_replace(text, fence, "");
+    text = std::regex_replace(text, fence, "$1");
     text = std::regex_replace(text, link, "$1");
     text = std::regex_replace(text, reference_link, "$1");
     text = std::regex_replace(text, code, "$2");

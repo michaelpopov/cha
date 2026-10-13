@@ -5,8 +5,12 @@ ifeq ($(package),linux)
 endif
 
 build:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1
+else
 	cmake --preset ninja
 	cmake --build --preset ninja
+endif
 
 package:
 	$(if $(strip $(VERSION)),,$(error usage: make package VERSION=<version>))
