@@ -360,7 +360,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         }
         // Open external links here, including target="_blank": cancelling
         // navigation prevents createWebViewWith from being called.
-        openHTTPSInSystemBrowser(url)
+        openWebLinkInSystemBrowser(url)
         decisionHandler(.cancel)
     }
 
@@ -386,7 +386,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             // keep it in CHA instead of dropping it.
             self.webView?.load(navigationAction.request)
         } else {
-            openHTTPSInSystemBrowser(url)
+            openWebLinkInSystemBrowser(url)
         }
         return nil
     }
@@ -422,10 +422,11 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         isChaAssetURL(url)
     }
 
-    private func openHTTPSInSystemBrowser(_ url: URL) {
-        guard url.scheme?.caseInsensitiveCompare("https") == .orderedSame else {
-            return
-        }
+    private func openWebLinkInSystemBrowser(_ url: URL) {
+        guard let scheme = url.scheme else { return }
+        let http = scheme.caseInsensitiveCompare("http") == .orderedSame
+        let https = scheme.caseInsensitiveCompare("https") == .orderedSame
+        guard http || https else { return }
         NSWorkspace.shared.open(url)
     }
 

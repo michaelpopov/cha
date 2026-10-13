@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChaError } from '../api/client';
 import type { NoteContent, NoteItem } from '../api/nativeClient';
+import { pictureTypeMessage } from '../notes/pictures';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveDelayMs, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { AppAction } from '../state/view';
@@ -353,5 +354,196 @@ describe('Notes screen', () => {
     expect(await screen.findByText('Essay text')).toBeInTheDocument();
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1200)); });
     expect((await openedEditor()).getText()).toBe('Essay text');
+  });
+
+  it('inserts a picture and keeps a save error visible', async () => {
+    vi.useFakeTimers();
+    const saveNote = vi.fn(async () => {
+      throw new ChaError('invalid_argument', 'The vault is locked.');
+    });
+    render(<Harness saveNote={saveNote} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const editor = await openedEditor();
+    act(() => insertText(editor, ' beta'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not save “Plan”. The vault is locked.');
+    vi.useRealTimers();
+
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    if (!input) throw new Error('Picture input is missing.');
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    fireEvent.change(input, {
+      target: { files: [new File([png], 'dot.png', { type: 'image/png' })] },
+    });
+    await waitFor(() => expect(JSON.stringify(editor.getJSON())).toContain('data:image/png'));
+    expect(screen.getByText(/Could not save “Plan”/)).toBeInTheDocument();
+    expect(screen.queryByText(pictureTypeMessage)).not.toBeInTheDocument();
+
+    fireEvent.change(input, {
+      target: { files: [new File([Uint8Array.from([1, 2, 3, 4])], 'bad.png', { type: 'image/png' })] },
+    });
+    expect(await screen.findByText(pictureTypeMessage)).toBeInTheDocument();
+    expect(screen.getByText(/Could not save “Plan”/)).toBeInTheDocument();
+    expect(screen.getAllByRole('alert').length).toBeGreaterThan(1);
+  });
+
+  it('finds, replaces, and keeps prompt Enter', async () => {
+    render(<Harness />);
+    const editor = await openedEditor();
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+    prompt.focus();
+    fireEvent.keyDown(prompt, { key: 'f', metaKey: true });
+    expect(screen.queryByRole('textbox', { name: 'Find' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+    const find = await screen.findByRole('textbox', { name: 'Find' });
+    expect(find).toHaveFocus();
+    fireEvent.change(find, { target: { value: 'a' } });
+    expect(screen.getByRole('status')).toHaveTextContent('1 / 2');
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByRole('status')).toHaveTextContent('2 / 2');
+    expect(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)).toBe('a');
+    fireEvent.keyDown(find, { key: 'Enter', shiftKey: true });
+    expect(screen.getByRole('status')).toHaveTextContent('1 / 2');
+
+    const replace = screen.getByRole('textbox', { name: 'Replace' });
+    fireEvent.change(replace, { target: { value: '$1' } });
+    fireEvent.keyDown(replace, { key: 'Enter' });
+    expect(editor.getText()).toBe('$1lpha');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(editor.getText()).toBe('Alpha');
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Find' }), { target: { value: 'a' } });
+    fireEvent.change(replace, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Replace all' }));
+    expect(editor.getText()).toBe('lph');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(editor.getText()).toBe('Alpha');
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Find' }), { target: { value: 'zzzz' } });
+    expect(screen.getByRole('status')).toHaveTextContent('No matches');
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled();
+
+    fireEvent.change(prompt, { target: { value: 'Ping' } });
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    await waitFor(() => expect(prompt).toHaveValue(''));
+    expect(editor.getText()).toContain('Ping');
+  });
+
+  it('clears whole word in regex mode and resets Find on another note', async () => {
+    render(<Harness />);
+    const editor = await openedEditor();
+    act(() => editor.commands.setContent('<p>cat catalog</p>'));
+    fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+    const find = await screen.findByRole('textbox', { name: 'Find' });
+    fireEvent.change(find, { target: { value: 'cat' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Whole word' }));
+    expect(screen.getByRole('status')).toHaveTextContent('1 / 1');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Regular expression' }));
+    expect(screen.getByRole('checkbox', { name: 'Whole word' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Whole word' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('1 / 2');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Regular expression' }));
+    expect(screen.getByRole('checkbox', { name: 'Whole word' })).toBeEnabled();
+    expect(screen.getByRole('checkbox', { name: 'Whole word' })).not.toBeChecked();
+    expect(screen.getByRole('status')).toHaveTextContent('1 / 2');
+
+    expect(editor.view.dom.querySelector('.find-and-replace-result')).not.toBeNull();
+    fireEvent.keyDown(find, { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: 'Find' })).not.toBeInTheDocument();
+    expect(editor.view.dom.querySelector('.find-and-replace-result')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+    expect(await screen.findByRole('textbox', { name: 'Find' })).toHaveValue('cat');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
+    expect(await screen.findByText('Essay text')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Find' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+    expect(await screen.findByRole('textbox', { name: 'Find' })).toHaveValue('');
+  });
+
+  it('does not save a search and does save a replacement', async () => {
+    vi.useFakeTimers();
+    const saveNote = vi.fn(async () => undefined);
+    render(<Harness saveNote={saveNote} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const editor = await openedEditor();
+    editor.view.dom.focus();
+    fireEvent.keyDown(editor.view.dom, { key: 'f', metaKey: true });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const find = screen.getByRole('textbox', { name: 'Find' });
+    fireEvent.change(find, { target: { value: 'Alpha' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    expect(saveNote).not.toHaveBeenCalled();
+    expect(editor.can().undo()).toBe(false);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Replace' }), { target: { value: 'Beta' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
+    expect(editor.getText()).toBe('Beta');
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    expect(saveNote).toHaveBeenCalled();
+  });
+
+  it('edits and removes a link from the toolbar and the context menu', async () => {
+    const openWindow = vi.spyOn(window, 'open').mockReturnValue(null);
+    render(<Harness />);
+    const editor = await openedEditor();
+    expect(screen.getByRole('button', { name: 'Link' })).toBeDisabled();
+    act(() => {
+      editor.commands.setContent({
+        type: 'doc',
+        content: [{
+          type: 'paragraph',
+          content: [{
+            type: 'text',
+            text: 'docs',
+            marks: [
+              { type: 'bold' },
+              { type: 'link', attrs: { href: 'https://example.com/a' } },
+            ],
+          }],
+        }],
+      });
+      editor.commands.setTextSelection(2);
+    });
+    expect(screen.getByRole('button', { name: 'Link' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(screen.queryByRole('menuitem', { name: 'Edit link' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit link' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit link' });
+    const url = screen.getByRole('textbox', { name: 'URL' });
+    fireEvent.change(url, { target: { value: 'mailto:user@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter an HTTP or HTTPS address.');
+    expect(JSON.stringify(editor.getJSON())).toContain('https://example.com/a');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(JSON.stringify(editor.getJSON())).toContain('https://example.com/a');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit link' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'URL' }), { target: { value: 'http://example.org/b' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(editor.getText()).toBe('docs');
+    expect(JSON.stringify(editor.getJSON())).toContain('http://example.org/b');
+    expect(JSON.stringify(editor.getJSON())).toContain('"type":"bold"');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(JSON.stringify(editor.getJSON())).toContain('https://example.com/a');
+
+    const anchor = editor.view.dom.querySelector('a');
+    if (!anchor) throw new Error('Link is missing.');
+    fireEvent.contextMenu(anchor);
+    expect(openWindow).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove link' }));
+    expect(editor.getText()).toBe('docs');
+    expect(editor.view.dom.querySelector('a')).toBeNull();
+    expect(JSON.stringify(editor.getJSON())).toContain('"type":"bold"');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(editor.view.dom.querySelector('a')?.getAttribute('href')).toBe('https://example.com/a');
+    expect(dialog).toBeTruthy();
   });
 });

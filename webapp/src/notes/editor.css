@@ -34,6 +34,11 @@ img.ProseMirror-separator {
   height: auto;
 }
 
+.ProseMirror-selectednode {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
 .ProseMirror mark {
   background-color: rgb(255 230 120);
 }

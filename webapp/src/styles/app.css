@@ -2102,6 +2102,30 @@ select:disabled {
   width: auto;
 }
 
+.cha-notes-find {
+  display: grid;
+  gap: 0.35rem;
+  width: var(--cha-column);
+  margin: 0.35rem auto 0;
+}
+
+.cha-notes-find-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.cha-notes-find label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.cha-notes-find .cha-form-control {
+  width: 14rem;
+}
+
 .cha-notes-list {
   position: relative;
 }

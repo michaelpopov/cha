@@ -3,17 +3,39 @@ import { GapCursor } from '@tiptap/pm/gapcursor';
 import { redoDepth, undoDepth } from '@tiptap/pm/history';
 import { Fragment, Slice } from '@tiptap/pm/model';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 import {
+  canonicalNoteLink,
   createNotesEditor,
+  importPictureFile,
   insertPromptParagraph,
+  insertTrackedPicture,
   isAllowedNoteLink,
+  linkRangeAt,
+  removeNoteLink,
+  replaceLinkDestination,
   selectNoteEnd,
+  storedWebDestination,
+  trackSelectionBookmark,
+  transformClipboardHTML,
   withIsolatedHistory,
   type NotesEditorOptions,
 } from './editor';
+import {
+  noteTooLargeMessage,
+  pictureFromBytes,
+  pictureTooLargeMessage,
+  pictureTypeMessage,
+} from './pictures';
 import type { Editor } from '@tiptap/core';
+
+if (typeof ClipboardEvent === 'undefined') {
+  class ClipboardEventPolyfill extends Event {
+    clipboardData: DataTransfer | null = null;
+  }
+  globalThis.ClipboardEvent = ClipboardEventPolyfill as unknown as typeof ClipboardEvent;
+}
 
 const open: Editor[] = [];
 
@@ -29,6 +51,7 @@ afterEach(() => {
   for (const item of open) item.destroy();
   open.length = 0;
   document.body.replaceChildren();
+  vi.restoreAllMocks();
 });
 
 function simplify(node: JSONContent): unknown {
@@ -115,15 +138,55 @@ function imageSlice(created: Editor): Slice {
   return new Slice(Fragment.from(image), 0, 0);
 }
 
+const pngHeader = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01];
+
+function pngSrc(): string {
+  const picture = pictureFromBytes(Uint8Array.from(pngHeader));
+  if ('error' in picture) throw new Error(picture.error);
+  return picture.src;
+}
+
+function pasteWith(created: Editor, slice: Slice, data: { files?: File[]; text?: string }): boolean {
+  const event = {
+    clipboardData: {
+      files: data.files ?? [],
+      getData: (type: string) => (type === 'text/plain' ? data.text ?? '' : ''),
+    },
+  } as unknown as ClipboardEvent;
+  let handled = false;
+  created.view.someProp('handlePaste', (fn) => {
+    handled = !!fn(created.view, event, slice);
+    return handled;
+  });
+  return handled;
+}
+
+function clickAt(created: Editor, pos: number, button: number): boolean {
+  const event = new MouseEvent('click', { button, bubbles: true, cancelable: true });
+  let handled = false;
+  created.view.someProp('handleClick', (fn) => {
+    handled = !!fn(created.view, pos, event);
+    return handled;
+  });
+  return handled;
+}
+
 describe('note link predicate', () => {
-  it('accepts only absolute http and https urls', () => {
+  it('accepts absolute http and https urls and a bare web address', () => {
     expect(isAllowedNoteLink('https://example.com/a')).toBe(true);
     expect(isAllowedNoteLink('http://example.com')).toBe(true);
+    expect(canonicalNoteLink('http://example.com')).toBe('http://example.com/');
     expect(isAllowedNoteLink('HTTP://Example.COM/a')).toBe(true);
-    expect(isAllowedNoteLink('example.com')).toBe(false);
+    expect(storedWebDestination('HTTP://Example.COM/a')).toBe('http://example.com/a');
+    expect(isAllowedNoteLink('example.com')).toBe(true);
+    expect(canonicalNoteLink('example.com')).toBe('http://example.com/');
+    expect(storedWebDestination('example.com')).toBeNull();
     expect(isAllowedNoteLink('mailto:user@example.com')).toBe(false);
+    expect(isAllowedNoteLink('user@example.com')).toBe(false);
     expect(isAllowedNoteLink('javascript:alert(1)')).toBe(false);
+    expect(storedWebDestination('javascript:alert(1)')).toBeNull();
     expect(isAllowedNoteLink('file:///tmp/a')).toBe(false);
+    expect(isAllowedNoteLink('file.txt')).toBe(false);
     expect(isAllowedNoteLink('data:text/plain,hi')).toBe(false);
     expect(isAllowedNoteLink('cha://app')).toBe(false);
   });
@@ -747,7 +810,7 @@ describe('prompt insertion', () => {
     expect(created.state.selection.toJSON()).toEqual(original);
   });
 
-  it('links only explicit http and https urls, like typing and paste', () => {
+  it('links bare domains and explicit http and https urls, like typing and paste', () => {
     const created = editor();
     insertPromptParagraph(
       created,
@@ -757,7 +820,9 @@ describe('prompt insertion', () => {
       type: 'paragraph',
       content: [
         { text: 'http://example.com', marks: ['link:http://example.com/'] },
-        ' example.com file.txt ',
+        ' ',
+        { text: 'example.com', marks: ['link:http://example.com/'] },
+        ' file.txt ',
         { text: 'HTTP://Example.COM/a', marks: ['link:http://example.com/a'] },
         ' mailto:user.name@example.com javascript:alert(1) file:///tmp/a data:text/plain,hi cha://app ',
         { text: 'https://example.com/a', marks: ['link:https://example.com/a'] },
@@ -902,7 +967,7 @@ describe('find and replace', () => {
     expect(created.getText()).toBe('a a');
   });
 
-  it('rejects paste and non-file drop content that contains images', () => {
+  it('rejects invalid images in a paste or a non-file drop', () => {
     const saves: string[] = [];
     const created = editor({
       content: '<p>keep</p>',
@@ -1000,5 +1065,389 @@ describe('find and replace', () => {
     expect(created.view.dom.querySelector('.cha-notes-inactive-caret')).not.toBeNull();
     expect(undoDepth(created.state)).toBe(0);
     expect(saves).toEqual([]);
+  });
+
+  it('matches across marks inside one textblock', () => {
+    const created = editor({
+      content: {
+        type: 'doc',
+        content: [{
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'c', marks: [{ type: 'bold' }] },
+            { type: 'text', text: 'at' },
+          ],
+        }],
+      },
+    });
+    created.commands.setSearchTerm('cat');
+    expect(created.storage.findAndReplace.results).toHaveLength(1);
+    expect(created.state.doc.textBetween(
+      created.storage.findAndReplace.results[0].from,
+      created.storage.findAndReplace.results[0].to,
+    )).toBe('cat');
+  });
+
+  it('rejects a replacement that exceeds the note limit', () => {
+    const probe = editor({ content: '<p>cat</p>' });
+    const limit = noteDocumentByteLength(probe.state.doc);
+    const created = editor({ content: '<p>cat</p>', byteLimit: limit });
+    const before = created.getJSON();
+    const selection = created.state.selection.toJSON();
+    const depth = undoDepth(created.state);
+    created.commands.setSearchTerm('cat');
+    created.commands.setReplaceTerm('catcat');
+    withIsolatedHistory(created, () => created.commands.replace());
+    expect(created.getJSON()).toEqual(before);
+    expect(created.state.selection.toJSON()).toEqual(selection);
+    expect(undoDepth(created.state)).toBe(depth);
+  });
+});
+
+describe('pictures and clipboard', () => {
+  it('inserts one valid image and undoes it', () => {
+    const created = editor({ content: '<p>keep</p>' });
+    const src = pngSrc();
+    const depth = undoDepth(created.state);
+    expect(created.view.pasteHTML(`<img src="${src}">`)).toBe(true);
+    expect(JSON.stringify(created.getJSON())).toContain(src);
+    expect(undoDepth(created.state)).toBe(depth + 1);
+    created.commands.undo();
+    expect(created.getText()).toBe('keep');
+    created.commands.redo();
+    expect(JSON.stringify(created.getJSON())).toContain(src);
+  });
+
+  it('rejects a mixed paste that contains an invalid image', () => {
+    const errors: string[] = [];
+    const created = editor({
+      content: '<p>keep</p>',
+      onCommandError: (message) => errors.push(message),
+    });
+    selectText(created, 'keep', 0, 4);
+    const before = created.getJSON();
+    const depth = undoDepth(created.state);
+    expect(created.view.pasteHTML('<p>NEW <img src="data:image/png;base64,aa"> END</p>')).toBe(true);
+    expect(created.getJSON()).toEqual(before);
+    expect(undoDepth(created.state)).toBe(depth);
+    expect(errors).toEqual([pictureTypeMessage]);
+  });
+
+  it('uses plain text when the clipboard image type is unsupported', () => {
+    const created = editor({ content: '<p>keep</p>' });
+    selectText(created, 'keep', 0, 4);
+    const file = new File([Uint8Array.from([1])], 'a.svg', { type: 'image/svg+xml' });
+    expect(pasteWith(created, Slice.empty, { files: [file], text: 'ALT' })).toBe(true);
+    expect(created.getText()).toBe('ALT');
+    expect(undoDepth(created.state)).toBe(1);
+  });
+
+  it('uses plain text once when filtered HTML is empty', () => {
+    const created = editor({ content: '<p>keep</p>' });
+    selectText(created, 'keep', 0, 4);
+    expect(pasteWith(created, Slice.empty, { text: 'ALT' })).toBe(true);
+    expect(created.getText()).toBe('ALT');
+    expect(undoDepth(created.state)).toBe(1);
+  });
+
+  it('imports one clipboard image and does not also insert its text', async () => {
+    const created = editor({ content: '<p>keep</p>' });
+    const file = new File([Uint8Array.from(pngHeader)], 'a.png', { type: 'image/png' });
+    expect(pasteWith(created, Slice.empty, { files: [file], text: 'ALT' })).toBe(true);
+    await vi.waitFor(() => {
+      expect(JSON.stringify(created.getJSON())).toContain('data:image/png');
+    });
+    expect(created.getText()).toContain('keep');
+    expect(created.getText()).not.toContain('ALT');
+    expect(undoDepth(created.state)).toBe(1);
+    created.commands.undo();
+    expect(created.getText()).toBe('keep');
+    expect(JSON.stringify(created.getJSON())).not.toContain('data:image/png');
+  });
+
+  it('does not fall back to text when clipboard image bytes are rejected', async () => {
+    const errors: string[] = [];
+    const created = editor({
+      content: '<p>keep</p>',
+      onCommandError: (message) => errors.push(message),
+    });
+    const file = new File([Uint8Array.from([1, 2, 3, 4])], 'a.png', { type: 'image/png' });
+    expect(pasteWith(created, Slice.empty, { files: [file], text: 'ALT' })).toBe(true);
+    await vi.waitFor(() => expect(errors).toEqual([pictureTypeMessage]));
+    expect(created.getText()).toBe('keep');
+    expect(undoDepth(created.state)).toBe(0);
+  });
+
+  it('keeps a selection when unsupported paste has no text alternative', () => {
+    const created = editor({ content: '<p>keep</p>' });
+    selectText(created, 'keep', 0, 4);
+    const before = created.getJSON();
+    const selection = created.state.selection.toJSON();
+    expect(created.view.pasteHTML('<script>no()</script><img src="https://example.com/a.png">')).toBe(true);
+    expect(created.getJSON()).toEqual(before);
+    expect(created.state.selection.toJSON()).toEqual(selection);
+    expect(undoDepth(created.state)).toBe(0);
+  });
+
+  it('omits a remote image and keeps the surrounding text', () => {
+    const created = editor({ content: '<p></p>' });
+    expect(created.view.pasteHTML('<p>hello <img src="https://example.com/a.png"> there</p>')).toBe(true);
+    expect(created.getText()).toContain('hello');
+    expect(created.getText()).toContain('there');
+    expect(JSON.stringify(created.getJSON())).not.toContain('https://example.com/a.png');
+  });
+
+  it('flattens a table and keeps a bold cell', () => {
+    const created = editor({ content: '<p></p>' });
+    created.view.pasteHTML('<table><tr><td><b>A</b></td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>');
+    expect(created.getText({ blockSeparator: '\n' })).toContain('A\tB');
+    expect(created.getText({ blockSeparator: '\n' })).toContain('C\tD');
+    expect(JSON.stringify(created.getJSON())).toContain('"type":"bold"');
+  });
+
+  it('keeps web highlights and Word highlights, and drops web background colors', () => {
+    const web = editor({ content: '<p></p>' });
+    web.view.pasteHTML('<p>say <mark>hi</mark></p>');
+    expect(JSON.stringify(web.getJSON())).toContain('"type":"highlight"');
+
+    const page = editor({ content: '<p></p>' });
+    page.view.pasteHTML('<p><span style="background-color:yellow">hi</span></p>');
+    expect(JSON.stringify(page.getJSON())).not.toContain('highlight');
+    expect(page.getText()).toContain('hi');
+
+    const word = editor({ content: '<p></p>' });
+    word.view.pasteHTML(
+      '<html xmlns:o="urn:schemas-microsoft-com:office:office"><p><span style="background-color:yellow">hi</span></p></html>',
+    );
+    expect(JSON.stringify(word.getJSON())).toContain('"type":"highlight"');
+    const marked = editor({ content: '<p></p>' });
+    marked.view.pasteHTML(
+      '<html xmlns:o="urn:schemas-microsoft-com:office:office"><p><span style="mso-highlight:yellow">yo</span></p></html>',
+    );
+    expect(JSON.stringify(marked.getJSON())).toContain('"type":"highlight"');
+
+    const mentioned = editor({ content: '<p></p>' });
+    mentioned.view.pasteHTML('<p>Microsoft Word <span style="background-color:yellow">hi</span></p>');
+    expect(JSON.stringify(mentioned.getJSON())).not.toContain('highlight');
+    expect(mentioned.getText()).toContain('hi');
+
+    const generated = editor({ content: '<p></p>' });
+    generated.view.pasteHTML(
+      '<meta name="Generator" content="Microsoft Word 15"><p><span style="background-color:yellow">hi</span></p>',
+    );
+    expect(JSON.stringify(generated.getJSON())).toContain('"type":"highlight"');
+
+    const program = editor({ content: '<p></p>' });
+    program.view.pasteHTML(
+      '<meta name=ProgId content=Word.Document><p><span style="background-color:yellow">yo</span></p>',
+    );
+    expect(JSON.stringify(program.getJSON())).toContain('"type":"highlight"');
+  });
+
+  it('preserves an internal slice and rewrites pasted links', () => {
+    const created = editor({ content: '<p><strong>Bold</strong> <mark>hi</mark></p>' });
+    created.commands.selectAll();
+    const copied = created.view.serializeForClipboard(created.state.selection.content());
+    expect(copied.dom.innerHTML).toContain('data-pm-slice');
+    expect(transformClipboardHTML(copied.dom.innerHTML)).toContain('data-pm-slice');
+    const next = editor({ content: '<p></p>' });
+    next.view.pasteHTML(copied.dom.innerHTML);
+    expect(JSON.stringify(next.getJSON())).toContain('"type":"bold"');
+    expect(JSON.stringify(next.getJSON())).toContain('"type":"highlight"');
+
+    const links = editor({ content: '<p></p>' });
+    links.view.pasteHTML('<p><a href="https://example.com/docs">Docs</a> <a href="example.com">Bare</a> <a href="javascript:alert(1)">Bad</a></p>');
+    expect(links.getText()).toContain('Docs');
+    expect(links.getText()).toContain('Bare');
+    expect(links.getText()).toContain('Bad');
+    expect(JSON.stringify(links.getJSON())).toContain('https://example.com/docs');
+    expect(JSON.stringify(links.getJSON())).toContain('http://example.com/');
+    expect(JSON.stringify(links.getJSON())).not.toContain('javascript');
+    expect(transformClipboardHTML('<p><font color="red">Hi</font><script>bad()</script></p>')).not.toContain('color');
+    expect(transformClipboardHTML('<p>Hi</p><iframe src="https://example.com"></iframe>')).not.toContain('iframe');
+  });
+
+  it('lets a valid non-file image drop through and consumes every file drop', () => {
+    const created = editor({ content: '<p>keep</p>' });
+    const before = created.getJSON();
+    const selection = created.state.selection.toJSON();
+    const depth = undoDepth(created.state);
+    const valid = new Slice(
+      Fragment.from(created.schema.nodes.image.create({ src: pngSrc() })),
+      0,
+      0,
+    );
+    expect(dropSlice(created, valid, { files: { length: 0 }, types: ['text/html'] })).toBe(false);
+    expect(dropSlice(created, valid, { files: { length: 1 }, types: ['Files', 'text/html'] })).toBe(true);
+    const text = new Slice(
+      Fragment.from(created.schema.nodes.paragraph.create(null, created.schema.text('NEW'))),
+      0,
+      0,
+    );
+    expect(dropSlice(created, text, { files: { length: 1 }, types: ['Files', 'text/plain'] })).toBe(true);
+    expect(dropSlice(created, Slice.empty, { files: { length: 0 }, types: ['text/plain'] })).toBe(true);
+    expect(created.getJSON()).toEqual(before);
+    expect(created.state.selection.toJSON()).toEqual(selection);
+    expect(undoDepth(created.state)).toBe(depth);
+  });
+
+  it('inserts at the mapped bookmark and ignores a later caret', () => {
+    const created = editor({ content: '<p>abcd</p>' });
+    const src = pngSrc();
+    selectText(created, 'abcd', 1);
+    const tracked = trackSelectionBookmark(created);
+    selectText(created, 'abcd', 4);
+    expect(insertTrackedPicture(created, tracked.current(), src)).toBe('inserted');
+    expect(created.getText({ blockSeparator: '|' })).toBe('a||bcd');
+    created.commands.undo();
+
+    selectText(created, 'abcd', 1);
+    const mapped = trackSelectionBookmark(created);
+    insertText(created, 'Z');
+    expect(insertTrackedPicture(created, mapped.current(), src)).toBe('inserted');
+    expect(created.getText({ blockSeparator: '|' })).toBe('aZ||bcd');
+    expect(undoDepth(created.state)).toBe(2);
+  });
+
+  it('does not insert into a frozen editor or a stale context', async () => {
+    const created = editor({ content: '<p>abcd</p>' });
+    const src = pngSrc();
+    selectText(created, 'abcd', 1);
+    created.setEditable(false, false);
+    expect(insertTrackedPicture(created, created.state.selection.getBookmark(), src)).toBe('unavailable');
+    expect(created.getText()).toBe('abcd');
+    created.setEditable(true, false);
+
+    const file = new File([Uint8Array.from(pngHeader)], 'a.png', { type: 'image/png' });
+    await expect(importPictureFile(created, file, () => false)).resolves.toBeNull();
+    expect(created.getText()).toBe('abcd');
+    expect(undoDepth(created.state)).toBe(0);
+  });
+
+  it('rejects an image that makes the note too large and keeps the selection', async () => {
+    const probe = editor({ content: '<p>abcd</p>' });
+    const limit = noteDocumentByteLength(probe.state.doc);
+    const created = editor({ content: '<p>abcd</p>', byteLimit: limit });
+    selectText(created, 'abcd', 1);
+    const before = created.getJSON();
+    const selection = created.state.selection.toJSON();
+    const depth = undoDepth(created.state);
+    const file = new File([Uint8Array.from(pngHeader)], 'a.png', { type: 'image/png' });
+    await expect(importPictureFile(created, file, () => true)).resolves.toBe(noteTooLargeMessage);
+    expect(insertTrackedPicture(created, created.state.selection.getBookmark(), pngSrc())).toBe('rejected');
+    expect(created.getJSON()).toEqual(before);
+    expect(created.state.selection.toJSON()).toEqual(selection);
+    expect(undoDepth(created.state)).toBe(depth);
+    const over = new Uint8Array(1_048_577);
+    over.set(pngHeader);
+    await expect(importPictureFile(
+      created,
+      new File([over], 'big.png', { type: 'image/png' }),
+      () => true,
+    )).resolves.toBe(pictureTooLargeMessage);
+  });
+});
+
+describe('link activation and edits', () => {
+  it('opens the stored http destination and blocks a damaged link', () => {
+    const openWindow = vi.spyOn(window, 'open').mockReturnValue(null);
+    const created = editor({
+      content: {
+        type: 'doc',
+        content: [{
+          type: 'paragraph',
+          content: [{
+            type: 'text',
+            text: 'Go',
+            marks: [{ type: 'link', attrs: { href: 'HTTP://Example.COM/a' } }],
+          }],
+        }],
+      },
+    });
+    expect(clickAt(created, 1, 0)).toBe(true);
+    expect(openWindow).toHaveBeenCalledWith('http://example.com/a', '_blank', 'noopener,noreferrer');
+    expect(clickAt(created, 1, 2)).toBe(false);
+    expect(openWindow).toHaveBeenCalledTimes(1);
+
+    created.commands.setContent({
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [{
+          type: 'text',
+          text: 'click',
+          marks: [{ type: 'link', attrs: { href: 'javascript:alert(1)' } }],
+        }],
+      }],
+    });
+    expect(created.getText()).toBe('click');
+    expect(clickAt(created, 1, 0)).toBe(true);
+    expect(openWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('autolinks a typed bare domain and does not autolink an unsupported scheme', () => {
+    const created = editor();
+    insertText(created, 'example.com ');
+    expect(docOf(created)).toEqual([{
+      type: 'paragraph',
+      content: [
+        { text: 'example.com', marks: ['link:http://example.com'] },
+        ' ',
+      ],
+    }]);
+    created.commands.setContent('<p></p>');
+    insertText(created, 'javascript:alert(1) ');
+    expect(JSON.stringify(created.getJSON())).not.toContain('"type":"link"');
+    created.commands.setContent('<p></p>');
+    insertText(created, 'mailto:user@example.com ');
+    expect(JSON.stringify(created.getJSON())).not.toContain('"type":"link"');
+  });
+
+  it('removes a link without recreating it on reopen or an unrelated edit', () => {
+    const created = editor();
+    insertText(created, 'example.com ');
+    const range = linkRangeAt(created.state.doc, 1);
+    expect(range?.href).toBe('http://example.com');
+    expect(removeNoteLink(created, range!)).toBe(true);
+    expect(JSON.stringify(created.getJSON())).not.toContain('"type":"link"');
+    created.commands.setTextSelection(created.state.doc.content.size - 1);
+    insertText(created, 'x ');
+    expect(JSON.stringify(created.getJSON())).not.toContain('"type":"link"');
+    const reopened = editor({ content: created.getJSON() });
+    expect(JSON.stringify(reopened.getJSON())).not.toContain('"type":"link"');
+    expect(undoDepth(created.state)).toBeGreaterThan(0);
+    created.commands.undo();
+    created.commands.undo();
+    expect(JSON.stringify(created.getJSON())).toContain('"type":"link"');
+  });
+
+  it('changes only the destination and keeps the other marks', () => {
+    const created = editor({
+      content: {
+        type: 'doc',
+        content: [{
+          type: 'paragraph',
+          content: [{
+            type: 'text',
+            text: 'docs',
+            marks: [
+              { type: 'bold' },
+              { type: 'link', attrs: { href: 'https://example.com/a' } },
+            ],
+          }],
+        }],
+      },
+    });
+    const range = linkRangeAt(created.state.doc, 1)!;
+    const depth = undoDepth(created.state);
+    expect(replaceLinkDestination(created, range, 'mailto:user@example.com')).toBe(false);
+    expect(undoDepth(created.state)).toBe(depth);
+    expect(replaceLinkDestination(created, range, 'http://example.org/b')).toBe(true);
+    expect(created.getText()).toBe('docs');
+    expect(JSON.stringify(created.getJSON())).toContain('http://example.org/b');
+    expect(JSON.stringify(created.getJSON())).toContain('"type":"bold"');
+    expect(JSON.stringify(created.getJSON())).not.toContain('https://example.com/a');
+    created.commands.undo();
+    expect(JSON.stringify(created.getJSON())).toContain('https://example.com/a');
   });
 });

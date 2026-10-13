@@ -4,7 +4,7 @@ import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import { closeHistory, isHistoryTransaction } from '@tiptap/pm/history';
 import { GapCursor } from '@tiptap/pm/gapcursor';
-import { type Node as PmNode, type Schema, type Slice } from '@tiptap/pm/model';
+import { type Fragment, type Node as PmNode, type Schema, type Slice } from '@tiptap/pm/model';
 import {
   AllSelection,
   NodeSelection,
@@ -12,11 +12,21 @@ import {
   PluginKey,
   TextSelection,
   type EditorState,
+  type SelectionBookmark,
   type Transaction,
 } from '@tiptap/pm/state';
 import { Decoration, DecorationSet, type EditorProps, type EditorView } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
+import { find } from 'linkifyjs';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
+import {
+  clipboardImageFile,
+  embeddedImageError,
+  noteTooLargeMessage,
+  pictureFromBytes,
+  pictureTypeMessage,
+  readFileBytes,
+} from './pictures';
 
 const notesIsolatedMeta = 'notesIsolated';
 const notesIsolatedCloseMeta = 'notesIsolatedClose';
@@ -41,17 +51,51 @@ export type NotesEditorOptions = {
   byteLimit?: number;
   onAcceptedDocument?: () => void;
   onRejectedContent?: () => void;
+  onCommandError?: (message: string) => void;
   element?: HTMLElement | null;
 };
 
-// Absolute http(s) only. An explicit other scheme is not rewritten.
-export function isAllowedNoteLink(href: string): boolean {
-  try {
-    const url = new URL(href);
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
+// Absolute http(s), or a bare web address which is stored with an http prefix.
+// An explicit other scheme is rejected and is not rewritten.
+export function canonicalNoteLink(input: string): string | null {
+  const value = input.trim();
+  if (!value || /\s/u.test(value)) return null;
+  const scheme = /^([a-z][a-z0-9+.-]*):/iu.exec(value);
+  if (scheme) {
+    const name = scheme[1].toLowerCase();
+    if (name !== 'http' && name !== 'https') return null;
+    try {
+      const url = new URL(value);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+      return url.href;
+    } catch {
+      return null;
+    }
   }
+  const matches = find(value, { defaultProtocol: 'http' });
+  if (matches.length !== 1) return null;
+  const match = matches[0];
+  if (match.type !== 'url' || !match.isLink || match.start !== 0 || match.end !== value.length) {
+    return null;
+  }
+  try {
+    const url = new URL(match.href);
+    if (url.protocol !== 'http:') return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+export function isAllowedNoteLink(href: string): boolean {
+  return canonicalNoteLink(href) !== null;
+}
+
+// Activation uses the stored destination. A bare domain is not repaired here.
+export function storedWebDestination(href: string): string | null {
+  const trimmed = href.trim();
+  if (!/^[a-z][a-z0-9+.-]*:/iu.test(trimmed)) return null;
+  return canonicalNoteLink(trimmed);
 }
 
 export function withIsolatedHistory(editor: Editor, run: () => boolean): boolean {
@@ -81,15 +125,49 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
     dispatchTransaction(transaction: Transaction) {
       acceptNotesTransaction(editor, transaction, byteLimit, gate);
     },
-    handlePaste(_view: EditorView, _event: ClipboardEvent, slice: Slice) {
-      if (slice.size === 0) return true;
-      if (fragmentHasImage(slice.content)) return true;
-      return false;
+    transformPastedHTML(html: string) {
+      return transformClipboardHTML(html);
+    },
+    handleClick(view: EditorView, pos: number, event: MouseEvent) {
+      if (event.button !== 0) return false;
+      const range = linkRangeAt(view.state.doc, pos);
+      if (!range) return false;
+      const destination = storedWebDestination(range.href);
+      if (destination) window.open(destination, '_blank', 'noopener,noreferrer');
+      return true;
+    },
+    handlePaste(view: EditorView, event: ClipboardEvent, slice: Slice) {
+      if (slice.size > 0) {
+        const imageError = fragmentImageError(slice.content);
+        if (imageError) {
+          options.onCommandError?.(imageError);
+          return true;
+        }
+        return false;
+      }
+      const file = clipboardImageFile(event.clipboardData);
+      if (file) {
+        void importPictureFile(editor, file, () => !editor.isDestroyed && editor.isEditable)
+          .then((message) => {
+            if (message) options.onCommandError?.(message);
+          });
+        return true;
+      }
+      const text = clipboardPlainText(event);
+      if (text) {
+        view.pasteText(text);
+        return true;
+      }
+      return true;
     },
     handleDrop(_view: EditorView, event: DragEvent, slice: Slice) {
       if (dropHasFiles(event)) return true;
       if (slice.size === 0) return true;
-      if (fragmentHasImage(slice.content)) return true;
+      const imageError = fragmentImageError(slice.content);
+      if (imageError) {
+        options.onCommandError?.(imageError);
+        return true;
+      }
       return false;
     },
   };
@@ -318,15 +396,20 @@ function acceptNotesTransaction(
   }
 }
 
-function fragmentHasImage(fragment: { descendants: (fn: (node: PmNode) => boolean | void) => void }): boolean {
-  let found = false;
+function fragmentImageError(fragment: Fragment): string | null {
+  let error: string | null = null;
   fragment.descendants((node) => {
-    if (node.type.name === 'image') {
-      found = true;
-      return false;
-    }
+    if (error || node.type.name !== 'image') return;
+    error = embeddedImageError(node.attrs.src);
+    return false;
   });
-  return found;
+  return error;
+}
+
+function clipboardPlainText(event: ClipboardEvent): string {
+  const data = event.clipboardData;
+  if (!data) return '';
+  return data.getData('text/plain');
 }
 
 function dropHasFiles(event: DragEvent): boolean {
@@ -334,6 +417,251 @@ function dropHasFiles(event: DragEvent): boolean {
   if (!transfer) return false;
   if (transfer.files && transfer.files.length > 0) return true;
   return Array.from(transfer.types).includes('Files');
+}
+
+export type NoteLinkRange = { from: number; to: number; href: string };
+
+export function linkRangeAt(doc: PmNode, pos: number): NoteLinkRange | null {
+  const safe = Math.max(0, Math.min(pos, doc.content.size));
+  const $pos = doc.resolve(safe);
+  if (!$pos.parent.isTextblock) return null;
+  const parentPos = $pos.start();
+  const spans: NoteLinkRange[] = [];
+  $pos.parent.forEach((child, offset) => {
+    if (!child.isText) return;
+    const mark = child.marks.find((item) => item.type.name === 'link');
+    const href = mark?.attrs.href;
+    if (!mark || typeof href !== 'string') return;
+    const from = parentPos + offset;
+    const to = from + child.nodeSize;
+    const previous = spans[spans.length - 1];
+    if (previous && previous.to === from && previous.href === href) {
+      previous.to = to;
+      return;
+    }
+    spans.push({ from, to, href });
+  });
+  return spans.find((span) => safe >= span.from && safe < span.to)
+    ?? spans.find((span) => safe === span.to)
+    ?? null;
+}
+
+export function linkRangeFromSelection(state: EditorState): NoteLinkRange | null {
+  const { from, to } = state.selection;
+  return linkRangeAt(state.doc, from) ?? (to === from ? null : linkRangeAt(state.doc, to));
+}
+
+export function replaceLinkDestination(editor: Editor, range: NoteLinkRange, input: string): boolean {
+  const href = canonicalNoteLink(input);
+  if (!href || editor.isDestroyed || !editor.isEditable) return false;
+  if (!rangeFits(editor, range)) return false;
+  const existing = linkRangeAt(editor.state.doc, range.from);
+  if (existing?.href === href && existing.from === range.from && existing.to === range.to) return true;
+  const link = editor.schema.marks.link;
+  const tr = editor.state.tr;
+  tr.removeMark(range.from, range.to, link);
+  tr.addMark(range.from, range.to, link.create({ href }));
+  tr.setMeta('preventAutolink', true);
+  closeHistory(tr);
+  tr.setMeta(notesIsolatedMeta, true);
+  editor.view.dispatch(tr);
+  return linkRangeAt(editor.state.doc, range.from)?.href === href;
+}
+
+export function removeNoteLink(editor: Editor, range: NoteLinkRange): boolean {
+  if (editor.isDestroyed || !editor.isEditable || !rangeFits(editor, range)) return false;
+  const tr = editor.state.tr;
+  tr.removeMark(range.from, range.to, editor.schema.marks.link);
+  tr.setMeta('preventAutolink', true);
+  closeHistory(tr);
+  tr.setMeta(notesIsolatedMeta, true);
+  const before = editor.state.doc;
+  editor.view.dispatch(tr);
+  return !editor.state.doc.eq(before);
+}
+
+function rangeFits(editor: Editor, range: NoteLinkRange): boolean {
+  return range.from >= 0 && range.to <= editor.state.doc.content.size && range.from < range.to;
+}
+
+export function trackSelectionBookmark(editor: Editor): {
+  current(): SelectionBookmark;
+  stop(): void;
+} {
+  let bookmark = editor.state.selection.getBookmark();
+  const apply = ({ transaction }: { transaction: Transaction }) => {
+    bookmark = bookmark.map(transaction.mapping);
+  };
+  editor.on('transaction', apply);
+  return {
+    current: () => bookmark,
+    stop: () => {
+      editor.off('transaction', apply);
+    },
+  };
+}
+
+export function insertTrackedPicture(
+  editor: Editor,
+  bookmark: SelectionBookmark,
+  src: string,
+): 'inserted' | 'rejected' | 'unavailable' {
+  if (editor.isDestroyed || !editor.isEditable) return 'unavailable';
+  let selection;
+  try {
+    selection = bookmark.resolve(editor.state.doc);
+  } catch {
+    return 'unavailable';
+  }
+  const image = editor.schema.nodes.image.create({ src });
+  const tr = editor.state.tr.setSelection(selection);
+  tr.replaceSelectionWith(image, false);
+  closeHistory(tr);
+  tr.setMeta(notesIsolatedMeta, true);
+  const before = editor.state.doc;
+  editor.view.dispatch(tr);
+  return editor.state.doc.eq(before) ? 'rejected' : 'inserted';
+}
+
+export async function importPictureFile(
+  editor: Editor,
+  file: File,
+  stillCurrent: () => boolean,
+): Promise<string | null> {
+  const tracked = trackSelectionBookmark(editor);
+  const read = readFileBytes(file);
+  const cancelRead = () => read.release();
+  editor.on('destroy', cancelRead);
+  try {
+    const bytes = await read.bytes;
+    if (!stillCurrent() || editor.isDestroyed || !editor.isEditable) return null;
+    const picture = pictureFromBytes(bytes);
+    if ('error' in picture) return picture.error;
+    const result = insertTrackedPicture(editor, tracked.current(), picture.src);
+    if (result === 'rejected') return noteTooLargeMessage;
+    return null;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') return null;
+    return pictureTypeMessage;
+  } finally {
+    editor.off('destroy', cancelRead);
+    tracked.stop();
+    read.release();
+  }
+}
+
+const removedClipboardTags = new Set([
+  'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'VIDEO', 'AUDIO', 'CANVAS', 'SVG', 'FORM',
+]);
+
+export function transformClipboardHTML(html: string): string {
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  cleanClipboardNode(document.body, wordClipboardHTML(html, document));
+  return document.body.innerHTML;
+}
+
+// Office namespace, or a Generator/ProgId meta marker. Body text is not a marker.
+function wordClipboardHTML(html: string, document: Document): boolean {
+  if (/schemas-microsoft-com:office/iu.test(html)) return true;
+  for (const meta of document.querySelectorAll('meta')) {
+    const name = (meta.getAttribute('name') ?? '').trim().toLowerCase();
+    const content = meta.getAttribute('content') ?? '';
+    if (name === 'generator' && /microsoft\s+word/iu.test(content)) return true;
+    if (name === 'progid' && /word\.document/iu.test(content)) return true;
+  }
+  return false;
+}
+
+function cleanClipboardNode(node: Node, word: boolean): void {
+  for (const child of [...node.childNodes]) cleanClipboardNode(child, word);
+  if (!(node instanceof HTMLElement)) return;
+  const tag = node.tagName;
+  if (removedClipboardTags.has(tag)) {
+    node.remove();
+    return;
+  }
+  if (tag === 'IMG') {
+    const src = node.getAttribute('src') ?? '';
+    if (!src.startsWith('data:')) node.remove();
+    return;
+  }
+  if (tag === 'TABLE') {
+    flattenClipboardTable(node);
+    return;
+  }
+  if (tag === 'A') {
+    normalizeClipboardAnchor(node);
+    return;
+  }
+  if (word && wordHighlight(node)) {
+    const mark = node.ownerDocument.createElement('mark');
+    while (node.firstChild) mark.appendChild(node.firstChild);
+    node.replaceWith(mark);
+    return;
+  }
+  stripClipboardPresentation(node);
+}
+
+function wordHighlight(element: HTMLElement): boolean {
+  const names = (element.getAttribute('style') ?? '')
+    .split(';')
+    .map((part) => part.split(':')[0]?.trim().toLowerCase() ?? '');
+  if (names.includes('mso-highlight')) return true;
+  return element.tagName === 'SPAN'
+    && (names.includes('background') || names.includes('background-color'));
+}
+
+function normalizeClipboardAnchor(anchor: HTMLElement): void {
+  const destination = canonicalNoteLink(anchor.getAttribute('href') ?? '');
+  if (!destination) {
+    anchor.replaceWith(...anchor.childNodes);
+    return;
+  }
+  anchor.setAttribute('href', destination);
+  anchor.removeAttribute('target');
+  anchor.removeAttribute('rel');
+}
+
+function flattenClipboardTable(table: HTMLElement): void {
+  const rows = table instanceof HTMLTableElement ? [...table.rows] : [...table.querySelectorAll('tr')];
+  const fragment = table.ownerDocument.createDocumentFragment();
+  for (const row of rows) {
+    if (!(row instanceof HTMLTableRowElement) || row.closest('table') !== table) continue;
+    const paragraph = table.ownerDocument.createElement('p');
+    // ProseMirror keeps a tab only when the element white-space contains "pre".
+    paragraph.style.whiteSpace = 'pre-wrap';
+    for (let index = 0; index < row.cells.length; index += 1) {
+      if (index > 0) paragraph.append('\t');
+      appendClipboardCell(paragraph, row.cells[index]);
+    }
+    fragment.append(paragraph);
+  }
+  table.replaceWith(fragment);
+}
+
+function appendClipboardCell(target: HTMLElement, cell: HTMLElement): void {
+  for (const child of [...cell.childNodes]) {
+    if (child instanceof HTMLElement && (child.tagName === 'P' || child.tagName === 'DIV')) {
+      if (target.childNodes.length > 0) target.appendChild(target.ownerDocument.createElement('br'));
+      while (child.firstChild) target.appendChild(child.firstChild);
+      child.remove();
+    } else {
+      target.appendChild(child);
+    }
+  }
+}
+
+function stripClipboardPresentation(element: HTMLElement): void {
+  if (element.tagName === 'FONT') element.removeAttribute('color');
+  const style = element.getAttribute('style');
+  if (!style) return;
+  const kept = style.split(';').map((part) => part.trim()).filter((part) => {
+    if (!part) return false;
+    const name = part.split(':')[0]?.trim().toLowerCase() ?? '';
+    return name !== 'color' && name !== 'background' && name !== 'background-color' && !name.startsWith('mso-');
+  });
+  if (kept.length === 0) element.removeAttribute('style');
+  else element.setAttribute('style', kept.join('; '));
 }
 
 function tagIsolated(transaction: Transaction): void {
@@ -384,10 +712,6 @@ function publishNotesTransaction(
   });
 }
 
-const trailingLinkPunctuation = /[.,;:!?\])]+$/u;
-// Explicit http(s) only, the same links that typing and paste create.
-const linkPattern = /\bhttps?:\/\/[^\s]+/giu;
-
 function buildParagraph(schema: Schema, text: string): PmNode {
   const lines = text.split('\n');
   const content: PmNode[] = [];
@@ -403,26 +727,16 @@ function linkifyLine(schema: Schema, line: string): PmNode[] {
   const link = schema.marks.link;
   const nodes: PmNode[] = [];
   let cursor = 0;
-  for (const range of findLinkRanges(line)) {
-    if (range.from > cursor) nodes.push(schema.text(line.slice(cursor, range.from)));
-    nodes.push(schema.text(line.slice(range.from, range.to), [link.create({ href: range.href })]));
-    cursor = range.to;
+  for (const match of find(line, { defaultProtocol: 'http' })) {
+    if (match.type !== 'url' || !match.isLink || match.start < cursor) continue;
+    const href = canonicalNoteLink(match.value);
+    if (!href) continue;
+    if (match.start > cursor) nodes.push(schema.text(line.slice(cursor, match.start)));
+    nodes.push(schema.text(line.slice(match.start, match.end), [link.create({ href })]));
+    cursor = match.end;
   }
   if (cursor < line.length) nodes.push(schema.text(line.slice(cursor)));
   return nodes;
-}
-
-type LinkRange = { from: number; to: number; href: string };
-
-function findLinkRanges(line: string): LinkRange[] {
-  const ranges: LinkRange[] = [];
-  for (const match of line.matchAll(linkPattern)) {
-    const index = match.index ?? 0;
-    const trimmed = match[0].replace(trailingLinkPunctuation, '');
-    if (!isAllowedNoteLink(trimmed)) continue;
-    ranges.push({ from: index, to: index + trimmed.length, href: new URL(trimmed).href });
-  }
-  return ranges;
 }
 
 function placeParagraph(tr: Transaction, paragraph: PmNode): boolean {
