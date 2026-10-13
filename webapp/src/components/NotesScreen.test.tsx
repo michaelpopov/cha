@@ -13,6 +13,13 @@ import { fixtureClient } from '../test/fixtures';
 import { VoiceInputSession } from '../voiceInput';
 import { NotesScreen } from './NotesScreen';
 
+// jsdom has no Range layout. ProseMirror measures the selection when it
+// scrolls to it, which happens once the editor has focus.
+if (typeof Range.prototype.getClientRects !== 'function') {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
+}
+
 const plan: NoteItem = { id: 4, parent_id: null, kind: 'note', name: 'Plan' };
 const essay: NoteItem = { id: 5, parent_id: null, kind: 'note', name: 'Essay' };
 
@@ -385,6 +392,10 @@ describe('Notes screen', () => {
     expect(await screen.findByText(pictureTypeMessage)).toBeInTheDocument();
     expect(screen.getByText(/Could not save “Plan”/)).toBeInTheDocument();
     expect(screen.getAllByRole('alert').length).toBeGreaterThan(1);
+
+    act(() => insertText(editor, '!'));
+    expect(screen.queryByText(pictureTypeMessage)).not.toBeInTheDocument();
+    expect(screen.getByText(/Could not save “Plan”/)).toBeInTheDocument();
   });
 
   it('finds, replaces, and keeps prompt Enter', async () => {
@@ -470,7 +481,7 @@ describe('Notes screen', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     const editor = await openedEditor();
     editor.view.dom.focus();
-    fireEvent.keyDown(editor.view.dom, { key: 'f', metaKey: true });
+    fireEvent.keyDown(editor.view.dom, { key: 'а', code: 'KeyF', metaKey: true });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     const find = screen.getByRole('textbox', { name: 'Find' });
     fireEvent.change(find, { target: { value: 'Alpha' } });
@@ -521,13 +532,15 @@ describe('Notes screen', () => {
     expect(JSON.stringify(editor.getJSON())).toContain('https://example.com/a');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(editor.view.dom).toHaveFocus();
     expect(JSON.stringify(editor.getJSON())).toContain('https://example.com/a');
 
     fireEvent.click(screen.getByRole('button', { name: 'Link' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit link' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'URL' }), { target: { value: 'http://example.org/b' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.submit(screen.getByRole('textbox', { name: 'URL' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(editor.view.dom).toHaveFocus();
     expect(editor.getText()).toBe('docs');
     expect(JSON.stringify(editor.getJSON())).toContain('http://example.org/b');
     expect(JSON.stringify(editor.getJSON())).toContain('"type":"bold"');

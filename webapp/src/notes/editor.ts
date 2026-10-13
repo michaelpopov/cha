@@ -4,7 +4,13 @@ import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import { closeHistory, isHistoryTransaction } from '@tiptap/pm/history';
 import { GapCursor } from '@tiptap/pm/gapcursor';
-import { type Fragment, type Node as PmNode, type Schema, type Slice } from '@tiptap/pm/model';
+import {
+  type Fragment,
+  type Node as PmNode,
+  type ResolvedPos,
+  type Schema,
+  type Slice,
+} from '@tiptap/pm/model';
 import {
   AllSelection,
   NodeSelection,
@@ -23,7 +29,9 @@ import {
   clipboardImageFile,
   embeddedImageError,
   noteTooLargeMessage,
+  pictureByteLimit,
   pictureFromBytes,
+  pictureTooLargeMessage,
   pictureTypeMessage,
   readFileBytes,
 } from './pictures';
@@ -123,18 +131,26 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
   let editor!: Editor;
   const editorProps = {
     dispatchTransaction(transaction: Transaction) {
-      acceptNotesTransaction(editor, transaction, byteLimit, gate);
+      acceptNotesTransaction(editor, transaction, byteLimit, gate, options.onCommandError);
     },
     transformPastedHTML(html: string) {
       return transformClipboardHTML(html);
     },
-    handleClick(view: EditorView, pos: number, event: MouseEvent) {
+    handleClick(view: EditorView, _pos: number, event: MouseEvent) {
       if (event.button !== 0) return false;
-      const range = linkRangeAt(view.state.doc, pos);
+      const range = linkRangeAtTarget(view, event.target);
       if (!range) return false;
       const destination = storedWebDestination(range.href);
       if (destination) window.open(destination, '_blank', 'noopener,noreferrer');
       return true;
+    },
+    handleDOMEvents: {
+      // ProseMirror cancels only mouseup. A frozen editor would still follow the anchor.
+      click(view: EditorView, event: MouseEvent) {
+        const anchor = event.target instanceof Element ? event.target.closest('a') : null;
+        if (anchor && view.dom.contains(anchor)) event.preventDefault();
+        return false;
+      },
     },
     handlePaste(view: EditorView, event: ClipboardEvent, slice: Slice) {
       if (slice.size > 0) {
@@ -353,12 +369,14 @@ function notesExtensions() {
 // Dispatch adapter for Tiptap 3.30.3 Editor.dispatchTransaction.
 // applyTransaction already folded plugin appends (including autolink) into
 // `state`. The size check uses that candidate. Rejection does not call
-// updateState with it. Event order on acceptance matches the upstream method.
+// updateState with it and reports the limit. Event order on acceptance
+// matches the upstream method.
 function acceptNotesTransaction(
   editor: Editor,
   transaction: Transaction,
   byteLimit: number,
   gate: Gate,
+  onCommandError?: (message: string) => void,
 ): void {
   const capturing = captureState(editor);
   if (editor.isDestroyed) return;
@@ -383,7 +401,10 @@ function acceptNotesTransaction(
   }
   const changed = transactions.some((item) => item.docChanged) && !prevState.doc.eq(state.doc);
   if (changed && !editor.isEditable) return;
-  if (changed && noteDocumentByteLength(state.doc) > byteLimit) return;
+  if (changed && noteDocumentByteLength(state.doc) > byteLimit) {
+    onCommandError?.(noteTooLargeMessage);
+    return;
+  }
   publishNotesTransaction(editor, transaction, prevState, state, transactions);
   if (
     changed
@@ -451,12 +472,31 @@ export function linkRangeFromSelection(state: EditorState): NoteLinkRange | null
   return linkRangeAt(state.doc, from) ?? (to === from ? null : linkRangeAt(state.doc, to));
 }
 
-export function replaceLinkDestination(editor: Editor, range: NoteLinkRange, input: string): boolean {
+// A pointer acts on a link only when the event target is inside its <a> element.
+// A click next to a link, such as after a link at a line end, is not on it.
+export function linkRangeAtTarget(view: EditorView, target: EventTarget | null): NoteLinkRange | null {
+  const anchor = target instanceof Element ? target.closest('a') : null;
+  if (!anchor || !view.dom.contains(anchor)) return null;
+  return linkRangeAt(view.state.doc, view.posAtDOM(anchor, 0));
+}
+
+export type LinkEditResult = 'applied' | 'invalid' | 'missing' | 'rejected' | 'unavailable';
+
+// The range is captured when the dialog opens. A picture import or a spoken
+// submission can change the note before Apply, so the link must still match.
+export function replaceLinkDestination(
+  editor: Editor,
+  range: NoteLinkRange,
+  input: string,
+): LinkEditResult {
   const href = canonicalNoteLink(input);
-  if (!href || editor.isDestroyed || !editor.isEditable) return false;
-  if (!rangeFits(editor, range)) return false;
-  const existing = linkRangeAt(editor.state.doc, range.from);
-  if (existing?.href === href && existing.from === range.from && existing.to === range.to) return true;
+  if (!href) return 'invalid';
+  if (editor.isDestroyed || !editor.isEditable) return 'unavailable';
+  const existing = rangeFits(editor, range) ? linkRangeAt(editor.state.doc, range.from) : null;
+  if (existing?.from !== range.from || existing.to !== range.to || existing.href !== range.href) {
+    return 'missing';
+  }
+  if (existing.href === href) return 'applied';
   const link = editor.schema.marks.link;
   const tr = editor.state.tr;
   tr.removeMark(range.from, range.to, link);
@@ -465,7 +505,7 @@ export function replaceLinkDestination(editor: Editor, range: NoteLinkRange, inp
   closeHistory(tr);
   tr.setMeta(notesIsolatedMeta, true);
   editor.view.dispatch(tr);
-  return linkRangeAt(editor.state.doc, range.from)?.href === href;
+  return linkRangeAt(editor.state.doc, range.from)?.href === href ? 'applied' : 'rejected';
 }
 
 export function removeNoteLink(editor: Editor, range: NoteLinkRange): boolean {
@@ -528,6 +568,8 @@ export async function importPictureFile(
   file: File,
   stillCurrent: () => boolean,
 ): Promise<string | null> {
+  // File.size is the byte length. A large file is not read only to be rejected.
+  if (file.size > pictureByteLimit) return pictureTooLargeMessage;
   const tracked = trackSelectionBookmark(editor);
   const read = readFileBytes(file);
   const cancelRead = () => read.release();
@@ -537,8 +579,8 @@ export async function importPictureFile(
     if (!stillCurrent() || editor.isDestroyed || !editor.isEditable) return null;
     const picture = pictureFromBytes(bytes);
     if ('error' in picture) return picture.error;
-    const result = insertTrackedPicture(editor, tracked.current(), picture.src);
-    if (result === 'rejected') return noteTooLargeMessage;
+    // The acceptance boundary reports a note that would become too large.
+    insertTrackedPicture(editor, tracked.current(), picture.src);
     return null;
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return null;
@@ -789,7 +831,15 @@ function replaceAcross(tr: Transaction, paragraph: PmNode): boolean {
   const endPos = $to.after(depth + 1);
   const keptStart = cutBefore($from.node(depth + 1), startPos, $from.pos);
   const keptEnd = cutAfter($to.node(depth + 1), $to.before(depth + 1), $to.pos);
-  const { nodes, paragraphPos } = replacementNodes(parent, keptStart, keptEnd, paragraph, startPos);
+  const { nodes, paragraphPos } = replacementNodes(
+    parent,
+    keptStart,
+    keptEnd,
+    paragraph,
+    startPos,
+    $from,
+    depth + 1,
+  );
   tr.replaceWith(startPos, endPos, nodes);
   setCursorAtEnd(tr, paragraphPos);
   return true;
@@ -801,11 +851,13 @@ function replacementNodes(
   keptEnd: PmNode | null,
   paragraph: PmNode,
   startPos: number,
+  $from: ResolvedPos,
+  keptDepth: number,
 ): { nodes: PmNode[]; paragraphPos: number } {
   const nodes: PmNode[] = [];
   let paragraphPos = startPos;
   if (keptStart && isListContainer(keptStart)) {
-    const inserted = insertIntoSurviving(keptStart, paragraph);
+    const inserted = insertIntoSurviving(keptStart, paragraph, $from, keptDepth);
     nodes.push(inserted.node);
     paragraphPos = startPos + inserted.offset;
   } else if (keptStart) {
@@ -834,14 +886,23 @@ function fitBlock(parent: PmNode, paragraph: PmNode): PmNode {
   return paragraph;
 }
 
-// Follows the last child down to the item that held the selection start.
-function insertIntoSurviving(node: PmNode, paragraph: PmNode): { node: PmNode; offset: number } {
+// `node` is the kept part of $from.node(depth). Follows the kept children down
+// to the item that held the selection start. When cutBefore removed that item,
+// the last kept child is an earlier sibling; the list then gets a new item, so
+// the paragraph does not join an unselected bullet.
+function insertIntoSurviving(
+  node: PmNode,
+  paragraph: PmNode,
+  $from: ResolvedPos,
+  depth: number,
+): { node: PmNode; offset: number } {
   const children: PmNode[] = [];
   node.forEach((child) => children.push(child));
   const lastIndex = children.length - 1;
   const isList = (item: PmNode) => item.type.name === 'bulletList' || item.type.name === 'orderedList';
-  if (isList(node) || isList(children[lastIndex])) {
-    const inserted = insertIntoSurviving(children[lastIndex], paragraph);
+  const lastHeldStart = lastIndex === $from.index(depth);
+  if (lastHeldStart && (isList(node) || isList(children[lastIndex]))) {
+    const inserted = insertIntoSurviving(children[lastIndex], paragraph, $from, depth + 1);
     children[lastIndex] = inserted.node;
     let offset = 1;
     for (let index = 0; index < lastIndex; index += 1) offset += children[index].nodeSize;
@@ -850,8 +911,9 @@ function insertIntoSurviving(node: PmNode, paragraph: PmNode): { node: PmNode; o
       offset: offset + inserted.offset,
     };
   }
-  children.push(paragraph);
-  let offset = 1;
+  const added = isList(node) ? node.type.schema.nodes.listItem.create(null, paragraph) : paragraph;
+  children.push(added);
+  let offset = added === paragraph ? 1 : 2;
   for (let index = 0; index < children.length - 1; index += 1) offset += children[index].nodeSize;
   return { node: node.type.createChecked(node.attrs, children), offset };
 }

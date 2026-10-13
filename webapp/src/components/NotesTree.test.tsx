@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -58,13 +58,20 @@ function renderTree({
   onRegisterCreateNote?: (create: () => void) => void;
 } = {}) {
   const onNoteItems = vi.fn();
+  const notesClient = notes ?? client({ listNoteItems: async () => items });
+  // App deletes under the operation slot. This stub keeps only the RPC and refresh.
+  const deleteItem: DeleteNoteItem = onDeleteItem ?? (async (id, _listing, refresh) => {
+    await notesClient.deleteNoteItem(id);
+    await refresh();
+    return 'deleted';
+  });
   render(
     <NotesTree
       activeNoteId={activeNoteId}
       browsing
-      client={notes ?? client({ listNoteItems: async () => items })}
+      client={notesClient}
       onBeforeCreateNote={onBeforeCreateNote}
-      onDeleteItem={onDeleteItem}
+      onDeleteItem={deleteItem}
       onNoteItems={onNoteItems}
       onOpenNote={onOpenNote}
       onRegisterCreateNote={onRegisterCreateNote}
@@ -301,6 +308,7 @@ describe('Notes tree', () => {
           browsing
           client={client({ listNoteItems: async () => [study, aardvark, philosophy] })}
           onBeforeCreateNote={async () => true}
+          onDeleteItem={async () => 'deleted'}
           onNoteItems={() => undefined}
           onOpenNote={(id) => setActive(id)}
         />
@@ -336,6 +344,29 @@ describe('Notes tree', () => {
     fireEvent.keyDown(screen.getByRole('tree'), { key: 'ContextMenu' });
     expect(await screen.findByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'Aardvark' })).not.toHaveAttribute('aria-expanded');
+  });
+
+  it('returns focus to the row when a dialog from the menu is canceled', async () => {
+    // openMenu calls headless-tree's updateDomFocus. It focuses the row from a
+    // 20 ms interval timer, so the test lets that timer finish first.
+    const runTreeFocusTimer = () => act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    renderTree();
+    const study = await screen.findByRole('treeitem', { name: 'Study' });
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    await runTreeFocusTimer();
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Rename' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+    expect(study).toHaveFocus();
+
+    fireEvent.keyDown(screen.getByRole('tree'), { key: 'F10', shiftKey: true });
+    await runTreeFocusTimer();
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(study).toHaveFocus();
   });
 
   it('renames and moves metadata without opening or leaving the note', async () => {

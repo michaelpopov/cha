@@ -92,7 +92,7 @@ export function NotesTree({
   activeNoteId: number | null;
   onOpenNote(id: number): void;
   onBeforeCreateNote(): Promise<boolean>;
-  onDeleteItem?: DeleteNoteItem;
+  onDeleteItem: DeleteNoteItem;
   onNoteItems(items: NoteItem[]): void;
   onRegisterCreateNote?(create: () => void): void;
 }) {
@@ -402,21 +402,30 @@ export function NotesTree({
     if (restore && anchor?.isConnected) anchor.focus();
   }
 
-  function startRename() {
+  // The focused menu item is removed with the menu. Focus moves to its row
+  // first, so the dialog that opens next restores focus there.
+  function takeMenuSource(): NoteItem | null {
     const sourceId = menu?.sourceId ?? null;
     setMenu(null);
-    const source = sourceId === null ? null : itemsRef.current.find((item) => item.id === sourceId);
-    if (!source || !canMutateNow()) return;
+    const source = itemsRef.current.find((entry) => entry.id === sourceId) ?? null;
+    if (!source) return null;
+    const item = treeRef.current.getItemInstance(String(source.id));
+    item.setFocused();
+    item.getElement()?.focus();
+    return canMutateNow() ? source : null;
+  }
+
+  function startRename() {
+    const source = takeMenuSource();
+    if (!source) return;
     setDialog({
       action: 'rename', sourceId: source.id, name: source.name, error: null, pending: false,
     });
   }
 
   function startMove() {
-    const sourceId = menu?.sourceId ?? null;
-    setMenu(null);
-    const source = sourceId === null ? null : itemsRef.current.find((item) => item.id === sourceId);
-    if (!source || !canMutateNow()) return;
+    const source = takeMenuSource();
+    if (!source) return;
     setDialog({
       action: 'move',
       sourceId: source.id,
@@ -429,10 +438,8 @@ export function NotesTree({
   }
 
   function startDelete() {
-    const sourceId = menu?.sourceId ?? null;
-    setMenu(null);
-    const source = sourceId === null ? null : itemsRef.current.find((item) => item.id === sourceId);
-    if (!source || !canMutateNow()) return;
+    const source = takeMenuSource();
+    if (!source) return;
     setDialog({
       action: 'delete',
       sourceId: source.id,
@@ -498,9 +505,7 @@ export function NotesTree({
       if (result === 'failed') throw new Error('The notes list could not be refreshed.');
     };
     try {
-      const outcome = onDeleteRef.current
-        ? await onDeleteRef.current(captured.sourceId, listing, refresh)
-        : await deleteWithoutSlot(captured.sourceId, refresh);
+      const outcome = await onDeleteRef.current(captured.sourceId, listing, refresh);
       if (!alive.current) return;
       if (outcome === 'deleted' || outcome === 'refresh-failed') {
         setDialog(null);
@@ -522,19 +527,6 @@ export function NotesTree({
       });
     } finally {
       if (alive.current) busy.current = false;
-    }
-  }
-
-  async function deleteWithoutSlot(
-    sourceId: number,
-    refresh: () => Promise<void>,
-  ): Promise<NoteDeleteResult> {
-    await clientRef.current.deleteNoteItem(sourceId);
-    try {
-      await refresh();
-      return 'deleted';
-    } catch {
-      return 'refresh-failed';
     }
   }
 
@@ -688,7 +680,7 @@ export function NotesTree({
   );
 }
 
-function menuKeys(event: ReactKeyboardEvent<HTMLDivElement>, close: () => void) {
+export function menuKeys(event: ReactKeyboardEvent<HTMLDivElement>, close: () => void) {
   const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
   const current = items.indexOf(document.activeElement as HTMLButtonElement);
   let next = current;

@@ -161,14 +161,23 @@ function pasteWith(created: Editor, slice: Slice, data: { files?: File[]; text?:
   return handled;
 }
 
-function clickAt(created: Editor, pos: number, button: number): boolean {
+function clickAt(created: Editor, target: Element, button: number): boolean {
   const event = new MouseEvent('click', { button, bubbles: true, cancelable: true });
   let handled = false;
-  created.view.someProp('handleClick', (fn) => {
-    handled = !!fn(created.view, pos, event);
-    return handled;
-  });
+  target.addEventListener('click', () => {
+    created.view.someProp('handleClick', (fn) => {
+      handled = !!fn(created.view, 0, event);
+      return handled;
+    });
+  }, { once: true });
+  target.dispatchEvent(event);
   return handled;
+}
+
+function anchorOf(created: Editor): Element {
+  const anchor = created.view.dom.querySelector('a');
+  if (!anchor) throw new Error('Link is missing.');
+  return anchor;
 }
 
 describe('note link predicate', () => {
@@ -705,6 +714,24 @@ describe('prompt insertion', () => {
     }]);
   });
 
+  it('adds a new item when the removed start item leaves the list', () => {
+    const created = editor({ content: '<ul><li><p>one</p></li><li><p>two</p></li></ul><p>after</p>' });
+    selectBetween(created, 'two', 0, 'after', 2);
+    expect(insertPromptParagraph(created, 'X')).toBe(true);
+    expect(docOf(created)).toEqual([
+      {
+        type: 'bulletList',
+        content: [
+          { type: 'listItem', content: [{ type: 'paragraph', content: ['one'] }] },
+          { type: 'listItem', content: [{ type: 'paragraph', content: ['X'] }] },
+        ],
+      },
+      { type: 'paragraph', content: ['ter'] },
+    ]);
+    expect(created.state.selection.$from.parent.textContent).toBe('X');
+    expect(created.state.selection.$from.parentOffset).toBe(1);
+  });
+
   it('replaces the whole note after Select All', () => {
     const created = editor({ content: '<p>abc</p><ul><li><p>def</p></li></ul>' });
     const before = docOf(created);
@@ -859,10 +886,12 @@ describe('prompt insertion', () => {
   });
 
   it('rejects an over-limit insertion without clearing the submitted result', () => {
-    const created = editor({ byteLimit: 80 });
+    const errors: string[] = [];
+    const created = editor({ byteLimit: 80, onCommandError: (message) => errors.push(message) });
     expect(insertPromptParagraph(created, 'x'.repeat(200))).toBe(false);
     expect(docOf(created)).toEqual([{ type: 'paragraph' }]);
     expect(undoDepth(created.state)).toBe(0);
+    expect(errors).toEqual([noteTooLargeMessage]);
   });
 
   it('does not autolink a final url unless the insertion command adds the mark', () => {
@@ -1327,13 +1356,19 @@ describe('pictures and clipboard', () => {
   it('rejects an image that makes the note too large and keeps the selection', async () => {
     const probe = editor({ content: '<p>abcd</p>' });
     const limit = noteDocumentByteLength(probe.state.doc);
-    const created = editor({ content: '<p>abcd</p>', byteLimit: limit });
+    const errors: string[] = [];
+    const created = editor({
+      content: '<p>abcd</p>',
+      byteLimit: limit,
+      onCommandError: (message) => errors.push(message),
+    });
     selectText(created, 'abcd', 1);
     const before = created.getJSON();
     const selection = created.state.selection.toJSON();
     const depth = undoDepth(created.state);
     const file = new File([Uint8Array.from(pngHeader)], 'a.png', { type: 'image/png' });
-    await expect(importPictureFile(created, file, () => true)).resolves.toBe(noteTooLargeMessage);
+    await expect(importPictureFile(created, file, () => true)).resolves.toBeNull();
+    expect(errors).toEqual([noteTooLargeMessage]);
     expect(insertTrackedPicture(created, created.state.selection.getBookmark(), pngSrc())).toBe('rejected');
     expect(created.getJSON()).toEqual(before);
     expect(created.state.selection.toJSON()).toEqual(selection);
@@ -1364,9 +1399,9 @@ describe('link activation and edits', () => {
         }],
       },
     });
-    expect(clickAt(created, 1, 0)).toBe(true);
+    expect(clickAt(created, anchorOf(created), 0)).toBe(true);
     expect(openWindow).toHaveBeenCalledWith('http://example.com/a', '_blank', 'noopener,noreferrer');
-    expect(clickAt(created, 1, 2)).toBe(false);
+    expect(clickAt(created, anchorOf(created), 2)).toBe(false);
     expect(openWindow).toHaveBeenCalledTimes(1);
 
     created.commands.setContent({
@@ -1381,8 +1416,33 @@ describe('link activation and edits', () => {
       }],
     });
     expect(created.getText()).toBe('click');
-    expect(clickAt(created, 1, 0)).toBe(true);
+    expect(clickAt(created, anchorOf(created), 0)).toBe(true);
     expect(openWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a click beside a link and cancels the native link action', () => {
+    const openWindow = vi.spyOn(window, 'open').mockReturnValue(null);
+    const created = editor({
+      content: {
+        type: 'doc',
+        content: [{
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'see ' },
+            { type: 'text', text: 'Go', marks: [{ type: 'link', attrs: { href: 'https://example.com/' } }] },
+          ],
+        }],
+      },
+    });
+    const paragraph = created.view.dom.querySelector('p');
+    if (!paragraph) throw new Error('Paragraph is missing.');
+    expect(clickAt(created, paragraph, 0)).toBe(false);
+    expect(openWindow).not.toHaveBeenCalled();
+
+    created.setEditable(false, false);
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    anchorOf(created).dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
   });
 
   it('autolinks a typed bare domain and does not autolink an unsupported scheme', () => {
@@ -1440,14 +1500,36 @@ describe('link activation and edits', () => {
     });
     const range = linkRangeAt(created.state.doc, 1)!;
     const depth = undoDepth(created.state);
-    expect(replaceLinkDestination(created, range, 'mailto:user@example.com')).toBe(false);
+    expect(replaceLinkDestination(created, range, 'mailto:user@example.com')).toBe('invalid');
     expect(undoDepth(created.state)).toBe(depth);
-    expect(replaceLinkDestination(created, range, 'http://example.org/b')).toBe(true);
+    expect(replaceLinkDestination(created, range, 'http://example.org/b')).toBe('applied');
     expect(created.getText()).toBe('docs');
     expect(JSON.stringify(created.getJSON())).toContain('http://example.org/b');
     expect(JSON.stringify(created.getJSON())).toContain('"type":"bold"');
     expect(JSON.stringify(created.getJSON())).not.toContain('https://example.com/a');
     created.commands.undo();
     expect(JSON.stringify(created.getJSON())).toContain('https://example.com/a');
+  });
+
+  it('changes nothing when the captured link moved before Apply', () => {
+    const created = editor({
+      content: {
+        type: 'doc',
+        content: [{
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'ab ' },
+            { type: 'text', text: 'docs', marks: [{ type: 'link', attrs: { href: 'https://example.com/a' } }] },
+          ],
+        }],
+      },
+    });
+    const range = linkRangeAt(created.state.doc, 4)!;
+    created.view.dispatch(created.state.tr.insertText('X', 1));
+    const before = created.getJSON();
+    const depth = undoDepth(created.state);
+    expect(replaceLinkDestination(created, range, 'http://example.org/b')).toBe('missing');
+    expect(created.getJSON()).toEqual(before);
+    expect(undoDepth(created.state)).toBe(depth);
   });
 });

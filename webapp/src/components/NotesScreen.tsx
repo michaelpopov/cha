@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type Dispatch,
-  type KeyboardEvent as ReactKeyboardEvent,
   type MutableRefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -17,18 +16,21 @@ import {
   createNotesEditor,
   importPictureFile,
   insertPromptParagraph,
-  linkRangeAt,
+  linkRangeAtTarget,
   linkRangeFromSelection,
   removeNoteLink,
   replaceLinkDestination,
   selectNoteEnd,
   withIsolatedHistory,
+  type LinkEditResult,
   type NoteLinkRange,
 } from '../notes/editor';
+import { noteTooLargeMessage } from '../notes/pictures';
 import { noteItemPath } from '../notes/tree';
 import type { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveFailedMessage, useNoteSave, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { AppAction } from '../state/view';
+import { menuKeys } from './NotesTree';
 import { PromptInput } from './PromptInput';
 import { SidebarToggle } from './TopBar';
 
@@ -73,23 +75,6 @@ function runHistory(editor: Editor, command: 'undo' | 'redo') {
   if (!editor.isEditable || editor.isDestroyed) return;
   if (command === 'undo') editor.chain().undo().run();
   else editor.chain().redo().run();
-}
-
-function onMenuKey(event: ReactKeyboardEvent<HTMLDivElement>, onEscape: () => void) {
-  const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
-  const current = items.indexOf(document.activeElement as HTMLButtonElement);
-  let next = current;
-  if (event.key === 'ArrowDown') next = (current + 1) % items.length;
-  else if (event.key === 'ArrowUp') next = (current - 1 + items.length) % items.length;
-  else if (event.key === 'Home') next = 0;
-  else if (event.key === 'End') next = items.length - 1;
-  else if (event.key === 'Escape') {
-    event.preventDefault();
-    onEscape();
-    return;
-  } else return;
-  event.preventDefault();
-  items[next]?.focus();
 }
 
 function FormatBar({
@@ -235,7 +220,7 @@ function FormatBar({
         {listOpen && (
           <div
             className="cha-notes-list-menu"
-            onKeyDown={(event) => onMenuKey(event, () => {
+            onKeyDown={(event) => menuKeys(event, () => {
               setListOpen(false);
               listButton.current?.focus();
             })}
@@ -283,7 +268,7 @@ function FormatBar({
         {linkOpen && linkRange && (
           <div
             className="cha-notes-list-menu"
-            onKeyDown={(event) => onMenuKey(event, () => {
+            onKeyDown={(event) => menuKeys(event, () => {
               setLinkOpen(false);
               linkButton.current?.focus();
             })}
@@ -471,17 +456,27 @@ function FindBar({
   );
 }
 
+const linkEditErrors: Record<Exclude<LinkEditResult, 'applied' | 'unavailable'>, string> = {
+  invalid: 'Enter an HTTP or HTTPS address.',
+  missing: 'That link is no longer in the note.',
+  rejected: noteTooLargeMessage,
+};
+
 function LinkEditDialog({
   initial,
   onApply,
   onCancel,
+  onClosed,
 }: {
   initial: string;
-  onApply(value: string): boolean;
+  onApply(value: string): string | null;
   onCancel(): void;
+  onClosed(): void;
 }) {
   const dialog = useRef<HTMLDialogElement | null>(null);
   const input = useRef<HTMLInputElement | null>(null);
+  const closedRef = useRef(onClosed);
+  closedRef.current = onClosed;
   const [value, setValue] = useState(initial);
   const [error, setError] = useState<string | null>(null);
 
@@ -493,6 +488,8 @@ function LinkEditDialog({
     input.current?.focus();
     return () => {
       if (typeof element.close === 'function') element.close();
+      // The menu that opened this dialog is gone, so focus returns to the editor.
+      closedRef.current();
     };
   }, []);
 
@@ -506,53 +503,31 @@ function LinkEditDialog({
       }}
       ref={dialog}
     >
-      <label>
-        URL
-        <input
-          className="cha-form-control"
-          onChange={(event) => {
-            setValue(event.target.value);
-            setError(null);
-          }}
-          ref={input}
-          value={value}
-        />
-      </label>
-      {error && <p role="alert">{error}</p>}
-      <div className="cha-dialog-actions">
-        <button className="cha-button" onClick={onCancel} type="button">Cancel</button>
-        <button
-          className="cha-button cha-button-primary"
-          onClick={() => {
-            if (!onApply(value)) setError('Enter an HTTP or HTTPS address.');
-          }}
-          type="button"
-        >
-          Apply
-        </button>
-      </div>
+      <form onSubmit={(event) => {
+        event.preventDefault();
+        setError(onApply(value));
+      }}>
+        <label>
+          URL
+          <input
+            className="cha-form-control"
+            onChange={(event) => {
+              setValue(event.target.value);
+              setError(null);
+            }}
+            ref={input}
+            value={value}
+          />
+        </label>
+        {error && <p className="cha-error-message" role="alert">{error}</p>}
+        <div className="cha-dialog-actions">
+          <button className="cha-button" onClick={onCancel} type="button">Cancel</button>
+          <button className="cha-button cha-button-primary" type="submit">Apply</button>
+        </div>
+      </form>
     </dialog>,
     document.body,
   );
-}
-
-function linkRangeFromPointer(editor: Editor, event: MouseEvent): NoteLinkRange | null {
-  try {
-    const coords = editor.view.posAtCoords({ left: event.clientX, top: event.clientY });
-    if (coords) {
-      const range = linkRangeAt(editor.state.doc, coords.pos);
-      if (range) return range;
-    }
-  } catch {
-    // A host without hit testing still exposes the element under the pointer.
-  }
-  const target = event.target;
-  if (!(target instanceof Node)) return null;
-  try {
-    return linkRangeAt(editor.state.doc, editor.view.posAtDOM(target, 0));
-  } catch {
-    return null;
-  }
 }
 
 export function NotesScreen({
@@ -674,6 +649,11 @@ export function NotesScreen({
               if (cancelled || noteIdRef.current !== noteId) return;
               setCommandError(message);
             },
+            // An accepted change means the user continued, so an old command error goes.
+            onAcceptedDocument: () => {
+              if (cancelled || noteIdRef.current !== noteId) return;
+              setCommandError(null);
+            },
           });
         } catch {
           if (!cancelled) {
@@ -755,20 +735,26 @@ export function NotesScreen({
     findInputRef.current?.focus();
   }, [findOpen]);
 
-  useEffect(() => {
-    const current = editor;
-    if (!findOpenRef.current || !current || current.isDestroyed) return;
+  function applyFind(current: Editor) {
     const controls = findControls.current;
     current.commands.setCaseSensitive(controls.matchCase);
     current.commands.setUseRegex(controls.regex);
     current.commands.setWholeWord(controls.regex ? false : controls.wholeWord);
     current.commands.setReplaceTerm(controls.replacement);
     current.commands.setSearchTerm(controls.term);
+  }
+
+  useEffect(() => {
+    const current = editor;
+    if (!findOpenRef.current || !current || current.isDestroyed) return;
+    applyFind(current);
   }, [editor]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== 'f' || event.altKey || event.shiftKey) return;
+      // event.code keeps Mod+F on the F key with a non-Latin layout.
+      const isF = event.key.toLowerCase() === 'f' || event.code === 'KeyF';
+      if (!isF || event.altKey || event.shiftKey) return;
       if (!event.metaKey && !event.ctrlKey) return;
       const target = event.target;
       if (!(target instanceof Node)) return;
@@ -789,7 +775,7 @@ export function NotesScreen({
     const dom = editor.view.dom;
     const onContext = (event: Event) => {
       if (!(event instanceof MouseEvent) || !editor.isEditable || editor.isDestroyed) return;
-      const range = linkRangeFromPointer(editor, event);
+      const range = linkRangeAtTarget(editor.view, event.target);
       if (!range) return;
       event.preventDefault();
       setLinkMenu({ x: event.clientX, y: event.clientY, range });
@@ -809,15 +795,6 @@ export function NotesScreen({
     window.addEventListener('pointerdown', dismiss);
     return () => window.removeEventListener('pointerdown', dismiss);
   }, [linkMenu]);
-
-  function applyFind(current: Editor) {
-    const controls = findControls.current;
-    current.commands.setCaseSensitive(controls.matchCase);
-    current.commands.setUseRegex(controls.regex);
-    current.commands.setWholeWord(controls.regex ? false : controls.wholeWord);
-    current.commands.setReplaceTerm(controls.replacement);
-    current.commands.setSearchTerm(controls.term);
-  }
 
   function openFind() {
     const current = editorRef.current;
@@ -851,7 +828,7 @@ export function NotesScreen({
     const epoch = epochRef.current;
     if (!current || noteId === null) return;
     void importPictureFile(current, file, () => samePictureContext(current, noteId, epoch)).then((message) => {
-      if (!samePictureContext(current, noteId, epoch)) return;
+      if (!message || !samePictureContext(current, noteId, epoch)) return;
       setCommandError(message);
     });
   }
@@ -1020,7 +997,7 @@ export function NotesScreen({
       {linkMenu && createPortal(
         <div
           className="cha-notes-list-menu"
-          onKeyDown={(event) => onMenuKey(event, () => setLinkMenu(null))}
+          onKeyDown={(event) => menuKeys(event, () => setLinkMenu(null))}
           ref={linkContextRef}
           role="menu"
           style={{ position: 'fixed', top: linkMenu.y, left: linkMenu.x }}
@@ -1056,12 +1033,17 @@ export function NotesScreen({
           initial={linkEdit.href}
           onApply={(value) => {
             const current = editorRef.current;
-            if (!current) return false;
-            const applied = replaceLinkDestination(current, linkEdit, value);
-            if (applied) setLinkEdit(null);
-            return applied;
+            if (!current) return null;
+            const result = replaceLinkDestination(current, linkEdit, value);
+            if (result === 'applied') setLinkEdit(null);
+            if (result === 'applied' || result === 'unavailable') return null;
+            return linkEditErrors[result];
           }}
           onCancel={() => setLinkEdit(null)}
+          onClosed={() => {
+            const current = editorRef.current;
+            if (current && !current.isDestroyed) current.view.focus();
+          }}
         />
       )}
       {leave.decisionOpen && (
