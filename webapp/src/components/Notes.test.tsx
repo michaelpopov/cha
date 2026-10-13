@@ -162,6 +162,156 @@ describe('Notes in the application', () => {
     expect(JSON.stringify(saveNote.mock.calls[0][1])).toContain('Saved plan more');
   });
 
+  it.each(['Upload', 'Copy', 'Discard then Copy'])('%s uses the Settings leave decision once', async (operation) => {
+    let stored = noteDocument('Saved plan');
+    let transferred: unknown;
+    let finishSave!: () => void;
+    const saveNote = vi.fn((_id: number, document: Record<string, unknown>) => new Promise<void>((resolve, reject) => {
+      if (operation === 'Discard then Copy') {
+        reject(new ChaError('internal_error', 'Save failed.'));
+      } else {
+        finishSave = () => { stored = document as typeof stored; resolve(); };
+      }
+    }));
+    const vault = { display_name: 'Personal', protected: false, active: true, can_delete: false,
+      data_path: '/data/personal.sqlite3', mirror_path: null, modify_path: null };
+    const uploadVault = vi.fn(async () => { transferred = stored; return 42; });
+    const createVault = vi.fn(async () => { transferred = stored; return { ...vault, display_name: 'Copy', active: false }; });
+    render(<App client={fixtureClient({
+      getBootstrap: async () => ({ ...bootstrapFixture, capabilities: { can_transfer_r2: true, can_modify: false } }),
+      listNoteItems: async () => [plan], getNote: async (id) => ({ id, document: stored }), saveNote,
+      listVaults: async () => [vault], uploadVault, createVault,
+      checkVaultUpload: async () => ({ status: 'match', etag: 'known', context_epoch: 1 }),
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved plan');
+    act(() => typeInNote(' final edit'));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    expect(uploadVault).not.toHaveBeenCalled();
+    expect(createVault).not.toHaveBeenCalled();
+    if (operation === 'Discard then Copy') {
+      fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard' }));
+    } else {
+      await act(async () => finishSave());
+    }
+    fireEvent.click(await screen.findByRole('button', { name: 'Vaults' }));
+    if (operation === 'Upload') {
+      fireEvent.click(await screen.findByRole('button', { name: /Personal/ }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Upload' }));
+      await waitFor(() => expect(uploadVault).toHaveBeenCalledOnce());
+    } else {
+      fireEvent.click(await screen.findByRole('button', { name: /New vault/ }));
+      fireEvent.change(await screen.findByRole('textbox', { name: 'Display name' }), { target: { value: 'Copy' } });
+      fireEvent.change(screen.getByRole('combobox', { name: 'Initial database' }), { target: { value: 'Personal' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Create vault' }));
+      await waitFor(() => expect(createVault).toHaveBeenCalledOnce());
+      expect(createVault).toHaveBeenCalledWith({ display_name: 'Copy', copy_from: 'Personal', password: null });
+    }
+    expect(JSON.stringify(transferred)).toContain(operation === 'Discard then Copy' ? 'Saved plan' : 'Saved plan final edit');
+    if (operation === 'Discard then Copy') expect(JSON.stringify(transferred)).not.toContain('final edit');
+    expect(saveNote).toHaveBeenCalledOnce();
+  });
+
+  it.each(['success', 'failure', 'cancel'] as const)('guards vault switching and draft reset on %s', async (outcome) => {
+    const events = contextBus();
+    let activeVault = 'Personal';
+    let finishSave!: () => void;
+    const saveNote = vi.fn(() => new Promise<void>((resolve, reject) => {
+      finishSave = () => outcome === 'cancel'
+        ? reject(new ChaError('internal_error', 'Save failed.')) : resolve();
+    }));
+    const discardUnusedSession = vi.fn(async () => undefined);
+    const switchVault = vi.fn(async () => {
+      if (outcome === 'failure') throw new ChaError('internal_error', 'Switch failed.');
+      activeVault = 'Projects';
+      events.emit();
+    });
+    render(<App contextEvents={events} client={fixtureClient({
+      getBootstrap: async () => ({ ...bootstrapFixture, vault_name: activeVault }),
+      getSessionSnapshot: async () => ({ ...snapshotFixture, recent_pending: true, discardable: true }),
+      listNoteItems: async () => [plan],
+      getNote: async (id) => ({ id, document: noteDocument(activeVault) }),
+      saveNote, discardUnusedSession, switchVault,
+    })} />);
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Message' }), { target: { value: 'Chat draft' } });
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(document.querySelector('.ProseMirror')).toHaveTextContent('Personal'));
+    const originalEditor = noteEditor();
+    act(() => typeInNote(' final edit'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Notes draft' } });
+    discardUnusedSession.mockClear();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Vault' }), { target: { value: 'Projects' } });
+    await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
+    expect(discardUnusedSession).not.toHaveBeenCalled();
+    expect(switchVault).not.toHaveBeenCalled();
+    await act(async () => finishSave());
+    if (outcome === 'cancel') {
+      fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Stay' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(switchVault).not.toHaveBeenCalled();
+      expect(discardUnusedSession).not.toHaveBeenCalled();
+    } else if (outcome === 'failure') {
+      await screen.findByText('Switch failed.');
+      expect(switchVault).toHaveBeenCalledOnce();
+    } else {
+      await waitFor(() => expect(screen.getByRole('combobox', { name: 'Vault' })).toHaveValue('Projects'));
+      expect(originalEditor.isDestroyed).toBe(true);
+      fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+      await waitFor(() => expect(document.querySelector('.ProseMirror')).toHaveTextContent('Projects'));
+      expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('');
+      expect(saveNote).toHaveBeenCalledOnce();
+      fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Welcome/ }));
+      expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('');
+      return;
+    }
+    expect(noteEditor()).toBe(originalEditor);
+    expect(originalEditor.isEditable).toBe(true);
+    expect(originalEditor.getText()).toBe('Personal final edit');
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Notes draft');
+  });
+
+  it('keeps the open note when the active conversation is deleted from the sidebar', async () => {
+    let deleted = false;
+    const deleteSession = vi.fn(async () => { deleted = true; });
+    const saveNote = vi.fn(async () => undefined);
+    render(<App client={fixtureClient({
+      getBootstrap: async () => (deleted
+        ? bootstrapFixture
+        : { ...bootstrapFixture, initial_forum_id: 'lobby', initial_session_id: 'planning' }),
+      getSessionSnapshot: async (forumId) => (forumId === 'lobby'
+        ? { ...snapshotFixture, forum: bootstrapFixture.forums[1], session_id: 'planning', session_label: 'Planning' }
+        : snapshotFixture),
+      listNoteItems: async () => [plan],
+      getNote: async (id) => ({ id, document: noteDocument('Saved plan') }),
+      saveNote,
+      deleteSession,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved plan');
+    const editor = noteEditor();
+    act(() => typeInNote(' edit'));
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    fireEvent.click(screen.getByLabelText('Actions for Planning'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Welcome/ }))
+      .toHaveAttribute('aria-current', 'page'));
+    expect(deleteSession).toHaveBeenCalledWith('lobby', 'planning');
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    expect(window.location.hash).toBe('#/');
+    expect(noteEditor()).toBe(editor);
+    expect(editor.isEditable).toBe(true);
+    expect(editor.getText()).toBe('Saved plan edit');
+    expect(saveNote).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it('retains the editor and history after a failed session open, then opens it on Retry', async () => {
     let rejectOpen!: (error: unknown) => void;
     const pendingOpen = new Promise<void>((_resolve, reject) => { rejectOpen = reject; });

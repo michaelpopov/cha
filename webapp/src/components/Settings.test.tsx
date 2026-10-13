@@ -616,7 +616,12 @@ describe('Settings screens', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Download' }));
     let dialog = within(await screen.findByRole('dialog'));
-    expect(dialog.getByText(/save the current database beside itself/i)).toBeInTheDocument();
+    expect(dialog.getByText(/including all local notes and folders\? The previous database will replace the existing \.bac backup\./)).toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    await userEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    expect(downloadVault).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Download' }));
+    dialog = within(await screen.findByRole('dialog'));
     await userEvent.click(dialog.getByRole('button', { name: 'Download' }));
     expect(checkVaultUpload).toHaveBeenCalledOnce();
     expect(downloadVault).toHaveBeenCalledWith();

@@ -242,6 +242,8 @@ export type AppAction =
   | { type: 'session-audio-cache'; forumId: string; sessionId: string; entryId?: number; cached: boolean }
   | { type: 'session-append'; forumId: string; sessionId: string; event: AppendEvent }
   | { type: 'show-initial-conversation' }
+  // The initial session becomes the active conversation. The main panel stays.
+  | { type: 'reset-active-conversation' }
   | { type: 'stream-state'; status: StreamStatus; message?: string };
 
 function idleSessionOperation() {
@@ -958,6 +960,10 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       };
     case 'show-initial-conversation':
       return state.bootstrap ? showInitialConversation(state, state.bootstrap) : state;
+    case 'reset-active-conversation':
+      return state.bootstrap
+        ? { ...showInitialConversation(state, state.bootstrap), mainView: state.mainView }
+        : state;
     case 'stream-state':
       return {
         ...state,

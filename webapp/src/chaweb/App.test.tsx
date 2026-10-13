@@ -189,10 +189,22 @@ it.each(['Download', 'Parent merge'])('refreshes the vault and session list afte
   await showList(api);
   await screen.findByRole('button', { name: /Planning/ });
   await user.click(screen.getByRole('button', { name }));
-  if (name === 'Download') {
-    expect(api.downloadVault).not.toHaveBeenCalled();
-    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Download' }));
+  const dialog = within(await screen.findByRole('dialog'));
+  expect(api.downloadVault).not.toHaveBeenCalled();
+  expect(api.mergeParentVault).not.toHaveBeenCalled();
+  expect(dialog.getByText(/including all local notes and folders/)).toBeInTheDocument();
+  expect(dialog.getByText(/replace .*existing \.bac backup/)).toBeInTheDocument();
+  if (name === 'Parent merge') {
+    expect(dialog.getByText(/Notes and folders in .* stay unchanged/)).toBeInTheDocument();
+    expect(dialog.getByText(/If the merge fails, the downloaded parent remains/)).toBeInTheDocument();
   }
+  expect(dialog.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+  await user.click(dialog.getByRole('button', { name: 'Cancel' }));
+  expect(api.downloadVault).not.toHaveBeenCalled();
+  expect(api.mergeParentVault).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name })).toHaveFocus();
+  await user.click(screen.getByRole('button', { name }));
+  await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name }));
   expect(await screen.findByRole('button', { name: /Remote session/ })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Planning/ })).not.toBeInTheDocument();
   expect(api.getBootstrap).toHaveBeenCalledTimes(2);
@@ -209,6 +221,8 @@ it('requests the parent password and retries the merge with it', async () => {
   });
   await showList(api);
   await user.click(screen.getByRole('button', { name: 'Parent merge' }));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Download and merge parent?' }))
+    .getByRole('button', { name: 'Parent merge' }));
   const dialog = await screen.findByRole('dialog', { name: 'Open Parent' });
   await user.type(within(dialog).getByLabelText('Password'), 'secret');
   await user.click(within(dialog).getByRole('button', { name: 'Open vault' }));

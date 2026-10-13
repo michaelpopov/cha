@@ -24,7 +24,9 @@ export default defineConfig({
   base: '/',
   plugins: [react(), nativeBootstrap],
   build: {
-    chunkSizeWarningLimit: 550,
+    // The desktop hosts load this bundle from local files. The limit includes
+    // the Notes editor and still reports unexpected growth.
+    chunkSizeWarningLimit: 1300,
   },
   server: {
     host: '127.0.0.1',

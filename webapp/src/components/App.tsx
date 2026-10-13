@@ -946,12 +946,14 @@ export function App({
       && state.activeConversation.sessionId === sessionId;
     if (active) {
       clearLiveSession();
-      navigate({ type: 'show-initial-conversation' });
+      // A deleted background conversation does not close the open note.
+      if (state.mainView === 'notes') dispatch({ type: 'reset-active-conversation' });
+      else navigate({ type: 'show-initial-conversation' });
       writeAppRoute('/', 'replace');
     }
     setCatalogRevision((revision) => revision + 1);
   }, [clearLiveSession, client, navigate, refreshBootstrap, runMutation,
-    state.activeConversation]);
+    state.activeConversation, state.mainView]);
 
   const deleteForum = useCallback(async (forumId: string) => {
     await client.deleteForum(forumId);

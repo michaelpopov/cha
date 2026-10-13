@@ -763,7 +763,8 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
       {confirmingOperation === 'download' && (
         <ConfirmDialog
           confirmLabel="Download"
-          message={`Download “${detail?.display_name ?? 'this vault'}” from R2 and replace its local database? CHA will save the current database beside itself with a .bac suffix.`}
+          initialFocus="cancel"
+          message={`Download “${detail?.display_name ?? 'this vault'}” from R2 and replace its local database, including all local notes and folders? The previous database will replace the existing .bac backup.`}
           onCancel={() => setConfirmingOperation(null)}
           onConfirm={() => void runOperation('download')}
           title="Replace the local database?"

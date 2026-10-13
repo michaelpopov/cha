@@ -3,6 +3,8 @@
 
 #include "storage/session_repository.h"
 #include "storage/sqlite_storage.h"
+#include "storage/note_storage.h"
+#include "storage/workspace_session_database.h"
 #include "support/test_transcript.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
@@ -105,6 +107,228 @@ void set_r2(Application& application, int port) {
         .access_key_id = "test-access-key",
         .secret_key = std::string("test-secret-key"),
     }, application.context_epoch());
+}
+
+// Include opaque damaged content: whole-vault and configuration operations
+// must not start parsing every note as part of their validation.
+std::int64_t seed_notes(const std::filesystem::path& path, std::string_view name) {
+    storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+    const auto folder = note_create(database, {}, NoteItemKind::folder, name);
+    const auto nested = note_create(database, folder.id, NoteItemKind::folder, "旅行 🌍");
+    const auto note = note_create(database, nested.id, NoteItemKind::note, "План é");
+    auto document = nlohmann::json::parse(R"({"type":"doc","content":[{"type":"image","attrs":{
+        "src":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII=",
+        "alt":"pixel","title":null}}]})");
+    document["content"].push_back(nlohmann::json::parse(R"({"type":"paragraph","content":[
+        {"type":"text","text":"日本語 Привет café","marks":[{"type":"bold"},{"type":"highlight"}]},
+        {"type":"text","text":"Read the article","marks":[{"type":"link","attrs":{"href":"http://example.com/"}}]}
+    ]})"));
+    note_save(database, note.id, document);
+    const auto corrupt = note_create(database, folder.id, NoteItemKind::note, "Damaged");
+    auto damage = database.prepare("UPDATE note_items SET content_json = 'invalid JSON' WHERE id = ?1");
+    damage.bind(1, corrupt.id);
+    (void)damage.step();
+    const auto deleted = note_create(database, {}, NoteItemKind::note, "Deleted");
+    note_delete(database, deleted.id);
+    return note.id;
+}
+
+nlohmann::json stored_notes(const std::filesystem::path& path, std::string_view password = {}) {
+    storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only, password);
+    auto rows = database.prepare(
+        "SELECT id, parent_id, kind, name, content_json FROM note_items ORDER BY id");
+    auto items = nlohmann::json::array();
+    while (rows.step()) {
+        items.push_back({rows.integer(0), rows.is_null(1) ? nlohmann::json(nullptr)
+            : nlohmann::json(rows.integer(1)), rows.text(2), rows.text(3),
+            rows.is_null(4) ? nlohmann::json(nullptr) : nlohmann::json(rows.text(4))});
+    }
+    auto sequence = database.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'note_items'");
+    return {{"items", items}, {"sequence", sequence.step() ? sequence.integer(0) : 0}};
+}
+
+TEST(ApplicationVault, NotesFollowWholeCopiesProtectionAndEmptyNewVaults) {
+    TwoVaults pair;
+    const auto note = seed_notes(pair.database_a, "Original");
+    const auto before = stored_notes(pair.database_a);
+    auto application = Application::open(pair.command);
+    const auto fresh = application->create_vault({.display_name = "Empty"}, application->context_epoch());
+    EXPECT_TRUE(stored_notes(fresh.data)["items"].empty());
+    for (const bool protected_source : {false, true}) {
+        SCOPED_TRACE(protected_source);
+        if (protected_source) {
+            (void)application->update_vault("A", {.display_name = "A", .password = "secret"},
+                application->context_epoch());
+        }
+        for (const bool protected_copy : {false, true}) {
+            const auto copy = application->create_vault({
+                .display_name = std::string(protected_source ? "Protected source" : "Plain source")
+                    + (protected_copy ? " protected copy" : " plain copy"),
+                .copy_from = "A", .password = protected_copy ? "copy-secret" : "",
+            }, application->context_epoch());
+            EXPECT_EQ(stored_notes(copy.data, protected_copy ? "copy-secret" : ""), before);
+            storage::SqliteDatabase database(copy.data, storage::SqliteDatabase::Mode::read_write,
+                protected_copy ? "copy-secret" : "");
+            EXPECT_GT(note_create(database, {}, NoteItemKind::note, "Next").id,
+                before["sequence"].get<std::int64_t>());
+        }
+        EXPECT_EQ(stored_notes(pair.database_a, protected_source ? "secret" : ""), before);
+        EXPECT_EQ(application->get_note(note, application->context_epoch()).id, note);
+    }
+}
+
+TEST(ApplicationVault, UploadIncludesFinalSavedNotesWithoutScanningDamagedContent) {
+    TwoVaults pair;
+    const auto note = seed_notes(pair.database_a, "Local");
+    auto application = Application::open(pair.command);
+    auto final = application->get_note(note, application->context_epoch()).document;
+    final["content"].push_back({{"type", "paragraph"}, {"content", {
+        {{"type", "text"}, {"text", "Final saved edit"}},
+    }}});
+    application->save_note(note, final, application->context_epoch());
+    const auto saved = stored_notes(pair.database_a);
+    const std::string response = "HTTP/1.1 200 OK\r\nETag: \"saved\"\r\n"
+        "Content-Length: 0\r\nConnection: close\r\n\r\n";
+    MockHttpServer server({response, response});
+    set_r2(*application, server.port());
+    server.start();
+    (void)application->upload_database({}, application->context_epoch());
+    server.join();
+    ASSERT_EQ(server.requests().size(), 2U);
+    const auto uploaded = pair.workspace_a.root() / "uploaded-notes.sqlite3";
+    std::ofstream(uploaded, std::ios::binary) << request_body(server.requests().front());
+    EXPECT_EQ(stored_notes(uploaded), saved);
+}
+
+TEST(ApplicationVault, DownloadReplacesNotesAndOverwritesOneBackupIncludingOlderSchema2) {
+    for (const bool protected_vault : {false, true}) {
+        SCOPED_TRACE(protected_vault);
+        TwoVaults pair;
+        const auto note = seed_notes(pair.database_a, "Local");
+        test::TestWorkspace remote;
+        const auto remote_database = test::import_test_database(remote.root());
+        (void)seed_notes(remote_database, "Remote");
+        const auto remote_notes = stored_notes(remote_database);
+        auto application = Application::open(pair.command);
+        if (protected_vault) {
+            (void)application->update_vault("A", {.display_name = "A", .password = "secret"},
+                application->context_epoch());
+            protect_workspace_session_database(remote_database, "secret");
+        }
+        const auto password = protected_vault ? "secret" : "";
+        const auto definition = "vault_name = \"A\"\ndata = \"a.sqlite3\"\nprotected = "
+            + std::string(protected_vault ? "true" : "false") + "\n";
+        const auto newer_bytes = file_contents(remote_database);
+        {
+            storage::SqliteDatabase database(remote_database, storage::SqliteDatabase::Mode::read_write, password);
+            database.execute("DROP TABLE note_items");
+        }
+        MockHttpServer server({http_response("application/toml", definition),
+            http_response("application/vnd.sqlite3", newer_bytes),
+            http_response("application/toml", definition),
+            http_response("application/vnd.sqlite3", file_contents(remote_database))});
+        set_r2(*application, server.port());
+        auto saved = application->get_note(note, application->context_epoch()).document;
+        saved["content"].push_back({{"type", "paragraph"}, {"content", {
+            {{"type", "text"}, {"text", "Final saved edit"}},
+        }}});
+        application->save_note(note, saved, application->context_epoch());
+        const auto local_saved = stored_notes(pair.database_a, password);
+        auto backup = pair.database_a;
+        backup += ".bac";
+        std::ofstream(backup) << "older backup";
+        const auto old_epoch = application->context_epoch();
+        server.start();
+        (void)application->download_database(old_epoch);
+        EXPECT_EQ(stored_notes(pair.database_a, password), remote_notes);
+        EXPECT_EQ(stored_notes(backup, password), local_saved);
+        EXPECT_THROW(application->save_note(note, saved, old_epoch), ApplicationError);
+        EXPECT_EQ(stored_notes(pair.database_a, password), remote_notes);
+        // This disposable remote has no R2 credentials in its configuration.
+        set_r2(*application, server.port());
+        (void)application->download_database(application->context_epoch());
+        server.join();
+        EXPECT_TRUE(application->list_note_items(application->context_epoch()).empty());
+        EXPECT_EQ(stored_notes(backup, password), remote_notes);
+        EXPECT_TRUE(stored_notes(pair.database_a, password)["items"].empty());
+    }
+}
+
+TEST(ApplicationVault, ConfigurationTransferAndSessionMirrorExcludeNotes) {
+    TwoVaults pair;
+    (void)seed_notes(pair.database_a, "Destination");
+    (void)seed_notes(pair.database_b, "Source");
+    const auto before = stored_notes(pair.database_a);
+    const auto source_before = stored_notes(pair.database_b);
+    const auto exported = pair.workspace_a.root() / "export";
+    const auto mirror = pair.workspace_a.root() / "mirror";
+    pair.command.vault.modify = exported;
+    pair.command.vault.mirror = mirror;
+    pair.command.vaults.front() = pair.command.vault;
+    auto application = Application::open(pair.command);
+    (void)application->merge_vault("B", {}, application->context_epoch());
+    EXPECT_EQ(stored_notes(pair.database_a), before);
+    EXPECT_EQ(stored_notes(pair.database_b), source_before);
+    (void)application->export_configuration(application->context_epoch());
+    EXPECT_GT(std::distance(std::filesystem::recursive_directory_iterator(exported),
+        std::filesystem::recursive_directory_iterator{}), 0);
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(exported)) {
+        if (entry.is_regular_file()) {
+            EXPECT_EQ(file_contents(entry.path()).find("日本語 Привет café"), std::string::npos);
+            EXPECT_NE(entry.path().extension(), ".sqlite3");
+        }
+    }
+    (void)application->import_configuration(application->context_epoch());
+    EXPECT_EQ(stored_notes(pair.database_a), before);
+    // Rebuild a mirror containing an actual session, not just an empty directory.
+    (void)application->create_session("lobby", "Mirrored session", application->context_epoch());
+    application.reset();
+    application = Application::open(pair.command);
+    ASSERT_TRUE(std::filesystem::exists(mirror));
+    std::size_t documents = 0;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(mirror)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".md") {
+            ++documents;
+            EXPECT_EQ(file_contents(entry.path()).find("日本語 Привет café"), std::string::npos);
+        }
+    }
+    EXPECT_EQ(documents, 1U);
+    EXPECT_EQ(stored_notes(pair.database_a), before);
+}
+
+TEST(ApplicationVault, ParentNotesAndBackupSurviveALaterMergeFailure) {
+    for (const bool fail_merge : {false, true}) {
+        SCOPED_TRACE(fail_merge);
+        TwoVaults pair;
+        set_parent(pair);
+        (void)seed_notes(pair.database_a, "Child");
+        (void)seed_notes(pair.database_b, "Local parent");
+        const auto child = stored_notes(pair.database_a);
+        const auto local_parent = stored_notes(pair.database_b);
+        test::TestWorkspace remote;
+        remote.add_persona("remote", "Remote");
+        const auto remote_database = test::import_test_database(remote.root());
+        (void)seed_notes(remote_database, "Remote parent");
+        const auto remote_parent = stored_notes(remote_database);
+        MockHttpServer server({http_response("application/toml", "vault_name = \"B\"\ndata = \"b.sqlite3\"\n"),
+            http_response("application/vnd.sqlite3", file_contents(remote_database))});
+        auto application = Application::open(pair.command);
+        set_r2(*application, server.port());
+        if (fail_merge) force_next_forum_sync_failure();
+        server.start();
+        if (fail_merge) {
+            EXPECT_THROW((void)application->merge_parent_vault({}, application->context_epoch()),
+                WorkspaceRestartRequiredError);
+        } else {
+            EXPECT_NO_THROW((void)application->merge_parent_vault({}, application->context_epoch()));
+        }
+        server.join();
+        EXPECT_EQ(stored_notes(pair.database_a), child);
+        EXPECT_EQ(stored_notes(pair.database_b), remote_parent);
+        auto backup = pair.database_b;
+        backup += ".bac";
+        EXPECT_EQ(stored_notes(backup), local_parent);
+    }
 }
 
 TEST(ApplicationVault, PicturesFollowTheCurrentVaultAndRejectStaleEpochs) {

@@ -17,7 +17,7 @@ export function VaultActions({ bootstrap, client, blocked, onBusy, onRefresh, on
   onOpenAssistant(): void;
 }) {
   const [pending, setPending] = useState<Operation | 'check' | null>(null);
-  const [confirmation, setConfirmation] = useState<'upload' | 'download' | null>(null);
+  const [confirmation, setConfirmation] = useState<Operation | null>(null);
   const [uploadCheck, setUploadCheck] = useState<VaultUploadCheck | null>(null);
   const [passwordPrompt, setPasswordPrompt] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +93,7 @@ export function VaultActions({ bootstrap, client, blocked, onBusy, onRefresh, on
         <button aria-label="Download" className="chaweb-icon-button" disabled={disabled}
           onClick={() => setConfirmation('download')} title="Download" type="button"><DownloadIcon /></button>
         <button aria-label="Parent merge" className="chaweb-icon-button"
-          disabled={disabled || !bootstrap.vault_parent} onClick={() => void run('merge')}
+          disabled={disabled || !bootstrap.vault_parent} onClick={() => setConfirmation('merge')}
           title="Parent merge" type="button"><MergeIcon /></button>
         <button aria-label="Assistant" className="chaweb-icon-button"
           disabled={blocked || pending !== null} onClick={onOpenAssistant}
@@ -113,9 +113,15 @@ export function VaultActions({ bootstrap, client, blocked, onBusy, onRefresh, on
       />}
       {confirmation === 'download' && <ConfirmDialog
         className="chaweb-delete-dialog" confirmLabel="Download" initialFocus="cancel"
-        message={`Download “${bootstrap.vault_name}” from R2 and replace its local database? CHA will save the current database with a .bac suffix and reload the vault.`}
+        message={`Download “${bootstrap.vault_name}” from R2 and replace its local database, including all local notes and folders? The previous database will replace the existing .bac backup. CHA will reload the vault.`}
         onCancel={() => setConfirmation(null)} onConfirm={() => void run('download')}
         title="Download vault?"
+      />}
+      {confirmation === 'merge' && <ConfirmDialog
+        className="chaweb-delete-dialog" confirmLabel="Parent merge" initialFocus="cancel"
+        message={`Download “${bootstrap.vault_parent}” from R2 and replace its local database, including all local notes and folders? The previous parent database will replace its existing .bac backup. Then merge its configuration into “${bootstrap.vault_name}”. Notes and folders in “${bootstrap.vault_name}” stay unchanged. If the merge fails, the downloaded parent remains.`}
+        onCancel={() => setConfirmation(null)} onConfirm={() => void run('merge')}
+        title="Download and merge parent?"
       />}
       {passwordPrompt && <PasswordDialog
         className="chaweb-delete-dialog" error={error} name={bootstrap.vault_parent ?? 'parent vault'}
