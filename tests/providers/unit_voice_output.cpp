@@ -279,6 +279,8 @@ TEST(FishAudio, PreparesPlainSpeechAndParagraphPausesWithoutChangingSourceText) 
             "Title [long pause] Paragraph [long pause] Next [long pause] End"},
         {"Before\n```cpp\ncall();\n```\n\nUse `value` and ``another`value``.\n~~~text\nAfter\n~~~",
             "Before\ncall(); [long pause] Use value and another`value.\nAfter"},
+        {"Before\n```cpp\ncall();\n```\n~~~text\nAfter\n~~~\n\nEnd",
+            "Before\ncall();\nAfter [long pause] End"},
         {"***Both***, **bold *and italic***, ~~old~~, and __strong _inside___!",
             "Both, bold and italic, old, and strong inside!"},
         {"Read [**the guide**](https://example.org/guide) and [section](#part). "

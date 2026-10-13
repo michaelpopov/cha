@@ -23,7 +23,7 @@ std::string prepare_speech_text(std::string_view source, const char* pause = " [
     std::string text = remove_url_references(source);
     static const std::regex line_prefix(
         R"((^|\n)[ \t]*(#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+(\[[ xX]\][ \t]+)?|[0-9]{1,9}[.)][ \t]+))");
-    static const std::regex fence(R"((^|\n)[ \t]*(`{3,}|~{3,})[^\r\n]*(\r?\n|$))");
+    static const std::regex fence(R"((^|\n)[ \t]*(`{3,}|~{3,})[^\r\n]*\r?(?=\n|$))");
     static const std::regex rule(R"((^|\n)[ \t]*((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,}|=+)[ \t]*\r?(?=\n|$))");
     static const std::regex heading_end(R"(((^|\n)[ \t]*#{1,6}[ \t]+[^\r\n]*?)[ \t]+#+[ \t]*\r?(?=\n|$))");
     static const std::regex link(R"(!?\[([^\]\r\n]*)\]\([^\r\n)]*\))");
@@ -43,7 +43,7 @@ std::string prepare_speech_text(std::string_view source, const char* pause = " [
         if (plain == text) break;
         text = std::move(plain);
     }
-    text = std::regex_replace(text, fence, "$1");
+    text = std::regex_replace(text, fence, "");
     text = std::regex_replace(text, link, "$1");
     text = std::regex_replace(text, reference_link, "$1");
     text = std::regex_replace(text, code, "$2");
