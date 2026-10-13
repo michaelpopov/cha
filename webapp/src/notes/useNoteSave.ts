@@ -35,7 +35,7 @@ type InFlight = {
   done: Promise<void>;
 };
 
-const saveFailedMessage = 'The note could not be saved.';
+export const noteSaveFailedMessage = 'The note could not be saved.';
 
 export function useNoteSave({
   editor,
@@ -116,7 +116,7 @@ export function useNoteSave({
     } else {
       const next = {
         serial,
-        message: publicErrorMessage(failure, saveFailedMessage),
+        message: publicErrorMessage(failure, noteSaveFailedMessage),
       };
       saveErrorRef.current = next;
       setSaveError(next);

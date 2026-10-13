@@ -6,6 +6,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -25,6 +26,7 @@ interface SidebarProps {
   onDeleteSession(forumId: string, sessionId: string): Promise<void>;
   onClearSessionAudioCache(forumId: string, sessionId: string): Promise<void>;
   onSwitchVault(vaultName: string, password?: string): Promise<void>;
+  notesTree?: ReactNode;
 }
 
 interface SelectedSession {
@@ -186,6 +188,7 @@ export function Sidebar({
   onDeleteSession,
   onClearSessionAudioCache,
   onSwitchVault,
+  notesTree = null,
 }: SidebarProps) {
   const forums = new Map(state.bootstrap?.forums.map((forum) => [forum.id, forum]));
   const recents = state.bootstrap?.recent_sessions ?? [];
@@ -273,6 +276,32 @@ export function Sidebar({
   return (
     <aside className="cha-sidebar" aria-label="Sidebar">
       <div className="cha-brand">cha</div>
+      <div className="cha-sidebar-tabs" role="tablist" aria-label="Sidebar sections">
+        <button
+          aria-selected={state.sidebarTab === 'chat'}
+          className={`cha-button cha-button-ghost${state.sidebarTab === 'chat' ? ' is-current' : ''}`}
+          onClick={() => dispatch({ type: 'show-chat-tab' })}
+          role="tab"
+          type="button"
+        >
+          Chat
+        </button>
+        <button
+          aria-selected={state.sidebarTab === 'notes'}
+          className={`cha-button cha-button-ghost${state.sidebarTab === 'notes' ? ' is-current' : ''}`}
+          onClick={() => dispatch({ type: 'show-notes-tab' })}
+          role="tab"
+          type="button"
+        >
+          Notes
+        </button>
+      </div>
+      <div
+        aria-label="Chat"
+        className="cha-sidebar-pane"
+        hidden={state.sidebarTab !== 'chat'}
+        role="tabpanel"
+      >
       <div className="cha-sidebar-recent-sections">
         <div className="cha-sidebar-recent-section">
           <div className="cha-section-label">Recent Forums</div>
@@ -361,6 +390,15 @@ export function Sidebar({
             })}
           </div>
         </div>
+      </div>
+      </div>
+      <div
+        aria-label="Notes"
+        className="cha-sidebar-pane"
+        hidden={state.sidebarTab !== 'notes'}
+        role="tabpanel"
+      >
+        {notesTree}
       </div>
       {actionError && <p className="cha-error-message" role="alert">{actionError}</p>}
       {vaultError && !vaultPrompt && <p className="cha-error-message" role="alert">{vaultError}</p>}

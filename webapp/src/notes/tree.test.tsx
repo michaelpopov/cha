@@ -3,7 +3,14 @@ import { useTree } from '@headless-tree/react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { describe, expect, it } from 'vitest';
-import { compareNoteSiblings, type NoteSibling } from './tree';
+import {
+  buildNoteIndex,
+  compareNoteSiblings,
+  noteFolderOptions,
+  noteItemPath,
+  type NoteSibling,
+  type NoteTreeItem,
+} from './tree';
 
 type Row = NoteSibling & { id: string };
 
@@ -33,6 +40,33 @@ describe('note sibling order', () => {
         { name: decomposed, kind: 'note' },
       )).toBe(composed < decomposed ? -1 : 1);
     }
+  });
+});
+
+describe('note metadata index', () => {
+  const items: NoteTreeItem[] = [
+    { id: 2, parent_id: null, kind: 'note', name: 'Aardvark' },
+    { id: 1, parent_id: null, kind: 'folder', name: 'Study' },
+    { id: 4, parent_id: 3, kind: 'note', name: 'Plan' },
+    { id: 3, parent_id: 1, kind: 'folder', name: 'Philosophy' },
+    { id: 8, parent_id: 99, kind: 'note', name: 'Orphan' },
+  ];
+
+  it('sorts folders first and attaches a missing parent to the root', () => {
+    const { children } = buildNoteIndex(items);
+    expect(children.root).toEqual(['1', '2', '8']);
+    expect(children['1']).toEqual(['3']);
+    expect(children['3']).toEqual(['4']);
+    expect(children['4']).toEqual([]);
+  });
+
+  it('lists folder paths in tree order and builds the full note path', () => {
+    expect(noteFolderOptions(items)).toEqual([
+      { id: 1, path: 'Study' },
+      { id: 3, path: 'Study / Philosophy' },
+    ]);
+    expect(noteItemPath(items, 4)).toBe('Study / Philosophy / Plan');
+    expect(noteItemPath(items, 8)).toBe('Orphan');
   });
 });
 

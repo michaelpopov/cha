@@ -552,4 +552,47 @@ describe('character picture selection', () => {
     expect(appReducer(state, { type: 'show-initial-conversation' }).pictureCharacterId).toBeNull();
     expect(appReducer(state, { type: 'session-discarded', forumId: snapshot.forum.id, sessionId: snapshot.session_id }).pictureCharacterId).toBeNull();
   });
+
+  it('changes only the sidebar tab and keeps the main panel and conversation', () => {
+    let state = readyState();
+    const conversation = state.activeConversation;
+    state = appReducer(state, { type: 'show-notes-tab' });
+    expect(state.sidebarTab).toBe('notes');
+    expect(state.mainView).toBe('chat');
+    expect(state.activeConversation).toEqual(conversation);
+    state = appReducer(state, { type: 'show-chat-tab' });
+    expect(state.sidebarTab).toBe('chat');
+    expect(state.mainView).toBe('chat');
+    expect(state.activeNoteId).toBeNull();
+  });
+
+  it('opens a note beside the current conversation and releases it when the main panel leaves', () => {
+    let state = readyState();
+    const conversation = state.activeConversation;
+    state = appReducer(state, { type: 'open-note', noteId: 4, name: 'Plan' });
+    expect(state.mainView).toBe('notes');
+    expect(state.activeNoteId).toBe(4);
+    expect(state.activeNoteName).toBe('Plan');
+    expect(state.noteRequest).toBe(1);
+    expect(state.activeConversation).toEqual(conversation);
+    expect(navigationTitle(state)).toBeNull();
+    state = appReducer(state, { type: 'open-note', noteId: 4, name: 'Plan' });
+    expect(state.noteRequest).toBe(2);
+    state = appReducer(state, { type: 'show-settings' });
+    expect(state.mainView).toBe('settings');
+    expect(state.activeNoteId).toBeNull();
+    expect(state.activeConversation).toEqual(conversation);
+  });
+
+  it('clears the open note and advances the notes epoch on vault replacement', () => {
+    let state = appReducer(readyState(), { type: 'open-note', noteId: 4, name: 'Plan' });
+    state = appReducer(state, { type: 'show-notes-tab' });
+    state = appReducer(state, { type: 'vault-context-reset' });
+    expect(state.mainView).toBe('notes');
+    expect(state.sidebarTab).toBe('notes');
+    expect(state.activeNoteId).toBeNull();
+    expect(state.activeNoteName).toBeNull();
+    expect(state.notesEpoch).toBe(1);
+    expect(state.activeConversation).toBeNull();
+  });
 });

@@ -38,6 +38,7 @@ export type NotesEditorOptions = {
   content?: Content;
   byteLimit?: number;
   onAcceptedDocument?: () => void;
+  onRejectedContent?: () => void;
   element?: HTMLElement | null;
 };
 
@@ -101,6 +102,7 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
     onContentError: ({ editor: created }) => {
       gate.blocked = true;
       created.setEditable(false, false);
+      options.onRejectedContent?.();
     },
     // Tiptap 3.30.3 types EditorProps without this ProseMirror view callback.
     editorProps: editorProps as EditorProps,
@@ -110,6 +112,23 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
     options.onAcceptedDocument?.();
   });
   return editor;
+}
+
+// Opening places the caret at the end. A final image uses a gap cursor.
+// The selection is not a history step.
+export function selectNoteEnd(editor: Editor): void {
+  if (editor.isDestroyed) return;
+  const doc = editor.state.doc;
+  const last = doc.lastChild;
+  let selection = TextSelection.atEnd(doc);
+  if (last?.type.name === 'image') {
+    const $pos = doc.resolve(doc.content.size);
+    const valid = (GapCursor as unknown as { valid?: (pos: unknown) => boolean }).valid;
+    if (!valid || valid($pos)) selection = new GapCursor($pos);
+  }
+  const tr = editor.state.tr.setSelection(selection);
+  tr.setMeta('addToHistory', false);
+  editor.view.dispatch(tr);
 }
 
 export function insertPromptParagraph(editor: Editor, text: string): boolean {

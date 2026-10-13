@@ -18,6 +18,7 @@ import {
 
 export type MainView =
   | 'chat'
+  | 'notes'
   | 'personas'
   | 'new-persona'
   | 'persona-detail'
@@ -85,6 +86,11 @@ export interface AppState {
   pictureWidth: number;
   pictureCharacterId: string | null;
   mainView: MainView;
+  sidebarTab: 'chat' | 'notes';
+  activeNoteId: number | null;
+  activeNoteName: string | null;
+  notesEpoch: number;
+  noteRequest: number;
   bootstrapStatus: BootstrapStatus;
   bootstrap: Bootstrap | null;
   bootstrapMessage: string | null;
@@ -121,6 +127,11 @@ export const initialAppState: AppState = {
   pictureWidth: 280,
   pictureCharacterId: null,
   mainView: 'chat',
+  sidebarTab: 'chat',
+  activeNoteId: null,
+  activeNoteName: null,
+  notesEpoch: 0,
+  noteRequest: 0,
   bootstrapStatus: 'loading',
   bootstrap: null,
   bootstrapMessage: null,
@@ -153,6 +164,9 @@ export type AppAction =
   | { type: 'vault-context-reset' }
   | { type: 'vault-context-refreshed'; bootstrap: Bootstrap }
   | { type: 'toggle-sidebar' }
+  | { type: 'show-chat-tab' }
+  | { type: 'show-notes-tab' }
+  | { type: 'open-note'; noteId: number; name: string }
   | { type: 'toggle-picture' }
   | { type: 'resize-picture'; width: number }
   | { type: 'select-picture-character'; characterId: string }
@@ -307,7 +321,12 @@ function selectPictureCharacter(state: AppState, snapshot: SessionSnapshot, open
   return snapshot.characters.some(({ id }) => id === selected) ? selected : null;
 }
 
-export function appReducer(state: AppState, action: AppAction): AppState {
+function releaseClosedNote(state: AppState): AppState {
+  if (state.mainView === 'notes' || state.activeNoteId === null) return state;
+  return { ...state, activeNoteId: null, activeNoteName: null };
+}
+
+function reduceApp(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'bootstrap-started':
       return {
@@ -341,6 +360,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         pictureCharacterId: null,
         streamStatus: 'idle',
         streamMessage: null,
+        activeNoteId: null,
+        activeNoteName: null,
+        notesEpoch: state.notesEpoch + 1,
         ...idleSessionOperation(),
       };
     case 'vault-context-refreshed': {
@@ -367,6 +389,19 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     case 'toggle-sidebar':
       return { ...state, sidebarOpen: !state.sidebarOpen };
+    case 'show-chat-tab':
+      return { ...state, sidebarTab: 'chat' };
+    case 'show-notes-tab':
+      return { ...state, sidebarTab: 'notes' };
+    case 'open-note':
+      return {
+        ...state,
+        mainView: 'notes',
+        activeNoteId: action.noteId,
+        activeNoteName: action.name,
+        noteRequest: state.noteRequest + 1,
+        ...idleSessionOperation(),
+      };
     case 'show-personas':
       return {
         ...state,
@@ -933,6 +968,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
   }
 }
 
+export function appReducer(state: AppState, action: AppAction): AppState {
+  return releaseClosedNote(reduceApp(state, action));
+}
+
 export function navigationTitle(state: AppState): string | null {
   switch (state.mainView) {
     case 'personas': return 'Personas';
@@ -974,6 +1013,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-style':
     case 'settings-voice':
     case 'settings-api-key':
-    case 'chat': return null;
+    case 'chat':
+    case 'notes': return null;
   }
 }

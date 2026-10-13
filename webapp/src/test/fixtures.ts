@@ -9,6 +9,7 @@ import type {
   SessionSnapshot,
   VoiceDetail,
 } from '../api/client';
+import type { NotesClient } from '../api/nativeClient';
 
 // A character that configures nothing still carries an appearance on the wire.
 export const plainVoice: CharacterAppearance = {
@@ -179,9 +180,12 @@ export const snapshotFixture: SessionSnapshot = {
   lifecycle: 'running',
 };
 
-export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
+export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}): ChaClient & NotesClient {
   const audioCache = new Map<string, Set<number>>();
-  const client: ChaClient = {
+  const unavailable = (method: string) => async () => {
+    throw new Error(`${method} is not available in this test`);
+  };
+  const client: ChaClient & NotesClient = {
     getBootstrap: async () => bootstrapFixture,
     getCharacterPicture: async () => null,
     updateCharacterPicture: async () => {},
@@ -369,6 +373,13 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     downloadVault: async () => 0,
     importVault: async () => 0,
     exportVault: async () => 0,
+    listNoteItems: async () => [],
+    createNoteItem: unavailable('notes.create'),
+    getNote: unavailable('notes.get'),
+    saveNote: unavailable('notes.save'),
+    renameNoteItem: unavailable('notes.rename'),
+    moveNoteItem: unavailable('notes.move'),
+    deleteNoteItem: unavailable('notes.delete'),
     ...overrides,
   };
   return client;

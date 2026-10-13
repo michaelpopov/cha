@@ -43,6 +43,7 @@ export interface PromptInputProps {
   inputLabel: string;
   placeholder?: string;
   submitLabel: string;
+  submitTitle?: string;
   client: ChaClient;
   onSubmit(text: string): Promise<{ clear_input: boolean }>;
   onSubmittingChange?(submitting: boolean): void;
@@ -89,6 +90,7 @@ export function PromptInput({
   inputLabel,
   placeholder,
   submitLabel,
+  submitTitle,
   client,
   onSubmit,
   onSubmittingChange,
@@ -565,6 +567,7 @@ export function PromptInput({
                 aria-label={submitLabel}
                 className="cha-composer-action cha-send"
                 disabled={!canSubmit}
+                title={submitTitle}
                 type="submit"
               >
                 <SendIcon />

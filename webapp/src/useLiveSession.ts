@@ -71,6 +71,8 @@ const noSessionEvents: SessionEventsConnector = () => ({ close() {} });
 // and routing one through `navigate` would cancel it.
 const inPlaceActions = new Set<AppAction['type']>([
   'toggle-sidebar',
+  'show-chat-tab',
+  'show-notes-tab',
   'toggle-picture',
   'resize-picture',
   'select-picture-character',

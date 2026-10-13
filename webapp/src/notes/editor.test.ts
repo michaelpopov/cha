@@ -9,6 +9,7 @@ import {
   createNotesEditor,
   insertPromptParagraph,
   isAllowedNoteLink,
+  selectNoteEnd,
   withIsolatedHistory,
   type NotesEditorOptions,
 } from './editor';
@@ -501,6 +502,28 @@ describe('prompt insertion', () => {
       { type: 'paragraph', content: ['X'] },
       { type: 'paragraph', content: [{ text: 'cd', marks: ['bold'] }] },
     ]);
+  });
+
+  it('places the opening caret at the end without recording history', () => {
+    const created = editor({ content: '<p>Hello</p>' });
+    selectNoteEnd(created);
+    expect(created.state.doc.textContent).toBe('Hello');
+    expect(created.state.selection.empty).toBe(true);
+    expect(created.state.selection.from).toBe(created.state.doc.content.size - 1);
+    expect(undoDepth(created.state)).toBe(0);
+  });
+
+  it('uses a gap cursor after a final image without recording history', () => {
+    const created = editor({
+      content: {
+        type: 'doc',
+        content: [{ type: 'image', attrs: { src: 'data:image/png;base64,aaaa' } }],
+      },
+    });
+    selectNoteEnd(created);
+    expect(created.state.selection).toBeInstanceOf(GapCursor);
+    expect(created.state.selection.from).toBe(created.state.doc.content.size);
+    expect(undoDepth(created.state)).toBe(0);
   });
 
   it('replaces a selected image and inserts beside a gap cursor', () => {

@@ -3184,7 +3184,7 @@ describe('live session capacity', () => {
   it('offers Retry and Browse sessions after the session-limit bound is exhausted', async () => {
     window.history.replaceState(null, '', '/#/s/lobby/planning/');
     const openSession = vi.fn(async () => { throw capacityError(); });
-    const client: ChaClient = fixtureClient({ openSession });
+    const client = fixtureClient({ openSession });
     render(<App client={client} retryDelays={[0, 0]} />);
 
     expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();

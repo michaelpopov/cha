@@ -1,3 +1,4 @@
+import type { Editor } from '@tiptap/core';
 import {
   useCallback,
   useEffect,
@@ -15,6 +16,7 @@ import {
   type Bootstrap,
   type ChaClient,
 } from '../api/client';
+import type { NoteItem, NotesClient } from '../api/nativeClient';
 import type { NativeBridge } from '../api/nativeBridge';
 import { DetailRefreshProvider } from '../detailRefresh';
 import { validateBootstrap } from '../state/bootstrap';
@@ -22,6 +24,7 @@ import {
   adoptChatDraft,
   chatDraftKey,
   editChatDraft,
+  editNotesDraft,
   emptyPromptDrafts,
   visibleChatDraft,
 } from '../state/promptDrafts';
@@ -60,6 +63,8 @@ import {
   PersonasScreen,
   SessionsScreen,
 } from './Screens';
+import { NotesScreen } from './NotesScreen';
+import { NotesTree } from './NotesTree';
 import { Sidebar } from './Sidebar';
 import { TransliterationProvider } from './TransliterationMode';
 import {
@@ -90,8 +95,20 @@ interface ScreenProps extends ChatActions {
   playbackPositions: Map<string, Map<number, number>>;
   state: AppState;
   dispatch: Dispatch<AppAction>;
-  client: ChaClient;
+  client: ChaClient & NotesClient;
   draft: string;
+  notesDraft: string;
+  onNotesDraftChange(next: string): void;
+  noteItems: readonly NoteItem[];
+  editorLiveRef: { current: Editor | null };
+  leave: {
+    decisionOpen: boolean;
+    retry(): void;
+    stay(): void;
+    discard(): void;
+  };
+  onRegisterSave(save: NoteSaveHandle | null): void;
+  onRegisterDispose(dispose: () => void): void;
   onDraftChange(next: string): void;
   onDeleteForum(forumId: string): Promise<void>;
   onCreateSession(forumId: string): Promise<boolean>;
@@ -111,6 +128,13 @@ function Screen({
   onDeleteTurn,
   draft,
   onDraftChange,
+  notesDraft,
+  onNotesDraftChange,
+  noteItems,
+  editorLiveRef,
+  leave,
+  onRegisterSave,
+  onRegisterDispose,
   onRetryStream,
   onReturnToStart,
   onSetDefaultCharacter,
@@ -328,6 +352,24 @@ function Screen({
     case 'settings-r2-storage': return (
       <R2StorageScreen client={client} dispatch={dispatch} state={state} />
     );
+    case 'notes': return (
+      <NotesScreen
+        activeNoteId={state.activeNoteId}
+        activeNoteName={state.activeNoteName}
+        client={client}
+        dispatch={dispatch}
+        draft={notesDraft}
+        editorLiveRef={editorLiveRef}
+        leave={leave}
+        noteItems={noteItems}
+        noteRequest={state.noteRequest}
+        notesEpoch={state.notesEpoch}
+        onDraftChange={onNotesDraftChange}
+        onRegisterDispose={onRegisterDispose}
+        onRegisterSave={onRegisterSave}
+        sidebarOpen={state.sidebarOpen}
+      />
+    );
   }
 }
 
@@ -400,7 +442,7 @@ function clampSidebarWidth(width: number) {
 }
 
 interface AppProps {
-  client: ChaClient;
+  client: ChaClient & NotesClient;
   contextEvents?: Pick<NativeBridge, 'on'>;
   connectSessionEvents?: SessionEventsConnector;
   retryDelays?: readonly number[];
@@ -539,7 +581,18 @@ export function App({
 
   const sessionDiscarded = useCallback(() => setCatalogRevision((revision) => revision + 1), []);
   const noteSaveRef = useRef<NoteSaveHandle | null>(null);
-  const noteLeave = useNoteLeave(() => noteSaveRef.current);
+  const editorLiveRef = useRef<Editor | null>(null);
+  const disposeEditorRef = useRef<() => void>(() => undefined);
+  const noteLeave = useNoteLeave(() => noteSaveRef.current, {
+    disposeEditor: () => disposeEditorRef.current(),
+  });
+  const registerSave = useCallback((save: NoteSaveHandle | null) => {
+    noteSaveRef.current = save;
+  }, []);
+  const registerDispose = useCallback((dispose: () => void) => {
+    disposeEditorRef.current = dispose;
+  }, []);
+  const [noteItems, setNoteItems] = useState<NoteItem[]>([]);
 
   const activeChatKey = state.activeConversation
     ? chatDraftKey(
@@ -552,6 +605,9 @@ export function App({
   const editChat = useCallback((text: string) => {
     setDrafts((current) => editChatDraft(current, activeChatKey, text));
   }, [activeChatKey]);
+  const editNotes = useCallback((text: string) => {
+    setDrafts((current) => editNotesDraft(current, text));
+  }, []);
 
   const {
     navigate,
@@ -579,6 +635,30 @@ export function App({
     },
     leaveNoteThen: noteLeave.leaveNoteThen,
   });
+
+  useEffect(() => {
+    setNoteItems([]);
+  }, [state.notesEpoch]);
+
+  const requestOpenNote = useCallback((id: number, name: string) => {
+    const live = editorLiveRef.current;
+    if (
+      state.mainView === 'notes'
+      && state.activeNoteId === id
+      && live
+      && !live.isDestroyed
+      && live.isEditable
+    ) {
+      live.commands.focus();
+      return;
+    }
+    navigate({ type: 'open-note', noteId: id, name });
+  }, [navigate, state.activeNoteId, state.mainView]);
+
+  const beforeCreateNote = useCallback(async () => {
+    const result = await noteLeave.leaveNoteThen(() => true);
+    return result !== false;
+  }, [noteLeave.leaveNoteThen]);
 
   useEffect(() => {
     if (!contextEvents) return;
@@ -807,6 +887,7 @@ export function App({
   const ready = state.bootstrapStatus === 'ready';
   const wholeApplication = state.sessionOperation !== 'idle' && state.mainView === 'chat';
   const chatVisible = ready && !wholeApplication && state.mainView === 'chat';
+  const notesVisible = ready && !wholeApplication && state.mainView === 'notes';
 
   const detailRefresh = {
     epoch: detailEpoch,
@@ -833,6 +914,17 @@ export function App({
             onDownloadSession={downloadSession}
             onOpenSession={openConversation}
             onRenameSession={renameSession}
+            notesTree={(
+              <NotesTree
+                key={state.notesEpoch}
+                activeNoteId={state.activeNoteId}
+                browsing={state.sidebarTab === 'notes'}
+                client={client}
+                onBeforeCreateNote={beforeCreateNote}
+                onNoteItems={setNoteItems}
+                onOpenNote={requestOpenNote}
+              />
+            )}
             onSwitchVault={switchVault}
             state={state}
           />
@@ -868,8 +960,8 @@ export function App({
               tabIndex={0}
             />
           )}
-          <main className={`cha-main${chatVisible ? ' is-chat' : ''}`} data-view={state.mainView}>
-            {!chatVisible && <TopBar dispatch={navigate} state={state} title={title} />}
+          <main className={`cha-main${chatVisible ? ' is-chat' : ''}${notesVisible ? ' is-notes' : ''}`} data-view={state.mainView}>
+            {!chatVisible && !notesVisible && <TopBar dispatch={navigate} state={state} title={title} />}
             {submissionErrors.map((error) => <div className="cha-submission-error" role="alert" key={error.id}>
               <span>{error.message}</span>
               <button type="button" aria-label="Dismiss message error" onClick={() => setSubmissionErrors((errors) => errors.filter(({ id }) => id !== error.id))}>Dismiss</button>
@@ -889,7 +981,14 @@ export function App({
                 client={client}
                 dispatch={navigate}
                 draft={chatDraftText}
+                editorLiveRef={editorLiveRef}
+                leave={noteLeave}
+                noteItems={noteItems}
+                notesDraft={drafts.notes}
                 onDraftChange={editChat}
+                onNotesDraftChange={editNotes}
+                onRegisterDispose={registerDispose}
+                onRegisterSave={registerSave}
                 onCoverConversation={coverConversation}
                 onDeleteTurn={deleteTurn}
                 onDeleteForum={deleteForum}

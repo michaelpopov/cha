@@ -342,7 +342,8 @@ select:disabled {
   box-shadow: -0.35rem 0 1.5rem rgb(0 0 0 / 10%);
 }
 
-.cha-main.is-chat {
+.cha-main.is-chat,
+.cha-main.is-notes {
   display: flex;
   flex-direction: column;
 }
@@ -1993,4 +1994,115 @@ select:disabled {
    192-pixel minimum, so its divider has nothing to resize. */
 @media (max-width: 511px) {
   .cha-sidebar-resize { display: none; }
+}
+
+.cha-sidebar-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0 0.35rem 0.45rem;
+}
+
+.cha-sidebar-tabs .is-current {
+  color: var(--accent-foreground);
+  background: var(--accent);
+}
+
+.cha-sidebar-pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cha-sidebar-pane[hidden] {
+  display: none;
+}
+
+.cha-notes-browser {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cha-notes-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0 0.35rem 0.45rem;
+}
+
+.cha-notes-tree {
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 0.5rem;
+}
+
+.cha-notes-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.75rem;
+  border-radius: 0.55rem;
+  cursor: pointer;
+}
+
+.cha-notes-row.is-current {
+  color: var(--accent-foreground);
+  background: var(--accent);
+}
+
+.cha-notes-row:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.cha-notes-twist {
+  width: 0.85rem;
+  flex: none;
+  text-align: center;
+}
+
+.cha-notes-screen {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.cha-notes-document {
+  width: var(--cha-column);
+  min-height: 8rem;
+  margin: 0 auto;
+  flex: 1 0 8rem;
+  overflow: auto;
+}
+
+.cha-notes-document .ProseMirror {
+  min-height: 8rem;
+  padding: 0.75rem 0.15rem 1.25rem;
+}
+
+.cha-notes-status {
+  display: flex;
+  width: var(--cha-column);
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin: 0 auto 0.35rem;
+  padding: 0 0.55rem;
+}
+
+.cha-notes-screen .cha-composer-area {
+  width: var(--cha-column);
+  margin-right: auto;
+  margin-left: auto;
+  flex: none;
+}
+
+.cha-notes-create {
+  display: grid;
+  gap: 0.75rem;
 }
