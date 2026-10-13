@@ -848,7 +848,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
     case 'session-operation-started':
       return {
         ...state,
-        mainView: 'chat',
+        mainView: state.mainView === 'notes' ? 'notes' : 'chat',
         sessionOperation: 'pending',
         sessionOperationMessage: action.message,
         sessionOperationRetryable: false,
@@ -856,7 +856,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
     case 'session-operation-failed':
       return {
         ...state,
-        mainView: 'chat',
+        mainView: state.mainView === 'notes' ? 'notes' : 'chat',
         sessionOperation: 'failed',
         sessionOperationMessage: action.message,
         sessionOperationRetryable: action.retryable ?? false,

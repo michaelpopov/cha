@@ -116,6 +116,7 @@ interface ScreenProps extends ChatActions {
   onDeleteForum(forumId: string): Promise<void>;
   onCreateSession(forumId: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
+  onRetrySessionOpen(): void;
   catalogRevision: number;
 }
 
@@ -127,6 +128,7 @@ function Screen({
   onDeleteForum,
   onCreateSession,
   onOpenSession,
+  onRetrySessionOpen,
   onCoverConversation,
   onDeleteTurn,
   draft,
@@ -371,6 +373,14 @@ function Screen({
         onNewNote={onNewNote}
         onRegisterDispose={onRegisterDispose}
         onRegisterSave={onRegisterSave}
+        sessionStatus={state.sessionOperation !== 'idle' && (
+          <div className="cha-notes-status" role={state.sessionOperation === 'failed' ? 'alert' : 'status'}>
+            <p>{state.sessionOperationMessage}</p>
+            {state.sessionOperation === 'failed' && state.sessionOperationRetryable && (
+              <button className="cha-button" onClick={onRetrySessionOpen} type="button">Retry</button>
+            )}
+          </div>
+        )}
         sidebarOpen={state.sidebarOpen}
       />
     );
@@ -1067,6 +1077,7 @@ export function App({
                 onDeleteForum={deleteForum}
                 onCreateSession={createConversation}
                 onOpenSession={openConversation}
+                onRetrySessionOpen={retrySessionOpen}
                 onRetryStream={retryStream}
                 onReturnToStart={returnToStart}
                 onSetDefaultCharacter={setDefaultCharacter}

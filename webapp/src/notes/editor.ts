@@ -193,7 +193,7 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
     extensions: notesExtensions(),
     injectCSS: false,
     enableInputRules: false,
-    enablePasteRules: false,
+    enablePasteRules: ['link'],
     enableContentCheck: true,
     onContentError: ({ editor: created }) => {
       gate.blocked = true;
@@ -682,9 +682,10 @@ function flattenClipboardTable(table: HTMLElement): void {
 }
 
 function appendClipboardCell(target: HTMLElement, cell: HTMLElement): void {
+  const start = target.childNodes.length;
   for (const child of [...cell.childNodes]) {
     if (child instanceof HTMLElement && (child.tagName === 'P' || child.tagName === 'DIV')) {
-      if (target.childNodes.length > 0) target.appendChild(target.ownerDocument.createElement('br'));
+      if (target.childNodes.length > start) target.appendChild(target.ownerDocument.createElement('br'));
       while (child.firstChild) target.appendChild(child.firstChild);
       child.remove();
     } else {

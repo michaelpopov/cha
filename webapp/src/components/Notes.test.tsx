@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ChaError } from '../api/client';
 import type { NoteItem } from '../api/nativeClient';
-import { fixtureClient } from '../test/fixtures';
+import { bootstrapFixture, fixtureClient, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
 
 const plan: NoteItem = { id: 4, parent_id: null, kind: 'note', name: 'Plan' };
@@ -160,6 +160,113 @@ describe('Notes in the application', () => {
     await screen.findByRole('heading', { name: 'Settings' });
     expect(saveNote).toHaveBeenCalledOnce();
     expect(JSON.stringify(saveNote.mock.calls[0][1])).toContain('Saved plan more');
+  });
+
+  it('retains the editor and history after a failed session open, then opens it on Retry', async () => {
+    let rejectOpen!: (error: unknown) => void;
+    const pendingOpen = new Promise<void>((_resolve, reject) => { rejectOpen = reject; });
+    let failOpen = true;
+    const saveNote = vi.fn(async () => undefined);
+    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote,
+      saveNote,
+      openSession: async (forumId, sessionId) => {
+        if (sessionId === 'planning' && failOpen) await pendingOpen;
+        return { forum_id: forumId, session_id: sessionId };
+      },
+      getSessionSnapshot: async (forumId, sessionId) => ({
+        ...snapshotFixture,
+        forum: bootstrapFixture.forums.find(({ id }) => id === forumId)!,
+        session_id: sessionId,
+      }),
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved plan');
+    const editor = noteEditor();
+    act(() => typeInNote(' more'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
+      target: { value: 'Keep draft' },
+    });
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Planning/ }));
+    await screen.findByText('Opening session…');
+    expect(noteEditor()).toBe(editor);
+    expect(editor.isEditable).toBe(false);
+    expect(saveNote).toHaveBeenCalledOnce();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Send to Plan' })).toBeDisabled();
+
+    await act(async () => rejectOpen(new ChaError('session_open_timeout', 'Session opening timed out.')));
+    const error = await screen.findByRole('alert');
+    expect(error).toHaveTextContent('Session opening timed out.');
+    expect(noteEditor()).toBe(editor);
+    expect(editor.isEditable).toBe(true);
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(editor.getText()).toBe('Saved plan');
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    expect(editor.getText()).toBe('Saved plan more');
+
+    failOpen = false;
+    fireEvent.click(within(error).getByRole('button', { name: 'Retry' }));
+    await screen.findByRole('textbox', { name: 'Message' });
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'chat');
+    expect(editor.isDestroyed).toBe(true);
+    expect(getNote).toHaveBeenCalledOnce();
+    expect(saveNote).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('Session opening timed out.')).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])('keeps Notes after session creation fails (discard: %s)', async (discard) => {
+    const createSession = vi.fn(async () => {
+      throw new ChaError('invalid_argument', 'The session could not be created.');
+    });
+    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote,
+      saveNote: async () => {
+        if (discard) throw new ChaError('invalid_argument', 'The note could not be saved.');
+      },
+      createSession,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved plan');
+    const editor = noteEditor();
+    act(() => typeInNote(' more'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
+      target: { value: 'Keep draft' },
+    });
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for forum The Lobby' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Create new session' }));
+    if (discard) {
+      const dialog = await screen.findByRole('dialog', { name: 'Could not save “Plan”.' });
+      expect(createSession).not.toHaveBeenCalled();
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
+    }
+    await screen.findByText('The session could not be created.');
+    const error = screen.getByRole('alert');
+    expect(within(error).queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(createSession).toHaveBeenCalledWith('lobby', '');
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep draft');
+    expect(getNote).toHaveBeenCalledOnce();
+    if (discard) {
+      expect(editor.isDestroyed).toBe(true);
+      expect(document.querySelector('.ProseMirror')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    } else {
+      expect(noteEditor()).toBe(editor);
+      expect(editor.isEditable).toBe(true);
+      fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+      expect(editor.getText()).toBe('Saved plan');
+    }
   });
 
   it('replaces an open note when the vault context changes, even for the same id', async () => {

@@ -28,7 +28,7 @@ type LeaveIntent = {
 
 function noCloseWork(save: NoteSaveHandle | null): boolean {
   if (!save) return true;
-  return save.inFlightSerial() === null && !save.hasUnsaved();
+  return !save.isOpen && save.inFlightSerial() === null && !save.hasUnsaved();
 }
 
 export function useNoteLeave(

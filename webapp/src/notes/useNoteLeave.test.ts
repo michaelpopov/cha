@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChaError } from '../api/client';
 import { rememberAppUrl, rememberedAppUrl, restoreAppUrl } from '../state/route';
-import { createNotesEditor } from './editor';
+import { createNotesEditor, importPictureFile, insertPromptParagraph } from './editor';
 import { useNoteLeave } from './useNoteLeave';
 import { noteSaveDelayMs, useNoteSave, type NoteSaveHandle } from './useNoteSave';
 
@@ -450,18 +450,51 @@ describe('native close', () => {
     expect(view.result.current.pendingKind).toBeNull();
   });
 
-  it('replies ready for an open note with no unsaved work and does not freeze it', () => {
+  it('freezes a clean open note until shutdown or a matching close abort', async () => {
     host();
     const save = openSave({
       hasUnsaved: () => false,
       inFlightSerial: () => null,
     });
     const view = renderHook(() => useNoteLeave(() => save));
-    act(() => {
+    await act(async () => {
       view.result.current.prepareClose(2);
     });
     expect(closePosts()[0]?.result).toBe('ready');
-    expect(save.freeze).not.toHaveBeenCalled();
+    expect(save.freeze).toHaveBeenCalledOnce();
+    expect(save.flushRemaining).not.toHaveBeenCalled();
+    expect(view.result.current.pendingKind).toBe('leave');
+    act(() => view.result.current.closeAborted(1));
+    expect(save.unfreeze).not.toHaveBeenCalled();
+    act(() => view.result.current.closeAborted(2));
+    expect(save.unfreeze).toHaveBeenCalledOnce();
+    expect(view.result.current.pendingKind).toBeNull();
+  });
+
+  it('rejects a pending picture and prompt insertion after a clean note replies ready', async () => {
+    host();
+    const editor = createNotesEditor();
+    const saveNote = vi.fn(async () => undefined);
+    const view = renderHook(() => {
+      const save = useNoteSave({ editor, noteId: 4, contextKey: 'vault', save: saveNote });
+      return useNoteLeave(() => save);
+    });
+    try {
+      const before = editor.getJSON();
+      const file = new File([
+        Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      ], 'picture.png', { type: 'image/png' });
+      const pending = importPictureFile(editor, file, () => !editor.isDestroyed && editor.isEditable);
+      await act(async () => view.result.current.prepareClose(3));
+      expect(closePosts()[0]?.result).toBe('ready');
+      await act(async () => { await pending; });
+      expect(insertPromptParagraph(editor, 'Late submission')).toBe(false);
+      expect(editor.getJSON()).toEqual(before);
+      expect(saveNote).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      editor.destroy();
+    }
   });
 
   it('flushes a close-owned save, replies ready, and stays frozen', async () => {
@@ -828,7 +861,7 @@ describe('deletion slot', () => {
     expect(view.result.current.pendingKind).toBeNull();
   });
 
-  it('resumes the newest deferred close after deletion and ignores an aborted attempt', () => {
+  it('resumes the newest deferred close after deletion and ignores an aborted attempt', async () => {
     host();
     const save = openSave({ hasUnsaved: () => false, inFlightSerial: () => null });
     const view = renderHook(() => useNoteLeave(() => save));
@@ -840,7 +873,7 @@ describe('deletion slot', () => {
     });
     expect(closePosts()).toEqual([]);
     expect(view.result.current.pendingKind).toBe('delete');
-    act(() => view.result.current.endDelete());
+    await act(async () => view.result.current.endDelete());
     expect(closePosts()).toEqual([{
       native_action: 'close_reply',
       connection_id: 'view-4',

@@ -7,6 +7,7 @@ import {
   useState,
   type Dispatch,
   type MutableRefObject,
+  type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -545,6 +546,7 @@ export function NotesScreen({
   onRegisterSave,
   onRegisterDispose,
   onNewNote,
+  sessionStatus,
 }: {
   client: ChaClient & NotesClient;
   notesEpoch: number;
@@ -560,6 +562,7 @@ export function NotesScreen({
   onRegisterSave(save: NoteSaveHandle | null): void;
   onRegisterDispose(dispose: () => void): void;
   onNewNote?(): void;
+  sessionStatus?: ReactNode;
 }) {
   const [phase, setPhase] = useState<Phase>(activeNoteId === null ? 'empty' : 'loading');
   const [editing, setEditing] = useState(false);
@@ -953,6 +956,7 @@ export function NotesScreen({
         </div>
       )}
       {promptError && <p className="cha-error-message" role="alert">{promptError}</p>}
+      {sessionStatus}
       <PromptInput
         key={activeNoteId}
         client={client}

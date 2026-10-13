@@ -1134,6 +1134,51 @@ describe('find and replace', () => {
 });
 
 describe('pictures and clipboard', () => {
+  it.each([
+    ['https://example.com/path', 'https://example.com/path'],
+    ['http://example.com/path', 'http://example.com/path'],
+    ['example.org', 'http://example.org'],
+  ])('links pasted %s and keeps the whole paste in one Undo step', (url, href) => {
+    const accepted = vi.fn();
+    const created = editor({ onAcceptedDocument: accepted });
+    insertText(created, 'Before ');
+    const before = created.getJSON();
+    const depth = undoDepth(created.state);
+    accepted.mockClear();
+    const text = `Read ${url} for **details**`;
+    created.view.pasteText(text);
+    const pasted = created.getJSON();
+    expect(created.getText()).toBe(`Before ${text}`);
+    expect(created.view.dom.querySelector('a')?.getAttribute('href')).toBe(href);
+    expect(created.view.dom.querySelector('strong')).toBeNull();
+    expect(accepted).toHaveBeenCalledOnce();
+    expect(undoDepth(created.state)).toBe(depth + 1);
+    created.commands.undo();
+    expect(created.getJSON()).toEqual(before);
+    created.commands.redo();
+    expect(created.getJSON()).toEqual(pasted);
+  });
+
+  it('rejects a URL paste atomically when its added link marks exceed the limit', () => {
+    const text = 'Read https://example.com for details';
+    const plain = editor({ content: `<p>${text}</p>` });
+    const rejected = vi.fn();
+    const accepted = vi.fn();
+    const created = editor({
+      byteLimit: noteDocumentByteLength(plain.state.doc),
+      onCommandError: rejected,
+      onAcceptedDocument: accepted,
+    });
+    const before = created.getJSON();
+    const selection = created.state.selection.toJSON();
+    created.view.pasteText(text);
+    expect(rejected).toHaveBeenCalledWith(noteTooLargeMessage);
+    expect(accepted).not.toHaveBeenCalled();
+    expect(created.getJSON()).toEqual(before);
+    expect(created.state.selection.toJSON()).toEqual(selection);
+    expect(undoDepth(created.state)).toBe(0);
+  });
+
   it('inserts one valid image and undoes it', () => {
     const created = editor({ content: '<p>keep</p>' });
     const src = pngSrc();
@@ -1232,6 +1277,23 @@ describe('pictures and clipboard', () => {
     expect(created.getText({ blockSeparator: '\n' })).toContain('A\tB');
     expect(created.getText({ blockSeparator: '\n' })).toContain('C\tD');
     expect(JSON.stringify(created.getJSON())).toContain('"type":"bold"');
+  });
+
+  it('separates table cells with tabs and paragraphs within a cell with line breaks', () => {
+    const created = editor();
+    const before = created.getJSON();
+    created.view.pasteHTML(
+      '<table><tr><td><p><b>A</b></p></td><td><p>B</p><p>B2</p></td></tr>'
+      + '<tr><td><div>C</div></td><td></td><td><div>D</div></td></tr></table>',
+    );
+    expect(created.getText({ blockSeparator: '\n' })).toBe('A\tB\nB2\nC\t\tD');
+    expect(created.view.dom.querySelector('strong')?.textContent).toBe('A');
+    const pasted = created.getJSON();
+    expect(undoDepth(created.state)).toBe(1);
+    created.commands.undo();
+    expect(created.getJSON()).toEqual(before);
+    created.commands.redo();
+    expect(created.getJSON()).toEqual(pasted);
   });
 
   it('keeps web highlights and Word highlights, and drops web background colors', () => {
