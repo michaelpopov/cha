@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 
+import { replyNativeClose, requestNativeClose } from '../api/nativeClose';
 import { restoreAppUrl } from '../state/route';
 import type { NoteSaveHandle } from './useNoteSave';
 
@@ -11,13 +12,24 @@ export type LeaveNoteThen = <T>(
 export type PendingOperationKind = 'leave' | 'delete' | null;
 
 type LeaveChoice = 'retry' | 'stay' | 'discard';
+type IntentKind = 'navigate' | 'close';
+type ClosePhase = 'flush' | 'retry-handoff' | 'discard-handoff';
 
 type LeaveIntent = {
+  kind: IntentKind;
   action: () => unknown;
   previousUrl?: string;
   canceledUncovered: boolean;
+  submitted: boolean;
   choose?: (choice: LeaveChoice) => void;
+  handoff?: (attemptId: number | null) => void;
+  retryWait?: Promise<number | null>;
 };
+
+function noCloseWork(save: NoteSaveHandle | null): boolean {
+  if (!save) return true;
+  return save.inFlightSerial() === null && !save.hasUnsaved();
+}
 
 export function useNoteLeave(
   getSave: () => NoteSaveHandle | null,
@@ -29,16 +41,63 @@ export function useNoteLeave(
   disposeEditorRef.current = options?.disposeEditor;
   const intentRef = useRef<LeaveIntent | null>(null);
   const runningAction = useRef(false);
+  const pendingKindRef = useRef<PendingOperationKind>(null);
+  const decisionOpenRef = useRef(false);
+  const deferredCloseAttemptId = useRef<number | null>(null);
+  const pendingResume = useRef<number | null>(null);
+  const closePhase = useRef<ClosePhase | null>(null);
+  const closeAttempt = useRef<number | null>(null);
+  const retiredCloseAttempt = useRef(0);
+  const closeToken = useRef(0);
+  const seenConnection = useRef<string | undefined>(undefined);
+  const prepareCloseRef = useRef<(attemptId: number) => void>(() => undefined);
   const [pendingKind, setPendingKind] = useState<PendingOperationKind>(null);
   const [decisionOpen, setDecisionOpen] = useState(false);
+
+  const setSlot = useCallback((kind: PendingOperationKind) => {
+    pendingKindRef.current = kind;
+    setPendingKind(kind);
+  }, []);
+
+  const setDecision = useCallback((open: boolean) => {
+    decisionOpenRef.current = open;
+    setDecisionOpen(open);
+  }, []);
+
+  const noteConnection = useCallback(() => {
+    const current = window.__CHA_NATIVE_CONNECTION_ID__;
+    if (seenConnection.current !== undefined && seenConnection.current !== current) {
+      deferredCloseAttemptId.current = null;
+      pendingResume.current = null;
+    }
+    seenConnection.current = current;
+  }, []);
+
+  const scheduleDeferredResume = useCallback(() => {
+    const attemptId = deferredCloseAttemptId.current;
+    if (attemptId === null) return;
+    deferredCloseAttemptId.current = null;
+    pendingResume.current = attemptId;
+    // The leave action's editor disposal runs in layout effects after this
+    // call returns. Resume on the next turn so the handler sees that editor.
+    setTimeout(() => {
+      if (pendingResume.current !== attemptId) return;
+      pendingResume.current = null;
+      prepareCloseRef.current(attemptId);
+    }, 0);
+  }, []);
 
   const release = useCallback((intent: LeaveIntent) => {
     if (intentRef.current !== intent) return;
     intentRef.current = null;
     intent.choose = undefined;
-    setDecisionOpen(false);
-    setPendingKind(null);
-  }, []);
+    intent.handoff = undefined;
+    closePhase.current = null;
+    closeAttempt.current = null;
+    setDecision(false);
+    setSlot(null);
+    scheduleDeferredResume();
+  }, [scheduleDeferredResume, setDecision, setSlot]);
 
   const invokeAction = useCallback(<T>(action: () => T | Promise<T>): T | Promise<T> => {
     runningAction.current = true;
@@ -82,17 +141,22 @@ export function useNoteLeave(
   }, [invokeAction, release]);
 
   const waitForChoice = useCallback((intent: LeaveIntent) => {
-    setDecisionOpen(true);
+    setDecision(true);
+    const deferred = deferredCloseAttemptId.current;
+    if (deferred !== null) {
+      deferredCloseAttemptId.current = null;
+      prepareCloseRef.current(deferred);
+    }
     return new Promise<LeaveChoice>((resolve) => {
       intent.choose = resolve;
     });
-  }, []);
+  }, [setDecision]);
 
   const stayIntent = useCallback((intent: LeaveIntent) => {
     if (intent.previousUrl !== undefined) restoreAppUrl(intent.previousUrl);
     const save = getSaveRef.current();
     save?.unfreeze();
-    if (intent.canceledUncovered) save?.submitNow();
+    if (intent.canceledUncovered && !intent.submitted) save?.submitNow();
     release(intent);
   }, [release]);
 
@@ -117,6 +181,7 @@ export function useNoteLeave(
       if (save.hasUnsaved()) {
         // This flush submits the changes whose deadline the freeze canceled.
         intent.canceledUncovered = false;
+        intent.submitted = true;
         const ok = await save.flushRemaining();
         if (intentRef.current !== intent) return false;
         if (!ok) {
@@ -143,12 +208,14 @@ export function useNoteLeave(
     const save = getSaveRef.current();
     if (!save?.isOpen) return await invokeAction(action);
     const intent: LeaveIntent = {
+      kind: 'navigate',
       action,
       previousUrl: leaveOptions?.previousUrl,
       canceledUncovered: false,
+      submitted: false,
     };
     intentRef.current = intent;
-    setPendingKind('leave');
+    setSlot('leave');
     intent.canceledUncovered = save.freeze();
     try {
       return await resolveLeave(intent, save) as Awaited<ReturnType<typeof action>> | false;
@@ -159,40 +226,194 @@ export function useNoteLeave(
       }
       throw error;
     }
-  }, [invokeAction, release, resolveLeave]);
+  }, [invokeAction, release, resolveLeave, setSlot]);
+
+  const currentChoice = useCallback(() => {
+    const intent = intentRef.current;
+    if (!intent?.choose) return null;
+    const choose = intent.choose;
+    intent.choose = undefined;
+    setDecision(false);
+    return { intent, choose };
+  }, [setDecision]);
 
   const retry = useCallback(() => {
-    const intent = intentRef.current;
-    if (!intent?.choose) return;
-    const choose = intent.choose;
-    intent.choose = undefined;
-    setDecisionOpen(false);
-    choose('retry');
-  }, []);
+    const pending = currentChoice();
+    if (!pending) return;
+    if (pending.intent.kind === 'close') {
+      closePhase.current = 'retry-handoff';
+      pending.intent.retryWait = new Promise((resolve) => {
+        pending.intent.handoff = resolve;
+      });
+      requestNativeClose();
+    }
+    pending.choose('retry');
+  }, [currentChoice]);
 
   const stay = useCallback(() => {
-    const intent = intentRef.current;
-    if (!intent?.choose) return;
-    const choose = intent.choose;
-    intent.choose = undefined;
-    setDecisionOpen(false);
-    choose('stay');
-  }, []);
+    const pending = currentChoice();
+    pending?.choose('stay');
+  }, [currentChoice]);
 
   const discard = useCallback(() => {
+    const pending = currentChoice();
+    pending?.choose('discard');
+  }, [currentChoice]);
+
+  const closeStillOwned = useCallback((intent: LeaveIntent, token: number) => (
+    intentRef.current === intent && closeToken.current === token
+  ), []);
+
+  const runClose = useCallback(async (
+    intent: LeaveIntent,
+    save: NoteSaveHandle,
+    token: number,
+  ) => {
+    let attemptId = closeAttempt.current;
+    while (closeStillOwned(intent, token) && attemptId !== null) {
+      const admitted = save.inFlightSerial();
+      await save.waitInFlight();
+      if (!closeStillOwned(intent, token) || closeAttempt.current !== attemptId) return;
+      const current = getSaveRef.current() ?? save;
+      const failedAdmitted = admitted !== null && current.saveError?.serial === admitted;
+      const needsFlush = !failedAdmitted && current.hasUnsaved();
+      if (needsFlush) {
+        intent.canceledUncovered = false;
+        intent.submitted = true;
+        const ok = await current.flushRemaining();
+        if (!closeStillOwned(intent, token) || closeAttempt.current !== attemptId) return;
+        if (ok) {
+          replyNativeClose(attemptId, 'ready');
+          closePhase.current = null;
+          return;
+        }
+      } else if (!failedAdmitted) {
+        replyNativeClose(attemptId, 'ready');
+        closePhase.current = null;
+        return;
+      }
+      replyNativeClose(attemptId, 'cancelled');
+      if (closeAttempt.current === attemptId) closeAttempt.current = null;
+      retiredCloseAttempt.current = attemptId;
+      const choice = await waitForChoice(intent);
+      if (!closeStillOwned(intent, token)) return;
+      if (choice === 'stay') {
+        stayIntent(intent);
+        return;
+      }
+      if (choice === 'discard') {
+        await save.waitInFlight();
+        if (!closeStillOwned(intent, token)) return;
+        save.dispose();
+        disposeEditorRef.current?.();
+        closePhase.current = 'discard-handoff';
+        closeAttempt.current = null;
+        requestNativeClose();
+        return;
+      }
+      const next = await intent.retryWait;
+      intent.retryWait = undefined;
+      if (next == null || !closeStillOwned(intent, token)) return;
+      attemptId = next;
+    }
+  }, [closeStillOwned, stayIntent, waitForChoice]);
+
+  const startClose = useCallback((attemptId: number) => {
+    const save = getSaveRef.current();
+    if (noCloseWork(save)) {
+      replyNativeClose(attemptId, 'ready');
+      return;
+    }
+    const intent: LeaveIntent = {
+      kind: 'close',
+      action: () => undefined,
+      canceledUncovered: false,
+      submitted: false,
+    };
+    intentRef.current = intent;
+    setSlot('leave');
+    intent.canceledUncovered = save?.freeze() ?? false;
+    closePhase.current = 'flush';
+    closeAttempt.current = attemptId;
+    const token = closeToken.current;
+    void runClose(intent, save as NoteSaveHandle, token);
+  }, [runClose, setSlot]);
+
+  const prepareClose = useCallback((attemptId: number) => {
+    noteConnection();
+    if (decisionOpenRef.current) {
+      if (deferredCloseAttemptId.current === attemptId) {
+        deferredCloseAttemptId.current = null;
+      }
+      replyNativeClose(attemptId, 'cancelled');
+      return;
+    }
     const intent = intentRef.current;
-    if (!intent?.choose) return;
-    const choose = intent.choose;
+    if (intent?.kind === 'close' && closePhase.current === 'retry-handoff') {
+      closePhase.current = 'flush';
+      closeAttempt.current = attemptId;
+      const handoff = intent.handoff;
+      intent.handoff = undefined;
+      handoff?.(attemptId);
+      return;
+    }
+    if (intent?.kind === 'close' && closePhase.current === 'discard-handoff') {
+      closePhase.current = null;
+      closeAttempt.current = attemptId;
+      replyNativeClose(attemptId, 'ready');
+      return;
+    }
+    if (pendingKindRef.current !== null) {
+      deferredCloseAttemptId.current = attemptId;
+      return;
+    }
+    startClose(attemptId);
+  }, [noteConnection, startClose]);
+  prepareCloseRef.current = prepareClose;
+
+  const abortOwnedClose = useCallback((intent: LeaveIntent) => {
+    closeToken.current += 1;
+    closePhase.current = null;
+    closeAttempt.current = null;
+    const handoff = intent.handoff;
+    intent.handoff = undefined;
+    handoff?.(null);
+    if (intentRef.current !== intent) return;
+    const save = getSaveRef.current();
+    if (intent.canceledUncovered && !intent.submitted) save?.submitNow();
+    save?.unfreeze();
+    intentRef.current = null;
     intent.choose = undefined;
-    setDecisionOpen(false);
-    choose('discard');
-  }, []);
+    setDecision(false);
+    setSlot(null);
+  }, [setDecision, setSlot]);
+
+  const closeAborted = useCallback((attemptId: number) => {
+    noteConnection();
+    if (deferredCloseAttemptId.current === attemptId) {
+      deferredCloseAttemptId.current = null;
+    }
+    if (pendingResume.current === attemptId) pendingResume.current = null;
+    const intent = intentRef.current;
+    if (intent?.kind !== 'close') return;
+    if (closeAttempt.current === attemptId) {
+      abortOwnedClose(intent);
+      return;
+    }
+    const waitingForNextAttempt = closePhase.current === 'retry-handoff'
+      || closePhase.current === 'discard-handoff';
+    if (waitingForNextAttempt && attemptId > retiredCloseAttempt.current) {
+      abortOwnedClose(intent);
+    }
+  }, [abortOwnedClose, noteConnection]);
 
   return {
     leaveNoteThen,
     retry,
     stay,
     discard,
+    prepareClose,
+    closeAborted,
     decisionOpen,
     pendingKind,
     holdsLeave: pendingKind === 'leave',

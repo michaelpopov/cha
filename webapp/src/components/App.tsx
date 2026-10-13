@@ -18,6 +18,7 @@ import {
 } from '../api/client';
 import type { NoteItem, NotesClient } from '../api/nativeClient';
 import type { NativeBridge } from '../api/nativeBridge';
+import { installAppCloseHost } from '../api/nativeClose';
 import { DetailRefreshProvider } from '../detailRefresh';
 import { validateBootstrap } from '../state/bootstrap';
 import {
@@ -586,6 +587,13 @@ export function App({
   const noteLeave = useNoteLeave(() => noteSaveRef.current, {
     disposeEditor: () => disposeEditorRef.current(),
   });
+  const closeHost = useRef(noteLeave);
+  closeHost.current = noteLeave;
+  const closeInstalled = useRef(false);
+  if (!closeInstalled.current) {
+    closeInstalled.current = true;
+    installAppCloseHost(() => closeHost.current);
+  }
   const registerSave = useCallback((save: NoteSaveHandle | null) => {
     noteSaveRef.current = save;
   }, []);

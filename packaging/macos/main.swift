@@ -34,7 +34,7 @@ private struct DownloadDestination {
 
 @MainActor
 private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
-    WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+    NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     private let fileManager = FileManager.default
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -46,6 +46,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private let nativeFileOperations = DispatchGroup()
     private var savePanel: NSSavePanel?
     private var quitting = false
+    private var negotiating = false
+    private var nativeDecision = false
+    private var terminationPending = false
+    private var closeAttempt = 0
+    private var waitingAttempt = 0
+    private var closeTimer: Timer?
     private var rendererFailures = 0
     private let rendererFailureLimit = 3
 
@@ -74,14 +80,36 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         true
     }
 
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        NSApp.terminate(nil)
+        return false
+    }
+
     func applicationShouldTerminate(
         _ sender: NSApplication) -> NSApplication.TerminateReply {
         guard runtime != nil, !quitting else { return .terminateNow }
-        quitting = true
-        window.title = "Closing CHA…"
-        shutdownRuntimeThen {
-            NSApp.reply(toApplicationShouldTerminate: true)
+        if negotiating || nativeDecision {
+            return .terminateLater
         }
+        terminationPending = true
+        if !pageIsConnected() {
+            beginShutdown()
+            return .terminateLater
+        }
+        negotiating = true
+        closeAttempt += 1
+        let attempt = closeAttempt
+        waitingAttempt = attempt
+        sendPrepareClose(attempt)
+        closeTimer?.invalidate()
+        closeTimer = makeCloseResponseTimer { [weak self] in
+            MainActor.assumeIsolated {
+                self?.closeTimedOut(attempt)
+            }
+        }
+        // The test-host experiment showed page messages, JavaScript calls,
+        // bridge replies, and this common-mode timer all run while AppKit
+        // termination is pending. Cancellation restored the page.
         return .terminateLater
     }
 
@@ -153,6 +181,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             window.center()
         }
         window.setFrameAutosaveName("CHA.MainWindow")
+        window.delegate = self
 
         let starting = NSTextField(labelWithString: "Starting CHA…")
         starting.alignment = .center
@@ -277,6 +306,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                     forumId: forumId,
                     sessionId: sessionId)
             }
+            receiver.onCloseReply = { [weak self] connection, attempt, result in
+                self?.handleCloseReply(connection: connection, attempt: attempt, result: result)
+            }
+            receiver.onPageClose = { [weak self] in
+                self?.pageRequestedClose()
+            }
             receiver.attach(to: view, mediaHandler: built.1)
             nativeBridge = receiver
         }
@@ -299,7 +334,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 
     private func updateWindowTitle() {
-        guard !quitting else { return }
+        guard !quitting, !negotiating, !nativeDecision else { return }
         let title = webView?.title?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let title, !title.isEmpty {
             window.title = title
@@ -555,7 +590,115 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             detail: "Choose another location and try again.")
     }
 
+    private func pageIsConnected() -> Bool {
+        nativeBridge?.connectionId != nil && webView != nil
+    }
+
+    private func callPage(_ source: String, arguments: [String: Any]) {
+        webView?.callAsyncJavaScript(
+            source,
+            arguments: arguments,
+            in: nil,
+            in: .page,
+            completionHandler: { _ in })
+    }
+
+    private func sendPrepareClose(_ attempt: Int) {
+        callPage(
+            """
+            if (typeof window.__CHA_NATIVE_PREPARE_CLOSE__ === "function") {
+              window.__CHA_NATIVE_PREPARE_CLOSE__(attemptId);
+            }
+            """,
+            arguments: ["attemptId": attempt])
+    }
+
+    private func sendCloseAborted(_ attempt: Int) {
+        callPage(
+            """
+            if (typeof window.__CHA_NATIVE_CLOSE_ABORTED__ === "function") {
+              window.__CHA_NATIVE_CLOSE_ABORTED__(attemptId);
+            }
+            """,
+            arguments: ["attemptId": attempt])
+    }
+
+    private func pageRequestedClose() {
+        if quitting || negotiating || nativeDecision { return }
+        NSApp.terminate(nil)
+    }
+
+    private func handleCloseReply(connection: String, attempt: Int, result: String) {
+        guard !quitting, negotiating, attempt == waitingAttempt,
+              connection == nativeBridge?.connectionId else {
+            return
+        }
+        stopCloseTimer()
+        negotiating = false
+        waitingAttempt = 0
+        if result == "ready" {
+            beginShutdown()
+        } else if result == "cancelled" {
+            cancelNegotiation()
+        }
+    }
+
+    private func closeTimedOut(_ attempt: Int) {
+        guard !quitting, negotiating, attempt == waitingAttempt else { return }
+        stopCloseTimer()
+        negotiating = false
+        waitingAttempt = 0
+        nativeDecision = true
+        sendCloseAborted(attempt)
+        let alert = NSAlert()
+        alert.messageText = "CHA did not finish preparing to close."
+        alert.informativeText = "Closing now may lose unsaved changes."
+        let cancel = alert.addButton(withTitle: "Cancel close")
+        alert.addButton(withTitle: "Close anyway")
+        cancel.keyEquivalent = "\u{1b}"
+        if let cell = cancel.cell as? NSButtonCell {
+            alert.window.defaultButtonCell = cell
+        }
+        let response = alert.runModal()
+        nativeDecision = false
+        if response == .alertFirstButtonReturn {
+            cancelNegotiation()
+        } else {
+            beginShutdown()
+        }
+    }
+
+    private func stopCloseTimer() {
+        closeTimer?.invalidate()
+        closeTimer = nil
+    }
+
+    private func cancelNegotiation() {
+        stopCloseTimer()
+        negotiating = false
+        nativeDecision = false
+        waitingAttempt = 0
+        guard terminationPending else { return }
+        terminationPending = false
+        NSApp.reply(toApplicationShouldTerminate: false)
+    }
+
+    private func beginShutdown() {
+        guard !quitting else { return }
+        stopCloseTimer()
+        negotiating = false
+        nativeDecision = false
+        waitingAttempt = 0
+        quitting = true
+        shutdownRuntimeThen {
+            guard self.terminationPending else { return }
+            self.terminationPending = false
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+    }
+
     private func shutdownRuntimeThen(_ completion: @escaping () -> Void) {
+        window?.title = "Closing CHA…"
         if let panel = savePanel {
             savePanel = nil
             panel.cancel(nil)
@@ -601,6 +744,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
 
     private func showFatalError(_ error: Error) {
         guard !quitting else { return }
+        stopCloseTimer()
+        negotiating = false
+        nativeDecision = false
+        waitingAttempt = 0
         quitting = true
         shutdownRuntimeThen {
             let alert = NSAlert()

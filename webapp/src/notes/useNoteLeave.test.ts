@@ -416,6 +416,408 @@ describe('leaveNoteThen', () => {
   });
 });
 
+function closePosts(): Array<Record<string, unknown>> {
+  const post = window.__CHA_NATIVE_POST__;
+  if (!post) return [];
+  return (post as unknown as { mock: { calls: string[][] } }).mock.calls.map(
+    (call) => JSON.parse(call[0]) as Record<string, unknown>,
+  );
+}
+
+describe('native close', () => {
+  afterEach(() => {
+    delete window.__CHA_NATIVE_POST__;
+    delete window.__CHA_NATIVE_CONNECTION_ID__;
+  });
+
+  function host() {
+    window.__CHA_NATIVE_CONNECTION_ID__ = 'view-4';
+    window.__CHA_NATIVE_POST__ = vi.fn();
+  }
+
+  it('replies ready immediately when there is no editor and no save', () => {
+    host();
+    const view = renderHook(() => useNoteLeave(() => null));
+    act(() => {
+      view.result.current.prepareClose(1);
+    });
+    expect(closePosts()).toEqual([{
+      native_action: 'close_reply',
+      connection_id: 'view-4',
+      attempt_id: 1,
+      result: 'ready',
+    }]);
+    expect(view.result.current.pendingKind).toBeNull();
+  });
+
+  it('replies ready for an open note with no unsaved work and does not freeze it', () => {
+    host();
+    const save = openSave({
+      hasUnsaved: () => false,
+      inFlightSerial: () => null,
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      view.result.current.prepareClose(2);
+    });
+    expect(closePosts()[0]?.result).toBe('ready');
+    expect(save.freeze).not.toHaveBeenCalled();
+  });
+
+  it('flushes a close-owned save, replies ready, and stays frozen', async () => {
+    host();
+    const save = openSave();
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      view.result.current.prepareClose(3);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(save.freeze).toHaveBeenCalledOnce();
+    expect(save.flushRemaining).toHaveBeenCalledOnce();
+    expect(save.unfreeze).not.toHaveBeenCalled();
+    expect(closePosts()).toEqual([{
+      native_action: 'close_reply',
+      connection_id: 'view-4',
+      attempt_id: 3,
+      result: 'ready',
+    }]);
+    expect(view.result.current.pendingKind).toBe('leave');
+  });
+
+  it('replies cancelled before the decision when the close flush fails', async () => {
+    host();
+    const save = openSave({
+      flushRemaining: vi.fn(async () => false),
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      view.result.current.prepareClose(4);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(view.result.current.decisionOpen).toBe(true);
+    expect(closePosts()).toEqual([{
+      native_action: 'close_reply',
+      connection_id: 'view-4',
+      attempt_id: 4,
+      result: 'cancelled',
+    }]);
+    expect(save.unfreeze).not.toHaveBeenCalled();
+  });
+
+  it('cancels a prepare-close that arrives while the decision is open', async () => {
+    host();
+    const save = openSave({
+      flushRemaining: vi.fn(async () => false),
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      view.result.current.prepareClose(4);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      view.result.current.prepareClose(5);
+    });
+    expect(save.flushRemaining).toHaveBeenCalledOnce();
+    expect(view.result.current.decisionOpen).toBe(true);
+    expect(closePosts().map((message) => message.attempt_id)).toEqual([4, 5]);
+    expect(closePosts().every((message) => message.result === 'cancelled')).toBe(true);
+  });
+
+  it('defers a close behind a leave and resumes that attempt after the slot is free', async () => {
+    host();
+    const hang = deferred();
+    let unsaved = true;
+    const save = openSave({
+      waitInFlight: () => hang.promise,
+      inFlightSerial: () => 1,
+      saveError: null,
+      hasUnsaved: () => unsaved,
+      flushRemaining: vi.fn(async () => {
+        unsaved = false;
+        return true;
+      }),
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    const action = vi.fn(() => true);
+    act(() => {
+      void view.result.current.leaveNoteThen(action);
+    });
+    act(() => {
+      view.result.current.prepareClose(6);
+    });
+    expect(closePosts()).toEqual([]);
+    expect(save.flushRemaining).not.toHaveBeenCalled();
+    await act(async () => {
+      hang.resolve();
+      await hang.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(action).toHaveBeenCalledOnce();
+    expect(save.flushRemaining).toHaveBeenCalledOnce();
+    expect(closePosts()).toEqual([{
+      native_action: 'close_reply',
+      connection_id: 'view-4',
+      attempt_id: 6,
+      result: 'ready',
+    }]);
+  });
+
+  it('cancels the deferred close when a leave failure opens the decision', async () => {
+    host();
+    const hang = deferred();
+    const save = openSave({
+      waitInFlight: () => hang.promise,
+      inFlightSerial: () => 3,
+      saveError: { serial: 3, message: 'The note could not be saved.' },
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      void view.result.current.leaveNoteThen(vi.fn());
+    });
+    act(() => {
+      view.result.current.prepareClose(7);
+    });
+    await act(async () => {
+      hang.resolve();
+      await hang.promise;
+    });
+    expect(view.result.current.decisionOpen).toBe(true);
+    expect(closePosts()).toEqual([{
+      native_action: 'close_reply',
+      connection_id: 'view-4',
+      attempt_id: 7,
+      result: 'cancelled',
+    }]);
+    expect(save.flushRemaining).not.toHaveBeenCalled();
+  });
+
+  it('sends a fresh close request before the retry flush', async () => {
+    host();
+    const order: string[] = [];
+    window.__CHA_NATIVE_POST__ = vi.fn((message: string) => {
+      const parsed = JSON.parse(message) as { native_action?: string };
+      if (parsed.native_action === 'close') order.push('close');
+    });
+    const save = openSave({
+      flushRemaining: vi.fn()
+        .mockImplementationOnce(async () => {
+          order.push('flush');
+          return false;
+        })
+        .mockImplementationOnce(async () => {
+          order.push('flush');
+          return true;
+        }),
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      view.result.current.prepareClose(8);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      view.result.current.retry();
+    });
+    expect(order).toEqual(['flush', 'close']);
+    expect(save.flushRemaining).toHaveBeenCalledOnce();
+    act(() => {
+      view.result.current.prepareClose(9);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(order).toEqual(['flush', 'close', 'flush']);
+    expect(closePosts().at(-1)).toMatchObject({
+      native_action: 'close_reply',
+      attempt_id: 9,
+      result: 'ready',
+    });
+  });
+
+  it('disposes the editor and requests close before the no-work ready reply', async () => {
+    host();
+    const save = openSave({
+      flushRemaining: vi.fn(async () => false),
+    });
+    const disposeEditor = vi.fn();
+    const view = renderHook(() => useNoteLeave(() => save, { disposeEditor }));
+    act(() => {
+      view.result.current.prepareClose(10);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      view.result.current.discard();
+      await Promise.resolve();
+    });
+    expect(save.dispose).toHaveBeenCalledOnce();
+    expect(disposeEditor).toHaveBeenCalledOnce();
+    expect(closePosts().some((message) => message.native_action === 'close')).toBe(true);
+    expect(closePosts().some((message) => message.result === 'ready')).toBe(false);
+    act(() => {
+      view.result.current.prepareClose(11);
+    });
+    expect(closePosts().at(-1)).toMatchObject({
+      native_action: 'close_reply',
+      attempt_id: 11,
+      result: 'ready',
+    });
+    act(() => {
+      view.result.current.closeAborted(11);
+    });
+    expect(view.result.current.pendingKind).toBeNull();
+    expect(closePosts().some((message) => message.native_action === 'close')).toBe(true);
+    expect(closePosts().filter((message) => message.result === 'ready')).toHaveLength(1);
+  });
+
+  it('keeps a retry when an older abort arrives and releases it for a newer abort', async () => {
+    host();
+    const save = openSave({
+      flushRemaining: vi.fn(async () => false),
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      view.result.current.prepareClose(20);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      view.result.current.retry();
+      view.result.current.closeAborted(20);
+    });
+    expect(view.result.current.pendingKind).toBe('leave');
+    expect(save.flushRemaining).toHaveBeenCalledOnce();
+    act(() => {
+      view.result.current.closeAborted(21);
+    });
+    expect(view.result.current.pendingKind).toBeNull();
+    expect(save.unfreeze).toHaveBeenCalled();
+    expect(save.flushRemaining).toHaveBeenCalledOnce();
+    expect(closePosts().filter((message) => message.result === 'ready')).toEqual([]);
+  });
+
+  it('does not reply ready after an aborted close flush settles', async () => {
+    host();
+    const hang = deferred<boolean>();
+    const save = openSave({
+      freeze: vi.fn(() => true),
+      flushRemaining: vi.fn(() => hang.promise),
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      view.result.current.prepareClose(12);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      view.result.current.closeAborted(12);
+    });
+    expect(save.unfreeze).toHaveBeenCalled();
+    expect(save.submitNow).not.toHaveBeenCalled();
+    await act(async () => {
+      hang.resolve(true);
+      await hang.promise;
+    });
+    expect(closePosts().some((message) => message.result === 'ready')).toBe(false);
+    expect(closePosts().some((message) => message.native_action === 'close')).toBe(false);
+    expect(view.result.current.pendingKind).toBeNull();
+  });
+
+  it('submits an uncovered save when close aborts before the flush', async () => {
+    host();
+    const hang = deferred();
+    const save = openSave({
+      freeze: vi.fn(() => true),
+      inFlightSerial: () => 2,
+      waitInFlight: () => hang.promise,
+      saveError: null,
+      hasUnsaved: () => true,
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      view.result.current.prepareClose(13);
+    });
+    act(() => {
+      view.result.current.closeAborted(13);
+    });
+    expect(save.submitNow).toHaveBeenCalledOnce();
+    expect(save.flushRemaining).not.toHaveBeenCalled();
+    await act(async () => {
+      hang.resolve();
+      await hang.promise;
+    });
+    expect(closePosts()).toEqual([]);
+  });
+
+  it('clears only a matching deferred attempt and ignores an older abort', async () => {
+    host();
+    const hang = deferred();
+    const save = openSave({
+      waitInFlight: () => hang.promise,
+      inFlightSerial: () => 1,
+      saveError: null,
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      void view.result.current.leaveNoteThen(vi.fn(() => true));
+    });
+    act(() => {
+      view.result.current.prepareClose(14);
+      view.result.current.prepareClose(15);
+      view.result.current.closeAborted(14);
+    });
+    expect(view.result.current.holdsLeave).toBe(true);
+    await act(async () => {
+      hang.resolve();
+      await hang.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(closePosts()).toEqual([{
+      native_action: 'close_reply',
+      connection_id: 'view-4',
+      attempt_id: 15,
+      result: 'ready',
+    }]);
+  });
+
+  it('drops a deferred attempt when the native connection is replaced', async () => {
+    host();
+    const hang = deferred();
+    const save = openSave({
+      waitInFlight: () => hang.promise,
+      inFlightSerial: () => 1,
+      saveError: null,
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    act(() => {
+      void view.result.current.leaveNoteThen(vi.fn(() => true));
+    });
+    act(() => {
+      view.result.current.prepareClose(16);
+    });
+    window.__CHA_NATIVE_CONNECTION_ID__ = 'view-5';
+    act(() => {
+      view.result.current.closeAborted(16);
+    });
+    await act(async () => {
+      hang.resolve();
+      await hang.promise;
+      await Promise.resolve();
+    });
+    expect(closePosts()).toEqual([]);
+  });
+});
+
 describe('captured leave URLs', () => {
   it('restores a captured address with replaceState', () => {
     window.history.replaceState(null, '', '/#/s/lobby/planning/');

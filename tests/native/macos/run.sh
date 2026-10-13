@@ -68,7 +68,7 @@ expect=${1:-pass}
 shift $(( $# > 0 ? 1 : 0 ))
 vault=""
 case "$expect" in
-    flow|reload|renderer-fail|stall|quit|parity)
+    flow|reload|renderer-fail|stall|quit|parity|terminate)
         vault=${CHA_NATIVE_TEST_CONFIG:-}
         if [ -z "$vault" ]; then
             vault=$(mktemp -d "${TMPDIR:-/tmp}/cha-native-vault.XXXXXX")

@@ -16,6 +16,7 @@ private enum ProbeExpectation: String {
     case rendererFail = "renderer-fail"
     case stall
     case quit
+    case terminate
 }
 
 private struct HostOptions {
@@ -34,7 +35,7 @@ private enum HostError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .usage:
-            return "usage: cha_macos_native_test_host --assets <dir> [--config <dir>] [--dev-origin http://127.0.0.1:5173] [--expect pass|fail|timeout|audio|media|streaming|parity|flow|reload|renderer-fail|stall|quit] [--timeout-ms N]"
+            return "usage: cha_macos_native_test_host --assets <dir> [--config <dir>] [--dev-origin http://127.0.0.1:5173] [--expect pass|fail|timeout|audio|media|streaming|parity|flow|reload|renderer-fail|stall|quit|terminate] [--timeout-ms N]"
         case .probeFailed(let detail):
             return detail
         case .timedOut:
@@ -106,12 +107,44 @@ private func testWidth(_ fallback: Double) -> Double {
     ProcessInfo.processInfo.environment["CHA_NATIVE_TEST_WIDTH"].flatMap { Double($0) } ?? fallback
 }
 
+private final class TerminationProbe: @unchecked Sendable {
+    var started = false
+    var pageToHost = false
+    var rpcReply = false
+    var javaScriptCall = false
+    var timerFired = false
+    var restored = false
+}
+
+private let terminationProbeSource = """
+const original = window.__CHA_NATIVE_RECEIVE__;
+window.__CHA_NATIVE_RECEIVE__ = function(batch) {
+  if (typeof original === "function") original(batch);
+  window.__CHA_NATIVE_POST__(JSON.stringify({
+    native_action: "experiment_rpc",
+    connection_id: window.__CHA_NATIVE_CONNECTION_ID__
+  }));
+};
+window.__CHA_NATIVE_POST__(JSON.stringify({
+  native_action: "experiment_ping",
+  connection_id: window.__CHA_NATIVE_CONNECTION_ID__
+}));
+window.__CHA_NATIVE_POST__(JSON.stringify({
+  connection_id: window.__CHA_NATIVE_CONNECTION_ID__,
+  id: 1,
+  context_epoch: 0,
+  method: "bridge.info",
+  params: {}
+}));
+return true;
+"""
+
 private struct TestRuntimeHandle: @unchecked Sendable {
     let pointer: OpaquePointer
 }
 
 @MainActor
-private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate {
+private final class NativeTestHost: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
     private let options: HostOptions
     private var probeReceiver: ChaProbeReceiver?
     private var nativeBridge: ChaNativeBridgeReceiver?
@@ -123,6 +156,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
     private var initialFlowStarted = false
     private var rendererFailures = 0
     private var lastFlowConnection: String?
+    private var terminationProbe = TerminationProbe()
 
     init(options: HostOptions) {
         self.options = options
@@ -175,6 +209,11 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
                         && securityOrigin.host == "127.0.0.1"
                         && securityOrigin.port == (origin.port ?? 5173))
             }
+        }
+        let probe = terminationProbe
+        receiver.onNativeAction = { action, _ in
+            if action == "experiment_ping" { probe.pageToHost = true }
+            if action == "experiment_rpc" { probe.rpcReply = true }
         }
         receiver.attach(to: view, mediaHandler: built.1)
         nativeBridge = receiver
@@ -239,6 +278,8 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
             } catch {
                 finish(error: error)
             }
+        case .terminate:
+            NSApp.terminate(nil)
         case .flow, .reload, .rendererFail, .stall, .quit:
             if flowPhase == 0 {
                 guard !initialFlowStarted else { return }
@@ -349,6 +390,87 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
                 self?.handleProbe(result)
             }
         }
+    }
+
+    func applicationShouldTerminate(
+        _ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard options.expectation == .terminate, !terminationProbe.started else {
+            return .terminateNow
+        }
+        terminationProbe.started = true
+        let probe = terminationProbe
+        let view = webView
+        let kick = Timer(timeInterval: 0.05, repeats: false) { _ in
+            view?.callAsyncJavaScript(
+                terminationProbeSource,
+                arguments: [:],
+                in: nil,
+                in: .page
+            ) { outcome in
+                if case .success = outcome { probe.javaScriptCall = true }
+            }
+        }
+        RunLoop.main.add(kick, forMode: .common)
+        let withhold = Timer(timeInterval: 0.4, repeats: false) { _ in
+            probe.timerFired = true
+        }
+        RunLoop.main.add(withhold, forMode: .common)
+        let finishProbe = Timer(timeInterval: 2.0, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                self.finishTerminationProbe()
+            }
+        }
+        RunLoop.main.add(finishProbe, forMode: .common)
+        return .terminateLater
+    }
+
+    private func finishTerminationProbe() {
+        let probe = terminationProbe
+        NSApp.reply(toApplicationShouldTerminate: false)
+        webView.callAsyncJavaScript(
+            "return 7;",
+            arguments: [:],
+            in: nil,
+            in: .page
+        ) { [weak self] outcome in
+            if case .success(let value) = outcome, let number = value as? Int, number == 7 {
+                probe.restored = true
+            } else if case .success(let value) = outcome, let number = value as? NSNumber,
+                      number.intValue == 7 {
+                probe.restored = true
+            }
+            self?.reportTerminationProbe()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(2)) { [weak self] in
+            self?.reportTerminationProbe()
+        }
+    }
+
+    private func reportTerminationProbe() {
+        guard !finished else { return }
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        let os = "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
+        let webkit = Bundle(path: "/System/Library/Frameworks/WebKit.framework")?
+            .object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let probe = terminationProbe
+        let report: [String: Any] = [
+            "ok": probe.pageToHost && probe.javaScriptCall && probe.rpcReply
+                && probe.timerFired && probe.restored,
+            "pageToHost": probe.pageToHost,
+            "javaScriptCall": probe.javaScriptCall,
+            "rpcReply": probe.rpcReply,
+            "timerFired": probe.timerFired,
+            "restored": probe.restored,
+            "timerMode": "common",
+            "os": os,
+            "webkit": webkit,
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: report),
+           let text = String(data: data, encoding: .utf8) {
+            FileHandle.standardOutput.write(Data((text + "\n").utf8))
+        }
+        let passed = report["ok"] as? Bool == true
+        finish(error: passed ? nil : HostError.probeFailed("termination experiment failed"))
     }
 
     private func runFlow() {
@@ -855,6 +977,9 @@ private struct Main {
             application.setActivationPolicy(
                 options.devOrigin == nil ? .accessory : .regular)
             let host = NativeTestHost(options: options)
+            if options.expectation == .terminate {
+                application.delegate = host
+            }
             host.start()
             application.run()
         } catch {
