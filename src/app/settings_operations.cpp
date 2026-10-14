@@ -29,8 +29,6 @@ auto with_settings_edit(Fn&& fn) {
         throw;
     } catch (const std::out_of_range&) {
         fail(ErrorCode::not_found, "That settings item was not found.");
-    } catch (const WorkspaceRestartRequiredError& error) {
-        fail(ErrorCode::application_unavailable, error.what());
     } catch (const std::invalid_argument& error) {
         fail(ErrorCode::invalid_argument, error.what());
     }

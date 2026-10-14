@@ -463,7 +463,7 @@ TEST(AssistantService, CreationKeepsAdmissionAndStrictArgumentBoundaries) {
     EXPECT_EQ(harness.store().config_revision(), 1U);
 }
 
-TEST(AssistantService, CreationReportsCommittedIdOnlyAfterSaveIncludingPublicationFailure) {
+TEST(AssistantService, CreationFailuresDoNotReportCommittedId) {
     ServiceHarness harness;
     auto invalid = character_arguments();
     invalid["profile"] = "$$(missing.md)";
@@ -477,16 +477,6 @@ TEST(AssistantService, CreationReportsCommittedIdOnlyAfterSaveIncludingPublicati
     EXPECT_EQ(sqlite["committed"], false);
     EXPECT_FALSE(sqlite.contains("character_id"));
     EXPECT_EQ(harness.store().config_revision(), 1U);
-    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
-    const auto saved = harness.run("add_character", character_arguments());
-    EXPECT_EQ(saved["committed"], true);
-    EXPECT_EQ(saved["restart_required"], true);
-    EXPECT_EQ(saved["character_id"], "character_1");
-    EXPECT_EQ(saved["undo_available"], false);
-    const auto later = harness.run("add_character", character_arguments());
-    EXPECT_EQ(later["committed"], false);
-    EXPECT_EQ(later["error"], "restart_required");
-    EXPECT_FALSE(later.contains("character_id"));
 }
 
 TEST(AssistantService, ReadsAndWritesDiskHostConfiguration) {
@@ -959,27 +949,6 @@ TEST(AssistantService, ExercisesTheFourMaintenanceRecipes) {
     const auto disabled = harness.run(
         "assistant_logs", logs_arguments("debug", "disabled debug", 5));
     EXPECT_TRUE(disabled["entries"].empty());
-}
-
-TEST(AssistantService, ReportsASaveOnlyWhenThisCallCommitted) {
-    ServiceHarness harness;
-    const std::string original = harness.store().read_config(
-        std::vector<std::string>{kGuide}).files.front().content;
-    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
-    const Json saved = harness.run(
-        "vault_config_apply", replace_change(kGuide, original + "# first\n", "1"));
-    EXPECT_EQ(saved["committed"], true);
-    EXPECT_EQ(saved["restart_required"], true);
-
-    // The store now requires restart. Later calls save nothing and must say so.
-    const Json read = harness.run("vault_config_read", read_arguments(kGuide));
-    EXPECT_EQ(read["committed"], false);
-    EXPECT_EQ(read["error"], "restart_required");
-    const Json later = harness.run(
-        "vault_config_apply", replace_change(kGuide, original + "# second\n", "2"));
-    EXPECT_EQ(later["committed"], false);
-    EXPECT_EQ(later["error"], "restart_required");
-    EXPECT_EQ(later["message"].get<std::string>().find("was saved"), std::string::npos);
 }
 
 TEST(AssistantService, ReadsPersistedFileEntriesWithFiltersAndLimits) {

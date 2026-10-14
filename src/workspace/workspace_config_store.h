@@ -61,9 +61,8 @@ WorkspaceConfigTransfer export_workspace_configuration(
     WorkspaceConfigLease lease = WorkspaceConfigLease::acquire,
     std::string_view database_password = {});
 
-// Reported when a runtime edit committed to SQLite but in-memory publication
-// failed.
-// The process must restart; the next startup publishes the committed rows.
+// Reported when database maintenance cannot restore a usable workspace.
+// The process must restart.
 class WorkspaceRestartRequiredError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -151,7 +150,6 @@ enum class WorkspaceConfigApplyError {
     validation_failure,
     too_large,
     cancelled,
-    restart_required,
 };
 
 struct WorkspaceConfigChangedPath {
@@ -215,10 +213,6 @@ public:
     WorkspaceConfigStore& operator=(WorkspaceConfigStore&&) = delete;
 
     [[nodiscard]] std::shared_ptr<const Workspace> snapshot() const;
-
-    // Install before starting session owners. Called under the edit lock on an
-    // unrecoverable runtime edit; the handler must not reenter the store.
-    void set_restart_required_handler(std::function<void()> handler);
 
     [[nodiscard]] const std::filesystem::path& private_root() const noexcept;
     // Logical root for snapshot/session identity and configuration diagnostics.
@@ -359,14 +353,11 @@ public:
     [[nodiscard]] WorkspaceConfigListResult list_config(std::string_view prefix) const;
     [[nodiscard]] WorkspaceConfigReadResult read_config(
         std::span<const std::string> paths) const;
-    // A store that already requires restart returns restart_required. A thrown
-    // WorkspaceRestartRequiredError means that this call committed its rows.
     WorkspaceConfigApplyResult apply_config(
         WorkspaceConfigRevision version,
         std::span<const WorkspaceConfigChange> changes,
         WorkspaceConfigCancelCheck cancelled = {});
-    // allocated_id is call-local context, not proof of a commit. Like apply,
-    // a thrown WorkspaceRestartRequiredError means this call saved its rows.
+    // allocated_id is cleared at entry and set only after a successful commit.
     WorkspaceConfigApplyResult create_character_for_assistant(
         WorkspaceConfigRevision version,
         std::string_view name,
@@ -386,14 +377,13 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// Test-only seam for simulated validation, SQLite, and publication failures.
+// Test-only seam for simulated validation and SQLite failures.
 enum class WorkspaceConfigFault {
     none,
     validation,
     sqlite_begin,
     sqlite_write,
     sqlite_commit,
-    publication,
 };
 
 void force_next_workspace_config_fault(WorkspaceConfigFault fault);

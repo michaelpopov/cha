@@ -1131,7 +1131,13 @@ TEST_F(ChaWebAdapterTest, LoadsARetiredSessionAndDoesNotRetryUnknownOnes) {
 }
 
 TEST_F(ChaWebAdapterTest, UnavailableApplicationReturns503) {
-    application_->mark_unusable();
+    const auto other = application_->create_vault(
+        {.display_name = "Other", .copy_from = "Test"}, application_->context_epoch());
+    force_next_forum_sync_failure();
+    EXPECT_THROW(
+        (void)application_->merge_vault(other.name, {}, application_->context_epoch()),
+        WorkspaceRestartRequiredError);
+    ASSERT_EQ(application_->state(), app::ApplicationState::unavailable);
     const CgiResponse response = get(std::string(bootstrap_path));
     EXPECT_EQ(response.status, 503);
     EXPECT_EQ(

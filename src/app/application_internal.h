@@ -23,8 +23,6 @@ struct Application::Impl {
         std::string selected_vault_password,
         RuntimeSettings selected_settings);
 
-    void mark_unusable();
-
     static constexpr unsigned can_modify = 1U << 0;
     static constexpr unsigned can_transfer_r2 = 1U << 1;
 

@@ -247,8 +247,8 @@ stopping that operation; do not try to retarget it to another vault. Report
 native errors accurately, including create/replace conflicts, protection,
 credential-destination rejection, excessive size, and unavailable undo.
 
-A refresh or publication failure after commit is still a saved change.
-Report any restart requirement without claiming rollback. A committed apply,
+A refresh failure after commit is still a saved change.
+Report the refresh error without claiming rollback. A committed apply,
 undo, or creation has a native save notice in Welcome, available through both
 hosts,
 even if the model answer later fails or is stopped. An active answer delays
@@ -294,7 +294,7 @@ implicit default, it inserts one assignment to preserve the old default. Source
 preservation does not require a raw creation batch.
 
 The result uses the apply save contract and includes `character_id` only when
-committed, including a saved change requiring restart. Creation clears Assistant
+committed. Creation clears Assistant
 undo, even when it also replaces the forum configuration. On an uncertain outcome,
 inspect current state before trying again. Do not retry automatically. Do not use
 this tool or raw apply to bypass a protection error. For unsupported coordinated

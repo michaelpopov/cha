@@ -953,11 +953,6 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge(
             }
             rebuild_mirror(
                 session_mirror_root(app.current_vault_.get()));
-        } catch (const WorkspaceRestartRequiredError&) {
-            if (app.state.load() == ApplicationState::maintenance) {
-                end_maintenance_locked(false, notice);
-            }
-            throw;
         } catch (const std::exception& error) {
             if (app.state.load() == ApplicationState::maintenance) {
                 if (!merged) {

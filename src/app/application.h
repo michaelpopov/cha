@@ -591,7 +591,6 @@ public:
     [[nodiscard]] WorkspaceConfigStore& store();
     [[nodiscard]] ApiKeyStore& api_keys();
     [[nodiscard]] std::string active_password() const;
-    void mark_unusable();
 
 private:
     struct Impl;

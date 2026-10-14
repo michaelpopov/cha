@@ -137,7 +137,6 @@ std::string_view apply_error_name(WorkspaceConfigApplyError error) {
     case WorkspaceConfigApplyError::validation_failure: return "validation_failure";
     case WorkspaceConfigApplyError::too_large: return "too_large";
     case WorkspaceConfigApplyError::cancelled: return "cancelled";
-    case WorkspaceConfigApplyError::restart_required: return "restart_required";
     }
     return "invalid_argument";
 }
@@ -594,30 +593,25 @@ std::string logs_tool(
 // The short transcript notice for a committed vault save.
 std::string save_notice(
     const WorkspaceConfigApplyResult& applied,
-    bool restart,
     const std::string& refresh_error,
     const Redactor& redact) {
-    std::string notice = "Configuration was saved.";
-    if (!restart && !applied.changed.empty()) {
-        notice += " Changed:";
-        const std::size_t shown = std::min<std::size_t>(applied.changed.size(), 5);
-        for (std::size_t index = 0; index < shown; ++index) {
-            const auto& item = applied.changed[index];
-            notice += " " + item.path + " (" + std::to_string(item.new_bytes) + " bytes)";
-        }
-        if (applied.changed.size() > shown) notice += " ...";
-        notice += ".";
+    std::string notice = "Configuration was saved. Changed:";
+    const std::size_t shown = std::min<std::size_t>(applied.changed.size(), 5);
+    for (std::size_t index = 0; index < shown; ++index) {
+        const auto& item = applied.changed[index];
+        notice += " " + item.path + " (" + std::to_string(item.new_bytes) + " bytes)";
     }
-    notice += applied.undo_available && !restart
+    if (applied.changed.size() > shown) notice += " ...";
+    notice += ".";
+    notice += applied.undo_available
         ? " Undo is available."
         : " Undo is not available.";
-    if (!restart && !applied.warnings.empty()) {
+    if (!applied.warnings.empty()) {
         notice += " Warning: " + redact(applied.warnings.front().message);
     }
     if (!refresh_error.empty()) {
         notice += " Refresh failed: " + refresh_error;
     }
-    if (restart) notice += " Restart is required.";
     return cap_text(std::move(notice), 500);
 }
 
@@ -628,23 +622,14 @@ std::string save_tool(
     const Redactor& redact,
     const std::function<WorkspaceConfigApplyResult()>& save,
     const std::string* created_id = nullptr) {
-    WorkspaceConfigApplyResult applied;
-    bool restart = false;
-    std::string restart_message;
-    try {
-        applied = save();
-    } catch (const WorkspaceRestartRequiredError& error) {
-        // The store throws this only after it committed this call's rows.
-        restart = true;
-        restart_message = redact(error.what());
-    }
-    const bool saved = restart || (
-        applied.error == WorkspaceConfigApplyError::none && !applied.changed.empty());
+    const WorkspaceConfigApplyResult applied = save();
+    const bool saved =
+        applied.error == WorkspaceConfigApplyError::none && !applied.changed.empty();
     std::string refresh_error;
     bool delivered = true;
     if (saved) {
         lifecycle.unlock();
-        if (links.repository && !restart) {
+        if (links.repository) {
             try {
                 links.repository->synchronize_forums(*links.store->snapshot());
             } catch (const std::exception& error) {
@@ -656,30 +641,12 @@ std::string save_tool(
                 delivered = links.sessions->post_maintenance_result(
                     context.context_epoch,
                     {context.forum_id, context.session_id},
-                    save_notice(applied, restart, refresh_error, redact));
+                    save_notice(applied, refresh_error, redact));
             } catch (const std::exception& error) {
                 delivered = false;
                 refresh_error = redact(error.what());
             }
         }
-    }
-
-    if (restart) {
-        std::string message = "Configuration was saved. Restart is required.";
-        if (!restart_message.empty()) message += " " + restart_message;
-        if (!delivered) message += " Session refresh was not delivered.";
-        Json result{
-            {"committed", true},
-            {"restart_required", true},
-            {"version", nullptr},
-            {"changed", Json::array()},
-            {"warnings", Json::array()},
-            {"undo_available", false},
-            {"error", nullptr},
-            {"message", std::move(message)},
-        };
-        if (created_id) result["character_id"] = *created_id;
-        return result.dump();
     }
 
     Json changed = Json::array();
@@ -954,9 +921,6 @@ std::string AssistantService::execute(
         if (name == "vault_config_apply") {
             return apply_tool(parsed, arguments, links_, context, lifecycle, cancel_check, redact);
         }
-    } catch (const WorkspaceRestartRequiredError& error) {
-        // Vault save tools report post-commit restart errors in their shared wrapper.
-        return tool_error("restart_required", redact(error.what()));
     } catch (const std::exception& error) {
         log_warn(std::string("Maintenance tool failed: ") + std::string(name));
         return tool_error("validation_failure", redact(error.what()));

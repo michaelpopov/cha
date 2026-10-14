@@ -43,8 +43,6 @@ auto with_workspace_edit(Fn&& fn) {
     } catch (const WorkspaceConfigValidationError& error) {
         log_warn(std::string("Rejected workspace edit: ") + error.what());
         fail(ErrorCode::invalid_argument, error.what());
-    } catch (const WorkspaceRestartRequiredError& error) {
-        fail(ErrorCode::application_unavailable, error.what());
     } catch (const std::invalid_argument& error) {
         fail(ErrorCode::invalid_argument, error.what());
     }

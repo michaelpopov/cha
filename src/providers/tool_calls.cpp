@@ -137,7 +137,7 @@ void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
             "in one atomic save. forum_id is an existing writable user forum only when membership is requested, "
             "or null. Preserves forum defaults and source bytes, inserting a default assignment only when needed. "
             "Requires the current configuration version. Creation has no Assistant undo. "
-            "Returns character_id only when committed, including a post-commit restart requirement. "
+            "Returns character_id only when committed. "
             "Inspect current state before retrying an uncertain outcome."},
         {"strict", true},
         {"parameters", function_parameters(

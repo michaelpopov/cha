@@ -1391,41 +1391,6 @@ TEST_F(
 
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
-    EmptyEditPublicationFailureLeavesStateUnchanged) {
-    const auto store = open_store();
-    store->apply_character_settings(
-        "guide", "second", std::string_view{"mono"},
-        std::nullopt, std::string_view{"high"}, WebSearchMode::automatic);
-    const std::shared_ptr<const Workspace> published = store->snapshot();
-    const auto committed_rows = config_contents(database());
-    const std::string character = "characters/guide/character.toml";
-    const std::string config_before = stored_config(database(), character);
-
-    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
-    try {
-        (void)store->apply_character_settings(
-            "guide", "second", std::string_view{"mono"},
-            std::nullopt, std::string_view{"high"},
-            WebSearchMode::automatic);
-        FAIL() << "expected publication failure";
-    } catch (const WorkspaceRestartRequiredError& error) {
-        FAIL() << "no-op publication failure required restart: " << error.what();
-    } catch (const std::runtime_error& error) {
-        EXPECT_NE(
-            std::string_view(error.what()).find("Forced workspace publication"),
-            std::string_view::npos);
-    }
-
-    EXPECT_EQ(config_contents(database()), committed_rows);
-    EXPECT_EQ(stored_config(database(), character), config_before);
-    EXPECT_EQ(store->snapshot().get(), published.get());
-
-    store->apply_character_settings("guide", "test", std::nullopt);
-    EXPECT_EQ(store->snapshot()->find_character("guide")->provider_id, "test");
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
     ForumDeleteRemovesOnlyItsConfigAndSessions) {
     {
         Database handle(database(), Database::Mode::read_write);
@@ -1835,39 +1800,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RuntimeEditsNeverReadOrWriteConfiguratio
     maintenance.reopen();
     EXPECT_EQ(store->snapshot()->find_character("guide")->provider_id, "test");
     EXPECT_FALSE(std::filesystem::exists(workspace));
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    PostCommitPublicationFailureRequiresRestartAndSurvivesReopen) {
-    {
-        const auto store = open_store();
-        const std::shared_ptr<const Workspace> published = store->snapshot();
-        force_next_workspace_config_fault(WorkspaceConfigFault::publication);
-        try {
-            (void)store->apply_character_settings(
-                "guide", "second", std::nullopt);
-            FAIL() << "expected restart-required publication failure";
-        } catch (const WorkspaceRestartRequiredError& error) {
-            const std::string message = error.what();
-            EXPECT_NE(message.find("committed"), std::string::npos) << message;
-            EXPECT_NE(message.find("Restart is required"), std::string::npos)
-                << message;
-        }
-        EXPECT_EQ(published->find_character("guide")->provider_id, "test");
-        EXPECT_EQ(store->snapshot().get(), published.get());
-        EXPECT_NE(
-            stored_config(database(), "characters/guide/character.toml")
-                .find("second"),
-            std::string::npos);
-    }
-
-    const auto restarted = open_store();
-    EXPECT_EQ(restarted->snapshot()->find_character("guide")->provider_id, "second");
-    EXPECT_NE(
-        stored_config(database(), "characters/guide/character.toml")
-            .find("second"),
-        std::string::npos);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, RetargetReopensTheNewDatabaseInTheSameTree) {
@@ -2412,39 +2344,6 @@ TEST_F(
     EXPECT_NO_THROW(store->apply_character_settings("guide", "second", std::nullopt));
 }
 
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergePublicationFailureAfterCommitRequiresRestart) {
-    test::TestWorkspace source_workspace;
-    source_workspace.add_persona("beta", "Beta");
-    const std::filesystem::path source_database =
-        import_source_database(source_workspace);
-    {
-        const auto store = open_store();
-        const std::shared_ptr<const Workspace> published = store->snapshot();
-        force_next_workspace_config_fault(WorkspaceConfigFault::publication);
-        try {
-            merge_from(*store, source_database);
-            FAIL() << "expected restart-required publication failure";
-        } catch (const WorkspaceRestartRequiredError& error) {
-            const std::string message = error.what();
-            EXPECT_NE(message.find("committed"), std::string::npos) << message;
-            EXPECT_NE(message.find("Restart is required"), std::string::npos)
-                << message;
-        }
-        EXPECT_EQ(store->snapshot().get(), published.get());
-        EXPECT_EQ(published->find_persona("beta"), nullptr);
-        EXPECT_NE(
-            stored_config(database(), "personas/beta/persona.toml").find("Beta"),
-            std::string::npos);
-        EXPECT_EQ(store->snapshot()->root(), store->workspace_path());
-    }
-
-    const auto restarted = open_store();
-    EXPECT_NE(restarted->snapshot()->find_persona("beta"), nullptr);
-    EXPECT_EQ(restarted->snapshot()->root(), restarted->workspace_path());
-}
-
 TEST_F(WorkspaceConfigStoreTest, ImportsHarmlessFieldsThenOpensAndReopens) {
     write_bytes(
         source() / "characters" / "guide" / "character.toml",
@@ -2781,20 +2680,22 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, AssistantCreationRejectsInputAndTemplate
         {"New", "Description", "second", "Profile", "missing"},
         {"New", "Description", "second", "Profile", workspace_entrance_id},
     }) {
-        std::string id;
+        std::string id = "old";
         const auto result = store->create_character_for_assistant(revision,
             input.name, input.description, input.provider, input.profile, input.forum, id);
         EXPECT_EQ(result.error, WorkspaceConfigApplyError::invalid_argument) << result.error_message;
+        EXPECT_TRUE(id.empty());
         EXPECT_FALSE(result.error_message.empty());
         EXPECT_EQ(result.error_message.find(store->workspace_path().string()), std::string::npos)
             << result.error_message;
         EXPECT_EQ(store->config_revision(), revision);
         EXPECT_EQ(store->snapshot()->find_character("character_1"), nullptr);
     }
-    std::string id;
+    std::string id = "old";
     const auto invalid = store->create_character_for_assistant(revision,
         "New", "Description", "second", "$$(missing.md)", "lobby", id);
     EXPECT_EQ(invalid.error, WorkspaceConfigApplyError::validation_failure);
+    EXPECT_TRUE(id.empty());
     EXPECT_EQ(store->config_revision(), revision);
     EXPECT_TRUE(stored_config(database(), "characters/character_1/character.toml").empty());
     id = "old";
@@ -2802,33 +2703,33 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, AssistantCreationRejectsInputAndTemplate
         "New", "Description", "second", "Profile", {}, id).error,
         WorkspaceConfigApplyError::stale_version);
     EXPECT_TRUE(id.empty());
-    EXPECT_EQ(store->create_character_for_assistant(revision,
-        "New", "Description", "second", "Profile", {}, id, [] { return true; }).error,
-        WorkspaceConfigApplyError::cancelled);
-    EXPECT_TRUE(id.empty());
-}
-
-TEST_F(RuntimeWorkspaceConfigStoreTest, AssistantCreationDistinguishesPrecommitAndPublicationFailures) {
-    auto store = open_store();
-    const auto revision = store->config_revision();
-    std::string id;
-    for (const auto fault : {WorkspaceConfigFault::validation, WorkspaceConfigFault::sqlite_write,
-             WorkspaceConfigFault::sqlite_commit}) {
-        force_next_workspace_config_fault(fault);
-        EXPECT_THROW(store->create_character_for_assistant(revision,
-            "New", "Description", "second", "Profile", "lobby", id), std::runtime_error);
+    for (const int cancel_on_check : {1, 3}) {
+        id = "old";
+        int checks = 0;
+        EXPECT_EQ(store->create_character_for_assistant(revision,
+            "New", "Description", "second", "Profile", {}, id,
+            [&] { return ++checks == cancel_on_check; }).error,
+            WorkspaceConfigApplyError::cancelled);
+        EXPECT_TRUE(id.empty());
         EXPECT_EQ(store->config_revision(), revision);
         EXPECT_TRUE(stored_config(database(), "characters/character_1/character.toml").empty());
     }
-    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
-    EXPECT_THROW(store->create_character_for_assistant(revision,
-        "New", "Description", "second", "Profile", "lobby", id), WorkspaceRestartRequiredError);
-    EXPECT_EQ(id, "character_1");
-    EXPECT_FALSE(stored_config(database(), "characters/character_1/character.toml").empty());
-    EXPECT_EQ(store->create_character_for_assistant(revision,
-        "Later", "Description", "second", "Profile", {}, id).error,
-        WorkspaceConfigApplyError::restart_required);
-    EXPECT_TRUE(id.empty());
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, AssistantCreationFailuresLeaveConfigurationUnchanged) {
+    auto store = open_store();
+    const auto revision = store->config_revision();
+    std::string id;
+    for (const auto fault : {WorkspaceConfigFault::validation, WorkspaceConfigFault::sqlite_begin,
+             WorkspaceConfigFault::sqlite_write, WorkspaceConfigFault::sqlite_commit}) {
+        id = "old";
+        force_next_workspace_config_fault(fault);
+        EXPECT_THROW(store->create_character_for_assistant(revision,
+            "New", "Description", "second", "Profile", "lobby", id), std::runtime_error);
+        EXPECT_TRUE(id.empty());
+        EXPECT_EQ(store->config_revision(), revision);
+        EXPECT_TRUE(stored_config(database(), "characters/character_1/character.toml").empty());
+    }
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, PreparedMembershipPreservesEveryOriginalForumByte) {
@@ -3390,41 +3291,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RepairOfOmittedProviderKeepsItsWrittenKe
     EXPECT_EQ(
         seeded.error, WorkspaceConfigApplyError::credential_destination_protected);
     EXPECT_EQ(stored_config(database(), "system/providers/relay/config.toml"), "");
-}
-
-TEST_F(RuntimeWorkspaceConfigStoreTest, PublicationFailureAfterApplyRequiresRestart) {
-    auto store = open_store();
-    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
-    const std::string path = "characters/guide/character.toml";
-    try {
-        (void)store->apply_config(
-            store->config_revision(),
-            std::vector<WorkspaceConfigChange>{{
-                .path = path,
-                .operation = WorkspaceConfigOperation::replace,
-                .content = stored_config(database(), path) + "legacy_flag = true\n",
-            }});
-        FAIL() << "expected restart-required publication failure";
-    } catch (const WorkspaceRestartRequiredError&) {
-    }
-    const std::string committed = stored_config(database(), path);
-    EXPECT_NE(committed.find("legacy_flag"), std::string::npos);
-
-    // Later calls write nothing. They return the error instead of throwing it,
-    // because a thrown restart error means a committed write.
-    const auto later = store->apply_config(
-        0,
-        std::vector<WorkspaceConfigChange>{{
-            .path = path,
-            .operation = WorkspaceConfigOperation::replace,
-            .content = committed + "other_flag = true\n",
-        }});
-    EXPECT_FALSE(later.committed);
-    EXPECT_EQ(later.error, WorkspaceConfigApplyError::restart_required);
-    const auto undo = store->undo_config(0);
-    EXPECT_FALSE(undo.committed);
-    EXPECT_EQ(undo.error, WorkspaceConfigApplyError::restart_required);
-    EXPECT_EQ(stored_config(database(), path), committed);
 }
 
 void expect_package_seed_subscription(const ModelBackendConfig& config) {

@@ -421,49 +421,6 @@ TEST(Application, AppearanceAndToolEditsRefreshTheSubscriptionWithoutCancellingG
     EXPECT_EQ(final.transcript.back().status, EntryStatus::complete);
 }
 
-TEST(Application, FatalConfigurationEditsCloseAdmissionAndStopLiveSessions) {
-    for (const bool settings_edit : {false, true}) {
-        SCOPED_TRACE(settings_edit);
-        test::TestWorkspace workspace;
-        const auto database = test::import_test_database(workspace.root());
-        auto application = Application::open(make_command(workspace, database));
-        const auto epoch = application->context_epoch();
-        const auto created = application->create_session("lobby", "Failure", epoch);
-        ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
-            application->open_session("lobby", created.id, epoch)));
-        auto session = application->subscription_handle("lobby", created.id);
-        ASSERT_TRUE(session);
-        force_next_workspace_config_fault(WorkspaceConfigFault::publication);
-        try {
-            if (settings_edit) (void)application->create_style("Committed style", epoch);
-            else (void)application->update_character_definition(
-                "guide", {.display_name = "Committed guide"}, epoch);
-            FAIL() << "Expected restart-required publication failure";
-        } catch (const ApplicationError& error) {
-            EXPECT_EQ(error.code, ErrorCode::application_unavailable);
-        }
-        EXPECT_EQ(application->state(), ApplicationState::unavailable);
-        EXPECT_FALSE(application->running());
-        EXPECT_EQ(application->bootstrap().state, ApplicationState::unavailable);
-        EXPECT_EQ(application->check_context(epoch), ErrorCode::application_unavailable);
-        EXPECT_THROW((void)application->create_session("lobby", "Rejected", epoch), ApplicationError);
-        const auto submitted = application->submit_async("lobby", created.id, RawCommand{"Rejected"}, epoch);
-        ASSERT_TRUE(std::holds_alternative<ErrorCode>(submitted));
-        EXPECT_EQ(std::get<ErrorCode>(submitted), ErrorCode::application_unavailable);
-        EXPECT_THROW((void)application->store().create_style("Rejected"), WorkspaceRestartRequiredError);
-        EXPECT_TRUE(application->join_shutdown(2s));
-        EXPECT_EQ(session->lifecycle(), LiveSessionState::finished);
-        session.reset();
-        application.reset();
-        auto reopened = Application::open(make_command(workspace, database));
-        EXPECT_TRUE(reopened->running());
-        if (!settings_edit) {
-            EXPECT_EQ(reopened->get_character("guide", reopened->context_epoch()).summary.display_name,
-                "Committed guide");
-        }
-    }
-}
-
 TEST(Application, RejectedConfigurationLeavesApplicationAvailable) {
     test::TestWorkspace workspace;
     auto application = Application::open(make_command(
@@ -476,25 +433,6 @@ TEST(Application, RejectedConfigurationLeavesApplicationAvailable) {
     EXPECT_EQ(application->get_character("guide", epoch).summary.display_name, "Guide");
     EXPECT_NO_THROW((void)application->update_character_definition(
         "guide", {.display_name = "Accepted"}, epoch));
-}
-
-TEST(Application, OwnerThreadConfigurationFailureClosesAdmission) {
-    test::TestWorkspace workspace;
-    workspace.add_character("other", "Other");
-    std::filesystem::create_directories(workspace.root() / "forums/lobby/members/other");
-    std::ofstream(workspace.root() / "forums/lobby/members/other/character.toml") << "# member\n";
-    auto application = Application::open(make_command(
-        workspace, test::import_test_database(workspace.root())));
-    const auto epoch = application->context_epoch();
-    const auto created = application->create_session("lobby", "Owner failure", epoch);
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
-        application->open_session("lobby", created.id, epoch)));
-    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
-    (void)application->submit("lobby", created.id,
-        SetDefaultCharacterCommand{"other"}, epoch);
-    EXPECT_EQ(application->state(), ApplicationState::unavailable);
-    EXPECT_EQ(application->check_context(epoch), ErrorCode::application_unavailable);
-    EXPECT_TRUE(application->join_shutdown(2s));
 }
 
 TEST(Application, CloseLeavesTerminalSnapshot) {

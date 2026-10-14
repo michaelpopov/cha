@@ -36,14 +36,14 @@ owns neither the lease nor either private directory and uses short-lived
 connections for storage operations.
 
 Online configuration mutations go through `WorkspaceConfigStore` and the
-corresponding `Workspace` write, create, or delete operation. Each store
-operation edits the materialized files, loads a complete candidate, collects
-the complete small file set, compares it with the committed rows, and inserts,
+corresponding configuration write, create, or delete operation. Each store
+operation edits configuration in memory, loads a complete candidate, compares
+the complete small file set with the committed rows, and inserts,
 updates, or deletes only changed `config` rows in one SQLite transaction. It
-publishes the candidate only after commit. A pre-commit failure rematerializes
-the old rows; a post-commit publication failure requires restart and then loads
-the committed rows. Offline import and export use the separate transfer
-operations.
+publishes the prepared candidate only after commit, while holding the
+publication lock acquired before the transaction. A transaction failure leaves
+the rows and snapshot unchanged. Offline import and export use the separate
+transfer operations.
 
 Character settings can override their provider's `reasoning_effort` and
 `web_search`. The overrides remain optional in `WorkspaceCharacter`; generation

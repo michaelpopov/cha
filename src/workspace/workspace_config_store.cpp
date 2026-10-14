@@ -1355,8 +1355,6 @@ struct WorkspaceConfigStore::Impl {
     mutable std::mutex mutex;
     mutable std::mutex snapshot_mutex;
     std::shared_ptr<const Workspace> published_workspace;
-    bool restart_required{};
-    std::function<void()> on_restart_required;
     WorkspaceConfigRevision revision{};
     struct UndoRecord {
         WorkspaceConfigRevision resulting_revision{};
@@ -1365,19 +1363,6 @@ struct WorkspaceConfigStore::Impl {
     std::optional<UndoRecord> undo;
 
     enum class UndoUpdate { leave, clear, install };
-
-    [[noreturn]] void require_restart(std::string message) {
-        restart_required = true;
-        if (on_restart_required) {
-            try {
-                on_restart_required();
-            } catch (...) {
-                // Preserve the configuration failure even if stopping other
-                // resources fails. Admission must already have been closed.
-            }
-        }
-        throw WorkspaceRestartRequiredError(std::move(message));
-    }
 
     std::shared_ptr<const Workspace> snapshot() const {
         const std::lock_guard lock(snapshot_mutex);
@@ -1398,13 +1383,6 @@ struct WorkspaceConfigStore::Impl {
         publish(Workspace::load(tree->workspace(), files));
         ++revision;
         undo.reset();
-    }
-
-    void require_open() const {
-        if (restart_required) {
-            throw WorkspaceRestartRequiredError(
-                "Configuration is unavailable. Restart is required");
-        }
     }
 
     bool undo_is_available() const {
@@ -1429,60 +1407,42 @@ struct WorkspaceConfigStore::Impl {
         std::string_view deleted_forum_id,
         UndoUpdate undo_update,
         std::optional<UndoRecord> new_undo = {}) {
-        std::unique_lock publication_lock(snapshot_mutex);
-        bool database_committed = false;
-        bool config_changed = false;
-        try {
-            config_changed = committed_rows != rows;
-            if (config_changed || !deleted_forum_id.empty()) {
-                if (consume_runtime_fault(WorkspaceConfigFault::sqlite_begin)) {
-                    fail_path("Forced SQLite begin failure");
-                }
-                storage::SqliteTransaction transaction(*database);
-                if (consume_runtime_fault(WorkspaceConfigFault::sqlite_write)) {
-                    fail_path("Forced SQLite write failure");
-                }
-                if (config_changed) {
-                    apply_config_changes(*database, committed_rows, rows);
-                }
-                if (!deleted_forum_id.empty()) {
-                    storage::SqliteStatement delete_sessions = database->prepare(
-                        "DELETE FROM sessions WHERE forum_key IN ("
-                        "SELECT forum_key FROM forums WHERE forum_id = ?1)",
-                        deleted_forum_id);
-                    delete_sessions.run();
-                    storage::SqliteStatement delete_forum = database->prepare(
-                        "DELETE FROM forums WHERE forum_id = ?1",
-                        deleted_forum_id);
-                    delete_forum.run();
-                }
-                if (consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
-                    fail_path("Forced SQLite commit failure");
-                }
-                transaction.commit();
-                database_committed = true;
+        const std::lock_guard publication_lock(snapshot_mutex);
+        const bool config_changed = committed_rows != rows;
+        if (config_changed || !deleted_forum_id.empty()) {
+            if (consume_runtime_fault(WorkspaceConfigFault::sqlite_begin)) {
+                fail_path("Forced SQLite begin failure");
             }
-            if (consume_runtime_fault(WorkspaceConfigFault::publication)) {
-                fail_path("Forced workspace publication failure");
+            storage::SqliteTransaction transaction(*database);
+            if (consume_runtime_fault(WorkspaceConfigFault::sqlite_write)) {
+                fail_path("Forced SQLite write failure");
             }
-            published_workspace.swap(candidate);
             if (config_changed) {
-                ++revision;
-                if (undo_update == UndoUpdate::clear) undo.reset();
-                else if (undo_update == UndoUpdate::install) {
-                    undo = std::move(new_undo);
-                }
+                apply_config_changes(*database, committed_rows, rows);
             }
-        } catch (const std::exception& error) {
-            publication_lock.unlock();
-            if (!database_committed) throw;
-            if (config_changed) {
-                ++revision;
-                undo.reset();
+            if (!deleted_forum_id.empty()) {
+                storage::SqliteStatement delete_sessions = database->prepare(
+                    "DELETE FROM sessions WHERE forum_key IN ("
+                    "SELECT forum_key FROM forums WHERE forum_id = ?1)",
+                    deleted_forum_id);
+                delete_sessions.run();
+                storage::SqliteStatement delete_forum = database->prepare(
+                    "DELETE FROM forums WHERE forum_id = ?1",
+                    deleted_forum_id);
+                delete_forum.run();
             }
-            require_restart(
-                "Configuration was committed but could not be published: "
-                + std::string(error.what()) + ". Restart is required");
+            if (consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
+                fail_path("Forced SQLite commit failure");
+            }
+            transaction.commit();
+        }
+        published_workspace.swap(candidate);
+        if (config_changed) {
+            ++revision;
+            if (undo_update == UndoUpdate::clear) undo.reset();
+            else if (undo_update == UndoUpdate::install) {
+                undo = std::move(new_undo);
+            }
         }
     }
 
@@ -1491,7 +1451,6 @@ struct WorkspaceConfigStore::Impl {
         Writer&& writer,
         std::string_view deleted_forum_id = {}) {
         const std::lock_guard lock(mutex);
-        require_open();
         const std::shared_ptr<const Workspace> published = snapshot();
         if (!published || published->root() != tree->workspace()) {
             fail_path(
@@ -1525,7 +1484,6 @@ struct WorkspaceConfigStore::Impl {
     }
 
     WorkspaceConfigListResult list_config(std::string_view prefix) const {
-        require_open();
         const std::shared_ptr<const Workspace> published = snapshot();
         const std::string provider = assistant_provider_id(*published);
         const auto rows = read_workspace_config_files(*database);
@@ -1551,7 +1509,6 @@ struct WorkspaceConfigStore::Impl {
     }
 
     WorkspaceConfigReadResult read_config(std::span<const std::string> paths) const {
-        require_open();
         const auto rows = read_workspace_config_files(*database);
         TextFiles files;
         for (const ConfigFile& row : rows) files.emplace(row.name, row.content);
@@ -1596,12 +1553,6 @@ struct WorkspaceConfigStore::Impl {
             return failed(
                 WorkspaceConfigApplyError::cancelled,
                 "Configuration " + std::string(action) + " was cancelled");
-        }
-        // A restart error thrown after this check always means a committed write.
-        if (restart_required) {
-            return failed(
-                WorkspaceConfigApplyError::restart_required,
-                "Configuration is unavailable. Restart is required");
         }
         const std::shared_ptr<const Workspace> published = snapshot();
         if (!published || published->root() != tree->workspace()) {
@@ -2054,11 +2005,6 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
 
 std::shared_ptr<const Workspace> WorkspaceConfigStore::snapshot() const {
     return impl_->snapshot();
-}
-
-void WorkspaceConfigStore::set_restart_required_handler(std::function<void()> handler) {
-    const std::lock_guard lock(impl_->mutex);
-    impl_->on_restart_required = std::move(handler);
 }
 
 const std::filesystem::path& WorkspaceConfigStore::private_root()
@@ -2516,7 +2462,6 @@ void WorkspaceConfigStore::apply_key_migration(
 
 std::vector<NoteItem> WorkspaceConfigStore::list_note_items() const {
     const std::lock_guard lock(impl_->mutex);
-    impl_->require_open();
     return note_list(*impl_->database);
 }
 
@@ -2525,13 +2470,11 @@ NoteItem WorkspaceConfigStore::create_note_item(
     NoteItemKind kind,
     std::string_view name) {
     const std::lock_guard lock(impl_->mutex);
-    impl_->require_open();
     return note_create(*impl_->database, parent_id, kind, name);
 }
 
 NoteContent WorkspaceConfigStore::get_note(std::int64_t id) const {
     const std::lock_guard lock(impl_->mutex);
-    impl_->require_open();
     return note_get(*impl_->database, id);
 }
 
@@ -2539,7 +2482,6 @@ void WorkspaceConfigStore::save_note(
     std::int64_t id,
     const nlohmann::json& document) {
     const std::lock_guard lock(impl_->mutex);
-    impl_->require_open();
     note_save(*impl_->database, id, document);
 }
 
@@ -2547,20 +2489,17 @@ NoteItem WorkspaceConfigStore::rename_note_item(
     std::int64_t id,
     std::string_view name) {
     const std::lock_guard lock(impl_->mutex);
-    impl_->require_open();
     return note_rename(*impl_->database, id, name);
 }
 
 void WorkspaceConfigStore::delete_note_item(std::int64_t id) {
     const std::lock_guard lock(impl_->mutex);
-    impl_->require_open();
     note_delete(*impl_->database, id);
 }
 
 std::optional<WorkspaceCharacterPicture> WorkspaceConfigStore::get_character_picture(
     std::string_view character_id) const {
     const std::lock_guard lock(impl_->mutex);
-    impl_->require_open();
     const auto workspace = impl_->snapshot();
     const auto directory = workspace->character_directory(character_id);
     if (!directory) throw std::out_of_range("That character was not found.");
@@ -2581,7 +2520,6 @@ std::optional<WorkspaceCharacterPicture> WorkspaceConfigStore::get_character_pic
 
 WorkspaceConfigRevision WorkspaceConfigStore::config_revision() const {
     const std::lock_guard lock(impl_->mutex);
-    impl_->require_open();
     return impl_->revision;
 }
 
@@ -2623,10 +2561,11 @@ WorkspaceConfigApplyResult WorkspaceConfigStore::create_character_for_assistant(
     for (const auto& row : committed) files.emplace(row.name, row.content);
     const auto original = files;
     WorkspaceConfigEditor editor(*workspace, files);
+    std::string id;
     try {
-        allocated_id = allocate_character_id(*workspace, editor);
-        editor.create_character(allocated_id, name, description, provider_id, profile);
-        if (forum_id) editor.add_prepared_character_to_forum(*forum_id, allocated_id);
+        id = allocate_character_id(*workspace, editor);
+        editor.create_character(id, name, description, provider_id, profile);
+        if (forum_id) editor.add_prepared_character_to_forum(*forum_id, id);
     } catch (const std::invalid_argument& error) {
         return impl_->failed(WorkspaceConfigApplyError::invalid_argument,
             sanitize_config_error(error.what(), impl_->tree->workspace()));
@@ -2644,7 +2583,9 @@ WorkspaceConfigApplyResult WorkspaceConfigStore::create_character_for_assistant(
                 .content = content});
         }
     }
-    return impl_->apply_config(version, changes, cancelled);
+    auto result = impl_->apply_config(version, changes, cancelled);
+    if (result.committed) allocated_id.swap(id);
+    return result;
 }
 
 WorkspaceConfigApplyResult WorkspaceConfigStore::undo_config(

@@ -855,6 +855,10 @@ TEST(ApplicationVault, MergeSynchronizationFailureMarksApplicationUnavailable) {
     EXPECT_EQ(
         application->check_context(application->context_epoch()),
         ErrorCode::application_unavailable);
+    const auto boot = application->bootstrap();
+    EXPECT_EQ(boot.state, ApplicationState::unavailable);
+    EXPECT_EQ(boot.presentation.vault_name, "A");
+    EXPECT_TRUE(boot.presentation.forums.empty());
 }
 
 TEST(ApplicationVault, ProtectionSetupFailureRestoresRunningContext) {
@@ -1268,16 +1272,6 @@ TEST(ApplicationVault, SwitchPreservesFileLoggingAndDropsUndo) {
     const auto undo = application->store().undo_config(application->store().config_revision());
     EXPECT_FALSE(undo.committed);
     EXPECT_EQ(undo.error, WorkspaceConfigApplyError::unavailable_undo);
-}
-
-TEST(ApplicationVault, BootstrapDuringUnavailableDoesNotReadClosedHandles) {
-    TwoVaults pair;
-    auto application = Application::open(pair.command);
-    application->mark_unusable();
-    const auto boot = application->bootstrap();
-    EXPECT_EQ(boot.state, ApplicationState::unavailable);
-    EXPECT_EQ(boot.presentation.vault_name, "A");
-    EXPECT_TRUE(boot.presentation.forums.empty());
 }
 
 } // namespace

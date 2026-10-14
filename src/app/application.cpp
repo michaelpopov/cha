@@ -328,17 +328,6 @@ Application::Impl::Impl(
     running = true;
     notified_epoch = live_sessions->context_epoch();
     published_epoch.store(notified_epoch);
-    store->set_restart_required_handler([this] { mark_unusable(); });
-}
-
-void Application::Impl::mark_unusable() {
-    unusable.store(true);
-    state.store(ApplicationState::unavailable);
-    live_sessions->begin_shutdown();
-    pending_media.cancel_all();
-    xai_voice.cancel_all();
-    speech_proxy.stop();
-    audio_downloads->request_stop();
 }
 
 void Application::Impl::publish_capabilities_locked() {
@@ -1651,10 +1640,6 @@ ApiKeyStore& Application::api_keys() {
 
 std::string Application::active_password() const {
     return impl_->active_password;
-}
-
-void Application::mark_unusable() {
-    impl_->mark_unusable();
 }
 
 } // namespace cha::app
