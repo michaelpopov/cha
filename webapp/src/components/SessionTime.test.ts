@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatSessionTime } from './Screens';
+import { formatSessionTime } from './SessionsScreen';
 
 const now = Date.UTC(2026, 7, 6, 12, 0, 0);
 const minute = 60;

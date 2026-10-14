@@ -1,6 +1,6 @@
 #include "media/xai_transcript.h"
 #include "media/xai_socket.h"
-#include "media/xai_voice_session.h"
+#include "app/xai_voice_session.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -228,16 +228,16 @@ TEST(XaiRequest, ReportsCurlWebSocketSchemes) {
 }
 
 TEST(XaiRequest, ScalesDeadlinesFromTheBridgeBudget) {
-    const auto normal = xai_deadline_budget(30000ms);
+    const auto normal = app::xai_deadline_budget(30000ms);
     EXPECT_EQ(normal.startup, 15000ms);
     EXPECT_EQ(normal.stop_budget, 20000ms);
     EXPECT_EQ(normal.audio_send, 2000ms);
-    const auto shortened = xai_deadline_budget(900ms);
+    const auto shortened = app::xai_deadline_budget(900ms);
     EXPECT_EQ(shortened.startup, 600ms);
     EXPECT_EQ(shortened.stop_budget, 600ms);
     EXPECT_EQ(shortened.audio_send, 600ms);
-    EXPECT_EQ(xai_stop_limit(20000ms, 9000ms), 9000ms);
-    EXPECT_EQ(xai_stop_limit(100ms, 30000ms), 100ms);
+    EXPECT_EQ(app::xai_stop_limit(20000ms, 9000ms), 9000ms);
+    EXPECT_EQ(app::xai_stop_limit(100ms, 30000ms), 100ms);
 }
 
 } // namespace

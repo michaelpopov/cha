@@ -15,8 +15,9 @@ import {
   publicErrorMessage,
   type Bootstrap,
   type ChaClient,
+  type NoteItem,
+  type NotesClient,
 } from '../api/client';
-import type { NoteItem, NotesClient } from '../api/nativeClient';
 import type { NativeBridge } from '../api/nativeBridge';
 import { installAppCloseHost } from '../api/nativeClose';
 import { DetailRefreshProvider } from '../detailRefresh';
@@ -49,50 +50,47 @@ import { AppErrorBoundary } from './AppErrorBoundary';
 import { TopBar } from './TopBar';
 import {
   CharacterDetailScreen,
-  CharacterFileScreen,
-  NewCharacterFileScreen,
   CharacterSettingsScreen,
   CharactersScreen,
-  ForumDetailScreen,
+  NewCharacterScreen,
+} from './CharacterScreens';
+import {
+  CharacterFileScreen,
+  NewCharacterFileScreen,
   ForumFileScreen,
   NewForumFileScreen,
+} from './FileScreens';
+import {
+  ForumDetailScreen,
   ForumMembersScreen,
   ForumsScreen,
-  NewPersonaScreen,
-  NewCharacterScreen,
   NewForumScreen,
+} from './ForumScreens';
+import {
+  NewPersonaScreen,
   PersonaDetailScreen,
   PersonaSettingsScreen,
   PersonasScreen,
-  SessionsScreen,
-} from './Screens';
+} from './PersonaScreens';
+import { SessionsScreen } from './SessionsScreen';
 import { NotesScreen } from './NotesScreen';
 import { NotesTree, type DeleteNoteItem, type NoteActions } from './NotesTree';
 import { Sidebar } from './Sidebar';
 import { TransliterationProvider } from './TransliterationMode';
+import { ApiKeyScreen, ApiKeysScreen, NewApiKeyScreen } from './ApiKeySettings';
 import {
-  ApiKeyScreen,
-  ApiKeysScreen,
   DownloadVaultScreen,
   MergeVaultScreen,
-  NewApiKeyScreen,
-  NewProviderScreen,
-  NewStyleScreen,
-  NewVoiceScreen,
   NewVaultScreen,
-  ProviderScreen,
-  ProvidersScreen,
-  R2StorageScreen,
-  StyleScreen,
-  StylesScreen,
-  VoiceScreen,
-  VoiceSettingsScreen,
-  SessionSettingsScreen,
-  WebSearchSettingsScreen,
-  VoicesScreen,
   VaultScreen,
   VaultsScreen,
-} from './Settings';
+} from './VaultSettings';
+import { NewProviderScreen, ProviderScreen, ProvidersScreen } from './ProviderSettings';
+import { NewStyleScreen, StyleScreen, StylesScreen } from './StyleSettings';
+import { NewVoiceScreen, VoiceScreen, VoiceSettingsScreen, VoicesScreen } from './VoiceSettings';
+import { R2StorageScreen } from './R2StorageSettings';
+import { SessionSettingsScreen } from './SessionSettings';
+import { WebSearchSettingsScreen } from './WebSearchSettings';
 
 interface ScreenProps extends ChatActions {
   playbackPositions: Map<string, Map<number, number>>;

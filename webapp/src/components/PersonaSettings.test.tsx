@@ -8,7 +8,7 @@ import {
   fixtureClient,
   personaDetailFixture,
 } from '../test/fixtures';
-import { PersonaSettingsScreen } from './Screens';
+import { PersonaSettingsScreen } from './PersonaScreens';
 
 afterEach(() => {
   vi.unstubAllGlobals();

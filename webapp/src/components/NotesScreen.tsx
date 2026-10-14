@@ -11,8 +11,12 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import { publicErrorMessage, type ChaClient } from '../api/client';
-import type { NoteItem, NotesClient } from '../api/nativeClient';
+import {
+  publicErrorMessage,
+  type ChaClient,
+  type NoteItem,
+  type NotesClient,
+} from '../api/client';
 import {
   createNotesEditor,
   importPictureFile,

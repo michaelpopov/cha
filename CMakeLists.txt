@@ -314,10 +314,12 @@ add_library(cha_lib STATIC
     src/providers/voice_websocket.cpp
     src/app/r2_database_transfer.cpp
     src/workspace/workspace.cpp
+    src/workspace/workspace_config_editor.cpp
     src/workspace/workspace_config_store.cpp
     src/session/session_open.cpp
     src/app/application.cpp
     src/app/background_jobs.cpp
+    src/app/xai_voice_session.cpp
     src/app/vault_operations.cpp
     src/app/workspace_operations.cpp
     src/app/settings_operations.cpp
@@ -329,7 +331,6 @@ add_library(cha_lib STATIC
     src/media/pending_media_registry.cpp
     src/media/xai_transcript.cpp
     src/media/xai_curl_socket.cpp
-    src/media/xai_voice_session.cpp
     src/runtime/command_queue.cpp
     src/runtime/request_parser.cpp
     src/runtime/protocol.cpp
@@ -645,7 +646,7 @@ if(BUILD_TESTING)
     add_executable(
         cha_native_runtime_tests
         tests/native/unit_runtime_bridge.cpp
-        packaging/macos/runtime_bridge.cpp
+        packaging/host/runtime_bridge.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(
         cha_native_runtime_tests
@@ -657,7 +658,7 @@ if(BUILD_TESTING)
         cha_native_runtime_tests
         PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/tests"
-            "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos")
+            "${CMAKE_CURRENT_SOURCE_DIR}/packaging/host")
     cha_enable_warnings(cha_native_runtime_tests)
 
     add_executable(
@@ -745,10 +746,10 @@ endif()
 if(APPLE)
     add_library(
         cha_macos_runtime SHARED
-        packaging/macos/runtime_bridge.cpp)
+        packaging/host/runtime_bridge.cpp)
     target_link_libraries(cha_macos_runtime PRIVATE cha_lib)
     target_include_directories(
-        cha_macos_runtime PRIVATE packaging/macos)
+        cha_macos_runtime PRIVATE packaging/host)
     set_target_properties(
         cha_macos_runtime
         PROPERTIES
@@ -779,12 +780,12 @@ if(WIN32)
     add_executable(
         cha_windows_app WIN32
         packaging/windows/main.cpp
-        packaging/macos/runtime_bridge.cpp
+        packaging/host/runtime_bridge.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/generated/CHA.rc
         ${CHA_WINDOWS_ICON}
         ${CHA_WINDOWS_MANIFEST})
     target_include_directories(
-        cha_windows_app PRIVATE packaging/macos)
+        cha_windows_app PRIVATE packaging/host)
     # The host calls the wide Win32 entry points exclusively; without UNICODE
     # the resource-id macros (IDC_ARROW and friends) expand to their narrow
     # form and will not convert to LPCWSTR.
@@ -808,12 +809,12 @@ if(WIN32)
     add_executable(
         cha_windows_test_app WIN32
         packaging/windows/main.cpp
-        packaging/macos/runtime_bridge.cpp
+        packaging/host/runtime_bridge.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/generated/CHA.rc
         ${CHA_WINDOWS_ICON}
         ${CHA_WINDOWS_MANIFEST})
     target_include_directories(
-        cha_windows_test_app PRIVATE packaging/macos)
+        cha_windows_test_app PRIVATE packaging/host)
     target_compile_definitions(
         cha_windows_test_app PRIVATE CHA_NATIVE_INSTRUMENTATION UNICODE _UNICODE)
     target_link_libraries(

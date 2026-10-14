@@ -12,9 +12,9 @@ rules used by application media operations.
 | `pending_media_registry.*` | Cancellation and cleanup associations for pending media replies. |
 | `xai_transcript.*` | xAI word-time normalizer, STT URL, and PCM base64 decoding. |
 | `xai_socket.h`, `xai_curl_socket.cpp` | One libcurl WebSocket connection for an xAI dictation. |
-| `xai_voice_session.*` | xAI dictation registry, worker, and bridge reply lifecycle. |
 
-Application-facing request handling remains in `app/media_operations.*`.
+Application-facing request handling remains in `app/media_operations.*`, and
+the xAI session coordinator lives in `app/xai_voice_session.*`.
 Voice output request construction and transport remain in `providers/voice_output.*`.
 
 Fresh speech can be played while its download grows; complete validated audio

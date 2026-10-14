@@ -11,7 +11,7 @@ import {
   voiceDetailFixture,
   voiceOutputRuntimeFixture,
 } from '../test/fixtures';
-import { CharacterSettingsScreen } from './Screens';
+import { CharacterSettingsScreen } from './CharacterScreens';
 
 afterEach(() => {
   vi.unstubAllGlobals();

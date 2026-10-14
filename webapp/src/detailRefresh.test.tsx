@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { expect, it, vi } from 'vitest';
 
 import { DetailActions, EditableTitle } from './components/DetailActions';
-import { CharacterFileScreen } from './components/Screens';
+import { CharacterFileScreen } from './components/FileScreens';
 import {
   DetailRefreshProvider,
   StaleNotice,

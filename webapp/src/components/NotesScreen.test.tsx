@@ -3,8 +3,11 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useRef, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ChaError } from '../api/client';
-import type { NoteContent, NoteItem } from '../api/nativeClient';
+import {
+  ChaError,
+  type NoteContent,
+  type NoteItem,
+} from '../api/client';
 import { pictureTypeMessage } from '../notes/pictures';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveDelayMs, type NoteSaveHandle } from '../notes/useNoteSave';

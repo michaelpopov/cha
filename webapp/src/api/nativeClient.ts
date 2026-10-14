@@ -1,4 +1,7 @@
 import {
+  type NoteItem,
+  type NoteContent,
+  type NotesClient,
   ChaError,
   ChaProtocolError,
   isApiKeyDetail,
@@ -68,7 +71,6 @@ import {
 } from './client';
 import { nativeProtocolVersion, type NativeBridge } from './nativeBridge';
 import { isRecord } from './guards';
-import type { components } from './schema';
 import { validateBootstrap } from '../state/bootstrap';
 
 function isOpenSessionResult(value: unknown): value is OpenSessionResult {
@@ -127,22 +129,6 @@ function isVaultDetail(value: unknown): value is VaultDetail {
     && (value.modify_path === null || typeof value.modify_path === 'string')
     && typeof value.active === 'boolean'
     && typeof value.can_delete === 'boolean';
-}
-
-export type NoteItem = components['schemas']['NoteItem'];
-export type NoteContent = components['schemas']['NoteContent'];
-
-export interface NotesClient {
-  listNoteItems: () => Promise<NoteItem[]>;
-  createNoteItem: (
-    parentId: number | null,
-    kind: NoteItem['kind'],
-    name: string,
-  ) => Promise<NoteItem>;
-  getNote: (id: number) => Promise<NoteContent>;
-  saveNote: (id: number, document: Record<string, unknown>) => Promise<void>;
-  renameNoteItem: (id: number, name: string) => Promise<NoteItem>;
-  deleteNoteItem: (id: number) => Promise<void>;
 }
 
 function isNoteId(value: unknown): value is number {

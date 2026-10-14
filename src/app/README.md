@@ -16,6 +16,7 @@ depend on it.
 | `workspace_operations.*` | Workspace, character, forum, session-list, and configuration-file operations. |
 | `vault_operations.*` | Vault lifecycle, maintenance, switching, merge, protection, and backup coordination. |
 | `media_operations.*` | Application-facing speech, voice-input, and media-resource operations. |
+| `xai_voice_session.*` | xAI dictation registry, worker, and bridge reply lifecycle. |
 | `r2_database_transfer.*` | R2 listing, upload, download, signing, validation, and local replacement. |
 
 The application may depend on every domain directory. `bridge/` and native

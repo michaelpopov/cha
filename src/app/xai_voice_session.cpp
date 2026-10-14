@@ -1,4 +1,4 @@
-#include "media/xai_voice_session.h"
+#include "app/xai_voice_session.h"
 
 #include "media/xai_transcript.h"
 #include "util/logging.h"
@@ -10,7 +10,7 @@
 #include <optional>
 #include <utility>
 
-namespace cha::media {
+namespace cha::app {
 namespace {
 
 using clock = std::chrono::steady_clock;
@@ -39,7 +39,7 @@ struct Session {
     std::atomic<std::uint64_t> audio_request_id{0};
     std::atomic<std::uint64_t> stop_request_id{0};
 
-    std::shared_ptr<app::OperationReply> start_reply;
+    std::shared_ptr<OperationReply> start_reply;
     bool start_completed = false;
     bool ready = false;
     bool finished = false;
@@ -49,13 +49,13 @@ struct Session {
 
     struct AudioCall {
         std::vector<unsigned char> pcm;
-        std::shared_ptr<app::OperationReply> reply;
+        std::shared_ptr<OperationReply> reply;
         std::chrono::milliseconds deadline{0};
     };
     std::optional<AudioCall> audio;
 
     struct StopCall {
-        std::shared_ptr<app::OperationReply> reply;
+        std::shared_ptr<OperationReply> reply;
         clock::time_point deadline{};
     };
     std::optional<StopCall> stop;
@@ -88,8 +88,8 @@ struct XaiVoiceSessions::Impl {
         std::string message;
     };
 
-    explicit Impl(app::BackgroundJobs& jobs) : jobs(jobs) {
-        factory = [] { return make_xai_curl_socket(); };
+    explicit Impl(BackgroundJobs& jobs) : jobs(jobs) {
+        factory = [] { return media::make_xai_curl_socket(); };
     }
 
     void finish_slot(
@@ -115,7 +115,7 @@ struct XaiVoiceSessions::Impl {
     }
 
     std::mutex mu;
-    app::BackgroundJobs& jobs;
+    BackgroundJobs& jobs;
     SocketFactory factory;
     std::map<SessionKey, Slot> slots;
     std::map<std::string, std::string> active_by_connection;
@@ -126,9 +126,9 @@ namespace {
 void run_worker(
     const std::function<void(const std::shared_ptr<Session>&, std::optional<Terminal>)>& finish,
     const std::shared_ptr<Session>& session,
-    std::unique_ptr<XaiSocket> socket,
+    std::unique_ptr<media::XaiSocket> socket,
     std::atomic_bool& job_cancel) {
-    XaiTranscriptNormalizer normalizer;
+    media::XaiTranscriptNormalizer normalizer;
     std::vector<std::string> pieces;
     std::string preview;
     std::size_t pending_bytes = 0;
@@ -147,9 +147,9 @@ void run_worker(
         pieces.clear();
         preview.clear();
         pending_bytes = 0;
-        std::shared_ptr<app::OperationReply> start_reply;
-        std::shared_ptr<app::OperationReply> audio_reply;
-        std::shared_ptr<app::OperationReply> stop_reply;
+        std::shared_ptr<OperationReply> start_reply;
+        std::shared_ptr<OperationReply> audio_reply;
+        std::shared_ptr<OperationReply> stop_reply;
         bool start_completed = false;
         {
             std::lock_guard lock(session->mu);
@@ -181,40 +181,40 @@ void run_worker(
     };
     const auto throw_stopped = [&] {
         if (!stopping()) return;
-        throw XaiVoiceFailure(
-            ErrorCode::operation_cancelled, std::string(xai_operation_cancelled));
+        throw media::XaiVoiceFailure(
+            ErrorCode::operation_cancelled, std::string(media::xai_operation_cancelled));
     };
     const auto append_addition = [&](std::string addition) {
         if (addition.empty()) return;
-        if (pending_bytes + addition.size() > xai_max_pending_text) {
-            throw XaiVoiceFailure(
-                ErrorCode::internal_error, std::string(xai_pending_text_limit));
+        if (pending_bytes + addition.size() > media::xai_max_pending_text) {
+            throw media::XaiVoiceFailure(
+                ErrorCode::internal_error, std::string(media::xai_pending_text_limit));
         }
         pending_bytes += addition.size();
         pieces.push_back(std::move(addition));
     };
-    const auto handle = [&](const XaiIncoming& message) {
+    const auto handle = [&](const media::XaiIncoming& message) {
         if (message.closed) {
-            throw XaiVoiceFailure(
-                ErrorCode::internal_error, std::string(xai_connection_closed));
+            throw media::XaiVoiceFailure(
+                ErrorCode::internal_error, std::string(media::xai_connection_closed));
         }
-        if (message.binary) return XaiTranscriptUpdate{};
-        if (message.payload.size() > xai_max_provider_message) {
-            throw XaiTranscriptError(std::string(xai_malformed_transcript));
+        if (message.binary) return media::XaiTranscriptUpdate{};
+        if (message.payload.size() > media::xai_max_provider_message) {
+            throw media::XaiTranscriptError(std::string(media::xai_malformed_transcript));
         }
         const nlohmann::json event = nlohmann::json::parse(
             message.payload, nullptr, false);
         if (event.is_discarded()) {
-            throw XaiTranscriptError(std::string(xai_malformed_transcript));
+            throw media::XaiTranscriptError(std::string(media::xai_malformed_transcript));
         }
-        XaiTranscriptUpdate update = normalizer.apply(event);
+        media::XaiTranscriptUpdate update = normalizer.apply(event);
         if (update.interim) preview = std::move(update.preview);
         else if (update.final) preview.clear();
         append_addition(std::move(update.addition));
         if (update.done) {
             if (!audio_done_sent) {
-                throw XaiVoiceFailure(
-                    ErrorCode::internal_error, std::string(xai_completed_early));
+                throw media::XaiVoiceFailure(
+                    ErrorCode::internal_error, std::string(media::xai_completed_early));
             }
             got_done = true;
         }
@@ -240,15 +240,15 @@ void run_worker(
         while (!created) {
             throw_stopped();
             if (clock::now() >= startup_deadline) {
-                throw XaiVoiceFailure(
-                    ErrorCode::command_timeout, std::string(xai_timed_out));
+                throw media::XaiVoiceFailure(
+                    ErrorCode::command_timeout, std::string(media::xai_timed_out));
             }
             auto message = socket->recv(std::chrono::milliseconds(100));
             if (!message) continue;
             created = handle(*message).created;
         }
         throw_stopped();
-        std::shared_ptr<app::OperationReply> start_reply;
+        std::shared_ptr<OperationReply> start_reply;
         {
             std::lock_guard lock(session->mu);
             session->ready = true;
@@ -260,9 +260,9 @@ void run_worker(
                 {"stop_budget_ms", budget.stop_budget.count()},
             })) {
             session->cancel.store(true);
-            throw XaiVoiceFailure(
+            throw media::XaiVoiceFailure(
                 ErrorCode::operation_cancelled,
-                std::string(xai_operation_cancelled));
+                std::string(media::xai_operation_cancelled));
         }
 
         auto last_audio = clock::now();
@@ -271,7 +271,7 @@ void run_worker(
             drain();
             if (got_done) break;
             std::vector<unsigned char> pcm;
-            std::shared_ptr<app::OperationReply> audio_reply;
+            std::shared_ptr<OperationReply> audio_reply;
             std::chrono::milliseconds audio_deadline{0};
             std::optional<clock::time_point> stop_deadline;
             {
@@ -286,8 +286,8 @@ void run_worker(
             if (session->idle_timeout.count() > 0 && !stop_deadline
                 && pcm.empty() && clock::now() - last_audio >= session->idle_timeout) {
                 idle_expired = true;
-                throw XaiVoiceFailure(
-                    ErrorCode::command_timeout, std::string(xai_timed_out));
+                throw media::XaiVoiceFailure(
+                    ErrorCode::command_timeout, std::string(media::xai_timed_out));
             }
             if (!pcm.empty() && !audio_done_sent) {
                 last_audio = clock::now();
@@ -314,16 +314,16 @@ void run_worker(
                         pieces_json(session->session_id, std::move(delivered),
                                     delivered_preview))) {
                     session->cancel.store(true);
-                    throw XaiVoiceFailure(
+                    throw media::XaiVoiceFailure(
                         ErrorCode::operation_cancelled,
-                        std::string(xai_operation_cancelled));
+                        std::string(media::xai_operation_cancelled));
                 }
                 continue;
             }
             if (stop_deadline && !audio_done_sent) {
                 if (clock::now() >= *stop_deadline) {
-                    throw XaiVoiceFailure(
-                        ErrorCode::command_timeout, std::string(xai_timed_out));
+                    throw media::XaiVoiceFailure(
+                        ErrorCode::command_timeout, std::string(media::xai_timed_out));
                 }
                 socket->send(
                     "{\"type\":\"audio.done\"}",
@@ -336,8 +336,8 @@ void run_worker(
             }
             if (audio_done_sent) {
                 if (!stop_deadline || clock::now() >= *stop_deadline) {
-                    throw XaiVoiceFailure(
-                        ErrorCode::command_timeout, std::string(xai_timed_out));
+                    throw media::XaiVoiceFailure(
+                        ErrorCode::command_timeout, std::string(media::xai_timed_out));
                 }
                 if (auto message = socket->recv(std::chrono::milliseconds(100))) {
                     (void)handle(*message);
@@ -349,7 +349,7 @@ void run_worker(
             }
         }
 
-        std::shared_ptr<app::OperationReply> stop_reply;
+        std::shared_ptr<OperationReply> stop_reply;
         {
             std::lock_guard lock(session->mu);
             session->finished = true;
@@ -363,17 +363,17 @@ void run_worker(
             (void)stop_reply->complete(
                 pieces_json(session->session_id, std::move(pieces), preview));
         }
-    } catch (const XaiVoiceFailure& error) {
+    } catch (const media::XaiVoiceFailure& error) {
         // A bridge deadline cancels the worker. Report it as a timeout.
         if (error.code == ErrorCode::operation_cancelled && session->timed_out.load()) {
-            fail(ErrorCode::command_timeout, std::string(xai_timed_out));
+            fail(ErrorCode::command_timeout, std::string(media::xai_timed_out));
         } else {
             fail(error.code, error.what());
         }
-    } catch (const XaiTranscriptError& error) {
+    } catch (const media::XaiTranscriptError& error) {
         fail(ErrorCode::internal_error, error.what());
     } catch (const std::exception&) {
-        fail(ErrorCode::internal_error, std::string(xai_connection_failed));
+        fail(ErrorCode::internal_error, std::string(media::xai_connection_failed));
     }
 }
 
@@ -399,7 +399,7 @@ std::chrono::milliseconds xai_stop_limit(
     return std::min(remaining, deadline);
 }
 
-XaiVoiceSessions::XaiVoiceSessions(app::BackgroundJobs& jobs)
+XaiVoiceSessions::XaiVoiceSessions(BackgroundJobs& jobs)
     : impl_(std::make_unique<Impl>(jobs)) {}
 
 XaiVoiceSessions::~XaiVoiceSessions() {
@@ -409,10 +409,10 @@ XaiVoiceSessions::~XaiVoiceSessions() {
 void XaiVoiceSessions::set_socket_factory(SocketFactory factory) {
     std::lock_guard lock(impl_->mu);
     if (factory) impl_->factory = std::move(factory);
-    else impl_->factory = [] { return make_xai_curl_socket(); };
+    else impl_->factory = [] { return media::make_xai_curl_socket(); };
 }
 
-std::shared_ptr<app::OperationReply> XaiVoiceSessions::start(
+std::shared_ptr<OperationReply> XaiVoiceSessions::start(
     std::string connection_id,
     std::uint64_t request_id,
     std::string session_id,
@@ -420,7 +420,7 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::start(
     std::string authorization,
     std::chrono::milliseconds deadline,
     std::chrono::milliseconds idle_timeout) {
-    auto reply = std::make_shared<app::OperationReply>();
+    auto reply = std::make_shared<OperationReply>();
     auto session = std::make_shared<Session>();
     session->connection_id = connection_id;
     session->session_id = session_id;
@@ -440,7 +440,7 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::start(
             impl_->slots.erase(existing);
             reply->fail(
                 ErrorCode::operation_cancelled,
-                std::string(xai_operation_cancelled));
+                std::string(media::xai_operation_cancelled));
             return reply;
         }
         if (existing != impl_->slots.end()
@@ -468,9 +468,9 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::start(
     const bool launched = impl_->jobs.launch(
         [registry = impl_.get(), session, factory = std::move(factory)](
             std::atomic_bool& cancel) {
-            std::unique_ptr<XaiSocket> socket;
+            std::unique_ptr<media::XaiSocket> socket;
             try {
-                socket = factory ? factory() : make_xai_curl_socket();
+                socket = factory ? factory() : media::make_xai_curl_socket();
             } catch (const std::exception&) {
                 socket.reset();
             }
@@ -483,7 +483,7 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::start(
                 if (session->start_reply) {
                     session->start_reply->fail(
                         ErrorCode::internal_error,
-                        std::string(xai_connection_failed));
+                        std::string(media::xai_connection_failed));
                 }
                 finish(session, std::nullopt);
                 return;
@@ -493,18 +493,18 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::start(
     if (!launched) {
         impl_->finish_slot(session, std::nullopt);
         reply->fail(
-            ErrorCode::operation_cancelled, std::string(xai_operation_cancelled));
+            ErrorCode::operation_cancelled, std::string(media::xai_operation_cancelled));
     }
     return reply;
 }
 
-std::shared_ptr<app::OperationReply> XaiVoiceSessions::audio(
+std::shared_ptr<OperationReply> XaiVoiceSessions::audio(
     std::string connection_id,
     std::uint64_t request_id,
     std::string session_id,
     std::vector<unsigned char> pcm,
     std::chrono::milliseconds deadline) {
-    auto reply = std::make_shared<app::OperationReply>();
+    auto reply = std::make_shared<OperationReply>();
     std::shared_ptr<Session> session;
     std::optional<Terminal> terminal;
     {
@@ -518,7 +518,7 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::audio(
         if (found->second.kind == Impl::Slot::Kind::tombstone) {
             reply->fail(
                 ErrorCode::operation_cancelled,
-                std::string(xai_operation_cancelled));
+                std::string(media::xai_operation_cancelled));
             return reply;
         }
         if (found->second.kind == Impl::Slot::Kind::terminal) {
@@ -551,13 +551,13 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::audio(
     return reply;
 }
 
-std::shared_ptr<app::OperationReply> XaiVoiceSessions::stop(
+std::shared_ptr<OperationReply> XaiVoiceSessions::stop(
     std::string connection_id,
     std::uint64_t request_id,
     std::string session_id,
     std::chrono::milliseconds remaining,
     std::chrono::milliseconds deadline) {
-    auto reply = std::make_shared<app::OperationReply>();
+    auto reply = std::make_shared<OperationReply>();
     std::shared_ptr<Session> session;
     std::optional<Terminal> terminal;
     {
@@ -684,4 +684,4 @@ void XaiVoiceSessions::expire(
     }
 }
 
-} // namespace cha::media
+} // namespace cha::app

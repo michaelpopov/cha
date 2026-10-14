@@ -2,8 +2,10 @@ import type { Editor } from '@tiptap/core';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ChaError } from '../api/client';
-import type { NoteItem } from '../api/nativeClient';
+import {
+  ChaError,
+  type NoteItem,
+} from '../api/client';
 import { bootstrapFixture, fixtureClient, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
 

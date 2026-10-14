@@ -6,30 +6,21 @@ import { ChaError, type ChaClient, type ProviderDetail, type StyleDetail, type V
 import { DetailRefreshProvider } from '../detailRefresh';
 import { appReducer, initialAppState, type AppAction, type AppState } from '../state/view';
 import { bootstrapFixture, fixtureClient, voiceDetailFixture } from '../test/fixtures';
+import { ApiKeyScreen, ApiKeysScreen, NewApiKeyScreen } from './ApiKeySettings';
 import {
-  ApiKeyScreen,
-  ApiKeysScreen,
   DownloadVaultScreen,
   MergeVaultScreen,
-  NewApiKeyScreen,
-  NewProviderScreen,
-  NewStyleScreen,
   NewVaultScreen,
-  NewVoiceScreen,
-  ProviderScreen,
-  ProvidersScreen,
-  R2StorageScreen,
-  SettingsNavigation,
-  StyleScreen,
-  StylesScreen,
   VaultScreen,
   VaultsScreen,
-  VoiceScreen,
-  VoiceSettingsScreen,
-  SessionSettingsScreen,
-  WebSearchSettingsScreen,
-  VoicesScreen,
-} from './Settings';
+} from './VaultSettings';
+import { NewProviderScreen, ProviderScreen, ProvidersScreen } from './ProviderSettings';
+import { NewStyleScreen, StyleScreen, StylesScreen } from './StyleSettings';
+import { NewVoiceScreen, VoiceScreen, VoiceSettingsScreen, VoicesScreen } from './VoiceSettings';
+import { R2StorageScreen } from './R2StorageSettings';
+import { SettingsNavigation } from './Settings';
+import { SessionSettingsScreen } from './SessionSettings';
+import { WebSearchSettingsScreen } from './WebSearchSettings';
 
 afterEach(() => {
   vi.unstubAllGlobals();

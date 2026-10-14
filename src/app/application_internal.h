@@ -4,7 +4,7 @@
 #include "app/application.h"
 #include "app/assistant_service.h"
 #include "app/background_jobs.h"
-#include "media/xai_voice_session.h"
+#include "app/xai_voice_session.h"
 #include "media/pending_media_registry.h"
 #include "providers/api_key_store.h"
 #include "providers/openai_oauth.h"
@@ -153,7 +153,7 @@ struct Application::Impl {
     std::optional<std::string> speech_url_override;
     PendingMediaRegistry pending_media{media_resources};
     BackgroundJobs background_jobs;
-    media::XaiVoiceSessions xai_voice{background_jobs};
+    XaiVoiceSessions xai_voice{background_jobs};
     mutable std::timed_mutex lifecycle_mutex;
     std::atomic_bool stopping_flag{};
     bool running{};

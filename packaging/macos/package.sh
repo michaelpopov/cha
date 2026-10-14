@@ -106,7 +106,7 @@ xcrun swiftc \
     -target "arm64-apple-macos$deployment_target" \
     -framework AppKit \
     -framework WebKit \
-    -import-objc-header "$repository/packaging/macos/runtime_bridge.h" \
+    -import-objc-header "$repository/packaging/host/runtime_bridge.h" \
     -L "$native_build" \
     -lChaRuntime \
     -Xlinker -rpath \
@@ -194,7 +194,7 @@ bundle_config="$bundle_test/config"
 mkdir -p "$bundle_config"
 xcrun clang \
     -target "arm64-apple-macos$deployment_target" \
-    -I "$repository/packaging/macos" \
+    -I "$repository/packaging/host" \
     -L "$contents/Frameworks" \
     -lChaRuntime \
     "$repository/packaging/macos/runtime-smoke.c" \

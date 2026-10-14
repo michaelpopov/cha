@@ -64,8 +64,9 @@ blocking unrelated operations.
 | Files | Responsibility |
 | --- | --- |
 | `workspace.*` | Load, validate, and query an immutable workspace configuration. |
-| `workspace_config_editor.h` | Edit candidate workspace text files before validation and commit. |
+| `workspace_config_editor.*` | Edit candidate workspace text files before validation and commit. |
 | `workspace_config_store.*` | Materialize, publish, import, export, and transactionally update workspace configuration. |
+| `workspace_internal.h` | Declare helpers shared by workspace loading and configuration editing. |
 | `builtins.h` | Declare reserved built-in IDs and Welcome constants. |
 
 This directory may depend on `characters/`, `chat/`, `providers/`, `storage/`,

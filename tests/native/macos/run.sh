@@ -30,7 +30,7 @@ xcrun swiftc \
     -target "arm64-apple-macos$deployment_target" \
     -framework AppKit \
     -framework WebKit \
-    -import-objc-header "$repository/packaging/macos/runtime_bridge.h" \
+    -import-objc-header "$repository/packaging/host/runtime_bridge.h" \
     -L "$(dirname "$runtime_lib")" \
     -lChaRuntime \
     -Xlinker -rpath \

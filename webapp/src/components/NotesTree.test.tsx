@@ -2,8 +2,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ChaError } from '../api/client';
-import type { NoteItem, NotesClient } from '../api/nativeClient';
+import {
+  ChaError,
+  type NoteItem,
+  type NotesClient,
+} from '../api/client';
 import { NotesTree, type DeleteNoteItem, type NoteActions } from './NotesTree';
 
 const study: NoteItem = { id: 1, parent_id: null, kind: 'folder', name: 'Study' };

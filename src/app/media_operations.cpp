@@ -3,7 +3,7 @@
 #include "app/application_internal.h"
 #include "media/media_resources.h"
 #include "media/xai_transcript.h"
-#include "media/xai_voice_session.h"
+#include "app/xai_voice_session.h"
 #include "app/settings_operations.h"
 #include "util/curl.h"
 #include "util/logging.h"

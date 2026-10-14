@@ -8,7 +8,8 @@ import { initialAppState, type AppState } from '../state/view';
 import {
   bootstrapFixture, fixtureClient, forumDetailFixture, personaDetailFixture,
 } from '../test/fixtures';
-import { ForumMembersScreen, PersonaDetailScreen } from './Screens';
+import { ForumMembersScreen } from './ForumScreens';
+import { PersonaDetailScreen } from './PersonaScreens';
 
 it('refreshes a persona back to its original value after a local save', async () => {
   const user = userEvent.setup();

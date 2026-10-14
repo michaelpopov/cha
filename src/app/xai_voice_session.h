@@ -12,7 +12,7 @@
 #include <string_view>
 #include <vector>
 
-namespace cha::media {
+namespace cha::app {
 
 struct XaiDeadlineBudget {
     std::chrono::milliseconds startup{0};
@@ -29,16 +29,16 @@ struct XaiDeadlineBudget {
 
 class XaiVoiceSessions {
 public:
-    explicit XaiVoiceSessions(app::BackgroundJobs& jobs);
+    explicit XaiVoiceSessions(BackgroundJobs& jobs);
     ~XaiVoiceSessions();
 
     XaiVoiceSessions(const XaiVoiceSessions&) = delete;
     XaiVoiceSessions& operator=(const XaiVoiceSessions&) = delete;
 
-    using SocketFactory = std::function<std::unique_ptr<XaiSocket>()>;
+    using SocketFactory = std::function<std::unique_ptr<media::XaiSocket>()>;
     void set_socket_factory(SocketFactory factory);
 
-    [[nodiscard]] std::shared_ptr<app::OperationReply> start(
+    [[nodiscard]] std::shared_ptr<OperationReply> start(
         std::string connection_id,
         std::uint64_t request_id,
         std::string session_id,
@@ -47,14 +47,14 @@ public:
         std::chrono::milliseconds deadline,
         std::chrono::milliseconds idle_timeout = {});
 
-    [[nodiscard]] std::shared_ptr<app::OperationReply> audio(
+    [[nodiscard]] std::shared_ptr<OperationReply> audio(
         std::string connection_id,
         std::uint64_t request_id,
         std::string session_id,
         std::vector<unsigned char> pcm,
         std::chrono::milliseconds deadline);
 
-    [[nodiscard]] std::shared_ptr<app::OperationReply> stop(
+    [[nodiscard]] std::shared_ptr<OperationReply> stop(
         std::string connection_id,
         std::uint64_t request_id,
         std::string session_id,
@@ -73,4 +73,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace cha::media
+} // namespace cha::app

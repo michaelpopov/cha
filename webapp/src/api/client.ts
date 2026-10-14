@@ -70,6 +70,9 @@ export type VaultUploadCheck = {
   status: 'match' | 'mismatch' | 'missing';
   context_epoch: number;
 };
+export type NoteItem = components['schemas']['NoteItem'];
+export type NoteContent = components['schemas']['NoteContent'];
+
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
 export type MediaResource = components['schemas']['MediaResource'];
 export type BridgeInfo = components['schemas']['BridgeInfo'];
@@ -103,6 +106,19 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
       || failure instanceof ChaProtocolError
     ? failure.message
     : fallback;
+}
+
+export interface NotesClient {
+  listNoteItems: () => Promise<NoteItem[]>;
+  createNoteItem: (
+    parentId: number | null,
+    kind: NoteItem['kind'],
+    name: string,
+  ) => Promise<NoteItem>;
+  getNote: (id: number) => Promise<NoteContent>;
+  saveNote: (id: number, document: Record<string, unknown>) => Promise<void>;
+  renameNoteItem: (id: number, name: string) => Promise<NoteItem>;
+  deleteNoteItem: (id: number) => Promise<void>;
 }
 
 export interface ChaClient {

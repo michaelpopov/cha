@@ -4,12 +4,12 @@ import type {
   CharacterAppearance,
   CharacterDetail,
   ForumDetail,
+  NotesClient,
   OpenAiAuth,
   PersonaDetail,
   SessionSnapshot,
   VoiceDetail,
 } from '../api/client';
-import type { NotesClient } from '../api/nativeClient';
 
 // A character that configures nothing still carries an appearance on the wire.
 export const plainVoice: CharacterAppearance = {
