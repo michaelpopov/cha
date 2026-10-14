@@ -139,7 +139,6 @@ private:
         CharacterId character_id;
         std::string character_display_name;
         ResponsePhase phase{ResponsePhase::waiting};
-        std::string reasoning_text;
         AnswerTimestampState answer_timestamp_state{
             AnswerTimestampState::checking};
         std::string pending_answer_text;

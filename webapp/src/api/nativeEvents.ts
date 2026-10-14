@@ -44,11 +44,8 @@ export function isNativeSessionEvent(value: unknown): value is NativeSessionEven
 }
 
 function knownTarget(snapshot: SessionSnapshot, event: AppendEvent): boolean {
-  if (event.target.kind === 'entry') {
-    const entryId = event.target.entry_id;
-    return snapshot.transcript.some((entry) => entry.id === entryId);
-  }
-  return snapshot.generation.request_id === event.target.request_id;
+  const entryId = event.target.entry_id;
+  return snapshot.transcript.some((entry) => entry.id === entryId);
 }
 
 export function createNativeEventProjection(

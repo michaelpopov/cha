@@ -346,7 +346,6 @@ function appendSessionEvent(
   event: AppendEvent,
 ): SessionSnapshot {
   const target = event.target;
-  if (target.kind !== 'entry') return snapshot;
   const entryIndex = snapshot.transcript.findIndex(({ id }) => id === target.entry_id);
   if (entryIndex < 0) return snapshot;
   const transcript = [...snapshot.transcript];

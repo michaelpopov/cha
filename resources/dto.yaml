@@ -1393,7 +1393,7 @@ components:
     GenerationState:
       type: object
       additionalProperties: false
-      required: [active, character_id, character_display_name, phase, reasoning_text]
+      required: [active, character_id, character_display_name, phase]
       properties:
         active:
           type: boolean
@@ -1406,8 +1406,6 @@ components:
         phase:
           type: string
           enum: [waiting, reasoning, answering, stopping]
-        reasoning_text:
-          type: string
 
     SessionSnapshot:
       type: object
@@ -1469,34 +1467,13 @@ components:
         entry_id:
           $ref: "#/components/schemas/UnsignedInteger"
 
-    AppendTargetReasoning:
-      type: object
-      additionalProperties: false
-      required: [kind, request_id]
-      properties:
-        kind:
-          type: string
-          const: reasoning
-        request_id:
-          $ref: "#/components/schemas/UnsignedInteger"
-
-    AppendTarget:
-      oneOf:
-        - $ref: "#/components/schemas/AppendTargetEntry"
-        - $ref: "#/components/schemas/AppendTargetReasoning"
-      discriminator:
-        propertyName: kind
-        mapping:
-          entry: "#/components/schemas/AppendTargetEntry"
-          reasoning: "#/components/schemas/AppendTargetReasoning"
-
     AppendEvent:
       type: object
       additionalProperties: false
       required: [target, text, seq]
       properties:
         target:
-          $ref: "#/components/schemas/AppendTarget"
+          $ref: "#/components/schemas/AppendTargetEntry"
         text:
           type: string
         seq:

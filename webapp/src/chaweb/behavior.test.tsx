@@ -35,7 +35,6 @@ function generation(active: boolean): SessionSnapshot['generation'] {
     character_id: active ? 'guide' : '',
     character_display_name: active ? 'Guide' : '',
     phase: active ? 'answering' : 'waiting',
-    reasoning_text: 'hidden reasoning',
   };
 }
 

@@ -5,7 +5,6 @@
 #include "session/controller_update.h"
 #include "session/generation_status.h"
 
-#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -537,15 +536,8 @@ struct Error {
     std::string message;
 };
 
-struct SnapshotAppendSelection {
-    TextTarget target;
-    std::optional<std::size_t> transcript_index;
-};
-
-// The snapshot is the authoritative base for later append events. Keep target
-// selection shared by the session actor and its transport mailbox so they
-// cannot establish different delta bases.
-[[nodiscard]] std::optional<SnapshotAppendSelection> snapshot_append_selection(
+// Select the streaming entry that later append events can extend.
+[[nodiscard]] std::optional<EntryTextTarget> snapshot_append_target(
     const SessionSnapshot& snapshot);
 
 // Owning payload moved from a session owner thread into the SSE mailbox.
@@ -555,7 +547,7 @@ struct SnapshotEvent {
 };
 
 struct AppendEvent {
-    TextTarget target;
+    EntryTextTarget target;
     std::string text;
     std::uint64_t seq{};
 };

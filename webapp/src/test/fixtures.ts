@@ -175,7 +175,6 @@ export const snapshotFixture: SessionSnapshot = {
     character_id: '',
     character_display_name: '',
     phase: 'waiting',
-    reasoning_text: '',
   },
   lifecycle: 'running',
 };

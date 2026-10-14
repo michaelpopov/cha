@@ -58,8 +58,7 @@
     "active": false,
     "character_id": "",
     "character_display_name": "",
-    "phase": "waiting",
-    "reasoning_text": ""
+    "phase": "waiting"
   },
   "lifecycle": "running"
 }

@@ -24,8 +24,8 @@ make run-native-dev CONFIG=/path/to/cha-config
 `useLiveSession.ts` owns subscription recovery, navigation epochs, delayed
 Recent visibility, and unused-session cleanup. `App.tsx` composes screens and
 the resizable sidebar; detail screens own their mutations. Chat sends with
-Enter and inserts a newline with Ctrl+Enter. Reasoning events are ignored;
-answer entries show usage and search indicators.
+Enter and inserts a newline with Ctrl+Enter. Answer entries show usage and
+search indicators.
 
 `voiceInput.ts` selects OpenAI WebRTC or xAI native WebSocket dictation.
 `voiceInputCapture.worklet.js` converts capture to 16 kHz mono PCM16 for xAI.

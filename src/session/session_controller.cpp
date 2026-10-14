@@ -420,8 +420,6 @@ ControllerGenerationView SessionController::generation_view() const noexcept {
         .character_display_name = active_ ? std::string_view(active_->character_display_name)
                               : std::string_view{},
         .phase = active_ ? active_->phase : ResponsePhase::waiting,
-        .reasoning_text = active_ ? std::string_view(active_->reasoning_text)
-                                  : std::string_view{},
     };
 }
 
@@ -1329,18 +1327,10 @@ void SessionController::apply(const GenerationEventDelta& event, ControllerUpdat
             update);
         return;
     }
-    // The first reasoning chunk establishes visible request state. Later
-    // reasoning is a pure append even after answering began; the frontend's
-    // transport decides whether that target switch needs a snapshot.
-    const bool structural = active_->phase == ResponsePhase::waiting;
-    const RequestId request_id = active_->request_id;
-    active_->reasoning_text.append(event.text);
-    if (structural) {
+    if (active_->phase == ResponsePhase::waiting) {
         active_->phase = ResponsePhase::reasoning;
         require_snapshot(update);
-        return;
     }
-    merge(update, {.state = TextAppend{ReasoningTextTarget{request_id}, event.text}});
 }
 
 void SessionController::append_answer_text(

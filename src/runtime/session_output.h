@@ -15,7 +15,7 @@ struct SessionOutputItem {
     enum class Kind { snapshot, append } kind{Kind::snapshot};
     std::uint64_t seq{};
     SessionSnapshot snapshot;
-    TextTarget target;
+    EntryTextTarget target;
     std::string text;
 };
 
@@ -69,7 +69,7 @@ private:
     std::uint64_t generation_{};
     std::shared_ptr<const SessionOutputItem> in_flight_;
     std::shared_ptr<SessionOutputItem> pending_;
-    std::optional<TextTarget> target_;
+    std::optional<EntryTextTarget> target_;
     std::uint64_t next_sequence_{};
     std::size_t collapsed_payloads_{};
 };

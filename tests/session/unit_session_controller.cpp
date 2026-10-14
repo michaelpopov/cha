@@ -994,7 +994,7 @@ TEST(SessionController, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
-TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
+TEST(SessionController, KeepsReasoningOutOfTheTranscriptWhileAnswerEntersIt) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
@@ -1017,9 +1017,6 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
     EXPECT_EQ(
         controller->view().generation.phase,
         ResponsePhase::reasoning);
-    EXPECT_EQ(
-        controller->view().generation.reasoning_text,
-        "PRIVATE_REASONING");
     ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
 
     (void)controller->handle_generation_event(GenerationEventDelta{
@@ -1040,13 +1037,9 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
     EXPECT_EQ(
         controller->view().generation.phase,
         ResponsePhase::answering);
-    EXPECT_EQ(
-        controller->view().generation.reasoning_text,
-        "PRIVATE_REASONING late");
 
     (void)controller->handle_generation_event(GenerationCompleted{1});
     EXPECT_FALSE(controller->is_generating());
-    EXPECT_TRUE(controller->view().generation.reasoning_text.empty());
     const std::vector<TranscriptEntry> live =
         copy_entries(controller->view().transcript);
     ASSERT_EQ(live.size(), 2U);
@@ -1185,13 +1178,11 @@ TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
         GenerationDeltaKind::reasoning,
         "EPHEMERAL_REASONING_ONLY",
     });
-    EXPECT_EQ(
-        controller->view().generation.reasoning_text,
-        "EPHEMERAL_REASONING_ONLY");
+    EXPECT_EQ(controller->view().generation.phase, ResponsePhase::reasoning);
     ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
     (void)controller->request_stop();
     receive_until_idle(*controller);
-    EXPECT_TRUE(controller->view().generation.reasoning_text.empty());
+    EXPECT_FALSE(controller->view().generation.active);
 
     const std::vector<TranscriptEntry> live =
         copy_entries(controller->view().transcript);
@@ -2306,17 +2297,14 @@ TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
         controller->handle_generation_event(GenerationEventDelta{
             1, GenerationDeltaKind::reasoning, " more",
         });
-    ASSERT_NE(text_append(more_reasoning), nullptr);
-    EXPECT_EQ(
-        *text_append(more_reasoning),
-        (TextAppend{ReasoningTextTarget{1}, " more"}));
+    EXPECT_FALSE(has_state_update(more_reasoning));
+    EXPECT_EQ(controller->view().generation.phase, ResponsePhase::reasoning);
 
     const ControllerUpdate careful_reasoning =
         controller->handle_generation_event(GenerationEventDelta{
             1, GenerationDeltaKind::reasoning, " carefully",
         });
-    ASSERT_NE(text_append(careful_reasoning), nullptr);
-    EXPECT_EQ(text_append(careful_reasoning)->text, " carefully");
+    EXPECT_FALSE(has_state_update(careful_reasoning));
 
     // The first answer chunk changes phase and opens the response entry.
     EXPECT_TRUE(requires_snapshot(controller->handle_generation_event(GenerationEventDelta{
@@ -2331,16 +2319,14 @@ TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
         *text_append(more_answer),
         (TextAppend{EntryTextTarget{2}, " again"}));
 
-    // Reasoning arriving after the answer began is still a pure append; the
-    // transport decides whether that target switch needs a snapshot.
+    // Later reasoning does not change the answer phase or presentation.
     const ControllerUpdate late_reasoning =
         controller->handle_generation_event(GenerationEventDelta{
             1, GenerationDeltaKind::reasoning, " late",
         });
-    ASSERT_NE(text_append(late_reasoning), nullptr);
-    EXPECT_EQ(
-        *text_append(late_reasoning),
-        (TextAppend{ReasoningTextTarget{1}, " late"}));
+    EXPECT_FALSE(has_state_update(late_reasoning));
+    EXPECT_EQ(controller->view().generation.phase, ResponsePhase::answering);
+    EXPECT_EQ(controller->view().transcript.entries.back().text, "Answer again");
 
     // Generation finalization closes the entry even though it also carries text.
     EXPECT_TRUE(

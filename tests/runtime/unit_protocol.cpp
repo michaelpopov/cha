@@ -227,7 +227,7 @@ TEST(WebProtocol, SerializesDiscardableSessionState) {
     EXPECT_EQ(nlohmann::json(snapshot)["discardable"], true);
 }
 
-TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
+TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndEntryAppend) {
     SessionSnapshot snapshot{
         .forum = {"forum", "Forum"},
         .session_id = "session",
@@ -254,7 +254,6 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
             .character_id = "guide",
             .character_display_name = "Guide",
             .phase = ResponsePhase::answering,
-            .reasoning_text = "<reasoning>",
         },
         .notice = std::string{"<notice>"},
         .lifecycle = SessionLifecycle::stopping,
@@ -271,7 +270,6 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
              {"character_id", "guide"},
              {"character_display_name", "Guide"},
              {"phase", "answering"},
-             {"reasoning_text", "<reasoning>"},
              {"request_id", 3},
          }},
         {"lifecycle", "stopping"},
@@ -304,13 +302,6 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
     expect_no_transport_location_fields(value);
 
     EXPECT_EQ(
-        nlohmann::json(AppendEvent{ReasoningTextTarget{3}, "more", 7}),
-        nlohmann::json({
-            {"seq", 7},
-            {"target", {{"kind", "reasoning"}, {"request_id", 3}}},
-            {"text", "more"},
-        }));
-    EXPECT_EQ(
         nlohmann::json(AppendEvent{EntryTextTarget{7}, "more", 8}),
         nlohmann::json({
             {"seq", 8},
@@ -319,7 +310,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         }));
 }
 
-TEST(WebProtocol, SelectsAppendTargetAndTranscriptIndexTogether) {
+TEST(WebProtocol, SelectsOnlyAStreamingEntryAsTheAppendTarget) {
     SessionSnapshot snapshot{
         .transcript = {
             {.id = 4, .status = EntryStatus::complete},
@@ -332,19 +323,9 @@ TEST(WebProtocol, SelectsAppendTargetAndTranscriptIndexTogether) {
         },
     };
 
-    auto selection = snapshot_append_selection(snapshot);
-    ASSERT_TRUE(selection);
-    EXPECT_EQ(selection->target, TextTarget{EntryTextTarget{7}});
-    EXPECT_EQ(selection->transcript_index, 1U);
-
+    EXPECT_EQ(snapshot_append_target(snapshot), EntryTextTarget{7});
     snapshot.transcript[1].status = EntryStatus::complete;
-    selection = snapshot_append_selection(snapshot);
-    ASSERT_TRUE(selection);
-    EXPECT_EQ(selection->target, TextTarget{ReasoningTextTarget{3}});
-    EXPECT_FALSE(selection->transcript_index);
-
-    snapshot.generation.active = false;
-    EXPECT_FALSE(snapshot_append_selection(snapshot));
+    EXPECT_FALSE(snapshot_append_target(snapshot));
 }
 
 TEST(WebProtocol, EscapesAndOwnsPresentationText) {
@@ -372,15 +353,11 @@ TEST(WebProtocol, EscapesAndOwnsPresentationText) {
     std::string presentation = "quote \\\" newline\\n";
     SessionSnapshot snapshot;
     snapshot.notice = presentation;
-    snapshot.generation.reasoning_text = presentation;
     const auto snapshot_value = nlohmann::json(snapshot);
     const auto error_value =
         nlohmann::json(Error{ErrorCode::internal_error, presentation});
     presentation.assign("changed");
     EXPECT_EQ(snapshot_value["notice"], "quote \\\" newline\\n");
-    EXPECT_EQ(
-        snapshot_value["generation"]["reasoning_text"],
-        "quote \\\" newline\\n");
     EXPECT_EQ(error_value["error"]["message"], "quote \\\" newline\\n");
 }
 

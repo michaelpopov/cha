@@ -27,7 +27,5 @@ export function isAppendEvent(value: unknown): value is AppendEvent {
   if (typeof value.text !== 'string'
       || !Number.isSafeInteger(value.seq)
       || (value.seq as number) < 0) return false;
-  if (value.target.kind === 'entry') return typeof value.target.entry_id === 'number';
-  if (value.target.kind === 'reasoning') return typeof value.target.request_id === 'number';
-  return false;
+  return value.target.kind === 'entry' && typeof value.target.entry_id === 'number';
 }

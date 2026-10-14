@@ -635,8 +635,7 @@ function isGenerationState(value: unknown): boolean {
     && (value.request_id === undefined || isUnsignedInteger(value.request_id))
     && typeof value.character_id === 'string'
     && typeof value.character_display_name === 'string'
-    && isOneOf(value.phase, ['waiting', 'reasoning', 'answering', 'stopping'])
-    && typeof value.reasoning_text === 'string';
+    && isOneOf(value.phase, ['waiting', 'reasoning', 'answering', 'stopping']);
 }
 
 // Requests and events share this check before publishing parsed JSON to React.

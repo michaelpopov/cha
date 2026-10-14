@@ -306,7 +306,6 @@ export function useLiveSession(
         },
         onAppend: (event) => {
           if (!events || connection.current?.events !== events) return;
-          if (event.target.kind === 'reasoning') return;
           dispatch({ type: 'session-append', forumId, sessionId, event });
         },
         onError: (failure) => {

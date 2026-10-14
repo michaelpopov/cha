@@ -20,7 +20,6 @@ struct BackingState {
     std::optional<EntryId> covered_until;
     std::string character_id;
     std::string character_display_name;
-    std::string reasoning_text;
 
     [[nodiscard]] ControllerView view() const {
         return {
@@ -38,7 +37,6 @@ struct BackingState {
                 .character_id = character_id,
                 .character_display_name = character_display_name,
                 .phase = ResponsePhase::reasoning,
-                .reasoning_text = reasoning_text,
             },
         };
     }
@@ -56,7 +54,6 @@ BackingState populated_state() {
         },
         .character_id = "guide",
         .character_display_name = "Guide",
-        .reasoning_text = "Thinking",
     };
 }
 
@@ -118,7 +115,7 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
             {4, EntryKind::error, "reviewer", "Error", {}, {}, "Failure", EntryStatus::failed, 8},
         },
         .covered_until = 2,
-        .generation = {true, 7, "guide", "Guide", ResponsePhase::reasoning, "Thinking"},
+        .generation = {true, 7, "guide", "Guide", ResponsePhase::reasoning},
         .notice = "Current notice",
         .lifecycle = SessionLifecycle::stopping,
         .shutdown_reason = ShutdownReason::server_stopping,
@@ -133,7 +130,6 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
         state.default_character_id = "gone";
         state.transcript.clear();
         state.character_display_name = "gone";
-        state.reasoning_text = "gone";
         state.covered_until.reset();
     }
     EXPECT_EQ(snapshot, expected);

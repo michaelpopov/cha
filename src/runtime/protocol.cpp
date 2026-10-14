@@ -4,7 +4,6 @@
 
 #include <initializer_list>
 #include <stdexcept>
-#include <type_traits>
 #include <utility>
 
 namespace cha {
@@ -63,7 +62,6 @@ nlohmann::json generation_json(const GenerationStatus& value) {
         {"character_id", value.character_id},
         {"character_display_name", value.character_display_name},
         {"phase", to_string(value.phase)},
-        {"reasoning_text", value.reasoning_text},
     };
     put_optional(json, "request_id", value.request_id);
     return json;
@@ -89,23 +87,6 @@ nlohmann::json speech_voice_json(const SpeechVoice& value) {
         {"provider", value.provider},
         {"settings", std::move(settings)},
     };
-}
-
-nlohmann::json append_target_json(const TextTarget& value) {
-    return std::visit([](const auto& target) {
-        using Target = std::decay_t<decltype(target)>;
-        if constexpr (std::is_same_v<Target, EntryTextTarget>) {
-            return nlohmann::json{
-                {"kind", "entry"},
-                {"entry_id", target.entry_id},
-            };
-        } else {
-            return nlohmann::json{
-                {"kind", "reasoning"},
-                {"request_id", target.request_id},
-            };
-        }
-    }, value);
 }
 
 } // namespace
@@ -192,20 +173,12 @@ std::string_view to_string(ErrorCode value) {
         });
 }
 
-std::optional<SnapshotAppendSelection> snapshot_append_selection(
+std::optional<EntryTextTarget> snapshot_append_target(
     const SessionSnapshot& snapshot) {
-    for (std::size_t index = 0; index != snapshot.transcript.size(); ++index) {
-        const TranscriptEntry& entry = snapshot.transcript[index];
+    for (const TranscriptEntry& entry : snapshot.transcript) {
         if (entry.status == EntryStatus::streaming) {
-            return SnapshotAppendSelection{
-                EntryTextTarget{entry.id}, index};
+            return EntryTextTarget{entry.id};
         }
-    }
-    if (snapshot.generation.active && snapshot.generation.request_id
-        && snapshot.generation.phase == ResponsePhase::reasoning) {
-        return SnapshotAppendSelection{
-            ReasoningTextTarget{*snapshot.generation.request_id},
-            std::nullopt};
     }
     return std::nullopt;
 }
@@ -561,7 +534,7 @@ void to_json(nlohmann::json& json, const SnapshotEvent& value) {
 
 void to_json(nlohmann::json& json, const AppendEvent& value) {
     json = {
-        {"target", append_target_json(value.target)},
+        {"target", {{"kind", "entry"}, {"entry_id", value.target.entry_id}}},
         {"text", value.text},
         {"seq", value.seq},
     };

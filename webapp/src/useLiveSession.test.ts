@@ -234,9 +234,9 @@ it('reports the stream connected once its first snapshot arrives', async () => {
 });
 
 it(
-  'ignores reasoning appends without rendering and still appends answer text',
+  'appends answer text to the streaming entry',
   async () => {
-    const { events, view, reducer } = harness();
+    const { events, view } = harness();
     await act(async () => {
       await view.result.current.live.openConversation('entrance', 'welcome');
     });
@@ -249,19 +249,9 @@ it(
       }],
       generation: {
         ...snapshotFixture.generation,
-        active: true, request_id: 7, phase: 'answering', reasoning_text: 'Snapshot reasoning',
+        active: true, request_id: 7, phase: 'answering',
       },
     }));
-
-    const before = view.result.current;
-    reducer.mockClear();
-    act(() => events.handlers[0].onAppend({
-      target: { kind: 'reasoning', request_id: 7 }, text: ' hidden deliberation', seq: 0,
-    }));
-    expect(reducer).not.toHaveBeenCalled();
-    expect(view.result.current).toBe(before);
-    expect(view.result.current.state.sessionSnapshot?.generation.reasoning_text)
-      .toBe('Snapshot reasoning');
 
     act(() => events.handlers[0].onAppend({
       target: { kind: 'entry', entry_id: 4 }, text: ' there', seq: 1,

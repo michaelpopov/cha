@@ -609,7 +609,6 @@ export interface components {
             character_display_name: string;
             /** @enum {string} */
             phase: "waiting" | "reasoning" | "answering" | "stopping";
-            reasoning_text: string;
         };
         SessionSnapshot: {
             forum: components["schemas"]["ForumSummary"];
@@ -629,24 +628,12 @@ export interface components {
             shutdown_reason?: "session_closed" | "reloading" | "session_failed" | "session_deleted" | "server_stopping";
         };
         AppendTargetEntry: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
+            /** @constant */
             kind: "entry";
             entry_id: components["schemas"]["UnsignedInteger"];
         };
-        AppendTargetReasoning: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "reasoning";
-            request_id: components["schemas"]["UnsignedInteger"];
-        };
-        AppendTarget: components["schemas"]["AppendTargetEntry"] | components["schemas"]["AppendTargetReasoning"];
         AppendEvent: {
-            target: components["schemas"]["AppendTarget"];
+            target: components["schemas"]["AppendTargetEntry"];
             text: string;
             seq: components["schemas"]["UnsignedInteger"];
         };

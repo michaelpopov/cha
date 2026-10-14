@@ -69,7 +69,6 @@ function snapshot(sessionId: string, extras: Partial<SessionSnapshot> = {}): Ses
     covered_until: 1,
     generation: {
       ...snapshotFixture.generation,
-      reasoning_text: 'hidden reasoning',
     },
     ...extras,
   };

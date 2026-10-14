@@ -32,7 +32,6 @@ describe('C++ wire fixtures', () => {
       .toBe('welcome');
     expect(isSessionSnapshot(loadFixture('snapshot.json'))).toBe(true);
     expect(isAppendEvent(loadFixture('append-entry.json'))).toBe(true);
-    expect(isAppendEvent(loadFixture('append-reasoning.json'))).toBe(true);
 
     const command = loadFixture('command-result.json');
     expect(command).toEqual({ clear_input: true, notice: 'Saved' });
@@ -156,7 +155,6 @@ describe('snapshot validation', () => {
     ['missing character ID', { character_id: undefined }],
     ['non-text character name', { character_display_name: {} }],
     ['unknown phase', { phase: 'complete' }],
-    ['non-text reasoning', { reasoning_text: [] }],
   ])('rejects generation with %s', (_name, patch) => {
     const value = snapshot();
     expect(isSessionSnapshot({ ...value, generation: { ...value.generation, ...patch } })).toBe(false);
@@ -177,7 +175,7 @@ describe('snapshot validation', () => {
     const value = snapshot();
     value.generation = {
       active: true, request_id: 7, character_id: 'assistant',
-      character_display_name: 'Assistant', phase, reasoning_text: 'Thinking…',
+      character_display_name: 'Assistant', phase,
     };
     value.transcript[0].request_id = 7;
     value.covered_until = 1;

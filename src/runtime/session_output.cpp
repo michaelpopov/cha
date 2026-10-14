@@ -130,10 +130,7 @@ void SessionOutput::publish_snapshot_locked(SessionSnapshot snapshot) {
     dirty_ = false;
     requested_ = false;
     if (pending_) ++collapsed_payloads_;
-    const auto selection = snapshot_append_selection(snapshot);
-    target_ = selection
-        ? std::optional<TextTarget>{selection->target}
-        : std::nullopt;
+    target_ = snapshot_append_target(snapshot);
     auto item = std::make_shared<SessionOutputItem>();
     item->kind = SessionOutputItem::Kind::snapshot;
     item->snapshot = std::move(snapshot);

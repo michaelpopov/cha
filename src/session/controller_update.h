@@ -27,18 +27,11 @@ struct EntryTextTarget {
     bool operator==(const EntryTextTarget&) const = default;
 };
 
-struct ReasoningTextTarget {
-    RequestId request_id{};
-    bool operator==(const ReasoningTextTarget&) const = default;
-};
-
-using TextTarget = std::variant<EntryTextTarget, ReasoningTextTarget>;
-
 // All externally visible core-state change made by the operation is this
 // non-empty suffix, appended to exactly the value named by target. The text is
 // owned, so it can safely cross into transport state.
 struct TextAppend {
-    TextTarget target;
+    EntryTextTarget target;
     std::string text;
     bool operator==(const TextAppend&) const = default;
 };

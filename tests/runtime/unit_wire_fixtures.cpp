@@ -74,9 +74,6 @@ TEST(WebWireFixtures, SerializesBootstrapSnapshotCommandsErrorsAndAppends) {
         nlohmann::json(AppendEvent{EntryTextTarget{1}, "Hello", 0}),
         load_fixture("append-entry.json"));
     EXPECT_EQ(
-        nlohmann::json(AppendEvent{ReasoningTextTarget{7}, "Considering the request.", 1}),
-        load_fixture("append-reasoning.json"));
-    EXPECT_EQ(
         nlohmann::json(CommandResult{
             .session = {.notice = std::string("Saved")},
             .clear_input = true,

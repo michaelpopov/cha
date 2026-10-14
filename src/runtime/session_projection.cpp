@@ -73,7 +73,6 @@ SessionSnapshot to_snapshot(
             .character_id = std::string(controller.generation.character_id),
             .character_display_name = std::string(controller.generation.character_display_name),
             .phase = controller.generation.phase,
-            .reasoning_text = std::string(controller.generation.reasoning_text),
         },
         .notice = presentation.notice,
         .lifecycle = presentation.lifecycle,

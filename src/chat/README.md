@@ -43,10 +43,10 @@ Four kinds and four statuses combine only in these ways:
 | `notice` | `complete` | Session messages; no participant identity. Ordinary notices are labelled `"System"`; cover markers are the only notices with another display name. |
 | `error` | `failed` | May carry the participant it concerns and the request it ends. |
 
-Provider reasoning is not transcript content. The session layer holds it only
-while a response is active and clears it when the turn ends. The frontend does
-not display it. Deleting an error report removes its entire turn, including
-the human prompt.
+Provider reasoning is not transcript content. The session layer uses it only
+to set the reasoning phase and does not keep its text. The frontend does not
+display it. Deleting an error report removes its entire turn, including the
+human prompt.
 
 Entries are built through factories — `make_human_entry`, `make_character_entry`,
 `make_notice_entry`, `make_error_entry`. `make_notice_entry` and

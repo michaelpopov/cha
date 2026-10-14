@@ -88,7 +88,6 @@ function transcriptSnapshot(): SessionSnapshot {
       character_id: 'assistant',
       character_display_name: 'Assistant',
       phase: 'reasoning',
-      reasoning_text: 'Checking',
     },
   };
 }
@@ -155,7 +154,7 @@ describe('live chat', () => {
       ...snapshot,
       transcript: [],
       generation: {
-        ...snapshot.generation, phase: 'waiting', reasoning_text: '', character_display_name: '',
+        ...snapshot.generation, phase: 'waiting', character_display_name: '',
       },
     });
 
@@ -167,7 +166,7 @@ describe('live chat', () => {
     act(() => events.handlers[0].onSnapshot({
       ...snapshot,
       transcript: [],
-      generation: { ...snapshot.generation, phase: 'waiting', reasoning_text: '' },
+      generation: { ...snapshot.generation, phase: 'waiting' },
     }));
     expect(screen.getByText('Assistant is preparing a response…')).toBeInTheDocument();
 

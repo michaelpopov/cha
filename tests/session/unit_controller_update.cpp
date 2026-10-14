@@ -11,10 +11,6 @@ ControllerStateUpdate entry_append(EntryId id, std::string text) {
     return TextAppend{EntryTextTarget{id}, std::move(text)};
 }
 
-ControllerStateUpdate reasoning_append(RequestId id, std::string text) {
-    return TextAppend{ReasoningTextTarget{id}, std::move(text)};
-}
-
 TEST(ControllerUpdate, DefaultConstructionMeansNoStateUpdate) {
     const ControllerUpdate update;
 
@@ -59,17 +55,10 @@ TEST(ControllerUpdate, SnapshotRequiredDominatesEveryOtherEffect) {
 TEST(ControllerUpdate, SameTargetAppendsConcatenateInEventOrder) {
     EXPECT_EQ(merge_state(entry_append(7, "one"), entry_append(7, " two")),
         entry_append(7, "one two"));
-    EXPECT_EQ(
-        merge_state(reasoning_append(3, "th"), reasoning_append(3, "ink")),
-        reasoning_append(3, "think"));
 }
 
 TEST(ControllerUpdate, DifferentTargetAppendsRequireASnapshot) {
     EXPECT_EQ(merge_state(entry_append(7, "a"), entry_append(8, "b")),
-        ControllerStateUpdate{SnapshotRequired{}});
-    EXPECT_EQ(merge_state(entry_append(7, "a"), reasoning_append(7, "b")),
-        ControllerStateUpdate{SnapshotRequired{}});
-    EXPECT_EQ(merge_state(reasoning_append(3, "a"), reasoning_append(4, "b")),
         ControllerStateUpdate{SnapshotRequired{}});
 }
 

@@ -625,7 +625,7 @@ TEST(LiveSession, PublishesExactAppendsAndSnapshotsForStructuralUpdates) {
         host->acknowledge_output();
     }
     EXPECT_EQ(first->kind, app::SessionOutputItem::Kind::append);
-    EXPECT_TRUE(std::holds_alternative<EntryTextTarget>(first->target));
+    EXPECT_EQ(first->target, EntryTextTarget{2});
     EXPECT_FALSE(first->text.empty());
     controls->finish();
 }
@@ -723,8 +723,8 @@ TEST(LiveSession, StalledRendererDefersSnapshotCaptureUntilItRequestsDelivery) {
     EXPECT_EQ(captures.load(), initial_captures + 1);
 }
 
-TEST(LiveSession, IncompatibleAppendTargetRepairsBrowserStateWithASnapshot) {
-    test::TemporarySessionFile file("live_session_target_change");
+TEST(LiveSession, PublishesReasoningPhaseWithoutReasoningTextUpdates) {
+    test::TemporarySessionFile file("live_session_reasoning_phase");
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
     subscribe(*host);
@@ -734,40 +734,42 @@ TEST(LiveSession, IncompatibleAppendTargetRepairsBrowserStateWithASnapshot) {
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
         host->submit(RawCommand{"Question"}, 2s)));
     ASSERT_TRUE(controls->wait_until_running());
-
-    bool saw_reasoning_append = false;
-    bool saw_answer_snapshot = false;
-    const auto drain = [&] {
-        for (int index = 0; index != 8; ++index) {
-            auto item = next_output(*host, 300ms);
-            if (!item) return;
-            host->acknowledge_output();
-            if (item->kind == app::SessionOutputItem::Kind::append) {
-                if (std::holds_alternative<ReasoningTextTarget>(item->target)) {
-                    saw_reasoning_append = true;
-                }
-                continue;
-            }
-            for (const TranscriptEntry& entry : item->snapshot.transcript) {
-                if (entry.kind == EntryKind::character
-                    && entry.text.find("answer") != std::string::npos) {
-                    saw_answer_snapshot = true;
-                }
-            }
-        }
-    };
+    const auto waiting = next_output(*host);
+    ASSERT_TRUE(waiting);
+    EXPECT_EQ(waiting->snapshot.generation.phase, ResponsePhase::waiting);
+    host->acknowledge_output();
 
     controls->emit_reasoning("thinking");
-    drain();
+    const auto reasoning = next_output(*host);
+    ASSERT_TRUE(reasoning);
+    EXPECT_EQ(reasoning->kind, app::SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(reasoning->snapshot.generation.phase, ResponsePhase::reasoning);
+    host->acknowledge_output();
+
     controls->emit_reasoning(" harder");
-    drain();
-    EXPECT_TRUE(saw_reasoning_append);
+    EXPECT_FALSE(next_output(*host, 100ms));
 
     controls->emit_answer("answer");
-    drain();
+    const auto answer = next_output(*host);
+    ASSERT_TRUE(answer);
+    EXPECT_EQ(answer->kind, app::SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(answer->snapshot.generation.phase, ResponsePhase::answering);
+    ASSERT_EQ(answer->snapshot.transcript.size(), 2U);
+    EXPECT_EQ(answer->snapshot.transcript.back().text, "answer");
+    host->acknowledge_output();
+
+    controls->emit_reasoning(" late");
+    EXPECT_FALSE(next_output(*host, 100ms));
+    controls->emit_answer(" suffix");
+    const auto suffix = next_output(*host);
+    ASSERT_TRUE(suffix);
+    EXPECT_EQ(suffix->kind, app::SessionOutputItem::Kind::append);
+    EXPECT_EQ(suffix->text, " suffix");
+    host->acknowledge_output();
     controls->finish();
-    drain();
-    EXPECT_TRUE(saw_answer_snapshot);
+    const auto completed = next_output(*host);
+    ASSERT_TRUE(completed);
+    EXPECT_FALSE(completed->snapshot.generation.active);
 }
 
 TEST(LiveSession, PresentationChangesPublishOneSnapshotEach) {

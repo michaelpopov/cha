@@ -103,8 +103,8 @@ Jev submission replies wait for classification and dispatch, without blocking
 the runtime thread. Pending classification has a deadline and counts as busy.
 Snapshots expose `recent_pending` and `discardable` so the frontend can manage
 new-session visibility and abandon unused sessions safely. Token usage and
-search-use markers accompany transcript entries. Reasoning remains internal;
-the frontend ignores reasoning append events.
+search-use markers accompany transcript entries. Reasoning text remains internal;
+only its phase is exposed to the frontend.
 
 ## Maintenance and shutdown
 
