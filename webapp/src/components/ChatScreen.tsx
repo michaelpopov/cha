@@ -555,15 +555,14 @@ export function ChatScreen({
       downloads.refresh(entry.id);
     };
     const begin = (cachedUrl: string, resourceId?: string, streaming = false) => {
-      const session = new TextToSpeechSession(
-        textToSpeechConfiguration,
-        speechVoices.get(entry.participant_id),
-        visibleEntryText(entry.kind, entry.text),
-        () => {
+      const session = new TextToSpeechSession({
+        voice: speechVoices.get(entry.participant_id),
+        text: visibleEntryText(entry.kind, entry.text),
+        onEnded: () => {
           if (textToSpeechSession.current !== session) return;
           stopSpeech();
         },
-        {
+        playback: {
           position: entryPositions.get(entry.id) ?? 0,
           onPositionChange: (position) => {
             if (position > 0) entryPositions.set(entry.id, position);
@@ -571,18 +570,19 @@ export function ChatScreen({
           },
         },
         cachedUrl,
-        () => dispatch({
+        onCached: () => dispatch({
           type: 'session-audio-cache', forumId: snapshot.forum.id,
           sessionId: snapshot.session_id, entryId: entry.id, cached: true,
         }),
-        undefined,
-        resourceId
+        onDispose: resourceId
           ? () => { void client.releaseResource(resourceId); }
           : undefined,
-        { streaming, leadingSilence: automaticSpeech.current, onError: (failure) => {
+        streaming,
+        leadingSilence: automaticSpeech.current,
+        onError: (failure) => {
           if (textToSpeechSession.current === session) setActionError(failure.message);
-        } },
-      );
+        },
+      });
       textToSpeechSession.current = session;
       setSpokenEntry({ id: entry.id, state: 'loading' });
       void session.play().then(() => {
@@ -747,7 +747,6 @@ export function ChatScreen({
   // it is exempt: a ladder that has given up still needs its buttons, and its
   // stale reason must not take them away.
   const showRecoveryActions = state.streamStatus === 'retry'
-    || state.streamStatus === 'moved'
     || (state.streamStatus === 'connected'
       && ended !== null
       && snapshot?.shutdown_reason !== 'reloading');
@@ -851,7 +850,7 @@ export function ChatScreen({
           {showRecoveryActions && (
             <span className="cha-live-actions">
               <button className="cha-button cha-button-ghost" onClick={onRetryStream} type="button">
-                {state.streamStatus === 'moved' ? 'Continue here' : 'Retry'}
+                Retry
               </button>
               <button
                 className="cha-button cha-button-ghost"

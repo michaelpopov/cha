@@ -189,22 +189,23 @@ export function useReadAloud(
     };
     function play(streaming = false) {
       if (!active()) return;
-      const playback = new TextToSpeechSession(
-        null, undefined, entry.text,
-        () => { if (active()) stop(); },
-        {
+      const playback = new TextToSpeechSession({
+        text: entry.text,
+        onEnded: () => { if (active()) stop(); },
+        playback: {
           position: positions.current.get(entry.id) ?? 0,
           onPositionChange: (position) => {
             if (position > 0) positions.current.set(entry.id, position);
             else positions.current.delete(entry.id);
           },
         },
-        audioUrl(forum!, session!, entry.id),
-        markCached,
-        undefined, undefined, { streaming, onError: failed,
-          ...(automatically ? { leadingSilence: true } : {}),
-          ...(automaticAudio.current ? { audio: automaticAudio.current } : {}) },
-      );
+        cachedUrl: audioUrl(forum!, session!, entry.id),
+        onCached: markCached,
+        streaming,
+        onError: failed,
+        ...(automatically ? { leadingSilence: true } : {}),
+        ...(automaticAudio.current ? { audio: automaticAudio.current } : {}),
+      });
       player.current = playback;
       void playback.play().then(() => {
         if (active()) setState('playing');

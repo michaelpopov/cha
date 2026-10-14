@@ -7,12 +7,9 @@ import {
   type AppendEvent,
   type SessionEventConnection,
   type SessionEventHandlers,
-  type SessionStreamFailure,
 } from './events';
 import { isRecord } from './guards';
 import type { NativeBridge } from './nativeBridge';
-
-const streamFailure: SessionStreamFailure = Object.freeze({ kind: 'stream_failure' });
 
 export interface NativeSessionEvent {
   connection_id: string;
@@ -69,7 +66,7 @@ export function createNativeEventProjection(
   const fail = () => {
     if (invalidated) return;
     invalidated = true;
-    handlers.onError(streamFailure);
+    handlers.onError();
   };
 
   return {
@@ -158,8 +155,8 @@ export function createNativeSessionEvents(
         onAppend: (event) => {
           if (!closed) handlers.onAppend(event);
         },
-        onError: (failure) => {
-          if (!closed) handlers.onError(failure);
+        onError: () => {
+          if (!closed) handlers.onError();
         },
       },
     );
@@ -169,7 +166,7 @@ export function createNativeSessionEvents(
       session_id: sessionId,
       subscription_id: subscriptionId,
     }).catch(() => {
-      if (!closed) handlers.onError(streamFailure);
+      if (!closed) handlers.onError();
     });
     return {
       close() {

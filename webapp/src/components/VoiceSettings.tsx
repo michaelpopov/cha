@@ -528,21 +528,16 @@ export function VoiceScreen({
     if (!draft || !speechConfiguration || !previewText.trim()
       || !draft.elevenlabs_voice_id.trim()) return;
     setPreviewError(null);
-    const session = new TextToSpeechSession(
-      speechConfiguration,
-      speechVoice(draft),
-      previewText.trim(),
-      () => {
+    const session = new TextToSpeechSession({
+      voice: speechVoice(draft),
+      text: previewText.trim(),
+      onEnded: () => {
         if (preview.current === session) preview.current = null;
         setPreviewing(false);
       },
-      undefined,
-      undefined,
-      undefined,
-      nativeSpeechFromClient(client),
-      undefined,
-      { onError: (failure) => setPreviewError(failure.message) },
-    );
+      nativeSpeech: nativeSpeechFromClient(client),
+      onError: (failure) => setPreviewError(failure.message),
+    });
     preview.current = session;
     setPreviewing(true);
     try {

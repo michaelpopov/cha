@@ -27,7 +27,6 @@ RuntimeSettings native_manager_settings(std::size_t session_limit) {
     settings.session_limit = session_limit;
     settings.command_queue_capacity = 8;
 
-    settings.monotonic_event_sequence = true;
     return settings;
 }
 

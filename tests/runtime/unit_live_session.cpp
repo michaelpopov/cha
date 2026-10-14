@@ -82,10 +82,9 @@ public:
     LiveSessionHost(
         RuntimeSettings settings,
         SessionOpener opener,
-        LiveSessionClock clock = {},
         FullSessionId key = {"forum", "session"})
         : key_(std::move(key)),
-          manager_(std::move(settings), std::move(opener), std::move(clock)) {
+          manager_(std::move(settings), std::move(opener)) {
         if (!std::holds_alternative<LiveSessionReady>(manager_.open(key_, 5s))) {
             throw std::runtime_error("Test live session did not open");
         }
@@ -945,7 +944,6 @@ TEST(LiveSession, ConcurrentShutdownRequestsRunTeardownOnce) {
 
     EXPECT_TRUE(wait_for_finished(host.handle()));
     EXPECT_EQ(host->lifecycle(), LiveSessionState::finished);
-    host.manager().sweep();
     EXPECT_EQ(host.manager().snapshot().live_session_count, 0U);
 }
 

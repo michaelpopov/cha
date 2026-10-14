@@ -21,7 +21,6 @@ import { welcomeSnapshot, welcomeSubmission, type WelcomeTurn } from './welcomeT
 // what they cancel.
 const liveRetryDelays = [250, 500, 1_000, 2_000, 4_000] as const;
 const reconnectingMessage = 'Reconnecting live updates…';
-const movedMessage = 'This conversation moved to another device';
 
 export type SessionEventsConnector = (
   forumId: string,
@@ -308,27 +307,9 @@ export function useLiveSession(
           if (!events || connection.current?.events !== events) return;
           dispatch({ type: 'session-append', forumId, sessionId, event });
         },
-        onError: (failure) => {
+        onError: () => {
           if (!events || connection.current?.events !== events) return;
           detachStream(events);
-          // The reader picked this session up on another device. Recovering
-          // here would take it straight back, so this page parks instead and
-          // waits for the reader to ask for it again. Ending the generation is
-          // what parks it: a replacement in flight, and the late failure callback of
-          // a stream that had already connected, both belong to that
-          // generation and would otherwise reconnect behind the notice.
-          if (failure.kind === 'superseded') {
-            cancelRetryTimer();
-            recovery.current = null;
-            liveGeneration.current += 1;
-            dispatch({
-              type: 'stream-state',
-              status: 'moved',
-              message: movedMessage,
-            });
-            onSettled?.(false);
-            return;
-          }
           failed();
         },
       });
@@ -342,7 +323,7 @@ export function useLiveSession(
       if (events) detachStream(events);
       failed();
     }
-  }, [cancelRetryTimer, connectSessionEvents, detachStream, dispatch, isWelcome,
+  }, [connectSessionEvents, detachStream, dispatch, isWelcome,
     noteWelcomeSnapshot, refreshBootstrap, retainSession]);
 
   // One replacement attach: resolves true when the new stream delivers its
@@ -651,8 +632,7 @@ export function useLiveSession(
         conversationOpened.current?.(active.forumId, active.sessionId);
       }
       if (state.sessionSnapshot?.lifecycle !== 'running'
-          || state.streamStatus === 'retry'
-          || state.streamStatus === 'moved') return;
+          || state.streamStatus === 'retry') return;
       connectStream(
         active.forumId,
         active.sessionId,

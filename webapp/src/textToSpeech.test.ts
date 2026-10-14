@@ -78,7 +78,11 @@ describe('text to speech', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise((resolve) => { deliver = resolve; }));
     const changes: boolean[] = [];
     const unsubscribe = onSpeechPlaybackChange((playing) => { changes.push(playing); });
-    const session = new TextToSpeechSession(null, undefined, '', vi.fn(), undefined, '/media/r1');
+    const session = new TextToSpeechSession({
+      text: '',
+      onEnded: vi.fn(),
+      cachedUrl: '/media/r1',
+    });
     try {
       const playing = session.play();
       expect(changes).toEqual([false]);
@@ -111,7 +115,11 @@ describe('text to speech', () => {
         pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(),
       });
     }));
-    const session = new TextToSpeechSession(null, undefined, '', vi.fn(), undefined, '/media/r1');
+    const session = new TextToSpeechSession({
+      text: '',
+      onEnded: vi.fn(),
+      cachedUrl: '/media/r1',
+    });
     try {
       await expect(session.play()).rejects.toThrow('Playback denied');
       await vi.advanceTimersByTimeAsync(400);
@@ -124,11 +132,18 @@ describe('text to speech', () => {
 
   it('keeps input paused until overlapping chat and preview playback have both stopped', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('audio'));
-    const chat = new TextToSpeechSession(null, undefined, '', vi.fn(), undefined, '/media/r1');
-    const preview = new TextToSpeechSession(null, undefined, 'Preview', vi.fn(), undefined,
-      undefined, undefined, {
+    const chat = new TextToSpeechSession({
+      text: '',
+      onEnded: vi.fn(),
+      cachedUrl: '/media/r1',
+    });
+    const preview = new TextToSpeechSession({
+      text: 'Preview',
+      onEnded: vi.fn(),
+      nativeSpeech: {
         preview: async () => ({ url: '/media/r2', resource_id: 'r2' }), release: vi.fn(),
-      });
+      },
+    });
     const changes: boolean[] = [];
     const unsubscribe = onSpeechPlaybackChange((playing) => { changes.push(playing); });
     let unsubscribeLate = () => {};
@@ -158,9 +173,12 @@ describe('text to speech', () => {
     const release = vi.fn(async () => undefined);
     const preview = vi.fn(async () => ({ url: '/media/r9', resource_id: 'r9' }));
     const voice = { elevenlabs_voice_id: 'voice', settings: { speed: 0.9 } };
-    const session = new TextToSpeechSession(
-      null, voice, 'Hello', vi.fn(), undefined, undefined, undefined, { preview, release },
-    );
+    const session = new TextToSpeechSession({
+      voice,
+      text: 'Hello',
+      onEnded: vi.fn(),
+      nativeSpeech: { preview, release },
+    });
 
     await session.play();
 
@@ -182,10 +200,11 @@ describe('text to speech', () => {
         pending.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
       });
     });
-    const session = new TextToSpeechSession(
-      null, undefined, 'Hello', vi.fn(), undefined, undefined, undefined,
-      { preview, release: vi.fn(async () => undefined) },
-    );
+    const session = new TextToSpeechSession({
+      text: 'Hello',
+      onEnded: vi.fn(),
+      nativeSpeech: { preview, release: vi.fn(async () => undefined) },
+    });
 
     const playing = session.play();
     session.stop();
@@ -199,9 +218,12 @@ describe('text to speech', () => {
       .mockImplementation(async () => new Response('audio'));
     const onCached = vi.fn();
     for (let index = 0; index < 2; index += 1) {
-      const session = new TextToSpeechSession(
-        null, undefined, '', vi.fn(), undefined, '/media/cached-r2', onCached,
-      );
+      const session = new TextToSpeechSession({
+        text: '',
+        onEnded: vi.fn(),
+        cachedUrl: '/media/cached-r2',
+        onCached,
+      });
       await session.play();
       session.stop();
     }
@@ -217,9 +239,11 @@ describe('text to speech', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       error: { code: 'vault_changed', message: 'The active vault changed.' },
     }), { status: 409 }));
-    const session = new TextToSpeechSession(
-      null, undefined, '', vi.fn(), undefined, '/media/cached-r2',
-    );
+    const session = new TextToSpeechSession({
+      text: '',
+      onEnded: vi.fn(),
+      cachedUrl: '/media/cached-r2',
+    });
 
     await expect(session.play()).rejects.toMatchObject({
       message: 'Audio: The active vault changed. (HTTP 409)',
@@ -229,7 +253,10 @@ describe('text to speech', () => {
   });
 
   it('reports unavailable speech without committed or native audio', async () => {
-    const session = new TextToSpeechSession(null, undefined, 'Hello', vi.fn());
+    const session = new TextToSpeechSession({
+      text: 'Hello',
+      onEnded: vi.fn(),
+    });
     await expect(session.play()).rejects.toMatchObject({
       name: 'TextToSpeechError',
       message: 'Voice output is unavailable.',
@@ -249,9 +276,13 @@ describe('playback position', () => {
     vi.mocked(audio.load).mockImplementation(() => {
       Object.assign(audio, { currentTime: 0, duration: NaN, readyState: 0 });
     });
-    const session = new TextToSpeechSession(null, undefined, '', vi.fn(),
-      { position, onPositionChange: vi.fn() }, '/media/new-reply',
-      undefined, undefined, undefined, { audio });
+    const session = new TextToSpeechSession({
+      text: '',
+      onEnded: vi.fn(),
+      playback: { position, onPositionChange: vi.fn() },
+      cachedUrl: '/media/new-reply',
+      audio,
+    });
     await session.play();
     expect(audio.currentTime).toBe(0);
     Object.assign(audio, { duration: 60, readyState: 1 });
@@ -264,12 +295,20 @@ describe('playback position', () => {
     const audio = new Audio();
     const firstEnded = vi.fn();
     const secondEnded = vi.fn();
-    const first = new TextToSpeechSession(null, undefined, '', firstEnded,
-      undefined, '/media/first', undefined, undefined, undefined, { audio });
+    const first = new TextToSpeechSession({
+      text: '',
+      onEnded: firstEnded,
+      cachedUrl: '/media/first',
+      audio,
+    });
     await first.play();
     first.stop();
-    const second = new TextToSpeechSession(null, undefined, '', secondEnded,
-      undefined, '/media/second', undefined, undefined, undefined, { audio });
+    const second = new TextToSpeechSession({
+      text: '',
+      onEnded: secondEnded,
+      cachedUrl: '/media/second',
+      audio,
+    });
     await second.play();
     expect(audios).toHaveLength(1);
     expect(audios[0].play).toHaveBeenCalledTimes(2);
@@ -281,11 +320,12 @@ describe('playback position', () => {
   it('saves the stop position, resumes, and resets after ending', async () => {
     let position = 0;
     const ended = vi.fn();
-    const createSession = () => new TextToSpeechSession(
-      null, undefined, '', ended,
-      { position, onPositionChange: (next) => { position = next; } },
-      '/media/cached-r2',
-    );
+    const createSession = () => new TextToSpeechSession({
+      text: '',
+      onEnded: ended,
+      playback: { position, onPositionChange: (next) => { position = next; } },
+      cachedUrl: '/media/cached-r2',
+    });
     const first = createSession();
     await first.play();
     audios[0].currentTime = 12.5;
@@ -301,11 +341,12 @@ describe('playback position', () => {
   });
 
   it('starts at zero when a remembered position exceeds the duration', async () => {
-    const session = new TextToSpeechSession(
-      null, undefined, '', vi.fn(),
-      { position: 70, onPositionChange: vi.fn() },
-      '/media/cached-r2',
-    );
+    const session = new TextToSpeechSession({
+      text: '',
+      onEnded: vi.fn(),
+      playback: { position: 70, onPositionChange: vi.fn() },
+      cachedUrl: '/media/cached-r2',
+    });
     await session.play();
     expect(audios[0].currentTime).toBe(0);
     session.stop();
@@ -316,8 +357,12 @@ describe('playback position', () => {
     const ended = vi.fn();
     const changes: boolean[] = [];
     const unsubscribe = onSpeechPlaybackChange((playing) => { changes.push(playing); });
-    const session = new TextToSpeechSession(null, undefined, '', ended,
-      { position: 0, onPositionChange: position }, '/media/r1');
+    const session = new TextToSpeechSession({
+      text: '',
+      onEnded: ended,
+      playback: { position: 0, onPositionChange: position },
+      cachedUrl: '/media/r1',
+    });
     try {
       await session.play();
       const audio = audios[0];
@@ -357,8 +402,13 @@ describe('playback position', () => {
     const changes: boolean[] = [];
     const unsubscribe = onSpeechPlaybackChange((playing) => { changes.push(playing); });
     const release = vi.fn();
-    const session = new TextToSpeechSession(null, undefined, '', ended,
-      { position: 0, onPositionChange: position }, '/media/r1', undefined, undefined, release);
+    const session = new TextToSpeechSession({
+      text: '',
+      onEnded: ended,
+      playback: { position: 0, onPositionChange: position },
+      cachedUrl: '/media/r1',
+      onDispose: release,
+    });
     try {
       await session.play();
       audios[0].currentTime = 60;
@@ -394,9 +444,13 @@ describe('automatic reply silence', () => {
       headers: { 'Content-Type': 'audio/mpeg' },
     }));
     const position = vi.fn();
-    const session = new TextToSpeechSession(null, undefined, '', vi.fn(),
-      { position: 0, onPositionChange: position }, '/media/reply', undefined, undefined, undefined,
-      { leadingSilence: true });
+    const session = new TextToSpeechSession({
+      text: '',
+      onEnded: vi.fn(),
+      playback: { position: 0, onPositionChange: position },
+      cachedUrl: '/media/reply',
+      leadingSilence: true,
+    });
     await session.play();
     const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
     const duration = checkSilentPrefix(new Uint8Array(await blob.arrayBuffer()), reply, length);
@@ -410,9 +464,13 @@ describe('automatic reply silence', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(reply, {
       headers: { 'Content-Type': 'audio/mpeg' },
     }));
-    const session = new TextToSpeechSession(null, undefined, '', vi.fn(),
-      { position, onPositionChange() {} }, '/media/reply', undefined, undefined, undefined,
-      { leadingSilence: position > 0 });
+    const session = new TextToSpeechSession({
+      text: '',
+      onEnded: vi.fn(),
+      playback: { position, onPositionChange() {} },
+      cachedUrl: '/media/reply',
+      leadingSilence: position > 0,
+    });
     await session.play();
     const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
     expect(new Uint8Array(await blob.arrayBuffer())).toEqual(reply);
@@ -425,9 +483,13 @@ describe('automatic reply silence', () => {
       headers: { 'Content-Type': 'audio/mpeg' },
     }));
     const position = vi.fn();
-    const session = new TextToSpeechSession(null, undefined, '', vi.fn(),
-      { position: 0, onPositionChange: position }, '/media/reply', undefined, undefined, undefined,
-      { leadingSilence: true });
+    const session = new TextToSpeechSession({
+      text: '',
+      onEnded: vi.fn(),
+      playback: { position: 0, onPositionChange: position },
+      cachedUrl: '/media/reply',
+      leadingSilence: true,
+    });
     await session.play();
     audios[0].currentTime = 1;
     session.stop();
@@ -463,10 +525,13 @@ describe('streaming playback', () => {
   });
   const start = (onCached = vi.fn(), onError = vi.fn()) => {
     const release = vi.fn(async () => undefined);
-    const session = new TextToSpeechSession(null, undefined, 'Hello', vi.fn(),
-      undefined, undefined, onCached,
-      { preview: async () => ({ url: '/media/r1', resource_id: 'r1', streaming: true }), release },
-      undefined, { onError });
+    const session = new TextToSpeechSession({
+      text: 'Hello',
+      onEnded: vi.fn(),
+      onCached,
+      nativeSpeech: { preview: async () => ({ url: '/media/r1', resource_id: 'r1', streaming: true }), release },
+      onError,
+    });
     return { session, release };
   };
   beforeEach(() => {
@@ -491,8 +556,14 @@ describe('streaming playback', () => {
       .mockResolvedValueOnce(packet(reply.slice(2, 1000), false))
       .mockResolvedValueOnce(packet(reply.slice(1000), true));
     const cached = vi.fn();
-    const session = new TextToSpeechSession(null, undefined, '', vi.fn(), undefined,
-      '/media/reply', cached, undefined, undefined, { streaming: true, leadingSilence: true });
+    const session = new TextToSpeechSession({
+      text: '',
+      onEnded: vi.fn(),
+      cachedUrl: '/media/reply',
+      onCached: cached,
+      streaming: true,
+      leadingSilence: true,
+    });
     await session.play();
     await vi.waitFor(() => expect(cached).toHaveBeenCalledOnce());
     let bytes: Uint8Array;

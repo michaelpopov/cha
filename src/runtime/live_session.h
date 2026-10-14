@@ -31,9 +31,6 @@ using SessionOpener = std::function<OpenedSession(
     std::shared_ptr<WakeNotifier>,
     std::uint64_t)>;
 
-using LiveSessionClock =
-    std::function<std::chrono::steady_clock::time_point()>;
-
 [[nodiscard]] RuntimeSettings validate_live_session_settings(
     RuntimeSettings settings);
 
@@ -67,8 +64,7 @@ private:
     friend class LiveSessionManager;
     SessionRuntime(
         RuntimeSettings settings,
-        SessionOpener opener,
-        LiveSessionClock clock);
+        SessionOpener opener);
     [[nodiscard]] std::shared_ptr<LiveSession> make_session(
         FullSessionId identity,
         std::uint64_t instance);

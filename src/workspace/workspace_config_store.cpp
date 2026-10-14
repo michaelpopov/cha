@@ -1375,6 +1375,32 @@ struct WorkspaceConfigStore::Impl {
         published_workspace = std::move(published);
     }
 
+    void open_database() {
+        secure_workspace_session_database_files(database_path);
+        const WorkspaceDatabaseState state =
+            inspect_workspace_session_database(
+                database_path, database_password);
+        if (state != WorkspaceDatabaseState::valid_v2) {
+            fail_runtime_database_state(database_path, state);
+        }
+
+        database = std::make_unique<Database>(
+            database_path,
+            Database::Mode::read_write,
+            database_password);
+        validate_workspace_session_database_identity(*database);
+        ensure_entry_metadata_columns(*database);
+        ensure_session_lifecycle_columns(*database);
+        {
+            storage::SqliteTransaction transaction(*database);
+            create_note_items_schema(*database);
+            transaction.commit();
+        }
+        validate_workspace_session_contents(*database);
+        database->execute("PRAGMA journal_mode = WAL");
+        secure_workspace_session_database_files(database_path);
+    }
+
     void load_committed_workspace() {
         const auto rows = read_workspace_config_files(*database);
         validate_config_rows(rows);
@@ -1925,29 +1951,7 @@ void WorkspaceConfigStore::MaintenanceGuard::reopen() {
     }
     WorkspaceConfigStore::Impl& store = *impl_->store;
     try {
-        secure_workspace_session_database_files(store.database_path);
-        const WorkspaceDatabaseState state =
-            inspect_workspace_session_database(
-                store.database_path, store.database_password);
-        if (state != WorkspaceDatabaseState::valid_v2) {
-            fail_runtime_database_state(store.database_path, state);
-        }
-
-        store.database = std::make_unique<Database>(
-            store.database_path,
-            Database::Mode::read_write,
-            store.database_password);
-        validate_workspace_session_database_identity(*store.database);
-        ensure_entry_metadata_columns(*store.database);
-        ensure_session_lifecycle_columns(*store.database);
-        {
-            storage::SqliteTransaction transaction(*store.database);
-            create_note_items_schema(*store.database);
-            transaction.commit();
-        }
-        validate_workspace_session_contents(*store.database);
-        store.database->execute("PRAGMA journal_mode = WAL");
-        secure_workspace_session_database_files(store.database_path);
+        store.open_database();
 
         store.load_committed_workspace();
         impl_->closed = false;
@@ -1973,29 +1977,7 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
         SessionLease::acquire(
             impl->database_path, busy_message(impl->database_path)));
 
-    secure_workspace_session_database_files(impl->database_path);
-    const WorkspaceDatabaseState state =
-        inspect_workspace_session_database(
-            impl->database_path, impl->database_password);
-    if (state != WorkspaceDatabaseState::valid_v2) {
-        fail_runtime_database_state(impl->database_path, state);
-    }
-
-    impl->database = std::make_unique<Database>(
-        impl->database_path,
-        Database::Mode::read_write,
-        impl->database_password);
-    validate_workspace_session_database_identity(*impl->database);
-    ensure_entry_metadata_columns(*impl->database);
-    ensure_session_lifecycle_columns(*impl->database);
-    {
-        storage::SqliteTransaction transaction(*impl->database);
-        create_note_items_schema(*impl->database);
-        transaction.commit();
-    }
-    validate_workspace_session_contents(*impl->database);
-    impl->database->execute("PRAGMA journal_mode = WAL");
-    secure_workspace_session_database_files(impl->database_path);
+    impl->open_database();
 
     impl->tree.emplace();
     impl->load_committed_workspace();

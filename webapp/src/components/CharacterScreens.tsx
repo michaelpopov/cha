@@ -273,21 +273,16 @@ function VoicePreview({ client, voiceId, appearance }: {
         return;
       }
     }
-    const session = new TextToSpeechSession(
-      speechConfiguration,
-      selectedVoice,
-      text.trim(),
-      () => {
+    const session = new TextToSpeechSession({
+      voice: selectedVoice,
+      text: text.trim(),
+      onEnded: () => {
         if (sessionRef.current === session) sessionRef.current = null;
         setPlaying(false);
       },
-      undefined,
-      undefined,
-      undefined,
-      nativeSpeechFromClient(client),
-      undefined,
-      { onError: (failure) => setError(failure.message) },
-    );
+      nativeSpeech: nativeSpeechFromClient(client),
+      onError: (failure) => setError(failure.message),
+    });
     sessionRef.current = session;
     setPlaying(true);
     try {

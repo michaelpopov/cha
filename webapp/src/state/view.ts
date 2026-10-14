@@ -65,9 +65,7 @@ export type StreamStatus =
   | 'connecting'
   | 'connected'
   | 'reconnecting'
-  | 'retry'
-  // The reader opened this session on another device, which now holds it.
-  | 'moved';
+  | 'retry';
 
 export interface ActiveConversation {
   forumId: string;

@@ -117,13 +117,11 @@ struct SessionRuntime::Impl {
     Impl(
         SessionRuntime& owner,
         RuntimeSettings settings_value,
-        SessionOpener opener_value,
-        LiveSessionClock clock_value)
+        SessionOpener opener_value)
         : owner(owner),
           settings(validate_live_session_settings(std::move(settings_value))),
           opener(std::move(opener_value)),
           notifier(std::make_shared<OwnerWakeSignal>()) {
-        (void)clock_value;
         if (!opener) {
             throw std::invalid_argument("Session runtime needs a session opener");
         }
@@ -438,10 +436,9 @@ struct SessionRuntime::Impl {
 
 SessionRuntime::SessionRuntime(
     RuntimeSettings settings,
-    SessionOpener opener,
-    LiveSessionClock clock)
+    SessionOpener opener)
     : impl_(std::make_unique<Impl>(
-          *this, std::move(settings), std::move(opener), std::move(clock))) {}
+          *this, std::move(settings), std::move(opener))) {}
 
 SessionRuntime::~SessionRuntime() {
     impl_->stopping_requested.store(true);
@@ -536,10 +533,9 @@ void LiveSessionGlobalMaintenance::release() noexcept {
 
 LiveSessionManager::LiveSessionManager(
     RuntimeSettings settings,
-    SessionOpener opener,
-    LiveSessionClock clock)
+    SessionOpener opener)
     : runtime_(std::shared_ptr<SessionRuntime>(new SessionRuntime(
-          std::move(settings), std::move(opener), std::move(clock)))) {
+          std::move(settings), std::move(opener)))) {
     runtime_->impl_->start(runtime_);
 }
 
@@ -964,8 +960,6 @@ bool LiveSessionManager::join_shutdown(std::chrono::milliseconds grace) {
 std::vector<FullSessionId> LiveSessionManager::unfinished_owners() {
     return runtime_->impl_->published_identities();
 }
-
-void LiveSessionManager::sweep() {}
 
 void LiveSessionManager::release_maintenance(
     const std::shared_ptr<std::atomic_bool>& active) noexcept {

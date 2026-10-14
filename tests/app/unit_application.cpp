@@ -73,7 +73,6 @@ TEST(RuntimeSettings, DefaultsHavePositiveBatchSizes) {
     const RuntimeSettings settings;
     EXPECT_GT(settings.command_batch_size, 0U);
     EXPECT_GT(settings.event_batch_size, 0U);
-    EXPECT_TRUE(settings.monotonic_event_sequence);
 }
 
 TEST(Application, PictureReadsNeedNoSessionAndUseApplicationErrors) {

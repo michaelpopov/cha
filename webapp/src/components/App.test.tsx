@@ -2294,7 +2294,7 @@ it('replaces a failed stream without reopening the session', async () => {
   const planning = events.connections.findIndex(({ key }) => key === 'lobby/planning');
   expect(planning).toBeGreaterThanOrEqual(0);
 
-  act(() => events.handlers[planning].onError({ kind: 'stream_failure' }));
+  act(() => events.handlers[planning].onError());
 
   await waitFor(() => expect(screen.getByRole('status'))
     .toHaveTextContent('Reconnecting live updates'));

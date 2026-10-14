@@ -209,7 +209,11 @@ describe('xAI composer', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
       await screen.findByRole('button', { name: 'Stop voice input' });
     };
-    const playback = new TextToSpeechSession(null, undefined, '', vi.fn(), undefined, '/media/r1');
+    const playback = new TextToSpeechSession({
+      text: '',
+      onEnded: vi.fn(),
+      cachedUrl: '/media/r1',
+    });
     try {
       if (when === 'before') await startDictation();
       await playback.play();

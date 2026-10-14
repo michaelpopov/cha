@@ -4,18 +4,10 @@ import { isRecord } from './guards';
 
 export type AppendEvent = components['schemas']['AppendEvent'];
 
-// A stream ends either because it broke, which the reconnect ladder repairs,
-// or because the reader opened this session on another device and that device
-// now holds it. Reconnecting after a takeover would only take the session
-// back, so the two endings must not look alike here.
-export interface SessionStreamFailure {
-  readonly kind: 'stream_failure' | 'superseded';
-}
-
 export interface SessionEventHandlers {
   onSnapshot(snapshot: SessionSnapshot): void;
   onAppend(event: AppendEvent): void;
-  onError(failure: SessionStreamFailure): void;
+  onError(): void;
 }
 
 export interface SessionEventConnection {

@@ -95,8 +95,7 @@ class LiveSessionManager {
 public:
     LiveSessionManager(
         RuntimeSettings settings,
-        SessionOpener opener,
-        LiveSessionClock clock = {});
+        SessionOpener opener);
     ~LiveSessionManager();
     LiveSessionManager(const LiveSessionManager&) = delete;
     LiveSessionManager& operator=(const LiveSessionManager&) = delete;
@@ -139,9 +138,6 @@ public:
     void begin_shutdown(const std::function<void()>& stop_accepting = {});
     [[nodiscard]] std::vector<FullSessionId> unfinished_owners();
     [[nodiscard]] bool join_shutdown(std::chrono::milliseconds grace);
-    // Kept as a harmless compatibility operation; retirement is immediate on
-    // the runtime thread, so there are no finished owner threads to reap.
-    void sweep();
 
 private:
     friend class LiveSessionMaintenanceReservation;

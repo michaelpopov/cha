@@ -271,7 +271,7 @@ it('replaces the stream after it fails, without a second replacement', async () 
   });
 
   await act(async () => {
-    events.handlers[0].onError({ kind: 'stream_failure' });
+    events.handlers[0].onError();
   });
   expect(events.handlers).toHaveLength(2);
 
@@ -279,24 +279,6 @@ it('replaces the stream after it fails, without a second replacement', async () 
     events.handlers[1].onSnapshot(snapshotFixture);
   });
   expect(view.result.current.state.streamStatus).toBe('connected');
-});
-
-it('parks instead of recovering when the session moves to another device', async () => {
-  const { events, view } = harness();
-
-  await act(async () => {
-    await view.result.current.live.openConversation('entrance', 'welcome');
-  });
-  act(() => {
-    events.handlers[0].onSnapshot(snapshotFixture);
-  });
-
-  await act(async () => {
-    events.handlers[0].onError({ kind: 'superseded' });
-  });
-
-  expect(view.result.current.state.streamStatus).toBe('moved');
-  expect(events.handlers).toHaveLength(1);
 });
 
 it('closes the live stream when the session is cleared', async () => {
@@ -363,7 +345,7 @@ it('refreshes the first snapshot after Welcome reconnects', async () => {
   onWelcomeRefresh.mockClear();
 
   await act(async () => {
-    events.handlers[0].onError({ kind: 'stream_failure' });
+    events.handlers[0].onError();
   });
   act(() => events.handlers.at(-1)!.onSnapshot(welcomeSnapshot));
   expect(onWelcomeRefresh).toHaveBeenCalledTimes(1);

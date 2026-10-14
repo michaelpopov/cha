@@ -46,7 +46,7 @@ describe('native session projection', () => {
     }, handlers);
     projection.push(event({ payload: { ...snapshotFixture, generation: {} } }));
     expect(projection.invalidated()).toBe(true);
-    expect(handlers.onError).toHaveBeenCalledExactlyOnceWith({ kind: 'stream_failure' });
+    expect(handlers.onError).toHaveBeenCalledExactlyOnceWith();
     expect(handlers.onSnapshot).not.toHaveBeenCalled();
     projection.push(event({ seq: 1 }));
     expect(handlers.onSnapshot).not.toHaveBeenCalled();
@@ -137,7 +137,7 @@ describe('native session projection', () => {
       seq: 2,
       payload: { target: { kind: 'entry', entry_id: 1 }, text: 'gap' },
     }));
-    expect(handlers.onError).toHaveBeenCalledWith({ kind: 'stream_failure' });
+    expect(handlers.onError).toHaveBeenCalledWith();
     gap.push(event({ seq: 3 }));
     expect(handlers.onSnapshot).toHaveBeenCalledOnce();
 

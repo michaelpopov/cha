@@ -17,7 +17,6 @@ struct RuntimeSettings {
     std::size_t prompt_limit{32768};
     std::chrono::milliseconds shutdown_grace{10000};
     std::size_t pending_append_byte_limit{65536};
-    bool monotonic_event_sequence{true};
 };
 
 } // namespace cha

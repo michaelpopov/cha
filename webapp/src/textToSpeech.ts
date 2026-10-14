@@ -150,6 +150,24 @@ async function* readAudioChunks(url: string, signal: AbortSignal) {
   }
 }
 
+export interface TextToSpeechSessionOptions {
+  voice?: TextToSpeechVoice;
+  text: string;
+  onEnded(): void;
+  playback?: {
+    position: number;
+    onPositionChange(position: number): void;
+  };
+  cachedUrl?: string;
+  onCached?(): void;
+  nativeSpeech?: NativeSpeech;
+  onDispose?(): void;
+  streaming?: boolean;
+  onError?(error: Error): void;
+  audio?: HTMLAudioElement;
+  leadingSilence?: boolean;
+}
+
 export class TextToSpeechSession {
   private readonly request = new AbortController();
   private audio: HTMLAudioElement | null = null;
@@ -160,29 +178,15 @@ export class TextToSpeechSession {
   private playbackWaitTimer: ReturnType<typeof setTimeout> | undefined;
   private leadingSilenceSeconds = 0;
 
-  constructor(
-    _configuration: TextToSpeechConfiguration | null,
-    private readonly voice: TextToSpeechVoice | undefined,
-    private readonly text: string,
-    private readonly onEnded: () => void,
-    private readonly playback?: {
-      position: number;
-      onPositionChange(position: number): void;
-    },
-    private readonly cachedUrl?: string,
-    private readonly onCached?: () => void,
-    private readonly nativeSpeech?: NativeSpeech,
-    private readonly onDispose?: () => void,
-    private readonly options?: {
-      streaming?: boolean; onError?(error: Error): void; audio?: HTMLAudioElement; leadingSilence?: boolean;
-    },
-  ) {}
+  constructor(private readonly options: TextToSpeechSessionOptions) {}
 
   async play(): Promise<void> {
-    let url = this.cachedUrl;
-    let streaming = this.options?.streaming ?? false;
-    if (!url && this.nativeSpeech) {
-      const resource = await this.nativeSpeech.preview(this.text, this.voice, this.request.signal);
+    let url = this.options.cachedUrl;
+    let streaming = this.options.streaming ?? false;
+    if (!url && this.options.nativeSpeech) {
+      const resource = await this.options.nativeSpeech.preview(
+        this.options.text, this.options.voice, this.request.signal,
+      );
       this.nativeResourceId = resource.resource_id;
       if (this.stopped) { this.releaseNative(); return; }
       url = resource.url;
@@ -195,15 +199,15 @@ export class TextToSpeechSession {
       this.releaseNative();
       return;
     }
-    if (this.cachedUrl) this.onCached?.();
+    if (this.options.cachedUrl) this.options.onCached?.();
 
     const audio = await this.createBlobAudio(blob);
     if (audio) await this.startAudio(audio);
   }
 
   private silentFrames(frame: CodecFrame): Uint8Array<ArrayBuffer> {
-    if (!this.options?.leadingSilence || this.leadingSilenceSeconds > 0
-      || (this.playback?.position ?? 0) > 0 || frame.header.layer !== 'Layer III') return new Uint8Array();
+    if (!this.options.leadingSilence || this.leadingSilenceSeconds > 0
+      || (this.options.playback?.position ?? 0) > 0 || frame.header.layer !== 'Layer III') return new Uint8Array();
     const count = Math.ceil(2500 / frame.duration);
     const silence = new Uint8Array(count * frame.data.length);
     for (let offset = 0; offset < silence.length; offset += frame.data.length) {
@@ -215,8 +219,8 @@ export class TextToSpeechSession {
   }
 
   private async createBlobAudio(blob: Blob): Promise<HTMLAudioElement | null> {
-    if (this.options?.leadingSilence && blob.type.split(';')[0] === 'audio/mpeg'
-      && (this.playback?.position ?? 0) === 0) {
+    if (this.options.leadingSilence && blob.type.split(';')[0] === 'audio/mpeg'
+      && (this.options.playback?.position ?? 0) === 0) {
       const parser = new CodecParser('audio/mpeg', { enableFrameCRC32: false });
       const first = parser.parseChunk(new Uint8Array(await blob.arrayBuffer())).next().value
         ?? parser.flush().next().value;
@@ -240,7 +244,7 @@ export class TextToSpeechSession {
   }
 
   private createAudio(url: string, managed = false): HTMLAudioElement {
-    const audio = this.options?.audio ?? new Audio();
+    const audio = this.options.audio ?? new Audio();
     // Safari needs this before attaching a ManagedMediaSource without an AirPlay URL.
     if (managed) audio.disableRemotePlayback = true;
     audio.src = url;
@@ -266,17 +270,17 @@ export class TextToSpeechSession {
     audio.addEventListener('waiting', () => {
       if (this.stopped || audio.paused || this.playbackWaitTimer !== undefined) return;
       this.playbackWaitTimer = setTimeout(() => {
-        this.options?.onError?.(new TextToSpeechError('Audio playback stalled. Try again.'));
+        this.options.onError?.(new TextToSpeechError('Audio playback stalled. Try again.'));
         this.finish();
       }, 10_000);
     }, { signal });
     audio.addEventListener('error', () => {
       if (this.stopped) return;
-      this.options?.onError?.(new TextToSpeechError('Audio could not be played.'));
+      this.options.onError?.(new TextToSpeechError('Audio could not be played.'));
       this.finish(true);
     }, { once: true, signal });
-    if (this.playback && this.playback.position > 0) {
-      const position = this.playback.position;
+    if (this.options.playback && this.options.playback.position > 0) {
+      const position = this.options.playback.position;
       const resume = () => {
         if (this.stopped) return;
         audio.currentTime = Number.isFinite(audio.duration) && position >= audio.duration ? 0 : position;
@@ -299,11 +303,11 @@ export class TextToSpeechSession {
     const mp4Mime = 'audio/mp4;codecs="mp3"';
     const rawMp3 = mime === 'audio/mpeg' && StreamingSource?.isTypeSupported(mime);
     const wrappedMp3 = mime === 'audio/mpeg' && !rawMp3 && StreamingSource?.isTypeSupported(mp4Mime);
-    if ((!rawMp3 && !wrappedMp3) || (this.playback?.position ?? 0) > 0) {
+    if ((!rawMp3 && !wrappedMp3) || (this.options.playback?.position ?? 0) > 0) {
       const parts = [first.value.bytes];
       for await (const chunk of chunks) parts.push(chunk.bytes);
       if (this.stopped) return;
-      this.onCached?.();
+      this.options.onCached?.();
       const audio = await this.createBlobAudio(new Blob(parts, { type: first.value.type }));
       if (audio) await this.startAudio(audio);
       return;
@@ -316,7 +320,7 @@ export class TextToSpeechSession {
     const buffer = source.addSourceBuffer(wrappedMp3 ? mp4Mime : mime);
     if (wrappedMp3) buffer.mode = 'sequence';
     // Firefox accepts MP3 frames inside MP4, but not the raw MP3 byte stream.
-    const parser = wrappedMp3 || this.options?.leadingSilence
+    const parser = wrappedMp3 || this.options.leadingSilence
       ? new CodecParser(mime, { enableFrameCRC32: false }) : null;
     const wrapper = wrappedMp3 ? new MSEAudioWrapper(mime, {
       codec: 'mpeg', minFramesPerSegment: 1, minBytesPerSegment: 1,
@@ -361,7 +365,7 @@ export class TextToSpeechSession {
       if (parser) await appendFrames(parser.flush());
       if (this.stopped) return;
       source.endOfStream();
-      this.onCached?.();
+      this.options.onCached?.();
     })();
     // Resolve when playback starts; later transfer failures still reach the screen.
     await new Promise<void>((resolve, reject) => {
@@ -369,7 +373,7 @@ export class TextToSpeechSession {
       void transfer.catch((error: unknown) => {
         if (!started) { this.stop(); reject(error); return; }
         if (this.stopped) return;
-        this.options?.onError?.(error instanceof Error ? error : new TextToSpeechError('Audio generation failed.'));
+        this.options.onError?.(error instanceof Error ? error : new TextToSpeechError('Audio generation failed.'));
         this.finish(true);
       });
       void this.startAudio(audio).then(() => { started = true; resolve(); }, reject);
@@ -382,10 +386,10 @@ export class TextToSpeechSession {
     this.clearPlaybackWait();
     this.request.abort();
     this.audio?.pause();
-    if (this.playback && this.audio) {
-      if (resetPosition) this.playback.onPositionChange(0);
+    if (this.options.playback && this.audio) {
+      if (resetPosition) this.options.playback.onPositionChange(0);
       else if (this.audio.readyState >= 1 && Number.isFinite(this.audio.currentTime)) {
-        this.playback.onPositionChange(Math.max(0, this.audio.currentTime - this.leadingSilenceSeconds));
+        this.options.playback.onPositionChange(Math.max(0, this.audio.currentTime - this.leadingSilenceSeconds));
       }
     }
     this.audio?.removeAttribute('src');
@@ -394,13 +398,13 @@ export class TextToSpeechSession {
     this.releaseInput();
     this.releaseObjectUrl();
     this.releaseNative();
-    this.onDispose?.();
+    this.options.onDispose?.();
   }
 
   private releaseNative(): void {
     const id = this.nativeResourceId;
     this.nativeResourceId = null;
-    if (id && this.nativeSpeech) void this.nativeSpeech.release(id);
+    if (id && this.options.nativeSpeech) void this.options.nativeSpeech.release(id);
   }
 
   private releaseInput(): void {
@@ -417,7 +421,7 @@ export class TextToSpeechSession {
   private finish(completed = false): void {
     if (this.stopped) return;
     this.stop(completed);
-    this.onEnded();
+    this.options.onEnded();
   }
 
   private releaseObjectUrl(): void {
