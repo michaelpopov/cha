@@ -18,6 +18,20 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it('reads and replaces shared character instructions without a character id or filename', async () => {
+    const file = { filename: 'character-voice.md', content: 'Shared voice.', writable: true };
+    const read = vi.fn(() => file);
+    const write = vi.fn(({ content }) => ({ ...file, content }));
+    const client = createNativeChaClient(createFakeNativeBridge({
+      'character.instructions.get': read,
+      'character.instructions.update': write,
+    }));
+    expect(await client.getCharacterInstructions()).toEqual(file);
+    expect(read).toHaveBeenCalledWith({});
+    expect(await client.updateCharacterInstructions('New voice.')).toEqual({ ...file, content: 'New voice.' });
+    expect(write).toHaveBeenCalledWith({ content: 'New voice.' });
+  });
+
   it.each(['JPG', 'jpeg', 'png'])('uploads original %s bytes under the picture filename', async (extension) => {
     const write = vi.fn(() => ({}));
     const client = createNativeChaClient(createFakeNativeBridge({ 'character.picture.update': write }));

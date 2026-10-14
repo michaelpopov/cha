@@ -48,6 +48,8 @@ enum class Method {
     character_update,
     character_update_definition,
     character_delete,
+    character_instructions_get,
+    character_instructions_update,
     character_file_get,
     character_file_create,
     character_file_update,

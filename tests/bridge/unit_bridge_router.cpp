@@ -169,6 +169,24 @@ protected:
     std::uint64_t next_id_{1};
 };
 
+TEST_F(BridgeRouterTest, CharacterInstructionsUseFixedVaultPathAndHaveNoDeleteMethod) {
+    bootstrap_epoch();
+    auto reply = call("character.instructions.get");
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"]["filename"], "character-voice.md");
+    reply = call("character.instructions.update", {{"content", "Shared voice."}});
+    ASSERT_TRUE(reply["ok"]) << reply;
+    EXPECT_EQ(reply["result"]["content"], "Shared voice.");
+    EXPECT_EQ(call("character.instructions.get")["result"]["content"], "Shared voice.");
+    for (const auto& params : std::vector<nlohmann::json>{
+             {}, {{"content", 42}}, {{"content", "Wrong"}, {"filename", "elsewhere.md"}}}) {
+        EXPECT_FALSE(call("character.instructions.update", params)["ok"]);
+    }
+    EXPECT_FALSE(call("character.instructions.get", {{"character_id", "guide"}})["ok"]);
+    EXPECT_FALSE(call("character.instructions.delete")["ok"]);
+    EXPECT_EQ(call("character.instructions.get")["result"]["content"], "Shared voice.");
+}
+
 TEST_F(BridgeRouterTest, CharacterPictureReadsNullAndStoredContentWithExactParams) {
     router_->shutdown();
     application_->request_shutdown();

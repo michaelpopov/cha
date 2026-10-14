@@ -5,6 +5,7 @@
 #include "support/mock_http_server.h"
 #include "runtime/live_session.h"
 #include "workspace/builtins.h"
+#include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
 
@@ -570,6 +571,48 @@ TEST(Application, StartupLoadsHarmlessFieldsAndKeepsKnownSettings) {
     EXPECT_NE(logged.find("unsupported field 'legacy_flag'"), std::string::npos);
     EXPECT_NE(logged.find("Ignoring unused web search field: query_provider"),
         std::string::npos);
+}
+
+TEST(Application, SharedCharacterInstructionsPersistAndRebuildPrompts) {
+    test::TestWorkspace workspace;
+    std::ofstream(workspace.root() / "characters/character-voice.md") << "Original voice.";
+    std::ofstream(workspace.root() / "characters/guide/CHARACTER.md")
+        << "$$(../character-voice.md)\nGuide profile.";
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    const auto original = application->get_character_instructions(epoch);
+    EXPECT_EQ(original.filename, "character-voice.md");
+    EXPECT_EQ(original.content, "Original voice.");
+    EXPECT_TRUE(original.writable);
+    const std::string replacement = "Portray $${character.display_name}.";
+    EXPECT_EQ(application->update_character_instructions(replacement, epoch).content, replacement);
+    EXPECT_THROW((void)application->update_character_instructions("$$(missing.md)", epoch), ApplicationError);
+    EXPECT_EQ(application->get_character_instructions(epoch).content, replacement);
+    EXPECT_THROW((void)application->get_character_instructions(epoch + 1), ApplicationError);
+    EXPECT_THROW((void)application->update_character_instructions("Wrong vault", epoch + 1), ApplicationError);
+    EXPECT_THROW(application->delete_character_file("guide", "../character-voice.md", epoch), ApplicationError);
+    application->request_shutdown();
+    ASSERT_TRUE(application->join_shutdown(2s));
+    application.reset();
+
+    auto store = WorkspaceConfigStore::open(database);
+    EXPECT_EQ(store->get_character_instructions(), replacement);
+    EXPECT_EQ(store->snapshot()->find_forum_member("lobby", "guide")->character_prompt,
+        "Portray Guide.\nGuide profile.");
+}
+
+TEST(Application, MissingSharedCharacterInstructionsCanBeCreatedAndCleared) {
+    test::TestWorkspace workspace;
+    auto application = Application::open(make_command(
+        workspace, test::import_test_database(workspace.root())));
+    const auto epoch = application->context_epoch();
+    EXPECT_TRUE(application->get_character_instructions(epoch).content.empty());
+    const std::string content(70 * 1024, 'x');
+    EXPECT_EQ(application->update_character_instructions(content, epoch).content, content);
+    EXPECT_EQ(application->get_character_instructions(epoch).content, content);
+    (void)application->update_character_instructions("", epoch);
+    EXPECT_TRUE(application->get_character_instructions(epoch).content.empty());
 }
 
 TEST(Application, CharacterPersonaForumAndFileEditsUseTheStore) {

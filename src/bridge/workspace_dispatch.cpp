@@ -80,6 +80,17 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
         result = nlohmann::json::object();
         break;
     }
+    case Method::character_instructions_get: {
+        require_only_keys(params, {});
+        result = application.get_character_instructions(epoch);
+        break;
+    }
+    case Method::character_instructions_update: {
+        require_only_keys(params, {"content"});
+        result = application.update_character_instructions(
+            require_string(params, "content"), epoch);
+        break;
+    }
     case Method::character_file_get: {
         require_only_keys(params, {"character_id", "filename"});
         result = application.get_character_file(

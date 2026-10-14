@@ -34,6 +34,8 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::character_update, "character.update"},
     {Method::character_update_definition, "character.updateDefinition"},
     {Method::character_delete, "character.delete"},
+    {Method::character_instructions_get, "character.instructions.get"},
+    {Method::character_instructions_update, "character.instructions.update"},
     {Method::character_file_get, "character.file.get"},
     {Method::character_file_create, "character.file.create"},
     {Method::character_file_update, "character.file.update"},

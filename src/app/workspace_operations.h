@@ -81,6 +81,11 @@ void update_character_picture(
     std::string_view id,
     const CharacterDefinitionUpdate& update);
 void delete_character(WorkspaceConfigStore& store, std::string_view id);
+[[nodiscard]] MarkdownFile get_character_instructions(WorkspaceConfigStore& store);
+[[nodiscard]] MarkdownFile update_character_instructions(
+    WorkspaceConfigStore& store,
+    LiveSessionManager& live_sessions,
+    std::string content);
 [[nodiscard]] MarkdownFile get_character_file(
     const Workspace& workspace,
     std::string_view id,

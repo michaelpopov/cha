@@ -862,6 +862,21 @@ void Application::delete_character(
     workspace::delete_character(*impl_->store, character_id);
 }
 
+MarkdownFile Application::get_character_instructions(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::get_character_instructions(*impl_->store);
+}
+
+MarkdownFile Application::update_character_instructions(
+    std::string content,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::update_character_instructions(
+        *impl_->store, *impl_->live_sessions, std::move(content));
+}
+
 MarkdownFile Application::get_character_file(
     std::string_view character_id,
     std::string_view filename,

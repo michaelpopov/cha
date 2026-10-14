@@ -444,6 +444,68 @@ it('retries a failed persona-detail request without exposing implementation deta
   expect(getPersona).toHaveBeenCalledTimes(2);
 });
 
+it('opens shared character instructions and saves edits and uploads without a delete action', async () => {
+  let content = '# Shared instructions\n\nOriginal voice.';
+  const getCharacterInstructions = vi.fn(async () => ({ filename: 'character-voice.md', content, writable: true }));
+  const updateCharacterInstructions = vi.fn(async (replacement: string) => {
+    content = replacement;
+    return { filename: 'character-voice.md', content, writable: true };
+  });
+  const user = userEvent.setup();
+  const { container } = render(<App client={fixtureClient({ getCharacterInstructions, updateCharacterInstructions })} />);
+  await openSettingsNavigation();
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  const navigation = screen.getByLabelText('Characters navigation');
+  const instructions = within(navigation).getByRole('button', { name: 'Instructions' });
+  expect(instructions.parentElement).toBe(within(navigation).getByRole('button', { name: 'Settings' }).parentElement);
+  await user.click(instructions);
+  expect(await screen.findByRole('heading', { name: 'Shared instructions' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Delete/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Edit instructions' }));
+  const editor = screen.getByRole('textbox', { name: 'Edit instructions text' });
+  expect(editor).toHaveValue(content);
+  await user.clear(editor);
+  await user.type(editor, '# Edited instructions');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  expect(await screen.findByRole('heading', { name: 'Edited instructions' })).toBeInTheDocument();
+  expect(updateCharacterInstructions).toHaveBeenLastCalledWith('# Edited instructions');
+
+  const file = new File(['# Uploaded instructions'], 'external.txt', { type: 'text/plain' });
+  Object.defineProperty(file, 'text', { value: async () => '# Uploaded instructions' });
+  fireEvent.change(container.querySelector('.cha-definition-upload input')!, { target: { files: [file] } });
+  expect(await screen.findByRole('heading', { name: 'Uploaded instructions' })).toBeInTheDocument();
+  expect(updateCharacterInstructions).toHaveBeenLastCalledWith('# Uploaded instructions');
+  await user.click(screen.getByRole('button', { name: 'Characters' }));
+  expect(screen.getByRole('button', { name: 'Instructions' })).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Instructions' }));
+  expect(await screen.findByRole('heading', { name: 'Uploaded instructions' })).toBeInTheDocument();
+  expect(getCharacterInstructions).toHaveBeenCalledTimes(2);
+});
+
+it('retries instruction loading and keeps the editor open after a failed save', async () => {
+  const getCharacterInstructions = vi.fn()
+    .mockRejectedValueOnce(new ChaError('command_timeout', 'The request timed out.'))
+    .mockResolvedValue({ filename: 'character-voice.md', content: 'Original voice.', writable: true });
+  const updateCharacterInstructions = vi.fn().mockRejectedValue(new ChaError('invalid_argument', 'Invalid template.'));
+  const user = userEvent.setup();
+  render(<App client={fixtureClient({ getCharacterInstructions, updateCharacterInstructions })} />);
+  await openSettingsNavigation();
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(screen.getByRole('button', { name: 'Instructions' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('The request timed out.');
+  await user.click(screen.getByRole('button', { name: 'Try again' }));
+  await screen.findByText('Original voice.');
+  await user.click(screen.getByRole('button', { name: 'Edit instructions' }));
+  const editor = screen.getByRole('textbox', { name: 'Edit instructions text' });
+  await user.type(editor, ' Draft.');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Invalid template.');
+  expect(editor).toHaveValue('Original voice. Draft.');
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByText('Original voice.')).toBeInTheDocument();
+});
+
 it('opens the file list with settings before displaying a selected character file', async () => {
   const getCharacterFile = vi.fn(async (_id, filename) => ({
     filename, content: characterDetailFixture.editable_markdown, writable: true,

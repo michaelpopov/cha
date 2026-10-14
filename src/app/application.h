@@ -222,6 +222,10 @@ public:
     void delete_character(
         std::string_view character_id,
         std::uint64_t epoch);
+    [[nodiscard]] MarkdownFile get_character_instructions(std::uint64_t epoch);
+    [[nodiscard]] MarkdownFile update_character_instructions(
+        std::string content,
+        std::uint64_t epoch);
     [[nodiscard]] MarkdownFile get_character_file(
         std::string_view character_id,
         std::string_view filename,

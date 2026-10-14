@@ -50,6 +50,7 @@ import { AppErrorBoundary } from './AppErrorBoundary';
 import { TopBar } from './TopBar';
 import {
   CharacterDetailScreen,
+  CharacterInstructionsScreen,
   CharacterSettingsScreen,
   CharactersScreen,
   NewCharacterScreen,
@@ -200,6 +201,9 @@ function Screen({
     );
     case 'characters': return (
       <CharactersScreen state={state} dispatch={dispatch} navigate={navigate} />
+    );
+    case 'character-instructions': return (
+      <CharacterInstructionsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'new-character': return (
       <NewCharacterScreen

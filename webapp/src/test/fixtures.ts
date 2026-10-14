@@ -207,6 +207,8 @@ export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}):
       ...update,
     }),
     deleteCharacter: async () => undefined,
+    getCharacterInstructions: async () => ({ filename: 'character-voice.md', content: '# Shared instructions', writable: true }),
+    updateCharacterInstructions: async (content) => ({ filename: 'character-voice.md', content, writable: true }),
     getCharacterFile: async (characterId, filename) => {
       const detail = await client.getCharacter(characterId);
       return { filename, content: detail.editable_markdown, writable: detail.writable };

@@ -201,8 +201,8 @@ function DefinitionUpload({ ariaLabel, failureMessage, id, onUpload }: Definitio
 interface DetailActionsProps {
   name: string;
   subject: string;
-  deleteMessage: string;
-  onDelete(): Promise<void>;
+  deleteMessage?: string;
+  onDelete?(): Promise<void>;
   editor?: {
     title: string;
     value: string;
@@ -242,7 +242,7 @@ export function DetailActions({ name, subject, deleteMessage, onDelete, editor }
   }, [editorValue]);
 
   async function remove() {
-    if (deleting) return;
+    if (!onDelete || deleting) return;
     setConfirming(false);
     setDeleting(true);
     setDeleteError(null);
@@ -291,16 +291,16 @@ export function DetailActions({ name, subject, deleteMessage, onDelete, editor }
           onUpload={editor.onSave}
         />
       </>}
-      <button
+      {onDelete && deleteMessage && <button
         aria-label={`Delete ${name}`}
         className="cha-compact-icon-action cha-danger-icon-action"
         disabled={deleting}
         onClick={() => setConfirming(true)}
         title={`Delete ${name}`}
         type="button"
-      ><SkullBonesIcon /></button>
+      ><SkullBonesIcon /></button>}
       {deleteError && <span className="cha-definition-upload-error" role="alert">{deleteError}</span>}
-      {confirming && <ConfirmDialog
+      {confirming && onDelete && deleteMessage && <ConfirmDialog
         confirmLabel={`Delete ${subject.toLowerCase()}`}
         message={deleteMessage}
         onCancel={() => setConfirming(false)}

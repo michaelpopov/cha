@@ -133,6 +133,8 @@ export interface ChaClient {
     update: UpdateCharacterDefinitionRequest,
   ): Promise<CharacterDetail>;
   deleteCharacter(characterId: string): Promise<void>;
+  getCharacterInstructions(): Promise<MarkdownFile>;
+  updateCharacterInstructions(content: string): Promise<MarkdownFile>;
   getCharacterFile(characterId: string, filename: string): Promise<MarkdownFile>;
   createCharacterFile(characterId: string, filename: string, content: string): Promise<MarkdownFile>;
   updateCharacterFile(characterId: string, filename: string, content: string): Promise<MarkdownFile>;

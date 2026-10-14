@@ -24,6 +24,7 @@ export type MainView =
   | 'persona-detail'
   | 'persona-settings'
   | 'characters'
+  | 'character-instructions'
   | 'new-character'
   | 'character-detail'
   | 'character-file'
@@ -176,6 +177,7 @@ export type AppAction =
   | { type: 'persona-deleted'; personaId: string }
   | { type: 'show-persona-settings' }
   | { type: 'show-characters' }
+  | { type: 'show-character-instructions' }
   | { type: 'show-new-character' }
   | { type: 'inspect-character'; characterId: string }
   | { type: 'inspect-character-file'; characterId: string; filename: string }
@@ -257,6 +259,7 @@ export type NavigationAction = Extract<AppAction, {
     | 'persona-deleted'
     | 'show-persona-settings'
     | 'show-characters'
+    | 'show-character-instructions'
     | 'show-new-character'
     | 'inspect-character'
     | 'inspect-character-file'
@@ -532,6 +535,8 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         },
         ...idleSessionOperation(),
       };
+    case 'show-character-instructions':
+      return { ...state, mainView: 'character-instructions', ...idleSessionOperation() };
     case 'show-new-character':
       return { ...state, mainView: 'new-character', ...idleSessionOperation() };
     case 'inspect-character':
@@ -1041,6 +1046,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'new-persona': return 'New persona';
     case 'persona-settings': return 'Settings';
     case 'characters': return 'Characters';
+    case 'character-instructions': return 'Instructions';
     case 'new-character': return 'New character';
     case 'character-settings': return 'Settings';
     case 'character-file': return state.inspectedCharacter.file ?? 'File';

@@ -24,6 +24,8 @@
   "character.update": {"requires_context_epoch": true, "changes_context": false},
   "character.updateDefinition": {"requires_context_epoch": true, "changes_context": false},
   "character.delete": {"requires_context_epoch": true, "changes_context": false},
+  "character.instructions.get": {"requires_context_epoch": true, "changes_context": false},
+  "character.instructions.update": {"requires_context_epoch": true, "changes_context": false},
   "character.file.get": {"requires_context_epoch": true, "changes_context": false},
   "character.file.create": {"requires_context_epoch": true, "changes_context": false},
   "character.file.update": {"requires_context_epoch": true, "changes_context": false},

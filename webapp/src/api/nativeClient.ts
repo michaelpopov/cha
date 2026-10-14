@@ -319,6 +319,10 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     deleteCharacter: async (characterId) => {
       await call('character.delete', { character_id: characterId }, isRecord);
     },
+    getCharacterInstructions: () => call('character.instructions.get', {}, isMarkdownFile),
+    updateCharacterInstructions: (content) => call(
+      'character.instructions.update', { content }, isMarkdownFile,
+    ),
     getCharacterFile: (characterId, filename) => call(
       'character.file.get',
       { character_id: characterId, filename },

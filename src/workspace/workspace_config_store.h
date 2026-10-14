@@ -239,6 +239,8 @@ public:
         std::optional<std::string_view> markdown = std::nullopt);
     WorkspaceConfigEditResult apply_character_delete(
         std::string_view character_id);
+    [[nodiscard]] std::string get_character_instructions() const;
+    WorkspaceConfigEditResult apply_character_instructions(std::string_view content);
     WorkspaceConfigEditResult apply_character_file(
         std::string_view character_id,
         std::string_view filename,

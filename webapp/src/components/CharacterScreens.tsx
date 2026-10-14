@@ -34,6 +34,7 @@ import { TransliteratingInput } from './TransliterationMode';
 import { FileList } from './FileScreens';
 import {
   RosterDetailScreen,
+  rosterMarkdown,
   RosterRow,
   unresolvedOption,
   type NavigationScreenProps,
@@ -43,7 +44,17 @@ import {
 export function CharactersScreen({ state, navigate }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Characters navigation">
-      <BackToSettings navigate={navigate} />
+      <div className="cha-detail-toolbar">
+        <BackToSettings navigate={navigate} />
+        <button
+          className="cha-detail-link"
+          onClick={() => navigate({ type: 'show-character-instructions' })}
+          type="button"
+        >
+          <span>Instructions</span>
+          <ChevronRightIcon />
+        </button>
+      </div>
       <div className="cha-roster">
         <button
           className="cha-list-action"
@@ -66,6 +77,34 @@ export function CharactersScreen({ state, navigate }: NavigationScreenProps) {
         ))}
       </div>
     </section>
+  );
+}
+
+export function CharacterInstructionsScreen({ client, navigate }: RosterDetailProps) {
+  const load = useCallback(() => client.getCharacterInstructions(), [client]);
+  return (
+    <RosterDetailScreen
+      ariaLabel="Character instructions navigation"
+      backLabel="Characters"
+      copy={{
+        absent: 'No vault is selected.',
+        loading: 'Loading instructions…',
+        failed: 'Character instructions could not be loaded.',
+      }}
+      load={load}
+      onBack={() => navigate({ type: 'show-characters' })}
+      subjectId="character-voice.md"
+      toolbarAction={(file, update) => file.writable && <DetailActions
+        name={file.filename}
+        subject="Instructions"
+        editor={{
+          title: 'Edit instructions', value: file.content,
+          uploadLabel: 'Replace instructions content from file',
+          onSave: async (content) => update(await client.updateCharacterInstructions(content)),
+        }}
+      />}
+      render={(file) => rosterMarkdown(file.content, 'This file is empty.')}
+    />
   );
 }
 

@@ -458,6 +458,23 @@ void delete_character(WorkspaceConfigStore& store, std::string_view id) {
     });
 }
 
+MarkdownFile get_character_instructions(WorkspaceConfigStore& store) {
+    return markdown_file("character-voice.md", store.get_character_instructions(), true);
+}
+
+MarkdownFile update_character_instructions(
+    WorkspaceConfigStore& store,
+    LiveSessionManager& live_sessions,
+    std::string content) {
+    if (store.get_character_instructions() == content) {
+        return markdown_file("character-voice.md", std::move(content), true);
+    }
+    return with_workspace_edit([&] {
+        apply_edit(live_sessions, store.apply_character_instructions(content));
+        return markdown_file("character-voice.md", std::move(content), true);
+    });
+}
+
 MarkdownFile get_character_file(
     const Workspace& workspace,
     std::string_view id,

@@ -58,7 +58,7 @@ interface RosterDetailScreenProps<Value> {
   // Facts the roster already knows, shown above the content and while it is
   // still loading. A persona or character has none; a forum names its cast.
   subtitle?: ReactNode;
-  toolbarAction?: ReactNode;
+  toolbarAction?: ReactNode | ((value: Value, update: (value: Value) => void) => ReactNode);
 }
 
 export function RosterDetailScreen<Value>({
@@ -119,6 +119,8 @@ export function RosterDetailScreen<Value>({
     };
   }, [copy.failed, load, onLoaded, refresh.epoch, requestVersion, subjectId, updateValue]);
 
+  const detailRefresh = { epoch: refresh.epoch, refreshing, failed: error !== null, stale: false, retry };
+
   return (
     <section className="cha-screen cha-navigation" aria-label={ariaLabel}>
       <div className="cha-detail-toolbar">
@@ -126,7 +128,13 @@ export function RosterDetailScreen<Value>({
           <ChevronLeftIcon />
           <span>{backLabel}</span>
         </button>
-        {toolbarAction}
+        {typeof toolbarAction === 'function'
+          ? value !== null && (
+            <DetailRefreshProvider value={detailRefresh}>
+              {toolbarAction(value, updateValue)}
+            </DetailRefreshProvider>
+          )
+          : toolbarAction}
       </div>
       {subtitle}
       {value === null && fallbackTitle && (
@@ -150,9 +158,7 @@ export function RosterDetailScreen<Value>({
       )}
       {/* The title and text editor below save this screen's detail. */}
       {value !== null && (
-        <DetailRefreshProvider
-          value={{ epoch: refresh.epoch, refreshing, failed: error !== null, stale: false, retry }}
-        >
+        <DetailRefreshProvider value={detailRefresh}>
           {render(value, updateValue)}
         </DetailRefreshProvider>
       )}

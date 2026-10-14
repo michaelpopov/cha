@@ -2056,6 +2056,24 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_definition(
     });
 }
 
+std::string WorkspaceConfigStore::get_character_instructions() const {
+    const std::lock_guard lock(impl_->mutex);
+    return read_workspace_config_file(
+        *impl_->database, "characters/character-voice.md").value_or("");
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_instructions(
+    std::string_view content) {
+    return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
+        editor.files()["characters/character-voice.md"] = std::string(content);
+        std::vector<std::string> affected;
+        for (const auto& forum : workspace.forums()) {
+            if (forum.id != workspace_entrance_id) affected.push_back(forum.id);
+        }
+        return affected;
+    });
+}
+
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_file(
     std::string_view character_id,
     std::string_view filename,
