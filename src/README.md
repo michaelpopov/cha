@@ -24,8 +24,10 @@ alongside everything else.
 The native host opens `Application`, which owns the process-owned
 `WorkspaceConfigStore`, session repository, live-session manager, providers,
 credentials, audio, and vault maintenance. The store owns the selected database
-lease and handle, one private root with materialized `workspace/` and temporary
-`welcome/` children, the configuration mutex, publication, and cleanup.
+lease and handle, one private temporary root for ephemeral session storage,
+the configuration mutex, publication, and cleanup. Its `workspace/` path is a
+logical root for in-memory configuration; `welcome/` holds the temporary
+Welcome database.
 
 Declaration order in the composition root also defines shutdown order: session
 owners are released before the repository and provider supervisor, and
@@ -66,9 +68,9 @@ events and persists turn transitions; every provider request owns its own
 worker, client, curl handle, cancellation state, and event queue. The runtime
 thread never waits for provider cleanup during a Stop action or controller teardown.
 `WorkspaceConfigStore` owns the one process-lifetime database lease.
-`SessionRepository` receives explicit database, materialized-workspace, and
-Welcome paths; it owns none of those outer resources. Each live controller owns
-a separate SQLite journal connection scoped by its internal session key;
+`SessionRepository` receives the database path, logical workspace root, and
+Welcome directory; it owns none of those outer resources. Each live controller
+owns a separate SQLite journal connection scoped by its internal session key;
 repository operations use short-lived connections.
 
 Welcome is the sole built-in Entrance session. Its database lives under the
@@ -86,16 +88,20 @@ Opening a session resolves `(forum_id, session_id)` to an internal
 rows belonging to that key.
 
 One immutable `Workspace` is published process-wide, while one independent
-`SessionRepository` owns session-storage operations. `Workspace::load()` parses
-the store's materialized physical root. Published values eagerly own their
-parsed data; normal reads do not reopen materialized files. Process settings,
-including diagnostic logging, come from the external application config.
+`SessionRepository` owns session-storage operations. The store reads SQLite
+`config` rows into `TextFiles` and calls `Workspace::load(root, files)` to build
+the workspace in memory. The root provides logical paths for validation and
+template includes; runtime loading writes no configuration files. Published
+values eagerly own their parsed data. Process settings, including diagnostic
+logging, come from the external application config.
 
 Runtime entity, credential, voice, recipient-detection, and search edits are
 serialized by the store. Each validates a candidate, commits changed `config`
-rows in one SQLite transaction, and publishes after commit. Filesystem edits
-use Export/Edit/Import in the active vault's settings. Session listings come
-from SQLite; new unnamed sessions remain out of Recent until naming finishes.
+rows in one SQLite transaction, and publishes after commit. A validation or
+transaction failure leaves the committed rows and published snapshot unchanged.
+Export materializes configuration files for the Export/Edit/Import workflow in
+the active vault's settings. Session listings come from SQLite; new unnamed
+sessions remain out of Recent until naming finishes.
 
 ## Build and test map
 

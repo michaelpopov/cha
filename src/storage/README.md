@@ -8,10 +8,12 @@ application config's `data` setting. Public `(forum_id, session_id)` identities
 resolve to internal `session_key` values, and every restore and journal query is
 scoped by that key.
 
-The top-level workspace store owns the database lease and private root. The
-session repository receives explicit database, materialized-workspace, and
-Welcome paths and owns none of them. Repository operations use short-lived
-connections, while each live controller owns a separate journal connection.
+The top-level workspace store owns the database lease and private temporary
+root for ephemeral session storage. The session repository receives the
+database path, logical workspace root, and Welcome directory and owns none of
+them. It uses the logical root to check workspace identity, and stores Welcome
+in a temporary database. Repository operations use short-lived connections,
+while each live controller owns a separate journal connection.
 
 | Source | Responsibility |
 | --- | --- |

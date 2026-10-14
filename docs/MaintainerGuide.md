@@ -28,8 +28,8 @@ Follow these rules before changing anything:
 3. Unless the user says otherwise, a request to add or change workspace
    content means: edit the requested configuration directory and validate it.
    It does **not** authorize importing it into the production database.
-4. Do not edit the SQLite database directly. Do not edit a temporary
-   `cha-runtime-*` materialization.
+4. Do not edit the SQLite database directly. Do not edit the temporary
+   `cha-runtime-*` session storage.
 5. Do not modify `packaging/shared/import-seed/` unless the user explicitly
    asks to change the repository's example workspace.
 6. Use the smallest set of files that expresses the requested change. Do not
@@ -55,14 +55,21 @@ CHA configuration can appear in several places. They have different roles.
 | An exported directory such as `~/var/modify/` | Human-editable workspace bundle | Yes |
 | `packaging/shared/import-seed/` | Example workspace configuration in the repository | Only when explicitly requested |
 | The SQLite file named by the active vault's `data` field | Authoritative runtime configuration and sessions | Never by hand |
-| A `cha-runtime-*` directory under the system temporary directory | Private materialization of committed SQLite rows | Never |
+| A `cha-runtime-*` directory under the system temporary directory | Private ephemeral session storage, including Welcome | Never |
 | `system/keys/` rows in each vault database | Model and R2 keys saved through Settings | Only through Settings → API Keys |
 | `<config-directory>/openai-auth.json` | OpenAI subscription OAuth credentials | Only through Settings → OpenAI |
 | `<config-directory>/api-keys.json` | Legacy model-key migration source | Carefully; each empty vault may import it |
 
-Normal runtime reads configuration from SQLite. It does not continue reading
-the directory that was imported. Therefore editing `~/var/modify/` alone does
-not alter a running application. The normal lifecycle is:
+Normal runtime reads SQLite `config` rows into a `TextFiles` map and calls
+`Workspace::load(root, files)` to build an immutable workspace in memory. The
+`workspace/` path under `cha-runtime-*` supplies logical paths for validation
+and template includes; it need not exist on disk. The private `welcome/`
+directory holds Welcome's temporary database. Configuration materialization is
+an export operation.
+
+Runtime does not continue reading the directory that was imported. Therefore
+editing `~/var/modify/` alone does not alter a running application. The normal
+lifecycle for filesystem edits is:
 
 ```text
 SQLite database -> export directory -> edit -> validate -> import -> SQLite database
@@ -75,11 +82,14 @@ and round-trip through workspace import/export.
 
 An old export can also be stale. CHA can update characters, personas, forums,
 providers, styles, voices, and model/R2 credentials while it is running. Those
-edits are committed to SQLite. If a request concerns the current live
-configuration, begin from a fresh export or explicitly reconcile the existing
-bundle with one; otherwise a later import can overwrite changes made through
-the UI. Do not replace a user's existing edit directory merely to refresh it
-without first preserving or reviewing its contents.
+edits validate a complete in-memory candidate, commit changed `config` rows in
+one SQLite transaction, and publish the prepared snapshot after commit.
+Validation or transaction failure leaves the committed rows and published
+workspace unchanged; there is no configuration tree to restore. If a request
+concerns the current live configuration, begin from a fresh export or reconcile
+the existing bundle with one; otherwise a later import can overwrite changes
+made through the UI. Do not replace a user's existing edit directory merely to
+refresh it without first preserving or reviewing its contents.
 
 The external application configuration is a directory, not part of a workspace
 import. `app.toml` selects the startup vault and holds mirror/modify bases and
@@ -176,9 +186,9 @@ the old configuration and live sessions; success closes live sessions and
 refreshes the interface for the new application context. A failed
 voice-settings or discovery refresh does not undo the merge. Identical
 configuration and already synchronized forums require no destination write.
-Failure to restore or publish the workspace, or synchronize forums after
-commit, makes the application unavailable and requires a restart. Mirror rebuild failures are
-logged without undoing the merge.
+Failure to synchronize forums after commit makes the application unavailable
+and requires a restart. Mirror rebuild failures are logged without undoing the
+merge.
 
 Selecting a vault changes the vault for the whole running application, including
 Import, Export, Upload, and Download. A successful switch closes live sessions,
@@ -330,11 +340,17 @@ The loader requires `personas/`, `characters/`, `forums/`, and
 optional, but referenced character styles and voices, and persona styles, must exist.
 `system/assistant/character.toml` and at least one usable provider are
 effectively required because the built-in Assistant must select a provider.
+For in-memory loading, directory structure comes from stored file paths rather
+than directories under the temporary runtime root.
 
-Only regular `.toml` and `.md` files are stored during import. Symlinks whose
-names would otherwise be imported are rejected; symlinked directories are not
-followed. Other extensions are ignored. Consequently, a prompt include must
-also be a `.md` or `.toml` file if it must survive import. For example,
+Import stores regular `.toml` and `.md` files and supported character pictures.
+Pictures must be named `PICTURE.png`, `PICTURE.webp`, `PICTURE.jpg`,
+`PICTURE.jpeg`, or `PICTURE.gif` in a character definition directory or
+`system/assistant/`. Picture bytes are stored as base64 row content and decoded
+back into files during export. Unsupported picture names or locations warn and
+are ignored. Symlinks whose names would otherwise be imported are rejected;
+symlinked directories are not followed. Other extensions are ignored. A prompt
+include must be a `.md` or `.toml` file if it must survive import. For example,
 `$$(notes.md)` can work, while `$$(notes.txt)` disappears from the imported
 workspace and makes validation fail.
 
@@ -1446,15 +1462,14 @@ These are not workspace configuration rows and are not exported:
 - `<config-directory>/openai-auth.json` OAuth credentials;
 - SQLite databases, journals, WAL/SHM sidecars, and `.cha-lock` files;
 - session mirror output;
-- files other than `.toml` and `.md`.
+- files other than `.toml`, `.md`, and supported character pictures.
 
 ## 13. Verification checklist for each completed command
 
 Before reporting completion, verify the relevant subset:
 
 - `git status` still shows unrelated user changes untouched.
-- The intended workspace root, not a live temporary materialization, was
-  changed.
+- The intended export or source directory was changed.
 - Every new ID obeys the rules and is globally unique where required.
 - Every character has both `character.toml` and `CHARACTER.md`.
 - Every character and Assistant references an existing valid provider.
@@ -1517,8 +1532,11 @@ guide:
 
 - `src/workspace/workspace.cpp`: schemas, IDs, references, prompt composition,
   built-ins, and runtime-editable fields;
-- `src/workspace/workspace_config_store.cpp`: accepted import files,
-  materialization, validation, pruning, import/export, and database replacement;
+- `src/workspace/workspace_config_store.cpp`: SQLite row loading, in-memory
+  candidate edits, transactional publication, validation, pruning, import,
+  export materialization, and database replacement;
+- `src/util/text_source.cpp` and `.h`: in-memory configuration reads and logical
+  paths, plus the filesystem-backed source used by directory callers;
 - `src/util/text_template.cpp` and `.h`: prompt macros, scopes, containment,
   and limits;
 - `src/util/path_name.cpp`: path component and forum ID validation;
@@ -1545,7 +1563,7 @@ guide:
   runtime maintenance and vault switching, including failure outcomes.
 
 For the ownership and native message flow, see [the codebase tutorial](tutorial.md).
-For adding an editor, see [editing workspace entities](editing.md).
+For adding an editor, see the [entity editing trace](tutorial.md#132-editing-an-entity).
 
 The directory `~/var/modify/` is a useful content example, but the source and
 tests above are authoritative when the example and code disagree.

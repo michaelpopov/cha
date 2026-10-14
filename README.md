@@ -172,7 +172,7 @@ Each character selects exactly one of those configs in its own `character.toml`
 with `provider = "<id>"`. Provider keys in workspace, forum-default, and member
 configuration are ignored; there is no provider inheritance or override chain.
 A missing character provider or provider config stops startup. Provider config
-files are loaded when the committed configuration is materialized. Change
+values are loaded from committed SQLite configuration rows into memory. Change
 connection and model settings in Settings → Providers, or use the
 export/edit/import workflow below for filesystem edits. Import reloads the
 workspace in the running application.
@@ -250,7 +250,7 @@ Native hosts load packaged frontend assets themselves. Relative `data`,
 `logging.file`, and application-level `mirror` and `modify` bases resolve
 against the configuration directory. CHA appends the vault name to mirror/modify
 bases; obsolete per-vault values are ignored with warnings. Template includes
-resolve beneath the private materialized workspace.
+resolve within the logical workspace root using the in-memory configuration.
 
 ### Command line and configuration maintenance
 
@@ -288,13 +288,17 @@ epoch. To edit configuration:
 3. Import it back into the same database.
 
 The source or exported directory is never consulted by normal runtime. CHA
-materializes committed rows into one owner-private temporary tree. Supported
-Settings edits, including model and R2 credentials, persist through SQLite
-before publication.
+reads committed SQLite `config` rows into `TextFiles` and builds the workspace
+in memory. Its owner-private temporary directory holds ephemeral session
+storage, including Welcome; the workspace path is a logical configuration root.
+Configuration files are materialized only during export. Supported Settings
+edits, including model and R2 credentials, validate an in-memory candidate and
+persist through SQLite before publication.
 
 The database, rollback journal, WAL/SHM sidecars, companion lock, private
-runtime tree, workspace exports, legacy configuration-directory `.env` and
-`api-keys.json`, and `openai-auth.json` must remain accessible only to their owner.
+runtime session directory, workspace exports, legacy configuration-directory
+`.env` and `api-keys.json`, and `openai-auth.json` must remain accessible only
+to their owner.
 CHA enforces this for files it manages. Naively copying a live WAL database is
 unsafe; the R2 commands acquire the database lease, and upload checkpoints the
 WAL before transferring the main database file.
@@ -319,11 +323,11 @@ over HTTPS.
 
 An invalid import does not change an existing database. Failed v1 upgrade
 leaves valid v1; failed v2 replacement leaves the previous complete config. A
-runtime settings failure before commit restores the materialized tree and
-leaves durable and published state unchanged. In the rare case that SQLite
-commits but publication fails, stop and restart CHA: startup loads the new
-committed state. A failed export never changes the database but may leave an
-incomplete destination; empty it before retrying.
+runtime settings validation or transaction failure leaves committed rows and
+the published workspace unchanged. After commit, the store publishes the
+prepared candidate by swapping the snapshot under the publication lock. A
+failed export never changes the database but may leave an incomplete
+destination; empty it before retrying.
 
 Schema v1 is the earlier unified session database without the `config` table.
 Only import upgrades it to v2, preserving all sessions. Runtime and export
@@ -350,8 +354,8 @@ for path layout, import validation, and legacy migration constraints.
 
 `CHA` loads discovery — the roster, descriptions, and Markdown shown in
 Personas, Characters, and Forums — from the database as one validated immutable
-workspace. Runtime values own their parsed data eagerly; normal reads never
-reopen the materialized files.
+workspace. Runtime values own their parsed data eagerly; normal reads use the
+published snapshot.
 
 Startup validates every configured forum, not only the ones in use. A forum with
 an invalid default character, member override, or prompt therefore prevents the

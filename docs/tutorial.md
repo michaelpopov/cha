@@ -12,7 +12,7 @@ Sections 12–18 connect those pieces to the native bridge and lifecycle. Use th
 tests in section 19 to check an assumption before changing code.
 
 The [maintainer guide](MaintainerGuide.md) covers workspace files and operational
-recipes. [Editing workspace entities](editing.md) covers adding an editing flow.
+recipes. Section 13.2 traces a workspace edit through the application.
 The README in each `src/` directory summarizes that directory's current
 responsibility and dependencies; headers and tests remain authoritative for
 detailed behavior.
@@ -67,9 +67,9 @@ There are three distinct kinds of stored data:
   and logging. It also contains the process-wide OAuth credential file.
 - The selected vault database holds authoritative workspace configuration,
   saved API/R2 keys, persistent sessions, and cached audio.
-- A private temporary tree materializes configuration for loading and holds
-  the temporary Welcome database. Export directories and Markdown mirrors are
-  projections, not runtime sources of truth.
+- A private temporary directory holds ephemeral session storage, including the
+  Welcome database. Configuration is loaded from SQLite into memory. Export
+  directories and Markdown mirrors are projections, not runtime sources of truth.
 
 ## 3. Build graph and dependency direction
 
@@ -277,6 +277,8 @@ The other utilities support important boundaries:
 
 - `path_name.*` keeps UTF-8 filesystem paths and identifiers explicit.
 - `public_name.*` centralizes visible-name validation.
+- `text_source.*` reads logical paths from `TextFiles` in runtime loading and
+  candidate validation. Its filesystem-backed mode supports directory callers.
 - `text_template.*` expands `$$(relative/file)` includes and `$${variable}`
   substitutions with containment and cycle/resource limits. Persona prompts
   use `persona.id`, `persona.display_name`, and their own `[prompt]` variables;
@@ -338,16 +340,18 @@ inputs, backup considerations, and import/export recipes.
 
 Read [application.h](../src/app/application.h),
 [application.cpp](../src/app/application.cpp), and the shared
-[runtime bridge](../packaging/macos/runtime_bridge.cpp).
+[runtime bridge](../packaging/host/runtime_bridge.cpp).
 
 Startup connects these owners:
 
 1. The host locates configuration and assets and obtains a password if needed.
 2. `Application::open()` opens `WorkspaceConfigStore`, which holds the database
-   lease, materializes committed rows, and loads its immutable workspace.
+   lease, reads committed `config` rows into `TextFiles`, and calls
+   `Workspace::load(root, files)` to build its immutable workspace in memory.
 3. Vault-backed keys and process-wide OAuth support supply provider credentials.
-4. `SessionRepository` receives explicit database/private paths, password, and
-   a workspace-source callback. It creates the temporary Welcome database.
+4. `SessionRepository` receives the database path, logical workspace root,
+   Welcome directory, password, and a workspace-source callback. It creates
+   the temporary Welcome database.
 5. Optional mirroring is initialized; a mirror failure is logged without
    preventing use of the vault.
 6. `LiveSessionManager` starts the shared `SessionRuntime` with an opener bound
@@ -360,7 +364,7 @@ Startup connects these owners:
 
 The host owns the runtime. The application owns the database-related services;
 live controllers must release their journals before the store releases its lease
-and temporary tree.
+and temporary session directory.
 
 ### 8.1 What `Workspace::load()` builds
 
@@ -370,6 +374,12 @@ validated configuration snapshot. The loader reads personas, characters,
 forums, providers, styles, voices, prompts, and references, then adds built-in
 Guest, Assistant, and Entrance data. It resolves all forum members, including
 forums that have not been opened.
+
+Runtime loading uses the `TextFiles` overload. Its root supplies logical paths
+for validation and template includes; the store's `workspace/` path need not
+exist on disk. `TextSource` resolves file contents and directory structure from
+the map. The directory-backed `Workspace::load(root)` overload remains
+available for filesystem callers and tests.
 
 Normal readers use eagerly owned values, not the original import directory.
 A settings edit creates a new candidate workspace. Previously returned
@@ -384,16 +394,25 @@ need it. Repositories and controllers receive a workspace-source callback tied
 to their application; constructing a test workspace does not publish global
 process state.
 
-The schema-v2 `config` table stores `name` and `content`. Import collects
-regular `.toml` and `.md` workspace files without following symlinks. It
-excludes root process-configuration files and every other extension. Template
-includes must therefore be part of the accepted row set.
+The schema-v2 `config` table stores `name` and `content`. Import collects regular
+`.toml` and `.md` workspace files and supported `PICTURE.*` files in character
+definition directories and `system/assistant/`, without following symlinks.
+Picture bytes are stored as base64 content and decoded during export. Import
+excludes root process-configuration files and other file types. Template
+includes must be `.md` or `.toml` files in the accepted row set.
 
-An ordinary configuration mutation edits the private tree, loads a complete
-candidate, collects rows, commits them in one SQLite transaction, and only then
-publishes the candidate. Failure before commit retains the old workspace.
-Runtime entity editors and the active vault's Import action use this storage boundary;
-editing an exported directory alone changes nothing in the running application.
+An ordinary configuration mutation reads committed rows into `TextFiles`,
+edits that map, and loads a complete candidate in memory. It compares the
+candidate rows with the committed set and inserts, updates, or deletes only
+changed rows in one SQLite transaction. The publication lock spans the
+transaction and the snapshot swap after commit. Validation or transaction
+failure retains the old rows and workspace; no configuration files need to be
+restored.
+
+Import validates directory contents in memory before committing the replacement
+row set; the running application then reloads the committed workspace. Export
+is the operation that materializes configuration rows into a directory. Editing
+that directory alone changes nothing in the running application.
 
 ### 8.3 Provider selection
 
@@ -1404,8 +1423,8 @@ Windows host checks when changing WebView2 behavior.
 
 ## 20. How to approach changes safely
 
-For a workspace editor, follow [editing.md](editing.md). For any new native
-operation, keep these pieces synchronized:
+For a workspace editor, follow the configuration mutation trace in section 13.2.
+For any new native operation, keep these pieces synchronized:
 
 1. Method enum/name and control/context policy in the bridge.
 2. Application operation with explicit context admission and dependencies.

@@ -469,7 +469,7 @@ build maps below, then follow the domain, storage, and generation sections.
 Sections 12–18 connect those pieces to the native bridge and lifecycle. Use the
 tests in section 19 to check an assumption before changing code.</p>
 <p>The <a href="MaintainerGuide.md">maintainer guide</a> covers workspace files and operational
-recipes. <a href="editing.md">Editing workspace entities</a> covers adding an editing flow.
+recipes. Section 13.2 traces a workspace edit through the application.
 The README in each <code>src/</code> directory summarizes that directory&#39;s current
 responsibility and dependencies; headers and tests remain authoritative for
 detailed behavior.</p>
@@ -516,9 +516,9 @@ which it started and runs on its own worker.</p>
 and logging. It also contains the process-wide OAuth credential file.</li>
 <li>The selected vault database holds authoritative workspace configuration,
 saved API/R2 keys, persistent sessions, and cached audio.</li>
-<li>A private temporary tree materializes configuration for loading and holds
-the temporary Welcome database. Export directories and Markdown mirrors are
-projections, not runtime sources of truth.</li>
+<li>A private temporary directory holds ephemeral session storage, including the
+Welcome database. Configuration is loaded from SQLite into memory. Export
+directories and Markdown mirrors are projections, not runtime sources of truth.</li>
 </ul>
 <h2 id="3-build-graph-and-dependency-direction">3. Build graph and dependency direction</h2>
 <p><a href="../CMakeLists.txt">CMakeLists.txt</a> defines the current targets:</p>
@@ -778,6 +778,8 @@ queues remain the source of work.</p>
 <ul>
 <li><code>path_name.*</code> keeps UTF-8 filesystem paths and identifiers explicit.</li>
 <li><code>public_name.*</code> centralizes visible-name validation.</li>
+<li><code>text_source.*</code> reads logical paths from <code>TextFiles</code> in runtime loading and
+candidate validation. Its filesystem-backed mode supports directory callers.</li>
 <li><code>text_template.*</code> expands <code>$$(relative/file)</code> includes and <code>$${variable}</code>
 substitutions with containment and cycle/resource limits. Persona prompts
 use <code>persona.id</code>, <code>persona.display_name</code>, and their own <code>[prompt]</code> variables;
@@ -826,15 +828,17 @@ inputs, backup considerations, and import/export recipes.</p>
 <h2 id="8-third-reading-pass-startup-and-the-immutable-workspace">8. Third reading pass: startup and the immutable workspace</h2>
 <p>Read <a href="../src/app/application.h">application.h</a>,
 <a href="../src/app/application.cpp">application.cpp</a>, and the shared
-<a href="../packaging/macos/runtime_bridge.cpp">runtime bridge</a>.</p>
+<a href="../packaging/host/runtime_bridge.cpp">runtime bridge</a>.</p>
 <p>Startup connects these owners:</p>
 <ol>
 <li>The host locates configuration and assets and obtains a password if needed.</li>
 <li><code>Application::open()</code> opens <code>WorkspaceConfigStore</code>, which holds the database
-lease, materializes committed rows, and loads its immutable workspace.</li>
+lease, reads committed <code>config</code> rows into <code>TextFiles</code>, and calls
+<code>Workspace::load(root, files)</code> to build its immutable workspace in memory.</li>
 <li>Vault-backed keys and process-wide OAuth support supply provider credentials.</li>
-<li><code>SessionRepository</code> receives explicit database/private paths, password, and
-a workspace-source callback. It creates the temporary Welcome database.</li>
+<li><code>SessionRepository</code> receives the database path, logical workspace root,
+Welcome directory, password, and a workspace-source callback. It creates
+the temporary Welcome database.</li>
 <li>Optional mirroring is initialized; a mirror failure is logged without
 preventing use of the vault.</li>
 <li><code>LiveSessionManager</code> starts the shared <code>SessionRuntime</code> with an opener bound
@@ -847,7 +851,7 @@ roster, and context epoch through <code>app.bootstrap</code>.</li>
 </ol>
 <p>The host owns the runtime. The application owns the database-related services;
 live controllers must release their journals before the store releases its lease
-and temporary tree.</p>
+and temporary session directory.</p>
 <h3 id="81-what-workspaceload-builds">8.1 What <code>Workspace::load()</code> builds</h3>
 <p><a href="../src/workspace/workspace.h">workspace.h</a> and
 <a href="../src/workspace/workspace.cpp">workspace.cpp</a> define a fully loaded,
@@ -855,6 +859,11 @@ validated configuration snapshot. The loader reads personas, characters,
 forums, providers, styles, voices, prompts, and references, then adds built-in
 Guest, Assistant, and Entrance data. It resolves all forum members, including
 forums that have not been opened.</p>
+<p>Runtime loading uses the <code>TextFiles</code> overload. Its root supplies logical paths
+for validation and template includes; the store&#39;s <code>workspace/</code> path need not
+exist on disk. <code>TextSource</code> resolves file contents and directory structure from
+the map. The directory-backed <code>Workspace::load(root)</code> overload remains
+available for filesystem callers and tests.</p>
 <p>Normal readers use eagerly owned values, not the original import directory.
 A settings edit creates a new candidate workspace. Previously returned
 snapshots remain valid until their readers release them.</p>
@@ -865,15 +874,23 @@ operation and pass <code>const Workspace&amp;</code> into the settings/workspace
 need it. Repositories and controllers receive a workspace-source callback tied
 to their application; constructing a test workspace does not publish global
 process state.</p>
-<p>The schema-v2 <code>config</code> table stores <code>name</code> and <code>content</code>. Import collects
-regular <code>.toml</code> and <code>.md</code> workspace files without following symlinks. It
-excludes root process-configuration files and every other extension. Template
-includes must therefore be part of the accepted row set.</p>
-<p>An ordinary configuration mutation edits the private tree, loads a complete
-candidate, collects rows, commits them in one SQLite transaction, and only then
-publishes the candidate. Failure before commit retains the old workspace.
-Runtime entity editors and the active vault&#39;s Import action use this storage boundary;
-editing an exported directory alone changes nothing in the running application.</p>
+<p>The schema-v2 <code>config</code> table stores <code>name</code> and <code>content</code>. Import collects regular
+<code>.toml</code> and <code>.md</code> workspace files and supported <code>PICTURE.*</code> files in character
+definition directories and <code>system/assistant/</code>, without following symlinks.
+Picture bytes are stored as base64 content and decoded during export. Import
+excludes root process-configuration files and other file types. Template
+includes must be <code>.md</code> or <code>.toml</code> files in the accepted row set.</p>
+<p>An ordinary configuration mutation reads committed rows into <code>TextFiles</code>,
+edits that map, and loads a complete candidate in memory. It compares the
+candidate rows with the committed set and inserts, updates, or deletes only
+changed rows in one SQLite transaction. The publication lock spans the
+transaction and the snapshot swap after commit. Validation or transaction
+failure retains the old rows and workspace; no configuration files need to be
+restored.</p>
+<p>Import validates directory contents in memory before committing the replacement
+row set; the running application then reloads the committed workspace. Export
+is the operation that materializes configuration rows into a directory. Editing
+that directory alone changes nothing in the running application.</p>
 <h3 id="83-provider-selection">8.3 Provider selection</h3>
 <p>Every connection and model setting lives in
 <code>system/providers/&lt;id&gt;/config.toml</code>. Each character selects exactly one of
@@ -1818,8 +1835,8 @@ probe exercises the shared interface in a real WKWebView:</p>
 native-host checks; DOM tests alone cannot prove platform integration. Use the
 Windows host checks when changing WebView2 behavior.</p>
 <h2 id="20-how-to-approach-changes-safely">20. How to approach changes safely</h2>
-<p>For a workspace editor, follow <a href="editing.md">editing.md</a>. For any new native
-operation, keep these pieces synchronized:</p>
+<p>For a workspace editor, follow the configuration mutation trace in section 13.2.
+For any new native operation, keep these pieces synchronized:</p>
 <ol>
 <li>Method enum/name and control/context policy in the bridge.</li>
 <li>Application operation with explicit context admission and dependencies.</li>

@@ -7,14 +7,18 @@ no HTTP transport, session opening, or live-session switching policy.
 | Component | Responsibility |
 | --- | --- |
 | `Workspace` | Load and validate providers, styles, personas, characters, forums, prompts, and built-ins. |
-| `WorkspaceConfigStore` | Own the database lease, secured database, private materialization, configuration mutex, and atomic runtime edits. |
+| `WorkspaceConfigStore` | Own the database lease, secured database, private temporary session root, configuration mutex, and atomic runtime edits. |
 | `import_workspace_configuration()` / `export_workspace_configuration()` | Perform lease-protected offline transfer between a directory and database rows. |
 | `WorkspaceConfigEditor` | Apply edits to candidate workspace text files. |
 | `builtins` | Reserved built-in IDs and Welcome constants. |
 
-`Workspace::load()` reads a physical directory tree once and builds a complete
-candidate. It resolves character and forum prompts, provider and style
-selections, forum membership and defaults, descriptions, labels, and the
+Runtime loading reads SQLite `config` rows into a `TextFiles` map and calls
+`Workspace::load(root, files)` to build a complete candidate in memory. The
+root supplies logical paths for validation and template includes; configuration
+files are not written to it. The directory-backed `Workspace::load(root)`
+overload remains available for filesystem callers and tests. Loading resolves
+character and forum prompts, provider and style selections, forum membership
+and defaults, descriptions, labels, and the
 Guest, Assistant, and Entrance data. Invalid referenced
 configuration fails the load. `WorkspaceConfigStore` publishes only a
 successfully built and committed candidate, so readers see either the previous
@@ -29,11 +33,13 @@ prompt and provider settings it will execute; an in-flight request therefore
 cannot change halfway through.
 
 `WorkspaceConfigStore` is the top-level normal-runtime owner. It holds the
-database lease and handle, one owner-private root containing `workspace/` and
-`welcome/`, the configuration mutex, and cleanup. `SessionRepository` is
-independent and process-owned but receives explicit paths from that store; it
-owns neither the lease nor either private directory and uses short-lived
-connections for storage operations.
+database lease and handle, one owner-private temporary root for ephemeral
+session storage, the configuration mutex, and cleanup. Its `workspace/` path is
+the logical configuration root and need not exist on disk; `welcome/` contains
+the temporary Welcome database. `SessionRepository` is independent and
+process-owned but receives explicit paths from that store; it owns neither the
+lease nor the temporary root and uses short-lived connections for storage
+operations.
 
 Online configuration mutations go through `WorkspaceConfigStore` and the
 corresponding configuration write, create, or delete operation. Each store
@@ -42,8 +48,9 @@ the complete small file set with the committed rows, and inserts,
 updates, or deletes only changed `config` rows in one SQLite transaction. It
 publishes the prepared candidate only after commit, while holding the
 publication lock acquired before the transaction. A transaction failure leaves
-the rows and snapshot unchanged. Offline import and export use the separate
-transfer operations.
+the rows and snapshot unchanged, with no configuration filesystem rollback.
+Import reads files into database rows; export materializes committed rows into
+a directory. Both use the separate transfer operations.
 
 Character settings can override their provider's `reasoning_effort` and
 `web_search`. The overrides remain optional in `WorkspaceCharacter`; generation
@@ -65,7 +72,7 @@ blocking unrelated operations.
 | --- | --- |
 | `workspace.*` | Load, validate, and query an immutable workspace configuration. |
 | `workspace_config_editor.*` | Edit candidate workspace text files before validation and commit. |
-| `workspace_config_store.*` | Materialize, publish, import, export, and transactionally update workspace configuration. |
+| `workspace_config_store.*` | Load configuration rows in memory, publish, import, export, and transactionally update workspace configuration. |
 | `workspace_internal.h` | Declare helpers shared by workspace loading and configuration editing. |
 | `builtins.h` | Declare reserved built-in IDs and Welcome constants. |
 

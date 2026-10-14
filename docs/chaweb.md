@@ -244,6 +244,6 @@ Build with `npm run build:chaweb` in `webapp/`; this runs type checking and
 writes the separate browser build. Run `npm test -- src/chaweb
 src/textToSpeech.test.ts` there for browser and shared playback tests. Native
 packaging serves its own frontend bundle; ChaWeb must be deployed with the
-matching daemon. See [headless operation](headless.md) and the
+matching daemon. See the
 [deployment guide](MaintainerGuide.md#16-chaweb-deployment-on-linux) for nginx,
 socket units, permissions, and macOS runner setup.
