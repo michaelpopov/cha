@@ -36,7 +36,7 @@ import {
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
 import { validateBootstrap } from '../state/bootstrap';
-import type { AppAction, AppState } from '../state/view';
+import type { AppState, DataAction, NavigationAction } from '../state/view';
 import { DetailRefreshProvider, StaleNotice, useFormReload } from '../detailRefresh';
 import { useLoad } from '../useLoad';
 import { voiceClasses } from './characterAppearance';
@@ -66,7 +66,8 @@ import { TransliteratingInput } from './TransliterationMode';
 
 interface SettingsScreenProps {
   client: ChaClient;
-  dispatch: Dispatch<AppAction>;
+  dispatch: Dispatch<DataAction>;
+  navigate: Dispatch<NavigationAction>;
   state: AppState;
 }
 
@@ -88,9 +89,9 @@ function formatBytes(bytes: number): string {
   return `${size.toLocaleString(undefined, { maximumFractionDigits: unit ? 1 : 0 })} ${units[unit]}`;
 }
 
-export function BackToSettings({ dispatch }: { dispatch: Dispatch<AppAction> }) {
+export function BackToSettings({ navigate }: { navigate: Dispatch<NavigationAction> }) {
   return (
-    <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings' })} type="button">
+    <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings' })} type="button">
       <ChevronLeftIcon />
       <span>Settings</span>
     </button>
@@ -165,67 +166,67 @@ function VaultPasswordInput({
   );
 }
 
-export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction> }) {
+export function SettingsNavigation({ navigate }: { navigate: Dispatch<NavigationAction> }) {
   return (
     <section className="cha-settings-card" aria-label="Configuration">
       <div className="cha-settings-links">
         <SettingsRow
           icon={<PersonasIcon />}
           label="Personas"
-          onClick={() => dispatch({ type: 'show-personas' })}
+          onClick={() => navigate({ type: 'show-personas' })}
         />
         <SettingsRow
           icon={<CharacterIcon />}
           label="Characters"
-          onClick={() => dispatch({ type: 'show-characters' })}
+          onClick={() => navigate({ type: 'show-characters' })}
         />
         <SettingsRow
           icon={<ForumsIcon />}
           label="Forums"
-          onClick={() => dispatch({ type: 'show-forums' })}
+          onClick={() => navigate({ type: 'show-forums' })}
         />
         <SettingsRow
           icon={<DatabaseIcon />}
           label="Vaults"
-          onClick={() => dispatch({ type: 'show-settings-vaults' })}
+          onClick={() => navigate({ type: 'show-settings-vaults' })}
         />
         <SettingsRow
           icon={<SettingsIcon />}
           label="Providers"
-          onClick={() => dispatch({ type: 'show-settings-providers' })}
+          onClick={() => navigate({ type: 'show-settings-providers' })}
         />
         <SettingsRow
           icon={<TextLinesIcon />}
           label="Styles"
-          onClick={() => dispatch({ type: 'show-settings-styles' })}
+          onClick={() => navigate({ type: 'show-settings-styles' })}
         />
         <SettingsRow icon={<SettingsIcon />} label="Session settings"
-          onClick={() => dispatch({ type: 'show-settings-jev' })} />
+          onClick={() => navigate({ type: 'show-settings-jev' })} />
         <SettingsRow icon={<SettingsIcon />} label="Search API"
-          onClick={() => dispatch({ type: 'show-settings-web-search' })} />
+          onClick={() => navigate({ type: 'show-settings-web-search' })} />
         <SettingsRow
           icon={<SpeakerIcon />}
           label="Voices"
-          onClick={() => dispatch({ type: 'show-settings-voices' })}
+          onClick={() => navigate({ type: 'show-settings-voices' })}
         />
         <SettingsRow
           icon={<KeyIcon />}
           label="API Keys"
-          onClick={() => dispatch({ type: 'show-settings-api-keys' })}
+          onClick={() => navigate({ type: 'show-settings-api-keys' })}
         />
       </div>
     </section>
   );
 }
 
-export function VaultsScreen({ client, dispatch }: SettingsScreenProps) {
+export function VaultsScreen({ client, navigate }: SettingsScreenProps) {
   const { data: vaults, error, retry } = useLoad(
     client, loadVaults, 'Vaults could not be loaded.',
   );
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Vaults settings">
-      <BackToSettings dispatch={dispatch} />
+      <BackToSettings navigate={navigate} />
       {vaults === null && !error && <p className="cha-state-message" role="status">Loading vaults…</p>}
       {error && <LoadFailure message={error} retry={retry} />}
       {vaults && (
@@ -234,13 +235,13 @@ export function VaultsScreen({ client, dispatch }: SettingsScreenProps) {
             description="Create an empty vault or copy an existing one"
             icon={<PlusIcon />}
             label="New vault"
-            onClick={() => dispatch({ type: 'show-settings-new-vault' })}
+            onClick={() => navigate({ type: 'show-settings-new-vault' })}
           />
           <SettingsRow
             description="Download a vault from R2"
             icon={<DownloadIcon />}
             label="Download vault"
-            onClick={() => dispatch({ type: 'show-settings-download-vault' })}
+            onClick={() => navigate({ type: 'show-settings-download-vault' })}
           />
           {vaults.map((vault) => (
             <SettingsRow
@@ -248,7 +249,7 @@ export function VaultsScreen({ client, dispatch }: SettingsScreenProps) {
               icon={<DatabaseIcon />}
               key={vault.display_name}
               label={vault.display_name}
-              onClick={() => dispatch({
+              onClick={() => navigate({
                 type: 'inspect-vault',
                 vaultName: vault.display_name,
               })}
@@ -260,7 +261,7 @@ export function VaultsScreen({ client, dispatch }: SettingsScreenProps) {
   );
 }
 
-export function DownloadVaultScreen({ client, dispatch }: SettingsScreenProps) {
+export function DownloadVaultScreen({ client, dispatch, navigate }: SettingsScreenProps) {
   const [names, setNames] = useState<string[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState<Set<string>>(() => new Set());
@@ -301,7 +302,7 @@ export function DownloadVaultScreen({ client, dispatch }: SettingsScreenProps) {
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Download vault settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
       {names === null && !error && <p className="cha-state-message" role="status">Loading vaults from R2…</p>}
       {names === null && error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
       {names && names.length === 0 && <p className="cha-empty-list">No vaults found in R2</p>}
@@ -325,7 +326,7 @@ export function DownloadVaultScreen({ client, dispatch }: SettingsScreenProps) {
   );
 }
 
-export function MergeVaultScreen({ client, dispatch, state }: SettingsScreenProps) {
+export function MergeVaultScreen({ client, dispatch, navigate, state }: SettingsScreenProps) {
   const { data: vaults, error: loadError, retry } = useLoad(
     client, loadVaults, 'Vaults could not be loaded.',
   );
@@ -384,7 +385,7 @@ export function MergeVaultScreen({ client, dispatch, state }: SettingsScreenProp
     <section className="cha-screen cha-navigation" aria-label="Merge vault settings">
       <button
         className="cha-back-row"
-        onClick={() => dispatch(state.inspectedVaultName
+        onClick={() => navigate(state.inspectedVaultName
           ? { type: 'inspect-vault', vaultName: state.inspectedVaultName }
           : { type: 'show-settings-vaults' })}
         type="button"
@@ -436,7 +437,7 @@ export function MergeVaultScreen({ client, dispatch, state }: SettingsScreenProp
   );
 }
 
-export function NewVaultScreen({ client, dispatch }: SettingsScreenProps) {
+export function NewVaultScreen({ client, navigate }: SettingsScreenProps) {
   const [vaults, setVaults] = useState<VaultDetail[] | null>(null);
   const [name, setName] = useState('');
   const [copyFrom, setCopyFrom] = useState('');
@@ -470,7 +471,7 @@ export function NewVaultScreen({ client, dispatch }: SettingsScreenProps) {
         copy_from: copyFrom || null,
         password: protectedVault ? password : null,
       });
-      dispatch({ type: 'vault-created', vault: created });
+      navigate({ type: 'vault-created', vault: created });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The vault could not be created.'));
       setSaving(false);
@@ -480,7 +481,7 @@ export function NewVaultScreen({ client, dispatch }: SettingsScreenProps) {
   const ready = vaults !== null && vaults.length > 0;
   return (
     <section className="cha-screen cha-navigation" aria-label="New vault settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
       {!ready && !error && <p className="cha-state-message" role="status">Loading vaults…</p>}
       {ready && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
@@ -491,7 +492,7 @@ export function NewVaultScreen({ client, dispatch }: SettingsScreenProps) {
             {protectedVault && <VaultPasswordInput id="cha-new-vault-password" onChange={(value) => { setPassword(value); setError(null); }} value={password} />}
           </fieldset>
           {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving || (protectedVault && !password)} type="submit">{saving ? 'Creating…' : 'Create vault'}</button></div>
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => navigate({ type: 'show-settings-vaults' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving || (protectedVault && !password)} type="submit">{saving ? 'Creating…' : 'Create vault'}</button></div>
         </form>
       )}
       {error && !ready && <p className="cha-error-message" role="alert">{error}</p>}
@@ -499,7 +500,7 @@ export function NewVaultScreen({ client, dispatch }: SettingsScreenProps) {
   );
 }
 
-export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
+export function VaultScreen({ client, dispatch, navigate, state }: SettingsScreenProps) {
   const selectedName = state.inspectedVaultName;
   const [detail, setDetail] = useState<VaultDetail | null>(null);
   const [vaultCount, setVaultCount] = useState(0);
@@ -587,7 +588,7 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
     setError(null);
     try {
       await client.deleteVault(selectedName);
-      dispatch({ type: 'vault-deleted', vaultName: selectedName });
+      navigate({ type: 'vault-deleted', vaultName: selectedName });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The vault could not be deleted.'));
       setDeleting(false);
@@ -658,7 +659,7 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Vault settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
       {(detail || selectedName) && <div className="cha-detail-actions">
         {detail ? <DetailRefreshProvider value={reload.context}><EditableTitle
           available disabled={saving || deleting}
@@ -692,7 +693,7 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
                 disabled={busy}
                 icon={<DatabaseIcon />}
                 label="Merge"
-                onClick={() => dispatch({ type: 'show-settings-merge-vault' })}
+                onClick={() => navigate({ type: 'show-settings-merge-vault' })}
               />
               <SettingsRow
                 description={!canTransferR2 ? 'R2 storage is not configured' : undefined}
@@ -803,14 +804,14 @@ function UsedBy({ empty, items }: { empty: string; items: string[] }) {
   );
 }
 
-export function ProvidersScreen({ client, dispatch }: SettingsScreenProps) {
+export function ProvidersScreen({ client, navigate }: SettingsScreenProps) {
   const { data: providers, error, retry } = useLoad(
     client, loadProviders, 'Providers could not be loaded.',
   );
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Providers settings">
-      <BackToSettings dispatch={dispatch} />
+      <BackToSettings navigate={navigate} />
       {providers === null && !error && <p className="cha-state-message" role="status">Loading providers…</p>}
       {error && <LoadFailure message={error} retry={retry} />}
       {providers && (
@@ -819,7 +820,7 @@ export function ProvidersScreen({ client, dispatch }: SettingsScreenProps) {
             description="Start from defaults or copy existing settings"
             icon={<PlusIcon />}
             label="New provider"
-            onClick={() => dispatch({ type: 'show-settings-new-provider' })}
+            onClick={() => navigate({ type: 'show-settings-new-provider' })}
           />
           {providers.length === 0 && <p className="cha-empty-list">No providers configured</p>}
           {providers.map((provider) => (
@@ -828,7 +829,7 @@ export function ProvidersScreen({ client, dispatch }: SettingsScreenProps) {
               icon={<SettingsIcon />}
               key={provider.id}
               label={provider.display_name}
-              onClick={() => dispatch({
+              onClick={() => navigate({
                 type: 'inspect-provider',
                 providerId: provider.id,
                 providerName: provider.display_name,
@@ -841,7 +842,7 @@ export function ProvidersScreen({ client, dispatch }: SettingsScreenProps) {
   );
 }
 
-export function NewProviderScreen({ client, dispatch }: SettingsScreenProps) {
+export function NewProviderScreen({ client, navigate }: SettingsScreenProps) {
   const [name, setName] = useState('');
   const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
   const [copyFrom, setCopyFrom] = useState('');
@@ -869,7 +870,7 @@ export function NewProviderScreen({ client, dispatch }: SettingsScreenProps) {
         display_name: name.trim(),
         copy_from: copyFrom || null,
       });
-      dispatch({
+      navigate({
         type: 'inspect-provider',
         providerId: created.id,
         providerName: created.display_name,
@@ -882,7 +883,7 @@ export function NewProviderScreen({ client, dispatch }: SettingsScreenProps) {
 
   return (
     <section className="cha-screen cha-navigation" aria-label="New provider settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-providers' })} type="button"><ChevronLeftIcon /><span>Providers</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-providers' })} type="button"><ChevronLeftIcon /><span>Providers</span></button>
       {providers === null && !error && <p className="cha-state-message" role="status">Loading providers…</p>}
       {providers !== null && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
@@ -892,7 +893,7 @@ export function NewProviderScreen({ client, dispatch }: SettingsScreenProps) {
           </fieldset>
           {copyFrom && <p className="cha-settings-note">The selected provider settings, including its saved API-key selection, are copied.</p>}
           {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-providers' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving} type="submit">{saving ? 'Creating…' : 'Create provider'}</button></div>
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => navigate({ type: 'show-settings-providers' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving} type="submit">{saving ? 'Creating…' : 'Create provider'}</button></div>
         </form>
       )}
       {error && providers === null && <p className="cha-error-message" role="alert">{error}</p>}
@@ -962,6 +963,7 @@ function isOpenRouterBaseUrl(value: string): boolean {
 export function ProviderScreen({
   client,
   dispatch,
+  navigate,
   state,
 }: SettingsScreenProps) {
   const id = state.inspectedProvider.id;
@@ -1132,7 +1134,7 @@ export function ProviderScreen({
     setError(null);
     try {
       await client.deleteProvider(id);
-      dispatch({ type: 'show-settings-providers' });
+      navigate({ type: 'show-settings-providers' });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The provider could not be deleted.'));
       setDeleting(false);
@@ -1166,7 +1168,7 @@ export function ProviderScreen({
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Provider settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-providers' })} type="button">
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-providers' })} type="button">
         <ChevronLeftIcon /><span>Providers</span>
       </button>
       {(detail || state.inspectedProvider.name) && <div className="cha-detail-actions">
@@ -1240,23 +1242,23 @@ export function ProviderScreen({
   );
 }
 
-export function StylesScreen({ client, dispatch }: SettingsScreenProps) {
+export function StylesScreen({ client, navigate }: SettingsScreenProps) {
   const { data: styles, error, retry } = useLoad(
     client, loadStyles, 'Styles could not be loaded.',
   );
   return (
     <section className="cha-screen cha-navigation" aria-label="Styles settings">
-      <BackToSettings dispatch={dispatch} />
+      <BackToSettings navigate={navigate} />
       {styles === null && !error && <p className="cha-state-message" role="status">Loading styles…</p>}
       {error && <LoadFailure message={error} retry={retry} />}
-      {styles && <div className="cha-list"><SettingsRow description="Start with a neutral character style" icon={<PlusIcon />} label="New style" onClick={() => dispatch({ type: 'show-settings-new-style' })} />{styles.length === 0 && <p className="cha-empty-list">No styles configured</p>}{styles.map((style) => (
-        <SettingsRow description={`${style.font} · ${style.weight} · ${style.size}`} icon={<CharacterIcon />} key={style.id} label={style.display_name} onClick={() => dispatch({ type: 'inspect-style', styleId: style.id, styleName: style.display_name })} />
+      {styles && <div className="cha-list"><SettingsRow description="Start with a neutral character style" icon={<PlusIcon />} label="New style" onClick={() => navigate({ type: 'show-settings-new-style' })} />{styles.length === 0 && <p className="cha-empty-list">No styles configured</p>}{styles.map((style) => (
+        <SettingsRow description={`${style.font} · ${style.weight} · ${style.size}`} icon={<CharacterIcon />} key={style.id} label={style.display_name} onClick={() => navigate({ type: 'inspect-style', styleId: style.id, styleName: style.display_name })} />
       ))}</div>}
     </section>
   );
 }
 
-export function NewStyleScreen({ client, dispatch }: SettingsScreenProps) {
+export function NewStyleScreen({ client, navigate }: SettingsScreenProps) {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1268,7 +1270,7 @@ export function NewStyleScreen({ client, dispatch }: SettingsScreenProps) {
     setError(null);
     try {
       const created = await client.createStyle({ display_name: name.trim() });
-      dispatch({ type: 'inspect-style', styleId: created.id, styleName: created.display_name });
+      navigate({ type: 'inspect-style', styleId: created.id, styleName: created.display_name });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The style could not be created.'));
       setSaving(false);
@@ -1277,11 +1279,11 @@ export function NewStyleScreen({ client, dispatch }: SettingsScreenProps) {
 
   return (
     <section className="cha-screen cha-navigation" aria-label="New style settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-styles' })} type="button"><ChevronLeftIcon /><span>Styles</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-styles' })} type="button"><ChevronLeftIcon /><span>Styles</span></button>
       <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
         <fieldset disabled={saving}><TransliteratingInput autoFocus className="cha-form-control" id="cha-new-style-name" label="Name" onValueChange={setName} placeholder="e.g. Editorial" value={name} /></fieldset>
         {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-styles' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving} type="submit">{saving ? 'Creating…' : 'Create style'}</button></div>
+        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => navigate({ type: 'show-settings-styles' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving} type="submit">{saving ? 'Creating…' : 'Create style'}</button></div>
       </form>
     </section>
   );
@@ -1295,6 +1297,7 @@ function styleUpdate(detail: StyleDetail): StyleUpdate {
 export function StyleScreen({
   client,
   dispatch,
+  navigate,
   state,
 }: SettingsScreenProps) {
   const id = state.inspectedStyle.id;
@@ -1373,7 +1376,7 @@ export function StyleScreen({
     setError(null);
     try {
       await client.deleteStyle(id);
-      dispatch({ type: 'show-settings-styles' });
+      navigate({ type: 'show-settings-styles' });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The style could not be deleted.'));
       setDeleting(false);
@@ -1397,7 +1400,7 @@ export function StyleScreen({
   };
   return (
     <section className="cha-screen cha-navigation" aria-label="Style settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-styles' })} type="button"><ChevronLeftIcon /><span>Styles</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-styles' })} type="button"><ChevronLeftIcon /><span>Styles</span></button>
       {(detail || state.inspectedStyle.name) && <div className="cha-detail-actions">
         {detail ? <DetailRefreshProvider value={reload.context}><EditableTitle
           available={detail.writable} disabled={saving || deleting}
@@ -1454,17 +1457,17 @@ export function StyleScreen({
   );
 }
 
-export function VoicesScreen({ client, dispatch }: SettingsScreenProps) {
+export function VoicesScreen({ client, navigate }: SettingsScreenProps) {
   const { data: voices, error, retry } = useLoad(
     client, loadVoices, 'Voices could not be loaded.',
   );
   return (
     <section className="cha-screen cha-navigation" aria-label="Voices settings">
       <div className="cha-detail-toolbar">
-        <BackToSettings dispatch={dispatch} />
+        <BackToSettings navigate={navigate} />
         <button
           className="cha-detail-link"
-          onClick={() => dispatch({ type: 'show-settings-voice-input' })}
+          onClick={() => navigate({ type: 'show-settings-voice-input' })}
           type="button"
         >
           <span>Voice settings</span>
@@ -1475,7 +1478,7 @@ export function VoicesScreen({ client, dispatch }: SettingsScreenProps) {
       {error && <LoadFailure message={error} retry={retry} />}
       {voices && (
         <div className="cha-list">
-          <SettingsRow description="Add a voice for character speech" icon={<PlusIcon />} label="New voice" onClick={() => dispatch({ type: 'show-settings-new-voice' })} />
+          <SettingsRow description="Add a voice for character speech" icon={<PlusIcon />} label="New voice" onClick={() => navigate({ type: 'show-settings-new-voice' })} />
           {voices.length === 0 && <p className="cha-empty-list">No voices configured</p>}
           {voices.map((voice) => (
             <SettingsRow
@@ -1483,7 +1486,7 @@ export function VoicesScreen({ client, dispatch }: SettingsScreenProps) {
               icon={<SpeakerIcon />}
               key={voice.id}
               label={voice.display_name}
-              onClick={() => dispatch({
+              onClick={() => navigate({
                 type: 'inspect-voice',
                 voiceId: voice.id,
                 voiceName: voice.display_name,
@@ -1544,7 +1547,7 @@ function defaultVoiceOutput(voices: VoiceDetail[]): VoiceOutputSettings {
   };
 }
 
-export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
+export function VoiceSettingsScreen({ client, navigate }: SettingsScreenProps) {
   const [savedInput, setSavedInput] =
     useState<VoiceInputSettings | null | undefined>(undefined);
   const [input, setInput] = useState<VoiceInputSettings>(defaultVoiceInput);
@@ -1757,7 +1760,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Voice settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
       {(savedInput === undefined || savedOutput === undefined) && !loadError && <p className="cha-state-message" role="status">Loading voice settings…</p>}
       {loadError && (savedInput === undefined || savedOutput === undefined || reload.refreshFailed) && <LoadFailure message={loadError} retry={reload.retry} />}
       {reload.stale && <StaleNotice onReload={() => reload.accept(applyVoiceSettings)} />}
@@ -1799,7 +1802,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
   );
 }
 
-export function NewVoiceScreen({ client, dispatch }: SettingsScreenProps) {
+export function NewVoiceScreen({ client, navigate }: SettingsScreenProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [voiceReferenceId, setVoiceReferenceId] = useState('');
@@ -1819,7 +1822,7 @@ export function NewVoiceScreen({ client, dispatch }: SettingsScreenProps) {
         elevenlabs_voice_id: voiceReferenceId.trim(),
         provider,
       });
-      dispatch({
+      navigate({
         type: 'inspect-voice',
         voiceId: created.id,
         voiceName: created.display_name,
@@ -1832,14 +1835,14 @@ export function NewVoiceScreen({ client, dispatch }: SettingsScreenProps) {
 
   return (
     <section className="cha-screen cha-navigation" aria-label="New voice settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
       <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
         <TransliteratingInput autoFocus className="cha-form-control" disabled={saving} id="cha-new-voice-name" label="Name" onValueChange={setName} placeholder="e.g. Brian" value={name} />
         <label htmlFor="cha-new-voice-description">Description<textarea className="cha-form-control cha-voice-description" disabled={saving} id="cha-new-voice-description" onChange={(event) => setDescription(event.target.value)} placeholder="Describe how this voice sounds" value={description} /></label>
         <label>Provider<select className="cha-form-control" disabled={saving} value={provider} onChange={(event) => setProvider(event.target.value as typeof provider)}><option value="fishaudio">FishAudio</option><option value="elevenlabs">ElevenLabs</option></select></label>
         <label htmlFor="cha-new-voice-reference-id">Voice ID<input className="cha-form-control" disabled={saving} id="cha-new-voice-reference-id" onChange={(event) => setVoiceReferenceId(event.target.value)} value={voiceReferenceId} /></label>
         {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-voices' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !description.trim() || !voiceReferenceId.trim() || saving} type="submit">{saving ? 'Registering…' : 'Register voice'}</button></div>
+        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => navigate({ type: 'show-settings-voices' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !description.trim() || !voiceReferenceId.trim() || saving} type="submit">{saving ? 'Registering…' : 'Register voice'}</button></div>
       </form>
     </section>
   );
@@ -1857,6 +1860,7 @@ function optionalNumber(value: string): number | null {
 export function VoiceScreen({
   client,
   dispatch,
+  navigate,
   state,
 }: SettingsScreenProps) {
   const id = state.inspectedVoice.id;
@@ -1991,7 +1995,7 @@ export function VoiceScreen({
     setError(null);
     try {
       await client.deleteVoice(id);
-      dispatch({ type: 'show-settings-voices' });
+      navigate({ type: 'show-settings-voices' });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The voice could not be deleted.'));
       setDeleting(false);
@@ -2012,7 +2016,7 @@ export function VoiceScreen({
   const supportsSpeed = draft?.provider !== 'elevenlabs' || voiceOutput?.elevenlabs?.supports_speed !== false;
   return (
     <section className="cha-screen cha-navigation" aria-label="Voice settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
       {(detail || state.inspectedVoice.name) && <div className="cha-detail-actions">
         {detail ? <DetailRefreshProvider value={reload.context}><EditableTitle
           available={detail.writable} disabled={saving || deleting}
@@ -2068,16 +2072,16 @@ export function VoiceScreen({
   );
 }
 
-export function ApiKeysScreen({ client, dispatch }: SettingsScreenProps) {
+export function ApiKeysScreen({ client, navigate }: SettingsScreenProps) {
   const { data: keys, error, retry } = useLoad(
     client, loadApiKeys, 'API keys could not be loaded.',
   );
   return (
     <section className="cha-screen cha-navigation" aria-label="API keys settings">
-      <BackToSettings dispatch={dispatch} />
+      <BackToSettings navigate={navigate} />
       {keys === null && !error && <p className="cha-state-message" role="status">Loading API keys…</p>}
       {error && <LoadFailure message={error} retry={retry} />}
-      {keys && <div className="cha-list"><SettingsRow description="Configure database upload and download" icon={<DatabaseIcon />} label="R2 storage" onClick={() => dispatch({ type: 'show-settings-r2-storage' })} /><SettingsRow description="Save a model-service secret in this vault" icon={<PlusIcon />} label="New API key" onClick={() => dispatch({ type: 'show-settings-new-api-key' })} />{keys.length === 0 && <p className="cha-empty-list">No model API keys saved</p>}{keys.map((key) => <SettingsRow description={key.used_by.length ? `Used by ${key.used_by.join(', ')}` : 'Saved in this vault · Not in use'} icon={<KeyIcon />} key={key.id} label={key.display_name} onClick={() => dispatch({ type: 'inspect-api-key', apiKeyId: key.id, apiKeyName: key.display_name })} />)}</div>}
+      {keys && <div className="cha-list"><SettingsRow description="Configure database upload and download" icon={<DatabaseIcon />} label="R2 storage" onClick={() => navigate({ type: 'show-settings-r2-storage' })} /><SettingsRow description="Save a model-service secret in this vault" icon={<PlusIcon />} label="New API key" onClick={() => navigate({ type: 'show-settings-new-api-key' })} />{keys.length === 0 && <p className="cha-empty-list">No model API keys saved</p>}{keys.map((key) => <SettingsRow description={key.used_by.length ? `Used by ${key.used_by.join(', ')}` : 'Saved in this vault · Not in use'} icon={<KeyIcon />} key={key.id} label={key.display_name} onClick={() => navigate({ type: 'inspect-api-key', apiKeyId: key.id, apiKeyName: key.display_name })} />)}</div>}
     </section>
   );
 }
@@ -2096,7 +2100,7 @@ function r2Draft(detail: R2StorageDetail | null): R2Draft {
   };
 }
 
-export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
+export function R2StorageScreen({ client, dispatch, navigate }: SettingsScreenProps) {
   const [detail, setDetail] = useState<R2StorageDetail | null | undefined>(undefined);
   const [draft, setDraft] = useState<R2Draft>(() => r2Draft(null));
   const [busy, setBusy] = useState<'save' | 'delete' | null>(null);
@@ -2195,7 +2199,7 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
     try {
       await client.deleteR2Storage();
       await refreshCapabilities();
-      dispatch({ type: 'show-settings-api-keys' });
+      navigate({ type: 'show-settings-api-keys' });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'R2 storage credentials could not be removed.'));
       setBusy(null);
@@ -2204,7 +2208,7 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
 
   return (
     <section className="cha-screen cha-navigation" aria-label="R2 storage settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
       {detail === undefined && !error && <p className="cha-state-message" role="status">Loading R2 storage credentials…</p>}
       {error && (detail === undefined || reload.refreshFailed) && <LoadFailure message={error} retry={reload.retry} />}
       {detail !== undefined && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
@@ -2223,7 +2227,7 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
   );
 }
 
-export function NewApiKeyScreen({ client, dispatch }: SettingsScreenProps) {
+export function NewApiKeyScreen({ client, navigate }: SettingsScreenProps) {
   const [name, setName] = useState('');
   const [value, setValue] = useState('');
   const [saving, setSaving] = useState(false);
@@ -2236,7 +2240,7 @@ export function NewApiKeyScreen({ client, dispatch }: SettingsScreenProps) {
     try {
       const created = await client.createApiKey({ display_name: name.trim(), value });
       setValue('');
-      dispatch({ type: 'inspect-api-key', apiKeyId: created.id, apiKeyName: created.display_name });
+      navigate({ type: 'inspect-api-key', apiKeyId: created.id, apiKeyName: created.display_name });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The API key could not be saved.'));
       setSaving(false);
@@ -2244,17 +2248,17 @@ export function NewApiKeyScreen({ client, dispatch }: SettingsScreenProps) {
   }
   return (
     <section className="cha-screen cha-navigation" aria-label="New API key settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
       <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
         <fieldset disabled={saving}><TransliteratingInput autoFocus autoComplete="off" className="cha-form-control" id="cha-new-api-key-name" label="Name" onValueChange={setName} placeholder="e.g. OpenRouter" value={name} /><label>API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setValue(event.target.value)} placeholder="Paste key" type="password" value={value} /></label></fieldset>
         {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-api-keys' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !value || saving} type="submit">{saving ? 'Saving…' : 'Save API key'}</button></div>
+        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => navigate({ type: 'show-settings-api-keys' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !value || saving} type="submit">{saving ? 'Saving…' : 'Save API key'}</button></div>
       </form>
     </section>
   );
 }
 
-export function ApiKeyScreen({ client, dispatch, state }: SettingsScreenProps) {
+export function ApiKeyScreen({ client, dispatch, navigate, state }: SettingsScreenProps) {
   const id = state.inspectedApiKey.id;
   const [key, setKey] = useState<ApiKeyDetail | null>(null);
   const [replacement, setReplacement] = useState('');
@@ -2320,13 +2324,13 @@ export function ApiKeyScreen({ client, dispatch, state }: SettingsScreenProps) {
     setConfirming(false);
     if (!id || busy) return;
     setBusy('delete'); setError(null);
-    try { await client.deleteApiKey(id); dispatch({ type: 'show-settings-api-keys' }); }
+    try { await client.deleteApiKey(id); navigate({ type: 'show-settings-api-keys' }); }
     catch (failure: unknown) { setError(publicErrorMessage(failure, 'The API key could not be removed.')); setBusy(null); }
   }
   reload.markDirty(replacement !== '');
   return (
     <section className="cha-screen cha-navigation" aria-label="API key settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
       {(key || state.inspectedApiKey.name) && <div className="cha-detail-actions">
         {key ? <DetailRefreshProvider value={reload.context}><EditableTitle
           available disabled={busy !== null} id={key.id} name={key.display_name} subject="API key"
@@ -2372,7 +2376,7 @@ const defaultJev: JevSettings = {
   url: 'https://openrouter.ai/api/alpha/decisions', model: 'typesafe/jev-1.13', api_key: '',
 };
 
-export function SessionSettingsScreen({ client, dispatch }: SettingsScreenProps) {
+export function SessionSettingsScreen({ client, navigate }: SettingsScreenProps) {
   const [settings, setSettings] = useState<JevSettings>(defaultJev);
   const [saved, setSaved] = useState<JevSettings | null>(null);
   const [naming, setNaming] = useState<SessionNamingSettings | null>(null);
@@ -2475,7 +2479,7 @@ export function SessionSettingsScreen({ client, dispatch }: SettingsScreenProps)
   jevReload.markDirty(jevDirty);
   namingReload.markDirty(namingDirty);
   return <section className="cha-screen cha-navigation" aria-label="Session settings">
-    <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings' })} type="button"><ChevronLeftIcon /><span>Settings</span></button>
+    <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings' })} type="button"><ChevronLeftIcon /><span>Settings</span></button>
     {namingError && <p className="cha-error-message" role="alert">{namingError}</p>}
     {namingReload.refreshFailed && <button className="cha-button cha-button-ghost" onClick={namingReload.retry} type="button">Try again</button>}
     {namingReload.stale && <StaleNotice onReload={() => namingReload.accept(applyNaming)} />}
@@ -2519,7 +2523,7 @@ const defaultWebSearch: WebSearchSettings = {
   read_provider: 'off', firecrawl_api_key: '', web_reader_url: '', web_reader_enabled: false, web_reader_api_key: '',
 };
 
-export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProps) {
+export function WebSearchSettingsScreen({ client, navigate }: SettingsScreenProps) {
   const [settings, setSettings] = useState<WebSearchSettings>(defaultWebSearch);
   const [saved, setSaved] = useState<WebSearchSettings | null>(null);
   const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
@@ -2580,7 +2584,7 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
   }
 
   return <section className="cha-screen cha-navigation" aria-label="Search API">
-    <BackToSettings dispatch={dispatch} />
+    <BackToSettings navigate={navigate} />
     {error && <p className="cha-error-message" role="alert">{error}</p>}
     {reload.refreshFailed && <button className="cha-button cha-button-ghost" onClick={reload.retry} type="button">Try again</button>}
     {reload.stale && <StaleNotice onReload={() => reload.accept(applySearch)} />}

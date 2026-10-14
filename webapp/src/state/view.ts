@@ -246,6 +246,67 @@ export type AppAction =
   | { type: 'reset-active-conversation' }
   | { type: 'stream-state'; status: StreamStatus; message?: string };
 
+// Navigation intents start a new navigation epoch and discard an unused
+// session. All except vault-context-reset first leave the open note.
+export type NavigationAction = Extract<AppAction, {
+  type:
+    | 'vault-context-reset'
+    | 'open-note'
+    | 'show-personas'
+    | 'show-new-persona'
+    | 'inspect-persona'
+    | 'persona-created'
+    | 'persona-deleted'
+    | 'show-persona-settings'
+    | 'show-characters'
+    | 'show-new-character'
+    | 'inspect-character'
+    | 'inspect-character-file'
+    | 'show-new-character-file'
+    | 'character-created'
+    | 'character-deleted'
+    | 'show-character-settings'
+    | 'show-forums'
+    | 'show-new-forum'
+    | 'forum-created'
+    | 'select-forum'
+    | 'show-sessions'
+    | 'show-forum-detail'
+    | 'inspect-forum-file'
+    | 'show-new-forum-file'
+    | 'show-forum-members'
+    | 'forum-deleted'
+    | 'show-settings'
+    | 'show-settings-vaults'
+    | 'show-settings-new-vault'
+    | 'show-settings-download-vault'
+    | 'show-settings-merge-vault'
+    | 'inspect-vault'
+    | 'vault-created'
+    | 'vault-deleted'
+    | 'show-settings-providers'
+    | 'show-settings-new-provider'
+    | 'inspect-provider'
+    | 'show-settings-styles'
+    | 'show-settings-new-style'
+    | 'inspect-style'
+    | 'show-settings-voices'
+    | 'show-settings-voice-input'
+    | 'show-settings-jev'
+    | 'show-settings-web-search'
+    | 'show-settings-new-voice'
+    | 'inspect-voice'
+    | 'show-settings-api-keys'
+    | 'show-settings-new-api-key'
+    | 'inspect-api-key'
+    | 'show-settings-r2-storage'
+    | 'show-chat'
+    | 'show-initial-conversation'
+}>;
+
+// Screens send navigation intents only through navigate.
+export type DataAction = Exclude<AppAction, NavigationAction>;
+
 function idleSessionOperation() {
   return {
     sessionOperation: 'idle' as const,

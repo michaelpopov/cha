@@ -11,7 +11,7 @@ import {
   welcomeSessionId,
   writeAppRoute,
 } from './state/route';
-import type { AppAction, AppState } from './state/view';
+import type { AppAction, AppState, NavigationAction } from './state/view';
 import { welcomeSnapshot, welcomeSubmission, type WelcomeTurn } from './welcomeTurn';
 
 // Owns everything a navigation can invalidate: the address bar, the epoch
@@ -64,34 +64,6 @@ function isSessionLimit(failure: unknown): failure is ChaError {
 // One stable instance: a per-render default would rebuild connectStream and
 // every callback and effect that depends on it, on every render.
 const noSessionEvents: SessionEventsConnector = () => ({ close() {} });
-
-// These redraw the current screen. Every other action is a navigation intent
-// and ends the epoch, which is why the session actions dispatched below go
-// straight to `dispatch`: they report on the operation the epoch is guarding,
-// and routing one through `navigate` would cancel it.
-const inPlaceActions = new Set<AppAction['type']>([
-  'toggle-sidebar',
-  'show-chat-tab',
-  'show-notes-tab',
-  'toggle-picture',
-  'resize-picture',
-  'select-picture-character',
-  'bootstrap-refreshed',
-  'character-detail-loaded',
-  'character-updated',
-  'persona-detail-loaded',
-  'persona-updated',
-  'forum-detail-loaded',
-  'forum-updated',
-  'provider-detail-loaded',
-  'provider-updated',
-  'style-detail-loaded',
-  'style-updated',
-  'voice-detail-loaded',
-  'voice-updated',
-  'api-key-detail-loaded',
-  'api-key-updated',
-]);
 
 const passthroughLeave: LeaveNoteThen = async (action) => await action();
 
@@ -263,11 +235,7 @@ export function useLiveSession(
     return navigation.current;
   }, [abandonUnusedSession]);
 
-  const navigate = useCallback((action: AppAction) => {
-    if (inPlaceActions.has(action.type)) {
-      dispatch(action);
-      return;
-    }
+  const navigate = useCallback((action: NavigationAction) => {
     if (action.type === 'vault-context-reset') {
       beginNavigation();
       dispatch(action);
@@ -714,7 +682,8 @@ export function useLiveSession(
         } else if (route.kind === 'session') {
           return openConversation(route.forumId, route.sessionId, false);
         } else {
-          navigate({
+          beginNavigation();
+          dispatch({
             type: 'session-operation-failed',
             message: 'This address does not identify a CHA session.',
           });
@@ -728,7 +697,7 @@ export function useLiveSession(
       window.removeEventListener('popstate', visitHistoryRoute);
       window.removeEventListener('hashchange', visitHistoryRoute);
     };
-  }, [clearLiveSession, navigate, openConversation]);
+  }, [beginNavigation, clearLiveSession, dispatch, navigate, openConversation]);
 
   useEffect(() => () => {
     resetLiveSession();

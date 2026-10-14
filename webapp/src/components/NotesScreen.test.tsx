@@ -89,7 +89,7 @@ function Harness({
       <NotesScreen
         activeNoteId={noteId}
         client={client}
-        dispatch={dispatch}
+        dispatch={dispatch} navigate={dispatch}
         draft={text}
         editorLiveRef={editorLiveRef}
         leave={leave}

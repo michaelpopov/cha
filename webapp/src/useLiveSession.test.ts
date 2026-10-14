@@ -94,14 +94,13 @@ function haltedOpen() {
   };
 }
 
-it('discards an unused session when leaving for Settings, but not on an in-place action', async () => {
+it('discards an unused session when leaving for Settings', async () => {
   const discardUnusedSession = vi.fn(async () => undefined);
   const { events, view } = harness({
     discardUnusedSession,
     getSessionSnapshot: async () => ({ ...snapshotFixture, recent_pending: true, discardable: true }),
   });
   await act(async () => { await view.result.current.live.openConversation('entrance', 'welcome'); });
-  act(() => view.result.current.live.navigate({ type: 'toggle-sidebar' }));
   expect(discardUnusedSession).not.toHaveBeenCalled();
   act(() => view.result.current.live.navigate({ type: 'show-settings' }));
   expect(discardUnusedSession).toHaveBeenCalledWith('entrance', 'welcome');
@@ -199,27 +198,6 @@ it.each(['Garden planning', 'New session'])(
     expect(refreshBootstrap).toHaveBeenCalledTimes(1);
   },
 );
-
-it('keeps an in-flight open alive across an in-place action', async () => {
-  const halted = haltedOpen();
-  const { events, view } = harness({ openSession: halted.openSession });
-
-  let opened: Promise<boolean> | null = null;
-  act(() => {
-    opened = view.result.current.live.openConversation('entrance', 'welcome');
-  });
-  act(() => {
-    view.result.current.live.navigate({ type: 'toggle-sidebar' });
-  });
-  await act(async () => {
-    halted.release();
-    expect(await opened).toBe(true);
-  });
-
-  expect(view.result.current.state.activeConversation)
-    .toEqual({ forumId: 'entrance', sessionId: 'welcome' });
-  expect(events.handlers).toHaveLength(1);
-});
 
 it('abandons an in-flight open when the reader navigates away', async () => {
   const halted = haltedOpen();

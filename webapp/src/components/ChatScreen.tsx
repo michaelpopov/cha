@@ -21,7 +21,7 @@ import {
 import { useAudioDownloads } from '../audioDownloads';
 import { ChatPictureLayout } from './ChatPicture';
 import { SidebarToggle } from './TopBar';
-import type { AppAction, AppState } from '../state/view';
+import type { AppState, DataAction, NavigationAction } from '../state/view';
 import {
   nativeSpeechFromClient,
   TextToSpeechError,
@@ -64,7 +64,8 @@ interface ChatScreenProps extends ChatActions {
   draft: string;
   onDraftChange(next: string): void;
   state: AppState;
-  dispatch: Dispatch<AppAction>;
+  dispatch: Dispatch<DataAction>;
+  navigate: Dispatch<NavigationAction>;
 }
 
 function actionMessage(failure: unknown): string {
@@ -316,6 +317,7 @@ export function ChatScreen({
   onDraftChange,
   state,
   dispatch,
+  navigate,
   onRetryStream,
   onReturnToStart,
   onCoverConversation,
@@ -854,8 +856,8 @@ export function ChatScreen({
               <button
                 className="cha-button cha-button-ghost"
                 onClick={() => {
-                  if (snapshot) dispatch({ type: 'select-forum', forumId: snapshot.forum.id });
-                  else dispatch({ type: 'show-forums' });
+                  if (snapshot) navigate({ type: 'select-forum', forumId: snapshot.forum.id });
+                  else navigate({ type: 'show-forums' });
                 }}
                 type="button"
               >

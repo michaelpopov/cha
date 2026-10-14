@@ -34,7 +34,7 @@ it('refreshes a manually saved file when Assistant restores its initial contents
   const dispatch = vi.fn();
   const viewFor = (epoch: number) => (
     <DetailRefreshProvider value={{ epoch, refreshing: false, failed: false, stale: false, retry() {} }}>
-      <CharacterFileScreen state={state} dispatch={dispatch} client={client} />
+      <CharacterFileScreen state={state} dispatch={dispatch} navigate={dispatch} client={client} />
     </DetailRefreshProvider>
   );
   const view = render(viewFor(0));

@@ -3,7 +3,7 @@ import {
   type Dispatch, type PointerEvent, type ReactNode,
 } from 'react';
 import type { ChaClient } from '../api/client';
-import type { AppAction, AppState } from '../state/view';
+import type { AppState, DataAction } from '../state/view';
 
 // The parent key remounts this for each vault, session, and character.
 function Picture({ client, characterId, displayName }: {
@@ -27,7 +27,7 @@ function Picture({ client, characterId, displayName }: {
 }
 
 export function ChatPictureLayout({ children, client, dispatch, state }: {
-  children: ReactNode; client: ChaClient; dispatch: Dispatch<AppAction>; state: AppState;
+  children: ReactNode; client: ChaClient; dispatch: Dispatch<DataAction>; state: AppState;
 }) {
   const area = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);

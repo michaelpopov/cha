@@ -33,7 +33,7 @@ function renderSettings(client = fixtureClient()) {
   render(
     <PersonaSettingsScreen
       client={client}
-      dispatch={dispatch}
+      dispatch={dispatch} navigate={dispatch}
       state={settingsState()}
     />,
   );

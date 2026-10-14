@@ -10,7 +10,7 @@ import {
   type ChaClient,
   type OpenAiAuth,
 } from '../api/client';
-import type { AppAction, AppState } from '../state/view';
+import type { AppState, NavigationAction } from '../state/view';
 import { SettingsNavigation } from './Settings';
 
 type AuthMutation = 'login' | 'poll' | 'disconnect';
@@ -18,7 +18,7 @@ type AuthMutation = 'login' | 'poll' | 'disconnect';
 interface OpenAiConnectionScreenProps {
   state: AppState;
   client: ChaClient;
-  dispatch?: Dispatch<AppAction>;
+  navigate?: Dispatch<NavigationAction>;
 }
 
 function verificationHref(snapshot: OpenAiAuth): string | null {
@@ -30,7 +30,7 @@ function verificationHref(snapshot: OpenAiAuth): string | null {
 
 export function OpenAiConnectionScreen({
   client,
-  dispatch,
+  navigate,
 }: OpenAiConnectionScreenProps) {
   const [snapshot, setSnapshot] = useState<OpenAiAuth | null>(null);
   const [httpError, setHttpError] = useState<string | null>(null);
@@ -161,7 +161,7 @@ export function OpenAiConnectionScreen({
 
   return (
     <section className="cha-screen cha-navigation cha-settings" aria-label="Settings">
-      {dispatch && <SettingsNavigation dispatch={dispatch} />}
+      {navigate && <SettingsNavigation navigate={navigate} />}
       <section className="cha-settings-card" aria-labelledby="cha-openai-settings-title">
         <header className="cha-settings-card-header">
           <h2 id="cha-openai-settings-title">OpenAI</h2>

@@ -11,14 +11,15 @@ import {
 import { createPortal } from 'react-dom';
 
 import { ChaError, publicErrorMessage } from '../api/client';
-import type { AppAction, AppState, MainView } from '../state/view';
+import type { AppState, DataAction, MainView, NavigationAction } from '../state/view';
 import { ForumsIcon, MoreIcon, SettingsIcon } from './Icons';
 import { TransliteratingInput } from './TransliterationMode';
 import { PasswordDialog } from './PasswordDialog';
 
 interface SidebarProps {
   state: AppState;
-  dispatch: Dispatch<AppAction>;
+  dispatch: Dispatch<DataAction>;
+  navigate: Dispatch<NavigationAction>;
   onCreateSession(forumId: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
   onDownloadSession(forumId: string, sessionId: string, label: string): Promise<void>;
@@ -181,6 +182,7 @@ function SessionDialog({
 export function Sidebar({
   state,
   dispatch,
+  navigate,
   onCreateSession,
   onDownloadSession,
   onOpenSession,
@@ -319,7 +321,7 @@ export function Sidebar({
                     aria-current={current ? 'page' : undefined}
                     className={`cha-side-action ${current ? 'is-current' : ''}`}
                     disabled={state.bootstrapStatus !== 'ready'}
-                    onClick={() => dispatch({ type: 'select-forum', forumId: forum.id })}
+                    onClick={() => navigate({ type: 'select-forum', forumId: forum.id })}
                     type="button"
                   >
                     <ForumsIcon />
@@ -430,7 +432,7 @@ export function Sidebar({
           aria-label="Settings"
           className={`cha-sidebar-settings ${settingsViews.includes(state.mainView) ? 'is-current' : ''}`}
           disabled={state.bootstrapStatus !== 'ready'}
-          onClick={() => dispatch({ type: 'show-settings' })}
+          onClick={() => navigate({ type: 'show-settings' })}
           title="Settings"
           type="button"
         >

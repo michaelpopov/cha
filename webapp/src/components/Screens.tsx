@@ -31,7 +31,7 @@ import {
 import {
   DetailRefreshProvider, sameDetail, StaleNotice, useDetailRefresh, useFormReload,
 } from '../detailRefresh';
-import { type AppAction, type AppState } from '../state/view';
+import { type AppState, type DataAction, type NavigationAction } from '../state/view';
 import { Markdown } from './Markdown';
 import { BackToSettings } from './Settings';
 import { DetailActions, EditableTitle } from './DetailActions';
@@ -50,7 +50,8 @@ import {
 
 interface NavigationScreenProps {
   state: AppState;
-  dispatch: Dispatch<AppAction>;
+  dispatch: Dispatch<DataAction>;
+  navigate: Dispatch<NavigationAction>;
 }
 
 // Personas, characters, and character files use the same navigation rows.
@@ -240,14 +241,14 @@ interface RosterDetailProps extends NavigationScreenProps {
   client: ChaClient;
 }
 
-export function PersonasScreen({ state, dispatch }: NavigationScreenProps) {
+export function PersonasScreen({ state, navigate }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Personas navigation">
-      <BackToSettings dispatch={dispatch} />
+      <BackToSettings navigate={navigate} />
       <div className="cha-roster">
         <button
           className="cha-list-action"
-          onClick={() => dispatch({ type: 'show-new-persona' })}
+          onClick={() => navigate({ type: 'show-new-persona' })}
           type="button"
         >
           <span className="cha-list-icon"><PlusIcon /></span>
@@ -261,7 +262,7 @@ export function PersonasScreen({ state, dispatch }: NavigationScreenProps) {
             description={persona.description}
             displayName={persona.display_name}
             key={persona.id}
-            onSelect={() => dispatch({ type: 'inspect-persona', personaId: persona.id })}
+            onSelect={() => navigate({ type: 'inspect-persona', personaId: persona.id })}
           />
         ))}
       </div>
@@ -270,7 +271,7 @@ export function PersonasScreen({ state, dispatch }: NavigationScreenProps) {
 }
 
 export function NewPersonaScreen({
-  dispatch,
+  navigate,
   client,
 }: RosterDetailProps) {
   const [name, setName] = useState('');
@@ -285,7 +286,7 @@ export function NewPersonaScreen({
     setError(null);
     try {
       const persona = await client.createPersona({ display_name: trimmedName });
-      dispatch({ type: 'persona-created', persona });
+      navigate({ type: 'persona-created', persona });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The persona could not be created.'));
       setSaving(false);
@@ -296,7 +297,7 @@ export function NewPersonaScreen({
     <section className="cha-screen cha-navigation" aria-label="New persona navigation">
       <button
         className="cha-back-row"
-        onClick={() => dispatch({ type: 'show-personas' })}
+        onClick={() => navigate({ type: 'show-personas' })}
         type="button"
       >
         <ChevronLeftIcon />
@@ -320,7 +321,7 @@ export function NewPersonaScreen({
           <button
             className="cha-button cha-button-ghost"
             disabled={saving}
-            onClick={() => dispatch({ type: 'show-personas' })}
+            onClick={() => navigate({ type: 'show-personas' })}
             type="button"
           >
             Cancel
@@ -338,7 +339,7 @@ export function NewPersonaScreen({
   );
 }
 
-export function PersonaDetailScreen({ state, dispatch, client }: RosterDetailProps) {
+export function PersonaDetailScreen({ state, dispatch, navigate, client }: RosterDetailProps) {
   const id = state.inspectedPersona.id;
   const load = useCallback((id: string) => client.getPersona(id), [client]);
   const onLoaded = useCallback((detail: PersonaDetail, personaId: string) => {
@@ -358,10 +359,10 @@ export function PersonaDetailScreen({ state, dispatch, client }: RosterDetailPro
       }}
       load={load}
       onLoaded={onLoaded}
-      onBack={() => dispatch({ type: 'show-personas' })}
+      onBack={() => navigate({ type: 'show-personas' })}
       subjectId={id}
       toolbarAction={state.inspectedPersona.writable ? (
-        <button className="cha-detail-link" onClick={() => dispatch({ type: 'show-persona-settings' })} type="button">
+        <button className="cha-detail-link" onClick={() => navigate({ type: 'show-persona-settings' })} type="button">
           <span>Settings</span><ChevronRightIcon />
         </button>
       ) : undefined}
@@ -386,7 +387,7 @@ export function PersonaDetailScreen({ state, dispatch, client }: RosterDetailPro
               deleteMessage={`Delete “${detail.display_name}”? This permanently removes its profile. This cannot be undone.`}
               onDelete={async () => {
                 await client.deletePersona(detail.id);
-                dispatch({ type: 'persona-deleted', personaId: detail.id });
+                navigate({ type: 'persona-deleted', personaId: detail.id });
               }}
               editor={{ title: 'Edit persona profile', value: detail.persona_markdown,
                 uploadLabel: 'Replace persona description from file', onSave: saveMarkdown }}
@@ -399,14 +400,14 @@ export function PersonaDetailScreen({ state, dispatch, client }: RosterDetailPro
   );
 }
 
-export function CharactersScreen({ state, dispatch }: NavigationScreenProps) {
+export function CharactersScreen({ state, navigate }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Characters navigation">
-      <BackToSettings dispatch={dispatch} />
+      <BackToSettings navigate={navigate} />
       <div className="cha-roster">
         <button
           className="cha-list-action"
-          onClick={() => dispatch({ type: 'show-new-character' })}
+          onClick={() => navigate({ type: 'show-new-character' })}
           type="button"
         >
           <span className="cha-list-icon"><PlusIcon /></span>
@@ -420,7 +421,7 @@ export function CharactersScreen({ state, dispatch }: NavigationScreenProps) {
             description={character.description}
             displayName={character.display_name}
             key={character.id}
-            onSelect={() => dispatch({ type: 'inspect-character', characterId: character.id })}
+            onSelect={() => navigate({ type: 'inspect-character', characterId: character.id })}
           />
         ))}
       </div>
@@ -429,7 +430,7 @@ export function CharactersScreen({ state, dispatch }: NavigationScreenProps) {
 }
 
 export function NewCharacterScreen({
-  dispatch,
+  navigate,
   client,
 }: RosterDetailProps) {
   const [name, setName] = useState('');
@@ -449,7 +450,7 @@ export function NewCharacterScreen({
         display_name: trimmedName,
         description: trimmedDescription,
       });
-      dispatch({ type: 'character-created', character });
+      navigate({ type: 'character-created', character });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The character could not be created.'));
       setSaving(false);
@@ -460,7 +461,7 @@ export function NewCharacterScreen({
     <section className="cha-screen cha-navigation" aria-label="New character navigation">
       <button
         className="cha-back-row"
-        onClick={() => dispatch({ type: 'show-characters' })}
+        onClick={() => navigate({ type: 'show-characters' })}
         type="button"
       >
         <ChevronLeftIcon />
@@ -495,7 +496,7 @@ export function NewCharacterScreen({
           <button
             className="cha-button cha-button-ghost"
             disabled={saving}
-            onClick={() => dispatch({ type: 'show-characters' })}
+            onClick={() => navigate({ type: 'show-characters' })}
             type="button"
           >
             Cancel
@@ -516,6 +517,7 @@ export function NewCharacterScreen({
 export function CharacterDetailScreen({
   state,
   dispatch,
+  navigate,
   client,
 }: RosterDetailProps) {
   const characterId = state.inspectedCharacter.id;
@@ -542,12 +544,12 @@ export function CharacterDetailScreen({
       }}
       load={load}
       onLoaded={onLoaded}
-      onBack={() => dispatch({ type: 'show-characters' })}
+      onBack={() => navigate({ type: 'show-characters' })}
       subjectId={characterId}
       toolbarAction={state.inspectedCharacter.settingsWritable ? (
         <button
           className="cha-detail-link"
-          onClick={() => dispatch({ type: 'show-character-settings' })}
+          onClick={() => navigate({ type: 'show-character-settings' })}
           type="button"
         >
           <span>Settings</span>
@@ -569,15 +571,15 @@ export function CharacterDetailScreen({
             deleteMessage={`Delete “${detail.display_name}”? This permanently removes its definition and settings. Existing chat transcripts are kept. This cannot be undone.`}
             onDelete={async () => {
               await client.deleteCharacter(detail.id);
-              dispatch({ type: 'character-deleted', characterId: detail.id });
+              navigate({ type: 'character-deleted', characterId: detail.id });
             }}
           />}
         </div>
         <FileList
           filenames={detail.markdown_files}
           writable={detail.settings_writable}
-          onNew={() => dispatch({ type: 'show-new-character-file' })}
-          onSelect={(filename) => dispatch({ type: 'inspect-character-file', characterId: characterId!, filename })}
+          onNew={() => navigate({ type: 'show-new-character-file' })}
+          onSelect={(filename) => navigate({ type: 'inspect-character-file', characterId: characterId!, filename })}
         />
       </>}
     />
@@ -586,7 +588,7 @@ export function CharacterDetailScreen({
 
 export function CharacterFileScreen({
   state,
-  dispatch,
+  navigate,
   client,
 }: RosterDetailProps) {
   const filename = state.inspectedCharacter.file;
@@ -615,7 +617,7 @@ export function CharacterFileScreen({
             deleteMessage={`Delete “${filename}”? This permanently removes this Markdown file. This cannot be undone.`}
             onDelete={async () => {
               await client.deleteCharacterFile(characterId!, filename!);
-              dispatch({ type: 'inspect-character', characterId: characterId! });
+              navigate({ type: 'inspect-character', characterId: characterId! });
             }}
             editor={{ title: 'Edit character file', value: file.content,
               uploadLabel: 'Replace character file content from file',
@@ -627,7 +629,7 @@ export function CharacterFileScreen({
         </div>}
         {rosterMarkdown(file.content, 'This file is empty.')}
       </>}
-      onBack={() => dispatch({ type: 'inspect-character', characterId: characterId! })}
+      onBack={() => navigate({ type: 'inspect-character', characterId: characterId! })}
       subjectId={filename ? characterId : null}
     />
   );
@@ -651,7 +653,7 @@ function normalizeMarkdownFilename(filename: string) {
 function NewMarkdownFileScreen({
   kind,
   state,
-  dispatch,
+  navigate,
   client,
 }: RosterDetailProps & { kind: 'character' | 'forum' }) {
   const [mode, setMode] = useState<'upload' | 'text'>('upload');
@@ -679,7 +681,7 @@ function NewMarkdownFileScreen({
   }, []);
 
   function back() {
-    dispatch(kind === 'character'
+    navigate(kind === 'character'
       ? { type: 'inspect-character', characterId: subjectId } : { type: 'show-forum-detail' });
   }
 
@@ -739,7 +741,7 @@ function NewMarkdownFileScreen({
           ? client.createCharacterFile(subjectId, normalizedFilename, content)
           : client.createForumFile(subjectId, normalizedFilename, content));
         if (mounted.current) {
-          dispatch(kind === 'character'
+          navigate(kind === 'character'
             ? { type: 'inspect-character-file', characterId: subjectId, filename: file.filename }
             : { type: 'inspect-forum-file', forumId: subjectId, filename: file.filename });
         }
@@ -913,6 +915,7 @@ function VoicePreview({ client, voiceId, appearance }: {
 export function PersonaSettingsScreen({
   state,
   dispatch,
+  navigate,
   client,
 }: RosterDetailProps) {
   const personaId = state.inspectedPersona.id;
@@ -953,8 +956,8 @@ export function PersonaSettingsScreen({
   }, [client, personaId, reload.epoch, reload.attempt]);
 
   function closeSettings() {
-    if (personaId) dispatch({ type: 'inspect-persona', personaId });
-    else dispatch({ type: 'show-personas' });
+    if (personaId) navigate({ type: 'inspect-persona', personaId });
+    else navigate({ type: 'show-personas' });
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -1049,6 +1052,7 @@ export function PersonaSettingsScreen({
 export function CharacterSettingsScreen({
   state,
   dispatch,
+  navigate,
   client,
 }: RosterDetailProps) {
   const characterId = state.inspectedCharacter.id;
@@ -1100,8 +1104,8 @@ export function CharacterSettingsScreen({
   }, [characterId, client, reload.epoch, reload.attempt]);
 
   function closeSettings() {
-    if (characterId) dispatch({ type: 'inspect-character', characterId });
-    else dispatch({ type: 'show-characters' });
+    if (characterId) navigate({ type: 'inspect-character', characterId });
+    else navigate({ type: 'show-characters' });
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -1310,14 +1314,14 @@ export function forumRosterDescription(forum: ForumSummary): string {
   return forum.description ?? forumMemberNames(forum);
 }
 
-export function ForumsScreen({ state, dispatch }: NavigationScreenProps) {
+export function ForumsScreen({ state, navigate }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Forums navigation">
-      <BackToSettings dispatch={dispatch} />
+      <BackToSettings navigate={navigate} />
       <div className="cha-roster">
         <button
           className="cha-list-action"
-          onClick={() => dispatch({ type: 'show-new-forum' })}
+          onClick={() => navigate({ type: 'show-new-forum' })}
           type="button"
         >
           <span className="cha-list-icon"><PlusIcon /></span>
@@ -1331,7 +1335,7 @@ export function ForumsScreen({ state, dispatch }: NavigationScreenProps) {
             description={forumRosterDescription(forum)}
             displayName={forum.display_name}
             key={forum.id}
-            onSelect={() => dispatch({ type: 'select-forum', forumId: forum.id })}
+            onSelect={() => navigate({ type: 'select-forum', forumId: forum.id })}
           />
         ))}
       </div>
@@ -1341,7 +1345,7 @@ export function ForumsScreen({ state, dispatch }: NavigationScreenProps) {
 
 export function NewForumScreen({
   state,
-  dispatch,
+  navigate,
   client,
 }: RosterDetailProps) {
   const personas = state.bootstrap?.personas ?? [];
@@ -1361,7 +1365,7 @@ export function NewForumScreen({
         display_name: trimmedName,
         persona_id: personaId,
       });
-      dispatch({ type: 'forum-created', forum });
+      navigate({ type: 'forum-created', forum });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The forum could not be created.'));
       setSaving(false);
@@ -1372,7 +1376,7 @@ export function NewForumScreen({
     <section className="cha-screen cha-navigation" aria-label="New forum navigation">
       <button
         className="cha-back-row"
-        onClick={() => dispatch({ type: 'show-forums' })}
+        onClick={() => navigate({ type: 'show-forums' })}
         type="button"
       >
         <ChevronLeftIcon />
@@ -1408,7 +1412,7 @@ export function NewForumScreen({
           <button
             className="cha-button cha-button-ghost"
             disabled={saving}
-            onClick={() => dispatch({ type: 'show-forums' })}
+            onClick={() => navigate({ type: 'show-forums' })}
             type="button"
           >
             Cancel
@@ -1441,6 +1445,7 @@ function ForumCast({ forum }: { forum: ForumSummary }) {
 export function ForumDetailScreen({
   state,
   dispatch,
+  navigate,
   client,
   onDelete,
 }: RosterDetailProps & { onDelete(forumId: string): Promise<void> }) {
@@ -1481,17 +1486,17 @@ export function ForumDetailScreen({
         <FileList
           filenames={detail.markdown_files}
           writable={detail.writable}
-          onNew={() => dispatch({ type: 'show-new-forum-file' })}
-          onSelect={(filename) => dispatch({ type: 'inspect-forum-file', forumId: state.currentForumId!, filename })}
+          onNew={() => navigate({ type: 'show-new-forum-file' })}
+          onSelect={(filename) => navigate({ type: 'inspect-forum-file', forumId: state.currentForumId!, filename })}
         />
       </>}
-      onBack={() => dispatch({ type: 'show-sessions' })}
+      onBack={() => navigate({ type: 'show-sessions' })}
       subjectId={state.currentForumId}
       subtitle={forum && <ForumCast forum={forum} />}
       toolbarAction={state.inspectedForum.writable ? (
         <button
           className="cha-detail-link"
-          onClick={() => dispatch({ type: 'show-forum-members' })}
+          onClick={() => navigate({ type: 'show-forum-members' })}
           type="button"
         >
           <span>Members</span>
@@ -1503,7 +1508,7 @@ export function ForumDetailScreen({
 }
 
 export function ForumFileScreen({
-  state, dispatch, client,
+  state, navigate, client,
 }: RosterDetailProps) {
   const forumId = state.currentForumId;
   const filename = state.inspectedForum.file;
@@ -1529,7 +1534,7 @@ export function ForumFileScreen({
             deleteMessage={`Delete “${filename}”? This permanently removes this Markdown file. This cannot be undone.`}
             onDelete={async () => {
               await client.deleteForumFile(forumId!, filename!);
-              dispatch({ type: 'show-forum-detail' });
+              navigate({ type: 'show-forum-detail' });
             }}
             editor={{ title: 'Edit forum file', value: file.content,
               uploadLabel: 'Replace forum file content from file',
@@ -1541,7 +1546,7 @@ export function ForumFileScreen({
         </div>}
         {rosterMarkdown(file.content, 'This file is empty.')}
       </>}
-      onBack={() => dispatch({ type: 'show-forum-detail' })}
+      onBack={() => navigate({ type: 'show-forum-detail' })}
       subjectId={filename ? state.currentForumId : null}
     />
   );
@@ -1550,6 +1555,7 @@ export function ForumFileScreen({
 export function ForumMembersScreen({
   state,
   dispatch,
+  navigate,
   client,
 }: RosterDetailProps) {
   const forumId = state.currentForumId;
@@ -1642,7 +1648,7 @@ export function ForumMembersScreen({
     <section className="cha-screen cha-navigation" aria-label="Forum members navigation">
       <button
         className="cha-back-row"
-        onClick={() => dispatch({ type: 'show-forum-detail' })}
+        onClick={() => navigate({ type: 'show-forum-detail' })}
         type="button"
       >
         <ChevronLeftIcon />
@@ -1727,7 +1733,7 @@ export function formatSessionTime(updatedAt: number, now = Date.now()): string {
 
 export function SessionsScreen({
   state,
-  dispatch,
+  navigate,
   client,
   catalogRevision,
   onCreateSession,
@@ -1764,7 +1770,7 @@ export function SessionsScreen({
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Forum sessions navigation">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-forums' })} type="button">
+      <button className="cha-back-row" onClick={() => navigate({ type: 'show-forums' })} type="button">
         <ChevronLeftIcon />
         <span>All forums</span>
       </button>
@@ -1774,7 +1780,7 @@ export function SessionsScreen({
       {forum && (
         <button
           className="cha-header-row"
-          onClick={() => dispatch({ type: 'show-forum-detail' })}
+          onClick={() => navigate({ type: 'show-forum-detail' })}
           type="button"
         >
           <span className="cha-list-copy">

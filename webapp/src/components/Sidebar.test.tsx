@@ -20,7 +20,7 @@ function renderSidebar(state: AppState = readyState()) {
   render(
     <Sidebar
       onCreateSession={vi.fn(async () => true)}
-      dispatch={dispatch}
+      dispatch={dispatch} navigate={dispatch}
       onClearSessionAudioCache={vi.fn(async () => undefined)}
       onDeleteSession={vi.fn(async () => undefined)}
       onDownloadSession={vi.fn(async () => undefined)}
@@ -214,7 +214,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()}
+        dispatch={vi.fn()} navigate={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -243,7 +243,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()}
+        dispatch={vi.fn()} navigate={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -266,7 +266,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()}
+        dispatch={vi.fn()} navigate={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -302,7 +302,7 @@ describe('Sidebar session actions', () => {
       render(
         <Sidebar
           onCreateSession={vi.fn(async () => true)}
-          dispatch={vi.fn()}
+          dispatch={vi.fn()} navigate={vi.fn()}
           onClearSessionAudioCache={item.action === 'Clear audio cache' ? failingAction : vi.fn(async () => undefined)}
           onDeleteSession={vi.fn(async () => undefined)}
           onDownloadSession={item.action === 'Download' ? failingAction : vi.fn(async () => undefined)}
@@ -328,7 +328,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()}
+        dispatch={vi.fn()} navigate={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={onDelete}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -352,7 +352,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()}
+        dispatch={vi.fn()} navigate={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -392,7 +392,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()}
+        dispatch={vi.fn()} navigate={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -414,7 +414,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()}
+        dispatch={vi.fn()} navigate={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -442,7 +442,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()}
+        dispatch={vi.fn()} navigate={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -473,7 +473,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()}
+        dispatch={vi.fn()} navigate={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={() => pending}
         onDownloadSession={vi.fn(async () => undefined)}

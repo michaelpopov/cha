@@ -527,6 +527,41 @@ describe('live chat', () => {
     expect(getAudioDownloads).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['cached', 'missing'] as const)('keeps an unused session connected after a %s audio-cache update', async (cache) => {
+    mockAudioPlayback();
+    const discardUnusedSession = vi.fn(async () => undefined);
+    const snapshot: SessionSnapshot = {
+      ...snapshotFixture, recent_pending: true, discardable: true,
+      transcript: [{
+        id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+        addressed_to: '', addressed_to_name: '', text: 'Answer', status: 'complete', created_at: 2,
+      }],
+    };
+    const events = drivableEvents();
+    const client = fixtureClient({
+      getSessionSnapshot: async () => snapshot,
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      getAudioDownloads: async () => ({ cached_entry_ids: [2], downloads: [] }),
+      discardUnusedSession,
+      ...(cache === 'missing' ? {
+        resolveAudioSource: async () => { throw new ChaError('not_found', 'Cached audio not found.'); },
+      } : {}),
+    });
+    render(<App client={client} connectSessionEvents={events.connect} />);
+    await attachInitial(events, snapshot);
+    const route = window.location.hash;
+    fireEvent.click(await screen.findByRole('button', { name: "Play cached audio for Assistant's response" }));
+    if (cache === 'cached') {
+      await screen.findByRole('button', { name: "Stop reading Assistant's response" });
+    } else {
+      expect(await screen.findByRole('alert')).toHaveTextContent('Cached audio is no longer available.');
+    }
+    expect(discardUnusedSession).not.toHaveBeenCalled();
+    expect(events.connections[0].close).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe(route);
+    expect(screen.getByText('Answer')).toBeInTheDocument();
+  });
+
   it('discards audio resolution completed for the previous conversation', async () => {
     const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
     let resolvePrevious!: (resource: MediaResource) => void;
@@ -2520,7 +2555,7 @@ describe('live chat', () => {
       <ChatScreen
         key={vaultName}
         client={client}
-        dispatch={vi.fn()}
+        dispatch={vi.fn()} navigate={vi.fn()}
         draft=""
         onDraftChange={() => {}}
         onCoverConversation={vi.fn()}
@@ -2662,7 +2697,7 @@ describe('live chat', () => {
       return (
         <ChatScreen
           client={client}
-          dispatch={vi.fn()}
+          dispatch={vi.fn()} navigate={vi.fn()}
           draft={draft}
           onDraftChange={setDraft}
           onCoverConversation={vi.fn()}
@@ -3631,7 +3666,7 @@ it('clears a picture immediately on a vault change and ignores the old vault res
   const getCharacterPicture = vi.fn().mockReturnValueOnce(old).mockResolvedValue(portrait);
   const client = fixtureClient({ getCharacterPicture });
   const chat = (vaultName: string) => <ChatScreen
-    client={client} dispatch={vi.fn()} playbackPositions={new Map()}
+    client={client} dispatch={vi.fn()} navigate={vi.fn()} playbackPositions={new Map()}
     draft="" onDraftChange={() => {}}
     onCoverConversation={vi.fn()} onDeleteTurn={vi.fn()} onRetryStream={vi.fn()}
     onReturnToStart={vi.fn()} onSetDefaultCharacter={vi.fn()} onStopGeneration={vi.fn()}
@@ -3811,7 +3846,7 @@ describe('spoken send while the session closes', () => {
       return (
         <ChatScreen
           client={client}
-          dispatch={vi.fn()}
+          dispatch={vi.fn()} navigate={vi.fn()}
           draft={draft}
           onDraftChange={setDraft}
           onCoverConversation={vi.fn()}

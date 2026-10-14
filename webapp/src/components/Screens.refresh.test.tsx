@@ -24,7 +24,7 @@ it('refreshes a persona back to its original value after a local save', async ()
   };
   const viewFor = (epoch: number) => (
     <DetailRefreshProvider value={{ epoch, refreshing: false, failed: false, stale: false, retry() {} }}>
-      <PersonaDetailScreen client={client} dispatch={dispatch} state={state} />
+      <PersonaDetailScreen client={client} dispatch={dispatch} navigate={dispatch} state={state} />
     </DetailRefreshProvider>
   );
   const view = render(viewFor(0));
@@ -54,11 +54,11 @@ function membersState(forum: ForumSummary): AppState {
 it.each(['members', 'persona'] as const)('refreshes untouched forum %s without a draft conflict', (field) => {
   const client = fixtureClient();
   const dispatch = vi.fn();
-  const view = render(<ForumMembersScreen client={client} dispatch={dispatch} state={membersState(lobby)} />);
+  const view = render(<ForumMembersScreen client={client} dispatch={dispatch} navigate={dispatch} state={membersState(lobby)} />);
   const updated = field === 'members'
     ? { ...lobby, members: bootstrapFixture.characters }
     : { ...lobby, default_persona_id: 'guest', default_persona_display_name: 'Guest' };
-  view.rerender(<ForumMembersScreen client={client} dispatch={dispatch} state={membersState(updated)} />);
+  view.rerender(<ForumMembersScreen client={client} dispatch={dispatch} navigate={dispatch} state={membersState(updated)} />);
 
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getByRole('checkbox', { name: 'Assistant' }).matches(':checked')).toBe(field === 'members');
@@ -72,7 +72,7 @@ it('keeps a forum draft during a conflict and clears it only when new values are
   const client = fixtureClient({ updateForumMembers });
   const dispatch = vi.fn();
   const viewFor = (forum: ForumSummary) => (
-    <ForumMembersScreen client={client} dispatch={dispatch} state={membersState(forum)} />
+    <ForumMembersScreen client={client} dispatch={dispatch} navigate={dispatch} state={membersState(forum)} />
   );
   const view = render(viewFor(lobby));
   await user.click(screen.getByRole('checkbox', { name: 'Assistant' }));
@@ -107,14 +107,14 @@ it('uses saved forum members as the baseline for the next refresh', async () => 
   const updateForumMembers = vi.fn<ChaClient['updateForumMembers']>(async () => saved);
   const client = fixtureClient({ updateForumMembers });
   const dispatch = vi.fn();
-  const view = render(<ForumMembersScreen client={client} dispatch={dispatch} state={membersState(lobby)} />);
+  const view = render(<ForumMembersScreen client={client} dispatch={dispatch} navigate={dispatch} state={membersState(lobby)} />);
   await user.click(screen.getByRole('checkbox', { name: 'Assistant' }));
   await user.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: 'forum-updated', forum: saved }));
   expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
 
   const updated = { ...saved, default_persona_id: 'guest', default_persona_display_name: 'Guest' };
-  view.rerender(<ForumMembersScreen client={client} dispatch={dispatch} state={membersState(updated)} />);
+  view.rerender(<ForumMembersScreen client={client} dispatch={dispatch} navigate={dispatch} state={membersState(updated)} />);
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getByRole('checkbox', { name: 'Assistant' })).toBeChecked();
   expect(screen.getByLabelText('Persona')).toHaveValue('guest');

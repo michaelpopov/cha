@@ -30,7 +30,7 @@ import { noteTooLargeMessage } from '../notes/pictures';
 import { noteItemPath } from '../notes/tree';
 import type { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveFailedMessage, useNoteSave, type NoteSaveHandle } from '../notes/useNoteSave';
-import type { AppAction } from '../state/view';
+import type { DataAction, NavigationAction } from '../state/view';
 import {
   EditIcon,
   HighlighterIcon,
@@ -607,6 +607,7 @@ export function NotesScreen({
   onDraftChange,
   sidebarOpen,
   dispatch,
+  navigate,
   editorLiveRef,
   leave,
   onRegisterSave,
@@ -622,7 +623,8 @@ export function NotesScreen({
   draft: string;
   onDraftChange(next: string): void;
   sidebarOpen: boolean;
-  dispatch: Dispatch<AppAction>;
+  dispatch: Dispatch<DataAction>;
+  navigate: Dispatch<NavigationAction>;
   editorLiveRef: MutableRefObject<Editor | null>;
   leave: LeaveHandle;
   onRegisterSave(save: NoteSaveHandle | null): void;
@@ -1004,7 +1006,7 @@ export function NotesScreen({
               className="cha-button"
               onClick={() => {
                 if (activeNoteId === null) return;
-                dispatch({ type: 'open-note', noteId: activeNoteId });
+                navigate({ type: 'open-note', noteId: activeNoteId });
               }}
               type="button"
             >

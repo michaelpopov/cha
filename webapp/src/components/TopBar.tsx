@@ -1,10 +1,10 @@
 import type { Dispatch } from 'react';
 
-import type { AppAction, AppState } from '../state/view';
+import type { AppState, DataAction } from '../state/view';
 import { SidebarIcon } from './Icons';
 
 export function SidebarToggle({ dispatch, sidebarOpen, className = 'cha-icon-action' }: {
-  dispatch: Dispatch<AppAction>;
+  dispatch: Dispatch<DataAction>;
   sidebarOpen: boolean;
   className?: string;
 }) {
@@ -22,7 +22,7 @@ export function SidebarToggle({ dispatch, sidebarOpen, className = 'cha-icon-act
 }
 
 export function TopBar({ dispatch, state, title }: {
-  dispatch: Dispatch<AppAction>;
+  dispatch: Dispatch<DataAction>;
   state: AppState;
   title: string | null;
 }) {

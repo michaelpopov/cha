@@ -39,7 +39,8 @@ import {
   appReducer,
   initialAppState,
   navigationTitle,
-  type AppAction,
+  type DataAction,
+  type NavigationAction,
   type AppState,
 } from '../state/view';
 import { OpenAiConnectionScreen } from './OpenAiConnection';
@@ -96,7 +97,8 @@ import {
 interface ScreenProps extends ChatActions {
   playbackPositions: Map<string, Map<number, number>>;
   state: AppState;
-  dispatch: Dispatch<AppAction>;
+  dispatch: Dispatch<DataAction>;
+  navigate: Dispatch<NavigationAction>;
   client: ChaClient & NotesClient;
   draft: string;
   notesDraft: string;
@@ -124,6 +126,7 @@ function Screen({
   playbackPositions,
   state,
   dispatch,
+  navigate,
   client,
   onDeleteForum,
   onCreateSession,
@@ -156,6 +159,7 @@ function Screen({
         playbackPositions={playbackPositions}
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         onCoverConversation={onCoverConversation}
         onDeleteTurn={onDeleteTurn}
         draft={draft}
@@ -170,12 +174,13 @@ function Screen({
       />
     );
     case 'personas': return (
-      <PersonasScreen state={state} dispatch={dispatch} />
+      <PersonasScreen state={state} dispatch={dispatch} navigate={navigate} />
     );
     case 'new-persona': return (
       <NewPersonaScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
@@ -183,6 +188,7 @@ function Screen({
       <PersonaDetailScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
@@ -190,16 +196,18 @@ function Screen({
       <PersonaSettingsScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
     case 'characters': return (
-      <CharactersScreen state={state} dispatch={dispatch} />
+      <CharactersScreen state={state} dispatch={dispatch} navigate={navigate} />
     );
     case 'new-character': return (
       <NewCharacterScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
@@ -207,6 +215,7 @@ function Screen({
       <CharacterDetailScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
@@ -214,6 +223,7 @@ function Screen({
       <CharacterFileScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
@@ -221,6 +231,7 @@ function Screen({
       <NewCharacterFileScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
@@ -228,16 +239,18 @@ function Screen({
       <CharacterSettingsScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
     case 'forums': return (
-      <ForumsScreen state={state} dispatch={dispatch} />
+      <ForumsScreen state={state} dispatch={dispatch} navigate={navigate} />
     );
     case 'new-forum': return (
       <NewForumScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
@@ -246,6 +259,7 @@ function Screen({
         catalogRevision={catalogRevision}
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         onCreateSession={onCreateSession}
         onOpenSession={onOpenSession}
         state={state}
@@ -256,6 +270,7 @@ function Screen({
         onDelete={onDeleteForum}
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
@@ -263,6 +278,7 @@ function Screen({
       <ForumFileScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
@@ -270,6 +286,7 @@ function Screen({
       <NewForumFileScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
@@ -277,92 +294,97 @@ function Screen({
       <ForumMembersScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
     case 'settings': return (
       <OpenAiConnectionScreen
         client={client}
-        dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
     case 'settings-vaults': return (
-      <VaultsScreen client={client} dispatch={dispatch} state={state} />
+      <VaultsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-new-vault': return (
-      <NewVaultScreen client={client} dispatch={dispatch} state={state} />
+      <NewVaultScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-download-vault': return (
-      <DownloadVaultScreen client={client} dispatch={dispatch} state={state} />
+      <DownloadVaultScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-merge-vault': return (
-      <MergeVaultScreen client={client} dispatch={dispatch} state={state} />
+      <MergeVaultScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-vault': return (
-      <VaultScreen client={client} dispatch={dispatch} state={state} />
+      <VaultScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-providers': return (
-      <ProvidersScreen client={client} dispatch={dispatch} state={state} />
+      <ProvidersScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-new-provider': return (
-      <NewProviderScreen client={client} dispatch={dispatch} state={state} />
+      <NewProviderScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-provider': return (
       <ProviderScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
     case 'settings-styles': return (
-      <StylesScreen client={client} dispatch={dispatch} state={state} />
+      <StylesScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-new-style': return (
-      <NewStyleScreen client={client} dispatch={dispatch} state={state} />
+      <NewStyleScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-style': return (
       <StyleScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
     case 'settings-voices': return (
-      <VoicesScreen client={client} dispatch={dispatch} state={state} />
+      <VoicesScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
-    case 'settings-jev': return <SessionSettingsScreen client={client} dispatch={dispatch} state={state} />;
-    case 'settings-web-search': return <WebSearchSettingsScreen client={client} dispatch={dispatch} state={state} />;
+    case 'settings-jev': return <SessionSettingsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />;
+    case 'settings-web-search': return <WebSearchSettingsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />;
     case 'settings-voice-input': return (
-      <VoiceSettingsScreen client={client} dispatch={dispatch} state={state} />
+      <VoiceSettingsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-new-voice': return (
-      <NewVoiceScreen client={client} dispatch={dispatch} state={state} />
+      <NewVoiceScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-voice': return (
       <VoiceScreen
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         state={state}
       />
     );
     case 'settings-api-keys': return (
-      <ApiKeysScreen client={client} dispatch={dispatch} state={state} />
+      <ApiKeysScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-new-api-key': return (
-      <NewApiKeyScreen client={client} dispatch={dispatch} state={state} />
+      <NewApiKeyScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-api-key': return (
-      <ApiKeyScreen client={client} dispatch={dispatch} state={state} />
+      <ApiKeyScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-r2-storage': return (
-      <R2StorageScreen client={client} dispatch={dispatch} state={state} />
+      <R2StorageScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'notes': return (
       <NotesScreen
         activeNoteId={state.activeNoteId}
         client={client}
         dispatch={dispatch}
+        navigate={navigate}
         draft={notesDraft}
         editorLiveRef={editorLiveRef}
         leave={leave}
@@ -984,7 +1006,8 @@ export function App({
           <Sidebar
             onCreateSession={createConversation}
             onClearSessionAudioCache={clearSessionAudioCache}
-            dispatch={navigate}
+            dispatch={dispatch}
+            navigate={navigate}
             onDeleteSession={deleteSession}
             onDownloadSession={downloadSession}
             onOpenSession={openConversation}
@@ -1039,7 +1062,7 @@ export function App({
             />
           )}
           <main className={`cha-main${chatVisible ? ' is-chat' : ''}${notesVisible ? ' is-notes' : ''}`} data-view={state.mainView}>
-            {!chatVisible && !notesVisible && <TopBar dispatch={navigate} state={state} title={title} />}
+            {!chatVisible && !notesVisible && <TopBar dispatch={dispatch} state={state} title={title} />}
             {submissionErrors.map((error) => <div className="cha-submission-error" role="alert" key={error.id}>
               <span>{error.message}</span>
               <button type="button" aria-label="Dismiss message error" onClick={() => setSubmissionErrors((errors) => errors.filter(({ id }) => id !== error.id))}>Dismiss</button>
@@ -1057,7 +1080,8 @@ export function App({
                 playbackPositions={playbackPositions.current}
                 catalogRevision={catalogRevision}
                 client={client}
-                dispatch={navigate}
+                dispatch={dispatch}
+                navigate={navigate}
                 draft={chatDraftText}
                 editorLiveRef={editorLiveRef}
                 leave={noteLeave}

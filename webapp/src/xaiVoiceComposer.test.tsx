@@ -107,6 +107,7 @@ function renderChat(
   const props = {
     client,
     dispatch: vi.fn(),
+    navigate: vi.fn(),
     onCoverConversation: vi.fn(async () => ({ clear_input: false })),
     onDeleteTurn: vi.fn(async () => ({ clear_input: false })),
     onRetryStream: vi.fn(),
