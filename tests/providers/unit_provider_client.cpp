@@ -2001,6 +2001,27 @@ ProviderHttpResponse tool_reply(ProviderApi api, bool stream, Json calls,
     return {200, "text/event-stream", events + "data: [DONE]\n\n"};
 }
 
+TEST(ProviderClientTools, RecordsFailedModelRoundTimeEvenWhenTransportThrows) {
+    for (bool throws : {false, true}) {
+        auto definition = network_definition(80, false);
+        ProviderClient client(shared_definition(definition), nullptr,
+            [&](const ProviderHttpRequest&, const auto&) -> ProviderHttpResponse {
+                if (throws) throw std::runtime_error("transport failed");
+                return {503, "application/json", R"({"error":{"message":"Unavailable"}})"};
+            });
+        Transcript transcript;
+        GenerationStatistics statistics;
+        auto payload = client.prepare(client_request(transcript, 1, "Answer"));
+        payload.statistics = &statistics;
+        EXPECT_NE(client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false}).outcome,
+            GenerationOutcome::completed);
+        EXPECT_EQ(statistics.model.calls, 1u);
+        EXPECT_EQ(statistics.model.failed, 1u);
+        EXPECT_GT(statistics.model.duration.count(), 0);
+        EXPECT_EQ(statistics.web_search.calls, 0u);
+    }
+}
+
 TEST(ProviderClientTools, RunsMixedWebCallsInGroupsOfFourAndPreservesOrderedResults) {
     for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
         for (bool stream : {false, true}) {
@@ -2067,8 +2088,23 @@ TEST(ProviderClientTools, RunsMixedWebCallsInGroupsOfFourAndPreservesOrderedResu
             auto input = client_request(transcript, 1, "Read and search");
             input.web_search_tool = execute;
             input.web_read_tool = execute;
-            const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
+            GenerationStatistics statistics;
+            auto payload = client.prepare(input);
+            payload.statistics = &statistics;
+            const auto result = client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false});
             EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(statistics.model.calls, 2u);
+            EXPECT_EQ(statistics.model.failed, 0u);
+            EXPECT_GT(statistics.model.duration.count(), 0);
+            EXPECT_EQ(statistics.web_search.calls, 4u);
+            EXPECT_EQ(statistics.web_search.failed, 1u);
+            EXPECT_EQ(statistics.web_read.calls, 4u);
+            EXPECT_EQ(statistics.web_read.failed, 1u);
+            EXPECT_EQ(statistics.tool_calls_requested, 8u);
+            EXPECT_EQ(statistics.tool_calls_rejected, 0u);
+            EXPECT_GT(statistics.tools_wall_time.count(), 0);
+            EXPECT_GT(statistics.web_search.duration.count(), 0);
+            EXPECT_GT(statistics.web_read.duration.count(), 0);
             EXPECT_EQ(requests, 2);
             EXPECT_EQ(started, 8);
             EXPECT_EQ(completed, 8);
@@ -2198,7 +2234,15 @@ TEST(ProviderClientTools, ReadingReturnsErrorsAndStopsOnCancellation) {
                 if (cancel) { cancelled.store(true); return {}; }
                 throw std::runtime_error("private-key");
             };
-            const auto result = client.perform(client.prepare(input), [](auto) {}, cancelled);
+            GenerationStatistics statistics;
+            auto payload = client.prepare(input);
+            payload.statistics = &statistics;
+            const auto result = client.perform(std::move(payload), [](auto) {}, cancelled);
+            EXPECT_EQ(statistics.web_read.calls, 1u);
+            EXPECT_EQ(statistics.web_read.failed, cancel ? 0u : 1u);
+            EXPECT_EQ(statistics.web_read.cancelled, cancel ? 1u : 0u);
+            EXPECT_EQ(statistics.tool_calls_rejected, 2u);
+            EXPECT_GT(statistics.tools_wall_time.count(), 0);
             EXPECT_EQ(reads, 1);
             EXPECT_EQ(rounds, cancel ? 1 : 2);
             EXPECT_EQ(result.outcome, cancel ? GenerationOutcome::cancelled : GenerationOutcome::completed);
@@ -2429,8 +2473,15 @@ TEST(ProviderClientTools, ReturnsErrorsForBadArgumentsUnknownToolsAndSearchFailu
             ++searches;
             throw std::runtime_error("private credential details");
         };
-        const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
+        GenerationStatistics statistics;
+        auto payload = client.prepare(input);
+        payload.statistics = &statistics;
+        const auto result = client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false});
         EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(statistics.web_search.calls, 1u);
+        EXPECT_EQ(statistics.web_search.failed, 1u);
+        EXPECT_EQ(statistics.tool_calls_requested, 3u);
+        EXPECT_EQ(statistics.tool_calls_rejected, 2u);
         EXPECT_EQ(searches, 1);
         ASSERT_EQ(requests.size(), 2u);
         const auto& messages = requests.back()[api == ProviderApi::responses ? "input" : "messages"];
@@ -3255,9 +3306,15 @@ TEST(ProviderClientTools, MaintenanceOmitsRequiredWebSearch) {
             EXPECT_EQ(name, "vault_config_list");
             return R"({"version":"1","entries":[]})";
         };
-        const auto result = client.perform(
-            client.prepare(input), [](auto) {}, std::atomic_bool{false});
+        GenerationStatistics statistics;
+        auto payload = client.prepare(input);
+        payload.statistics = &statistics;
+        const auto result = client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false});
         EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(statistics.maintenance.calls, 1u);
+        EXPECT_EQ(statistics.maintenance.failed, 0u);
+        EXPECT_EQ(statistics.tool_calls_rejected, 2u);
+        EXPECT_GT(statistics.maintenance.duration.count(), 0);
         EXPECT_EQ(web_calls, 0);
         EXPECT_EQ(maintenance_calls, 1);
         expect_maintenance_tools(requests.front());

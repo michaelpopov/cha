@@ -189,14 +189,15 @@ TEST(ApplicationVault, UploadIncludesFinalSavedNotesWithoutScanningDamagedConten
     const auto saved = stored_notes(pair.database_a);
     const std::string response = "HTTP/1.1 200 OK\r\nETag: \"saved\"\r\n"
         "Content-Length: 0\r\nConnection: close\r\n\r\n";
-    MockHttpServer server({response, response});
+    MockHttpServer server({
+        http_response("text/plain", ""), response, response});
     set_r2(*application, server.port());
     server.start();
     (void)application->upload_database({}, application->context_epoch());
     server.join();
-    ASSERT_EQ(server.requests().size(), 2U);
+    ASSERT_EQ(server.requests().size(), 3U);
     const auto uploaded = pair.workspace_a.root() / "uploaded-notes.sqlite3";
-    std::ofstream(uploaded, std::ios::binary) << request_body(server.requests().front());
+    std::ofstream(uploaded, std::ios::binary) << request_body(server.requests()[1]);
     EXPECT_EQ(stored_notes(uploaded), saved);
 }
 
@@ -362,8 +363,9 @@ TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndCanFinishAfterAVaul
     TwoVaults pair;
     const std::string response = "HTTP/1.1 200 OK\r\nETag: \"uploaded-etag\"\r\n"
         "Content-Length: 0\r\nConnection: close\r\n\r\n";
-    MockHttpServer server({response, response});
-    server.pause_before_response(1);
+    MockHttpServer server({
+        http_response("text/plain", ""), response, response});
+    server.pause_before_response(2);
     auto application = Application::open(pair.command);
     set_r2(*application, server.port());
     const auto epoch = application->context_epoch();
@@ -375,7 +377,7 @@ TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndCanFinishAfterAVaul
     auto upload = std::async(std::launch::async, [&] {
         return application->upload_database({}, epoch);
     });
-    EXPECT_TRUE(server.wait_for_requests(1, 2s));
+    EXPECT_TRUE(server.wait_for_requests(2, 2s));
     EXPECT_EQ(application->state(), ApplicationState::running);
     EXPECT_GT(application->context_epoch(), epoch);
     EXPECT_EQ(notified_epoch.load(), application->context_epoch());
@@ -398,7 +400,7 @@ TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndCanFinishAfterAVaul
     EXPECT_EQ(read_toml_file(pair.command.vault.source, "vault")["r2_etag"].value<std::string>(),
         "uploaded-etag");
     const auto copy_path = pair.workspace_a.root() / "uploaded.sqlite3";
-    std::ofstream(copy_path, std::ios::binary) << request_body(server.requests().front());
+    std::ofstream(copy_path, std::ios::binary) << request_body(server.requests()[1]);
     storage::SqliteDatabase copy(copy_path, storage::SqliteDatabase::Mode::read_only);
     auto session = copy.prepare("SELECT count(*) FROM sessions WHERE label = 'Created during upload'");
     ASSERT_TRUE(session.step());
@@ -408,6 +410,7 @@ TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndCanFinishAfterAVaul
 TEST(ApplicationVault, FailedCompanionUploadKeepsTheVaultUsableAndRemembersTheDatabaseEtag) {
     TwoVaults pair;
     MockHttpServer server({
+        http_response("text/plain", ""),
         "HTTP/1.1 200 OK\r\nETag: \"uploaded-etag\"\r\n"
             "Content-Length: 0\r\nConnection: close\r\n\r\n",
         "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"

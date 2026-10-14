@@ -1362,6 +1362,7 @@ TEST_F(BridgeRouterTest, MaintenanceHttpStatusKeepsSafeReason) {
 TEST_F(BridgeRouterTest, UploadCheckHttpStatusKeepsSafeReason) {
     bootstrap_epoch();
     MockHttpServer server({
+        etag_response("uploader-etag"),
         etag_response("uploaded-etag"),
         etag_response("vault-etag"),
         "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
@@ -1386,13 +1387,14 @@ TEST_F(BridgeRouterTest, UploadCheckHttpStatusKeepsSafeReason) {
         "R2 metadata request failed with HTTP status 403");
     EXPECT_EQ(reply["context_epoch"], epoch_);
     EXPECT_EQ(application_->context_epoch(), epoch_);
-    ASSERT_EQ(server.requests().size(), 3U);
+    ASSERT_EQ(server.requests().size(), 4U);
     EXPECT_TRUE(server.requests().back().starts_with("HEAD "));
 }
 
 TEST_F(BridgeRouterTest, MaintenanceUploadConflictExplainsHowToRetry) {
     bootstrap_epoch();
     MockHttpServer server({
+        etag_response("uploader-etag"),
         "HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\n"
         "Connection: close\r\n\r\n",
     });
@@ -1411,8 +1413,8 @@ TEST_F(BridgeRouterTest, MaintenanceUploadConflictExplainsHowToRetry) {
     EXPECT_EQ(reply["error"]["message"],
         "The R2 vault changed since the check. Click Upload again to review it.");
     EXPECT_GT(reply["context_epoch"].get<std::uint64_t>(), epoch_);
-    ASSERT_EQ(server.requests().size(), 1U);
-    EXPECT_NE(server.requests()[0].find("If-Match: \"previous-etag\""),
+    ASSERT_EQ(server.requests().size(), 2U);
+    EXPECT_NE(server.requests()[1].find("If-Match: \"previous-etag\""),
         std::string::npos);
 }
 
@@ -1531,6 +1533,7 @@ TEST_F(BridgeRouterTest, MaintenanceResultsReturnCountsAndNewEpochs) {
     check_result(call("vault.import"), "file_count");
 
     MockHttpServer upload_server({
+        etag_response("uploader-etag"),
         etag_response("uploaded-etag"),
         etag_response("vault-etag"),
         etag_response("uploaded-etag"),

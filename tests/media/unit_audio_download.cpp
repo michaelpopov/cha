@@ -110,7 +110,10 @@ TEST_F(AudioDownloads, StreamsCleanedReplyAndCachesAudioWithoutChangingTranscrip
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
     EXPECT_EQ(downloads->audio(session, 6, "Test")->audio, "firstsecond");
     EXPECT_EQ(sessions->lookup_entry_audio(session, 6)->entry_text, original);
-    EXPECT_EQ(downloads->submit_batch(session, input({6})).at(0).kind, AudioAcceptanceKind::cached);
+    // The cache write becomes visible before the worker removes its active job.
+    ASSERT_TRUE(eventually([&] {
+        return downloads->submit_batch(session, input({6})).at(0).kind == AudioAcceptanceKind::cached;
+    }));
     const auto tail = downloads->audio_chunk(session, 6, "Test", 5);
     ASSERT_TRUE(tail);
     EXPECT_EQ(tail->body, "second");

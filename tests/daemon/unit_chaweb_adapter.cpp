@@ -571,9 +571,11 @@ TEST_F(ChaWebAdapterTest, UnknownRoutesAndMethodsAreNotFoundWithoutCors) {
 
 TEST_F(ChaWebAdapterTest, ChecksAndUploadsTheVaultWithTheExpectedR2Version) {
     MockHttpServer server({
+        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         "HTTP/1.1 200 OK\r\nETag: \"uploaded-version\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         "HTTP/1.1 200 OK\r\nETag: \"uploaded-version\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         "HTTP/1.1 200 OK\r\nETag: \"next-version\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
     });
@@ -603,13 +605,15 @@ TEST_F(ChaWebAdapterTest, ChecksAndUploadsTheVaultWithTheExpectedR2Version) {
     server.join();
     ASSERT_EQ(second.status, 200) << second.raw;
     EXPECT_EQ(application_->current_vault().get().r2_etag, "next-version");
-    ASSERT_EQ(server.requests().size(), 5U);
+    ASSERT_EQ(server.requests().size(), 7U);
     EXPECT_TRUE(server.requests()[0].starts_with("PUT /bucket/"));
     EXPECT_TRUE(server.requests()[1].starts_with("PUT /bucket/"));
-    EXPECT_TRUE(server.requests()[2].starts_with("HEAD /bucket/"));
-    EXPECT_TRUE(server.requests()[3].starts_with("PUT /bucket/"));
-    EXPECT_NE(server.requests()[3].find("If-Match: \"uploaded-version\""), std::string::npos);
+    EXPECT_TRUE(server.requests()[2].starts_with("PUT /bucket/"));
+    EXPECT_TRUE(server.requests()[3].starts_with("HEAD /bucket/"));
     EXPECT_TRUE(server.requests()[4].starts_with("PUT /bucket/"));
+    EXPECT_TRUE(server.requests()[5].starts_with("PUT /bucket/"));
+    EXPECT_NE(server.requests()[5].find("If-Match: \"uploaded-version\""), std::string::npos);
+    EXPECT_TRUE(server.requests()[6].starts_with("PUT /bucket/"));
 }
 
 TEST_F(ChaWebAdapterTest, DownloadsBacksUpAndReloadsTheVault) {

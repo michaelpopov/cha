@@ -5,6 +5,7 @@
 #include "providers/generation_event.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -63,6 +64,28 @@ struct RequestTextSizes {
     std::size_t conversation_bytes{};
 };
 
+// Request-local diagnostics. Updated by the backend; parallel web workers return
+// their measurements to the calling thread before these totals are changed.
+struct GenerationOperationStats {
+    std::size_t calls{};
+    std::size_t failed{};
+    std::size_t cancelled{};
+    std::size_t result_bytes{};
+    std::chrono::nanoseconds duration{};
+};
+
+struct GenerationStatistics {
+    GenerationOperationStats model;
+    GenerationOperationStats web_search;
+    GenerationOperationStats web_read;
+    GenerationOperationStats maintenance;
+    // Elapsed tool time, including parallel calls (unlike summed call durations).
+    std::chrono::nanoseconds tools_wall_time{};
+    std::size_t tool_calls_requested{};
+    std::size_t tool_calls_rejected{};
+    std::size_t tool_limit_hits{};
+};
+
 // The request a backend built for itself, opaque to its caller. Preparation
 // consumes immutable input; performing the slow call is a separate step.
 struct RequestPayload {
@@ -74,6 +97,8 @@ struct RequestPayload {
     std::function<std::string(std::string_view, const std::atomic_bool&)> web_read_tool;
     std::function<std::string(
         std::string_view, std::string_view, const std::atomic_bool&)> maintenance_tool;
+    // Optional diagnostics owned by the caller, alive until perform() returns.
+    GenerationStatistics* statistics{};
 };
 
 // Receives one semantic transport fragment without attaching request identity.

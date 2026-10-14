@@ -12,6 +12,12 @@
 
 #include <curl/curl.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <unistd.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -59,6 +65,11 @@ struct R2ResponseHeaders {
 };
 
 class R2ObjectNotFoundError : public R2HttpStatusError {
+public:
+    using R2HttpStatusError::R2HttpStatusError;
+};
+
+class R2UploaderExistsError : public R2HttpStatusError {
 public:
     using R2HttpStatusError::R2HttpStatusError;
 };
@@ -232,6 +243,35 @@ std::string hex_bytes(const unsigned char* bytes, std::size_t size) {
 std::string sha256_hex(std::string_view contents) {
     const Sha256Digest digest = sha256_digest(contents);
     return hex_bytes(digest.data(), digest.size());
+}
+
+std::string uploader_machine_id() {
+    std::string identity;
+#ifdef _WIN32
+    std::array<char, 256> value{};
+    DWORD size = static_cast<DWORD>(value.size());
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography",
+            "MachineGuid", RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
+            nullptr, value.data(), &size) == ERROR_SUCCESS) {
+        identity = value.data();
+    }
+#elif defined(__APPLE__)
+    uuid_t value{};
+    const timespec timeout{5, 0};
+    if (gethostuuid(value, &timeout) == 0) {
+        identity = hex_bytes(value, sizeof(value));
+    }
+#else
+    for (const char* path : {"/etc/machine-id", "/var/lib/dbus/machine-id"}) {
+        std::ifstream input(path);
+        if (input >> identity && !identity.empty()) break;
+    }
+#endif
+    if (identity.empty()) {
+        throw std::runtime_error("Cannot read this machine's ID for R2 upload");
+    }
+    // Store a fingerprint, rather than the operating system's raw machine ID.
+    return sha256_hex(identity);
 }
 
 std::string sha256_file_hex(const std::filesystem::path& path) {
@@ -750,7 +790,8 @@ R2DatabaseTransfer upload_file(
     std::string_view content_type,
     const R2StorageKey& storage,
     const std::function<bool()>& cancelled,
-    std::string_view expected_etag = {}) {
+    std::string_view expected_etag = {},
+    bool create_only = false) {
     const R2Settings settings = load_r2_settings(object_name, storage);
     const std::string payload_hash = sha256_file_hex(path);
     const std::uintmax_t byte_count = std::filesystem::file_size(path);
@@ -773,6 +814,7 @@ R2DatabaseTransfer upload_file(
     if (!expected_etag.empty()) {
         headers.append("If-Match: " + quoted_etag(expected_etag));
     }
+    if (create_only) headers.append("If-None-Match: *");
     headers.append("Content-Type: " + std::string(content_type));
     require_curl(
         curl_easy_setopt(curl.get(), CURLOPT_UPLOAD, 1L),
@@ -795,12 +837,15 @@ R2DatabaseTransfer upload_file(
     const CURLcode result = perform_transfer(curl.get(), cancelled);
     if (response.error) std::rethrow_exception(response.error);
     if (result != CURLE_OK) fail_transfer("upload", result, error);
-    if (!expected_etag.empty()) {
+    if (!expected_etag.empty() || create_only) {
         long status{};
         require_curl(
             curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status),
             "Failed to read R2 response status");
         if (status == 412) {
+            if (create_only) {
+                throw R2UploaderExistsError("R2 uploader is already registered");
+            }
             throw R2HttpStatusError(
                 "The R2 vault changed since the check. "
                 "Click Upload again to review it.");
@@ -856,6 +901,33 @@ R2DatabaseTransfer download_file(
         .byte_count = std::filesystem::file_size(destination),
         .etag = std::move(response.etag),
     };
+}
+
+void require_r2_uploader(
+    const std::filesystem::path& database,
+    const R2StorageKey& storage,
+    const std::function<bool()>& cancelled) {
+    const std::string machine = uploader_machine_id();
+    const std::string object = utf8_path(database.filename()) + ".uploader";
+    TemporaryPath temporary(unique_sibling(database, "uploader"));
+    create_private_file(temporary.get(), machine);
+    try {
+        // An immutable record prevents simultaneous first uploads from
+        // registering different machines. It also survives failed transfers.
+        (void)upload_file(temporary.get(), object, "text/plain", storage,
+            cancelled, {}, true);
+        return;
+    } catch (const R2UploaderExistsError&) {
+        (void)download_file(temporary.get(), object, storage, cancelled);
+    }
+    std::ifstream input(temporary.get(), std::ios::binary);
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    if (contents.str() != machine) {
+        throw R2HttpStatusError(
+            "Only the registered uploader machine can upload this vault to R2. "
+            "To change it, delete '" + object + "' from the bucket.");
+    }
 }
 
 VaultDefinition require_matching_vault(
@@ -971,6 +1043,7 @@ R2DatabaseTransfer R2DatabaseUpload::upload(
     std::string_view expected_etag,
     const std::function<void(std::string_view)>& save_etag) {
     if (cancelled && cancelled()) throw std::runtime_error("R2 upload cancelled");
+    require_r2_uploader(database_, storage, cancelled);
     {
         storage::SqliteDatabase database(
             copy_, storage::SqliteDatabase::Mode::read_write, password_);

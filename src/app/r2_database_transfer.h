@@ -41,6 +41,8 @@ enum class R2DatabaseLease {
 
 // A private copy made while the original database is closed. Audio removal and
 // transfer happen later, after the application has reopened the original.
+// The first upload registers this machine as the object's only uploader in R2.
+// Downloads do not require uploader registration.
 class R2DatabaseUpload {
 public:
     R2DatabaseUpload(

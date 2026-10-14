@@ -97,6 +97,18 @@ private:
 
 namespace {
 
+// Account for time on every exit, including transport exceptions.
+struct RecordDuration {
+    std::chrono::nanoseconds& total;
+    std::chrono::steady_clock::time_point started{std::chrono::steady_clock::now()};
+    ~RecordDuration() { total += std::chrono::steady_clock::now() - started; }
+};
+
+bool tool_failed(std::string_view output) {
+    const auto json = nlohmann::json::parse(output, nullptr, false);
+    return json.is_object() && json.contains("error") && !json["error"].is_null();
+}
+
 using Json = nlohmann::json;
 
 constexpr std::size_t max_provider_error_body_size = 4 * 1024;
@@ -545,6 +557,8 @@ GenerationResult ProviderClient::perform(
     RequestPayload payload,
     const GenerationDeltaSink& on_delta,
     const std::atomic_bool& cancellation) {
+    GenerationStatistics unobserved;
+    auto& statistics = payload.statistics ? *payload.statistics : unobserved;
     const bool maintenance = static_cast<bool>(payload.maintenance_tool);
     const int max_tool_calls = maintenance
         ? maintenance_call_limit
@@ -565,16 +579,29 @@ GenerationResult ProviderClient::perform(
             + " tool_calls_used=" + std::to_string(tool_calls_used)
             + " tool_call_limit=" + std::to_string(max_tool_calls));
         bool round_received_answer = false;
-        auto result = perform_once(payload, [&](GenerationDelta delta) {
-            if (delta.kind == GenerationDeltaKind::answer && !delta.text.empty()) {
-                if (!round_received_answer && received_answer) {
-                    on_delta({GenerationDeltaKind::answer, "\n\n"});
-                }
-                round_received_answer = true;
-                received_answer = true;
+        ++statistics.model.calls;
+        GenerationResult result;
+        {
+            RecordDuration timing{statistics.model.duration};
+            try {
+                result = perform_once(payload, [&](GenerationDelta delta) {
+                    if (delta.kind == GenerationDeltaKind::answer && !delta.text.empty()) {
+                        if (!round_received_answer && received_answer) {
+                            on_delta({GenerationDeltaKind::answer, "\n\n"});
+                        }
+                        round_received_answer = true;
+                        received_answer = true;
+                    }
+                    on_delta(std::move(delta));
+                }, cancellation);
+            } catch (...) {
+                ++statistics.model.failed;
+                throw;
             }
-            on_delta(std::move(delta));
-        }, cancellation);
+        }
+        if (result.outcome == GenerationOutcome::cancelled) ++statistics.model.cancelled;
+        else if (result.outcome != GenerationOutcome::completed) ++statistics.model.failed;
+        statistics.tool_calls_requested += result.tool_calls.size();
         add(total.input_tokens, result.usage.input_tokens);
         add(total.output_tokens, result.usage.output_tokens);
         add(total.cache_read_tokens, result.usage.cache_read_tokens);
@@ -586,10 +613,13 @@ GenerationResult ProviderClient::perform(
         if (result.outcome != GenerationOutcome::completed || result.tool_calls.empty())
             return result;
         if (!maintenance && !payload.web_search_tool && !payload.web_read_tool) {
+            statistics.tool_calls_rejected += result.tool_calls.size();
             return {GenerationOutcome::protocol_error,
                 "Model requested a tool when tools were unavailable", total};
         }
         if (tool_calls_used >= max_tool_calls) {
+            ++statistics.tool_limit_hits;
+            statistics.tool_calls_rejected += result.tool_calls.size();
             return {GenerationOutcome::protocol_error,
                 maintenance ? "Model kept requesting tools after the maintenance tool limit"
                     : payload.web_read_tool ? "Model kept requesting tools after the web tool limit"
@@ -605,6 +635,7 @@ GenerationResult ProviderClient::perform(
         }
         bool force_final = false;
         std::vector<std::string> outputs(result.tool_calls.size());
+        RecordDuration tools_timing{statistics.tools_wall_time};
         if (maintenance) {
             for (std::size_t index = 0; index < result.tool_calls.size(); ++index) {
                 const auto& call = result.tool_calls[index];
@@ -612,6 +643,8 @@ GenerationResult ProviderClient::perform(
                 auto& output = outputs[index];
                 const auto arguments = Json::parse(call.arguments, nullptr, false);
                 if (tool_calls_used >= max_tool_calls) {
+                    ++statistics.tool_limit_hits;
+                    ++statistics.tool_calls_rejected;
                     output = R"({"error":"limit","message":"Maintenance tool limit reached. Answer using the available results.","committed":false})";
                 } else {
                     ++tool_calls_used;
@@ -621,18 +654,26 @@ GenerationResult ProviderClient::perform(
                         || call.name == "add_character"
                         || call.name == "host_config_write";
                     if (force_final) {
+                        ++statistics.tool_calls_rejected;
                         output = R"({"error":"too_large","message":"Tool results for this answer are too large. This call was not run.","committed":false})";
                     } else if (call.name == "web_search" || call.name == "web_read") {
+                        ++statistics.tool_calls_rejected;
                         output = R"({"error":"unavailable","message":"Web tools are not available for this request.","committed":false})";
                     } else if (arguments.is_discarded()) {
+                        ++statistics.tool_calls_rejected;
                         output = R"({"error":"invalid_argument","message":"Tool arguments are not valid JSON.","committed":false})";
                     } else {
+                        ++statistics.maintenance.calls;
+                        RecordDuration timing{statistics.maintenance.duration};
                         try {
                             output = payload.maintenance_tool(call.name, call.arguments, cancellation);
                         } catch (const std::exception&) {
                             log_warn("Maintenance tool failed");
                             output = R"({"error":"validation_failure","message":"The maintenance tool failed.","committed":false})";
                         }
+                        if (cancellation.load()) ++statistics.maintenance.cancelled;
+                        else if (tool_failed(output)) ++statistics.maintenance.failed;
+                        statistics.maintenance.result_bytes += output.size();
                     }
                     if (!write && output.size() > maintenance_call_result_limit) {
                         output = R"({"error":"too_large","message":"Tool result is too large.","committed":false})";
@@ -662,6 +703,8 @@ GenerationResult ProviderClient::perform(
                 auto& output = outputs[index];
                 const auto arguments = Json::parse(call.arguments, nullptr, false);
                 if (tool_calls_used >= max_tool_calls) {
+                    ++statistics.tool_limit_hits;
+                    ++statistics.tool_calls_rejected;
                     output = R"({"error":"Web tool limit reached. Answer using the available results."})";
                     continue;
                 }
@@ -670,10 +713,12 @@ GenerationResult ProviderClient::perform(
                 const auto& execute = read ? payload.web_read_tool : payload.web_search_tool;
                 const char* argument = read ? "url" : "query";
                 if ((call.name != "web_search" && !read) || !execute) {
+                    ++statistics.tool_calls_rejected;
                     output = R"({"error":"Unknown or unavailable web tool."})";
                 } else if (!arguments.is_object() || arguments.size() != 1
                     || !arguments.contains(argument) || !arguments[argument].is_string()
                     || trim_view(arguments[argument].get_ref<const std::string&>()).empty()) {
+                    ++statistics.tool_calls_rejected;
                     output = read
                         ? R"({"error":"web_read requires one non-empty string argument: url."})"
                         : R"({"error":"web_search requires one non-empty string argument: query."})";
@@ -681,24 +726,36 @@ GenerationResult ProviderClient::perform(
                     calls.push_back({index, arguments[argument].get<std::string>(), read});
                 }
             }
-            const auto run_web_call = [&payload, &cancellation](const WebCall& call) -> std::string {
+            struct WebResult {
+                std::string output;
+                GenerationOperationStats statistics;
+            };
+            const auto run_web_call = [&payload, &cancellation](const WebCall& call) {
+                WebResult result;
+                const auto started = std::chrono::steady_clock::now();
                 const auto& execute = call.read ? payload.web_read_tool : payload.web_search_tool;
                 try {
-                    return execute(call.argument, cancellation);
+                    result.output = execute(call.argument, cancellation);
                 } catch (const WebToolError& error) {
-                    return Json{{"error", error.what()}}.dump();
+                    result.output = Json{{"error", error.what()}}.dump();
                 } catch (const std::exception&) {
                     log_warn(call.read ? "On-demand page reading failed" : "On-demand web search failed");
-                    return call.read
+                    result.output = call.read
                         ? R"({"error":"Page reading failed. Continue without it or try another URL."})"
                         : R"({"error":"Web search failed. Continue without it or try another query."})";
                 }
+                result.statistics.calls = 1;
+                result.statistics.duration = std::chrono::steady_clock::now() - started;
+                result.statistics.cancelled = cancellation.load() ? 1 : 0;
+                result.statistics.failed = !result.statistics.cancelled && tool_failed(result.output) ? 1 : 0;
+                result.statistics.result_bytes = result.output.size();
+                return result;
             };
             constexpr std::size_t concurrency = 4;
             for (std::size_t first = 0; first < calls.size(); first += concurrency) {
                 // Async futures wait on destruction, including when launching or
                 // collecting a worker throws. Their referenced calls remain alive.
-                std::vector<std::future<std::string>> workers;
+                std::vector<std::future<WebResult>> workers;
                 workers.reserve(concurrency);
                 const auto end = std::min(first + concurrency, calls.size());
                 for (std::size_t index = first; index < end; ++index) {
@@ -706,7 +763,15 @@ GenerationResult ProviderClient::perform(
                     workers.push_back(std::async(std::launch::async, run_web_call, std::cref(calls[index])));
                 }
                 for (std::size_t index = 0; index < workers.size(); ++index) {
-                    outputs[calls[first + index].index] = workers[index].get();
+                    auto result = workers[index].get();
+                    const auto& call = calls[first + index];
+                    auto& stats = call.read ? statistics.web_read : statistics.web_search;
+                    stats.calls += result.statistics.calls;
+                    stats.failed += result.statistics.failed;
+                    stats.cancelled += result.statistics.cancelled;
+                    stats.duration += result.statistics.duration;
+                    stats.result_bytes += result.statistics.result_bytes;
+                    outputs[call.index] = std::move(result.output);
                 }
                 if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
             }

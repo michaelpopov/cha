@@ -2,6 +2,7 @@
 
 #include "util/logging.h"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -43,6 +44,16 @@ std::string token_usage_fields(const GenerationTokenUsage& usage) {
         + " total_tokens=" + count(total)
         + " cache_read_tokens=" + count(usage.cache_read_tokens)
         + " cache_write_tokens=" + count(usage.cache_write_tokens);
+}
+
+std::string operation_fields(std::string_view name, const GenerationOperationStats& stats) {
+    const std::string prefix = " " + std::string(name);
+    return prefix + "_calls=" + std::to_string(stats.calls)
+        + prefix + "_failed=" + std::to_string(stats.failed)
+        + prefix + "_cancelled=" + std::to_string(stats.cancelled)
+        + prefix + "_ms=" + std::to_string(
+            std::chrono::duration<double, std::milli>(stats.duration).count())
+        + (name == "model" ? "" : prefix + "_result_bytes=" + std::to_string(stats.result_bytes));
 }
 
 } // namespace
@@ -97,7 +108,14 @@ std::string ProviderRequest::log_fields() const {
         + " session_id=" + run.session.session_id
         + " request_id=" + std::to_string(run.request_id)
         + " token=" + std::to_string(token_)
-        + " model=" + character.provider.config.model;
+        + " model=" + character.provider.config.model
+        + " effort=" + character.provider.config.reasoning_effort
+        + " api=" + std::string(to_string(character.provider.config.api))
+        + " stream=" + (character.provider.config.stream ? "true" : "false")
+        + " provider_web_search=" + std::string(to_string(character.provider.config.web_search))
+        + " web_search_provider=" + (input_.web_search_tool ? input_.web_search_tool->provider : "off")
+        + " web_read_provider=" + (input_.web_read_tool ? input_.web_read_tool->read_provider : "off")
+        + " web_reader_enabled=" + (input_.web_read_tool && input_.web_read_tool->web_reader_enabled ? "true" : "false");
 }
 
 void ProviderRequest::set_token(std::uint64_t token) noexcept {
@@ -124,11 +142,47 @@ void ProviderRequest::execute(
     const RequestId request_id = input_.generation.run.request_id;
     const auto started = std::chrono::steady_clock::now();
     std::string fields;
+    GenerationStatistics statistics;
+    GenerationTokenUsage usage;
+    std::string outcome = "exception";
+    std::string stage = "client_construction";
+    auto prepared = started;
+    std::optional<std::chrono::steady_clock::time_point> first_answer;
+    std::size_t answer_bytes = 0, reasoning_bytes = 0;
+    const auto summarize = [&] {
+        const auto finished = std::chrono::steady_clock::now();
+        const auto preparation_end = stage == "client_construction" || stage == "preparation"
+            ? finished : prepared;
+        const auto milliseconds = [](auto duration) {
+            return std::to_string(std::chrono::duration<double, std::milli>(duration).count());
+        };
+        log_info("Prompt processing statistics: " + fields
+            + " outcome=" + outcome + " stage=" + stage
+            + " overall_ms=" + milliseconds(finished - started)
+            + " preparation_ms=" + milliseconds(preparation_end - started)
+            + operation_fields("model", statistics.model)
+            + " tools_wall_ms=" + milliseconds(statistics.tools_wall_time)
+            + operation_fields("web_search", statistics.web_search)
+            + operation_fields("web_read", statistics.web_read)
+            + operation_fields("maintenance", statistics.maintenance)
+            + " tool_calls_requested=" + std::to_string(statistics.tool_calls_requested)
+            + " tool_calls_rejected=" + std::to_string(statistics.tool_calls_rejected)
+            + " tool_limit_hits=" + std::to_string(statistics.tool_limit_hits)
+            + " other_ms=" + milliseconds(std::max(std::chrono::nanoseconds::zero(),
+                std::chrono::duration_cast<std::chrono::nanoseconds>(finished - preparation_end)
+                    - statistics.model.duration - statistics.tools_wall_time))
+            + " first_answer_ms=" + (first_answer ? milliseconds(*first_answer - started) : "unreported")
+            + " answer_bytes=" + std::to_string(answer_bytes)
+            + " reasoning_bytes=" + std::to_string(reasoning_bytes)
+            + token_usage_fields(usage));
+    };
 
     try {
         fields = log_fields();
         if (cancellation_.load(std::memory_order_acquire)) {
             log_info("Provider request cancelled before client construction: " + fields);
+            outcome = "cancelled";
+            summarize();
             close_with(GenerationCancelled{request_id});
             return;
         }
@@ -141,6 +195,8 @@ void ProviderRequest::execute(
         }
         if (cancellation_.load(std::memory_order_acquire)) {
             log_info("Provider request cancelled before preparation: " + fields);
+            outcome = "cancelled";
+            summarize();
             close_with(GenerationCancelled{request_id});
             return;
         }
@@ -195,7 +251,11 @@ void ProviderRequest::execute(
                 return result;
             };
         }
+        stage = "preparation";
         RequestPayload payload = backend->prepare(generation);
+        prepared = std::chrono::steady_clock::now();
+        payload.statistics = &statistics;
+        stage = "processing";
         fields += " request_payload_bytes=" + std::to_string(payload.bytes.size());
         if (payload.text_sizes) {
             fields += " system_prompt_bytes="
@@ -207,8 +267,14 @@ void ProviderRequest::execute(
         }
         const GenerationResult result = backend->perform(
             std::move(payload),
-            [this, request_id, &web_search_used]
+            [this, request_id, &web_search_used, &first_answer, &answer_bytes, &reasoning_bytes]
             (GenerationDelta delta) {
+                if (delta.kind == GenerationDeltaKind::answer) {
+                    answer_bytes += delta.text.size();
+                    if (!first_answer && !delta.text.empty()) first_answer = std::chrono::steady_clock::now();
+                } else {
+                    reasoning_bytes += delta.text.size();
+                }
                 if (!events_.push(GenerationEventDelta{
                         request_id,
                         delta.kind,
@@ -222,7 +288,11 @@ void ProviderRequest::execute(
             },
             cancellation_);
 
+        usage = result.usage;
         if (result.outcome == GenerationOutcome::completed) {
+            outcome = "completed";
+            stage = "finished";
+            summarize();
             log_info("Provider request completed: " + fields
                 + token_usage_fields(result.usage));
             close_with(GenerationCompleted{
@@ -231,6 +301,8 @@ void ProviderRequest::execute(
                 result.usage.output_tokens,
             });
         } else if (result.outcome == GenerationOutcome::cancelled) {
+            outcome = "cancelled";
+            summarize();
             log_info("Provider request cancelled: " + fields
                 + token_usage_fields(result.usage));
             close_with(GenerationCancelled{
@@ -239,15 +311,19 @@ void ProviderRequest::execute(
                 result.usage.output_tokens,
             });
         } else {
+            outcome = result.outcome == GenerationOutcome::protocol_error ? "protocol_error" : "transport_error";
+            summarize();
             log_info("Provider request failed usage: " + fields
                 + token_usage_fields(result.usage));
             log_error("Provider request failed: " + fields);
             fail(result.message);
         }
     } catch (const std::exception& error) {
+        summarize();
         log_error("Provider request raised an exception: " + fields);
         fail(error.what());
     } catch (...) {
+        summarize();
         log_error("Provider request raised an unknown exception: " + fields);
         fail("Unknown provider request failure");
     }

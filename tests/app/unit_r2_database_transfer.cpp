@@ -78,6 +78,7 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
     const std::string expected_database = file_bytes(database);
     const std::string local_vault = file_bytes(vault);
     MockHttpServer server({
+        http_response("text/plain", ""),
         etag_response("application/xml", "", "database-etag"),
         etag_response("application/xml", "", "vault-etag"),
     });
@@ -90,9 +91,14 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
             "previous-etag");
     server.join();
 
-    ASSERT_EQ(server.requests().size(), 2U);
-    const std::string& database_request = server.requests()[0];
-    const std::string& vault_request = server.requests()[1];
+    ASSERT_EQ(server.requests().size(), 3U);
+    const auto& uploader_request = server.requests()[0];
+    EXPECT_TRUE(uploader_request.starts_with(
+        "PUT /cha-backups/workspace%20copy.sqlite3.uploader HTTP/1.1"));
+    EXPECT_NE(uploader_request.find("If-None-Match: *"), std::string::npos);
+    EXPECT_EQ(request_body(uploader_request).size(), 64U);
+    const std::string& database_request = server.requests()[1];
+    const std::string& vault_request = server.requests()[2];
     EXPECT_EQ(
         result.byte_count,
         request_body(database_request).size() + request_body(vault_request).size());
@@ -144,6 +150,96 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
     EXPECT_EQ(read_workspace_config_files(source), read_workspace_config_files(copy));
 }
 
+TEST(R2DatabaseTransfer, RegisteredMachineCanUploadAgain) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    const auto vault = write_vault(database);
+    MockHttpServer first({
+        http_response("text/plain", ""),
+        etag_response("application/xml", "", "first-etag"),
+        http_response("application/xml", ""),
+    });
+    first.start();
+    (void)upload_database_to_r2(database, vault, storage(mock_url(first.port())));
+    first.join();
+    ASSERT_EQ(first.requests().size(), 3U);
+    const std::string machine = request_body(first.requests()[0]);
+
+    MockHttpServer second({
+        "HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\n"
+            "Connection: close\r\n\r\n",
+        http_response("text/plain", machine),
+        etag_response("application/xml", "", "second-etag"),
+        http_response("application/xml", ""),
+    });
+    second.start();
+    EXPECT_EQ(upload_database_to_r2(database, vault,
+        storage(mock_url(second.port()))).etag, "second-etag");
+    second.join();
+    ASSERT_EQ(second.requests().size(), 4U);
+    EXPECT_EQ(request_body(second.requests()[0]), machine);
+    EXPECT_TRUE(second.requests()[1].starts_with(
+        "GET /cha-backups/workspace.sqlite3.uploader HTTP/1.1"));
+}
+
+TEST(R2DatabaseTransfer, OtherMachineCannotUploadEvenWithMatchingEtag) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    const auto vault = write_vault(database);
+    const auto original_database = file_bytes(database);
+    const auto original_vault = file_bytes(vault);
+    MockHttpServer server({
+        "HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\n"
+            "Connection: close\r\n\r\n",
+        http_response("text/plain", std::string(64, '0')),
+        http_response("application/toml", original_vault),
+        etag_response("application/vnd.sqlite3", original_database, "matching-etag"),
+    });
+    server.start();
+    try {
+        (void)upload_database_to_r2(database, vault, storage(mock_url(server.port())),
+            R2DatabaseLease::acquire, {}, {}, "matching-etag");
+        FAIL() << "Expected another machine's registration to block upload";
+    } catch (const R2HttpStatusError& error) {
+        EXPECT_STREQ(error.what(),
+            "Only the registered uploader machine can upload this vault to R2. "
+            "To change it, delete 'workspace.sqlite3.uploader' from the bucket.");
+    }
+    EXPECT_EQ(file_bytes(database), original_database);
+    EXPECT_EQ(file_bytes(vault), original_vault);
+    // A machine denied upload can still download the same vault.
+    EXPECT_EQ(download_database_from_r2(database, vault,
+        storage(mock_url(server.port()))).etag, "matching-etag");
+    server.join();
+    ASSERT_EQ(server.requests().size(), 4U);
+    EXPECT_NE(server.requests()[0].find("If-None-Match: *"), std::string::npos);
+    EXPECT_TRUE(server.requests()[2].starts_with(
+        "GET /cha-backups/workspace.sqlite3.toml HTTP/1.1"));
+    EXPECT_TRUE(server.requests()[3].starts_with(
+        "GET /cha-backups/workspace.sqlite3 HTTP/1.1"));
+    for (const auto& entry : std::filesystem::directory_iterator(workspace.root())) {
+        EXPECT_EQ(entry.path().filename().string().find(".uploader."), std::string::npos);
+        EXPECT_EQ(entry.path().filename().string().find(".upload."), std::string::npos);
+    }
+}
+
+TEST(R2DatabaseTransfer, FailedUploaderRegistrationDoesNotUploadVault) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    const auto vault = write_vault(database);
+    const auto original_vault = file_bytes(vault);
+    MockHttpServer server({
+        "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
+            "Connection: close\r\n\r\n",
+    });
+    server.start();
+    EXPECT_THROW((void)upload_database_to_r2(database, vault,
+        storage(mock_url(server.port()))), R2HttpStatusError);
+    server.join();
+    ASSERT_EQ(server.requests().size(), 1U);
+    EXPECT_EQ(file_bytes(vault), original_vault);
+}
+
 TEST(R2DatabaseTransfer, UploadOmitsAudioCompactsTheCopyAndPreservesTheOriginal) {
     for (const std::string password : {"", "secret"}) {
         SCOPED_TRACE(password.empty() ? "plain" : "protected");
@@ -173,6 +269,7 @@ TEST(R2DatabaseTransfer, UploadOmitsAudioCompactsTheCopyAndPreservesTheOriginal)
         checkpoint_workspace_session_database(database, password);
         const auto original = file_bytes(database);
         MockHttpServer server({
+            http_response("text/plain", ""),
             etag_response("application/xml", "", "database-etag"),
             etag_response("application/xml", "", "vault-etag"),
         });
@@ -182,12 +279,12 @@ TEST(R2DatabaseTransfer, UploadOmitsAudioCompactsTheCopyAndPreservesTheOriginal)
             R2DatabaseLease::acquire, password);
         server.join();
         EXPECT_EQ(file_bytes(database), original);
-        ASSERT_EQ(server.requests().size(), 2U);
-        const auto uploaded_bytes = request_body(server.requests()[0]);
+        ASSERT_EQ(server.requests().size(), 3U);
+        const auto uploaded_bytes = request_body(server.requests()[1]);
         EXPECT_LT(uploaded_bytes.size(), original.size() / 2);
         EXPECT_EQ(transferred.byte_count,
-            uploaded_bytes.size() + request_body(server.requests()[1]).size());
-        EXPECT_TRUE(server.requests()[0].starts_with("PUT /cha-backups/workspace.sqlite3 HTTP/1.1"));
+            uploaded_bytes.size() + request_body(server.requests()[2]).size());
+        EXPECT_TRUE(server.requests()[1].starts_with("PUT /cha-backups/workspace.sqlite3 HTTP/1.1"));
         const auto copy_path = workspace.root() / "uploaded.sqlite3";
         write_bytes(copy_path, uploaded_bytes);
         EXPECT_EQ(inspect_workspace_session_database(copy_path, password),
@@ -226,6 +323,7 @@ TEST(R2DatabaseTransfer, UploadSupportsVaultsWithoutTheOptionalAudioTable) {
         source.execute("DROP TABLE entry_audio");
     }
     MockHttpServer server({
+        http_response("text/plain", ""),
         etag_response("application/xml", "", "database-etag"),
         etag_response("application/xml", "", "vault-etag"),
     });
@@ -233,8 +331,8 @@ TEST(R2DatabaseTransfer, UploadSupportsVaultsWithoutTheOptionalAudioTable) {
     EXPECT_NO_THROW((void)upload_database_to_r2(database, vault, storage(mock_url(server.port()))));
     server.join();
     const auto copy_path = workspace.root() / "uploaded.sqlite3";
-    ASSERT_EQ(server.requests().size(), 2U);
-    write_bytes(copy_path, request_body(server.requests()[0]));
+    ASSERT_EQ(server.requests().size(), 3U);
+    write_bytes(copy_path, request_body(server.requests()[1]));
     EXPECT_EQ(inspect_workspace_session_database(copy_path), WorkspaceDatabaseState::valid_v2);
 }
 
@@ -282,6 +380,7 @@ TEST(R2DatabaseTransfer, ChangedRemoteUploadLeavesStoredEtagAndCompanionUntouche
     std::ofstream(vault, std::ios::app) << "r2_etag = \"previous-etag\"\n";
     const std::string original_vault = file_bytes(vault);
     MockHttpServer server({
+        http_response("text/plain", ""),
         "HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\n"
         "Connection: close\r\n\r\n",
     });
@@ -299,10 +398,10 @@ TEST(R2DatabaseTransfer, ChangedRemoteUploadLeavesStoredEtagAndCompanionUntouche
     for (const auto& entry : std::filesystem::directory_iterator(workspace.root())) {
         EXPECT_EQ(entry.path().filename().string().find(".upload."), std::string::npos);
     }
-    ASSERT_EQ(server.requests().size(), 1U);
-    EXPECT_TRUE(server.requests()[0].starts_with(
+    ASSERT_EQ(server.requests().size(), 2U);
+    EXPECT_TRUE(server.requests()[1].starts_with(
         "PUT /cha-backups/workspace.sqlite3 HTTP/1.1"));
-    EXPECT_NE(server.requests()[0].find("If-Match: \"previous-etag\""),
+    EXPECT_NE(server.requests()[1].find("If-Match: \"previous-etag\""),
         std::string::npos);
 }
 
@@ -334,6 +433,7 @@ TEST(R2DatabaseTransfer, SavesDatabaseEtagWhenCompanionUploadFails) {
             std::ofstream(vault, std::ios::app) << "r2_etag = \"previous-etag\"\n";
         }
         MockHttpServer server({
+            http_response("text/plain", ""),
             etag_response("application/xml", "", "new-database-etag"),
             "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
             "Connection: close\r\n\r\n",
@@ -351,8 +451,8 @@ TEST(R2DatabaseTransfer, SavesDatabaseEtagWhenCompanionUploadFails) {
         const VaultDefinition saved = load_vault_definition_file(workspace.root(), vault);
         EXPECT_EQ(saved.r2_etag, "new-database-etag");
         EXPECT_EQ(saved.data, std::filesystem::weakly_canonical(database));
-        ASSERT_EQ(server.requests().size(), 2U);
-        EXPECT_TRUE(server.requests()[1].starts_with(
+        ASSERT_EQ(server.requests().size(), 3U);
+        EXPECT_TRUE(server.requests()[2].starts_with(
             "PUT /cha-backups/workspace.sqlite3.toml HTTP/1.1"));
 #ifndef _WIN32
         EXPECT_EQ(std::filesystem::status(vault).permissions()

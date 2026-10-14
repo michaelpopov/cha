@@ -354,6 +354,8 @@ TEST(Integration, StreamingChatCanBeCancelled) {
 
 // This test intentionally overwrites one dedicated object named
 // cha-r2-integration-test.sqlite3 in the bucket selected by CHA_R2_URL.
+// It also registers this machine in cha-r2-integration-test.sqlite3.uploader.
+// Delete that object before running the R2 tests from another machine.
 TEST(R2Integration, UploadsDownloadsAndBacksUpThePreviousDatabase) {
     TemporaryR2Database fixture;
     const R2StorageKey storage = integration_r2_key();
