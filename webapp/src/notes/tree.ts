@@ -66,35 +66,6 @@ export function buildNoteIndex(items: readonly NoteTreeItem[]): {
   return { rows, children };
 }
 
-export function noteFolderOptions(
-  items: readonly NoteTreeItem[],
-  excludeId?: number | null,
-): { id: number; path: string }[] {
-  const { rows, children } = buildNoteIndex(items);
-  const excluded = new Set<string>();
-  if (excludeId != null && rows[String(excludeId)]?.kind === 'folder') {
-    const skip = (key: string) => {
-      excluded.add(key);
-      for (const child of children[key] ?? []) {
-        if (rows[child]?.kind === 'folder') skip(child);
-      }
-    };
-    skip(String(excludeId));
-  }
-  const options: { id: number; path: string }[] = [];
-  const walk = (parentKey: string, prefix: string[]) => {
-    for (const id of children[parentKey] ?? []) {
-      const row = rows[id];
-      if (row.kind !== 'folder' || row.noteId === null || excluded.has(id)) continue;
-      const path = [...prefix, row.name];
-      options.push({ id: row.noteId, path: path.join(' / ') });
-      walk(id, path);
-    }
-  };
-  walk('root', []);
-  return options;
-}
-
 // True when noteId is the item or sits inside its current metadata subtree.
 export function noteInSubtree(
   items: readonly NoteTreeItem[],

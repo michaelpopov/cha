@@ -66,7 +66,7 @@ import {
   SessionsScreen,
 } from './Screens';
 import { NotesScreen } from './NotesScreen';
-import { NotesTree, type DeleteNoteItem } from './NotesTree';
+import { NotesTree, type DeleteNoteItem, type NoteActions } from './NotesTree';
 import { Sidebar } from './Sidebar';
 import { TransliterationProvider } from './TransliterationMode';
 import {
@@ -102,6 +102,7 @@ interface ScreenProps extends ChatActions {
   notesDraft: string;
   onNotesDraftChange(next: string): void;
   noteItems: readonly NoteItem[];
+  noteActions: NoteActions | null;
   editorLiveRef: { current: Editor | null };
   leave: {
     decisionOpen: boolean;
@@ -111,7 +112,6 @@ interface ScreenProps extends ChatActions {
   };
   onRegisterSave(save: NoteSaveHandle | null): void;
   onRegisterDispose(dispose: () => void): void;
-  onNewNote(): void;
   onDraftChange(next: string): void;
   onDeleteForum(forumId: string): Promise<void>;
   onCreateSession(forumId: string): Promise<boolean>;
@@ -136,11 +136,11 @@ function Screen({
   notesDraft,
   onNotesDraftChange,
   noteItems,
+  noteActions,
   editorLiveRef,
   leave,
   onRegisterSave,
   onRegisterDispose,
-  onNewNote,
   onRetryStream,
   onReturnToStart,
   onSetDefaultCharacter,
@@ -367,10 +367,10 @@ function Screen({
         editorLiveRef={editorLiveRef}
         leave={leave}
         noteItems={noteItems}
+        noteActions={noteActions}
         noteRequest={state.noteRequest}
         notesEpoch={state.notesEpoch}
         onDraftChange={onNotesDraftChange}
-        onNewNote={onNewNote}
         onRegisterDispose={onRegisterDispose}
         onRegisterSave={onRegisterSave}
         sessionStatus={state.sessionOperation !== 'idle' && (
@@ -599,7 +599,6 @@ export function App({
   const disposeEditorRef = useRef<() => void>(() => undefined);
   const notesEpochRef = useRef(state.notesEpoch);
   const activeNoteIdRef = useRef(state.activeNoteId);
-  const createNoteRef = useRef<() => void>(() => undefined);
   notesEpochRef.current = state.notesEpoch;
   activeNoteIdRef.current = state.activeNoteId;
   const noteLeave = useNoteLeave(() => noteSaveRef.current, {
@@ -622,6 +621,7 @@ export function App({
     disposeEditorRef.current = dispose;
   }, []);
   const [noteItems, setNoteItems] = useState<NoteItem[]>([]);
+  const [noteActions, setNoteActions] = useState<NoteActions | null>(null);
 
   const activeChatKey = state.activeConversation
     ? chatDraftKey(
@@ -678,7 +678,7 @@ export function App({
       && !live.isDestroyed
       && live.isEditable
     ) {
-      live.commands.focus();
+      live.view.focus();
       return;
     }
     navigate({ type: 'open-note', noteId: id });
@@ -732,13 +732,6 @@ export function App({
       noteLeave.endDelete();
     }
   }, [client, dispatch, noteLeave.beginDelete, noteLeave.endDelete]);
-
-  const registerCreateNote = useCallback((create: () => void) => {
-    createNoteRef.current = create;
-  }, []);
-  const requestNewNote = useCallback(() => {
-    createNoteRef.current();
-  }, []);
 
   useEffect(() => {
     if (!contextEvents) return;
@@ -1006,7 +999,8 @@ export function App({
                 onDeleteItem={deleteNoteItem}
                 onNoteItems={setNoteItems}
                 onOpenNote={requestOpenNote}
-                onRegisterCreateNote={registerCreateNote}
+                vaultName={state.bootstrap?.vault_name ?? ''}
+                onRegisterNoteActions={setNoteActions}
               />
             )}
             onSwitchVault={switchVault}
@@ -1068,12 +1062,12 @@ export function App({
                 editorLiveRef={editorLiveRef}
                 leave={noteLeave}
                 noteItems={noteItems}
+                noteActions={noteActions}
                 notesDraft={drafts.notes}
                 onDraftChange={editChat}
                 onNotesDraftChange={editNotes}
                 onRegisterDispose={registerDispose}
                 onRegisterSave={registerSave}
-                onNewNote={requestNewNote}
                 onCoverConversation={coverConversation}
                 onDeleteTurn={deleteTurn}
                 onDeleteForum={deleteForum}

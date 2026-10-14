@@ -43,7 +43,7 @@ function contextBus() {
 
 async function openNotes() {
   fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
-  await screen.findByRole('button', { name: 'New note' });
+  await screen.findByRole('treeitem', { name: bootstrapFixture.vault_name });
 }
 
 function noteEditor(): Editor {
@@ -88,15 +88,57 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     expect(await screen.findByText('Saved plan')).toBeInTheDocument();
+    await waitFor(() => expect(noteEditor().view.dom).toHaveFocus());
     expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
     expect(window.location.href).toBe(address);
     expect(screen.queryByRole('heading', { name: 'Notes' })).not.toBeInTheDocument();
+    act(() => screen.getByRole('treeitem', { name: 'Plan' }).focus());
     fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' }));
+    expect(noteEditor().view.dom).toHaveFocus();
     expect(getNote).toHaveBeenCalledOnce();
     expect(screen.getByText('Saved plan')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
     fireEvent.click(screen.getByRole('button', { name: /^Welcome/ }));
     expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('Chat draft');
+  });
+
+  it.each(['immediate', 'delayed'])('focuses the new note editor with %s loading', async (loading) => {
+    const created: NoteItem = { id: 9, parent_id: null, kind: 'note', name: 'New note' };
+    let items = [plan];
+    let finishOpen!: () => void;
+    const newDocument = { type: 'doc', content: [{ type: 'paragraph' }] };
+    const pendingOpen = new Promise<{ id: number; document: typeof newDocument }>((resolve) => {
+      finishOpen = () => resolve({ id: created.id, document: newDocument });
+    });
+    const createNoteItem = vi.fn(async () => {
+      items = [...items, created];
+      return created;
+    });
+    render(<App client={fixtureClient({
+      listNoteItems: async () => items,
+      createNoteItem,
+      getNote: async (id) => {
+        if (id !== created.id) return { id, document: noteDocument('Saved plan') };
+        return loading === 'delayed' ? pendingOpen : { id, document: newDocument };
+      },
+      saveNote: async () => undefined,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved plan');
+    fireEvent.click(screen.getByRole('button', { name: `Actions for ${bootstrapFixture.vault_name}` }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'New note' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'New note' })).getByRole('button', { name: 'Create' }));
+    if (loading === 'delayed') {
+      await screen.findByText('Opening…');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      await act(async () => finishOpen());
+    }
+    await waitFor(() => expect(noteEditor().view.dom).toHaveFocus());
+    expect(noteEditor().isEditable).toBe(true);
+    act(() => typeInNote('Start typing'));
+    expect(noteEditor().getText()).toBe('Start typing');
+    expect(noteEditor().view.dom).toHaveFocus();
   });
 
   it('keeps the Notes draft and Send available across sidebar tabs', async () => {
@@ -133,6 +175,7 @@ describe('Notes in the application', () => {
     typeInNote(' more');
     fireEvent.click(screen.getByRole('treeitem', { name: 'Essay' }));
     expect(await screen.findByText('Essay text')).toBeInTheDocument();
+    await waitFor(() => expect(noteEditor().view.dom).toHaveFocus());
     expect(saveNote).toHaveBeenCalledOnce();
     expect(saveNote.mock.calls[0][0]).toBe(4);
     expect(JSON.stringify(saveNote.mock.calls[0][1])).toContain('Saved plan more');
@@ -199,7 +242,7 @@ describe('Notes in the application', () => {
     }
     fireEvent.click(await screen.findByRole('button', { name: 'Vaults' }));
     if (operation === 'Upload') {
-      fireEvent.click(await screen.findByRole('button', { name: /Personal/ }));
+      fireEvent.click(await within(await screen.findByRole('region', { name: 'Vaults settings' })).findByRole('button', { name: /Personal/ }));
       fireEvent.click(await screen.findByRole('button', { name: 'Upload' }));
       await waitFor(() => expect(uploadVault).toHaveBeenCalledOnce());
     } else {
@@ -446,18 +489,6 @@ describe('Notes in the application', () => {
     expect(getNote).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps the open note editable when New note is canceled', async () => {
-    render(<App client={notesClient('Alpha')} />);
-    await openNotes();
-    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    await screen.findByText('Alpha');
-    fireEvent.click(screen.getByRole('button', { name: 'New note' }));
-    await screen.findByRole('dialog', { name: 'New note' });
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(noteEditor().isEditable).toBe(true);
-  });
-
   it('shows Stay with focus and discards unsaved changes on request', async () => {
     const saveNote = vi.fn(async () => {
       throw new ChaError('invalid_argument', 'The note could not be saved.');
@@ -488,8 +519,12 @@ describe('Notes in the application', () => {
   }
 
   async function deleteItem(name: string, kind: 'note' | 'folder') {
-    fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    if (kind === 'folder') {
+      fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    }
     const label = kind === 'folder'
       ? `Delete “${name}” and all notes and folders inside it? This cannot be undone in CHA.`
       : `Delete “${name}”? This cannot be undone in CHA.`;
@@ -500,16 +535,46 @@ describe('Notes in the application', () => {
     return dialog;
   }
 
-  it('renames and moves a note without reloading its body', async () => {
+  it('targets the open note and returns editor focus when Rename or Delete is canceled', async () => {
+    const renameNoteItem = vi.fn();
+    const deleteNoteItem = vi.fn();
+    const saveNote = vi.fn();
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [study, plan],
+      getNote: async (id) => ({ id, document: noteDocument('Saved plan') }),
+      renameNoteItem, deleteNoteItem, saveNote,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved plan');
+    const editor = noteEditor();
+    expect(screen.queryByRole('button', { name: 'Actions for Plan' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions for Study' })).toBeInTheDocument();
+    act(() => screen.getByRole('treeitem', { name: 'Study' }).focus());
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    const rename = await screen.findByRole('dialog', { name: 'Rename “Plan”' });
+    expect(within(rename).getByRole('textbox', { name: 'Name' })).toHaveValue('Plan');
+    fireEvent.click(within(rename).getByRole('button', { name: 'Cancel' }));
+    expect(editor.view.dom).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const deletion = await screen.findByRole('dialog', { name: 'Delete “Plan”? This cannot be undone in CHA.' });
+    expect(within(deletion).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    fireEvent.click(within(deletion).getByRole('button', { name: 'Cancel' }));
+    expect(editor.view.dom).toHaveFocus();
+    expect(noteEditor()).toBe(editor);
+    expect(renameNoteItem).not.toHaveBeenCalled();
+    expect(deleteNoteItem).not.toHaveBeenCalled();
+    expect(saveNote).not.toHaveBeenCalled();
+  });
+
+  it('renames a note without reloading its body', async () => {
     const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
     let renamed = false;
-    let moved = false;
     render(<App client={fixtureClient({
       listNoteItems: async () => {
         const note = {
           ...plan,
           name: renamed ? 'Draft' : 'Plan',
-          parent_id: moved ? 1 : null,
         };
         return [study, note];
       },
@@ -519,29 +584,18 @@ describe('Notes in the application', () => {
         renamed = true;
         return { ...plan, name: 'Draft' };
       },
-      moveNoteItem: async () => {
-        moved = true;
-        return { ...plan, name: renamed ? 'Draft' : 'Plan', parent_id: 1 };
-      },
     })} />);
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     expect(await screen.findByText('Saved plan')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Draft' } });
+    expect(screen.queryByRole('button', { name: 'Actions for Plan' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Draft' } });
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Rename “Plan”' })).getByRole('button', { name: 'Rename' }));
     expect(await screen.findByRole('button', { name: 'Send to Draft' })).toBeInTheDocument();
     expect(screen.getByText('Saved plan')).toBeInTheDocument();
     expect(getNote).toHaveBeenCalledOnce();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Draft' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Move' }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Move “Draft” to' }), { target: { value: '1' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Move' }));
-    expect(await screen.findByRole('button', { name: 'Send to Study / Draft' })).toBeInTheDocument();
-    expect(noteEditor().getText()).toContain('Saved plan');
-    expect(getNote).toHaveBeenCalledOnce();
+    expect(noteEditor().view.dom).toHaveFocus();
   });
 
   it('deletes an open note without saving the remainder and keeps the draft', async () => {
@@ -561,7 +615,8 @@ describe('Notes in the application', () => {
     fireEvent.change(prompt, { target: { value: 'Remember this' } });
     typeInNote(' more');
     await deleteItem('Plan', 'note');
-    expect(await within(noteRegion()).findByRole('button', { name: 'New note' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled());
+    expect(within(noteRegion()).queryByRole('button', { name: 'New note' })).not.toBeInTheDocument();
     expect(screen.queryByText('Saved plan more')).not.toBeInTheDocument();
     expect(prompt).toHaveValue('Remember this');
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();

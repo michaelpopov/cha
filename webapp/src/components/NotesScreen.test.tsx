@@ -13,13 +13,6 @@ import { fixtureClient } from '../test/fixtures';
 import { VoiceInputSession } from '../voiceInput';
 import { NotesScreen } from './NotesScreen';
 
-// jsdom has no Range layout. ProseMirror measures the selection when it
-// scrolls to it, which happens once the editor has focus.
-if (typeof Range.prototype.getClientRects !== 'function') {
-  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
-  Range.prototype.getBoundingClientRect = () => new DOMRect();
-}
-
 const plan: NoteItem = { id: 4, parent_id: null, kind: 'note', name: 'Plan' };
 const essay: NoteItem = { id: 5, parent_id: null, kind: 'note', name: 'Essay' };
 
@@ -53,7 +46,6 @@ function Harness({
   draft = '',
   voice = false,
   sendPhrase = '',
-  onNewNote,
 }: {
   initialId?: number | null;
   items?: NoteItem[];
@@ -62,7 +54,6 @@ function Harness({
   draft?: string;
   voice?: boolean;
   sendPhrase?: string;
-  onNewNote?: () => void;
 }) {
   const [noteId, setNoteId] = useState(initialId);
   const [request, setRequest] = useState(1);
@@ -106,7 +97,6 @@ function Harness({
         noteRequest={request}
         notesEpoch={1}
         onDraftChange={setText}
-        onNewNote={onNewNote}
         onRegisterDispose={(dispose) => { disposeRef.current = dispose; }}
         onRegisterSave={(save) => { saveRef.current = save; }}
         sidebarOpen
@@ -236,48 +226,101 @@ describe('Notes screen', () => {
     expect((await openedEditor()).getText()).toBe('Essay text');
   });
 
-  it('exposes New note and keeps Send disabled when no note is open', () => {
-    const onNewNote = vi.fn();
-    render(<Harness draft="Keep this" initialId={null} items={[]} onNewNote={onNewNote} />);
+  it('keeps Send disabled when no note is open', () => {
+    render(<Harness draft="Keep this" initialId={null} items={[]} />);
     expect(screen.queryByRole('combobox', { name: 'Paragraph style' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'New note' }));
-    expect(onNewNote).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'New note' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this');
   });
 
-  it('formats the retained selection, ignores a repeated style, and leaves the draft', async () => {
+  it('formats the retained selection and leaves the draft', async () => {
     render(<Harness />);
     const editor = await openedEditor();
     const prompt = screen.getByRole('textbox', { name: 'Prompt' });
     fireEvent.change(prompt, { target: { value: 'Keep' } });
     editor.commands.setTextSelection({ from: 1, to: 4 });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Paragraph style' }), { target: { value: 'paragraph' } });
+    function clickAction(name: string) {
+      const control = screen.getByRole('button', { name });
+      act(() => control.focus());
+      fireEvent.click(control);
+      expect(editor.view.dom).toHaveFocus();
+    }
     expect(editor.can().undo()).toBe(false);
-    fireEvent.change(screen.getByRole('combobox', { name: 'Paragraph style' }), { target: { value: '2' } });
+    clickAction('Heading 2');
     expect(editor.isActive('heading', { level: 2 })).toBe(true);
     expect(editor.can().undo()).toBe(true);
-    fireEvent.change(screen.getByRole('combobox', { name: 'Paragraph style' }), { target: { value: '2' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+    clickAction('Bold');
     expect(editor.getJSON().content?.[0]?.content?.[0]?.marks?.[0]?.type).toBe('bold');
     expect(prompt).toHaveValue('Keep');
     expect(prompt).not.toHaveFocus();
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    clickAction('Undo');
     expect(editor.isActive('bold')).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    clickAction('Undo');
     expect(editor.isActive('heading', { level: 2 })).toBe(false);
     expect(editor.can().undo()).toBe(false);
     expect(prompt).toHaveValue('Keep');
-    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    clickAction('Redo');
     expect(editor.isActive('heading', { level: 2 })).toBe(true);
 
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Bullet list' }));
+    expect(editor.view.dom).toHaveFocus();
     expect(editor.isActive('bulletList')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Numbered list' }));
+    expect(editor.view.dom).toHaveFocus();
     expect(editor.isActive('orderedList')).toBe(true);
     expect(prompt).toHaveValue('Keep');
+  });
+
+  it.each([1, 2, 3])('toggles heading %s, preserves the selection, and returns focus', async (level) => {
+    render(<Harness />);
+    const editor = await openedEditor();
+    act(() => editor.commands.setTextSelection({ from: 1, to: 4 }));
+    expect(screen.queryByRole('combobox', { name: 'Paragraph style' })).not.toBeInTheDocument();
+    const heading = screen.getByRole('button', { name: `Heading ${level}` });
+    act(() => heading.focus());
+    fireEvent.click(heading);
+    expect(editor.isActive('heading', { level })).toBe(true);
+    expect(heading).toHaveAttribute('aria-pressed', 'true');
+    expect(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)).toBe('Alp');
+    expect(editor.view.dom).toHaveFocus();
+    act(() => heading.focus());
+    fireEvent.click(heading);
+    expect(editor.isActive('paragraph')).toBe(true);
+    expect(heading).toHaveAttribute('aria-pressed', 'false');
+    expect(editor.view.dom).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(editor.isActive('heading', { level })).toBe(true);
+    expect(heading).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    expect(editor.isActive('paragraph')).toBe(true);
+  });
+
+  it.each(['Bold', 'Italic', 'Underline', 'Highlight'])('returns focus after %s and keeps formatting for typing', async (name) => {
+    render(<Harness />);
+    const editor = await openedEditor();
+    const control = screen.getByRole('button', { name });
+    act(() => control.focus());
+    fireEvent.click(control);
+    expect(editor.view.dom).toHaveFocus();
+    act(() => insertText(editor, '!'));
+    expect(editor.getText()).toBe('Alpha!');
+    expect(editor.getJSON().content?.[0]?.content?.at(-1)?.marks?.[0]?.type).toBe(name.toLowerCase());
+  });
+
+  it('returns focus after the picture picker is canceled', async () => {
+    render(<Harness />);
+    const editor = await openedEditor();
+    const picture = screen.getByRole('button', { name: 'Picture' });
+    act(() => picture.focus());
+    fireEvent.click(picture);
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    if (!input) throw new Error('Picture input is missing.');
+    fireEvent(input, new Event('cancel'));
+    expect(editor.view.dom).toHaveFocus();
+    expect(editor.getText()).toBe('Alpha');
   });
 
   it('inserts literal prompts from Send and Enter and keeps later typing', async () => {
@@ -285,6 +328,7 @@ describe('Notes screen', () => {
     const editor = await openedEditor();
     editor.commands.setTextSelection(3);
     const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+    act(() => prompt.focus());
     fireEvent.change(prompt, { target: { value: 'One' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
     fireEvent.change(prompt, { target: { value: 'One tail' } });
@@ -379,17 +423,21 @@ describe('Notes screen', () => {
     const input = document.querySelector<HTMLInputElement>('input[type="file"]');
     if (!input) throw new Error('Picture input is missing.');
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    act(() => screen.getByRole('button', { name: 'Picture' }).focus());
     fireEvent.change(input, {
       target: { files: [new File([png], 'dot.png', { type: 'image/png' })] },
     });
     await waitFor(() => expect(JSON.stringify(editor.getJSON())).toContain('data:image/png'));
+    expect(editor.view.dom).toHaveFocus();
     expect(screen.getByText(/Could not save “Plan”/)).toBeInTheDocument();
     expect(screen.queryByText(pictureTypeMessage)).not.toBeInTheDocument();
 
+    act(() => screen.getByRole('button', { name: 'Picture' }).focus());
     fireEvent.change(input, {
       target: { files: [new File([Uint8Array.from([1, 2, 3, 4])], 'bad.png', { type: 'image/png' })] },
     });
     expect(await screen.findByText(pictureTypeMessage)).toBeInTheDocument();
+    expect(editor.view.dom).toHaveFocus();
     expect(screen.getByText(/Could not save “Plan”/)).toBeInTheDocument();
     expect(screen.getAllByRole('alert').length).toBeGreaterThan(1);
 
@@ -411,7 +459,9 @@ describe('Notes screen', () => {
     expect(find).toHaveFocus();
     fireEvent.change(find, { target: { value: 'a' } });
     expect(screen.getByRole('status')).toHaveTextContent('1 / 2');
+    act(() => screen.getByRole('button', { name: 'Next' }).focus());
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(editor.view.dom).toHaveFocus();
     expect(screen.getByRole('status')).toHaveTextContent('2 / 2');
     expect(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)).toBe('a');
     fireEvent.keyDown(find, { key: 'Enter', shiftKey: true });
@@ -419,14 +469,18 @@ describe('Notes screen', () => {
 
     const replace = screen.getByRole('textbox', { name: 'Replace' });
     fireEvent.change(replace, { target: { value: '$1' } });
+    act(() => replace.focus());
     fireEvent.keyDown(replace, { key: 'Enter' });
+    expect(editor.view.dom).toHaveFocus();
     expect(editor.getText()).toBe('$1lpha');
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     expect(editor.getText()).toBe('Alpha');
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Find' }), { target: { value: 'a' } });
     fireEvent.change(replace, { target: { value: '' } });
+    act(() => screen.getByRole('button', { name: 'Replace all' }).focus());
     fireEvent.click(screen.getByRole('button', { name: 'Replace all' }));
+    expect(editor.view.dom).toHaveFocus();
     expect(editor.getText()).toBe('lph');
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     expect(editor.getText()).toBe('Alpha');
@@ -464,6 +518,7 @@ describe('Notes screen', () => {
     fireEvent.keyDown(find, { key: 'Escape' });
     expect(screen.queryByRole('textbox', { name: 'Find' })).not.toBeInTheDocument();
     expect(editor.view.dom.querySelector('.find-and-replace-result')).toBeNull();
+    expect(editor.view.dom).toHaveFocus();
     fireEvent.click(screen.getByRole('button', { name: 'Find' }));
     expect(await screen.findByRole('textbox', { name: 'Find' })).toHaveValue('cat');
 
@@ -521,6 +576,7 @@ describe('Notes screen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Link' }));
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     expect(screen.queryByRole('menuitem', { name: 'Edit link' })).not.toBeInTheDocument();
+    expect(editor.view.dom).toHaveFocus();
 
     fireEvent.click(screen.getByRole('button', { name: 'Link' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit link' }));
@@ -552,11 +608,16 @@ describe('Notes screen', () => {
     fireEvent.contextMenu(anchor);
     expect(openWindow).not.toHaveBeenCalled();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove link' }));
+    expect(editor.view.dom).toHaveFocus();
     expect(editor.getText()).toBe('docs');
     expect(editor.view.dom.querySelector('a')).toBeNull();
     expect(JSON.stringify(editor.getJSON())).toContain('"type":"bold"');
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     expect(editor.view.dom.querySelector('a')?.getAttribute('href')).toBe('https://example.com/a');
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove link' }));
+    expect(editor.view.dom).toHaveFocus();
+    expect(editor.view.dom.querySelector('a')).toBeNull();
     expect(dialog).toBeTruthy();
   });
 });

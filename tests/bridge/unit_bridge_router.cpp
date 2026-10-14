@@ -2006,9 +2006,6 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
     const auto renamed = call("notes.rename", {{"id", note_id}, {"name", "Final"}});
     ASSERT_TRUE(renamed["ok"]);
     EXPECT_EQ(renamed["result"]["name"], "Final");
-    const auto moved = call("notes.move", {{"id", note_id}, {"parent_id", nullptr}});
-    ASSERT_TRUE(moved["ok"]);
-    EXPECT_EQ(moved["result"]["parent_id"], nullptr);
     expect_note_error(
         call("notes.get", {{"id", folder_id}}),
         "invalid_argument",

@@ -256,9 +256,6 @@ TEST_F(NoteStorageTest, NamesParentsAndSiblingNamespace) {
     const auto renamed = note_rename(*database_, slash.id, "plans/today:now");
     EXPECT_EQ(renamed.name, "plans/today:now");
     EXPECT_EQ(raw_content(*database_, slash.id), std::string(empty_note_document));
-    const auto moved = note_move(*database_, slash.id, slash.parent_id);
-    EXPECT_EQ(moved.parent_id, std::nullopt);
-
     Statement spaced = database_->prepare(
         "UPDATE note_items SET content_json = ?1 WHERE id = ?2");
     const std::string spaced_json = "{ \"type\" : \"doc\" }";
@@ -268,30 +265,10 @@ TEST_F(NoteStorageTest, NamesParentsAndSiblingNamespace) {
     const auto next_name = note_rename(*database_, slash.id, "Renamed");
     EXPECT_EQ(next_name.name, "Renamed");
     EXPECT_EQ(raw_content(*database_, slash.id), spaced_json);
-    const auto relocated = note_move(*database_, slash.id, folder.id);
-    EXPECT_EQ(relocated.parent_id, folder.id);
-    EXPECT_EQ(raw_content(*database_, slash.id), spaced_json);
-
     expect_note_error(
         NoteFailure::invalid,
         "An item with this name already exists here.",
         [&] { (void)note_rename(*database_, slash.id, "Plan"); });
-    expect_note_error(
-        NoteFailure::invalid,
-        "An item cannot be moved into itself or its descendant.",
-        [&] { (void)note_move(*database_, folder.id, folder.id); });
-    expect_note_error(
-        NoteFailure::invalid,
-        "An item cannot be moved into itself or its descendant.",
-        [&] { (void)note_move(*database_, folder.id, nested.id); });
-    expect_note_error(
-        NoteFailure::invalid,
-        "The parent folder was not found.",
-        [&] { (void)note_move(*database_, folder.id, 999); });
-    expect_note_error(
-        NoteFailure::invalid,
-        "The parent must be a folder.",
-        [&] { (void)note_move(*database_, folder.id, other_case.id); });
     EXPECT_EQ(note_list(*database_).size(), 6U);
     const auto still = note_list(*database_);
     const auto found = std::find_if(still.begin(), still.end(), [&](const NoteItem& item) {
@@ -326,25 +303,6 @@ TEST_F(NoteStorageTest, DeleteCascadesAndDoesNotReuseIds) {
     EXPECT_GT(created.id, grandchild.id);
     EXPECT_EQ(note_sequence(*database_), created.id);
     EXPECT_EQ(item_count(*database_), 2);
-}
-
-TEST_F(NoteStorageTest, DamagedAncestryTerminates) {
-    database_->execute("PRAGMA foreign_keys = OFF");
-    database_->execute(
-        "INSERT INTO note_items (id, parent_id, kind, name, content_json) VALUES "
-        "(1, 3, 'folder', 'A', NULL),"
-        "(2, 1, 'folder', 'B', NULL),"
-        "(3, 2, 'folder', 'C', NULL)");
-    database_->execute("PRAGMA foreign_keys = ON");
-    expect_note_error(
-        NoteFailure::invalid,
-        "An item cannot be moved into itself or its descendant.",
-        [&] { (void)note_move(*database_, 1, 2); });
-    const auto outside = note_create(
-        *database_, std::nullopt, NoteItemKind::note, "Outside");
-    const auto moved = note_move(*database_, outside.id, 2);
-    EXPECT_EQ(moved.parent_id, 2);
-    EXPECT_EQ(moved.kind, NoteItemKind::note);
 }
 
 TEST_F(NoteStorageTest, DamagedRowUsesTheOperationMessage) {
@@ -497,10 +455,9 @@ TEST(NoteStorage, OlderVaultAndMaintenanceKeepIdentityWithoutConfigChanges) {
     const auto snapshot = store->snapshot();
     const auto folder = store->create_note_item(
         std::nullopt, NoteItemKind::folder, "Plan");
-    const auto note = store->create_note_item(folder.id, NoteItemKind::note, "Draft");
+    const auto note = store->create_note_item(std::nullopt, NoteItemKind::note, "Draft");
     store->save_note(note.id, nlohmann::json::parse(R"({"type":"doc","extra":1})"));
     (void)store->rename_note_item(note.id, "Final");
-    (void)store->move_note_item(note.id, std::nullopt);
     store->delete_note_item(folder.id);
     EXPECT_EQ(store->config_revision(), revision);
     EXPECT_EQ(store->snapshot().get(), snapshot.get());

@@ -15,8 +15,6 @@ constexpr std::string_view missing_parent_message =
     "The parent folder was not found.";
 constexpr std::string_view parent_kind_message =
     "The parent must be a folder.";
-constexpr std::string_view cycle_message =
-    "An item cannot be moved into itself or its descendant.";
 constexpr std::string_view kind_message =
     "Kind must be folder or note.";
 constexpr std::string_view object_message =
@@ -37,16 +35,6 @@ constexpr std::string_view loading_message =
     "The notes could not be loaded.";
 constexpr std::string_view change_message =
     "The change could not be saved.";
-
-constexpr std::string_view ancestor_sql = R"sql(
-WITH RECURSIVE ancestors(id, parent_id) AS (
-    SELECT id, parent_id FROM note_items WHERE id = ?1
-    UNION
-    SELECT p.id, p.parent_id
-    FROM note_items AS p JOIN ancestors AS a ON p.id = a.parent_id
-)
-SELECT 1 FROM ancestors WHERE id = ?2 LIMIT 1
-)sql";
 
 [[noreturn]] void fail(NoteFailure failure, std::string_view message) {
     throw NoteError(failure, std::string(message));
@@ -128,16 +116,6 @@ void require_folder(
     statement.bind(1, parent_id);
     if (!statement.step()) fail(NoteFailure::invalid, missing_parent_message);
     if (statement.text(0) != "folder") fail(NoteFailure::invalid, parent_kind_message);
-}
-
-bool destination_contains(
-    storage::SqliteDatabase& database,
-    std::int64_t destination,
-    std::int64_t id) {
-    storage::SqliteStatement statement = database.prepare(ancestor_sql);
-    statement.bind(1, destination);
-    statement.bind(2, id);
-    return statement.step();
 }
 
 std::optional<NoteItem> find_item(
@@ -349,43 +327,6 @@ NoteItem note_rename(
             update.bind(2, id);
             update.run();
             item.name = std::string(name);
-        }
-        transaction.commit();
-        return item;
-    } catch (const std::runtime_error& error) {
-        throw sql_failure(error, NoteFailure::saving, change_message);
-    }
-}
-
-NoteItem note_move(
-    storage::SqliteDatabase& database,
-    std::int64_t id,
-    std::optional<std::int64_t> parent_id) {
-    try {
-        storage::SqliteTransaction transaction(database);
-        const std::optional<NoteItem> current = find_item(database, id);
-        if (!current) fail(NoteFailure::not_found, missing_item_message);
-        NoteItem item = *current;
-        if (item.parent_id != parent_id) {
-            if (parent_id && *parent_id == id) {
-                fail(NoteFailure::invalid, cycle_message);
-            }
-            if (parent_id) {
-                require_folder(database, *parent_id);
-                if (destination_contains(database, *parent_id, id)) {
-                    fail(NoteFailure::invalid, cycle_message);
-                }
-            }
-            if (name_taken(database, parent_id, item.name, id)) {
-                fail(NoteFailure::invalid, duplicate_name_message);
-            }
-            storage::SqliteStatement update = database.prepare(
-                "UPDATE note_items SET parent_id = ?1 WHERE id = ?2");
-            if (parent_id) update.bind(1, *parent_id);
-            else update.bind_null(1);
-            update.bind(2, id);
-            update.run();
-            item.parent_id = parent_id;
         }
         transaction.commit();
         return item;

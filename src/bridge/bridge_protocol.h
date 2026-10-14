@@ -137,7 +137,6 @@ enum class Method {
     notes_get,
     notes_save,
     notes_rename,
-    notes_move,
     notes_delete,
     count,
 };

@@ -73,10 +73,6 @@ void note_save(
     storage::SqliteDatabase& database,
     std::int64_t id,
     std::string_view name);
-[[nodiscard]] NoteItem note_move(
-    storage::SqliteDatabase& database,
-    std::int64_t id,
-    std::optional<std::int64_t> parent_id);
 void note_delete(storage::SqliteDatabase& database, std::int64_t id);
 
 } // namespace cha

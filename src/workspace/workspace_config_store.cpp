@@ -2551,14 +2551,6 @@ NoteItem WorkspaceConfigStore::rename_note_item(
     return note_rename(*impl_->database, id, name);
 }
 
-NoteItem WorkspaceConfigStore::move_note_item(
-    std::int64_t id,
-    std::optional<std::int64_t> parent_id) {
-    const std::lock_guard lock(impl_->mutex);
-    impl_->require_open();
-    return note_move(*impl_->database, id, parent_id);
-}
-
 void WorkspaceConfigStore::delete_note_item(std::int64_t id) {
     const std::lock_guard lock(impl_->mutex);
     impl_->require_open();

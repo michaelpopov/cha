@@ -417,10 +417,6 @@ describe('notes native client', () => {
         calls.push(['rename', params]);
         return { ...note, name: 'Final' };
       },
-      'notes.move': (params) => {
-        calls.push(['move', params]);
-        return { ...note, parent_id: null };
-      },
       'notes.delete': (params) => {
         calls.push(['delete', params]);
         return {};
@@ -433,7 +429,6 @@ describe('notes native client', () => {
     await client.saveNote(4, document);
     await client.saveNote(4, { type: 'doc', extra: true });
     expect(await client.renameNoteItem(4, 'Final')).toEqual({ ...note, name: 'Final' });
-    expect(await client.moveNoteItem(4, null)).toEqual({ ...note, parent_id: null });
     await client.deleteNoteItem(4);
     expect(calls).toEqual([
       ['list', {}],
@@ -442,7 +437,6 @@ describe('notes native client', () => {
       ['save', { id: 4, document }],
       ['save', { id: 4, document: { type: 'doc', extra: true } }],
       ['rename', { id: 4, name: 'Final' }],
-      ['move', { id: 4, parent_id: null }],
       ['delete', { id: 4 }],
     ]);
   });

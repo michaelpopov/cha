@@ -331,3 +331,55 @@ export function PictureIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function HighlighterIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m9 11-6 6v3h9l3-3M22 12l-4 4-9-9 4-4a2.83 2.83 0 0 1 4 0l5 5a2.83 2.83 0 0 1 0 4ZM3 22h7" {...stroke} />
+    </Icon>
+  );
+}
+
+export function ListIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 6h13M8 12h13M8 18h13" {...stroke} />
+      <circle cx="3" cy="6" r="1" fill="currentColor" />
+      <circle cx="3" cy="12" r="1" fill="currentColor" />
+      <circle cx="3" cy="18" r="1" fill="currentColor" />
+    </Icon>
+  );
+}
+
+export function LinkIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" {...stroke} />
+    </Icon>
+  );
+}
+
+export function UndoIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-2" {...stroke} />
+    </Icon>
+  );
+}
+
+export function RedoIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m15 14 5-5-5-5M20 9H10a6 6 0 0 0 0 12h2" {...stroke} />
+    </Icon>
+  );
+}
+
+export function SearchIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="11" cy="11" r="8" {...stroke} />
+      <path d="m21 21-4.35-4.35" {...stroke} />
+    </Icon>
+  );
+}

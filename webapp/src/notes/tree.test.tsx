@@ -7,7 +7,6 @@ import {
   buildNoteIndex,
   compareNoteSiblings,
   focusAfterRemoval,
-  noteFolderOptions,
   noteInSubtree,
   noteItemPath,
   type NoteSibling,
@@ -62,22 +61,12 @@ describe('note metadata index', () => {
     expect(children['4']).toEqual([]);
   });
 
-  it('lists folder paths in tree order and builds the full note path', () => {
-    expect(noteFolderOptions(items)).toEqual([
-      { id: 1, path: 'Study' },
-      { id: 3, path: 'Study / Philosophy' },
-    ]);
+  it('builds the full note path', () => {
     expect(noteItemPath(items, 4)).toBe('Study / Philosophy / Plan');
     expect(noteItemPath(items, 8)).toBe('Orphan');
   });
 
-  it('excludes a moved folder subtree and reports membership and focus', () => {
-    expect(noteFolderOptions(items, 1)).toEqual([]);
-    expect(noteFolderOptions(items, 3)).toEqual([{ id: 1, path: 'Study' }]);
-    expect(noteFolderOptions(items, 2)).toEqual([
-      { id: 1, path: 'Study' },
-      { id: 3, path: 'Study / Philosophy' },
-    ]);
+  it('reports subtree membership and focus', () => {
     expect(noteInSubtree(items, 1, 4)).toBe(true);
     expect(noteInSubtree(items, 1, 2)).toBe(false);
     expect(noteInSubtree(items, 4, 4)).toBe(true);

@@ -5,7 +5,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -15,7 +14,6 @@ import type { NoteItem, NotesClient } from '../api/nativeClient';
 import {
   buildNoteIndex,
   focusAfterRemoval,
-  noteFolderOptions,
   type NoteTreeRow,
 } from '../notes/tree';
 
@@ -24,9 +22,8 @@ type CreateKind = 'note' | 'folder';
 type CreateDialogState = {
   action: 'create';
   kind: CreateKind;
-  name: string;
   parentId: number | null;
-  holding: boolean;
+  name: string;
   error: string | null;
   pending: boolean;
 };
@@ -35,16 +32,6 @@ type RenameDialogState = {
   action: 'rename';
   sourceId: number;
   name: string;
-  error: string | null;
-  pending: boolean;
-};
-
-type MoveDialogState = {
-  action: 'move';
-  sourceId: number;
-  name: string;
-  kind: 'note' | 'folder';
-  parentId: number | null;
   error: string | null;
   pending: boolean;
 };
@@ -58,10 +45,10 @@ type DeleteDialogState = {
   pending: boolean;
 };
 
-type DialogState = CreateDialogState | RenameDialogState | MoveDialogState | DeleteDialogState;
+type DialogState = CreateDialogState | RenameDialogState | DeleteDialogState;
 
 type MenuState = {
-  sourceId: number;
+  sourceId: string;
   x: number;
   y: number;
   restore: HTMLElement | null;
@@ -75,6 +62,11 @@ export type DeleteNoteItem = (
   refresh: () => Promise<void>,
 ) => Promise<NoteDeleteResult>;
 
+export type NoteActions = {
+  rename(): void;
+  delete(): void;
+};
+
 type RefreshResult = 'applied' | 'ignored' | 'failed';
 
 export function NotesTree({
@@ -85,7 +77,8 @@ export function NotesTree({
   onBeforeCreateNote,
   onDeleteItem,
   onNoteItems,
-  onRegisterCreateNote,
+  vaultName,
+  onRegisterNoteActions,
 }: {
   client: NotesClient;
   browsing: boolean;
@@ -94,7 +87,8 @@ export function NotesTree({
   onBeforeCreateNote(): Promise<boolean>;
   onDeleteItem: DeleteNoteItem;
   onNoteItems(items: NoteItem[]): void;
-  onRegisterCreateNote?(create: () => void): void;
+  vaultName: string;
+  onRegisterNoteActions?(actions: NoteActions | null): void;
 }) {
   const [items, setItems] = useState<NoteItem[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -110,10 +104,11 @@ export function NotesTree({
   const loadedRef = useRef(false);
   const dataRef = useRef(buildNoteIndex([]));
   const signatureRef = useRef<string | null>(null);
-  const revealId = useRef<number | null>(null);
+  const revealId = useRef<number | string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const clientRef = useRef(client);
   const openRef = useRef(onOpenNote);
+  const activeNoteRef = useRef(activeNoteId);
   const beforeCreateRef = useRef(onBeforeCreateNote);
   const onNoteItemsRef = useRef(onNoteItems);
   const onDeleteRef = useRef(onDeleteItem);
@@ -121,9 +116,9 @@ export function NotesTree({
   const staleRef = useRef(stale);
   const listingRef = useRef(listing);
   const dialogRef = useRef(dialog);
-  const beginCreateRef = useRef<(kind: CreateKind) => void>(() => undefined);
   clientRef.current = client;
   openRef.current = onOpenNote;
+  activeNoteRef.current = activeNoteId;
   beforeCreateRef.current = onBeforeCreateNote;
   onNoteItemsRef.current = onNoteItems;
   onDeleteRef.current = onDeleteItem;
@@ -133,13 +128,20 @@ export function NotesTree({
   dialogRef.current = dialog;
 
   const index = buildNoteIndex(items);
+  index.rows.vault = {
+    id: 'vault', noteId: null, name: vaultName, kind: 'folder', parentId: null, parentKey: 'root',
+  };
+  index.children.vault = index.children.root;
+  index.children.root = ['vault'];
+  for (const key of index.children.vault) index.rows[key].parentKey = 'vault';
   dataRef.current = index;
-  const signature = items.map((item) => (
+  const signature = vaultName + '\n' + items.map((item) => (
     `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}`
   )).join('\n');
 
   const tree = useTree<NoteTreeRow>({
     rootItemId: 'root',
+    initialState: { expandedItems: ['vault'] },
     features: [syncDataLoaderFeature, hotkeysCoreFeature],
     getItemName: (item) => item.getItemData().name,
     isItemFolder: (item) => item.getItemData().kind === 'folder',
@@ -185,11 +187,6 @@ export function NotesTree({
       alive.current = false;
     };
   }, []);
-
-  useEffect(() => {
-    onRegisterCreateNote?.(() => { beginCreateRef.current('note'); });
-    return () => onRegisterCreateNote?.(() => undefined);
-  }, [onRegisterCreateNote]);
 
   useEffect(() => {
     if (!menu) return;
@@ -256,18 +253,10 @@ export function NotesTree({
     if (!target.getElement()) return;
     revealId.current = null;
     target.setFocused();
-    current.updateDomFocus();
+    // A deferred tree focus could overwrite focus in the newly opened editor.
+    target.getElement()?.focus();
     void target.scrollTo().catch(() => undefined);
   });
-
-  // Use the tree state, not getFocusedItem(): that falls back to the first row.
-  function destinationParent(): number | null {
-    const focusedId = tree.getState().focusedItem;
-    const data = focusedId === null ? undefined : dataRef.current.rows[focusedId];
-    if (!data) return null;
-    if (data.kind === 'folder' && data.noteId !== null) return data.noteId;
-    return data.parentId;
-  }
 
   function canMutateNow() {
     return loadedRef.current
@@ -288,7 +277,7 @@ export function NotesTree({
       setStale(false);
       setError(null);
       onNoteItemsRef.current(next);
-      revealId.current = reveal;
+      revealId.current = reveal ?? 'vault';
       return 'applied';
     } catch (failure: unknown) {
       if (!alive.current || gen !== generation.current) return 'ignored';
@@ -308,49 +297,56 @@ export function NotesTree({
     } : current));
   }
 
-  function requireFresh(sourceId: number | null): NoteItem | null {
+  // A null sourceId checks only the list, as for the vault root.
+  function requireFresh(sourceId: number | null): boolean {
     if (!loadedRef.current || staleRef.current || listingRef.current || busy.current) {
       setDialog((current) => (current ? {
         ...current,
         error: 'Refresh the notes list and try again.',
       } : current));
-      return null;
+      return false;
     }
-    if (sourceId === null) return null;
-    const source = itemsRef.current.find((item) => item.id === sourceId) ?? null;
-    if (!source) {
-      setDialog((current) => (current ? {
-        ...current,
-        error: 'That item is no longer in the list.',
-      } : current));
-    }
-    return source;
+    if (sourceId === null || itemsRef.current.some((item) => item.id === sourceId)) return true;
+    setDialog((current) => (current ? {
+      ...current,
+      error: 'That item is no longer in the list.',
+    } : current));
+    return false;
   }
 
-  async function beginCreate(kind: CreateKind) {
+  function beginCreate(kind: CreateKind, parentId: number | null) {
     if (!canMutateNow()) return;
+    if (menu) tree.getItemInstance(menu.sourceId).getElement()?.focus();
     setMenu(null);
-    const parentId = destinationParent();
-    if (kind === 'folder') {
-      setDialog({
-        action: 'create', kind, name: '', parentId, holding: false, error: null, pending: false,
-      });
-      return;
-    }
-    setDialog({
-      action: 'create', kind, name: '', parentId, holding: true, error: null, pending: false,
-    });
-    const accepted = await beforeCreateRef.current();
-    if (!alive.current) return;
-    if (!accepted) {
-      setDialog(null);
-      return;
-    }
-    setDialog((current) => (
-      current?.action === 'create' && current.kind === 'note' ? { ...current, holding: false } : current
-    ));
+    const base = kind === 'note' ? 'New note' : 'New folder';
+    const names = new Set(itemsRef.current
+      .filter((item) => item.parent_id === parentId).map((item) => item.name));
+    let name = base;
+    for (let suffix = 1; names.has(name); suffix++) name = `${base} ${suffix}`;
+    setDialog({ action: 'create', kind, parentId, name, pending: false, error: null });
   }
-  beginCreateRef.current = (kind) => { void beginCreate(kind); };
+
+  async function submitCreate() {
+    const captured = dialogRef.current;
+    if (!captured || captured.action !== 'create' || captured.pending || busy.current) return;
+    if (captured.name.length === 0) return;
+    if (!requireFresh(captured.parentId)) return;
+    busy.current = true;
+    setDialog({ ...captured, pending: true, error: null });
+    try {
+      if (captured.kind === 'note' && !await beforeCreateRef.current()) {
+        if (alive.current) setDialog({ ...captured, pending: false });
+        return;
+      }
+      if (!alive.current) return;
+      const created = await clientRef.current.createNoteItem(captured.parentId, captured.kind, captured.name);
+      await finishMutation(created.id, captured.kind === 'note' ? created.id : null);
+    } catch (failure: unknown) {
+      keepDialogError(failure, 'The item could not be created.');
+    } finally {
+      busy.current = false;
+    }
+  }
 
   async function finishMutation(reveal: number | null, openNote: number | null) {
     const refreshed = await refreshListing(reveal);
@@ -363,33 +359,10 @@ export function NotesTree({
     if (refreshed === 'applied' && openNote !== null) openRef.current(openNote);
   }
 
-  async function submitCreate() {
-    const captured = dialogRef.current;
-    if (!captured || captured.action !== 'create' || captured.pending || captured.holding) return;
-    if (captured.name.length === 0 || busy.current) return;
-    if (!loadedRef.current || staleRef.current || listingRef.current) {
-      setDialog({ ...captured, error: 'Refresh the notes list and try again.' });
-      return;
-    }
-    busy.current = true;
-    setDialog({ ...captured, pending: true, error: null });
-    let created: NoteItem;
-    try {
-      created = await clientRef.current.createNoteItem(captured.parentId, captured.kind, captured.name);
-    } catch (failure: unknown) {
-      keepDialogError(failure, 'The item could not be created.');
-      return;
-    }
-    try {
-      await finishMutation(created.id, created.kind === 'note' ? created.id : null);
-    } finally {
-      if (alive.current) busy.current = false;
-    }
-  }
-
-  function openMenu(sourceId: number, anchor: HTMLElement) {
+  function openMenu(sourceId: string, anchor: HTMLElement) {
     if (!canMutateNow()) return;
-    const item = treeRef.current.getItemInstance(String(sourceId));
+    const item = treeRef.current.getItemInstance(sourceId);
+    if (!item.isFolder()) return;
     item.setFocused();
     // The row already exists. A deferred tree focus would steal focus back
     // after the menu (or its dialog) has focused its first control.
@@ -407,41 +380,25 @@ export function NotesTree({
   // The focused menu item is removed with the menu. Focus moves to its row
   // first, so the dialog that opens next restores focus there.
   function takeMenuSource(): NoteItem | null {
-    const sourceId = menu?.sourceId ?? null;
+    const sourceId = menu ? Number(menu.sourceId) : null;
     setMenu(null);
     const source = itemsRef.current.find((entry) => entry.id === sourceId) ?? null;
     if (!source) return null;
     const item = treeRef.current.getItemInstance(String(source.id));
     item.setFocused();
     item.getElement()?.focus();
-    return canMutateNow() ? source : null;
+    return source;
   }
 
-  function startRename() {
-    const source = takeMenuSource();
-    if (!source) return;
+  function startRename(source = takeMenuSource()) {
+    if (!source || !canMutateNow()) return;
     setDialog({
       action: 'rename', sourceId: source.id, name: source.name, error: null, pending: false,
     });
   }
 
-  function startMove() {
-    const source = takeMenuSource();
-    if (!source) return;
-    setDialog({
-      action: 'move',
-      sourceId: source.id,
-      name: source.name,
-      kind: source.kind,
-      parentId: source.parent_id,
-      error: null,
-      pending: false,
-    });
-  }
-
-  function startDelete() {
-    const source = takeMenuSource();
-    if (!source) return;
+  function startDelete(source = takeMenuSource()) {
+    if (!source || !canMutateNow()) return;
     setDialog({
       action: 'delete',
       sourceId: source.id,
@@ -456,8 +413,7 @@ export function NotesTree({
     const captured = dialogRef.current;
     if (!captured || captured.action !== 'rename' || captured.pending || busy.current) return;
     if (captured.name.length === 0) return;
-    const source = requireFresh(captured.sourceId);
-    if (!source) return;
+    if (!requireFresh(captured.sourceId)) return;
     busy.current = true;
     setDialog({ ...captured, pending: true, error: null });
     try {
@@ -473,31 +429,10 @@ export function NotesTree({
     }
   }
 
-  async function submitMove() {
-    const captured = dialogRef.current;
-    if (!captured || captured.action !== 'move' || captured.pending || busy.current) return;
-    const source = requireFresh(captured.sourceId);
-    if (!source) return;
-    busy.current = true;
-    setDialog({ ...captured, pending: true, error: null });
-    try {
-      await clientRef.current.moveNoteItem(captured.sourceId, captured.parentId);
-    } catch (failure: unknown) {
-      keepDialogError(failure, 'The item could not be moved.');
-      return;
-    }
-    try {
-      await finishMutation(captured.sourceId, null);
-    } finally {
-      if (alive.current) busy.current = false;
-    }
-  }
-
   async function submitDelete() {
     const captured = dialogRef.current;
     if (!captured || captured.action !== 'delete' || captured.pending || busy.current) return;
-    const source = requireFresh(captured.sourceId);
-    if (!source) return;
+    if (!requireFresh(captured.sourceId)) return;
     const listing = itemsRef.current;
     const reveal = focusAfterRemoval(listing, captured.sourceId);
     busy.current = true;
@@ -538,33 +473,37 @@ export function NotesTree({
     if (!focused || focused === 'root') return;
     event.preventDefault();
     const anchor = tree.getItemInstance(focused).getElement() ?? event.currentTarget;
-    openMenu(Number(focused), anchor);
+    openMenu(focused, anchor);
   }
 
-  const canCreate = loaded && !stale && !listing && dialog === null && !busy.current;
-  const rows = loaded ? tree.getItems() : [];
+  const canMutate = loaded && !stale && !listing && dialog === null && !busy.current;
+  const activeNoteAvailable = items.some((item) => item.id === activeNoteId && item.kind === 'note');
+  const rows = tree.getItems();
+  const menuParentId = menu?.sourceId === 'vault' ? null : Number(menu?.sourceId);
   const containerProps = tree.getContainerProps('Notes');
+
+  // The actions find the open note when they run, so the owner's state changes
+  // only when they become available or unavailable.
+  useEffect(() => {
+    if (!canMutate || !activeNoteAvailable) return;
+    const source = () => itemsRef.current.find((item) => (
+      item.id === activeNoteRef.current && item.kind === 'note'
+    ));
+    onRegisterNoteActions?.({
+      rename: () => {
+        const note = source();
+        if (note) startRename(note);
+      },
+      delete: () => {
+        const note = source();
+        if (note) startDelete(note);
+      },
+    });
+    return () => onRegisterNoteActions?.(null);
+  }, [activeNoteAvailable, canMutate, onRegisterNoteActions]);
 
   return (
     <div className="cha-notes-browser">
-      <div className="cha-notes-actions">
-        <button
-          className="cha-button"
-          disabled={!canCreate}
-          onClick={() => void beginCreate('note')}
-          type="button"
-        >
-          New note
-        </button>
-        <button
-          className="cha-button"
-          disabled={!canCreate}
-          onClick={() => void beginCreate('folder')}
-          type="button"
-        >
-          New folder
-        </button>
-      </div>
       {error && (
         <p className="cha-error-message" role="alert">
           {error}
@@ -573,57 +512,55 @@ export function NotesTree({
         </p>
       )}
       {!loaded && !error && <p role="status">Loading notes…</p>}
-      {loaded && (
-        <div
-          {...containerProps}
-          className="cha-notes-tree"
-          onKeyDown={(event) => {
-            containerProps.onKeyDown?.(event);
-            onTreeKeyDown(event);
-          }}
-        >
-          {rows.map((item) => {
-            const data = item.getItemData();
-            const props = item.getProps();
-            const current = data.noteId !== null && data.noteId === activeNoteId;
-            const level = item.getItemMeta()?.level ?? 0;
-            return (
-              <div
-                key={item.getId()}
-                {...props}
-                aria-current={current ? 'true' : undefined}
-                className={`cha-notes-row${current ? ' is-current' : ''}${props.className ? ` ${props.className}` : ''}`}
-                style={{ paddingLeft: `${0.45 + level * 0.85}rem` }}
-              >
-                <span aria-hidden="true" className="cha-notes-twist">
-                  {data.kind === 'folder' ? (item.isExpanded() ? '▾' : '▸') : ''}
-                </span>
-                <span className="cha-notes-label">{data.name}</span>
-                {data.noteId !== null && (
-                  <button
-                    aria-expanded={menu?.sourceId === data.noteId ? true : undefined}
-                    aria-haspopup="menu"
-                    aria-label={`Actions for ${data.name}`}
-                    className="cha-notes-menu-button"
-                    disabled={!canCreate}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      openMenu(data.noteId as number, event.currentTarget);
-                    }}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    tabIndex={-1}
-                    type="button"
-                  >
-                    <span aria-hidden="true">⋯</span>
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <div
+        {...containerProps}
+        className="cha-notes-tree"
+        onKeyDown={(event) => {
+          containerProps.onKeyDown?.(event);
+          onTreeKeyDown(event);
+        }}
+      >
+        {rows.map((item) => {
+          const data = item.getItemData();
+          const props = item.getProps();
+          const current = data.noteId !== null && data.noteId === activeNoteId;
+          const level = item.getItemMeta()?.level ?? 0;
+          return (
+            <div
+              key={item.getId()}
+              {...props}
+              aria-current={current ? 'true' : undefined}
+              className={`cha-notes-row${current ? ' is-current' : ''}${props.className ? ` ${props.className}` : ''}`}
+              style={{ paddingLeft: `${0.45 + level * 0.85}rem` }}
+            >
+              <span aria-hidden="true" className="cha-notes-twist">
+                {data.kind === 'folder' ? (item.isExpanded() ? '▾' : '▸') : ''}
+              </span>
+              <span className="cha-notes-label">{data.name}</span>
+              {data.kind === 'folder' && (
+                <button
+                  aria-expanded={menu?.sourceId === data.id ? true : undefined}
+                  aria-haspopup="menu"
+                  aria-label={`Actions for ${data.name}`}
+                  className="cha-notes-menu-button"
+                  disabled={!canMutate}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openMenu(data.id, event.currentTarget);
+                  }}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  tabIndex={-1}
+                  type="button"
+                >
+                  <span aria-hidden="true">⋯</span>
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
       {menu && createPortal(
         <div
           className="cha-session-menu"
@@ -632,21 +569,30 @@ export function NotesTree({
           role="menu"
           style={{
             left: Math.max(8, Math.min(menu.x, window.innerWidth - 168)),
-            top: Math.max(8, Math.min(menu.y, window.innerHeight - 140)),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menu.sourceId !== 'vault' ? 180 : 100))),
           }}
         >
-          <button onClick={startRename} role="menuitem" type="button">Rename</button>
-          <button onClick={startMove} role="menuitem" type="button">Move</button>
-          <button onClick={startDelete} role="menuitem" type="button">Delete</button>
+          <button onClick={() => beginCreate('note', menuParentId)} role="menuitem" type="button">New note</button>
+          <button onClick={() => beginCreate('folder', menuParentId)} role="menuitem" type="button">New folder</button>
+          {menu.sourceId !== 'vault' && (
+            <>
+              <button onClick={() => startRename()} role="menuitem" type="button">Rename</button>
+              <button onClick={() => startDelete()} role="menuitem" type="button">Delete</button>
+            </>
+          )}
         </div>,
         document.body,
       )}
-      {dialog?.action === 'create' && !dialog.holding && (
-        <CreateDialog
-          dialog={dialog}
-          items={items}
-          onChange={setDialog}
+      {dialog?.action === 'create' && (
+        <NameDialog
+          error={dialog.error}
+          label="Create"
+          name={dialog.name}
+          pending={dialog.pending}
+          title={dialog.kind === 'note' ? 'New note' : 'New folder'}
+          showTitle
           onClose={() => { if (!dialog.pending) setDialog(null); }}
+          onName={(name) => setDialog({ ...dialog, name, error: null })}
           onSubmit={() => void submitCreate()}
         />
       )}
@@ -660,15 +606,6 @@ export function NotesTree({
           onClose={() => { if (!dialog.pending) setDialog(null); }}
           onName={(name) => setDialog({ ...dialog, name, error: null })}
           onSubmit={() => void submitRename()}
-        />
-      )}
-      {dialog?.action === 'move' && (
-        <MoveDialog
-          dialog={dialog}
-          items={items}
-          onChange={setDialog}
-          onClose={() => { if (!dialog.pending) setDialog(null); }}
-          onSubmit={() => void submitMove()}
         />
       )}
       {dialog?.action === 'delete' && (
@@ -699,105 +636,6 @@ export function menuKeys(event: ReactKeyboardEvent<HTMLDivElement>, close: () =>
   items[next]?.focus();
 }
 
-function CreateDialog({
-  dialog,
-  items,
-  onChange,
-  onClose,
-  onSubmit,
-}: {
-  dialog: CreateDialogState;
-  items: NoteItem[];
-  onChange(next: CreateDialogState): void;
-  onClose(): void;
-  onSubmit(): void;
-}) {
-  const element = useRef<HTMLDialogElement | null>(null);
-  const nameInput = useRef<HTMLInputElement | null>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
-  const title = dialog.kind === 'note' ? 'New note' : 'New folder';
-  const options = noteFolderOptions(items);
-
-  useEffect(() => {
-    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const node = element.current;
-    if (!node) return;
-    if (typeof node.showModal === 'function') node.showModal();
-    else node.setAttribute('open', '');
-    nameInput.current?.focus();
-    return () => {
-      if (typeof node.close === 'function') node.close();
-      if (previousFocus.current?.isConnected) previousFocus.current.focus();
-    };
-  }, []);
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    onSubmit();
-  }
-
-  return createPortal(
-    <dialog
-      aria-label={title}
-      className="cha-dialog"
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
-      ref={element}
-    >
-      <form className="cha-notes-create" onSubmit={submit}>
-        <label>
-          Name
-          <input
-            className="cha-form-control"
-            disabled={dialog.pending}
-            onChange={(event) => onChange({ ...dialog, name: event.target.value, error: null })}
-            ref={nameInput}
-            value={dialog.name}
-          />
-        </label>
-        <label>
-          In
-          <select
-            className="cha-form-control"
-            disabled={dialog.pending}
-            onChange={(event) => onChange({
-              ...dialog,
-              parentId: event.target.value === 'root' ? null : Number(event.target.value),
-            })}
-            value={dialog.parentId === null ? 'root' : String(dialog.parentId)}
-          >
-            <option value="root">Top level</option>
-            {options.map((option) => (
-              <option key={option.id} value={String(option.id)}>{option.path}</option>
-            ))}
-          </select>
-        </label>
-        {dialog.error && <p className="cha-error-message" role="alert">{dialog.error}</p>}
-        <div className="cha-dialog-actions">
-          <button
-            className="cha-button cha-button-ghost"
-            disabled={dialog.pending}
-            onClick={onClose}
-            type="button"
-          >
-            Cancel
-          </button>
-          <button
-            className="cha-button cha-button-primary"
-            disabled={dialog.pending || dialog.name.length === 0}
-            type="submit"
-          >
-            Create
-          </button>
-        </div>
-      </form>
-    </dialog>,
-    document.body,
-  );
-}
-
 function useDialogElement(focus: () => void) {
   const element = useRef<HTMLDialogElement | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
@@ -824,6 +662,7 @@ function NameDialog({
   name,
   pending,
   title,
+  showTitle = false,
   onClose,
   onName,
   onSubmit,
@@ -833,6 +672,7 @@ function NameDialog({
   name: string;
   pending: boolean;
   title: string;
+  showTitle?: boolean;
   onClose(): void;
   onName(name: string): void;
   onSubmit(): void;
@@ -853,6 +693,7 @@ function NameDialog({
       }}
       ref={element}
     >
+      {showTitle && <h2>{title}</h2>}
       <form className="cha-notes-create" onSubmit={(event) => {
         event.preventDefault();
         onSubmit();
@@ -883,79 +724,6 @@ function NameDialog({
             type="submit"
           >
             {label}
-          </button>
-        </div>
-      </form>
-    </dialog>,
-    document.body,
-  );
-}
-
-function MoveDialog({
-  dialog,
-  items,
-  onChange,
-  onClose,
-  onSubmit,
-}: {
-  dialog: MoveDialogState;
-  items: NoteItem[];
-  onChange(next: MoveDialogState): void;
-  onClose(): void;
-  onSubmit(): void;
-}) {
-  const selectRef = useRef<HTMLSelectElement | null>(null);
-  const element = useDialogElement(() => {
-    selectRef.current?.focus();
-  });
-  const options = noteFolderOptions(items, dialog.kind === 'folder' ? dialog.sourceId : null);
-  const label = `Move “${dialog.name}” to`;
-
-  return createPortal(
-    <dialog
-      aria-label={label}
-      className="cha-dialog"
-      onCancel={(event) => {
-        event.preventDefault();
-        if (!dialog.pending) onClose();
-      }}
-      ref={element}
-    >
-      <form className="cha-notes-create" onSubmit={(event) => {
-        event.preventDefault();
-        onSubmit();
-      }}>
-        <label>
-          {label}
-          <select
-            className="cha-form-control"
-            disabled={dialog.pending}
-            onChange={(event) => onChange({
-              ...dialog,
-              parentId: event.target.value === 'root' ? null : Number(event.target.value),
-              error: null,
-            })}
-            ref={selectRef}
-            value={dialog.parentId === null ? 'root' : String(dialog.parentId)}
-          >
-            <option value="root">Top level</option>
-            {options.map((option) => (
-              <option key={option.id} value={String(option.id)}>{option.path}</option>
-            ))}
-          </select>
-        </label>
-        {dialog.error && <p className="cha-error-message" role="alert">{dialog.error}</p>}
-        <div className="cha-dialog-actions">
-          <button
-            className="cha-button cha-button-ghost"
-            disabled={dialog.pending}
-            onClick={onClose}
-            type="button"
-          >
-            Cancel
-          </button>
-          <button className="cha-button cha-button-primary" disabled={dialog.pending} type="submit">
-            Move
           </button>
         </div>
       </form>

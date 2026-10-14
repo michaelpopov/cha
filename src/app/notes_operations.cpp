@@ -83,19 +83,6 @@ NoteItem Application::rename_note_item(
     }
 }
 
-NoteItem Application::move_note_item(
-    std::int64_t id,
-    std::optional<std::int64_t> parent_id,
-    std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    try {
-        return impl_->store->move_note_item(id, parent_id);
-    } catch (const NoteError& error) {
-        rethrow_note(error);
-    }
-}
-
 void Application::delete_note_item(std::int64_t id, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);

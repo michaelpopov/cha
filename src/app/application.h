@@ -549,10 +549,6 @@ public:
         std::int64_t id,
         std::string name,
         std::uint64_t epoch);
-    [[nodiscard]] NoteItem move_note_item(
-        std::int64_t id,
-        std::optional<std::int64_t> parent_id,
-        std::uint64_t epoch);
     void delete_note_item(std::int64_t id, std::uint64_t epoch);
 
     void save_file(

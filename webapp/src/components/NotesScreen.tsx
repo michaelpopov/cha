@@ -31,7 +31,18 @@ import { noteItemPath } from '../notes/tree';
 import type { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveFailedMessage, useNoteSave, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { AppAction } from '../state/view';
-import { menuKeys } from './NotesTree';
+import {
+  EditIcon,
+  HighlighterIcon,
+  LinkIcon,
+  ListIcon,
+  PictureIcon,
+  RedoIcon,
+  SearchIcon,
+  TrashIcon,
+  UndoIcon,
+} from './Icons';
+import { menuKeys, type NoteActions } from './NotesTree';
 import { PromptInput } from './PromptInput';
 import { SidebarToggle } from './TopBar';
 
@@ -46,25 +57,8 @@ function saveDetail(message: string): string {
   return message === noteSaveFailedMessage ? 'Check the vault and try again.' : message;
 }
 
-const headingLevels = [1, 2, 3, 4, 5, 6] as const;
-
-function headingValue(editor: Editor): string {
-  for (const level of headingLevels) {
-    if (editor.isActive('heading', { level })) return String(level);
-  }
-  return 'paragraph';
-}
-
-function applyBlock(editor: Editor, value: string) {
-  if (!editor.isEditable || editor.isDestroyed) return;
-  if (value === 'paragraph') {
-    if (editor.isActive('paragraph')) return;
-    withIsolatedHistory(editor, () => editor.chain().setParagraph().run());
-    return;
-  }
-  const level = headingLevels.find((item) => String(item) === value);
-  if (level === undefined || editor.isActive('heading', { level })) return;
-  withIsolatedHistory(editor, () => editor.chain().setHeading({ level }).run());
+function focusNotesEditor(editor: Editor | null) {
+  if (editor && !editor.isDestroyed && editor.isEditable) editor.view.focus();
 }
 
 function runMark(editor: Editor, command: () => boolean) {
@@ -82,6 +76,7 @@ function FormatBar({
   editor,
   toolbarRef,
   onFind,
+  noteActions,
   onPicture,
   onEditLink,
   onRemoveLink,
@@ -89,6 +84,7 @@ function FormatBar({
   editor: Editor;
   toolbarRef: { current: HTMLDivElement | null };
   onFind(): void;
+  noteActions: NoteActions | null;
   onPicture(file: File): void;
   onEditLink(range: NoteLinkRange): void;
   onRemoveLink(range: NoteLinkRange): void;
@@ -98,10 +94,8 @@ function FormatBar({
   const [linkOpen, setLinkOpen] = useState(false);
   const listRoot = useRef<HTMLDivElement | null>(null);
   const listMenu = useRef<HTMLDivElement | null>(null);
-  const listButton = useRef<HTMLButtonElement | null>(null);
   const linkRoot = useRef<HTMLDivElement | null>(null);
   const linkMenu = useRef<HTMLDivElement | null>(null);
-  const linkButton = useRef<HTMLButtonElement | null>(null);
   const pictureInput = useRef<HTMLInputElement | null>(null);
   const editable = editor.isEditable && !editor.isDestroyed;
   const linkRange = linkRangeFromSelection(editor.state);
@@ -151,171 +145,221 @@ function FormatBar({
     ));
   }
 
+  // Each toolbar action returns focus to the note. A menu or dialog that an
+  // action opens then focuses its own first control.
   return (
-    <div className="cha-notes-toolbar" ref={toolbarRef}>
-      <select
-        aria-label="Paragraph style"
-        className="cha-form-control"
-        disabled={!editable}
-        onChange={(event) => applyBlock(editor, event.target.value)}
-        value={headingValue(editor)}
-      >
-        <option value="paragraph">Paragraph</option>
-        {headingLevels.map((level) => (
-          <option key={level} value={String(level)}>{`Heading ${level}`}</option>
-        ))}
-      </select>
-      <button
-        aria-label="Bold"
-        aria-pressed={editor.isActive('bold')}
-        className="cha-button"
-        disabled={!editable}
-        onClick={() => runMark(editor, () => editor.chain().toggleBold().run())}
-        type="button"
-      >
-        B
-      </button>
-      <button
-        aria-label="Italic"
-        aria-pressed={editor.isActive('italic')}
-        className="cha-button"
-        disabled={!editable}
-        onClick={() => runMark(editor, () => editor.chain().toggleItalic().run())}
-        type="button"
-      >
-        I
-      </button>
-      <button
-        aria-label="Underline"
-        aria-pressed={editor.isActive('underline')}
-        className="cha-button"
-        disabled={!editable}
-        onClick={() => runMark(editor, () => editor.chain().toggleUnderline().run())}
-        type="button"
-      >
-        U
-      </button>
-      <button
-        aria-label="Highlight"
-        aria-pressed={editor.isActive('highlight')}
-        className="cha-button"
-        disabled={!editable}
-        onClick={() => runMark(editor, () => editor.chain().toggleHighlight().run())}
-        type="button"
-      >
-        Highlight
-      </button>
-      <div className="cha-notes-list" ref={listRoot}>
+    <div className="cha-notes-toolbar" onClick={() => focusNotesEditor(editor)} ref={toolbarRef}>
+      <div className="cha-notes-toolbar-group">
         <button
-          aria-expanded={listOpen}
-          aria-haspopup="menu"
-          aria-pressed={editor.isActive('bulletList') || editor.isActive('orderedList')}
+          aria-label="Undo"
+          title="Undo"
+          className="cha-button"
+          disabled={!editable || !editor.can().undo()}
+          onClick={() => runHistory(editor, 'undo')}
+          type="button"
+        >
+          <UndoIcon />
+        </button>
+        <button
+          aria-label="Redo"
+          title="Redo"
+          className="cha-button"
+          disabled={!editable || !editor.can().redo()}
+          onClick={() => runHistory(editor, 'redo')}
+          type="button"
+        >
+          <RedoIcon />
+        </button>
+      </div>
+      <div className="cha-notes-toolbar-group">
+        <button
+          aria-label="Bold"
+          title="Bold"
+          aria-pressed={editor.isActive('bold')}
           className="cha-button"
           disabled={!editable}
-          onClick={() => setListOpen((open) => !open)}
-          ref={listButton}
+          onClick={() => runMark(editor, () => editor.chain().toggleBold().run())}
           type="button"
         >
-          List
+          B
         </button>
-        {listOpen && (
-          <div
-            className="cha-notes-list-menu"
-            onKeyDown={(event) => menuKeys(event, () => {
-              setListOpen(false);
-              listButton.current?.focus();
-            })}
-            ref={listMenu}
-            role="menu"
-          >
-            <button onClick={() => chooseList('bullet')} role="menuitem" type="button">Bullet list</button>
-            <button onClick={() => chooseList('ordered')} role="menuitem" type="button">Numbered list</button>
-          </div>
-        )}
-      </div>
-      <input
-        accept=".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif"
-        aria-hidden="true"
-        hidden
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          event.target.value = '';
-          if (file) onPicture(file);
-        }}
-        ref={pictureInput}
-        tabIndex={-1}
-        type="file"
-      />
-      <button
-        className="cha-button"
-        disabled={!editable}
-        onClick={() => pictureInput.current?.click()}
-        type="button"
-      >
-        Picture
-      </button>
-      <div className="cha-notes-list" ref={linkRoot}>
         <button
-          aria-expanded={linkOpen}
-          aria-haspopup="menu"
+          aria-label="Italic"
+          title="Italic"
+          aria-pressed={editor.isActive('italic')}
           className="cha-button"
-          disabled={!editable || !linkRange}
-          onClick={() => setLinkOpen((open) => !open)}
-          ref={linkButton}
+          disabled={!editable}
+          onClick={() => runMark(editor, () => editor.chain().toggleItalic().run())}
           type="button"
         >
-          Link
+          I
         </button>
-        {linkOpen && linkRange && (
-          <div
-            className="cha-notes-list-menu"
-            onKeyDown={(event) => menuKeys(event, () => {
-              setLinkOpen(false);
-              linkButton.current?.focus();
-            })}
-            ref={linkMenu}
-            role="menu"
-          >
-            <button
-              onClick={() => {
-                setLinkOpen(false);
-                onEditLink(linkRange);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              Edit link
-            </button>
-            <button
-              onClick={() => {
-                setLinkOpen(false);
-                onRemoveLink(linkRange);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              Remove link
-            </button>
-          </div>
-        )}
+        <button
+          aria-label="Underline"
+          title="Underline"
+          aria-pressed={editor.isActive('underline')}
+          className="cha-button"
+          disabled={!editable}
+          onClick={() => runMark(editor, () => editor.chain().toggleUnderline().run())}
+          type="button"
+        >
+          U
+        </button>
+        <button
+          aria-label="Highlight"
+          title="Highlight"
+          aria-pressed={editor.isActive('highlight')}
+          className="cha-button"
+          disabled={!editable}
+          onClick={() => runMark(editor, () => editor.chain().toggleHighlight().run())}
+          type="button"
+        >
+          <HighlighterIcon />
+        </button>
       </div>
-      <button
-        className="cha-button"
-        disabled={!editable || !editor.can().undo()}
-        onClick={() => runHistory(editor, 'undo')}
-        type="button"
-      >
-        Undo
-      </button>
-      <button
-        className="cha-button"
-        disabled={!editable || !editor.can().redo()}
-        onClick={() => runHistory(editor, 'redo')}
-        type="button"
-      >
-        Redo
-      </button>
-      <button className="cha-button" onClick={onFind} type="button">Find</button>
+      <div className="cha-notes-toolbar-group">
+        {([1, 2, 3] as const).map((level) => (
+          <button
+            aria-label={`Heading ${level}`}
+            aria-pressed={editor.isActive('heading', { level })}
+            className="cha-button cha-notes-heading"
+            disabled={!editable}
+            key={level}
+            onClick={() => runMark(editor, () => editor.chain().toggleHeading({ level }).run())}
+            title={`Heading ${level}`}
+            type="button"
+          >
+            H<sub>{level}</sub>
+          </button>
+        ))}
+      </div>
+      <div className="cha-notes-toolbar-group">
+        <div className="cha-notes-list" ref={listRoot}>
+          <button
+            aria-label="List"
+            title="List"
+            aria-expanded={listOpen}
+            aria-haspopup="menu"
+            aria-pressed={editor.isActive('bulletList') || editor.isActive('orderedList')}
+            className="cha-button"
+            disabled={!editable}
+            onClick={() => setListOpen((open) => !open)}
+            type="button"
+          >
+            <ListIcon />
+          </button>
+          {listOpen && (
+            <div
+              className="cha-notes-list-menu"
+              onKeyDown={(event) => menuKeys(event, () => {
+                setListOpen(false);
+                focusNotesEditor(editor);
+              })}
+              ref={listMenu}
+              role="menu"
+            >
+              <button onClick={() => chooseList('bullet')} role="menuitem" type="button">Bullet list</button>
+              <button onClick={() => chooseList('ordered')} role="menuitem" type="button">Numbered list</button>
+            </div>
+          )}
+        </div>
+        <input
+          accept=".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif"
+          aria-hidden="true"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) onPicture(file);
+          }}
+          ref={pictureInput}
+          tabIndex={-1}
+          type="file"
+        />
+        <button
+          aria-label="Picture"
+          title="Picture"
+          className="cha-button"
+          disabled={!editable}
+          onClick={() => pictureInput.current?.click()}
+          type="button"
+        >
+          <PictureIcon />
+        </button>
+        <div className="cha-notes-list" ref={linkRoot}>
+          <button
+            aria-label="Link"
+            title="Link"
+            aria-expanded={linkOpen}
+            aria-haspopup="menu"
+            className="cha-button"
+            disabled={!editable || !linkRange}
+            onClick={() => setLinkOpen((open) => !open)}
+            type="button"
+          >
+            <LinkIcon />
+          </button>
+          {linkOpen && linkRange && (
+            <div
+              className="cha-notes-list-menu"
+              onKeyDown={(event) => menuKeys(event, () => {
+                setLinkOpen(false);
+                focusNotesEditor(editor);
+              })}
+              ref={linkMenu}
+              role="menu"
+            >
+              <button
+                onClick={() => {
+                  setLinkOpen(false);
+                  onEditLink(linkRange);
+                }}
+                role="menuitem"
+                type="button"
+              >
+                Edit link
+              </button>
+              <button
+                onClick={() => {
+                  setLinkOpen(false);
+                  onRemoveLink(linkRange);
+                }}
+                role="menuitem"
+                type="button"
+              >
+                Remove link
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="cha-notes-toolbar-group">
+        <button
+          aria-label="Rename"
+          className="cha-button"
+          disabled={!editable || !noteActions}
+          onClick={() => noteActions?.rename()}
+          title="Rename"
+          type="button"
+        >
+          <EditIcon />
+        </button>
+        <button
+          aria-label="Delete"
+          className="cha-button"
+          disabled={!editable || !noteActions}
+          onClick={() => noteActions?.delete()}
+          title="Delete"
+          type="button"
+        >
+          <TrashIcon />
+        </button>
+      </div>
+      <div className="cha-notes-toolbar-group">
+        <button aria-label="Find" className="cha-button" onClick={onFind} title="Find" type="button">
+          <SearchIcon />
+        </button>
+      </div>
     </div>
   );
 }
@@ -369,21 +413,25 @@ function FindBar({
   function previous() {
     if (!canMove) return;
     editor.commands.goToPreviousResult();
+    focusNotesEditor(editor);
   }
 
   function next() {
     if (!canMove) return;
     editor.commands.goToNextResult();
+    focusNotesEditor(editor);
   }
 
   function replaceOne() {
     if (!canReplace) return;
-    withIsolatedHistory(editor, () => editor.commands.replace());
+    runMark(editor, () => editor.commands.replace());
+    focusNotesEditor(editor);
   }
 
   function replaceEvery() {
     if (!canReplace) return;
-    withIsolatedHistory(editor, () => editor.commands.replaceAll());
+    runMark(editor, () => editor.commands.replaceAll());
+    focusNotesEditor(editor);
   }
 
   return (
@@ -436,20 +484,37 @@ function FindBar({
       </div>
       <div className="cha-notes-find-row">
         <label>
-          <input checked={matchCase} onChange={(event) => onMatchCase(event.target.checked)} type="checkbox" />
+          <input
+            checked={matchCase}
+            onChange={(event) => {
+              onMatchCase(event.target.checked);
+              focusNotesEditor(editor);
+            }}
+            type="checkbox"
+          />
           Match case
         </label>
         <label>
           <input
             checked={wholeWord}
             disabled={regex}
-            onChange={(event) => onWholeWord(event.target.checked)}
+            onChange={(event) => {
+              onWholeWord(event.target.checked);
+              focusNotesEditor(editor);
+            }}
             type="checkbox"
           />
           Whole word
         </label>
         <label>
-          <input checked={regex} onChange={(event) => onRegex(event.target.checked)} type="checkbox" />
+          <input
+            checked={regex}
+            onChange={(event) => {
+              onRegex(event.target.checked);
+              focusNotesEditor(editor);
+            }}
+            type="checkbox"
+          />
           Regular expression
         </label>
       </div>
@@ -537,6 +602,7 @@ export function NotesScreen({
   noteRequest,
   activeNoteId,
   noteItems,
+  noteActions = null,
   draft,
   onDraftChange,
   sidebarOpen,
@@ -545,7 +611,6 @@ export function NotesScreen({
   leave,
   onRegisterSave,
   onRegisterDispose,
-  onNewNote,
   sessionStatus,
 }: {
   client: ChaClient & NotesClient;
@@ -553,6 +618,7 @@ export function NotesScreen({
   noteRequest: number;
   activeNoteId: number | null;
   noteItems: readonly NoteItem[];
+  noteActions?: NoteActions | null;
   draft: string;
   onDraftChange(next: string): void;
   sidebarOpen: boolean;
@@ -561,7 +627,6 @@ export function NotesScreen({
   leave: LeaveHandle;
   onRegisterSave(save: NoteSaveHandle | null): void;
   onRegisterDispose(dispose: () => void): void;
-  onNewNote?(): void;
   sessionStatus?: ReactNode;
 }) {
   const [phase, setPhase] = useState<Phase>(activeNoteId === null ? 'empty' : 'loading');
@@ -714,6 +779,7 @@ export function NotesScreen({
     editorLiveRef.current = editor;
     const dom = editor.view.dom as HTMLElement & { chaEditor?: Editor };
     dom.chaEditor = editor;
+    focusNotesEditor(editor);
     return () => {
       setEditing(false);
       if (dom.chaEditor === editor) delete dom.chaEditor;
@@ -814,7 +880,7 @@ export function NotesScreen({
     const current = editorRef.current;
     if (!current || current.isDestroyed) return;
     current.commands.clearSearch();
-    current.commands.focus();
+    focusNotesEditor(current);
   }
 
   function samePictureContext(current: Editor, noteId: number, epoch: number): boolean {
@@ -831,8 +897,9 @@ export function NotesScreen({
     const epoch = epochRef.current;
     if (!current || noteId === null) return;
     void importPictureFile(current, file, () => samePictureContext(current, noteId, epoch)).then((message) => {
-      if (!message || !samePictureContext(current, noteId, epoch)) return;
-      setCommandError(message);
+      if (!samePictureContext(current, noteId, epoch)) return;
+      if (message) setCommandError(message);
+      focusNotesEditor(current);
     });
   }
 
@@ -895,6 +962,7 @@ export function NotesScreen({
       {phase === 'ready' && editor && (
         <FormatBar
           editor={editor}
+          noteActions={noteActions}
           onEditLink={(range) => {
             setLinkMenu(null);
             setLinkEdit(range);
@@ -928,9 +996,6 @@ export function NotesScreen({
         />
       )}
       <div className="cha-notes-document" ref={hostRef}>
-        {phase === 'empty' && (
-          <button className="cha-button" onClick={() => onNewNote?.()} type="button">New note</button>
-        )}
         {phase === 'loading' && <p role="status">Opening…</p>}
         {phase === 'error' && (
           <div role="alert">
@@ -1022,7 +1087,10 @@ export function NotesScreen({
               const range = linkMenu.range;
               setLinkMenu(null);
               const current = editorRef.current;
-              if (current) removeNoteLink(current, range);
+              if (current) {
+                removeNoteLink(current, range);
+                focusNotesEditor(current);
+              }
             }}
             role="menuitem"
             type="button"
@@ -1046,7 +1114,7 @@ export function NotesScreen({
           onCancel={() => setLinkEdit(null)}
           onClosed={() => {
             const current = editorRef.current;
-            if (current && !current.isDestroyed) current.view.focus();
+            focusNotesEditor(current);
           }}
         />
       )}

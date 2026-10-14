@@ -84,10 +84,6 @@ std::optional<nlohmann::json> dispatch_notes_operation(
         require_only_keys(params, {"id", "name"});
         return nlohmann::json(application.rename_note_item(
             require_note_id(params), require_string(params, "name"), epoch));
-    case Method::notes_move:
-        require_only_keys(params, {"id", "parent_id"});
-        return nlohmann::json(application.move_note_item(
-            require_note_id(params), require_parent_id(params), epoch));
     case Method::notes_delete:
         require_only_keys(params, {"id"});
         application.delete_note_item(require_note_id(params), epoch);

@@ -142,7 +142,6 @@ export interface NotesClient {
   getNote: (id: number) => Promise<NoteContent>;
   saveNote: (id: number, document: Record<string, unknown>) => Promise<void>;
   renameNoteItem: (id: number, name: string) => Promise<NoteItem>;
-  moveNoteItem: (id: number, parentId: number | null) => Promise<NoteItem>;
   deleteNoteItem: (id: number) => Promise<void>;
 }
 
@@ -794,11 +793,6 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       await call('notes.save', { id, document }, isEmptyResult);
     },
     renameNoteItem: (id, name) => call('notes.rename', { id, name }, isNoteItem),
-    moveNoteItem: (id, parentId) => call(
-      'notes.move',
-      { id, parent_id: parentId },
-      isNoteItem,
-    ),
     deleteNoteItem: async (id) => {
       await call('notes.delete', { id }, isEmptyResult);
     },
