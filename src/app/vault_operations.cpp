@@ -37,6 +37,16 @@ std::optional<std::filesystem::path> vault_path(
         *base / path_from_utf8(vault_name));
 }
 
+void write_vault_selection(
+    const std::filesystem::path& config_directory,
+    const std::string& vault_name) {
+    rewrite_toml_file(
+        config_directory / "app.toml",
+        [&](toml::table& table) {
+            table.insert_or_assign("vault", vault_name);
+        });
+}
+
 } // namespace
 
 std::filesystem::path normalized_vault_path(
@@ -568,6 +578,7 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
         const bool active = same_vault_name(
             app.current_vault_.get().name, previous.name);
         std::vector<vault::VaultDirectoryMove> moved;
+        bool selection_written = false;
         try {
             vault::move_vault_directory(
                 previous.modify, candidate.modify, "modify", moved);
@@ -576,11 +587,9 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
             write_toml_file(
                 candidate.source, vault::vault_definition_table(candidate));
             if (active) {
-                rewrite_toml_file(
-                    app.command.config_directory / "app.toml",
-                    [&](toml::table& table) {
-                        table.insert_or_assign("vault", candidate.name);
-                    });
+                vault::write_vault_selection(
+                    app.command.config_directory, candidate.name);
+                selection_written = true;
             }
             if (enable_protection) {
                 if (active) {
@@ -609,6 +618,16 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
                     log_critical(
                         "Failed to restore vault definition after update: "
                         + std::string(error.what()));
+                }
+                if (selection_written) {
+                    try {
+                        vault::write_vault_selection(
+                            app.command.config_directory, previous.name);
+                    } catch (const std::exception& error) {
+                        log_critical(
+                            "Failed to restore vault selection after update: "
+                            + std::string(error.what()));
+                    }
                 }
                 vault::restore_vault_directories(moved);
             }
@@ -825,11 +844,8 @@ MaintenanceResult Application::Impl::VaultMaintenance::switch_vault(
             }
             rebuild_mirror(session_mirror_root(selected));
             try {
-                rewrite_toml_file(
-                    app.command.config_directory / "app.toml",
-                    [&](toml::table& table) {
-                        table.insert_or_assign("vault", selected.name);
-                    });
+                vault::write_vault_selection(
+                    app.command.config_directory, selected.name);
             } catch (const std::exception& error) {
                 log_warn(
                     "Failed to persist vault selection: "

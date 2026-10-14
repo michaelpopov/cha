@@ -869,13 +869,21 @@ TEST(ApplicationVault, ProtectionSetupFailureRestoresRunningContext) {
 
     EXPECT_THROW(
         (void)application->update_vault(
-            "A", {.display_name = "A", .password = "secret"}, application->context_epoch()),
+            "A", {.display_name = "Renamed A", .password = "secret"}, application->context_epoch()),
         std::runtime_error);
 
     EXPECT_TRUE(resumed);
     EXPECT_EQ(application->state(), ApplicationState::running);
     EXPECT_GT(application->context_epoch(), old_epoch);
+    EXPECT_EQ(application->vault_snapshot().active.name, "A");
     EXPECT_FALSE(application->vault_snapshot().active.password_protected);
+    EXPECT_EQ(
+        read_toml_file(pair.command.config_directory / "app.toml", "config file")
+            ["vault"].value<std::string>(),
+        "A");
+    EXPECT_EQ(
+        load_configuration_directory(pair.command.config_directory).startup_vault,
+        "A");
     EXPECT_FALSE(application->create_session(
         "lobby", "After recovery", application->context_epoch()).id.empty());
 
