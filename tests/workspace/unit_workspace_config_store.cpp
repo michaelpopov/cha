@@ -1196,7 +1196,8 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFilesPersistExpandAndRollBackInvali
     EXPECT_FALSE(snapshot->find_forum("lobby")->markdown_files.contains("HOUSE-RULES.md"));
     store->apply_forum_file("lobby", "FORUM.md",
         std::string_view{"$${FORUM_DEFINITION}\n$$(HOUSE-RULES.md)"});
-    EXPECT_NE(store->snapshot()->find_forum_member("lobby", "guide")->system_prompt.find("Guide in The Lobby."), std::string::npos);
+    EXPECT_NE(store->snapshot()->character_definition("lobby", "guide")
+        .system_prompt.find("Guide in The Lobby."), std::string::npos);
     const auto before = config_contents(database());
     EXPECT_THROW(store->apply_forum_file("lobby", "FORUM.md", std::nullopt), std::invalid_argument);
     EXPECT_THROW(store->apply_forum_file("lobby", "HOUSE-RULES.md", std::nullopt), WorkspaceConfigValidationError);

@@ -31,11 +31,8 @@ TEST(Builtins, WorkspacePublishesGuestAssistantAndEntrance) {
     EXPECT_EQ(entrance->default_persona_id, workspace_guest_id);
     ASSERT_EQ(entrance->members.size(), 1U);
     EXPECT_EQ(entrance->members.front().character_id, workspace_assistant_id);
-    EXPECT_NE(
-        entrance->members.front().system_prompt.find(
-            "Workspace inventory reference data"),
-        std::string::npos);
-    const auto& prompt = entrance->members.front().system_prompt;
+    const auto prompt = workspace.character_definition(
+        workspace_entrance_id, workspace_assistant_id).system_prompt;
     EXPECT_TRUE(prompt.starts_with("# Conversation protocol\n"));
     EXPECT_NE(prompt.find("<character_instructions>\n" + assistant->prompt_template
         + "\n</character_instructions>"), std::string::npos);

@@ -153,7 +153,7 @@ struct WorkspaceForumMember {
     std::string character_id;
     WorkspacePromptVariables prompt_variables;
     std::string character_prompt;
-    std::string system_prompt;
+    std::string forum_prompt;
 };
 
 struct WorkspaceForum {
@@ -264,7 +264,8 @@ public:
         std::string_view forum_id) const;
     [[nodiscard]] CharacterDefinition character_definition(
         std::string_view forum_id,
-        std::string_view character_id) const;
+        std::string_view character_id,
+        std::string_view variants = {}) const;
     [[nodiscard]] std::optional<std::filesystem::path> character_directory(
         std::string_view id) const;
     [[nodiscard]] bool character_is_writable(

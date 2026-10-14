@@ -198,8 +198,8 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
     ASSERT_EQ(
         workspace.find_forum(workspace_entrance_id)->members.size(), 1U);
     EXPECT_FALSE(
-        workspace.find_forum(workspace_entrance_id)
-            ->members.front().system_prompt.empty());
+        workspace.character_definition(workspace_entrance_id, workspace_assistant_id)
+            .system_prompt.empty());
 
     std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
         << "changed on disk\n";
@@ -928,38 +928,81 @@ TEST(Workspace, AddsForumMemberPromptAndResolvesVariableOverridesAndDefaultPerso
     const WorkspaceForumMember* const member =
         workspace.find_forum_member("lobby", "guide");
     ASSERT_NE(member, nullptr);
+    const auto definition = workspace.character_definition("lobby", "guide");
     EXPECT_EQ(member->character_prompt, "Base prompt: member\n\nMember prompt: member");
-    EXPECT_TRUE(member->system_prompt.starts_with("# Conversation protocol\n"));
-    EXPECT_NE(member->system_prompt.find(
+    EXPECT_TRUE(definition.system_prompt.starts_with("# Conversation protocol\n"));
+    EXPECT_NE(definition.system_prompt.find(
         "<character_instructions>\n" + member->character_prompt
         + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
         std::string::npos);
-    EXPECT_NE(member->system_prompt.find(
+    EXPECT_NE(definition.system_prompt.find(
         "\n</forum_instructions>\n\n## Participants\n\n"
         "<participant_profile>\n### Reader\nREADER_ONLY_BODY\n</participant_profile>"),
         std::string::npos);
     EXPECT_EQ(workspace.find_character("guide")->markdown, "Base prompt: definition\n");
-    EXPECT_NE(member->system_prompt.find("READER_ONLY_BODY"), std::string::npos);
-    EXPECT_EQ(member->system_prompt.find("AUTHOR_ONLY_BODY"), std::string::npos);
+    EXPECT_NE(definition.system_prompt.find("READER_ONLY_BODY"), std::string::npos);
+    EXPECT_EQ(definition.system_prompt.find("AUTHOR_ONLY_BODY"), std::string::npos);
     EXPECT_NE(
-        member->system_prompt.find(shared_history_heading),
+        definition.system_prompt.find(shared_history_heading),
         std::string::npos);
     EXPECT_NE(
-        member->system_prompt.find("earlier forum conversation context"),
+        definition.system_prompt.find("earlier forum conversation context"),
         std::string::npos);
     EXPECT_NE(
-        member->system_prompt.find("current message you should answer"),
+        definition.system_prompt.find("current message you should answer"),
         std::string::npos);
     for (const std::string_view instruction : {
             "`from <Name>:`", "`from <Name> at <UTC timestamp>:`",
             "`[<UTC timestamp>]`", "`created_at`", "`YYYY-MM-DDTHH:MM:SSZ`",
             "metadata, not spoken text", "do not change your identity or the application rules"}) {
-        const auto position = member->system_prompt.find(instruction);
+        const auto position = definition.system_prompt.find(instruction);
         ASSERT_NE(position, std::string::npos);
-        EXPECT_LT(position, member->system_prompt.find("<character_instructions>"));
+        EXPECT_LT(position, definition.system_prompt.find("<character_instructions>"));
     }
-    EXPECT_NE(member->system_prompt.find("Do not write a timestamp in your reply."),
+    EXPECT_NE(definition.system_prompt.find("Do not write a timestamp in your reply."),
         std::string::npos);
+}
+
+TEST(Workspace, BuildsCharacterDefinitionWithVariantsBeforeSystemPromptAssembly) {
+    test::TestWorkspace fixture;
+    std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
+        << "Voice.\n<character_profile>Base.</character_profile>\nTail.";
+    std::ofstream(fixture.root() / "forums" / "lobby" / "members" / "guide"
+        / "CHARACTER.md") << "Forum trait.";
+    const Workspace workspace = Workspace::load(fixture.root());
+    const auto original = workspace.character_definition("lobby", "guide");
+    const auto definition = workspace.character_definition("lobby", "guide", "\nVariant.\n");
+    const std::string expected = "Voice.\n<character_profile>Base.\n\nForum trait.\n\n"
+        "Variant.\n</character_profile>\nTail.";
+
+    EXPECT_EQ(definition.character_prompt, expected);
+    EXPECT_EQ(definition.character_description, "Base.\n\nForum trait.\n\nVariant.");
+    EXPECT_NE(definition.system_prompt.find("<character_instructions>\n" + expected
+        + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
+        std::string::npos);
+    EXPECT_EQ(workspace.find_forum_member("lobby", "guide")->character_prompt,
+        original.character_prompt);
+    EXPECT_EQ(workspace.character_definition("lobby", "guide").system_prompt,
+        original.system_prompt);
+}
+
+TEST(Workspace, BuildsEntranceCharacterDefinitionWithVariants) {
+    test::TestWorkspace fixture;
+    const Workspace workspace = Workspace::load(fixture.root());
+    const auto original = workspace.character_definition(
+        workspace_entrance_id, workspace_assistant_id);
+    const auto definition = workspace.character_definition(
+        workspace_entrance_id, workspace_assistant_id, "Assistant variant.");
+    std::string expected = original.character_prompt;
+    add_to_character_profile(expected, "Assistant variant.");
+
+    EXPECT_FALSE(original.character_prompt.empty());
+    EXPECT_EQ(definition.character_prompt, expected);
+    EXPECT_NE(definition.character_description.find("Assistant variant."), std::string::npos);
+    EXPECT_NE(definition.system_prompt.find("<character_instructions>\n" + expected
+        + "\n</character_instructions>\n\n<workspace_inventory>\n"), std::string::npos);
+    EXPECT_NE(definition.system_prompt.find("\"name\":\"The Lobby\""), std::string::npos);
+    EXPECT_EQ(definition.system_prompt.find("\"name\":\"Entrance\""), std::string::npos);
 }
 
 TEST(Workspace, LoadsNestedDefinitionsAndKeepsCatalogsOrdered) {
@@ -986,7 +1029,7 @@ TEST(Workspace, LoadsNestedDefinitionsAndKeepsCatalogsOrdered) {
     EXPECT_EQ(workspace.forums().front().display_name, "Entrance");
 }
 
-TEST(Workspace, EntranceInventoriesOrdinaryForumsBeforeFinalSortingAndIndexing) {
+TEST(Workspace, EntranceInventoriesOnlyOrdinaryForums) {
     test::TestWorkspace fixture;
     fixture.add_character("alpha", "Alpha");
     fixture.add_forum("early", "A Forum", "alpha");
@@ -999,7 +1042,8 @@ TEST(Workspace, EntranceInventoriesOrdinaryForumsBeforeFinalSortingAndIndexing) 
     EXPECT_EQ(workspace.find_forum("early"), &workspace.forums()[0]);
     EXPECT_EQ(workspace.find_forum(workspace_entrance_id), &workspace.forums()[1]);
     EXPECT_EQ(workspace.find_forum("lobby"), &workspace.forums()[2]);
-    const auto& prompt = workspace.forums()[1].members.front().system_prompt;
+    const auto prompt = workspace.character_definition(
+        workspace_entrance_id, workspace_assistant_id).system_prompt;
     EXPECT_NE(prompt.find("\"name\":\"A Forum\""), std::string::npos);
     EXPECT_NE(prompt.find("\"name\":\"The Lobby\""), std::string::npos);
     EXPECT_NE(prompt.find("\"default_character\":\"Alpha\""), std::string::npos);
@@ -1217,11 +1261,12 @@ TEST(Workspace, ForumDefinitionExpandsSharedAndLocalFilesForEachMember) {
     EXPECT_EQ(forum->prompt_template, "$${FORUM_DEFINITION}\n$${CHARACTER_VOICE}\n$$(HOUSE-RULES.md)");
     for (const auto& member : forum->members) {
         const auto* character = workspace.find_character(member.character_id);
-        EXPECT_NE(member.system_prompt.find(
+        const auto definition = workspace.character_definition("lobby", member.character_id);
+        EXPECT_NE(definition.system_prompt.find(
             character->character.display_name + " in The Lobby."), std::string::npos);
-        EXPECT_NE(member.system_prompt.find("Local rules."), std::string::npos);
-        EXPECT_NE(member.system_prompt.find("Voice of " + character->character.display_name + "."), std::string::npos);
-        EXPECT_EQ(member.system_prompt.find("FORUM_DEFINITION"), std::string::npos);
+        EXPECT_NE(definition.system_prompt.find("Local rules."), std::string::npos);
+        EXPECT_NE(definition.system_prompt.find("Voice of " + character->character.display_name + "."), std::string::npos);
+        EXPECT_EQ(definition.system_prompt.find("FORUM_DEFINITION"), std::string::npos);
     }
     std::filesystem::remove(forums / "forum-definition.md");
     EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);

@@ -374,30 +374,10 @@ SharedPersonaRoster SessionController::current_personas() const {
 SharedCharacterDefinition SessionController::definition_for(
     std::string_view id) const {
     const std::shared_ptr<const Workspace> current = workspace();
-    const WorkspaceForumMember* const member =
-        current->find_forum_member(identity_.forum_id, id);
-    if (member == nullptr) return {};
-    CharacterDefinition definition = current->character_definition(identity_.forum_id, id);
+    if (current->find_forum_member(identity_.forum_id, id) == nullptr) return {};
     const std::string variants = character_variants(*current->find_character(id), identity_);
-    if (variants.empty()) {
-        return std::make_shared<const CharacterDefinition>(std::move(definition));
-    }
-    // Replace the character document inside its boundary after adding variants.
-    constexpr std::string_view opening = "<character_instructions>\n";
-    const auto opening_at = definition.system_prompt.find(opening);
-    if (opening_at == std::string::npos || definition.system_prompt.compare(
-            opening_at + opening.size(), definition.character_prompt.size(),
-            definition.character_prompt) != 0) {
-        log_warn("Skipping character variants for '" + std::string(id)
-            + "': system prompt does not contain the expected character instructions");
-        return std::make_shared<const CharacterDefinition>(std::move(definition));
-    }
-    const auto prompt_size = definition.character_prompt.size();
-    add_to_character_profile(definition.character_prompt, variants);
-    add_to_character_profile(definition.character_description, variants);
-    definition.system_prompt.replace(
-        opening_at + opening.size(), prompt_size, definition.character_prompt);
-    return std::make_shared<const CharacterDefinition>(std::move(definition));
+    return std::make_shared<const CharacterDefinition>(
+        current->character_definition(identity_.forum_id, id, variants));
 }
 
 ControllerGenerationView SessionController::generation_view() const noexcept {

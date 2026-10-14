@@ -510,16 +510,7 @@ LobbySetup lobby_setup() {
 }
 
 std::string current_system_prompt(const SessionController& controller, std::string_view character_id) {
-    const std::shared_ptr<const Workspace> workspace = controller.workspace();
-    const WorkspaceForumMember* const member =
-        workspace == nullptr
-        ? nullptr : workspace->find_forum_member("lobby", character_id);
-    if (member == nullptr) {
-        throw std::runtime_error(
-            "Published test workspace has no lobby member '"
-            + std::string(character_id) + "'");
-    }
-    return member->system_prompt;
+    return controller.workspace()->character_definition("lobby", character_id).system_prompt;
 }
 
 // Redirects one character's backend at a local mock server without touching its prompt.
