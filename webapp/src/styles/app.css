@@ -1016,11 +1016,15 @@ select:disabled {
   white-space: pre-wrap;
 }
 
+.cha-chat,
+.cha-notes-screen {
+  padding: 0.2rem 1rem max(1rem, env(safe-area-inset-bottom));
+}
+
 .cha-chat {
   flex: 1;
   flex-direction: row;
   min-width: 0;
-  padding: 0.2rem 1rem max(1rem, env(safe-area-inset-bottom));
 }
 
 .cha-transcript {
@@ -1986,7 +1990,8 @@ select:disabled {
     padding-inline: 1rem;
   }
 
-  .cha-chat {
+  .cha-chat,
+  .cha-notes-screen {
     padding-inline: 0.65rem;
   }
 
@@ -2301,6 +2306,10 @@ select:disabled {
   margin-right: auto;
   margin-left: auto;
   flex: none;
+}
+
+.cha-notes-screen .cha-chat-status {
+  justify-content: space-between;
 }
 
 .cha-notes-create {

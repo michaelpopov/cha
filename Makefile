@@ -1,4 +1,4 @@
-.PHONY: build package package-linux package-macos package-windows web-check web-stage test itest itest-local itest-daemon run-native-dev clean-san
+.PHONY: build package package-linux package-macos package-windows web-check web-stage test test-ui itest itest-local itest-daemon run-native-dev clean-san
 
 ifeq ($(package),linux)
 .DEFAULT_GOAL := package-linux
@@ -48,6 +48,9 @@ web-stage:
 
 test: build
 	ctest --test-dir build/ninja --output-on-failure
+
+test-ui:
+	./tests/native/macos/test-ui.sh
 
 ifeq ($(OS),Windows_NT)
 itest itest-local itest-daemon:
