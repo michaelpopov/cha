@@ -169,6 +169,22 @@ protected:
     std::uint64_t next_id_{1};
 };
 
+TEST_F(BridgeRouterTest, ForumSystemPromptIsReadOnlyAndRequiresExactIdentifiers) {
+    bootstrap_epoch();
+    const auto params = nlohmann::json{{"forum_id", "lobby"}, {"character_id", "guide"}};
+    const auto before = call("forum.get", {{"forum_id", "lobby"}});
+    const auto reply = call("forum.systemPrompt", params);
+    ASSERT_TRUE(reply["ok"]) << reply;
+    EXPECT_NE(reply["result"]["system_prompt"].get<std::string>().find("Character instructions"), std::string::npos);
+    EXPECT_EQ(call("forum.get", {{"forum_id", "lobby"}})["result"], before["result"]);
+    EXPECT_FALSE(call("forum.systemPrompt", {{"forum_id", "lobby"}})["ok"]);
+    auto extra = params;
+    extra["persona_id"] = "reader";
+    EXPECT_FALSE(call("forum.systemPrompt", extra)["ok"]);
+    EXPECT_EQ(call("forum.systemPrompt", {{"forum_id", "missing"}, {"character_id", "guide"}})
+        ["error"]["code"], "not_found");
+}
+
 TEST_F(BridgeRouterTest, CharacterInstructionsUseFixedVaultPathAndHaveNoDeleteMethod) {
     bootstrap_epoch();
     auto reply = call("character.instructions.get");

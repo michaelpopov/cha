@@ -648,6 +648,31 @@ TEST(Application, MissingSharedCharacterInstructionsCanBeCreatedAndCleared) {
     EXPECT_TRUE(application->get_character_instructions(epoch).content.empty());
 }
 
+TEST(Application, SystemPromptPreviewIncludesVariantsWithoutCreatingASession) {
+    test::TestWorkspace fixture;
+    std::ofstream(fixture.root() / "characters/guide/_1_1.md") << "Variant A.";
+    std::ofstream(fixture.root() / "characters/guide/_1_2.md") << "Variant B.";
+    std::ofstream(fixture.root() / "characters/guide/_2_1.md") << "Category two.";
+    const auto workspace = Workspace::load(fixture.root());
+    const auto database = test::import_test_database(fixture.root());
+    auto application = Application::open(make_command(fixture, database));
+    const auto epoch = application->context_epoch();
+    ASSERT_TRUE(application->list_sessions("lobby", epoch).empty());
+    const auto prompt = application->get_forum_system_prompt("lobby", "guide", epoch);
+    EXPECT_EQ(prompt, workspace.character_definition(
+        FullSessionId{"lobby", "prompt-preview"}, "guide").system_prompt);
+    EXPECT_NE(prompt.find("Variant A.") != std::string::npos,
+        prompt.find("Variant B.") != std::string::npos);
+    EXPECT_NE(prompt.find("Category two."), std::string::npos);
+    EXPECT_EQ(application->get_forum_system_prompt("lobby", "guide", epoch), prompt);
+    EXPECT_TRUE(application->list_sessions("lobby", epoch).empty());
+    const auto created = application->create_session("lobby", "Actual session", epoch);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        application->open_session("lobby", created.id, epoch)));
+    EXPECT_EQ(application->get_forum_system_prompt("lobby", "guide", epoch), prompt);
+    EXPECT_EQ(application->list_sessions("lobby", epoch).size(), 1U);
+}
+
 TEST(Application, CharacterPersonaForumAndFileEditsUseTheStore) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =

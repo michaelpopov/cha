@@ -183,6 +183,7 @@ select:disabled {
 .cha-compact-icon-action,
 .cha-persona-title-trigger,
 .cha-title-icon-action,
+.cha-member-prompt-button,
 .cha-composer-action,
 .cha-speech-cache-toggle,
 .cha-transliteration-toggle,
@@ -576,6 +577,22 @@ select:disabled {
   color: var(--foreground);
   background: var(--surface);
   box-shadow: 0 1rem 3rem rgb(0 0 0 / 25%);
+}
+
+.cha-system-prompt-dialog {
+  width: min(52rem, calc(100vw - 2rem));
+  max-width: none;
+  max-height: calc(100dvh - 2rem);
+}
+
+.cha-system-prompt-dialog pre {
+  height: min(60vh, 32rem);
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  font: 0.9rem/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .cha-dialog::backdrop {
@@ -1620,6 +1637,38 @@ select.cha-form-control {
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   font-weight: 600;
+}
+
+.cha-settings-form .cha-member-row label {
+  display: flex;
+  color: inherit;
+  font-size: inherit;
+  flex: 1;
+  min-width: 0;
+  min-height: 3.5rem;
+  align-items: center;
+  gap: 0.85rem;
+  cursor: pointer;
+}
+
+.cha-member-prompt-button {
+  display: grid;
+  flex-shrink: 0;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border-radius: 0.5rem;
+  color: var(--muted-foreground);
+}
+
+.cha-member-prompt-button:hover {
+  color: var(--foreground);
+  background: var(--accent);
+}
+
+.cha-member-prompt-button svg {
+  width: 1.25rem;
+  height: 1.25rem;
 }
 
 .cha-member-row:hover {

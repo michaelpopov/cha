@@ -18,6 +18,16 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it('loads the forum system prompt using saved server settings', async () => {
+    const response = { system_prompt: '<instructions>\nFull prompt.\n</instructions>' };
+    const read = vi.fn(() => response);
+    const client = createNativeChaClient(createFakeNativeBridge({ 'forum.systemPrompt': read }));
+    expect(await client.getForumSystemPrompt('lobby', 'guide')).toEqual(response);
+    expect(read).toHaveBeenCalledWith({ forum_id: 'lobby', character_id: 'guide' });
+    const invalid = createNativeChaClient(createFakeNativeBridge({ 'forum.systemPrompt': () => ({ system_prompt: 42 }) }));
+    await expect(invalid.getForumSystemPrompt('lobby', 'guide')).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it('reads and replaces shared character instructions without a character id or filename', async () => {
     const file = { filename: 'character-voice.md', content: 'Shared voice.', writable: true };
     const read = vi.fn(() => file);

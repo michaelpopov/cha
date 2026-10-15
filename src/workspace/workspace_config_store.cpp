@@ -2209,6 +2209,37 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_file(
     });
 }
 
+std::string WorkspaceConfigStore::forum_system_prompt(
+    const FullSessionId& identity,
+    std::string_view character_id) const {
+    const auto& forum_id = identity.forum_id;
+    const std::lock_guard lock(impl_->mutex);
+    const auto workspace = impl_->snapshot();
+    const auto* forum = workspace->find_forum(forum_id);
+    const auto* character = workspace->find_character(character_id);
+    if (!forum || !character) throw std::out_of_range("Unknown forum or character");
+    if (!character->provider_id) {
+        throw std::invalid_argument("Select a provider for this character in Settings.");
+    }
+    if (workspace->find_forum_member(forum_id, character_id)) {
+        return workspace->character_definition(identity, character_id).system_prompt;
+    }
+
+    // Use the normal member editor and loader on a disposable copy. No edits
+    // are committed, and the saved persona and existing member overrides stay intact.
+    TextFiles files;
+    for (const auto& row : read_workspace_config_files(*impl_->database)) {
+        files.emplace(row.name, row.content);
+    }
+    std::vector<std::string> members;
+    for (const auto& member : forum->members) members.push_back(member.character_id);
+    members.emplace_back(character_id);
+    WorkspaceConfigEditor editor(*workspace, files);
+    editor.write_forum_members(forum_id, members);
+    return Workspace::load(workspace->root(), files)
+        .character_definition(identity, character_id).system_prompt;
+}
+
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_members_and_persona(
     std::string_view forum_id,
     std::span<const std::string> character_ids,

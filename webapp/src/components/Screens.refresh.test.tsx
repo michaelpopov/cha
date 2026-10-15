@@ -121,3 +121,66 @@ it('uses saved forum members as the baseline for the next refresh', async () => 
   expect(screen.getByLabelText('Persona')).toHaveValue('guest');
   expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
 });
+
+it('previews unchecked characters with saved forum settings without changing a draft', async () => {
+  const user = userEvent.setup();
+  const prompt = '<character_instructions>\nFull prompt.\n</character_instructions>';
+  const getForumSystemPrompt = vi.fn(async () => ({ system_prompt: prompt }));
+  const updateForumMembers = vi.fn<ChaClient['updateForumMembers']>();
+  const client = fixtureClient({ getForumSystemPrompt, updateForumMembers });
+  const dispatch = vi.fn();
+  render(<ForumMembersScreen client={client} dispatch={dispatch} navigate={dispatch} state={{ ...membersState(lobby), activeConversation: { forumId: lobby.id, sessionId: 'current-session' } }} />);
+  await user.selectOptions(screen.getByLabelText('Persona'), 'guest');
+  const trigger = screen.getByRole('button', { name: 'Show system prompt for Assistant' });
+  await user.click(trigger);
+  const dialog = await screen.findByRole('dialog', { name: 'System prompt for Assistant' });
+  expect(await screen.findByLabelText('System prompt')).toHaveTextContent('Full prompt.');
+  expect(screen.getByLabelText('System prompt').textContent).toBe(prompt);
+  expect(getForumSystemPrompt).toHaveBeenCalledWith(lobby.id, 'assistant');
+  expect(screen.getByRole('checkbox', { name: 'Assistant' })).not.toBeChecked();
+  expect(screen.getByLabelText('Persona')).toHaveValue('guest');
+  expect(updateForumMembers).not.toHaveBeenCalled();
+  const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+  await user.click(screen.getByRole('button', { name: 'Copy' }));
+  expect(writeText).toHaveBeenCalledWith(prompt);
+  expect(await screen.findByRole('button', { name: 'Copied' })).toBeEnabled();
+  await user.click(screen.getByRole('button', { name: 'Close' }));
+  expect(dialog).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+  await user.click(trigger);
+  await screen.findByLabelText('System prompt');
+  expect(screen.getByRole('button', { name: 'Copy' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Copied' })).not.toBeInTheDocument();
+});
+
+it('shows copy success only after the clipboard write succeeds and clears it on failure', async () => {
+  const user = userEvent.setup();
+  let finishCopy!: () => void;
+  const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockReset()
+    .mockImplementationOnce(() => new Promise<void>((resolve) => { finishCopy = resolve; }))
+    .mockRejectedValueOnce(new Error('Clipboard unavailable'));
+  const dispatch = vi.fn();
+  render(<ForumMembersScreen client={fixtureClient()} dispatch={dispatch} navigate={dispatch} state={membersState(lobby)} />);
+  await user.click(screen.getByRole('button', { name: 'Show system prompt for Guide' }));
+  await screen.findByLabelText('System prompt');
+  await user.click(screen.getByRole('button', { name: 'Copy' }));
+  expect(writeText).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('button', { name: 'Copied' })).not.toBeInTheDocument();
+  finishCopy();
+  await user.click(await screen.findByRole('button', { name: 'Copied' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('The system prompt could not be copied.');
+  expect(screen.getByRole('button', { name: 'Copy' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Copied' })).not.toBeInTheDocument();
+});
+
+it('keeps a failed system prompt preview closable and reports the error', async () => {
+  const user = userEvent.setup();
+  const dispatch = vi.fn();
+  const client = fixtureClient({ getForumSystemPrompt: async () => { throw new Error('Private error'); } });
+  render(<ForumMembersScreen client={client} dispatch={dispatch} navigate={dispatch} state={membersState(lobby)} />);
+  await user.click(screen.getByRole('button', { name: 'Show system prompt for Guide' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('The system prompt could not be loaded.');
+  expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
+  fireEvent(screen.getByRole('dialog'), new Event('cancel', { bubbles: false, cancelable: true }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});

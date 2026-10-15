@@ -519,6 +519,9 @@ export interface components {
         CreatePersonaRequest: {
             display_name: string;
         };
+        ForumSystemPrompt: {
+            system_prompt: string;
+        };
         ForumDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;

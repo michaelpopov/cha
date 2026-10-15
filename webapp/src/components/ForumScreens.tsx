@@ -8,7 +8,8 @@ import {
 import { publicErrorMessage, type ForumDetail, type ForumSummary } from '../api/client';
 import { StaleNotice, useDetailRefresh } from '../detailRefresh';
 import { DetailActions, EditableTitle } from './DetailActions';
-import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from './Icons';
+import { ChevronLeftIcon, ChevronRightIcon, MoreIcon, PlusIcon } from './Icons';
+import { SystemPromptDialog } from './SystemPromptDialog';
 import { BackToSettings } from './SettingsShared';
 import { TransliteratingInput } from './TransliterationMode';
 import { FileList } from './FileScreens';
@@ -240,6 +241,7 @@ export function ForumMembersScreen({
     () => new Set(forum?.members.map(({ id }) => id)),
   );
   const [personaId, setPersonaId] = useState(forum?.default_persona_id ?? '');
+  const [preview, setPreview] = useState<{ id: string; display_name: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
@@ -348,15 +350,26 @@ export function ForumMembersScreen({
           </label>
           <div className="cha-member-list">
             {available.map((character) => (
-              <label className="cha-member-row" key={character.id}>
-                <input
-                  checked={selected.has(character.id)}
-                  disabled={saving}
-                  onChange={() => toggle(character.id)}
-                  type="checkbox"
-                />
-                <span>{character.display_name}</span>
-              </label>
+              <div className="cha-member-row" key={character.id}>
+                <label>
+                  <input
+                    checked={selected.has(character.id)}
+                    disabled={saving}
+                    onChange={() => toggle(character.id)}
+                    type="checkbox"
+                  />
+                  <span>{character.display_name}</span>
+                </label>
+                <button
+                  aria-label={`Show system prompt for ${character.display_name}`}
+                  className="cha-member-prompt-button"
+                  onClick={() => setPreview(character)}
+                  title="Show system prompt"
+                  type="button"
+                >
+                  <MoreIcon />
+                </button>
+              </div>
             ))}
           </div>
           {error && <p className="cha-error-message" role="alert">{error}</p>}
@@ -377,6 +390,16 @@ export function ForumMembersScreen({
             </button>
           </div>
         </form>
+      )}
+      {forumId && preview && (
+        <SystemPromptDialog
+          characterId={preview.id}
+          characterName={preview.display_name}
+          client={client}
+          forumId={forumId}
+          key={`${forumId}:${preview.id}`}
+          onClose={() => setPreview(null)}
+        />
       )}
     </section>
   );

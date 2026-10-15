@@ -21,6 +21,7 @@ export type UpdateCharacterDefinitionRequest =
 export type PersonaDetail = components['schemas']['PersonaDetail'];
 export type CreatePersonaRequest = components['schemas']['CreatePersonaRequest'];
 export type UpdatePersonaRequest = components['schemas']['UpdatePersonaRequest'];
+export type ForumSystemPrompt = components['schemas']['ForumSystemPrompt'];
 export type ForumDetail = components['schemas']['ForumDetail'];
 export type ForumSummary = components['schemas']['ForumSummary'];
 export type CreateForumRequest = components['schemas']['CreateForumRequest'];
@@ -149,6 +150,7 @@ export interface ChaClient {
   updateForumFile(forumId: string, filename: string, content: string): Promise<MarkdownFile>;
   deleteForumFile(forumId: string, filename: string): Promise<void>;
   getForum(forumId: string): Promise<ForumDetail>;
+  getForumSystemPrompt(forumId: string, characterId: string): Promise<ForumSystemPrompt>;
   createForum(request: CreateForumRequest): Promise<ForumDetail>;
   updateForum(forumId: string, update: UpdateForumRequest): Promise<ForumDetail>;
   deleteForum(forumId: string): Promise<void>;

@@ -265,6 +265,10 @@ public:
     [[nodiscard]] ForumDetail get_forum(
         std::string_view forum_id,
         std::uint64_t epoch);
+    [[nodiscard]] std::string get_forum_system_prompt(
+        std::string_view forum_id,
+        std::string_view character_id,
+        std::uint64_t epoch);
     [[nodiscard]] ForumDetail create_forum(
         CreateForumRequest create,
         std::uint64_t epoch);

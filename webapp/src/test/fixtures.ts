@@ -236,6 +236,7 @@ export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}):
     createForumFile: async (_forumId, filename, content) => ({ filename, content, writable: true }),
     updateForumFile: async (_forumId, filename, content) => ({ filename, content, writable: true }),
     deleteForumFile: async () => undefined,
+    getForumSystemPrompt: async () => ({ system_prompt: "Forum system prompt." }),
     getForum: async () => forumDetailFixture,
     createForum: async ({ display_name, persona_id }) => ({
       ...forumDetailFixture,

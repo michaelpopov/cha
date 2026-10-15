@@ -971,6 +971,27 @@ ForumDetail Application::get_forum(
     return workspace::get_forum(*impl_->store->snapshot(), forum_id);
 }
 
+std::string Application::get_forum_system_prompt(
+    std::string_view forum_id,
+    std::string_view character_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    try {
+        // The settings preview needs a stable selection, without a stored session.
+        return impl_->store->forum_system_prompt(
+            {std::string(forum_id), "prompt-preview"}, character_id);
+    } catch (const std::out_of_range&) {
+        throw ApplicationError(ErrorCode::not_found, "That forum or character was not found.");
+    } catch (const std::invalid_argument& error) {
+        throw ApplicationError(ErrorCode::invalid_argument, error.what());
+    } catch (const std::runtime_error& error) {
+        log_warn(std::string("System prompt preview failed: ") + error.what());
+        throw ApplicationError(ErrorCode::invalid_argument,
+            "The system prompt could not be generated. Check the character and forum instructions.");
+    }
+}
+
 ForumDetail Application::create_forum(
     CreateForumRequest create,
     std::uint64_t epoch) {

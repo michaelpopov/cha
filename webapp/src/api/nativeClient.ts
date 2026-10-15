@@ -40,6 +40,7 @@ import {
   type AudioDownloadBatchAcceptance,
   type AudioDownloadStatus,
   type ChaClient,
+  type ForumSystemPrompt,
   type CharacterPicture,
   type CoverRequest,
   type CreateApiKeyRequest,
@@ -391,6 +392,11 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
         isRecord,
       );
     },
+    getForumSystemPrompt: (forumId, characterId) => call(
+      'forum.systemPrompt',
+      { forum_id: forumId, character_id: characterId },
+      (value): value is ForumSystemPrompt => isRecord(value) && typeof value.system_prompt === 'string',
+    ),
     getForum: (forumId) => call(
       'forum.get',
       { forum_id: forumId },

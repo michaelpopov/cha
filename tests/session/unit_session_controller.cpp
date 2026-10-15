@@ -10,6 +10,7 @@
 #include "util/path_name.h"
 #include "workspace/builtins.h"
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>
@@ -471,7 +472,8 @@ TEST(SessionController, SelectsOneCharacterVariantPerCategoryForEachSession) {
     for (const auto& [filename, text] : files) std::ofstream(directory / filename) << text;
     std::filesystem::create_directory(directory / "nested");
     std::ofstream(directory / "nested" / "_3_1.md") << "IGNORED";
-    const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
+    const auto store = WorkspaceConfigStore::open(test::import_test_database(fixture.root()));
+    const auto workspace = store->snapshot();
     std::set<std::string> selected_variants;
     std::set<std::string> selected_combinations;
     for (int session = 0; session < 32; ++session) {
@@ -479,6 +481,8 @@ TEST(SessionController, SelectsOneCharacterVariantPerCategoryForEachSession) {
         const auto definitions = capture_session_definitions(workspace, session_id);
         ASSERT_EQ(definitions.size(), 2U);
         const auto& definition = *definitions.front();
+        EXPECT_EQ(store->forum_system_prompt({"lobby", session_id}, "guide"),
+            definition.system_prompt);
         const std::string suffix = definition.character_prompt.substr(
             std::string("Base Guide in The Lobby.").size());
         const auto category_one_end = suffix.find("\n\n", 2);

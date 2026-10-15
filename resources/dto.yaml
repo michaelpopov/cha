@@ -1178,6 +1178,14 @@ components:
         display_name:
           type: string
 
+    ForumSystemPrompt:
+      type: object
+      additionalProperties: false
+      required: [system_prompt]
+      properties:
+        system_prompt:
+          type: string
+
     ForumDetail:
       type: object
       additionalProperties: false

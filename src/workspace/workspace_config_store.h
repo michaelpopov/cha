@@ -275,6 +275,9 @@ public:
         std::string_view filename,
         std::optional<std::string_view> content,
         bool create = false);
+    [[nodiscard]] std::string forum_system_prompt(
+        const FullSessionId& identity,
+        std::string_view character_id) const;
     WorkspaceConfigEditResult apply_forum_members_and_persona(
         std::string_view forum_id,
         std::span<const std::string> character_ids,

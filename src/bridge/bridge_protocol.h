@@ -60,6 +60,7 @@ enum class Method {
     persona_update,
     persona_delete,
     forum_get,
+    forum_system_prompt,
     forum_create,
     forum_update,
     forum_delete,

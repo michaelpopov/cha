@@ -168,6 +168,13 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
         result = nlohmann::json::object();
         break;
     }
+    case Method::forum_system_prompt: {
+        require_only_keys(params, {"forum_id", "character_id"});
+        result = {{"system_prompt", application.get_forum_system_prompt(
+            require_identifier(params, "forum_id"),
+            require_identifier(params, "character_id"), epoch)}};
+        break;
+    }
     case Method::forum_get: {
         require_only_keys(params, {"forum_id"});
         result = application.get_forum(

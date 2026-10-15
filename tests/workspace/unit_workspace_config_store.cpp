@@ -3342,6 +3342,46 @@ void expect_package_seed_subscription(const ModelBackendConfig& config) {
     EXPECT_EQ(config.cache_retention, CacheRetention::off);
 }
 
+TEST(WorkspaceConfigStore, SystemPromptPreviewUsesSavedSettingsWithoutChangingConfiguration) {
+    test::TestWorkspace fixture;
+    fixture.add_character("mentor", "Mentor");
+    fixture.add_persona("writer", "Writer", "Saved persona instructions.");
+    write_bytes(fixture.root() / "forums/lobby/config.toml",
+        "display_name = \"The Lobby\"\ndefault_persona = \"writer\"\n");
+    fixture.write_character_defaults("[prompt]\nvoice = \"Forum default voice\"\n");
+    write_bytes(fixture.root() / "characters/mentor/character.toml",
+        "display_name = \"Mentor\"\nprovider = \"test\"\n[prompt]\nvoice = \"Base voice\"\n");
+    write_bytes(fixture.root() / "characters/mentor/CHARACTER.md", "$${voice}\n$${forum.display_name}");
+    write_bytes(fixture.root() / "forums/lobby/members/guide/CHARACTER.md", "Member instructions.");
+    write_bytes(fixture.root() / "characters/guide/_1_1.md", "Guide variant.");
+    write_bytes(fixture.root() / "characters/mentor/_1_1.md", "Mentor category one.");
+    write_bytes(fixture.root() / "characters/mentor/_2_1.md", "Mentor category two.");
+    const auto database = test::import_test_database(fixture.root());
+    auto store = WorkspaceConfigStore::open(database);
+    const FullSessionId identity{"lobby", "preview-session"};
+    const auto before = store->snapshot();
+    const auto revision = store->config_revision();
+    const auto member_prompt = store->forum_system_prompt(identity, "guide");
+    EXPECT_EQ(member_prompt, before->character_definition(identity, "guide").system_prompt);
+    EXPECT_NE(member_prompt.find("Member instructions."), std::string::npos);
+    EXPECT_NE(member_prompt.find("Guide variant."), std::string::npos);
+    const auto preview = store->forum_system_prompt(identity, "mentor");
+    EXPECT_NE(preview.find("Saved persona instructions."), std::string::npos);
+    EXPECT_NE(preview.find("Forum default voice"), std::string::npos);
+    EXPECT_NE(preview.find("The Lobby"), std::string::npos);
+    EXPECT_NE(preview.find("Mentor category one."), std::string::npos);
+    EXPECT_NE(preview.find("Mentor category two."), std::string::npos);
+    EXPECT_EQ(store->snapshot(), before);
+    EXPECT_EQ(store->config_revision(), revision);
+    EXPECT_EQ(before->find_forum_member("lobby", "mentor"), nullptr);
+    EXPECT_THROW((void)store->forum_system_prompt({"missing", identity.session_id}, "guide"), std::out_of_range);
+    EXPECT_THROW((void)store->forum_system_prompt(identity, "missing"), std::out_of_range);
+
+    (void)store->apply_forum_members_and_persona(
+        "lobby", std::vector<std::string>{"guide", "mentor"}, "writer");
+    EXPECT_EQ(preview, store->snapshot()->character_definition(identity, "mentor").system_prompt);
+}
+
 TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {
     test::TestWorkspace fixture;
     const std::filesystem::path database = fixture.root() / "imported.sqlite3";

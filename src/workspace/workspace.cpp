@@ -4,6 +4,7 @@
 #include "characters/model_context.h"
 #include "providers/voice_output_config.h"
 #include "util/curl.h"
+#include "util/crypto.h"
 #include "util/path_name.h"
 #include "util/logging.h"
 #include "util/public_name.h"
@@ -22,6 +23,7 @@
 #include <limits>
 #include <mutex>
 #include <ranges>
+#include <random>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -942,6 +944,55 @@ void overlay(
     for (const auto& [name, value] : source) {
         destination.insert_or_assign(name, value);
     }
+}
+
+std::optional<int> variant_category(std::string_view filename) {
+    if (!filename.starts_with('_') || !filename.ends_with(".md")) return {};
+    filename.remove_prefix(1);
+    filename.remove_suffix(3);
+    const auto separator = filename.find('_');
+    if (separator == std::string_view::npos) return {};
+    const auto category_text = filename.substr(0, separator);
+    const auto variant_text = filename.substr(separator + 1);
+    int category{}, variant{};
+    const auto category_result = std::from_chars(
+        category_text.data(), category_text.data() + category_text.size(), category);
+    const auto variant_result = std::from_chars(
+        variant_text.data(), variant_text.data() + variant_text.size(), variant);
+    if (category_result.ec != std::errc{}
+        || category_result.ptr != category_text.data() + category_text.size()
+        || variant_result.ec != std::errc{}
+        || variant_result.ptr != variant_text.data() + variant_text.size()) return {};
+    return category;
+}
+
+std::string character_variants(
+    const WorkspaceCharacter& character,
+    const FullSessionId& identity) {
+    std::map<int, std::vector<std::string_view>> categories;
+    for (const auto& [filename, text] : character.markdown_files) {
+        if (const auto category = variant_category(filename)) {
+            categories[*category].push_back(text);
+        }
+    }
+    std::string result;
+    for (const auto& [category, variants] : categories) {
+        // Seed each category separately so the selection survives reopening a
+        // session and does not depend on other characters or categories.
+        const auto digest = sha256_digest(identity.forum_id + "/"
+            + identity.session_id + "/" + character.character.id + "/"
+            + std::to_string(category));
+        std::seed_seq seed(digest.begin(), digest.end());
+        std::mt19937 random(seed);
+        const auto index = std::uniform_int_distribution<std::size_t>(
+            0, variants.size() - 1)(random);
+        const auto text = trim_view(variants[index]);
+        if (!text.empty()) {
+            if (!result.empty()) result += "\n\n";
+            result += text;
+        }
+    }
+    return result;
 }
 
 std::string character_description(std::string_view prompt) {
@@ -2191,6 +2242,15 @@ std::string Workspace::forum_handle_list(std::string_view forum_id) const {
         result += "@" + character->display_name;
     }
     return result;
+}
+
+CharacterDefinition Workspace::character_definition(
+    const FullSessionId& identity,
+    std::string_view character_id) const {
+    const auto* character = find_character(character_id);
+    if (!character) throw std::invalid_argument("Unknown character");
+    return character_definition(identity.forum_id, character_id,
+        character_variants(*character, identity));
 }
 
 CharacterDefinition Workspace::character_definition(
