@@ -626,6 +626,7 @@ void validate_stored_config_name(std::string_view name) {
 
     if (!name.ends_with(".toml")
         && !name.ends_with(".md")
+        && !(name.starts_with("characters/") && name.ends_with(".txt"))
         && !picture_format(name)) {
         throw std::runtime_error(
             "Configuration name '" + std::string(name)

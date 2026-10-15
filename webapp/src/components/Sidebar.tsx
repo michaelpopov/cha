@@ -66,6 +66,7 @@ const settingsViews: MainView[] = [
   'character-instructions',
   'new-character',
   'character-detail',
+  'character-files',
   'character-file',
   'new-character-file',
   'character-settings',

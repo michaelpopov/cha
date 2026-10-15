@@ -24,13 +24,17 @@ inline constexpr std::array picture_formats{
 inline const PictureFormat* picture_format(std::string_view path) {
     const auto slash = path.find_last_of('/');
     const auto name = slash == std::string_view::npos ? path : path.substr(slash + 1);
+    const auto dot = name.find_last_of('.');
+    if (dot == std::string_view::npos) return nullptr;
     for (const auto& format : picture_formats) {
-        if (name == format.filename) return &format;
+        if (ascii_iequals(name.substr(dot), format.filename.substr(format.filename.find_last_of('.')))) {
+            return &format;
+        }
     }
     return nullptr;
 }
 
-// Ignores letter case, so import can warn about names such as PICTURE.PNG.
+// Ignores letter case.
 inline bool supported_picture_extension(std::string_view extension) {
     for (const auto& format : picture_formats) {
         if (ascii_iequals(format.filename.substr(format.filename.find_last_of('.')), extension)) {

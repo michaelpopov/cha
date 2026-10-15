@@ -144,7 +144,8 @@ std::filesystem::path require_existing_directory(
 
 bool is_accepted_stored_name(std::string_view name) {
     return name != "app.toml" && name != "workspace.toml"
-        && (name.ends_with(".toml") || name.ends_with(".md") || picture_format(name));
+        && (name.ends_with(".toml") || name.ends_with(".md") || picture_format(name)
+            || (name.starts_with("characters/") && name.ends_with(".txt")));
 }
 
 bool is_forum_member_directory(std::string_view name) {
@@ -273,10 +274,9 @@ std::vector<ConfigFile> collect_config_rows(const std::filesystem::path& source)
         }
         const bool image_extension =
             supported_picture_extension(utf8_path(file.extension()));
-        const bool picture = image_extension && picture_format(name)
-            && is_picture_directory(source, file.parent_path());
+        const bool picture = image_extension && is_picture_directory(source, file.parent_path());
         if (image_extension && !picture) {
-            log_warn("Ignoring picture file '" + name + "': unsupported name or location");
+            log_warn("Ignoring picture file '" + name + "': unsupported location");
             continue;
         }
         if (std::filesystem::is_symlink(status)) {
@@ -2018,9 +2018,9 @@ WorkspaceConfigStore::reserve_maintenance() {
 void WorkspaceConfigStore::apply_character_picture(
     std::string_view character_id,
     std::string_view filename,
-    std::string_view content_base64) {
+    std::string_view content_base64, std::string_view previous_filename) {
     (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
-        editor.write_character_picture(character_id, filename, content_base64);
+        editor.write_character_picture(character_id, filename, content_base64, previous_filename);
         return std::vector<std::string>{};
     });
 }
@@ -2080,7 +2080,9 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_file(
     std::optional<std::string_view> content,
     bool create) {
     return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
-        auto affected = forums_using_character(workspace, character_id);
+        const bool picture_delete = !content && !create && picture_format(filename);
+        auto affected = picture_delete ? std::vector<std::string>{}
+                                       : forums_using_character(workspace, character_id);
         editor.write_character_file(character_id, filename, content, create);
         return affected;
     });
@@ -2090,6 +2092,14 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_delete(
     std::string_view character_id) {
     return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
         editor.delete_character(character_id);
+        return std::vector<std::string>{};
+    });
+}
+
+void WorkspaceConfigStore::rename_character_file(
+    std::string_view character_id, std::string_view filename, std::string_view new_filename) {
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.rename_character_file(character_id, filename, new_filename);
         return std::vector<std::string>{};
     });
 }
@@ -2498,22 +2508,39 @@ void WorkspaceConfigStore::delete_note_item(std::int64_t id) {
 }
 
 std::optional<WorkspaceCharacterPicture> WorkspaceConfigStore::get_character_picture(
-    std::string_view character_id) const {
+    std::string_view character_id, std::string_view filename) const {
+    if (!filename.empty()) {
+        const auto* format = picture_format(filename);
+        if (!format) {
+            throw std::invalid_argument("Unsupported picture filename.");
+        }
+        try {
+            require_path_component(filename, {});
+        } catch (const std::runtime_error&) {
+            throw std::invalid_argument("Invalid picture filename.");
+        }
+    }
     const std::lock_guard lock(impl_->mutex);
     const auto workspace = impl_->snapshot();
     const auto directory = workspace->character_directory(character_id);
     if (!directory) throw std::out_of_range("That character was not found.");
     const auto relative = directory->lexically_relative(workspace->root());
-    for (const auto& format : picture_formats) {
+    const auto read_picture = [&](std::string_view name, const PictureFormat& format)
+        -> std::optional<WorkspaceCharacterPicture> {
         auto content = read_workspace_config_file(
-            *impl_->database, generic_utf8_path(relative / format.filename));
+            *impl_->database, generic_utf8_path(relative / name));
         if (content) {
             return WorkspaceCharacterPicture{
-                .filename = std::string(format.filename),
+                .filename = std::string(name),
                 .mime_type = std::string(format.mime_type),
                 .content_base64 = std::move(*content),
             };
         }
+        return std::nullopt;
+    };
+    if (!filename.empty()) return read_picture(filename, *picture_format(filename));
+    for (const auto& format : picture_formats) {
+        if (auto picture = read_picture(format.filename, format)) return picture;
     }
     return std::nullopt;
 }

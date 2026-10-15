@@ -32,13 +32,25 @@ describe('native CHA client', () => {
     expect(write).toHaveBeenCalledWith({ content: 'New voice.' });
   });
 
+  it('renames files through the native bridge without copying their content', async () => {
+    const rename = vi.fn(() => ({}));
+    const client = createNativeChaClient(createFakeNativeBridge({ 'character.file.rename': rename }));
+    await client.renameCharacterFile('guide', 'portrait.png', 'seneca.png');
+    expect(rename).toHaveBeenCalledWith({ character_id: 'guide', filename: 'portrait.png', new_filename: 'seneca.png' });
+  });
+
   it.each(['JPG', 'jpeg', 'png'])('uploads original %s bytes under the picture filename', async (extension) => {
     const write = vi.fn(() => ({}));
     const client = createNativeChaClient(createFakeNativeBridge({ 'character.picture.update': write }));
     const file = new File([new Uint8Array([0, 255, 128, 1])], `holiday.${extension}`);
     await client.updateCharacterPicture('guide', file);
     expect(write).toHaveBeenCalledWith({
-      character_id: 'guide', filename: `PICTURE.${extension.toLowerCase()}`, content_base64: 'AP+AAQ==',
+      character_id: 'guide', filename: `holiday.${extension}`, content_base64: 'AP+AAQ==',
+    });
+    await client.updateCharacterPicture('guide', file, 'PICTURE.webp');
+    expect(write).toHaveBeenLastCalledWith({
+      character_id: 'guide', filename: `holiday.${extension}`, content_base64: 'AP+AAQ==',
+      previous_filename: 'PICTURE.webp',
     });
   });
 
@@ -66,6 +78,8 @@ describe('native CHA client', () => {
     ['PICTURE.jpg', 'image/jpeg'],
     ['PICTURE.jpeg', 'image/jpeg'],
     ['PICTURE.gif', 'image/gif'],
+    ['my-portrait.PNG', 'image/png'],
+    ['Seneca.jpg', 'image/jpeg'],
   ])('requests and accepts %s without decoding image data', async (filename, mime_type) => {
     let received: unknown;
     const picture = { filename, mime_type, content_base64: 'bad base64!' };
@@ -74,6 +88,8 @@ describe('native CHA client', () => {
     }));
     expect(await client.getCharacterPicture('guide')).toEqual(picture);
     expect(received).toEqual({ character_id: 'guide' });
+    expect(await client.getCharacterPicture('guide', filename)).toEqual(picture);
+    expect(received).toEqual({ character_id: 'guide', filename });
   });
 
   it.each([null, { filename: 'PICTURE.gif', mime_type: 'image/gif', content_base64: '' }])(
@@ -87,7 +103,8 @@ describe('native CHA client', () => {
 
   it.each([
     undefined, {}, [],
-    { filename: 'picture.png', mime_type: 'image/png', content_base64: '' },
+    { filename: '../picture.png', mime_type: 'image/png', content_base64: '' },
+    { filename: 'pictures\\portrait.png', mime_type: 'image/png', content_base64: '' },
     { filename: 'PICTURE.png', mime_type: 'image/jpeg', content_base64: '' },
     { filename: 'PICTURE.png', mime_type: 'image/png', content_base64: 123 },
     { filename: 'PICTURE.png', mime_type: 'image/png' },

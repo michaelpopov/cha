@@ -1619,7 +1619,7 @@ LoadedCharacters load_characters(
         std::map<std::string, std::string, std::less<>> markdown_files;
         for (const auto& entry : source.entries(directory)) {
             if (source.is_regular_file(entry) && !source.is_symlink(entry)
-                && entry.extension() == ".md") {
+                && (entry.extension() == ".md" || entry.extension() == ".txt")) {
                 const auto filename = utf8_path(entry.filename());
                 markdown_files.emplace(filename, filename == "CHARACTER.md"
                     ? prompt_template : read_text(source, entry, "character file"));

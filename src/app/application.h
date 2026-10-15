@@ -199,12 +199,12 @@ public:
 
     [[nodiscard]] std::optional<CharacterPicture> get_character_picture(
         std::string_view character_id,
-        std::uint64_t epoch);
+        std::uint64_t epoch, std::string_view filename = {});
     void update_character_picture(
         std::string_view character_id,
         std::string_view filename,
         std::string_view content_base64,
-        std::uint64_t epoch);
+        std::uint64_t epoch, std::string_view previous_filename = {});
     [[nodiscard]] CharacterDetail get_character(
         std::string_view character_id,
         std::uint64_t epoch);
@@ -240,6 +240,9 @@ public:
         std::string filename,
         std::string content,
         std::uint64_t epoch);
+    void rename_character_file(
+        std::string_view character_id, std::string_view filename,
+        std::string_view new_filename, std::uint64_t epoch);
     void delete_character_file(
         std::string_view character_id,
         std::string_view filename,

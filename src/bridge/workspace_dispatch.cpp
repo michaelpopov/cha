@@ -36,18 +36,25 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
         break;
     }
     case Method::character_picture_get: {
-        require_only_keys(params, {"character_id"});
+        const auto filename = params.contains("filename")
+            ? require_filename(params, "filename") : std::string{};
+        if (params.contains("filename")) require_only_keys(params, {"character_id", "filename"});
+        else require_only_keys(params, {"character_id"});
         const auto picture = application.get_character_picture(
-            require_identifier(params, "character_id"), epoch);
+            require_identifier(params, "character_id"), epoch, filename);
         result = picture ? nlohmann::json(*picture) : nlohmann::json(nullptr);
         break;
     }
     case Method::character_picture_update: {
-        require_only_keys(params, {"character_id", "filename", "content_base64"});
+        const auto previous_filename = params.contains("previous_filename")
+            ? require_filename(params, "previous_filename") : std::string{};
+        if (params.contains("previous_filename")) {
+            require_only_keys(params, {"character_id", "filename", "content_base64", "previous_filename"});
+        } else require_only_keys(params, {"character_id", "filename", "content_base64"});
         application.update_character_picture(
             require_identifier(params, "character_id"),
             require_filename(params, "filename"),
-            require_string(params, "content_base64"), epoch);
+            require_string(params, "content_base64"), epoch, previous_filename);
         break;
     }
     case Method::character_create: {
@@ -115,6 +122,15 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
             require_filename(params, "filename"),
             require_string(params, "content"),
             epoch);
+        break;
+    }
+    case Method::character_file_rename: {
+        require_only_keys(params, {"character_id", "filename", "new_filename"});
+        application.rename_character_file(
+            require_identifier(params, "character_id"),
+            require_filename(params, "filename"),
+            require_filename(params, "new_filename"), epoch);
+        result = nlohmann::json::object();
         break;
     }
     case Method::character_file_delete: {

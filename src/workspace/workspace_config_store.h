@@ -224,7 +224,7 @@ public:
     void apply_character_picture(
         std::string_view character_id,
         std::string_view filename,
-        std::string_view content_base64);
+        std::string_view content_base64, std::string_view previous_filename = {});
     WorkspaceConfigEditResult apply_character_settings(
         std::string_view character_id,
         std::string_view provider_id,
@@ -246,6 +246,8 @@ public:
         std::string_view filename,
         std::optional<std::string_view> content,
         bool create = false);
+    void rename_character_file(
+        std::string_view character_id, std::string_view filename, std::string_view new_filename);
     WorkspaceConfigEditResult apply_persona_update(
         std::string_view persona_id,
         std::string_view display_name,
@@ -350,7 +352,7 @@ public:
     void delete_note_item(std::int64_t id);
 
     [[nodiscard]] std::optional<WorkspaceCharacterPicture> get_character_picture(
-        std::string_view character_id) const;
+        std::string_view character_id, std::string_view filename = {}) const;
     [[nodiscard]] WorkspaceConfigRevision config_revision() const;
     [[nodiscard]] WorkspaceConfigListResult list_config(std::string_view prefix) const;
     [[nodiscard]] WorkspaceConfigReadResult read_config(

@@ -433,8 +433,7 @@ export interface components {
             label: string;
         };
         CharacterPicture: {
-            /** @enum {string} */
-            filename: "PICTURE.png" | "PICTURE.webp" | "PICTURE.jpg" | "PICTURE.jpeg" | "PICTURE.gif";
+            filename: string;
             /** @enum {string} */
             mime_type: "image/png" | "image/webp" | "image/jpeg" | "image/gif";
             content_base64: string;

@@ -925,7 +925,8 @@ TEST(WorkspaceSessionDatabase, PictureNamesAndCopiesKeepTextRowsAndSchema) {
             EXPECT_THROW(validate_stored_config_name(std::string(prefix) + name), std::runtime_error);
         }
     }
-    EXPECT_THROW(validate_stored_config_name("characters/guide/picture.png"), std::runtime_error);
+    EXPECT_NO_THROW(validate_stored_config_name("characters/guide/picture.png"));
+    EXPECT_NO_THROW(validate_stored_config_name("characters/guide/Seneca.JPG"));
     {
         Database database(source, Database::Mode::read_write);
         replace_workspace_config_files(database, rows);

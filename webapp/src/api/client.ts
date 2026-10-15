@@ -123,8 +123,8 @@ export interface NotesClient {
 
 export interface ChaClient {
   getBootstrap(): Promise<Bootstrap>;
-  getCharacterPicture(characterId: string): Promise<CharacterPicture | null>;
-  updateCharacterPicture(characterId: string, file: File): Promise<void>;
+  getCharacterPicture(characterId: string, filename?: string): Promise<CharacterPicture | null>;
+  updateCharacterPicture(characterId: string, file: File, previousFilename?: string): Promise<void>;
   getCharacter(characterId: string): Promise<CharacterDetail>;
   createCharacter(request: CreateCharacterRequest): Promise<CharacterDetail>;
   updateCharacter(characterId: string, settings: UpdateCharacterRequest): Promise<CharacterDetail>;
@@ -138,6 +138,7 @@ export interface ChaClient {
   getCharacterFile(characterId: string, filename: string): Promise<MarkdownFile>;
   createCharacterFile(characterId: string, filename: string, content: string): Promise<MarkdownFile>;
   updateCharacterFile(characterId: string, filename: string, content: string): Promise<MarkdownFile>;
+  renameCharacterFile(characterId: string, filename: string, newFilename: string): Promise<void>;
   deleteCharacterFile(characterId: string, filename: string): Promise<void>;
   getPersona(personaId: string): Promise<PersonaDetail>;
   createPersona(request: CreatePersonaRequest): Promise<PersonaDetail>;
@@ -332,13 +333,14 @@ export function isMarkdownFile(value: unknown): value is MarkdownFile {
 
 export function isCharacterPicture(value: unknown): value is CharacterPicture {
   if (!isRecord(value) || typeof value.content_base64 !== 'string'
-    || Object.keys(value).length !== 3) return false;
-  switch (value.filename) {
-    case 'PICTURE.png': return value.mime_type === 'image/png';
-    case 'PICTURE.webp': return value.mime_type === 'image/webp';
-    case 'PICTURE.jpg':
-    case 'PICTURE.jpeg': return value.mime_type === 'image/jpeg';
-    case 'PICTURE.gif': return value.mime_type === 'image/gif';
+    || Object.keys(value).length !== 3 || typeof value.filename !== 'string'
+    || /[/\\\0]/.test(value.filename)) return false;
+  switch (value.filename.slice(value.filename.lastIndexOf('.')).toLowerCase()) {
+    case '.png': return value.mime_type === 'image/png';
+    case '.webp': return value.mime_type === 'image/webp';
+    case '.jpg':
+    case '.jpeg': return value.mime_type === 'image/jpeg';
+    case '.gif': return value.mime_type === 'image/gif';
     default: return false;
   }
 }

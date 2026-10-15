@@ -86,14 +86,16 @@ void WorkspaceConfigEditor::write_markdown_file(
     std::optional<std::string_view> content,
     bool create,
     std::string_view required_filename,
-    std::string_view subject) {
+    std::string_view subject,
+    bool allow_text) {
     try {
         require_path_component(filename, config_path);
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid Markdown filename");
     }
     const auto name = path_from_utf8(filename);
-    if (name.extension() != ".md") {
+    if (name.extension() != ".md"
+        && !(allow_text && name.extension() == ".txt")) {
         throw std::invalid_argument("Invalid Markdown filename");
     }
     if (!create && !markdown_files.contains(filename)) {
@@ -699,13 +701,91 @@ void WorkspaceConfigEditor::write_character_file(
     std::string_view filename,
     std::optional<std::string_view> content,
     bool create) {
+    const auto* picture = picture_format(filename);
+    if (picture && !content && !create) {
+        try {
+            require_path_component(filename, workspace_.root());
+        } catch (const std::runtime_error&) {
+            throw std::invalid_argument("Invalid picture filename.");
+        }
+        const auto directory = workspace_.character_directory(character_id);
+        if (!directory || !source_.is_regular_file(*directory / filename)) {
+            throw std::out_of_range("Unknown character picture");
+        }
+        files_.erase(source_.name(*directory / filename));
+        return;
+    }
     const auto config = workspace_.character_config_paths_.find(std::string(character_id));
     const auto* character = workspace_.find_character(character_id);
     if (config == workspace_.character_config_paths_.end() || !character) {
         throw std::out_of_range("Unknown writable character");
     }
     write_markdown_file(config->second, character->markdown_files,
-        filename, content, create, "CHARACTER.md", "character");
+        filename, content, create, "CHARACTER.md", "character", true);
+}
+
+void WorkspaceConfigEditor::rename_character_file(
+    std::string_view character_id, std::string_view filename, std::string_view new_filename) {
+    const auto directory = workspace_.character_directory(character_id);
+    if (!directory) throw std::out_of_range("That character was not found.");
+    try {
+        require_path_component(filename, *directory);
+        require_path_component(new_filename, *directory);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Enter a valid filename without folders.");
+    }
+    for (const auto reserved : {"CHARACTER.md", "character.toml", "PROFILE.md"}) {
+        if (path_component_names_equal(filename, reserved)
+            || path_component_names_equal(new_filename, reserved)) {
+            throw std::invalid_argument("This filename is reserved.");
+        }
+    }
+    const auto old_path = *directory / path_from_utf8(filename);
+    const auto new_path = *directory / path_from_utf8(new_filename);
+    const auto* picture = picture_format(filename);
+    if (picture) {
+        const auto* replacement = picture_format(new_filename);
+        if (!replacement || replacement->mime_type != picture->mime_type) {
+            throw std::invalid_argument("Keep the picture's file format when renaming it.");
+        }
+    } else if ((old_path.extension() != ".md" && old_path.extension() != ".txt")
+        || (new_path.extension() != ".md" && new_path.extension() != ".txt")) {
+        throw std::invalid_argument("Use a .md or .txt filename for a text file.");
+    }
+    const auto old_name = source_.name(old_path);
+    const auto found = files_.find(old_name);
+    if (found == files_.end()) throw std::out_of_range("That character file was not found.");
+    if (filename == new_filename) return;
+    for (const auto& path : source_.entries(*directory)) {
+        const auto existing = utf8_path(path.filename());
+        if (existing != filename && path_component_names_equal(existing, new_filename)) {
+            throw std::invalid_argument("A file with this name already exists.");
+        }
+    }
+    auto file = files_.extract(found);
+    file.key() = source_.name(new_path);
+    files_.insert(std::move(file));
+    if (picture) return;
+
+    // Keep prompt includes pointing at the renamed file. Ordinary prose and
+    // escaped macros are left alone; the file stays in the same directory.
+    for (auto& [name, content] : files_) {
+        if (!name.ends_with(".md") && !name.ends_with(".txt")) continue;
+        const auto parent = (workspace_.root() / path_from_utf8(name)).parent_path();
+        for (std::size_t pos = 0; (pos = content.find("$$", pos)) != std::string::npos;) {
+            if (content.compare(pos, 3, "$$$") == 0) { pos += 3; continue; }
+            if (content.compare(pos, 3, "$$(") != 0) { pos += 2; continue; }
+            const auto end = content.find_first_of(")\n", pos + 3);
+            if (end == std::string::npos) break;
+            if (content[end] != ')') { pos = end + 1; continue; }
+            const auto include = path_from_utf8(trim_view(std::string_view(content).substr(pos + 3, end - pos - 3)));
+            if ((parent / include).lexically_normal() == old_path.lexically_normal()) {
+                const auto replacement = generic_utf8_path(include.parent_path() / path_from_utf8(new_filename));
+                content.replace(pos + 3, end - pos - 3, replacement);
+                pos += replacement.size() + 4;
+            } else pos = end + 1;
+        }
+    }
 }
 
 void WorkspaceConfigEditor::delete_character(std::string_view character_id) {
@@ -928,11 +1008,17 @@ void WorkspaceConfigEditor::delete_forum(std::string_view forum_id) {
 void WorkspaceConfigEditor::write_character_picture(
     std::string_view character_id,
     std::string_view filename,
-    std::string_view content_base64) {
+    std::string_view content_base64, std::string_view previous_filename) {
     const auto directory = workspace_.character_directory(character_id);
     if (!directory) throw std::out_of_range("That character was not found.");
+    try {
+        require_path_component(filename, *directory);
+        if (!previous_filename.empty()) require_path_component(previous_filename, *directory);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid picture filename.");
+    }
     const auto* format = picture_format(filename);
-    if (!format || format->filename != filename) {
+    if (!format) {
         throw std::invalid_argument("Unsupported picture format.");
     }
     try {
@@ -940,8 +1026,18 @@ void WorkspaceConfigEditor::write_character_picture(
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid picture data.");
     }
-    for (const auto& supported : picture_formats) {
-        files_.erase(source_.name(*directory / supported.filename));
+    if (!previous_filename.empty()) {
+        const auto* previous = picture_format(previous_filename);
+        if (!previous) {
+            throw std::invalid_argument("Unsupported picture filename.");
+        }
+        if (!source_.is_regular_file(*directory / previous_filename)) {
+            throw std::out_of_range("That picture was not found.");
+        }
+        if (previous_filename != filename && source_.exists(*directory / filename)) {
+            throw std::invalid_argument("A picture with this filename already exists.");
+        }
+        files_.erase(source_.name(*directory / previous_filename));
     }
     write_file(*directory / filename, content_base64);
 }
@@ -1077,7 +1173,7 @@ void WorkspaceConfigEditor::write_forum_file(
         throw std::out_of_range("Unknown writable forum");
     }
     write_markdown_file(config->second, forum->markdown_files,
-        filename, content, create, "FORUM.md", "forum");
+        filename, content, create, "FORUM.md", "forum", false);
 }
 
 void WorkspaceConfigEditor::add_prepared_character_to_forum(

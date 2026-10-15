@@ -3,6 +3,7 @@
 #include "app/application.h"
 #include "util/logging.h"
 #include "util/text.h"
+#include "util/picture.h"
 #include "runtime/live_session.h"
 #include "runtime/live_session_manager.h"
 #include "runtime/protocol.h"
@@ -58,8 +59,11 @@ MarkdownFile edit_markdown_file(
     bool create) {
     const auto workspace = store.snapshot();
     if (character) {
+        const auto* picture = picture_format(filename);
+        const bool picture_delete = !content && !create && picture;
         if (workspace->find_character(id) == nullptr
-            || !workspace->character_is_writable(id)) {
+            || !(picture_delete ? workspace->character_settings_are_writable(id)
+                                : workspace->character_is_writable(id))) {
             fail(ErrorCode::not_found, "That character file was not found.");
         }
     } else if (workspace->find_forum(id) == nullptr
@@ -295,9 +299,9 @@ void refresh_affected_sessions(
 
 std::optional<CharacterPicture> get_character_picture(
     const WorkspaceConfigStore& store,
-    std::string_view id) {
+    std::string_view id, std::string_view filename) {
     try {
-        auto picture = store.get_character_picture(id);
+        auto picture = store.get_character_picture(id, filename);
         if (!picture) return std::nullopt;
         return CharacterPicture{
             .filename = std::move(picture->filename),
@@ -306,6 +310,8 @@ std::optional<CharacterPicture> get_character_picture(
         };
     } catch (const std::out_of_range&) {
         fail(ErrorCode::not_found, "That character was not found.");
+    } catch (const std::invalid_argument&) {
+        fail(ErrorCode::invalid_argument, "Unsupported picture filename.");
     }
 }
 
@@ -313,12 +319,12 @@ void update_character_picture(
     WorkspaceConfigStore& store,
     std::string_view id,
     std::string_view filename,
-    std::string_view content_base64) {
+    std::string_view content_base64, std::string_view previous_filename) {
     if (!store.snapshot()->character_settings_are_writable(id)) {
         fail(ErrorCode::not_found, "That character was not found.");
     }
     with_workspace_edit([&] {
-        store.apply_character_picture(id, filename, content_base64);
+        store.apply_character_picture(id, filename, content_base64, previous_filename);
     });
 }
 
@@ -516,6 +522,17 @@ MarkdownFile update_character_file(
     return edit_markdown_file(
         store, live_sessions, true, id, std::move(filename),
         std::move(content), false);
+}
+
+void rename_character_file(
+    WorkspaceConfigStore& store, std::string_view id,
+    std::string_view filename, std::string_view new_filename) {
+    const auto workspace = store.snapshot();
+    if (!(picture_format(filename) ? workspace->character_settings_are_writable(id)
+                                  : workspace->character_is_writable(id))) {
+        fail(ErrorCode::not_found, "That character file was not found.");
+    }
+    with_workspace_edit([&] { store.rename_character_file(id, filename, new_filename); });
 }
 
 void delete_character_file(

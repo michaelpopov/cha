@@ -801,20 +801,20 @@ SessionExport Application::export_session(
 
 std::optional<CharacterPicture> Application::get_character_picture(
     std::string_view character_id,
-    std::uint64_t epoch) {
+    std::uint64_t epoch, std::string_view filename) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return workspace::get_character_picture(*impl_->store, character_id);
+    return workspace::get_character_picture(*impl_->store, character_id, filename);
 }
 
 void Application::update_character_picture(
     std::string_view character_id,
     std::string_view filename,
     std::string_view content_base64,
-    std::uint64_t epoch) {
+    std::uint64_t epoch, std::string_view previous_filename) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    workspace::update_character_picture(*impl_->store, character_id, filename, content_base64);
+    workspace::update_character_picture(*impl_->store, character_id, filename, content_base64, previous_filename);
 }
 
 CharacterDetail Application::get_character(
@@ -909,6 +909,14 @@ MarkdownFile Application::update_character_file(
     return workspace::update_character_file(
         *impl_->store, *impl_->live_sessions, character_id,
         std::move(filename), std::move(content));
+}
+
+void Application::rename_character_file(
+    std::string_view character_id, std::string_view filename,
+    std::string_view new_filename, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    workspace::rename_character_file(*impl_->store, character_id, filename, new_filename);
 }
 
 void Application::delete_character_file(

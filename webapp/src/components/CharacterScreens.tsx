@@ -31,7 +31,6 @@ import {
 } from './Icons';
 import { BackToSettings } from './SettingsShared';
 import { TransliteratingInput } from './TransliterationMode';
-import { FileList } from './FileScreens';
 import {
   RosterDetailScreen,
   rosterMarkdown,
@@ -200,7 +199,13 @@ export function CharacterDetailScreen({
   client,
 }: RosterDetailProps) {
   const characterId = state.inspectedCharacter.id;
-  const load = useCallback((id: string) => client.getCharacter(id), [client]);
+  const load = useCallback(async (id: string) => {
+    const detail = await client.getCharacter(id);
+    const profile = detail.markdown_files.includes('PROFILE.md')
+      ? (await client.getCharacterFile(id, 'PROFILE.md')).content
+      : null;
+    return { ...detail, profile };
+  }, [client]);
   const onLoaded = useCallback((detail: CharacterDetail, id: string) => {
     dispatch({
       type: 'character-detail-loaded',
@@ -211,7 +216,7 @@ export function CharacterDetailScreen({
   }, [dispatch]);
 
   return (
-    <RosterDetailScreen
+    <RosterDetailScreen<CharacterDetail & { profile: string | null }>
       key={characterId}
       ariaLabel="Character detail navigation"
       backLabel="Characters"
@@ -231,7 +236,7 @@ export function CharacterDetailScreen({
           onClick={() => navigate({ type: 'show-character-settings' })}
           type="button"
         >
-          <span>Settings</span>
+          <span>Character settings</span>
           <ChevronRightIcon />
         </button>
       ) : undefined}
@@ -241,7 +246,7 @@ export function CharacterDetailScreen({
             available={detail.writable} id={detail.id} name={detail.display_name} subject="Character"
             onSave={async (display_name) => {
               const saved = await client.updateCharacterDefinition(detail.id, { display_name });
-              update(saved);
+              update({ ...saved, profile: detail.profile });
               dispatch({ type: 'character-updated', character: saved });
             }}
           />
@@ -252,14 +257,22 @@ export function CharacterDetailScreen({
               await client.deleteCharacter(detail.id);
               navigate({ type: 'character-deleted', characterId: detail.id });
             }}
+            editor={detail.profile === null ? undefined : {
+              title: 'Edit character profile',
+              value: detail.profile,
+              uploadLabel: 'Replace character description from file',
+              onSave: async (content) => {
+                const saved = await client.updateCharacterFile(detail.id, 'PROFILE.md', content);
+                update({ ...detail, profile: saved.content });
+              },
+            }}
           />}
         </div>
-        <FileList
-          filenames={detail.markdown_files}
-          writable={detail.settings_writable}
-          onNew={() => navigate({ type: 'show-new-character-file' })}
-          onSelect={(filename) => navigate({ type: 'inspect-character-file', characterId: characterId!, filename })}
-        />
+        {detail.profile === null
+          ? <p className="cha-state-message cha-warning-message" role="status">
+            This character has no PROFILE.md file.
+          </p>
+          : rosterMarkdown(detail.profile, 'This file is empty.')}
       </>}
     />
   );
@@ -464,10 +477,16 @@ export function CharacterSettingsScreen({
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Character settings">
-      <button className="cha-back-row" onClick={closeSettings} type="button">
-        <ChevronLeftIcon />
-        <span>{character?.display_name ?? 'Character'}</span>
-      </button>
+      <div className="cha-detail-toolbar">
+        <button className="cha-back-row" onClick={closeSettings} type="button">
+          <ChevronLeftIcon />
+          <span>{character?.display_name ?? 'Character'}</span>
+        </button>
+        {characterId && <button className="cha-detail-link"
+          onClick={() => navigate({ type: 'show-character-files' })} type="button">
+          <span>Files</span><ChevronRightIcon />
+        </button>}
+      </div>
       {!characterId && <p className="cha-state-message">No character is selected.</p>}
       {characterId && detail === null && !error && (
         <p className="cha-state-message" role="status">Loading character settings…</p>

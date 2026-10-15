@@ -659,6 +659,10 @@ select:disabled {
   color: light-dark(rgb(174 45 36), rgb(255 145 136));
 }
 
+.cha-warning-message {
+  color: light-dark(#91610c, #deb663);
+}
+
 .cha-list,
 .cha-roster {
   display: grid;
@@ -819,6 +823,78 @@ select:disabled {
   object-fit: contain;
   border-radius: 0.65rem;
   background: var(--input);
+}
+
+.cha-character-file-header {
+  align-items: center;
+}
+
+.cha-file-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.cha-file-name .cha-persona-title-trigger span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.cha-file-name .cha-persona-title-form {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.cha-file-name .cha-title-icon-action {
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid var(--border);
+}
+
+.cha-file-name .cha-persona-title-error {
+  position: static;
+  flex-basis: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.cha-file-name .cha-persona-title-form input {
+  flex: 1;
+  text-align: left;
+}
+
+@media (max-width: 560px) {
+  .cha-character-file-header .cha-file-name {
+    flex-basis: 100%;
+  }
+
+  .cha-character-file-header .cha-detail-action-buttons {
+    margin-left: auto;
+  }
+}
+
+@media (pointer: coarse) {
+  .cha-file-name .cha-persona-title-trigger {
+    min-height: 2.75rem;
+  }
+
+  .cha-file-name .cha-title-icon-action {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+
+.cha-character-file-picture {
+  display: flex;
+  justify-content: center;
+}
+
+.cha-character-file-picture img {
+  max-width: 100%;
+  max-height: 28rem;
+  object-fit: contain;
 }
 
 

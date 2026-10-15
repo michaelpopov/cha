@@ -30,6 +30,7 @@
   "character.file.create": {"requires_context_epoch": true, "changes_context": false},
   "character.file.update": {"requires_context_epoch": true, "changes_context": false},
   "character.file.delete": {"requires_context_epoch": true, "changes_context": false},
+  "character.file.rename": {"requires_context_epoch": true, "changes_context": false},
   "persona.get": {"requires_context_epoch": true, "changes_context": false},
   "persona.create": {"requires_context_epoch": true, "changes_context": false},
   "persona.update": {"requires_context_epoch": true, "changes_context": false},

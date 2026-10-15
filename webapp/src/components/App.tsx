@@ -57,6 +57,7 @@ import {
 } from './CharacterScreens';
 import {
   CharacterFileScreen,
+  CharacterFilesScreen,
   NewCharacterFileScreen,
   ForumFileScreen,
   NewForumFileScreen,
@@ -228,6 +229,9 @@ function Screen({
         navigate={navigate}
         state={state}
       />
+    );
+    case 'character-files': return (
+      <CharacterFilesScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'new-character-file': return (
       <NewCharacterFileScreen

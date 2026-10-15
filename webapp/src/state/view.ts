@@ -27,6 +27,7 @@ export type MainView =
   | 'character-instructions'
   | 'new-character'
   | 'character-detail'
+  | 'character-files'
   | 'character-file'
   | 'new-character-file'
   | 'character-settings'
@@ -187,6 +188,7 @@ export type AppAction =
   | { type: 'character-updated'; character: CharacterDetail }
   | { type: 'character-deleted'; characterId: string }
   | { type: 'show-character-settings' }
+  | { type: 'show-character-files' }
   | { type: 'show-forums' }
   | { type: 'show-new-forum' }
   | { type: 'forum-created'; forum: ForumDetail }
@@ -267,6 +269,7 @@ export type NavigationAction = Extract<AppAction, {
     | 'character-created'
     | 'character-deleted'
     | 'show-character-settings'
+    | 'show-character-files'
     | 'show-forums'
     | 'show-new-forum'
     | 'forum-created'
@@ -622,6 +625,10 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       };
     case 'show-character-settings':
       return { ...state, mainView: 'character-settings', ...idleSessionOperation() };
+    case 'show-character-files':
+      return state.inspectedCharacter.id
+        ? { ...state, mainView: 'character-files', inspectedCharacter: { ...state.inspectedCharacter, file: null }, ...idleSessionOperation() }
+        : state;
     case 'show-forums':
       return { ...state, mainView: 'forums', ...idleSessionOperation() };
     case 'show-new-forum':
@@ -1048,7 +1055,8 @@ export function navigationTitle(state: AppState): string | null {
     case 'characters': return 'Characters';
     case 'character-instructions': return 'Instructions';
     case 'new-character': return 'New character';
-    case 'character-settings': return 'Settings';
+    case 'character-settings': return 'Character settings';
+    case 'character-files': return 'Files';
     case 'character-file': return state.inspectedCharacter.file ?? 'File';
     case 'new-character-file': return 'New file';
     case 'forums': return 'Forums';

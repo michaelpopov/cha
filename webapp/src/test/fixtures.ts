@@ -215,6 +215,7 @@ export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}):
     },
     createCharacterFile: async (_characterId, filename, content) => ({ filename, content, writable: true }),
     updateCharacterFile: async (_characterId, filename, content) => ({ filename, content, writable: true }),
+    renameCharacterFile: async () => undefined,
     deleteCharacterFile: async () => undefined,
     getPersona: async () => personaDetailFixture,
     createPersona: async ({ display_name }) => ({

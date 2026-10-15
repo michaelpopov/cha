@@ -70,7 +70,7 @@ public:
     void write_character_picture(
         std::string_view character_id,
         std::string_view filename,
-        std::string_view content_base64);
+        std::string_view content_base64, std::string_view previous_filename = {});
     void write_character_settings(
         std::string_view character_id,
         std::string_view provider_id,
@@ -89,6 +89,8 @@ public:
         std::string_view filename,
         std::optional<std::string_view> content,
         bool create = false);
+    void rename_character_file(
+        std::string_view character_id, std::string_view filename, std::string_view new_filename);
     void write_persona(
         std::string_view persona_id,
         std::string_view display_name,
@@ -141,7 +143,8 @@ private:
         const std::filesystem::path& config_path,
         const std::map<std::string, std::string, std::less<>>& markdown_files,
         std::string_view filename, std::optional<std::string_view> content,
-        bool create, std::string_view required_filename, std::string_view subject);
+        bool create, std::string_view required_filename, std::string_view subject,
+        bool allow_text);
 
     const Workspace& workspace_;
     TextFiles& files_;

@@ -152,7 +152,7 @@ describe('Sidebar navigation', () => {
   it.each([
     'personas', 'new-persona', 'persona-detail', 'persona-settings',
     'characters', 'character-instructions', 'new-character', 'character-detail', 'character-file',
-    'new-character-file', 'character-settings', 'forums', 'new-forum',
+    'new-character-file', 'character-files', 'character-settings', 'forums', 'new-forum',
     'sessions', 'forum-detail', 'forum-file', 'new-forum-file',
     'forum-members', 'settings', 'settings-vaults',
     'settings-provider', 'settings-style', 'settings-voice', 'settings-api-key',

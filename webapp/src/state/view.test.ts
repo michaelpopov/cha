@@ -253,7 +253,7 @@ describe('application navigation reducer', () => {
 
     state = appReducer(state, { type: 'show-character-settings' });
     expect(state.mainView).toBe('character-settings');
-    expect(navigationTitle(state)).toBe('Settings');
+    expect(navigationTitle(state)).toBe('Character settings');
     expect(state.inspectedCharacter.settingsWritable).toBe(true);
 
     state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });
@@ -293,10 +293,16 @@ describe('application navigation reducer', () => {
   it('opens character files without losing settings and ignores a file for another character', () => {
     let state = appReducer(readyState(), { type: 'inspect-character', characterId: 'guide' });
     state = appReducer(state, { type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true });
+    state = appReducer(state, { type: 'show-character-settings' });
+    state = appReducer(state, { type: 'show-character-files' });
+    expect(state.mainView).toBe('character-files');
     state = appReducer(state, { type: 'inspect-character-file', characterId: 'guide', filename: 'PROFILE.md' });
     expect(state.mainView).toBe('character-file');
     expect(state.inspectedCharacter.file).toBe('PROFILE.md');
     expect(state.inspectedCharacter.settingsWritable).toBe(true);
+    state = appReducer(state, { type: 'show-character-files' });
+    expect(state.mainView).toBe('character-files');
+    expect(state.inspectedCharacter.file).toBeNull();
     state = appReducer(state, { type: 'inspect-character', characterId: 'assistant' });
     expect(state.inspectedCharacter.file).toBeNull();
     expect(appReducer(state, { type: 'inspect-character-file', characterId: 'guide', filename: 'NOTES.md' })).toBe(state);

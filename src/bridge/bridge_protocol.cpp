@@ -40,6 +40,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::character_file_create, "character.file.create"},
     {Method::character_file_update, "character.file.update"},
     {Method::character_file_delete, "character.file.delete"},
+    {Method::character_file_rename, "character.file.rename"},
     {Method::persona_get, "persona.get"},
     {Method::persona_create, "persona.create"},
     {Method::persona_update, "persona.update"},

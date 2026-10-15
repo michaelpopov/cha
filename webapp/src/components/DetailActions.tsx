@@ -14,9 +14,10 @@ interface EditableTitleProps {
   name: string | undefined;
   onSave(displayName: string): Promise<void>;
   subject: string;
+  filename?: boolean;
 }
 
-export function EditableTitle({ available, disabled = false, id, name, onSave, subject }: EditableTitleProps) {
+export function EditableTitle({ available, disabled = false, id, name, onSave, subject, filename = false }: EditableTitleProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name ?? '');
   const [blocked, setBlocked] = useState(false);
@@ -101,22 +102,29 @@ export function EditableTitle({ available, disabled = false, id, name, onSave, s
   return (
     <form className="cha-persona-title-form" onSubmit={(event) => void save(event)}>
       <input
-        aria-label={`${subject} name`}
+        aria-label={filename ? 'Filename' : `${subject} name`}
         autoFocus
         disabled={saving || disabled}
-        onChange={(event) => setDraft(transliteration.convert(event, draft))}
-        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => setDraft(filename ? event.target.value : transliteration.convert(event, draft))}
+        onFocus={(event) => {
+          if (filename) {
+            const dot = draft.lastIndexOf('.');
+            event.currentTarget.setSelectionRange(0, dot > 0 ? dot : draft.length);
+          } else event.currentTarget.select();
+        }}
+        autoComplete={filename ? 'off' : undefined}
+        spellCheck={filename ? false : undefined}
         onKeyDown={(event) => {
           if (event.key === 'Escape') cancel();
         }}
         ref={transliteration.field}
         value={draft}
       />
-      <TransliterationToggle disabled={saving || disabled} transliteration={transliteration} />
+      {!filename && <TransliterationToggle disabled={saving || disabled} transliteration={transliteration} />}
       <button
-        aria-label={`Save ${lowerSubject} name`}
+        aria-label={filename ? 'Save filename' : `Save ${lowerSubject} name`}
         className="cha-title-icon-action"
-        disabled={saving || disabled || blocked || refresh.refreshing || refresh.failed || refresh.stale || draft.trim() === ''}
+        disabled={saving || disabled || blocked || refresh.refreshing || refresh.failed || refresh.stale || draft.trim() === '' || (filename && draft.trim() === name)}
         type="submit"
       >
         <CheckIcon />

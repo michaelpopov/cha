@@ -962,7 +962,6 @@ components:
       properties:
         filename:
           type: string
-          enum: [PICTURE.png, PICTURE.webp, PICTURE.jpg, PICTURE.jpeg, PICTURE.gif]
         mime_type:
           type: string
           enum: [image/png, image/webp, image/jpeg, image/gif]

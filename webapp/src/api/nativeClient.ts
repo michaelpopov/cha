@@ -266,15 +266,15 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       { forum_id: forumId, session_id: sessionId },
       isCommandResult,
     ),
-    getCharacterPicture: (characterId) => call(
+    getCharacterPicture: (characterId, filename) => call(
       'character.picture.get',
-      { character_id: characterId },
+      { character_id: characterId, ...(filename === undefined ? {} : { filename }) },
       (value): value is CharacterPicture | null => value === null || isCharacterPicture(value),
     ),
-    updateCharacterPicture: async (characterId, file) => {
+    updateCharacterPicture: async (characterId, file, previousFilename) => {
       const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
       if (!['.png', '.webp', '.jpg', '.jpeg', '.gif'].includes(extension)) {
-        throw new ChaError('invalid_argument', 'Choose a PNG, JPEG, WebP, or GIF file.');
+        throw new ChaError('invalid_argument', 'Use a .png, .jpg, .jpeg, .webp, or .gif filename.');
       }
       // Base64 and JSON must fit within the native bridge's 16 MiB request limit.
       if (file.size > 8 * 1024 * 1024) {
@@ -292,8 +292,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       }
       await call('character.picture.update', {
         character_id: characterId,
-        filename: `PICTURE${extension}`,
+        filename: file.name,
         content_base64: data.slice(data.indexOf(',') + 1),
+        ...(previousFilename === undefined ? {} : { previous_filename: previousFilename }),
       }, isRecord);
     },
     getCharacter: (characterId) => call(
@@ -338,6 +339,11 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       { character_id: characterId, filename, content },
       isMarkdownFile,
     ),
+    renameCharacterFile: async (characterId, filename, newFilename) => {
+      await call('character.file.rename', {
+        character_id: characterId, filename, new_filename: newFilename,
+      }, isRecord);
+    },
     deleteCharacterFile: async (characterId, filename) => {
       await call(
         'character.file.delete',
