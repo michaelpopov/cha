@@ -81,7 +81,7 @@ export function NewPersonaScreen({
         <ChevronLeftIcon />
         <span>Personas</span>
       </button>
-      <form className="cha-new-persona" onSubmit={(event) => void submit(event)}>
+      <form className="cha-settings-form" onSubmit={(event) => void submit(event)}>
         <TransliteratingInput
           autoComplete="off"
           autoFocus
@@ -95,7 +95,7 @@ export function NewPersonaScreen({
           value={name}
         />
         {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-new-persona-actions">
+        <div className="cha-settings-form-actions">
           <button
             className="cha-button cha-button-ghost"
             disabled={saving}
@@ -275,25 +275,26 @@ export function PersonaSettingsScreen({
         </div>
       )}
       {detail && (
-        <form className="cha-new-session" onSubmit={(event) => void save(event)}>
-          <label htmlFor="cha-persona-style">Style</label>
-          <select
-            className="cha-form-control"
-            disabled={saving}
-            id="cha-persona-style"
-            onChange={(event) => setStyle(event.target.value === '' ? null : event.target.value)}
-            value={style ?? ''}
-          >
-            <option value="">No style</option>
-            {detail.available_styles.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
-            {unresolvedStyle && (
-              <option value={unresolvedStyle.id}>{unresolvedStyle.label}</option>
-            )}
-          </select>
+        <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+          <label htmlFor="cha-persona-style">Style
+            <select
+              className="cha-form-control"
+              disabled={saving}
+              id="cha-persona-style"
+              onChange={(event) => setStyle(event.target.value === '' ? null : event.target.value)}
+              value={style ?? ''}
+            >
+              <option value="">No style</option>
+              {detail.available_styles.map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+              {unresolvedStyle && (
+                <option value={unresolvedStyle.id}>{unresolvedStyle.label}</option>
+              )}
+            </select>
+          </label>
           {reload.stale && <StaleNotice onReload={() => reload.accept(applyPersona)} />}
-          <div className="cha-new-session-actions">
+          <div className="cha-settings-form-actions">
             <button
               className="cha-button cha-button-ghost"
               onClick={closeSettings}

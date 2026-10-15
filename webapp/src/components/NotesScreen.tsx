@@ -449,7 +449,7 @@ function FindBar({
       ref={findRef}
     >
       <div className="cha-notes-find-row">
-        <label>
+        <label className="cha-notes-find-field">
           Find
           <input
             className="cha-form-control"
@@ -464,13 +464,15 @@ function FindBar({
             value={term}
           />
         </label>
-        <button className="cha-button" disabled={!canMove} onClick={previous} type="button">Previous</button>
-        <button className="cha-button" disabled={!canMove} onClick={next} type="button">Next</button>
-        <span role="status">{status}</span>
-        <button aria-label="Close" className="cha-button" onClick={onClose} type="button">×</button>
+        <div className="cha-notes-find-actions">
+          <button className="cha-button" disabled={!canMove} onClick={previous} type="button">Previous</button>
+          <button className="cha-button" disabled={!canMove} onClick={next} type="button">Next</button>
+          <span role="status">{status}</span>
+          <button aria-label="Close" className="cha-button" onClick={onClose} type="button">×</button>
+        </div>
       </div>
       <div className="cha-notes-find-row">
-        <label>
+        <label className="cha-notes-find-field">
           Replace
           <input
             className="cha-form-control"
@@ -483,8 +485,10 @@ function FindBar({
             value={replacement}
           />
         </label>
-        <button className="cha-button" disabled={!canReplace} onClick={replaceOne} type="button">Replace</button>
-        <button className="cha-button" disabled={!canReplace} onClick={replaceEvery} type="button">Replace all</button>
+        <div className="cha-notes-find-actions">
+          <button className="cha-button" disabled={!canReplace} onClick={replaceOne} type="button">Replace</button>
+          <button className="cha-button" disabled={!canReplace} onClick={replaceEvery} type="button">Replace all</button>
+        </div>
       </div>
       <div className="cha-notes-find-row">
         <label>

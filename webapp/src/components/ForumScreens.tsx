@@ -99,7 +99,7 @@ export function NewForumScreen({
         <ChevronLeftIcon />
         <span>Forums</span>
       </button>
-      <form className="cha-new-forum" onSubmit={(event) => void submit(event)}>
+      <form className="cha-settings-form" onSubmit={(event) => void submit(event)}>
         <TransliteratingInput
           autoComplete="off"
           autoFocus
@@ -112,20 +112,21 @@ export function NewForumScreen({
           type="text"
           value={name}
         />
-        <label htmlFor="cha-forum-persona">Persona</label>
-        <select
-          className="cha-form-control"
-          disabled={saving}
-          id="cha-forum-persona"
-          onChange={(event) => setPersonaId(event.target.value)}
-          value={personaId}
-        >
-          {personas.map((persona) => (
-            <option key={persona.id} value={persona.id}>{persona.display_name}</option>
-          ))}
-        </select>
+        <label htmlFor="cha-forum-persona">Persona
+          <select
+            className="cha-form-control"
+            disabled={saving}
+            id="cha-forum-persona"
+            onChange={(event) => setPersonaId(event.target.value)}
+            value={personaId}
+          >
+            {personas.map((persona) => (
+              <option key={persona.id} value={persona.id}>{persona.display_name}</option>
+            ))}
+          </select>
+        </label>
         {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-new-forum-actions">
+        <div className="cha-settings-form-actions">
           <button
             className="cha-button cha-button-ghost"
             disabled={saving}
@@ -328,22 +329,23 @@ export function ForumMembersScreen({
       </button>
       {!forum && <p className="cha-state-message">No forum is selected.</p>}
       {forum && (
-        <form className="cha-forum-members" onSubmit={(event) => void save(event)}>
-          <select
-            aria-label="Persona"
-            className="cha-form-control"
-            disabled={saving}
-            id="cha-forum-members-persona"
-            onChange={(event) => {
-              setPersonaId(event.target.value);
-              setError(null);
-            }}
-            value={personaId}
-          >
-            {personas.map((persona) => (
-              <option key={persona.id} value={persona.id}>{persona.display_name}</option>
-            ))}
-          </select>
+        <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+          <label htmlFor="cha-forum-members-persona">Persona
+            <select
+              className="cha-form-control"
+              disabled={saving}
+              id="cha-forum-members-persona"
+              onChange={(event) => {
+                setPersonaId(event.target.value);
+                setError(null);
+              }}
+              value={personaId}
+            >
+              {personas.map((persona) => (
+                <option key={persona.id} value={persona.id}>{persona.display_name}</option>
+              ))}
+            </select>
+          </label>
           <div className="cha-member-list">
             {available.map((character) => (
               <label className="cha-member-row" key={character.id}>
@@ -365,7 +367,7 @@ export function ForumMembersScreen({
               <button className="cha-button cha-button-ghost" onClick={refresh.retry} type="button">Try again</button>
             </div>
           )}
-          <div className="cha-forum-members-actions">
+          <div className="cha-settings-form-actions">
             <button
               className="cha-button cha-button-primary"
               disabled={!dirty || selected.size === 0 || !personaId || saving || stale || refresh.refreshing || refresh.failed}

@@ -1280,7 +1280,6 @@ it('edits a forum’s members and persona with one Save action', async () => {
   expect(persona).toHaveValue('reader');
   const save = screen.getByRole('button', { name: 'Save' });
   expect(save).toBeDisabled();
-  expect(save.parentElement).toHaveClass('cha-forum-members-actions');
 
   await user.selectOptions(persona, 'guest');
   expect(save).toBeEnabled();

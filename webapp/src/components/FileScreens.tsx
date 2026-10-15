@@ -355,7 +355,7 @@ function NewMarkdownFileScreen({
         <label>Filename<input className="cha-form-control" value={filename}
           onChange={(event) => { setFilename(event.target.value); setPictureSaved(false); }} disabled={busy} required /></label>
         <div className="cha-file-actions">
-          <button className="cha-button cha-button-primary cha-file-upload-button" disabled={busy}
+          <button className="cha-button cha-button-primary" disabled={busy}
             onClick={() => input.current?.click()} type="button">
             <FileUpIcon />Upload file
           </button>
@@ -380,8 +380,8 @@ function NewMarkdownFileScreen({
             onChange={(event) => setContent(event.target.value)} disabled={busy} rows={12} /></label>
         </>}
         {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-dialog-actions cha-file-actions">
-          <button className="cha-button" disabled={busy} onClick={back} type="button">Cancel</button>
+        <div className="cha-settings-form-actions">
+          <button className="cha-button cha-button-ghost" disabled={busy} onClick={back} type="button">Cancel</button>
           <button className="cha-button cha-button-primary"
             disabled={busy || !filename.trim() || (mode === 'upload' && (!picture || pictureSaved))}
             type="submit">{saving ? 'Adding…' : 'Add file'}</button>

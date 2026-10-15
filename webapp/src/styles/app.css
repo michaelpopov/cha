@@ -493,6 +493,7 @@ select:disabled {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  margin-left: auto;
 }
 
 .cha-definition-upload {
@@ -795,12 +796,6 @@ select:disabled {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  min-height: 3rem;
-  padding: 0.65rem 1.25rem;
-}
-
-.cha-file-upload-button {
-  min-width: min(12.25rem, 100%);
 }
 
 .cha-file-actions svg {
@@ -868,10 +863,6 @@ select:disabled {
 @media (max-width: 560px) {
   .cha-character-file-header .cha-file-name {
     flex-basis: 100%;
-  }
-
-  .cha-character-file-header .cha-detail-action-buttons {
-    margin-left: auto;
   }
 }
 
@@ -1558,23 +1549,6 @@ select:disabled {
   gap: 0.4rem;
 }
 
-.cha-new-session,
-.cha-new-persona,
-.cha-new-character,
-.cha-new-forum {
-  display: grid;
-  width: min(100%, 30rem);
-  gap: 0.8rem;
-  margin: 1.2rem auto 0;
-}
-
-.cha-new-session .cha-transliterating-input,
-.cha-new-persona .cha-transliterating-input,
-.cha-new-character .cha-transliterating-input,
-.cha-new-forum .cha-transliterating-input {
-  gap: 0.8rem;
-}
-
 .cha-form-control {
   width: 100%;
   min-height: 2.25rem;
@@ -1583,6 +1557,14 @@ select:disabled {
   border-radius: 0.75rem;
   color: var(--foreground);
   background: var(--secondary);
+}
+
+select.cha-form-control {
+  appearance: none;
+  padding-right: 2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9 4-4 4 4m-8 6 4 4 4-4'/%3E%3C/svg%3E");
+  background-position: right 0.6rem center;
+  background-repeat: no-repeat;
 }
 
 .cha-password-input {
@@ -1625,23 +1607,6 @@ select:disabled {
   height: 1.1rem;
 }
 
-.cha-new-session-actions,
-.cha-new-persona-actions,
-.cha-new-character-actions,
-.cha-new-forum-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-
-.cha-forum-members {
-  display: grid;
-  width: min(100%, 42rem);
-  gap: 1rem;
-  margin: 1.2rem auto 0;
-}
-
 .cha-member-list {
   border-top: 1px solid var(--border);
 }
@@ -1666,11 +1631,6 @@ select:disabled {
   height: 1.15rem;
   margin: 0;
   accent-color: var(--primary);
-}
-
-.cha-forum-members-actions {
-  display: flex;
-  justify-content: flex-end;
 }
 
 .cha-settings {
@@ -1818,10 +1778,9 @@ select:disabled {
   display: grid;
   gap: 0.8rem;
   margin: 0;
-  padding: 1rem;
-  border: 1px solid var(--border);
-  border-radius: 1rem;
-  background: var(--secondary);
+  min-width: 0;
+  padding: 0;
+  border: 0;
 }
 
 .cha-settings-form legend {
@@ -1883,6 +1842,12 @@ select:disabled {
   align-items: center;
   gap: 0.55rem;
   color: var(--foreground);
+}
+
+.cha-settings-form .cha-member-row {
+  display: flex;
+  color: var(--foreground);
+  font-size: inherit;
 }
 
 .cha-settings-check input {
@@ -2221,7 +2186,8 @@ select:disabled {
   margin: 0.35rem auto 0;
 }
 
-.cha-notes-find-row {
+.cha-notes-find-row,
+.cha-notes-find-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2235,7 +2201,14 @@ select:disabled {
 }
 
 .cha-notes-find .cha-form-control {
-  width: 14rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.cha-notes-find .cha-notes-find-field {
+  display: grid;
+  grid-template-columns: 3.625rem minmax(0, 1fr);
+  width: min(100%, 18rem);
 }
 
 .cha-notes-list {

@@ -823,9 +823,9 @@ TEST_F(AudioDownloads, LiveSpeechPublishesAudioBeforePersistenceAndCachesTheFlus
     SessionJournal journal(path, sessions->prepare(session).session_key);
     journal.record_entry(reply);
     downloads.update_live(session, std::span(&reply, 1));
-    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
-    downloads.request_stop();
-    ASSERT_TRUE(downloads.join_until(std::chrono::steady_clock::now() + 2s));
+    // The cache write is visible before the worker finishes the stream. Wait for
+    // normal completion; stopping the manager here would cancel that same job.
+    ASSERT_TRUE(eventually([&] { return stream->read(0)->complete; }));
     EXPECT_EQ(spoken, "First sentence. Bold across\nchunks. Final.");
     EXPECT_EQ(sessions->lookup_entry_audio(session, 6)->cached->audio, "first-last");
     EXPECT_TRUE(stream->read(0)->complete);

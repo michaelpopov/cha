@@ -145,7 +145,7 @@ export function NewCharacterScreen({
         <ChevronLeftIcon />
         <span>Characters</span>
       </button>
-      <form className="cha-new-character" onSubmit={(event) => void submit(event)}>
+      <form className="cha-settings-form" onSubmit={(event) => void submit(event)}>
         <TransliteratingInput
           autoComplete="off"
           autoFocus
@@ -170,7 +170,7 @@ export function NewCharacterScreen({
           value={description}
         />
         {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-new-character-actions">
+        <div className="cha-settings-form-actions">
           <button
             className="cha-button cha-button-ghost"
             disabled={saving}
@@ -358,7 +358,7 @@ function VoicePreview({ client, voiceId, appearance }: {
         value={text}
       />
       {error && <p className="cha-error-message" role="alert">{error}</p>}
-      {speechConfiguration && <div className="cha-new-session-actions">
+      {speechConfiguration && <div className="cha-settings-form-actions">
         <button
           className="cha-button cha-voice-preview-action"
           disabled={!playing && !text.trim()}
@@ -506,110 +506,116 @@ export function CharacterSettingsScreen({
         </div>
       )}
       {detail && characterId && (
-        <form className="cha-new-session" onSubmit={(event) => void save(event)}>
-          <label htmlFor="cha-character-provider">Provider</label>
-          <select
-            className="cha-form-control"
-            disabled={saving}
-            id="cha-character-provider"
-            onChange={(event) => {
-              setProvider(event.target.value);
-            }}
-            value={provider ?? ''}
-          >
-            <option disabled value="">Select provider</option>
-            {detail.available_providers.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
-            {unresolvedProvider && (
-              <option value={unresolvedProvider.id}>{unresolvedProvider.label}</option>
-            )}
-          </select>
-          <label htmlFor="cha-character-reasoning-effort">Reasoning effort</label>
-          <select
-            className="cha-form-control"
-            disabled={saving}
-            id="cha-character-reasoning-effort"
-            onChange={(event) => {
-              setReasoningEffort(event.target.value === ''
-                ? null
-                : event.target.value as NonNullable<CharacterDetail['reasoning_effort']>);
-            }}
-            value={reasoningEffort ?? ''}
-          >
-            <option value="">Provider default</option>
-            <option value="none">None</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="xhigh">Extra high</option>
-          </select>
-          <label htmlFor="cha-character-web-search">Provider web search</label>
-          <select
-            className="cha-form-control"
-            disabled={saving}
-            id="cha-character-web-search"
-            onChange={(event) => {
-              setWebSearch(event.target.value === ''
-                ? null
-                : event.target.value as NonNullable<CharacterDetail['web_search']>);
-            }}
-            value={webSearch ?? ''}
-          >
-            <option value="">Provider default</option>
-            <option value="off">Off</option>
-            <option value="auto">Automatic</option>
-            <option value="required">Required</option>
-          </select>
-          <label htmlFor="cha-character-web-search-tool">On-demand web search</label>
-          <select className="cha-form-control" disabled={saving}
-            id="cha-character-web-search-tool" value={webSearchTool === null ? '' : String(webSearchTool)}
-            onChange={(event) => setWebSearchTool(event.target.value === '' ? null : event.target.value === 'true')}>
-            <option value="">Workspace default</option>
-            <option value="true">On</option>
-            <option value="false">Off</option>
-          </select>
-          <label htmlFor="cha-character-style">Style</label>
-          <select
-            className="cha-form-control"
-            disabled={saving}
-            id="cha-character-style"
-            onChange={(event) => {
-              setStyle(event.target.value === '' ? null : event.target.value);
-            }}
-            value={style ?? ''}
-          >
-            <option value="">No style</option>
-            {detail.available_styles.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
-            {unresolvedStyle && (
-              <option value={unresolvedStyle.id}>{unresolvedStyle.label}</option>
-            )}
-          </select>
-          <label htmlFor="cha-character-voice">Voice</label>
-          <select
-            className="cha-form-control"
-            disabled={saving}
-            id="cha-character-voice"
-            onChange={(event) => setVoice(event.target.value === '' ? null : event.target.value)}
-            value={voice ?? ''}
-          >
-            <option value="">Application default</option>
-            {detail.available_voices.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
-            {unresolvedVoice && (
-              <option value={unresolvedVoice.id}>{unresolvedVoice.label}</option>
-            )}
-          </select>
+        <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+          <label htmlFor="cha-character-provider">Provider
+            <select
+              className="cha-form-control"
+              disabled={saving}
+              id="cha-character-provider"
+              onChange={(event) => {
+                setProvider(event.target.value);
+              }}
+              value={provider ?? ''}
+            >
+              <option disabled value="">Select provider</option>
+              {detail.available_providers.map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+              {unresolvedProvider && (
+                <option value={unresolvedProvider.id}>{unresolvedProvider.label}</option>
+              )}
+            </select>
+          </label>
+          <label htmlFor="cha-character-reasoning-effort">Reasoning effort
+            <select
+              className="cha-form-control"
+              disabled={saving}
+              id="cha-character-reasoning-effort"
+              onChange={(event) => {
+                setReasoningEffort(event.target.value === ''
+                  ? null
+                  : event.target.value as NonNullable<CharacterDetail['reasoning_effort']>);
+              }}
+              value={reasoningEffort ?? ''}
+            >
+              <option value="">Provider default</option>
+              <option value="none">None</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="xhigh">Extra high</option>
+            </select>
+          </label>
+          <label htmlFor="cha-character-web-search">Provider web search
+            <select
+              className="cha-form-control"
+              disabled={saving}
+              id="cha-character-web-search"
+              onChange={(event) => {
+                setWebSearch(event.target.value === ''
+                  ? null
+                  : event.target.value as NonNullable<CharacterDetail['web_search']>);
+              }}
+              value={webSearch ?? ''}
+            >
+              <option value="">Provider default</option>
+              <option value="off">Off</option>
+              <option value="auto">Automatic</option>
+              <option value="required">Required</option>
+            </select>
+          </label>
+          <label htmlFor="cha-character-web-search-tool">On-demand web search
+            <select className="cha-form-control" disabled={saving}
+              id="cha-character-web-search-tool" value={webSearchTool === null ? '' : String(webSearchTool)}
+              onChange={(event) => setWebSearchTool(event.target.value === '' ? null : event.target.value === 'true')}>
+              <option value="">Workspace default</option>
+              <option value="true">On</option>
+              <option value="false">Off</option>
+            </select>
+          </label>
+          <label htmlFor="cha-character-style">Style
+            <select
+              className="cha-form-control"
+              disabled={saving}
+              id="cha-character-style"
+              onChange={(event) => {
+                setStyle(event.target.value === '' ? null : event.target.value);
+              }}
+              value={style ?? ''}
+            >
+              <option value="">No style</option>
+              {detail.available_styles.map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+              {unresolvedStyle && (
+                <option value={unresolvedStyle.id}>{unresolvedStyle.label}</option>
+              )}
+            </select>
+          </label>
+          <label htmlFor="cha-character-voice">Voice
+            <select
+              className="cha-form-control"
+              disabled={saving}
+              id="cha-character-voice"
+              onChange={(event) => setVoice(event.target.value === '' ? null : event.target.value)}
+              value={voice ?? ''}
+            >
+              <option value="">Application default</option>
+              {detail.available_voices.map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+              {unresolvedVoice && (
+                <option value={unresolvedVoice.id}>{unresolvedVoice.label}</option>
+              )}
+            </select>
+          </label>
           <VoicePreview
             appearance={selectedStyle?.appearance}
             client={client}
             voiceId={voice}
           />
           {reload.stale && <StaleNotice onReload={() => reload.accept(applyCharacter)} />}
-          <div className="cha-new-session-actions">
+          <div className="cha-settings-form-actions">
             <button
               className="cha-button cha-button-ghost"
               onClick={closeSettings}
