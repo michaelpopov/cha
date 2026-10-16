@@ -1096,12 +1096,13 @@ it('keeps a failed profile edit open for retry without replacing the description
 });
 
 it('retries a failed character-detail request without exposing implementation details', async () => {
-  const getCharacter = vi.fn()
+  const getGuide = vi.fn()
     .mockRejectedValueOnce(new ChaError('command_timeout', 'The request timed out.'))
     .mockResolvedValueOnce({
       ...characterDetailFixture,
       character_markdown: '# Guide dossier',
     });
+  const getCharacter = (id: string) => id === 'guide' ? getGuide() : Promise.resolve(characterDetailFixture);
   render(<App client={fixtureClient({ getCharacter })} />);
   await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
@@ -1110,7 +1111,7 @@ it('retries a failed character-detail request without exposing implementation de
   expect(await screen.findByRole('alert')).toHaveTextContent('The request timed out.');
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByText('This character has no PROFILE.md file.')).toBeInTheDocument();
-  expect(getCharacter).toHaveBeenCalledTimes(2);
+  expect(getGuide).toHaveBeenCalledTimes(2);
 });
 
 it('creates a forum with its selected persona and opens the new forum', async () => {
@@ -3247,6 +3248,7 @@ describe('picture sizing', () => {
     render(<App client={fixtureClient({
       createSession: async () => ({ id: 'unused', label: 'New session' }),
       getSessionSnapshot: async (_forumId, sessionId) => sessionId === 'welcome' ? snapshotFixture : unused,
+      getCharacter: async () => ({ ...characterDetailFixture, markdown_files: ['PICTURE.png'] }),
       getCharacterPicture: async () => ({ filename: 'PICTURE.png', mime_type: 'image/png', content_base64: 'portrait' }),
       discardUnusedSession,
     })} connectSessionEvents={events.connect} />);

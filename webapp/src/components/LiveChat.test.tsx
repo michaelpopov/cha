@@ -9,6 +9,7 @@ import type { SessionEventHandlers } from '../api/events';
 import { initialAppState } from '../state/view';
 import {
   bootstrapFixture,
+  characterDetailFixture,
   fixtureClient,
   monoLargeVoice,
   plainVoice,
@@ -3431,6 +3432,13 @@ describe('chat layout changes', () => {
   });
 });
 
+function pictureClient(overrides: Partial<ChaClient> = {}) {
+  return fixtureClient({
+    getCharacter: async () => ({ ...characterDetailFixture, markdown_files: ['CHARACTER.md', 'PICTURE.png'] }),
+    ...overrides,
+  });
+}
+
 describe('chat pictures', () => {
   const portrait = { filename: 'PICTURE.png' as const, mime_type: 'image/png' as const, content_base64: 'original-bytes' };
   const members = { ...snapshotFixture, characters: bootstrapFixture.characters };
@@ -3441,10 +3449,116 @@ describe('chat pictures', () => {
     return { promise, resolve, reject };
   }
 
+  it('selects a different random picture once per response and keeps it through streaming and completion', async () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    const events = drivableEvents();
+    const getCharacterPicture = vi.fn(async (_id: string, filename?: string) => ({ ...portrait, filename: filename!, content_base64: filename! }));
+    render(<App client={pictureClient({
+      getCharacter: async () => ({ ...characterDetailFixture, markdown_files: [
+        'PICTURE.jpg', 'PICTURE_1.jpeg', 'PICTURE_2.png',
+        'portrait.png', 'PICTURES.png', 'PICTURE.txt', 'PICTURE_3.svg',
+      ] }),
+      getCharacterPicture,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    const image = () => screen.getByRole('img', { name: 'Assistant' });
+    await waitFor(() => expect(image()).toHaveAttribute('src', 'data:image/png;base64,PICTURE.jpg'));
+    const generation = { ...members.generation, active: true, character_id: 'assistant', request_id: 7 };
+    act(() => events.handlers[0].onSnapshot({ ...members, generation }));
+    await waitFor(() => expect(image()).toHaveAttribute('src', 'data:image/png;base64,PICTURE_1.jpeg'));
+    expect(getCharacterPicture).toHaveBeenCalledTimes(2);
+
+    const entry = {
+      id: 1, kind: 'character' as const, participant_id: 'assistant', display_name: 'Assistant',
+      addressed_to: '', addressed_to_name: '', text: 'Hello', status: 'streaming' as const,
+      request_id: 7, created_at: null,
+    };
+    act(() => events.handlers[0].onSnapshot({ ...members, generation: { ...generation, phase: 'answering' }, transcript: [entry] }));
+    act(() => events.handlers[0].onAppend({ seq: 1, target: { kind: 'entry', entry_id: 1 }, text: ' there' }));
+    act(() => events.handlers[0].onSnapshot({ ...members, transcript: [{ ...entry, text: 'Hello there', status: 'complete' }] }));
+    await act(async () => {});
+    expect(getCharacterPicture).toHaveBeenCalledTimes(2);
+    expect(image()).toHaveAttribute('src', 'data:image/png;base64,PICTURE_1.jpeg');
+
+    random.mockReturnValue(0.99);
+    act(() => events.handlers[0].onSnapshot({ ...members, generation: { ...generation, request_id: 8 }, transcript: [entry] }));
+    await waitFor(() => expect(image()).toHaveAttribute('src', 'data:image/png;base64,PICTURE_2.png'));
+    expect(getCharacterPicture).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['jpg', 'jpeg', 'png', 'webp', 'gif', 'PNG'])('loads a single suffixed %s picture for consecutive responses', async (extension) => {
+    const events = drivableEvents();
+    const filename = `PICTURE_1.${extension}`;
+    const getCharacterPicture = vi.fn().mockResolvedValue({ ...portrait, filename });
+    render(<App client={pictureClient({
+      getCharacter: async () => ({ ...characterDetailFixture, markdown_files: [filename] }),
+      getCharacterPicture,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    await screen.findByRole('img');
+    for (const [requestId, calls] of [[7, 2], [8, 3]] as const) {
+      act(() => events.handlers[0].onSnapshot({ ...members,
+        generation: { ...members.generation, active: true, character_id: 'assistant', request_id: requestId } }));
+      await waitFor(() => expect(getCharacterPicture).toHaveBeenCalledTimes(calls));
+      expect(getCharacterPicture).toHaveBeenLastCalledWith('assistant', filename);
+    }
+  });
+
+  it('keeps the picture of the current response when the panel opens again', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const events = drivableEvents();
+    const getCharacterPicture = vi.fn(async (_id: string, filename?: string) => ({ ...portrait, filename: filename!, content_base64: filename! }));
+    render(<App client={pictureClient({
+      getCharacter: async () => ({ ...characterDetailFixture, markdown_files: ['PICTURE.png', 'PICTURE_1.png'] }),
+      getCharacterPicture,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    const image = () => screen.getByRole('img', { name: 'Assistant' });
+    act(() => events.handlers[0].onSnapshot({ ...members,
+      generation: { ...members.generation, active: true, character_id: 'assistant', request_id: 7, phase: 'answering' } }));
+    await waitFor(() => expect(image()).toHaveAttribute('src', 'data:image/png;base64,PICTURE_1.png'));
+    fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    await waitFor(() => expect(getCharacterPicture).toHaveBeenCalledTimes(3));
+    expect(getCharacterPicture).toHaveBeenLastCalledWith('assistant', 'PICTURE_1.png');
+    expect(await screen.findByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,PICTURE_1.png');
+  });
+
+  it('shows the next response picture after a picture fails to decode', async () => {
+    const events = drivableEvents();
+    const next = pendingPicture();
+    const getCharacterPicture = vi.fn().mockResolvedValueOnce(portrait).mockReturnValueOnce(next.promise);
+    render(<App client={pictureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    fireEvent.error(await screen.findByRole('img', { name: 'Assistant' }));
+    expect(await screen.findByText('Picture unavailable')).toBeInTheDocument();
+    act(() => events.handlers[0].onSnapshot({ ...members,
+      generation: { ...members.generation, active: true, character_id: 'assistant', request_id: 7 } }));
+    await waitFor(() => expect(getCharacterPicture).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    await act(async () => next.resolve({ ...portrait, content_base64: 'valid' }));
+    expect(screen.getByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,valid');
+    expect(screen.queryByText('Picture unavailable')).not.toBeInTheDocument();
+  });
+
+  it('leaves the panel empty when the character has no matching picture files', async () => {
+    const events = drivableEvents();
+    const getCharacter = vi.fn().mockResolvedValue({ ...characterDetailFixture,
+      markdown_files: ['CHARACTER.md', 'portrait.png', 'PICTURES.jpg', 'PICTURE_1.txt', 'picture.png', 'Picture_1.gif'] });
+    const getCharacterPicture = vi.fn();
+    render(<App client={pictureClient({ getCharacter, getCharacterPicture })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    await act(async () => {});
+    expect(getCharacter).toHaveBeenCalledWith('assistant');
+    expect(getCharacterPicture).not.toHaveBeenCalled();
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
+  });
+
   it('renders original data and display-name alt text, and toggles independently', async () => {
     const events = drivableEvents();
     const getCharacterPicture = vi.fn().mockResolvedValue(portrait);
-    render(<App client={fixtureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
+    render(<App client={pictureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
     expect(await screen.findByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,original-bytes');
     fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
@@ -3470,7 +3584,7 @@ describe('chat pictures', () => {
         status: 'complete', created_at: 1_700_000_000, has_cached_audio: true,
       }],
     };
-    render(<App client={fixtureClient({
+    render(<App client={pictureClient({
       getCharacterPicture: async () => portrait,
       getAudioDownloads: async () => ({ cached_entry_ids: [1], downloads: [] }),
     })}
@@ -3496,7 +3610,7 @@ describe('chat pictures', () => {
   it('keeps the current picture when recorded audio fails to play', async () => {
     vi.spyOn(TextToSpeechSession.prototype, 'play').mockRejectedValue(new Error('Playback failed'));
     const events = drivableEvents();
-    render(<App client={fixtureClient({
+    render(<App client={pictureClient({
       getCharacterPicture: async () => portrait,
       getAudioDownloads: async () => ({ cached_entry_ids: [1], downloads: [] }),
     })}
@@ -3519,7 +3633,7 @@ describe('chat pictures', () => {
     const events = drivableEvents();
     const getCharacterPicture = vi.fn().mockImplementation(() => failure === 'request'
       ? Promise.reject(new Error('read failed')) : Promise.resolve(failure === 'missing' ? null : portrait));
-    render(<App client={fixtureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
+    render(<App client={pictureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
     if (failure === 'decode') fireEvent.error(await screen.findByRole('img', { name: 'Assistant' }));
     if (failure !== 'missing') expect(await screen.findByText('Picture unavailable')).toBeInTheDocument();
@@ -3534,10 +3648,10 @@ describe('chat pictures', () => {
     const old = pendingPicture();
     const current = pendingPicture();
     const getCharacterPicture = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise).mockResolvedValue(null);
-    render(<App client={fixtureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
+    render(<App client={pictureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
     await attachInitial(events, members);
     act(() => events.handlers[0].onSnapshot({ ...members, default_character_id: 'guide' }));
-    await waitFor(() => expect(getCharacterPicture).toHaveBeenLastCalledWith('guide'));
+    await waitFor(() => expect(getCharacterPicture).toHaveBeenLastCalledWith('guide', 'PICTURE.png'));
     await act(async () => { if (outcome === 'resolve') old.resolve(portrait); else old.reject(new Error('obsolete')); });
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
     expect(screen.queryByText('Picture unavailable')).not.toBeInTheDocument();
@@ -3551,7 +3665,7 @@ describe('chat pictures', () => {
     const events = drivableEvents();
     const pending = pendingPicture();
     const getCharacterPicture = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(portrait);
-    render(<App client={fixtureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
+    render(<App client={pictureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
     if (action === 'close') fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
     else fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
@@ -3568,7 +3682,7 @@ describe('chat pictures', () => {
     const events = drivableEvents();
     const old = pendingPicture();
     const getCharacterPicture = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue(null);
-    render(<App client={fixtureClient({
+    render(<App client={pictureClient({
       getCharacterPicture,
       getSessionSnapshot: async (forumId, sessionId) => forumId === 'lobby' ? {
         ...snapshotFixture, forum: bootstrapFixture.forums[1], session_id: sessionId,
@@ -3577,7 +3691,7 @@ describe('chat pictures', () => {
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
     fireEvent.click(screen.getByRole('button', { name: 'PlanningThe Lobby' }));
-    await waitFor(() => expect(getCharacterPicture).toHaveBeenLastCalledWith('guide'));
+    await waitFor(() => expect(getCharacterPicture).toHaveBeenLastCalledWith('guide', 'PICTURE.png'));
     await act(async () => old.resolve(portrait));
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
   });
@@ -3588,7 +3702,7 @@ it('clears a picture immediately on a vault change and ignores the old vault res
   let resolveOld!: (picture: typeof portrait) => void;
   const old = new Promise<typeof portrait>((resolve) => { resolveOld = resolve; });
   const getCharacterPicture = vi.fn().mockReturnValueOnce(old).mockResolvedValue(portrait);
-  const client = fixtureClient({ getCharacterPicture });
+  const client = pictureClient({ getCharacterPicture });
   const chat = (vaultName: string) => <ChatScreen
     client={client} dispatch={vi.fn()} navigate={vi.fn()} playbackPositions={new Map()}
     draft="" onDraftChange={() => {}}
@@ -3600,6 +3714,7 @@ it('clears a picture immediately on a vault change and ignores the old vault res
       sessionSnapshot: snapshotFixture, pictureCharacterId: 'assistant' }}
   />;
   const { rerender } = render(chat('Personal'));
+  await waitFor(() => expect(getCharacterPicture).toHaveBeenCalledTimes(1));
   rerender(chat('Projects'));
   expect(await screen.findByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,new-vault');
   await act(async () => resolveOld({ ...portrait, content_base64: 'old-vault' }));

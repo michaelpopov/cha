@@ -35,27 +35,36 @@ std::string_view limit_query(std::string_view query, std::size_t byte_limit) {
     return query.substr(0, end);
 }
 
-void remove_search_media(nlohmann::ordered_json& value) {
-    if (value.is_object()) {
-        for (const auto* field : {"image", "images", "img", "video", "videos", "audio",
-                 "thumbnail", "thumbnails", "favicon", "logo", "icons", "pictures", "schemas"})
-            value.erase(field);
+nlohmann::ordered_json compact_search_results(const nlohmann::ordered_json& results) {
+    auto output = nlohmann::ordered_json::array();
+    for (const auto& result : results) {
+        if (!result.is_object()) continue;
+        auto entry = nlohmann::ordered_json::object();
+        for (const auto* field : {"title", "url", "description", "content",
+                 "page_age", "age", "published_date"}) {
+            const auto value = result.find(field);
+            if (value != result.end() && value->is_string()) entry[field] = *value;
+        }
+        const auto snippets = result.find("extra_snippets");
+        if (snippets != result.end() && snippets->is_array()) {
+            entry["extra_snippets"] = nlohmann::ordered_json::array();
+            for (const auto& snippet : *snippets) {
+                if (snippet.is_string()) entry["extra_snippets"].push_back(snippet);
+            }
+        }
+        output.push_back(std::move(entry));
     }
-    if (value.is_object() || value.is_array()) {
-        for (auto& child : value) remove_search_media(child);
-    }
+    return output;
 }
 
 std::string bounded_search_output(std::string_view provider, nlohmann::ordered_json response) {
     constexpr std::size_t byte_limit = 32 * 1024;
-    // Web results can still carry thumbnails and other media metadata.
-    remove_search_media(response);
     std::string output = response.dump();
     if (output.size() <= byte_limit) return output;
     const auto original_bytes = output.size();
     response["truncated"] = true;
     response["truncation_reason"] = "Search output size limit; oversized or lower-ranked results were omitted.";
-    do {
+    for (;;) {
         nlohmann::ordered_json* largest = nullptr;
         std::size_t largest_bytes = 0;
         const auto consider = [&](nlohmann::ordered_json& category) {
@@ -77,17 +86,9 @@ std::string bounded_search_output(std::string_view provider, nlohmann::ordered_j
         consider(response); // Tavily's top-level results.
         for (auto& category : response) consider(category); // Brave's categories.
         output = response.dump();
-        if (output.size() <= byte_limit) break;
-        if (!largest) {
-            // Metadata alone can exceed the limit. Do not pass broken JSON or
-            // silently present an empty result set as a successful search.
-            response = {{"truncated", true}, {"error",
-                "Search response exceeded the output size limit. Try a more specific query."}};
-        } else {
-            largest->erase(largest->end() - 1);
-        }
-        output = response.dump();
-    } while (output.size() > byte_limit);
+        if (output.size() <= byte_limit || !largest) break;
+        largest->erase(largest->end() - 1);
+    }
     log_debug(std::string(provider) + " search output truncated: original_bytes="
         + std::to_string(original_bytes) + " output_bytes=" + std::to_string(output.size())
         + " byte_limit=" + std::to_string(byte_limit));
@@ -170,7 +171,7 @@ nlohmann::ordered_json request_web_json(std::string_view provider, CurlHandle& c
     if (status != 200)
         fail_web(provider, subject, subject + " HTTP " + std::to_string(status));
 
-    // Bound depth while parsing, before recursive cleanup and serialization.
+    // Bound depth while parsing, before any recursive copy of the response.
     const auto check_depth = [&](int depth, nlohmann::ordered_json::parse_event_t,
         nlohmann::ordered_json&) {
         if (depth > 64) fail_web(provider, subject, subject + " response nesting limit exceeded");
@@ -356,7 +357,7 @@ std::string search_brave(std::string_view query, std::string_view key,
         curl_easy_escape(curl.get(), query.data(), static_cast<int>(query.size())), curl_free);
     if (!encoded) fail_web("Brave", "Web search", "Could not encode web search query");
     const std::string url = std::string(endpoint) + "?q=" + encoded.get()
-        + "&count=10&extra_snippets=true&text_decorations=false&result_filter=web,news,discussions,faq,infobox,query";
+        + "&count=10&extra_snippets=true&text_decorations=false&result_filter=web,news";
     log_debug_payload("Brave search effective query", query, key);
     const auto parsed = request_web_json("Brave", curl, headers, url, {}, cancelled, key, "Web search");
     if (parsed.is_null()) return {};
@@ -365,7 +366,15 @@ std::string search_brave(std::string_view query, std::string_view key,
         if (!web.is_object() || !web.contains("results") || !web.at("results").is_array())
             fail_web("Brave", "Web search", "Invalid web search results");
     }
-    return bounded_search_output("Brave", parsed);
+    nlohmann::ordered_json output{{"web", {{"results", nlohmann::ordered_json::array()}}}};
+    for (const auto* category : {"web", "news"}) {
+        const auto found = parsed.find(category);
+        if (found != parsed.end() && found->is_object()
+            && found->contains("results") && found->at("results").is_array()) {
+            output[category] = {{"results", compact_search_results(found->at("results"))}};
+        }
+    }
+    return bounded_search_output("Brave", std::move(output));
 }
 
 std::string search_tavily(std::string_view query, std::string_view key,
@@ -391,7 +400,7 @@ std::string search_tavily(std::string_view query, std::string_view key,
     if (!parsed.contains("results") || !parsed["results"].is_array())
         fail_web("Tavily", "Web search", "Invalid web search results");
 
-    return bounded_search_output("Tavily", parsed);
+    return bounded_search_output("Tavily", {{"results", compact_search_results(parsed.at("results"))}});
 }
 
 std::string read_firecrawl(std::string_view url, std::string_view key,
@@ -403,8 +412,10 @@ std::string read_firecrawl(std::string_view url, std::string_view key,
     headers.append("Accept: application/json");
     headers.append("Content-Type: application/json");
     headers.append("Authorization: Bearer " + std::string(key));
+    // AP wraps its desktop and mobile navigation in div.Page-header.
     const auto body = nlohmann::json{{"url", target}, {"formats", {"markdown"}},
-        {"excludeTags", {"img", "picture", "video", "audio", "source", "iframe", "svg", "canvas"}},
+        {"excludeTags", {"img", "picture", "video", "audio", "source", "iframe", "svg", "canvas",
+            ".Page-header"}},
         {"onlyMainContent", true}, {"timeout", 45000}, {"skipTlsVerification", false}}.dump();
     const auto response = request_web_json("Firecrawl", curl, headers, std::string(endpoint),
         body, cancelled, key, "Page reading", 60000L, 8 * 1024 * 1024);

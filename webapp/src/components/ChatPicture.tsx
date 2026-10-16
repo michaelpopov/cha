@@ -5,23 +5,44 @@ import {
 import type { ChaClient } from '../api/client';
 import type { AppState, DataAction } from '../state/view';
 
+type PictureChoice = { requestId: number | undefined; filename: string };
+
 // The parent key remounts this for each vault, session, and character.
-function Picture({ client, characterId, displayName }: {
+function Picture({ client, characterId, displayName, requestId, previousPictures }: {
   client: ChaClient; characterId: string; displayName: string;
+  requestId: number | undefined; previousPictures: Map<string, PictureChoice>;
 }) {
   // Build the data URL once: the chat renders again for every streamed token.
   const [source, setSource] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let current = true;
-    void client.getCharacterPicture(characterId).then(
+    async function load() {
+      const previous = previousPictures.get(characterId);
+      // The panel remounts when it opens again; keep this response's picture.
+      if (previous && previous.requestId === requestId) return client.getCharacterPicture(characterId, previous.filename);
+      const character = await client.getCharacter(characterId);
+      if (!current) return null;
+      // Only the extension ignores letter case.
+      const filenames = character.markdown_files.filter((name) => (
+        name.startsWith('PICTURE') && /^PICTURE(?:_.+)?\.(png|jpe?g|webp|gif)$/i.test(name)));
+      const choices = filenames.length > 1 ? filenames.filter((name) => name !== previous?.filename) : filenames;
+      if (!choices.length) return null;
+      const filename = choices[Math.floor(Math.random() * choices.length)];
+      return client.getCharacterPicture(characterId, filename);
+    }
+    void load().then(
       (picture) => {
-        if (current && picture) setSource(`data:${picture.mime_type};base64,${picture.content_base64}`);
+        if (!current) return;
+        if (picture) previousPictures.set(characterId, { requestId, filename: picture.filename });
+        // Reset here, not before the request, so a broken old image does not show again.
+        setFailed(false);
+        setSource(picture ? `data:${picture.mime_type};base64,${picture.content_base64}` : null);
       },
       () => { if (current) setFailed(true); },
     );
     return () => { current = false; };
-  }, [client, characterId]);
+  }, [client, characterId, requestId, previousPictures]);
   if (failed) return <span role="alert">Picture unavailable</span>;
   return source && <img alt={displayName} src={source} onError={() => setFailed(true)} />;
 }
@@ -52,6 +73,17 @@ export function ChatPictureLayout({ children, client, dispatch, state }: {
     state.bootstrap?.vault_name, state.activeConversation?.forumId,
     state.activeConversation?.sessionId, character?.id,
   ]);
+  // The last selection per character. The chat screen remounts for each conversation.
+  const [previousPictures] = useState(() => new Map<string, PictureChoice>());
+  const snapshot = state.sessionSnapshot;
+  const lastTurn = snapshot && [...snapshot.transcript].reverse().find((entry) => (
+    entry.request_id !== undefined && (entry.kind === 'human'
+      ? entry.addressed_to === character?.id
+      : (entry.kind === 'character' || entry.kind === 'error') && entry.participant_id === character?.id)
+  ));
+  // The prompt retains the request ID even if generation stops before answering.
+  const requestId = snapshot?.generation.character_id === character?.id
+    ? snapshot?.generation.request_id : lastTurn?.request_id;
   function resize(requested: number) {
     if (resizable) dispatch({ type: 'resize-picture', width: Math.min(maximum, Math.max(128, requested)) });
   }
@@ -107,7 +139,8 @@ export function ChatPictureLayout({ children, client, dispatch, state }: {
         onLostPointerCapture={finish}
       />}
       <div className="cha-picture-content">
-        {character && <Picture key={pictureKey} client={client} characterId={character.id} displayName={character.display_name} />}
+        {character && <Picture key={pictureKey} client={client} characterId={character.id}
+          displayName={character.display_name} requestId={requestId} previousPictures={previousPictures} />}
       </div>
     </div>}
   </div>;
