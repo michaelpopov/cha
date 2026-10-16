@@ -87,6 +87,7 @@ describe('Notes in the application', () => {
     fireEvent.keyDown(prompt, { key: 'Enter' });
     expect(await screen.findByRole('treeitem', { name: expected })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: `Send to ${expected}` })).toBeInTheDocument();
+    expect(document.title).toBe(`CHA: Personal — ${expected}`);
     await waitFor(() => expect(prompt).toHaveValue(''));
     expect(prompt).toHaveFocus();
     expect(renameNoteItem).toHaveBeenCalledWith(plan.id, expected);
@@ -102,6 +103,7 @@ describe('Notes in the application', () => {
     await openNotes();
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Chat draft');
     expect(screen.getByRole('main')).toHaveAttribute('data-view', 'chat');
+    expect(document.title).toBe('CHA: Personal — Welcome');
     expect(window.location.href).toBe(address);
     fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Chat draft');
@@ -125,6 +127,7 @@ describe('Notes in the application', () => {
     expect(await screen.findByText('Saved plan')).toBeInTheDocument();
     await waitFor(() => expect(noteEditor().view.dom).toHaveFocus());
     expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    expect(document.title).toBe('CHA: Personal — Plan');
     expect(window.location.href).toBe(address);
     expect(screen.queryByRole('heading', { name: 'Notes' })).not.toBeInTheDocument();
     act(() => screen.getByRole('treeitem', { name: 'Plan' }).focus());
@@ -133,8 +136,12 @@ describe('Notes in the application', () => {
     expect(getNote).toHaveBeenCalledOnce();
     expect(screen.getByText('Saved plan')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    expect(document.title).toBe('CHA: Personal — Plan');
     fireEvent.click(screen.getByRole('button', { name: /^Welcome/ }));
     expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('Chat draft');
+    expect(document.title).toBe('CHA: Personal — Welcome');
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(document.title).toBe('CHA: Personal');
   });
 
   it.each(['immediate', 'delayed'])('focuses the new note editor with %s loading', async (loading) => {

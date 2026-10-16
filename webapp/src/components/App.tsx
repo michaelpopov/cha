@@ -535,11 +535,6 @@ export function App({
   }, [composerKey]);
 
   useEffect(() => {
-    const vaultName = state.bootstrap?.vault_name;
-    document.title = vaultName ? `CHA: ${vaultName}` : 'CHA';
-  }, [state.bootstrap?.vault_name]);
-
-  useEffect(() => {
     if (request.current?.client !== client) {
       request.current = { client, promise: client.getBootstrap() };
     }
@@ -991,6 +986,16 @@ export function App({
   const wholeApplication = state.sessionOperation !== 'idle' && state.mainView === 'chat';
   const chatVisible = ready && !wholeApplication && state.mainView === 'chat';
   const notesVisible = ready && !wholeApplication && state.mainView === 'notes';
+  const windowItemName = notesVisible
+    ? noteItems.find(({ id }) => id === state.activeNoteId)?.name
+    : chatVisible ? state.activeConversationLabel : null;
+
+  useEffect(() => {
+    const vaultName = state.bootstrap?.vault_name;
+    document.title = vaultName
+      ? `CHA: ${vaultName}${windowItemName ? ` — ${windowItemName}` : ''}`
+      : 'CHA';
+  }, [state.bootstrap?.vault_name, windowItemName]);
 
   const detailRefresh = {
     epoch: detailEpoch,
