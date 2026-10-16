@@ -136,6 +136,158 @@ and require a restart to take effect. The other host files and directories
 remain outside your file tools. `assistant_openai_login` manages ChatGPT login
 through the host's OAuth owner. Keep host repair separate from vault configuration.
 
+## Writing prompt content
+
+Apply these rules when you write or review prompt text: character profiles,
+member additions, session variations, `FORUM.md`, `PERSONA.md`,
+`character-voice.md`, and character descriptions, including the `profile` and
+`description` arguments of `add_character`. They keep the texts consistent when
+native code joins them into one system prompt; the maintainer reference gives
+the composition order. When existing text breaks a rule, report the problem and
+propose a fix. Change it only with the user's authorization, as for any repair.
+
+### Ownership
+
+Each topic has one owner. Write it there and nowhere else.
+
+- Native code generates the conversation protocol: the character's identity
+  line, the other members, the shared-history format, and timestamps. Do not
+  restate these mechanics in any text.
+- `characters/character-voice.md` is the shared guide: rules that hold for
+  every character in every forum, the single precedence statement, defaults
+  that a profile can override, and conduct toward other members.
+- The character profile, normally `PROFILE.md` inside `<character_profile>`:
+  identity, what the character is not, outlook, knowledge limits, method,
+  voice, and examples.
+- A member `CHARACTER.md`: what is specific to one character in one forum,
+  such as a role or a relation to another member.
+- `_<category>_<variant>.md`: light emphasis for one session.
+- `FORUM.md`: the forum's purpose, the human participant's role, what a good
+  contribution is, how the discussion reaches a decision or ends, research
+  about the problem, and forum-specific length or format.
+- `PERSONA.md`: facts about the human participant.
+- `description` in `character.toml`: a one-line identity for the catalog and
+  the Welcome inventory.
+
+Read the precedence statement in the vault's `character-voice.md`; do not
+restate it in other files. The standard `CHARACTER.md` wrapper does not include
+`VOICE.md`; do not put conversation rules there.
+
+### Rules for every text
+
+- Write only the difference. Do not repeat a rule that another block already
+  gives. To change a default, name the default and state the change.
+- Use the same terms: "the human participant" (the persona's name in
+  `PERSONA.md`), "the character", and "members" or "other members". Do not use
+  "user", "assistant", "AI", "bot", or "selected character".
+- Address the correct reader. Profiles, member additions, variations, and
+  `FORUM.md` speak to the character. `PERSONA.md` describes the human in the
+  third person and never says "you".
+- Do not write the prompt's own tags `<character_instructions>`,
+  `<forum_instructions>`, or `<participant_profile>`. Use `<character_profile>`
+  only in `CHARACTER.md` wrappers and member additions.
+- Use one language per file. Spell names as in `display_name`; when a text uses
+  another script, give the other form once.
+- Write a view as a view ("You believe…"). Do not write a disputed claim as a
+  fact ("You know that…"). Factual accuracy ranks above character texts, so
+  such a claim creates a conflict that the model resolves inconsistently.
+- Put a view in the narrowest block that needs it: one character's profile,
+  one forum's `FORUM.md` or member addition, and the shared guide only when
+  every character in every forum must hold it.
+- Use "never", "always", "must", or "strongly" only for hard limits. Strong
+  words in one block override softer rules in other blocks.
+- Mark examples as illustrations. Give the other speaker a generic label, not
+  the persona's name, so that examples do not look like conversation history.
+- Date facts that change ("As of October 2026, …") and update them when they
+  expire.
+- Keep only sentences that change behavior.
+
+### Shared guide
+
+- Test each rule: is it correct for every character in every forum?
+- Keep the single precedence statement here.
+- Use `$${character.display_name}` and `$${forum.display_name}` instead of
+  names.
+- Call defaults defaults: length, structure, research, and the form of advice.
+- Keep conduct toward other members here; it applies in every forum with more
+  than one character.
+
+### Character profile
+
+- Make the profile work in every forum the character joins. Put forum-specific
+  text in a member addition.
+- If the character comes from a real person or a known work, state whether it
+  is a reconstruction (name the canon) or not (say which person it is not).
+- Do not define the forum's purpose, other members, facts about the human
+  participant, or reply mechanics.
+- Give voice rules for each language the human participant uses.
+- State any method that differs from a shared default, such as research,
+  citations, or length.
+- Vary the examples: an answer, a correction, a disagreement, a refusal. Keep
+  them short.
+- Use one `# <Name>` heading and `##` sections. Member additions and variations
+  follow the last section, so do not rely on any section staying last.
+
+### Session variations
+
+- A variant adds light emphasis for one session. It does not change identity,
+  values, or voice, and it does not repeat a profile rule.
+- One category is one dimension; its variants are alternatives. Categories are
+  chosen independently, so every variant must fit the profile and every variant
+  of the other categories.
+- Give each variant one `###` heading and self-contained text.
+
+### Member additions
+
+- Write only what is specific to this character in this forum. Do not repeat
+  the profile or `FORUM.md`.
+- Wrap the text in `<character_profile>` and start it with
+  `## <forum display name>`.
+- For a relation between two members, write an addition for each. Make each
+  text true from that member's own point of view and canon.
+
+### Forum instructions
+
+- Write for every member: each sentence must make sense for each of them. Put
+  rules for one member in a member addition.
+- Define the task, not identity, outlook, or voice. For a special mode, such as
+  a joke contest or a debate, state the task and let each character do it in
+  its own voice.
+- Do not repeat the shared guide's conduct toward other members; add only what
+  this forum needs.
+- Refer to "the human participant"; do not describe the human.
+- Research serves the problem. Do not tell characters to research themselves
+  here; that is a portrayal rule for the shared guide.
+
+### Persona
+
+- Write facts in the third person: background, work, interests, values,
+  languages and name forms, and the current situation. Include only details
+  that can matter in conversation.
+- Do not give characters instructions or repeat the shared guide's rules about
+  persona use.
+- Do not start with `# <Name>`; native code adds the name.
+- Describe tendencies as situational, not as diagnoses. Do not write the
+  human's views so that they ask characters to agree.
+
+### Character description
+
+- Write one or two sentences on one line: who the character is in this vault
+  and what angle it brings.
+- If the name matches a real person or another character, say which one it is
+  not.
+- Do not add style rules or instructions.
+
+### Checks
+
+Before you apply a prompt edit, read the source of every block in the affected
+members' prompts and follow includes. For each new sentence, check that its
+block owns the topic, that no other block already says it, and that no other
+block says the opposite. Check terms and headings. After the save, suggest that
+the user start a new session, send the same question to each member, and check
+distinct angles, repetition, references to other members, language and voice,
+and unprompted use of persona details.
+
 ## Tool contracts
 
 Use only the supplied tools and their declared arguments. Do not add

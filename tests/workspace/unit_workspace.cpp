@@ -931,14 +931,17 @@ TEST(Workspace, AddsForumMemberPromptAndResolvesVariableOverridesAndDefaultPerso
     const auto definition = workspace.character_definition("lobby", "guide");
     EXPECT_EQ(member->character_prompt, "Base prompt: member\n\nMember prompt: member");
     EXPECT_TRUE(definition.system_prompt.starts_with("# Conversation protocol\n"));
+    EXPECT_NE(definition.system_prompt.find("The current human participant is \"Reader\"."),
+        std::string::npos);
     EXPECT_NE(definition.system_prompt.find(
         "<character_instructions>\n" + member->character_prompt
         + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
         std::string::npos);
     EXPECT_NE(definition.system_prompt.find(
-        "\n</forum_instructions>\n\n## Participants\n\n"
-        "<participant_profile>\n### Reader\nREADER_ONLY_BODY\n</participant_profile>"),
+        "\n</forum_instructions>\n\n"
+        "<participant_profile name=\"Reader\">\nREADER_ONLY_BODY\n</participant_profile>"),
         std::string::npos);
+    EXPECT_EQ(definition.system_prompt.find("## Participants"), std::string::npos);
     EXPECT_EQ(workspace.find_character("guide")->markdown, "Base prompt: definition\n");
     EXPECT_NE(definition.system_prompt.find("READER_ONLY_BODY"), std::string::npos);
     EXPECT_EQ(definition.system_prompt.find("AUTHOR_ONLY_BODY"), std::string::npos);
@@ -963,6 +966,62 @@ TEST(Workspace, AddsForumMemberPromptAndResolvesVariableOverridesAndDefaultPerso
         std::string::npos);
 }
 
+TEST(Workspace, EscapesParticipantNamesAndPreservesProfileText) {
+    test::TestWorkspace fixture;
+    const std::string profile = "# Миша\n\nKeep \"quotes\", <tags> & profile text.\n";
+    fixture.add_persona("reader", "Reader", profile);
+    std::ofstream(fixture.root() / "personas" / "reader" / "persona.toml")
+        << R"(display_name = "Миша \"M\" & <reader>'s")" << '\n';
+    std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\ndefault_persona = \"reader\"\n";
+
+    const auto prompt = Workspace::load(fixture.root())
+        .character_definition("lobby", "guide").system_prompt;
+    EXPECT_NE(prompt.find(
+        R"(The current human participant is "Миша \"M\" & <reader>'s".)"),
+        std::string::npos);
+    EXPECT_NE(prompt.find(
+        "<participant_profile name=\"Миша &quot;M&quot; &amp; &lt;reader&gt;&apos;s\">\n"
+        + profile + "\n</participant_profile>"), std::string::npos);
+}
+
+TEST(Workspace, DescribesOtherForumMembersAndSharedReplies) {
+    test::TestWorkspace fixture;
+    const auto single_prompt = Workspace::load(fixture.root())
+        .character_definition("lobby", "guide").system_prompt;
+    EXPECT_NE(single_prompt.find("The current human participant is \"Guest\"."),
+        std::string::npos);
+    EXPECT_NE(single_prompt.find(
+        "Other characters currently participating in this forum (JSON): []."),
+        std::string::npos);
+    EXPECT_EQ(single_prompt.find("Your completed replies"), std::string::npos);
+
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"test\"\n"
+        "description = \"Current character description.\"\n");
+    fixture.add_character("analyst", "Аналитик");
+    fixture.add_character("observer", "Observer");
+    fixture.add_character("outsider", "Outsider");
+    std::ofstream(fixture.root() / "characters" / "analyst" / "character.toml",
+        std::ios::app)
+        << R"(description = 'Independent "analyst" & observer.')" << '\n';
+    for (const auto* id : {"analyst", "observer"}) {
+        const auto member = fixture.root() / "forums" / "lobby" / "members" / id;
+        std::filesystem::create_directories(member);
+        std::ofstream(member / "character.toml") << "# forum membership\n";
+    }
+
+    const auto prompt = Workspace::load(fixture.root())
+        .character_definition("lobby", "guide").system_prompt;
+    EXPECT_NE(prompt.find(
+        "Other characters currently participating in this forum (JSON): "
+        R"([{"name":"Аналитик","description":"Independent \"analyst\" & observer."},{"name":"Observer"}].)"),
+        std::string::npos);
+    EXPECT_NE(prompt.find(
+        "Your completed replies are included in the shared chat history "
+        "supplied to other characters on their later turns."), std::string::npos);
+}
+
 TEST(Workspace, BuildsCharacterDefinitionWithVariantsBeforeSystemPromptAssembly) {
     test::TestWorkspace fixture;
     std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
@@ -973,7 +1032,7 @@ TEST(Workspace, BuildsCharacterDefinitionWithVariantsBeforeSystemPromptAssembly)
     const auto original = workspace.character_definition("lobby", "guide");
     const auto definition = workspace.character_definition("lobby", "guide", "\nVariant.\n");
     const std::string expected = "Voice.\n<character_profile>Base.\n\nForum trait.\n\n"
-        "Variant.\n</character_profile>\nTail.";
+        "<session_traits>\nVariant.\n</session_traits>\n</character_profile>\nTail.";
 
     EXPECT_EQ(definition.character_prompt, expected);
     EXPECT_EQ(definition.character_description, "Base.\n\nForum trait.\n\nVariant.");
@@ -983,6 +1042,9 @@ TEST(Workspace, BuildsCharacterDefinitionWithVariantsBeforeSystemPromptAssembly)
     EXPECT_EQ(workspace.find_forum_member("lobby", "guide")->character_prompt,
         original.character_prompt);
     EXPECT_EQ(workspace.character_definition("lobby", "guide").system_prompt,
+        original.system_prompt);
+    EXPECT_EQ(original.system_prompt.find("<session_traits>"), std::string::npos);
+    EXPECT_EQ(workspace.character_definition("lobby", "guide", " \n\t ").system_prompt,
         original.system_prompt);
 }
 
@@ -994,7 +1056,8 @@ TEST(Workspace, BuildsEntranceCharacterDefinitionWithVariants) {
     const auto definition = workspace.character_definition(
         workspace_entrance_id, workspace_assistant_id, "Assistant variant.");
     std::string expected = original.character_prompt;
-    add_to_character_profile(expected, "Assistant variant.");
+    add_to_character_profile(expected,
+        "<session_traits>\nAssistant variant.\n</session_traits>");
 
     EXPECT_FALSE(original.character_prompt.empty());
     EXPECT_EQ(definition.character_prompt, expected);

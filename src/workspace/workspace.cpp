@@ -1006,36 +1006,58 @@ std::string character_description(std::string_view prompt) {
     return std::string(trim_view(prompt.substr(body, end - body)));
 }
 
-std::string participant_roster(const WorkspacePersona* persona) {
-    std::string result = "## Participants\n\n<participant_profile>\n### ";
-    if (persona == nullptr) {
-        result += guest_name;
-        result += "\nA special application user active before a forum is selected.";
-    } else {
-        result += persona->display_name;
-        result += '\n';
-        result += persona->prompt;
+std::string escape_xml_attribute(std::string_view value) {
+    std::string result;
+    for (const char character : value) {
+        switch (character) {
+        case '&': result += "&amp;"; break;
+        case '<': result += "&lt;"; break;
+        case '>': result += "&gt;"; break;
+        case '"': result += "&quot;"; break;
+        case '\'': result += "&apos;"; break;
+        default: result += character; break;
+        }
     }
-    return result + "\n</participant_profile>";
+    return result;
+}
+
+std::string participant_roster(const WorkspacePersona* persona) {
+    return "<participant_profile name=\""
+        + escape_xml_attribute(persona ? persona->display_name : guest_name)
+        + "\">\n"
+        + (persona ? persona->prompt
+                   : "A special application user active before a forum is selected.")
+        + "\n</participant_profile>";
 }
 
 std::string forum_context(
     const WorkspaceForumMember& current,
     const WorkspaceCharacter& character,
-    std::span<const WorkspaceForumMember> members,
+    const WorkspaceForum& forum,
     const Workspace& workspace) {
     Json others = Json::array();
-    for (const WorkspaceForumMember& member : members) {
+    for (const WorkspaceForumMember& member : forum.members) {
         if (member.character_id == current.character_id) continue;
-        others.push_back(
-            workspace.find_character(member.character_id)->character.display_name);
+        const auto& other = workspace.find_character(member.character_id)->character;
+        Json encoded{{"name", other.display_name}};
+        if (other.description) encoded["description"] = *other.description;
+        others.push_back(std::move(encoded));
     }
-    return
+    const auto* persona = workspace.find_persona(forum.default_persona_id);
+    std::string result =
         "# Conversation protocol\n\nYou are the character named "
         + Json(character.character.display_name).dump()
+        + ".\nThe current human participant is "
+        + Json(persona ? persona->display_name : guest_name).dump()
         + ".\nOther characters currently participating in this forum (JSON): "
         + others.dump()
-        + ".\n\nShared exchanges involving other characters are supplied in user-role "
+        + ".";
+    if (!others.empty()) {
+        result += "\nYour completed replies are included in the shared chat history "
+                  "supplied to other characters on their later turns.";
+    }
+    return result
+        + "\n\nShared exchanges involving other characters are supplied in user-role "
           "messages under the exact heading `"
         + std::string(shared_history_heading)
         + "`. Each following line is "
@@ -2280,11 +2302,15 @@ CharacterDefinition Workspace::character_definition(
     }
     std::string character_prompt = member->character_prompt;
     std::string description = character_description(character_prompt);
-    add_to_character_profile(character_prompt, variants);
+    variants = trim_view(variants);
+    if (!variants.empty()) {
+        add_to_character_profile(character_prompt,
+            "<session_traits>\n" + std::string(variants) + "\n</session_traits>");
+    }
     add_to_character_profile(description, variants);
 
     const WorkspaceForum& forum = *find_forum(forum_id);
-    std::string system_prompt = forum_context(*member, *character, forum.members, *this)
+    std::string system_prompt = forum_context(*member, *character, forum, *this)
         + "\n\n";
     if (forum_id == workspace_entrance_id) {
         system_prompt += "You are Assistant, the CHA application guide. In Welcome you can "

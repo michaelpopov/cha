@@ -483,7 +483,7 @@ TEST(SessionController, SelectsOneCharacterVariantPerCategoryForEachSession) {
         const auto& definition = *definitions.front();
         EXPECT_EQ(store->forum_system_prompt({"lobby", session_id}, "guide"),
             definition.system_prompt);
-        const std::string suffix = definition.character_prompt.substr(
+        const std::string suffix = definition.character_description.substr(
             std::string("Base Guide in The Lobby.").size());
         const auto category_one_end = suffix.find("\n\n", 2);
         ASSERT_NE(category_one_end, std::string::npos);
@@ -495,10 +495,12 @@ TEST(SessionController, SelectsOneCharacterVariantPerCategoryForEachSession) {
         EXPECT_TRUE(one == "CATEGORY_ONE_A" || one == "CATEGORY_ONE_B");
         EXPECT_TRUE(two == "CATEGORY_TWO_A" || two == "CATEGORY_TWO_B" || two == "CATEGORY_TWO_C");
         EXPECT_EQ(suffix.substr(category_two_end), "\n\nCATEGORY_TEN");
-        EXPECT_EQ(definition.character_description, "Base Guide in The Lobby." + suffix);
+        const std::string expected = "Base Guide in The Lobby.\n\n<session_traits>\n"
+            + suffix.substr(2) + "\n</session_traits>";
+        EXPECT_EQ(definition.character_prompt, expected);
         EXPECT_TRUE(definition.system_prompt.starts_with("# Conversation protocol\n"));
         EXPECT_NE(definition.system_prompt.find(
-            "<character_instructions>\nBase Guide in The Lobby." + suffix
+            "<character_instructions>\n" + expected
             + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
             std::string::npos);
         EXPECT_EQ(definition.system_prompt.find("IGNORED"), std::string::npos);
@@ -528,13 +530,15 @@ TEST(SessionController, InsertsCharacterVariantsBeforeLastProfileClosingTag) {
             "$$(../character-voice.md)\n\n<character_profile>\n"
             "$$(PROFILE.md)\n</character_profile>\nAfter profile.",
             "Character voice.\n\n<character_profile>\nBase profile.\n\n"
-            "Variant trait.\n</character_profile>\nAfter profile.",
+            "<session_traits>\nVariant trait.\n</session_traits>\n"
+            "</character_profile>\nAfter profile.",
         },
         {
             "<character_profile>Earlier profile.</character_profile>\n"
             "<character_profile>$$(PROFILE.md)</character_profile>",
             "<character_profile>Earlier profile.</character_profile>\n"
-            "<character_profile>Base profile.\n\nVariant trait.\n</character_profile>",
+            "<character_profile>Base profile.\n\n<session_traits>\nVariant trait.\n"
+            "</session_traits>\n</character_profile>",
         },
     };
     for (const auto& [prompt, expected] : cases) {
@@ -560,6 +564,7 @@ TEST(SessionController, PreservesCharacterPromptsWithoutVariantFiles) {
     std::ofstream(fixture.root() / "characters" / "guide" / "NOTES.md") << "Unused notes";
     const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
     const auto expected = workspace->character_definition("lobby", "guide");
+    EXPECT_EQ(expected.system_prompt.find("<session_traits>"), std::string::npos);
     const auto definitions = capture_session_definitions(workspace, "no-variants");
     ASSERT_EQ(definitions.size(), 2U);
     for (const auto& definition : definitions) {
@@ -585,7 +590,8 @@ TEST(SessionController, CombinesBaseForumAndVariantDescriptionsInsideProfile) {
     ASSERT_EQ(definitions.size(), 2U);
     const std::string expected =
         "Character voice.\n<character_profile>Base profile.\n\n"
-        "Forum trait for The Lobby.\n\nVariant trait.\n</character_profile>\n";
+        "Forum trait for The Lobby.\n\n<session_traits>\nVariant trait.\n"
+        "</session_traits>\n</character_profile>\n";
     for (const auto& definition : definitions) {
         EXPECT_EQ(definition->character_prompt, expected);
         EXPECT_TRUE(definition->system_prompt.starts_with("# Conversation protocol\n"));
