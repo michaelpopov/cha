@@ -3,6 +3,7 @@
 #include "workspace/workspace.h"
 
 #include <atomic>
+#include <cstddef>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -30,17 +31,19 @@ std::string search_tavily(std::string_view query, std::string_view key,
 using WebReadExecutor = std::function<std::string(
     const WorkspaceWebSearch&, std::string_view, const std::atomic_bool&)>;
 
-// Returns title, URL, and Markdown as JSON capped at 64 KiB.
+// Returns title, URL, and Markdown as JSON. Model tools default to a 64 KiB cap.
 std::string read_firecrawl(std::string_view url, std::string_view key,
     const std::atomic_bool& cancelled,
-    std::string_view endpoint = "https://api.firecrawl.dev/v2/scrape");
+    std::string_view endpoint = "https://api.firecrawl.dev/v2/scrape",
+    std::size_t output_byte_limit = 64 * 1024);
 
 std::string read_web_reader(std::string_view url, std::string_view base_url,
-    const std::atomic_bool& cancelled);
+    const std::atomic_bool& cancelled, std::size_t output_byte_limit = 64 * 1024);
 
 // Enabled web_reader runs first; enabled Firecrawl is the fallback.
 std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
     std::string_view firecrawl_key, const std::atomic_bool& cancelled,
-    std::string_view firecrawl_endpoint = "https://api.firecrawl.dev/v2/scrape");
+    std::string_view firecrawl_endpoint = "https://api.firecrawl.dev/v2/scrape",
+    std::size_t output_byte_limit = 64 * 1024);
 
 } // namespace cha

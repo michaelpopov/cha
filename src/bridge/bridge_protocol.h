@@ -139,6 +139,7 @@ enum class Method {
     notes_list,
     notes_create,
     notes_get,
+    notes_read_page,
     notes_save,
     notes_rename,
     notes_delete,

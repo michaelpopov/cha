@@ -379,6 +379,7 @@ export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}):
     listNoteItems: async () => [],
     createNoteItem: unavailable('notes.create'),
     getNote: unavailable('notes.get'),
+    readNotePage: unavailable('notes.readPage'),
     saveNote: unavailable('notes.save'),
     renameNoteItem: unavailable('notes.rename'),
     deleteNoteItem: unavailable('notes.delete'),

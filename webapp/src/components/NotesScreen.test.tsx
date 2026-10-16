@@ -7,6 +7,7 @@ import {
   ChaError,
   type NoteContent,
   type NoteItem,
+  type NotePage,
 } from '../api/client';
 import { pictureTypeMessage } from '../notes/pictures';
 import { useNoteLeave } from '../notes/useNoteLeave';
@@ -46,6 +47,8 @@ function Harness({
   items = [plan],
   getNote = async (id: number) => ({ id, document: documentWith(id === 5 ? 'Essay text' : 'Alpha') }),
   saveNote = async () => undefined,
+  readNotePage = async () => { throw new Error('Page reading is unavailable.'); },
+  renameNoteItem = async (id: number, name: string) => ({ ...plan, id, name }),
   draft = '',
   voice = false,
   sendPhrase = '',
@@ -54,6 +57,8 @@ function Harness({
   items?: NoteItem[];
   getNote?: (id: number) => Promise<NoteContent>;
   saveNote?: (id: number, document: Record<string, unknown>) => Promise<void>;
+  readNotePage?: (url: string) => Promise<NotePage>;
+  renameNoteItem?: (id: number, name: string) => Promise<NoteItem>;
   draft?: string;
   voice?: boolean;
   sendPhrase?: string;
@@ -73,6 +78,8 @@ function Harness({
   const client = useRef(fixtureClient({
     getNote: (id) => getNoteRef.current(id),
     saveNote: (id, document) => saveNoteRef.current(id, document),
+    readNotePage,
+    renameNoteItem,
     getVoiceInputRuntime: async () => (voice ? { ...voiceRuntime, send_phrase: sendPhrase } : null),
   })).current;
   const leave = useNoteLeave(() => saveRef.current, {
@@ -125,6 +132,171 @@ async function openedEditor(): Promise<Editor> {
 }
 
 describe('Notes screen', () => {
+  it.each([
+    ['New note', '', 'Title', true],
+    ['New note 1', '', 'Title', true],
+    ['New note 12', '', '  Title  ', true],
+    ['My note', '', 'Title', false],
+    ['New notebook', '', 'Title', false],
+    ['New note draft', '', 'Title', false],
+    ['New note', 'Existing text', 'Title', false],
+    ['New note', '', '  ', false],
+  ] as const)('names %s from the page only when empty with a default name (text=%s, title=%s)',
+    async (name, text, title, shouldRename) => {
+      const renameNoteItem = vi.fn(async (id: number, next: string) => ({ ...plan, id, name: next }));
+      render(<Harness
+        items={[{ ...plan, name }]}
+        getNote={async (id) => ({ id, document: documentWith(text) })}
+        readNotePage={async () => ({ url: 'https://example.org/', title, markdown: 'Article' })}
+        renameNoteItem={renameNoteItem}
+        draft="example.org"
+      />);
+      const editor = await openedEditor();
+      fireEvent.click(screen.getByRole('button', { name: `Send to ${name}` }));
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(''));
+      expect(editor.getText()).toContain('Article');
+      if (shouldRename) expect(renameNoteItem).toHaveBeenCalledWith(plan.id, 'Title');
+      else expect(renameNoteItem).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [['Title'], 'Title', 'Title 1'],
+    [['Title', 'Title 1', 'Title 3'], 'Title', 'Title 2'],
+    [[], 'Title', 'Title'],
+    [[], 'New note', 'New note'],
+  ] as const)('chooses an available title among siblings %j', async (names, title, expected) => {
+    const folder: NoteItem = { id: 3, parent_id: null, kind: 'folder', name: 'Folder' };
+    const original = { ...plan, parent_id: folder.id, name: 'New note' };
+    const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...original, id, name }));
+    render(<Harness
+      items={[folder, original,
+        { id: 20, parent_id: null, kind: 'note', name: 'Title' },
+        ...names.map((name, index) => ({ id: 30 + index, parent_id: folder.id, kind: 'note' as const, name })),
+      ]}
+      getNote={async (id) => ({ id, document: documentWith('') })}
+      readNotePage={async () => ({ url: 'https://example.org/', title, markdown: 'Article' })}
+      renameNoteItem={renameNoteItem}
+      draft="example.org"
+    />);
+    const editor = await openedEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Folder / New note' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(''));
+    expect(renameNoteItem).toHaveBeenCalledWith(plan.id, expected);
+    expect(editor.getText({ blockSeparator: '\n' })).toBe(`${title}\nArticle`);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it.each(['name', 'body'])('keeps a %s changed while the page is loading', async (change) => {
+    let finish!: (page: NotePage) => void;
+    const readNotePage = vi.fn(() => new Promise<NotePage>((resolve) => { finish = resolve; }));
+    const renameNoteItem = vi.fn();
+    const props = {
+      items: [{ ...plan, name: 'New note' }],
+      getNote: async (id: number) => ({ id, document: documentWith('') }),
+      readNotePage, renameNoteItem, draft: 'example.org',
+    };
+    const { rerender } = render(<Harness {...props} />);
+    const editor = await openedEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Send to New note' }));
+    await waitFor(() => expect(readNotePage).toHaveBeenCalledOnce());
+    if (change === 'name') rerender(<Harness {...props} items={[{ ...plan, name: 'My title' }]} />);
+    else act(() => insertText(editor, 'Keep this'));
+    await act(async () => finish({ url: 'https://example.org/', title: 'Title', markdown: 'Article' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(''));
+    expect(renameNoteItem).not.toHaveBeenCalled();
+    expect(editor.getText()).toContain('Article');
+    if (change === 'body') expect(editor.getText()).toContain('Keep this');
+  });
+
+  it('keeps the imported article and clears the URL if automatic renaming fails', async () => {
+    const renameNoteItem = vi.fn().mockRejectedValue(new ChaError('internal_error', 'The item could not be changed.'));
+    render(<Harness
+      items={[{ ...plan, name: 'New note' }]}
+      getNote={async (id) => ({ id, document: documentWith('') })}
+      readNotePage={async () => ({ url: 'https://example.org/', title: 'Title', markdown: 'Article' })}
+      renameNoteItem={renameNoteItem}
+      draft="example.org"
+    />);
+    const editor = await openedEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Send to New note' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The page was imported, but the note could not be renamed.');
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(''));
+    expect(editor.getText({ blockSeparator: '\n' })).toBe('Title\nArticle');
+    expect(screen.getByRole('button', { name: 'Send to New note' })).toBeInTheDocument();
+  });
+
+  it.each(['https://example.org/article', 'example.org/article'])(
+    'imports %s at the end and keeps text typed while the fetch is pending', async (address) => {
+      let finish!: (page: NotePage) => void;
+      const readNotePage = vi.fn(() => new Promise<NotePage>((resolve) => { finish = resolve; }));
+      render(<Harness readNotePage={readNotePage} />);
+      const editor = await openedEditor();
+      act(() => editor.commands.setTextSelection(2));
+      const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+      fireEvent.change(prompt, { target: { value: address } });
+      fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
+      await waitFor(() => expect(readNotePage).toHaveBeenCalledWith(
+        address.startsWith('https://') ? address : `http://${address}`,
+      ));
+      fireEvent.change(prompt, { target: { value: `${address} Next` } });
+      await act(async () => finish({ url: 'https://example.org/article', title: 'Title', markdown: '**Article**' }));
+      expect(editor.getText({ blockSeparator: '\n' })).toBe('Alpha\nTitle\nArticle');
+      expect(editor.view.dom.querySelector('strong')).toHaveTextContent('Article');
+      expect(prompt).toHaveValue('Next');
+    },
+  );
+
+  it('keeps the URL on failure, dismisses the error, and retries with Send', async () => {
+    const readNotePage = vi.fn()
+      .mockRejectedValueOnce(new Error('Network details must stay hidden'))
+      .mockResolvedValue({ url: 'https://example.org/', title: 'Title', markdown: 'Article' });
+    render(<Harness readNotePage={readNotePage} draft="example.org" />);
+    const editor = await openedEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not retrieve the web page. Try again.');
+    expect(editor.getText()).toBe('Alpha');
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+    expect(prompt).toHaveValue('example.org');
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss error' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(prompt).toHaveValue('example.org');
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
+    await waitFor(() => expect(prompt).toHaveValue(''));
+    expect(editor.getText()).toContain('Article');
+  });
+
+  it.each([false, true])('ignores a late URL result after switching notes (failure=%s)', async (fail) => {
+    let finish!: (page: NotePage) => void;
+    let reject!: (error: Error) => void;
+    const readNotePage = vi.fn(() => new Promise<NotePage>((resolve, no) => { finish = resolve; reject = no; }));
+    render(<Harness readNotePage={readNotePage} draft="https://example.org/" />);
+    await openedEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
+    await waitFor(() => expect(readNotePage).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
+    const essayEditor = await openedEditor();
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+    fireEvent.change(prompt, { target: { value: 'Keep this' } });
+    await act(async () => {
+      if (fail) reject(new Error('Failed'));
+      else finish({ url: 'https://example.org/', title: 'Late', markdown: 'Article' });
+    });
+    expect(essayEditor.getText()).toBe('Essay text');
+    expect(prompt).toHaveValue('Keep this');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps a URL with additional text on the literal insertion path', async () => {
+    const readNotePage = vi.fn();
+    render(<Harness readNotePage={readNotePage} draft="https://example.org/ read this" />);
+    const editor = await openedEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(''));
+    expect(readNotePage).not.toHaveBeenCalled();
+    expect(editor.getText()).toContain('https://example.org/ read this');
+  });
+
   it('opens a note, saves five seconds after an edit, and retries a save error', async () => {
     vi.useFakeTimers();
     const saveNote = vi.fn()

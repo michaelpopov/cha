@@ -18,6 +18,7 @@ import {
   type NotesClient,
 } from '../api/client';
 import {
+  appendNoteHtml,
   createNotesEditor,
   importPictureFile,
   insertPromptParagraph,
@@ -31,11 +32,13 @@ import {
   type NoteLinkRange,
 } from '../notes/editor';
 import { noteTooLargeMessage } from '../notes/pictures';
-import { noteItemPath } from '../notes/tree';
+import { notePageHtml, promptPageUrl } from '../notes/pageImport';
+import { availableNoteName, noteItemPath } from '../notes/tree';
 import type { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveFailedMessage, useNoteSave, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { DataAction, NavigationAction } from '../state/view';
 import {
+  CloseIcon,
   EditIcon,
   HighlighterIcon,
   LinkIcon,
@@ -648,11 +651,11 @@ export function NotesScreen({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const name = noteItems.find((item) => item.id === activeNoteId)?.name ?? 'note';
   const noteIdRef = useRef(activeNoteId);
-  const nameRef = useRef(name);
+  const itemsRef = useRef(noteItems);
   const clientRef = useRef(client);
   const epochRef = useRef(notesEpoch);
   noteIdRef.current = activeNoteId;
-  nameRef.current = name;
+  itemsRef.current = noteItems;
   clientRef.current = client;
   epochRef.current = notesEpoch;
   const [findOpen, setFindOpen] = useState(false);
@@ -709,7 +712,7 @@ export function NotesScreen({
       return;
     }
     const noteId = activeNoteId;
-    const noteName = nameRef.current;
+    const noteName = itemsRef.current.find((item) => item.id === noteId)?.name ?? 'note';
     let cancelled = false;
     setPhase('loading');
     setOpenError(null);
@@ -805,6 +808,7 @@ export function NotesScreen({
     setWholeWord(false);
     setUseRegex(false);
     setCommandError(null);
+    setPromptError(null);
     setLinkEdit(null);
     setLinkMenu(null);
   }, [activeNoteId]);
@@ -893,7 +897,7 @@ export function NotesScreen({
     focusNotesEditor(current);
   }
 
-  function samePictureContext(current: Editor, noteId: number, epoch: number): boolean {
+  function sameEditorContext(current: Editor, noteId: number, epoch: number): boolean {
     return editorRef.current === current
       && noteIdRef.current === noteId
       && epochRef.current === epoch
@@ -906,8 +910,8 @@ export function NotesScreen({
     const noteId = noteIdRef.current;
     const epoch = epochRef.current;
     if (!current || noteId === null) return;
-    void importPictureFile(current, file, () => samePictureContext(current, noteId, epoch)).then((message) => {
-      if (!samePictureContext(current, noteId, epoch)) return;
+    void importPictureFile(current, file, () => sameEditorContext(current, noteId, epoch)).then((message) => {
+      if (!sameEditorContext(current, noteId, epoch)) return;
       if (message) setCommandError(message);
       focusNotesEditor(current);
     });
@@ -1030,7 +1034,20 @@ export function NotesScreen({
           <button className="cha-button" onClick={() => save.submitNow()} type="button">Retry</button>
         </div>
       )}
-      {promptError && <p className="cha-error-message" role="alert">{promptError}</p>}
+      {promptError && (
+        <div className="cha-notes-status cha-error-message" role="alert">
+          <p>{promptError}</p>
+          <button
+            aria-label="Dismiss error"
+            className="cha-button"
+            onClick={() => setPromptError(null)}
+            title="Dismiss error"
+            type="button"
+          >
+            <CloseIcon />
+          </button>
+        </div>
+      )}
       {sessionStatus}
       <PromptInput
         key={activeNoteId}
@@ -1047,7 +1064,37 @@ export function NotesScreen({
           if (!current || current.isDestroyed || !current.isEditable || noteId === null) {
             return { clear_input: false };
           }
-          const accepted = insertPromptParagraph(current, text);
+          const url = promptPageUrl(text);
+          let accepted: boolean;
+          if (url) {
+            try {
+              const page = await client.readNotePage(url);
+              if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
+              const title = page.title.trim();
+              const note = itemsRef.current.find((item) => item.id === noteId);
+              const rename = current.isEmpty && /^New note(?: [1-9]\d*)?$/u.test(note?.name ?? '');
+              accepted = appendNoteHtml(current, notePageHtml(page));
+              if (accepted && rename && title && note) {
+                try {
+                  const name = availableNoteName(itemsRef.current, note.parent_id, title, noteId);
+                  const renamed = await client.renameNoteItem(noteId, name);
+                  noteActions?.renamed(renamed);
+                } catch (failure: unknown) {
+                  if (sameEditorContext(current, noteId, epoch)) {
+                    setPromptError('The page was imported, but the note could not be renamed. '
+                      + publicErrorMessage(failure, 'Try renaming the note again.'));
+                  }
+                }
+              }
+            } catch (failure: unknown) {
+              if (sameEditorContext(current, noteId, epoch)) {
+                setPromptError(publicErrorMessage(failure, 'Could not retrieve the web page. Try again.'));
+              }
+              return { clear_input: false };
+            }
+          } else {
+            accepted = insertPromptParagraph(current, text);
+          }
           if (
             !accepted
             || editorRef.current !== current

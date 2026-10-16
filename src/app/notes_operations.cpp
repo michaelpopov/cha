@@ -1,6 +1,8 @@
 #include "app/application_internal.h"
 
+#include "providers/web_search.h"
 #include "storage/note_storage.h"
+#include "util/logging.h"
 
 namespace cha::app {
 namespace {
@@ -55,6 +57,53 @@ NoteContent Application::get_note(std::int64_t id, std::uint64_t epoch) {
     } catch (const NoteError& error) {
         rethrow_note(error);
     }
+}
+
+std::shared_ptr<OperationReply> Application::read_note_page(
+    std::string url, std::uint64_t epoch) {
+    auto reply = std::make_shared<OperationReply>();
+    WorkspaceWebSearch config;
+    std::string key;
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+        config = impl_->store->snapshot()->web_search();
+        if (config.read_provider == "firecrawl"
+            && impl_->api_keys->find(config.firecrawl_api_key_id)) {
+            key = impl_->api_keys->value(config.firecrawl_api_key_id);
+        }
+    }
+    if (!config.web_reader_enabled && config.read_provider != "firecrawl") {
+        throw ApplicationError(ErrorCode::invalid_argument,
+            "Page reading is not configured. Enable web_reader or Firecrawl in Web search settings.");
+    }
+    if (!impl_->background_jobs.launch(
+            [reply, config = std::move(config), key = std::move(key), url = std::move(url)](
+                std::atomic_bool& cancel) {
+                try {
+                    // Document imports use the full article, rather than the model tool's 64 KiB limit.
+                    const auto result = read_page(config, url, key, cancel,
+                        "https://api.firecrawl.dev/v2/scrape", note_document_byte_limit);
+                    if (cancel.load()) {
+                        reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
+                        return;
+                    }
+                    const auto page = nlohmann::json::parse(result);
+                    if (page.at("truncated").get<bool>()) {
+                        reply->fail(ErrorCode::body_too_large, "The web page is too large to import.");
+                        return;
+                    }
+                    reply->complete({{"url", page.at("url")}, {"title", page.at("title")},
+                        {"markdown", page.at("markdown")}});
+                } catch (const std::exception& error) {
+                    log_warn("Note page import failed: " + std::string(error.what()));
+                    reply->fail(ErrorCode::internal_error,
+                        "Could not retrieve the web page. Try again.");
+                }
+            })) {
+        reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
+    }
+    return reply;
 }
 
 void Application::save_note(

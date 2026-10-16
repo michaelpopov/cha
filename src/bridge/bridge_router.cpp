@@ -83,6 +83,7 @@ bool deadline_exempt(Method method) noexcept {
     case Method::vault_import:
     case Method::vault_export:
     case Method::vault_r2_download:
+    case Method::notes_read_page:
         return true;
     default:
         return false;
@@ -1288,6 +1289,11 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = nlohmann::json::object();
                 break;
             }
+            case Method::notes_read_page:
+                require_only_keys(params, {"url"});
+                start_background(connection_id, id, application.read_note_page(
+                    require_string(params, "url"), epoch));
+                return;
             case Method::openai_auth_start:
                 require_only_keys(params, {});
                 start_background(

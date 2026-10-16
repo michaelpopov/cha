@@ -61,6 +61,39 @@ function typeInNote(text: string) {
 }
 
 describe('Notes in the application', () => {
+  it.each([0, 1, 3])('uses an available page title in the tree and Send label with %s existing names', async (count) => {
+    const original = { ...plan, name: 'New note 1' };
+    const siblings = Array.from({ length: count }, (_, index) => ({
+      ...plan, id: 20 + index, name: index === 0 ? 'Article title' : `Article title ${index}`,
+    }));
+    const expected = count === 0 ? 'Article title' : `Article title ${count}`;
+    const getNote = vi.fn(async (id: number) => ({ id, document: {
+      type: 'doc', content: [{ type: 'paragraph' }],
+    } }));
+    const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...original, id, name }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [original, ...siblings],
+      getNote,
+      saveNote: async () => undefined,
+      readNotePage: async () => ({ url: 'https://example.org/', title: 'Article title', markdown: 'Article text' }),
+      renameNoteItem,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'New note 1' }));
+    const prompt = await screen.findByRole('textbox', { name: 'Prompt' });
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    act(() => prompt.focus());
+    fireEvent.change(prompt, { target: { value: 'example.org' } });
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    expect(await screen.findByRole('treeitem', { name: expected })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: `Send to ${expected}` })).toBeInTheDocument();
+    await waitFor(() => expect(prompt).toHaveValue(''));
+    expect(prompt).toHaveFocus();
+    expect(renameNoteItem).toHaveBeenCalledWith(plan.id, expected);
+    expect(noteEditor().getText({ blockSeparator: '\n' })).toBe('Article title\nArticle text');
+    expect(getNote).toHaveBeenCalledOnce();
+  });
+
   it('switches sidebar tabs without changing the main panel, chat draft, or address', async () => {
     render(<App client={notesClient()} />);
     const message = await screen.findByRole('textbox', { name: 'Message' });

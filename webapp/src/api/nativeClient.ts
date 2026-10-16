@@ -1,6 +1,7 @@
 import {
   type NoteItem,
   type NoteContent,
+  type NotePage,
   type NotesClient,
   ChaError,
   ChaProtocolError,
@@ -791,6 +792,13 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       isNoteItem,
     ),
     getNote: (id) => call('notes.get', { id }, isNoteContent),
+    readNotePage: (url) => call('notes.readPage', { url }, (value): value is NotePage => (
+      isRecord(value)
+      && Object.keys(value).length === 3
+      && typeof value.url === 'string'
+      && typeof value.title === 'string'
+      && typeof value.markdown === 'string'
+    )),
     saveNote: async (id, document) => {
       await call('notes.save', { id, document }, isEmptyResult);
     },

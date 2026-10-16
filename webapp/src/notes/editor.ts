@@ -5,6 +5,7 @@ import Image from '@tiptap/extension-image';
 import { closeHistory, isHistoryTransaction } from '@tiptap/pm/history';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import {
+  DOMParser as PmDOMParser,
   type Fragment,
   type Node as PmNode,
   type ResolvedPos,
@@ -330,6 +331,26 @@ export function insertPromptParagraph(editor: Editor, text: string): boolean {
   tr.setMeta('preventAutolink', true);
   tr.setStoredMarks([]);
   const before = editor.state.doc;
+  editor.view.dispatch(tr);
+  return !editor.state.doc.eq(before);
+}
+
+export function appendNoteHtml(editor: Editor, html: string): boolean {
+  if (editor.isDestroyed || !editor.isEditable) return false;
+  const body = document.createElement('div');
+  body.innerHTML = html;
+  const content = PmDOMParser.fromSchema(editor.schema).parse(body).content;
+  const before = editor.state.doc;
+  const emptyParagraph = before.childCount === 1
+    && before.firstChild?.type.name === 'paragraph'
+    && before.firstChild.content.size === 0;
+  const tr = editor.state.tr.replaceWith(
+    emptyParagraph ? 0 : before.content.size, before.content.size, content,
+  );
+  closeHistory(tr);
+  tr.setMeta(notesIsolatedMeta, true);
+  tr.setMeta('preventAutolink', true);
+  tr.setStoredMarks([]);
   editor.view.dispatch(tr);
   return !editor.state.doc.eq(before);
 }

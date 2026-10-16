@@ -315,11 +315,10 @@ std::string page_prefix(std::string_view markdown, std::size_t byte_limit) {
 }
 
 std::string page_output(std::string_view provider, std::string_view url,
-    std::string_view title, std::string_view markdown) {
+    std::string_view title, std::string_view markdown, std::size_t byte_limit) {
     const auto text = without_page_images(markdown);
     markdown = text;
     if (trim_view(markdown).empty()) fail_web(provider, "Page reading", "Page returned no readable content");
-    constexpr std::size_t byte_limit = 64 * 1024;
     nlohmann::ordered_json result{{"url", url}, {"title", utf8_prefix(title, 1024)},
         {"markdown", utf8_prefix(markdown, byte_limit)}, {"truncated", false}};
     if (markdown.size() <= byte_limit && result.dump().size() <= byte_limit) return result.dump();
@@ -404,7 +403,7 @@ std::string search_tavily(std::string_view query, std::string_view key,
 }
 
 std::string read_firecrawl(std::string_view url, std::string_view key,
-    const std::atomic_bool& cancelled, std::string_view endpoint) {
+    const std::atomic_bool& cancelled, std::string_view endpoint, std::size_t output_byte_limit) {
     if (cancelled.load()) return {};
     const auto target = read_url("Firecrawl", url, key);
     CurlHandle curl;
@@ -435,11 +434,11 @@ std::string read_firecrawl(std::string_view url, std::string_view key,
     const auto title = metadata.contains("title") && metadata["title"].is_string()
         ? metadata["title"].get<std::string>() : std::string{};
     return page_output("Firecrawl", target, title,
-        data.value("markdown", std::string{}));
+        data.value("markdown", std::string{}), output_byte_limit);
 }
 
 std::string read_web_reader(std::string_view url, std::string_view base_url,
-    const std::atomic_bool& cancelled) {
+    const std::atomic_bool& cancelled, std::size_t output_byte_limit) {
     if (cancelled.load()) return {};
     const auto target = page_url("web_reader", url);
     auto endpoint = page_url("web_reader", base_url);
@@ -460,18 +459,18 @@ std::string read_web_reader(std::string_view url, std::string_view base_url,
         fail_web("web_reader", "Page reading", "Invalid page reading response");
     const auto final_url = page_url("web_reader", response["url"].get<std::string>());
     return page_output("web_reader", final_url, response["title"].get<std::string>(),
-        response["markdown"].get<std::string>());
+        response["markdown"].get<std::string>(), output_byte_limit);
 }
 
 std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
     std::string_view firecrawl_key, const std::atomic_bool& cancelled,
-    std::string_view firecrawl_endpoint) {
+    std::string_view firecrawl_endpoint, std::size_t output_byte_limit) {
     if (cancelled.load()) return {};
     if (config.web_reader_enabled) {
         if (!config.web_reader_api_key_id.empty())
             log_warn("web_reader API key is saved but unused; the service has no API-key authentication contract");
         try {
-            return read_web_reader(url, config.web_reader_url, cancelled);
+            return read_web_reader(url, config.web_reader_url, cancelled, output_byte_limit);
         } catch (const WebToolError&) {
             if (cancelled.load()) return {};
             if (config.read_provider != "firecrawl" || firecrawl_key.empty()) throw;
@@ -480,7 +479,7 @@ std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
     }
     if (cancelled.load()) return {};
     if (config.read_provider == "firecrawl")
-        return read_firecrawl(url, firecrawl_key, cancelled, firecrawl_endpoint);
+        return read_firecrawl(url, firecrawl_key, cancelled, firecrawl_endpoint, output_byte_limit);
     throw WebToolError("Page reading is not configured");
 }
 

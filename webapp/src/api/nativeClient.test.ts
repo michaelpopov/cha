@@ -435,6 +435,17 @@ describe('notes native client', () => {
     return createNativeChaClient(createFakeNativeBridge(handlers));
   }
 
+  it('reads a page using the notes bridge and validates its reply', async () => {
+    const page = { url: 'https://example.org/final', title: 'Title', markdown: '**Text**' };
+    const read = vi.fn(() => page);
+    expect(await clientFor({ 'notes.readPage': read }).readNotePage('https://example.org')).toEqual(page);
+    expect(read).toHaveBeenCalledWith({ url: 'https://example.org' });
+    for (const invalid of [{ ...page, markdown: 42 }, { ...page, extra: true }, {}]) {
+      await expect(clientFor({ 'notes.readPage': () => invalid }).readNotePage('https://example.org'))
+        .rejects.toThrow();
+    }
+  });
+
   it('sends the seven methods and accepts guarded replies', async () => {
     const calls: unknown[] = [];
     const client = clientFor({

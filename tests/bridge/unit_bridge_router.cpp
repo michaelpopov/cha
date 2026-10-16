@@ -169,6 +169,54 @@ protected:
     std::uint64_t next_id_{1};
 };
 
+TEST_F(BridgeRouterTest, NotePageReadingUsesConfiguredReaderAndKeepsLongArticles) {
+    bootstrap_epoch();
+    const std::string article = "A **formatted** article.\n\n" + std::string(80000, 'x');
+    const nlohmann::json page{{"url", "https://example.org/final"}, {"title", "Article title"},
+        {"markdown", article + "\n\n![Photo](https://example.org/photo.png)"}};
+    MockHttpServer server({http_response("application/json", page.dump())});
+    server.start();
+    auto settings = call("webSearch.get")["result"];
+    settings["web_reader_enabled"] = true;
+    settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(server.port());
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    const auto reply = call("notes.readPage", {{"url", "https://example.org/original"}});
+    server.join();
+    ASSERT_TRUE(reply["ok"]) << reply;
+    EXPECT_EQ(reply["result"]["url"], page["url"]);
+    EXPECT_EQ(reply["result"]["title"], page["title"]);
+    EXPECT_EQ(reply["result"]["markdown"], article + "\n\n");
+    EXPECT_EQ(reply["result"].size(), 3u);
+    EXPECT_TRUE(call("notes.list")["result"]["items"].empty());
+    ASSERT_EQ(server.requests().size(), 1u);
+    EXPECT_TRUE(server.requests()[0].starts_with("POST /extract HTTP/1.1\r\n"));
+}
+
+TEST_F(BridgeRouterTest, NotePageReadingReportsConfigurationAndFetchFailures) {
+    bootstrap_epoch();
+    for (const auto& params : std::vector<nlohmann::json>{
+            nlohmann::json::object(), {{"url", 42}},
+            {{"url", "https://example.org"}, {"extra", true}}}) {
+        EXPECT_FALSE(call("notes.readPage", params)["ok"]);
+    }
+    auto reply = call("notes.readPage", {{"url", "https://example.org"}});
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    EXPECT_NE(reply["error"]["message"].get<std::string>().find("not configured"), std::string::npos);
+
+    MockHttpServer server({"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"});
+    server.start();
+    auto settings = call("webSearch.get")["result"];
+    settings["web_reader_enabled"] = true;
+    settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(server.port());
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    reply = call("notes.readPage", {{"url", "https://example.org"}});
+    server.join();
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["message"], "Could not retrieve the web page. Try again.");
+    EXPECT_FALSE(call("notes.readPage", {{"url", "file:///private/file"}})["ok"]);
+}
+
 TEST_F(BridgeRouterTest, ForumSystemPromptIsReadOnlyAndRequiresExactIdentifiers) {
     bootstrap_epoch();
     const auto params = nlohmann::json{{"forum_id", "lobby"}, {"character_id", "guide"}};

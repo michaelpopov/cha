@@ -10,6 +10,20 @@ export type NoteTreeItem = {
   name: string;
 };
 
+export function availableNoteName(
+  items: readonly NoteTreeItem[],
+  parentId: number | null,
+  base: string,
+  excludeId?: number,
+): string {
+  const names = new Set(items
+    .filter((item) => item.parent_id === parentId && item.id !== excludeId)
+    .map((item) => item.name));
+  let name = base;
+  for (let suffix = 1; names.has(name); suffix++) name = `${base} ${suffix}`;
+  return name;
+}
+
 export type NoteTreeRow = NoteSibling & {
   id: string;
   noteId: number | null;

@@ -125,6 +125,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::notes_list, "notes.list"},
     {Method::notes_create, "notes.create"},
     {Method::notes_get, "notes.get"},
+    {Method::notes_read_page, "notes.readPage"},
     {Method::notes_save, "notes.save"},
     {Method::notes_rename, "notes.rename"},
     {Method::notes_delete, "notes.delete"},

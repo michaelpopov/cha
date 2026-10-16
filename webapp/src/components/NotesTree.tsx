@@ -15,6 +15,7 @@ import {
   type NotesClient,
 } from '../api/client';
 import {
+  availableNoteName,
   buildNoteIndex,
   focusAfterRemoval,
   type NoteTreeRow,
@@ -67,6 +68,7 @@ export type DeleteNoteItem = (
 
 export type NoteActions = {
   rename(): void;
+  renamed(note: NoteItem): void;
   delete(): void;
 };
 
@@ -322,10 +324,7 @@ export function NotesTree({
     if (menu) tree.getItemInstance(menu.sourceId).getElement()?.focus();
     setMenu(null);
     const base = kind === 'note' ? 'New note' : 'New folder';
-    const names = new Set(itemsRef.current
-      .filter((item) => item.parent_id === parentId).map((item) => item.name));
-    let name = base;
-    for (let suffix = 1; names.has(name); suffix++) name = `${base} ${suffix}`;
+    const name = availableNoteName(itemsRef.current, parentId, base);
     setDialog({ action: 'create', kind, parentId, name, pending: false, error: null });
   }
 
@@ -496,6 +495,13 @@ export function NotesTree({
       rename: () => {
         const note = source();
         if (note) startRename(note);
+      },
+      renamed: (note) => {
+        if (!alive.current) return;
+        const next = itemsRef.current.map((item) => item.id === note.id ? note : item);
+        itemsRef.current = next;
+        setItems(next);
+        onNoteItemsRef.current(next);
       },
       delete: () => {
         const note = source();

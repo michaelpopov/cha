@@ -109,7 +109,10 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
     : fallback;
 }
 
+export type NotePage = { url: string; title: string; markdown: string };
+
 export interface NotesClient {
+  readNotePage: (url: string) => Promise<NotePage>;
   listNoteItems: () => Promise<NoteItem[]>;
   createNoteItem: (
     parentId: number | null,

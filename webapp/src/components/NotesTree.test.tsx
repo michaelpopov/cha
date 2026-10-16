@@ -29,6 +29,7 @@ function client(overrides: Partial<NotesClient> = {}): NotesClient {
     listNoteItems: async () => [],
     createNoteItem: async () => { throw new Error('notes.create'); },
     getNote: async () => { throw new Error('notes.get'); },
+    readNotePage: async () => { throw new Error('notes.readPage'); },
     saveNote: async () => { throw new Error('notes.save'); },
     renameNoteItem: async () => { throw new Error('notes.rename'); },
     deleteNoteItem: async () => { throw new Error('notes.delete'); },
