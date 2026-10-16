@@ -201,9 +201,11 @@ export function CharacterDetailScreen({
   const characterId = state.inspectedCharacter.id;
   const load = useCallback(async (id: string) => {
     const detail = await client.getCharacter(id);
-    const profile = detail.markdown_files.includes('PROFILE.md')
-      ? (await client.getCharacterFile(id, 'PROFILE.md')).content
-      : null;
+    const profile = detail.id === 'builtin-assistant'
+      ? detail.character_markdown
+      : detail.markdown_files.includes('PROFILE.md')
+        ? (await client.getCharacterFile(id, 'PROFILE.md')).content
+        : null;
     return { ...detail, profile };
   }, [client]);
   const onLoaded = useCallback((detail: CharacterDetail, id: string) => {

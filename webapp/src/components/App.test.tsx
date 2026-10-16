@@ -713,6 +713,49 @@ it('loads a character editor from the unexpanded editable source', async () => {
   ));
 });
 
+it('shows the built-in Assistant guide as read-only Markdown without a PROFILE.md file', async () => {
+  const getCharacterFile = vi.fn();
+  render(<App client={fixtureClient({
+    getBootstrap: async () => ({
+      ...bootstrapFixture,
+      characters: [
+        { ...bootstrapFixture.characters[0], id: 'builtin-assistant' },
+        bootstrapFixture.characters[1],
+      ],
+      forums: [
+        {
+          ...bootstrapFixture.forums[0],
+          default_character_id: 'builtin-assistant',
+          members: [{ ...bootstrapFixture.characters[0], id: 'builtin-assistant' }],
+        },
+        bootstrapFixture.forums[1],
+      ],
+    }),
+    getCharacter: async () => ({
+      ...characterDetailFixture,
+      id: 'builtin-assistant',
+      display_name: 'Assistant',
+      character_markdown: '# CHA application guide\n\nAsk about **forums** and characters.',
+      writable: false,
+    }),
+    getCharacterFile,
+  })} />);
+  await openSettingsNavigation();
+  fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
+  fireEvent.click(screen.getByRole('button', { name: /Assistant/ }));
+  const navigation = await screen.findByRole('region', { name: 'Character detail navigation' });
+  expect(await within(navigation).findByRole('heading', { name: 'CHA application guide' }))
+    .toBeInTheDocument();
+  expect(within(navigation).getByText('forums').tagName).toBe('STRONG');
+  expect(within(navigation).getByRole('button', { name: 'Character settings' })).toBeInTheDocument();
+  expect(within(navigation).queryByRole('status')).not.toBeInTheDocument();
+  expect(within(navigation).queryByRole('textbox')).not.toBeInTheDocument();
+  expect(within(navigation).queryByRole('button', { name: 'Rename Assistant' })).not.toBeInTheDocument();
+  expect(within(navigation).queryByRole('button', { name: 'Edit character profile' })).not.toBeInTheDocument();
+  expect(within(navigation).queryByRole('button', { name: 'Replace character description from file' })).not.toBeInTheDocument();
+  expect(getCharacterFile).not.toHaveBeenCalled();
+});
+
 it('warns when PROFILE.md is missing without falling back to another file', async () => {
   const user = userEvent.setup();
   const getCharacterFile = vi.fn();
