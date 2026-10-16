@@ -3,6 +3,7 @@
 #include "providers/providers.h"
 #include "storage/not_found_error.h"
 #include "storage/session_repository.h"
+#include "storage/note_storage.h"
 #include "support/test_notifier.h"
 #include "support/test_workspace.h"
 #include "workspace/builtins.h"
@@ -109,6 +110,37 @@ TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePath) {
     EXPECT_EQ(
         opened.controller->view().default_persona_id,
         workspace_guest_id);
+}
+
+TEST_F(SessionOpenTest, WelcomeCopiesNotesFromTheActiveVaultAndKeepsItsOwnCopy) {
+    const auto note = store_->create_note_item(std::nullopt, NoteItemKind::note, "Reference");
+    store_->save_note(note.id, nlohmann::json::parse(
+        R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Original"}]}]})"));
+    const FullSessionId welcome{std::string(entrance_id), std::string(welcome_id)};
+    {
+        auto opened = open(welcome);
+        ASSERT_TRUE(opened.controller->add_note(note.id).input_consumed);
+        ASSERT_EQ(opened.controller->view().transcript.entries.size(), 1U);
+        EXPECT_EQ(opened.controller->view().transcript.entries.front().text,
+            "Added note “Reference” to this chat.");
+    }
+    const auto prepared = sessions_->prepare(welcome);
+    SessionJournal journal(prepared.database_path, prepared.session_key);
+    EXPECT_EQ(journal.notes_prompt(), "# Note: Reference\n\nOriginal");
+    store_->save_note(note.id, nlohmann::json::parse(
+        R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Revised"}]}]})"));
+    {
+        auto opened = open(welcome);
+        EXPECT_EQ(journal.notes_prompt(), "# Note: Reference\n\nOriginal");
+        ASSERT_TRUE(opened.controller->add_note(note.id).input_consumed);
+        EXPECT_EQ(opened.controller->view().transcript.entries.back().text,
+            "Updated this chat’s copy of note “Reference”.");
+    }
+    EXPECT_EQ(journal.notes_prompt(), "# Note: Reference\n\nRevised");
+    const auto other = sessions_->create("lobby", "Other");
+    const auto other_prepared = sessions_->prepare(other.identity);
+    SessionJournal vault_session(other_prepared.database_path, other_prepared.session_key);
+    EXPECT_TRUE(vault_session.notes_prompt().empty());
 }
 
 TEST_F(SessionOpenTest, DefaultCharacterWriteSurvivesRestartAndExport) {

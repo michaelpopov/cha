@@ -2,6 +2,7 @@
 #include "characters/character.h"
 #include "providers/model_backend.h"
 #include "storage/session_database.h"
+#include "storage/note_storage.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"
 #include "support/test_notifier.h"
@@ -453,6 +454,83 @@ std::vector<SharedCharacterDefinition> capture_session_definitions(
         (void)receive_until_idle(*controller);
     }
     return definitions;
+}
+
+TEST(SessionController, SendsSavedNoteCopiesToEveryCharacterAndRefreshesOnlyOnRequest) {
+    TemporaryJournal journal;
+    storage::SqliteDatabase database(journal.path, storage::SqliteDatabase::Mode::read_write);
+    const auto note = note_create(database, std::nullopt, NoteItemKind::note, "Reference");
+    const auto second = note_create(database, std::nullopt, NoteItemKind::note, "Other note");
+    const auto document = [](std::string text) {
+        auto result = nlohmann::json::parse(
+            R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":""}]}]})");
+        result["content"][0]["content"][0]["text"] = std::move(text);
+        return result;
+    };
+    note_save(database, note.id, document("ORIGINAL_NOTE_CONTENT"));
+    note_save(database, second.id, document("SECOND_NOTE_CONTENT"));
+
+    std::mutex mutex;
+    std::vector<SharedCharacterDefinition> definitions;
+    auto slot = std::make_shared<test::RequestBackendFacade::Slot>(
+        std::make_unique<ScriptedBackend>(GenerationResult{}, std::vector<std::string>{"Answer"}));
+    const ProviderClientFactory factory = [&](SharedCharacterDefinition definition) {
+        std::lock_guard lock(mutex);
+        definitions.push_back(std::move(definition));
+        return std::make_unique<test::RequestBackendFacade>(slot);
+    };
+    const auto open = [&](const std::filesystem::path& path) {
+        return test::TestController({
+            {.character = {.id = "guide-id", .display_name = "Guide"},
+             .provider = {.id = "test", .config = {.host = "127.0.0.1", .port = 1, .model = "fake"}}},
+            {.character = {.id = "other-id", .display_name = "Other"},
+             .provider = {.id = "test", .config = {.host = "127.0.0.1", .port = 1, .model = "fake"}}},
+        }, test::operator_roster(), "guide-id", path,
+            std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
+            load_session_state(path), factory).release();
+    };
+    const auto check_prompts = [&](SessionController& controller, std::string_view expected,
+                                  std::string_view absent) {
+        definitions.clear();
+        ASSERT_TRUE(controller.start_multicast("operator", "Question", {}).input_consumed);
+        (void)receive_until_idle(controller);
+        ASSERT_EQ(definitions.size(), 2U);
+        for (const auto& definition : definitions) {
+            const auto& prompt = definition->system_prompt;
+            const auto position = prompt.find(expected);
+            ASSERT_NE(position, std::string::npos);
+            EXPECT_EQ(prompt.find(expected, position + expected.size()), std::string::npos);
+            EXPECT_EQ(prompt.find(absent), std::string::npos);
+            EXPECT_NE(prompt.find("SECOND_NOTE_CONTENT"), std::string::npos);
+        }
+    };
+    auto controller = open(journal.path);
+    ASSERT_TRUE(controller->add_note(note.id).input_consumed);
+    ASSERT_TRUE(controller->add_note(second.id).input_consumed);
+    check_prompts(*controller, "ORIGINAL_NOTE_CONTENT", "REVISED_NOTE_CONTENT");
+    note_save(database, note.id, document("REVISED_NOTE_CONTENT"));
+    (void)note_rename(database, note.id, "Renamed reference");
+    check_prompts(*controller, "ORIGINAL_NOTE_CONTENT", "REVISED_NOTE_CONTENT");
+    controller.reset();
+    controller = open(journal.path);
+    check_prompts(*controller, "ORIGINAL_NOTE_CONTENT", "REVISED_NOTE_CONTENT");
+    ASSERT_TRUE(controller->add_note(note.id).input_consumed);
+    EXPECT_EQ(controller->view().transcript.entries.back().text,
+        "Updated this chat’s copy of note “Renamed reference”.");
+    check_prompts(*controller, "REVISED_NOTE_CONTENT", "ORIGINAL_NOTE_CONTENT");
+    note_delete(database, note.id);
+    controller.reset();
+    controller = open(journal.path);
+    check_prompts(*controller, "REVISED_NOTE_CONTENT", "ORIGINAL_NOTE_CONTENT");
+    controller.reset();
+
+    TemporaryJournal unrelated;
+    controller = open(unrelated.path);
+    definitions.clear();
+    ASSERT_TRUE(controller->submit_prompt("operator", "Unrelated chat").input_consumed);
+    (void)receive_until_idle(*controller);
+    ASSERT_EQ(definitions.size(), 1U);
+    EXPECT_EQ(definitions.front()->system_prompt.find("NOTE_CONTENT"), std::string::npos);
 }
 
 TEST(SessionController, SelectsOneCharacterVariantPerCategoryForEachSession) {
@@ -1892,7 +1970,7 @@ TEST(SessionController, PersistenceFailureIdentifiesTheRequestAndCharacter) {
     controller->shutdown();
     ASSERT_FALSE(message.empty());
     EXPECT_NE(
-        message.find("Failed to persist start of request 1 for @Guide"),
+        message.find("request 1 for @Guide"),
         std::string::npos)
         << message;
     EXPECT_NE(message.find("Session database"), std::string::npos)

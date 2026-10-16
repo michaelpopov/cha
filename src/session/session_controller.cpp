@@ -1,4 +1,5 @@
 #include "session/session_controller.h"
+#include "storage/note_storage.h"
 
 #include "providers/maintenance.h"
 #include "workspace/builtins.h"
@@ -182,6 +183,7 @@ std::string format_duplicate_character_notice(std::string_view display_name) {
 
 std::unique_ptr<SessionController> SessionController::from_workspace(
     WorkspaceReader read_workspace,
+    NoteReader read_note,
     CharacterId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path database_path,
@@ -195,6 +197,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
     std::shared_ptr<const std::string> maintenance_prompt) {
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(read_workspace),
+        std::move(read_note),
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id), std::move(database_path),
         session_key, std::move(database_password), providers,
@@ -217,8 +220,13 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
     std::shared_ptr<const std::string> maintenance_prompt) {
     if (!providers) throw std::invalid_argument("Session controller requires providers");
     Providers& provider = *providers;
+    NoteReader read_note = [path = database_path](std::int64_t id) {
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
+        return note_get_text(database, id);
+    };
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(read_workspace),
+        std::move(read_note),
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id),
         std::move(database_path), session_key, {}, provider,
@@ -229,6 +237,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
 
 SessionController::SessionController(
     WorkspaceReader read_workspace,
+    NoteReader read_note,
     ParticipantId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path path,
@@ -244,6 +253,7 @@ SessionController::SessionController(
     std::shared_ptr<const std::string> maintenance_prompt)
     : read_workspace_(std::move(read_workspace)),
       journal_(std::move(path), session_key, database_password),
+      read_note_(std::move(read_note)),
       providers_owner_(std::move(providers_owner)),
       providers_(providers),
       notifier_(std::move(notifier)),
@@ -253,6 +263,7 @@ SessionController::SessionController(
       context_epoch_(context_epoch),
       maintenance_prompt_(std::move(maintenance_prompt)) {
     if (!notifier_) throw std::invalid_argument("Session controller requires a wake notifier");
+    if (!read_note_) throw std::invalid_argument("Session controller requires a note reader");
     initialize(std::move(restored), initial_default_persona_id);
 }
 
@@ -408,6 +419,33 @@ void SessionController::record_monologue(
     update.input_consumed = true;
     update.notice = "";
     require_snapshot(update);
+}
+
+ControllerUpdate SessionController::add_note(
+    std::int64_t note_id, std::shared_ptr<SubmissionState> submission) {
+    if (submission && submission->expired()) return {.notice = "Submission expired"};
+    if (shutdown_) return {.notice = "Request could not be dispatched"};
+    if (is_generating()) return busy_notice();
+    TranscriptEntry entry;
+    try {
+        const NoteText note = read_note_(note_id);
+        if (submission && submission->expired()) return {.notice = "Submission expired"};
+        entry = journal_.add_note(note, next_entry_id_);
+    } catch (const NoteError& error) {
+        return {.notice = error.what()};
+    } catch (const std::exception& error) {
+        log_warn("Could not add note to chat: " + std::string(error.what()));
+        return {.notice = "The note could not be added to this chat. Try again."};
+    }
+    ++next_entry_id_;
+    transcript_.add_entry(std::move(entry));
+    ControllerUpdate update{
+        .state = SnapshotRequired{},
+        .input_consumed = true,
+        .notice = "",
+    };
+    publish_recent(update);
+    return update;
 }
 
 ControllerUpdate SessionController::submit_prompt(
@@ -650,6 +688,9 @@ void SessionController::start_generation(
         throw std::invalid_argument(
             "Generation requires history and at least one target");
     }
+    std::string notes;
+    persist(request_action("load notes for", next_request_id_, targets.front().display_name),
+        [this, &notes] { notes = journal_.notes_prompt(); });
     std::vector<ProviderRequestInput> inputs;
     inputs.reserve(targets.size());
     for (CharacterMetadata& target : targets) {
@@ -680,12 +721,18 @@ void SessionController::start_generation(
             log_warn(web.web_reader_enabled
                 ? "Page reading is unavailable: no web_reader URL is configured"
                 : "Page reading is unavailable: no reader API key is configured");
-        if (maintenance) {
+        if (maintenance || !notes.empty()) {
             auto copy = std::make_shared<CharacterDefinition>(*definition);
-            copy->provider.config.web_search = WebSearchMode::off;
-            if (maintenance_prompt_ && !maintenance_prompt_->empty()) {
+            if (!notes.empty()) {
                 if (!copy->system_prompt.empty()) copy->system_prompt += "\n\n";
-                copy->system_prompt += *maintenance_prompt_;
+                copy->system_prompt += notes;
+            }
+            if (maintenance) {
+                copy->provider.config.web_search = WebSearchMode::off;
+                if (maintenance_prompt_ && !maintenance_prompt_->empty()) {
+                    if (!copy->system_prompt.empty()) copy->system_prompt += "\n\n";
+                    copy->system_prompt += *maintenance_prompt_;
+                }
             }
             definition = std::move(copy);
         }

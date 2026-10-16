@@ -1,5 +1,6 @@
 import type { Editor } from '@tiptap/core';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useRef, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -132,6 +133,72 @@ async function openedEditor(): Promise<Editor> {
 }
 
 describe('Notes screen', () => {
+  it.each([
+    [1, '##000001'],
+    [10, '##00000A'],
+    [35, '##00000Z'],
+    [36, '##00000a'],
+    [61, '##00000z'],
+    [62, '##000010'],
+    [3844, '##000100'],
+    [56800235583, '##zzzzzz'],
+  ])('copies note %s as the reference %s without editing the document', async (id, reference) => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+    const saveNote = vi.fn();
+    render(<Harness initialId={id} items={[{ ...plan, id }]} saveNote={saveNote} />);
+    const editor = await openedEditor();
+    const document = editor.getJSON();
+
+    await user.click(screen.getByRole('button', { name: 'Copy note reference' }));
+
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(reference);
+    expect(editor.getJSON()).toEqual(document);
+    expect(editor.can().undo()).toBe(false);
+    expect(editor.view.dom).toHaveFocus();
+    expect(saveNote).not.toHaveBeenCalled();
+  });
+
+  it('copies the current note after switching notes', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+    render(<Harness />);
+    await openedEditor();
+    await user.click(screen.getByRole('button', { name: 'Copy note reference' }));
+    expect(writeText).toHaveBeenLastCalledWith('##000004');
+
+    await user.click(screen.getByRole('button', { name: 'Open essay' }));
+    await openedEditor();
+    await user.click(screen.getByRole('button', { name: 'Copy note reference' }));
+    expect(writeText).toHaveBeenLastCalledWith('##000005');
+  });
+
+  it('reports a clipboard failure and allows retrying', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText')
+      .mockRejectedValueOnce(new Error('Denied')).mockResolvedValue();
+    render(<Harness />);
+    await openedEditor();
+    const button = screen.getByRole('button', { name: 'Copy note reference' });
+    await user.click(button);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not copy the note reference. Try again.');
+
+    await user.click(button);
+    expect(writeText).toHaveBeenLastCalledWith('##000004');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('does not truncate IDs that cannot fit in six base62 characters', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+    render(<Harness initialId={56800235584} />);
+    await openedEditor();
+    await user.click(screen.getByRole('button', { name: 'Copy note reference' }));
+
+    expect(writeText).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('This note ID cannot fit in a 6-character reference.');
+  });
+
   it.each([
     ['New note', '', 'Title', true],
     ['New note 1', '', 'Title', true],

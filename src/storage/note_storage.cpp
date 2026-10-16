@@ -168,6 +168,37 @@ nlohmann::json parse_document(std::string_view text, std::int64_t id) {
     return parsed;
 }
 
+void append_document_text(const nlohmann::json& node, std::string& text) {
+    if (!node.is_object()) return;
+    const auto type = node.value("type", std::string{});
+    if (type == "text") {
+        text += node.value("text", std::string{});
+        if (const auto marks = node.find("marks"); marks != node.end() && marks->is_array()) {
+            for (const auto& mark : *marks) {
+                if (mark.value("type", "") == "link" && mark.contains("attrs")) {
+                    const auto href = mark["attrs"].value("href", std::string{});
+                    if (!href.empty() && href != node.value("text", std::string{}))
+                        text += " (" + href + ")";
+                }
+            }
+        }
+        return;
+    }
+    if (type == "hardBreak" || type == "horizontalRule") text += '\n';
+    if (type == "image" && node.contains("attrs")) {
+        const auto& attrs = node["attrs"];
+        if (attrs.contains("alt") && attrs["alt"].is_string()) text += attrs["alt"].get<std::string>();
+        text += '\n';
+    }
+    if (const auto content = node.find("content"); content != node.end() && content->is_array()) {
+        for (const auto& child : *content) append_document_text(child, text);
+    }
+    if (type == "paragraph" || type == "heading" || type == "codeBlock"
+        || type == "listItem" || type == "blockquote") {
+        text += '\n';
+    }
+}
+
 } // namespace
 
 NoteError::NoteError(NoteFailure failure, std::string message)
@@ -195,6 +226,13 @@ void to_json(nlohmann::json& json, const NoteContent& content) {
     };
 }
 
+std::string note_document_text(const nlohmann::json& document) {
+    std::string text;
+    append_document_text(document, text);
+    while (!text.empty() && text.back() == '\n') text.pop_back();
+    return text;
+}
+
 void create_note_items_schema(storage::SqliteDatabase& database) {
     database.execute(R"sql(
 CREATE TABLE IF NOT EXISTS note_items (
@@ -213,6 +251,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS note_items_sibling_name
     ON note_items(IFNULL(parent_id, 0), name);
 CREATE INDEX IF NOT EXISTS note_items_parent
     ON note_items(parent_id);
+
+-- Copies belong to the chat, so deleting the source note keeps them intact.
+CREATE TABLE IF NOT EXISTS session_notes (
+    session_key INTEGER NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
+    note_id INTEGER NOT NULL CHECK (note_id > 0),
+    name TEXT NOT NULL,
+    text TEXT NOT NULL,
+    PRIMARY KEY (session_key, note_id)
+) STRICT;
 )sql");
 }
 
@@ -276,6 +323,20 @@ NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id) {
         NoteContent content{id, std::move(document)};
         transaction.commit();
         return content;
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, NoteFailure::opening, opening_message);
+    }
+}
+
+NoteText note_get_text(storage::SqliteDatabase& database, std::int64_t id) {
+    try {
+        auto statement = database.prepare(
+            "SELECT name, content_json FROM note_items WHERE id = ?1 AND kind = 'note'", id);
+        if (!statement.step()) fail(NoteFailure::not_found, missing_note_message);
+        return {id, statement.text(0),
+            note_document_text(parse_document(statement.text(1), id))};
+    } catch (const nlohmann::json::exception&) {
+        fail(NoteFailure::opening, opening_message);
     } catch (const std::runtime_error& error) {
         throw sql_failure(error, NoteFailure::opening, opening_message);
     }

@@ -33,6 +33,7 @@ import {
 } from '../notes/editor';
 import { noteTooLargeMessage } from '../notes/pictures';
 import { notePageHtml, promptPageUrl } from '../notes/pageImport';
+import { noteReference } from '../notes/reference';
 import { availableNoteName, noteItemPath } from '../notes/tree';
 import type { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveFailedMessage, useNoteSave, type NoteSaveHandle } from '../notes/useNoteSave';
@@ -40,6 +41,7 @@ import type { DataAction, NavigationAction } from '../state/view';
 import {
   CloseIcon,
   EditIcon,
+  HashIcon,
   HighlighterIcon,
   LinkIcon,
   ListIcon,
@@ -84,6 +86,7 @@ function FormatBar({
   toolbarRef,
   onFind,
   noteActions,
+  onCopyReference,
   onPicture,
   onEditLink,
   onRemoveLink,
@@ -92,6 +95,7 @@ function FormatBar({
   toolbarRef: { current: HTMLDivElement | null };
   onFind(): void;
   noteActions: NoteActions | null;
+  onCopyReference(): void;
   onPicture(file: File): void;
   onEditLink(range: NoteLinkRange): void;
   onRemoveLink(range: NoteLinkRange): void;
@@ -341,6 +345,15 @@ function FormatBar({
         </div>
       </div>
       <div className="cha-notes-toolbar-group">
+        <button
+          aria-label="Copy note reference"
+          className="cha-button"
+          onClick={onCopyReference}
+          title="Copy note reference"
+          type="button"
+        >
+          <HashIcon />
+        </button>
         <button
           aria-label="Rename"
           className="cha-button"
@@ -961,6 +974,23 @@ export function NotesScreen({
     return () => onRegisterDispose(() => undefined);
   }, [editorLiveRef, onRegisterDispose]);
 
+  async function copyReference() {
+    if (activeNoteId === null) return;
+    const reference = noteReference(activeNoteId);
+    if (reference === null) {
+      setCommandError('This note ID cannot fit in a 6-character reference.');
+      return;
+    }
+    setCommandError(null);
+    try {
+      await navigator.clipboard.writeText(reference);
+    } catch {
+      if (noteIdRef.current === activeNoteId && epochRef.current === notesEpoch) {
+        setCommandError('Could not copy the note reference. Try again.');
+      }
+    }
+  }
+
   const path = activeNoteId === null ? '' : noteItemPath(noteItems, activeNoteId);
   const sendLabel = path ? `Send to ${path}` : 'Send';
   const failure = save.saveError ? saveDetail(save.saveError.message) : null;
@@ -977,6 +1007,7 @@ export function NotesScreen({
         <FormatBar
           editor={editor}
           noteActions={noteActions}
+          onCopyReference={() => void copyReference()}
           onEditLink={(range) => {
             setLinkMenu(null);
             setLinkEdit(range);

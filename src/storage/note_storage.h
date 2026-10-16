@@ -50,11 +50,21 @@ struct NoteContent {
     nlohmann::json document = nlohmann::json::object();
 };
 
+struct NoteText {
+    std::int64_t id{};
+    std::string name;
+    std::string text;
+};
+
 void to_json(nlohmann::json& json, const NoteItem& item);
 void to_json(nlohmann::json& json, const NoteContent& content);
 
 // Caller owns the transaction. The statements are idempotent.
 void create_note_items_schema(storage::SqliteDatabase& database);
+
+// Text for a model prompt, with block boundaries and link destinations retained.
+[[nodiscard]] std::string note_document_text(const nlohmann::json& document);
+[[nodiscard]] NoteText note_get_text(storage::SqliteDatabase& database, std::int64_t id);
 
 [[nodiscard]] std::vector<NoteItem> note_list(storage::SqliteDatabase& database);
 [[nodiscard]] NoteItem note_create(

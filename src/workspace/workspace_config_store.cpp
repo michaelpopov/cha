@@ -2519,6 +2519,11 @@ NoteContent WorkspaceConfigStore::get_note(std::int64_t id) const {
     return note_get(*impl_->database, id);
 }
 
+NoteText WorkspaceConfigStore::get_note_text(std::int64_t id) const {
+    const std::lock_guard lock(impl_->mutex);
+    return note_get_text(*impl_->database, id);
+}
+
 void WorkspaceConfigStore::save_note(
     std::int64_t id,
     const nlohmann::json& document) {

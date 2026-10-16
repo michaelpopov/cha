@@ -10,6 +10,7 @@
 #include "session/controller_view.h"
 #include "session/generation_status.h"
 #include "storage/session_database.h"
+#include "storage/note_storage.h"
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
 #include "util/text.h"
@@ -41,9 +42,11 @@ public:
     // Fault-injection seam used to fail foreground activation after selection
     // but before durable state changes.
     using ActivationHook = std::function<void(std::size_t)>;
+    using NoteReader = std::function<NoteText(std::int64_t)>;
 
     [[nodiscard]] static std::unique_ptr<SessionController> from_workspace(
         WorkspaceReader read_workspace,
+        NoteReader read_note,
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
@@ -90,6 +93,8 @@ public:
         std::string text,
         std::string handle = {},
         std::shared_ptr<SubmissionState> submission = {});
+    [[nodiscard]] ControllerUpdate add_note(
+        std::int64_t note_id, std::shared_ptr<SubmissionState> submission = {});
     [[nodiscard]] ControllerUpdate cover_conversation(
         std::optional<EntryId> through_entry_id = std::nullopt);
     [[nodiscard]] ControllerUpdate uncover_conversation();
@@ -153,6 +158,7 @@ private:
 
     SessionController(
         WorkspaceReader read_workspace,
+        NoteReader read_note,
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
@@ -249,6 +255,7 @@ private:
     WorkspaceReader read_workspace_;
     Transcript transcript_;
     SessionJournal journal_;
+    NoteReader read_note_;
     // Production borrows its process-owned executor. Test-backed controllers
     // own their injected executor because no process composition root exists.
     std::shared_ptr<Providers> providers_owner_;

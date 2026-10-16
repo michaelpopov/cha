@@ -348,6 +348,7 @@ public:
         NoteItemKind kind,
         std::string_view name);
     [[nodiscard]] NoteContent get_note(std::int64_t id) const;
+    [[nodiscard]] NoteText get_note_text(std::int64_t id) const;
     void save_note(std::int64_t id, const nlohmann::json& document);
     [[nodiscard]] NoteItem rename_note_item(
         std::int64_t id,

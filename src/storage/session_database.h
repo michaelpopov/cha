@@ -13,6 +13,8 @@
 
 namespace cha {
 
+struct NoteText;
+
 using SessionKey = std::int64_t;
 
 struct SessionDatabaseMetadata {
@@ -84,6 +86,9 @@ public:
 
     void start_turn(RequestId request_id, const TranscriptEntry& prompt);
     void record_entry(const TranscriptEntry& entry);
+    // Stores the note copy and its notice in one transaction.
+    [[nodiscard]] TranscriptEntry add_note(const NoteText& note, EntryId entry_id);
+    [[nodiscard]] std::string notes_prompt() const;
     void complete_turn(RequestId request_id, const TranscriptEntry& response);
     void cancel_turn(RequestId request_id, std::optional<TranscriptEntry> response);
     void fail_turn(RequestId request_id, const TranscriptEntry& error);

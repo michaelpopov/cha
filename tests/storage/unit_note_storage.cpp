@@ -160,6 +160,26 @@ TEST_F(NoteStorageTest, NewDatabaseKeepsSchema2IdentityAndNoteSchema) {
         std::runtime_error);
 }
 
+TEST(NoteStorage, ExtractsPromptTextWithBlockBoundariesLinksAndImageDescriptions) {
+    const auto document = nlohmann::json::parse(R"json({"type":"doc","content":[
+        {"type":"heading","content":[{"type":"text","text":"Heading"}]},
+        {"type":"paragraph","content":[{"type":"text","text":"Read "},
+            {"type":"text","text":"the source","marks":[{"type":"link","attrs":{"href":"https://example.com"}}]},
+            {"type":"hardBreak"},{"type":"text","text":"Next line"}]},
+        {"type":"bulletList","content":[
+            {"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"Item"}]}]}]},
+        {"type":"codeBlock","content":[{"type":"text","text":"print(1)\nprint(2)"}]},
+        {"type":"image","attrs":{"src":"data:image/png;base64,private-bytes","alt":"A diagram"}},
+        {"type":"image","attrs":{"src":"data:image/png;base64,private-bytes","alt":null}}
+    ]})json");
+    EXPECT_EQ(note_document_text(document),
+        "Heading\nRead the source (https://example.com)\nNext line\nItem\n\nprint(1)\nprint(2)\nA diagram");
+    EXPECT_EQ(note_document_text(nlohmann::json::parse(empty_note_document)), "");
+    EXPECT_EQ(note_document_text(nlohmann::json::parse(
+        R"({"type":"doc","content":[{"type":"codeBlock","content":[{"type":"text","text":"    indented code"}]}]})")),
+        "    indented code");
+}
+
 TEST(NoteStorage, SessionLabelErrorsStayUnchanged) {
     expect_invalid_argument("Session label must not be empty", [] {
         validate_session_label("");
@@ -382,18 +402,29 @@ TEST_F(NoteStorageTest, DocumentsAndByteLimit) {
     expect_note_error(NoteFailure::opening, "The note could not be opened.", [&] {
         (void)note_get(*database_, note.id);
     });
+    expect_note_error(NoteFailure::opening, "The note could not be opened.", [&] {
+        (void)note_get_text(*database_, note.id);
+    });
 
     write_content("[]");
     expect_note_error(
         NoteFailure::opening,
         "The note could not be opened.",
         [&] { (void)note_get(*database_, note.id); });
+    expect_note_error(
+        NoteFailure::opening,
+        "The note could not be opened.",
+        [&] { (void)note_get_text(*database_, note.id); });
 
     write_content(over.dump());
     expect_note_error(
         NoteFailure::too_large,
         "Note exceeds 12 MiB. Remove content or use a smaller picture.",
         [&] { (void)note_get(*database_, note.id); });
+    expect_note_error(
+        NoteFailure::too_large,
+        "Note exceeds 12 MiB. Remove content or use a smaller picture.",
+        [&] { (void)note_get_text(*database_, note.id); });
     EXPECT_NO_THROW(validate_workspace_session_contents(*database_));
 }
 
@@ -442,6 +473,7 @@ TEST(NoteStorage, OlderVaultAndMaintenanceKeepIdentityWithoutConfigChanges) {
     std::int64_t application_id = 0;
     {
         Database database(path, Database::Mode::read_write);
+        database.execute("DROP TABLE session_notes");
         database.execute("DROP TABLE note_items");
         application_id = database.pragma_integer("application_id");
         EXPECT_EQ(
@@ -480,6 +512,7 @@ TEST(NoteStorage, OlderVaultAndMaintenanceKeepIdentityWithoutConfigChanges) {
             database.pragma_integer("user_version"),
             workspace_session_database_version);
         EXPECT_TRUE(has_schema_object(database, "table", "note_items"));
+        EXPECT_TRUE(has_schema_object(database, "table", "session_notes"));
         EXPECT_NO_THROW(validate_workspace_session_contents(database));
     }
 }

@@ -2,6 +2,7 @@
 #include "session/session_controller.h"
 #include "runtime/text_input.h"
 #include "storage/session_database.h"
+#include "storage/note_storage.h"
 #include "storage/sqlite_storage.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"
@@ -229,6 +230,157 @@ TEST(TextInput, RecordsAnInlineSelfNote) {
         "thinking out loud");
 
     controller->shutdown();
+}
+
+TEST(TextInput, CopiesAndRefreshesANoteWithoutGeneratingAReply) {
+    TemporaryTextSession temporary;
+    storage::SqliteDatabase database(temporary.path, storage::SqliteDatabase::Mode::read_write);
+    const auto note = note_create(database, std::nullopt, NoteItemKind::note, "Gemma4 Embeddings");
+    ASSERT_EQ(note.id, 1);
+    note_save(database, note.id, nlohmann::json::parse(
+        R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Original content"}]}]})"));
+
+    {
+        auto controller = test::from_test_workspace(
+            std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
+        const auto added = handle_text_input(*controller, "operator", " \t##000001\n");
+        EXPECT_TRUE(added.clear_input);
+        EXPECT_TRUE(requires_snapshot(added.session));
+        EXPECT_FALSE(controller->is_generating());
+        EXPECT_FALSE(controller->is_naming());
+        const auto entries = controller->view().transcript.entries;
+        ASSERT_EQ(entries.size(), 1U);
+        EXPECT_EQ(entries.front().kind, EntryKind::notice);
+        EXPECT_EQ(entries.front().text, "Added note “Gemma4 Embeddings” to this chat.");
+
+        note_save(database, note.id, nlohmann::json::parse(
+            R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Revised content"}]}]})"));
+        SessionJournal journal(temporary.path);
+        EXPECT_EQ(journal.notes_prompt(), "# Note: Gemma4 Embeddings\n\nOriginal content");
+        const auto refreshed = handle_text_input(*controller, "operator", "##000001");
+        EXPECT_TRUE(refreshed.clear_input);
+        EXPECT_FALSE(controller->is_generating());
+        ASSERT_EQ(controller->view().transcript.entries.size(), 2U);
+        EXPECT_EQ(controller->view().transcript.entries.back().text,
+            "Updated this chat’s copy of note “Gemma4 Embeddings”.");
+        EXPECT_EQ(journal.notes_prompt(), "# Note: Gemma4 Embeddings\n\nRevised content");
+    }
+    note_delete(database, note.id);
+    auto reopened = test::from_test_workspace(
+        std::vector<CharacterDefinition>{definition()}, temporary.path, notifier(),
+        load_session_state(temporary.path));
+    EXPECT_EQ(reopened->view().transcript.entries.size(), 2U);
+    SessionJournal journal(temporary.path);
+    EXPECT_EQ(journal.notes_prompt(), "# Note: Gemma4 Embeddings\n\nRevised content");
+    auto count = database.prepare("SELECT COUNT(*) FROM session_notes");
+    ASSERT_TRUE(count.step());
+    EXPECT_EQ(count.integer(0), 1);
+    const auto missing = handle_text_input(*reopened, "operator", "##000001");
+    EXPECT_FALSE(missing.clear_input);
+    EXPECT_EQ(missing.session.notice, "That note was not found.");
+    EXPECT_EQ(reopened->view().transcript.entries.size(), 2U);
+    EXPECT_EQ(journal.notes_prompt(), "# Note: Gemma4 Embeddings\n\nRevised content");
+}
+
+TEST(TextInput, DecodesCaseSensitiveBase62ReferencesAndPreservesMissingNoteDrafts) {
+    TemporaryTextSession temporary;
+    storage::SqliteDatabase database(temporary.path, storage::SqliteDatabase::Mode::read_write);
+    database.execute(
+        "INSERT INTO note_items (id, kind, name, content_json) VALUES "
+        "(10, 'note', 'Uppercase', '{\"type\":\"doc\"}'), "
+        "(36, 'note', 'Lowercase', '{\"type\":\"doc\"}'), "
+        "(56800235583, 'note', 'Maximum', '{\"type\":\"doc\"}'), "
+        "(2, 'folder', 'Folder', NULL)");
+    auto controller = test::from_test_workspace(
+        std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
+    for (const auto reference : {"##00000A", "##00000a", "##zzzzzz"}) {
+        EXPECT_TRUE(handle_text_input(*controller, "operator", reference).clear_input);
+    }
+    const auto entries = controller->view().transcript.entries;
+    ASSERT_EQ(entries.size(), 3U);
+    EXPECT_EQ(entries[0].text, "Added note “Uppercase” to this chat.");
+    EXPECT_EQ(entries[1].text, "Added note “Lowercase” to this chat.");
+    EXPECT_EQ(entries[2].text, "Added note “Maximum” to this chat.");
+    for (const auto reference : {"##000000", "##000001", "##000002"}) {
+        const auto missing = handle_text_input(*controller, "operator", reference);
+        EXPECT_FALSE(missing.clear_input);
+        EXPECT_EQ(missing.session.notice, "That note was not found.");
+    }
+    EXPECT_FALSE(controller->is_generating());
+    EXPECT_EQ(controller->view().transcript.entries.size(), 3U);
+}
+
+TEST(TextInput, KeepsNotesScopedToTheirChatInTheSameDatabase) {
+    TemporaryTextSession temporary;
+    storage::SqliteDatabase database(temporary.path, storage::SqliteDatabase::Mode::read_write);
+    const auto note = note_create(database, std::nullopt, NoteItemKind::note, "Reference");
+    database.execute(
+        "INSERT INTO sessions (forum_key, session_id, label, updated_at, history_epoch, next_entry_id, next_request_id) "
+        "VALUES (1, 'other-session', 'Other session', 0, 1, 1, 1)");
+    SessionJournal first(temporary.path, 1);
+    SessionJournal second(temporary.path, 2);
+    const auto copy = note_get_text(database, note.id);
+    EXPECT_EQ(first.add_note(copy, 1).text, "Added note “Reference” to this chat.");
+    EXPECT_FALSE(first.notes_prompt().empty());
+    EXPECT_TRUE(second.notes_prompt().empty());
+    EXPECT_EQ(second.add_note(copy, 1).text, "Added note “Reference” to this chat.");
+    EXPECT_EQ(second.notes_prompt(), first.notes_prompt());
+}
+
+TEST(TextInput, RejectsADamagedDocumentWithoutReplacingTheSavedCopy) {
+    TemporaryTextSession temporary;
+    storage::SqliteDatabase database(temporary.path, storage::SqliteDatabase::Mode::read_write);
+    const auto note = note_create(database, std::nullopt, NoteItemKind::note, "Reference");
+    note_save(database, note.id, nlohmann::json::parse(
+        R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Original"}]}]})"));
+    auto controller = test::from_test_workspace(
+        std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
+    ASSERT_TRUE(handle_text_input(*controller, "operator", "##000001").clear_input);
+    database.execute("UPDATE note_items SET content_json = '[]'");
+    const auto failed = handle_text_input(*controller, "operator", "##000001");
+    EXPECT_FALSE(failed.clear_input);
+    EXPECT_EQ(failed.session.notice, "The note could not be opened.");
+    EXPECT_EQ(controller->view().transcript.entries.size(), 1U);
+    SessionJournal journal(temporary.path);
+    EXPECT_EQ(journal.notes_prompt(), "# Note: Reference\n\nOriginal");
+}
+
+TEST(TextInput, RollsBackTheNoteCopyIfItsNoticeCannotBeSavedAndAllowsRetry) {
+    TemporaryTextSession temporary;
+    storage::SqliteDatabase database(temporary.path, storage::SqliteDatabase::Mode::read_write);
+    (void)note_create(database, std::nullopt, NoteItemKind::note, "Reference");
+    auto controller = test::from_test_workspace(
+        std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
+    database.execute(
+        "CREATE TRIGGER reject_notice BEFORE INSERT ON entries "
+        "BEGIN SELECT RAISE(ABORT, 'test save failure'); END");
+    const auto failed = handle_text_input(*controller, "operator", "##000001");
+    EXPECT_FALSE(failed.clear_input);
+    EXPECT_EQ(failed.session.notice, "The note could not be added to this chat. Try again.");
+    EXPECT_TRUE(controller->view().transcript.empty());
+    EXPECT_TRUE(load_session_state(temporary.path).entries.empty());
+    SessionJournal journal(temporary.path);
+    EXPECT_TRUE(journal.notes_prompt().empty());
+    database.execute("DROP TRIGGER reject_notice");
+    EXPECT_TRUE(handle_text_input(*controller, "operator", "##000001").clear_input);
+    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
+    EXPECT_EQ(controller->view().transcript.entries.front().id, 1U);
+    EXPECT_EQ(controller->view().transcript.entries.front().text, "Added note “Reference” to this chat.");
+}
+
+TEST(TextInput, TreatsEmbeddedAndMalformedNoteReferencesAsOrdinaryText) {
+    for (const std::string input : {"Use ##000001", "##000001 please", "##00001", "##0000001",
+             "##00000!", "##000001\n##000002"}) {
+        SCOPED_TRACE(input);
+        TemporaryTextSession temporary;
+        auto controller = test::from_test_backends(
+            test::one_backend(std::make_unique<BlockingBackend>()), temporary.path, notifier());
+        EXPECT_TRUE(handle_text_input(*controller, "operator", input).clear_input);
+        ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
+        EXPECT_EQ(controller->view().transcript.entries.front().kind, EntryKind::human);
+        EXPECT_EQ(controller->view().transcript.entries.front().text, input);
+        controller->shutdown();
+    }
 }
 
 TEST(TextInput, ForwardsAuthorOnlyToBatchStartingCommands) {

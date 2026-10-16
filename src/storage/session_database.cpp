@@ -1,6 +1,7 @@
 #include "storage/session_database.h"
 
 #include "storage/not_found_error.h"
+#include "storage/note_storage.h"
 #include "storage/session_timestamp.h"
 #include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
@@ -653,6 +654,39 @@ void SessionJournal::record_entry(const TranscriptEntry& entry) {
         current_epoch(impl_->database, impl_->session_key), entry);
     touch_session(impl_->database, impl_->session_key);
     transaction.commit();
+}
+
+TranscriptEntry SessionJournal::add_note(const NoteText& note, EntryId entry_id) {
+    Transaction transaction(impl_->database);
+    Statement existing = impl_->database.prepare(
+        "SELECT 1 FROM session_notes WHERE session_key = ?1 AND note_id = ?2",
+        impl_->session_key, note.id);
+    const bool refresh = existing.step();
+    Statement copy = impl_->database.prepare(
+        "INSERT INTO session_notes (session_key, note_id, name, text) VALUES (?1, ?2, ?3, ?4) "
+        "ON CONFLICT (session_key, note_id) DO UPDATE SET name = excluded.name, text = excluded.text",
+        impl_->session_key, note.id, note.name, note.text);
+    copy.run();
+    TranscriptEntry entry = make_notice_entry(entry_id, refresh
+        ? "Updated this chat’s copy of note “" + note.name + "”."
+        : "Added note “" + note.name + "” to this chat.");
+    insert_entry(impl_->database, impl_->session_key,
+        current_epoch(impl_->database, impl_->session_key), entry);
+    touch_session(impl_->database, impl_->session_key);
+    transaction.commit();
+    return entry;
+}
+
+std::string SessionJournal::notes_prompt() const {
+    Statement notes = impl_->database.prepare(
+        "SELECT name, text FROM session_notes WHERE session_key = ?1 ORDER BY note_id",
+        impl_->session_key);
+    std::string prompt;
+    while (notes.step()) {
+        if (!prompt.empty()) prompt += "\n\n";
+        prompt += "# Note: " + notes.text(0) + "\n\n" + notes.text(1);
+    }
+    return prompt;
 }
 
 void SessionJournal::complete_turn(
