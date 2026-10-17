@@ -359,7 +359,6 @@ function notesExtensions() {
   return [
     StarterKit.configure({
       code: false,
-      codeBlock: false,
       blockquote: false,
       strike: false,
       horizontalRule: false,

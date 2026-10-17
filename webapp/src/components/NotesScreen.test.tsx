@@ -188,17 +188,6 @@ describe('Notes screen', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('does not truncate IDs that cannot fit in six base62 characters', async () => {
-    const user = userEvent.setup();
-    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
-    render(<Harness initialId={56800235584} />);
-    await openedEditor();
-    await user.click(screen.getByRole('button', { name: 'Copy note reference' }));
-
-    expect(writeText).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert')).toHaveTextContent('This note ID cannot fit in a 6-character reference.');
-  });
-
   it.each([
     ['New note', '', 'Title', true],
     ['New note 1', '', 'Title', true],
@@ -216,7 +205,7 @@ describe('Notes screen', () => {
         getNote={async (id) => ({ id, document: documentWith(text) })}
         readNotePage={async () => ({ url: 'https://example.org/', title, markdown: 'Article' })}
         renameNoteItem={renameNoteItem}
-        draft="example.org"
+        draft="https://example.org"
       />);
       const editor = await openedEditor();
       fireEvent.click(screen.getByRole('button', { name: `Send to ${name}` }));
@@ -244,7 +233,7 @@ describe('Notes screen', () => {
       getNote={async (id) => ({ id, document: documentWith('') })}
       readNotePage={async () => ({ url: 'https://example.org/', title, markdown: 'Article' })}
       renameNoteItem={renameNoteItem}
-      draft="example.org"
+      draft="https://example.org"
     />);
     const editor = await openedEditor();
     fireEvent.click(screen.getByRole('button', { name: 'Send to Folder / New note' }));
@@ -261,7 +250,7 @@ describe('Notes screen', () => {
     const props = {
       items: [{ ...plan, name: 'New note' }],
       getNote: async (id: number) => ({ id, document: documentWith('') }),
-      readNotePage, renameNoteItem, draft: 'example.org',
+      readNotePage, renameNoteItem, draft: 'https://example.org',
     };
     const { rerender } = render(<Harness {...props} />);
     const editor = await openedEditor();
@@ -283,7 +272,7 @@ describe('Notes screen', () => {
       getNote={async (id) => ({ id, document: documentWith('') })}
       readNotePage={async () => ({ url: 'https://example.org/', title: 'Title', markdown: 'Article' })}
       renameNoteItem={renameNoteItem}
-      draft="example.org"
+      draft="https://example.org"
     />);
     const editor = await openedEditor();
     fireEvent.click(screen.getByRole('button', { name: 'Send to New note' }));
@@ -293,7 +282,7 @@ describe('Notes screen', () => {
     expect(screen.getByRole('button', { name: 'Send to New note' })).toBeInTheDocument();
   });
 
-  it.each(['https://example.org/article', 'example.org/article'])(
+  it.each(['https://example.org/article', 'www.example.org/article'])(
     'imports %s at the end and keeps text typed while the fetch is pending', async (address) => {
       let finish!: (page: NotePage) => void;
       const readNotePage = vi.fn(() => new Promise<NotePage>((resolve) => { finish = resolve; }));
@@ -318,16 +307,16 @@ describe('Notes screen', () => {
     const readNotePage = vi.fn()
       .mockRejectedValueOnce(new Error('Network details must stay hidden'))
       .mockResolvedValue({ url: 'https://example.org/', title: 'Title', markdown: 'Article' });
-    render(<Harness readNotePage={readNotePage} draft="example.org" />);
+    render(<Harness readNotePage={readNotePage} draft="https://example.org" />);
     const editor = await openedEditor();
     fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not retrieve the web page. Try again.');
     expect(editor.getText()).toBe('Alpha');
     const prompt = screen.getByRole('textbox', { name: 'Prompt' });
-    expect(prompt).toHaveValue('example.org');
+    expect(prompt).toHaveValue('https://example.org');
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss error' }));
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(prompt).toHaveValue('example.org');
+    expect(prompt).toHaveValue('https://example.org');
     fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
     await waitFor(() => expect(prompt).toHaveValue(''));
     expect(editor.getText()).toContain('Article');

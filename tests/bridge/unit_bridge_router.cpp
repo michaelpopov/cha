@@ -213,8 +213,10 @@ TEST_F(BridgeRouterTest, NotePageReadingReportsConfigurationAndFetchFailures) {
     reply = call("notes.readPage", {{"url", "https://example.org"}});
     server.join();
     EXPECT_FALSE(reply["ok"]);
-    EXPECT_EQ(reply["error"]["message"], "Could not retrieve the web page. Try again.");
-    EXPECT_FALSE(call("notes.readPage", {{"url", "file:///private/file"}})["ok"]);
+    EXPECT_EQ(reply["error"]["message"], "Page reading HTTP 503");
+    reply = call("notes.readPage", {{"url", "file:///private/file"}});
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["message"], "Page reading supports only HTTP and HTTPS URLs");
 }
 
 TEST_F(BridgeRouterTest, ForumSystemPromptIsReadOnlyAndRequiresExactIdentifiers) {

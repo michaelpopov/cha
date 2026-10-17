@@ -767,6 +767,9 @@ void SessionJournal::clear_history() {
     Statement turns = impl_->database.prepare(
         "DELETE FROM turns WHERE session_key = ?1", impl_->session_key);
     turns.run();
+    Statement notes = impl_->database.prepare(
+        "DELETE FROM session_notes WHERE session_key = ?1", impl_->session_key);
+    notes.run();
     touch_session(impl_->database, impl_->session_key);
     transaction.commit();
 }

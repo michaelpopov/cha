@@ -3,6 +3,7 @@
 #include "storage/session_label.h"
 #include "util/logging.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -168,35 +169,105 @@ nlohmann::json parse_document(std::string_view text, std::int64_t id) {
     return parsed;
 }
 
-void append_document_text(const nlohmann::json& node, std::string& text) {
-    if (!node.is_object()) return;
-    const auto type = node.value("type", std::string{});
-    if (type == "text") {
-        text += node.value("text", std::string{});
-        if (const auto marks = node.find("marks"); marks != node.end() && marks->is_array()) {
-            for (const auto& mark : *marks) {
-                if (mark.value("type", "") == "link" && mark.contains("attrs")) {
-                    const auto href = mark["attrs"].value("href", std::string{});
-                    if (!href.empty() && href != node.value("text", std::string{}))
-                        text += " (" + href + ")";
+std::string backtick_fence(std::string_view text) {
+    std::size_t length = 3;
+    std::size_t run = 0;
+    for (const char c : text) {
+        run = c == '`' ? run + 1 : 0;
+        length = std::max(length, run + 1);
+    }
+    return std::string(length, '`');
+}
+
+std::string wrap_mark(std::string text, std::string_view marker) {
+    const auto first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return text;
+    text.insert(text.find_last_not_of(" \t\r\n") + 1, marker);
+    text.insert(first, marker);
+    return text;
+}
+
+std::string markdown_text(const nlohmann::json& node) {
+    std::string text = node.value("text", std::string{});
+    const auto marks = node.find("marks");
+    if (marks == node.end()) return text;
+    for (const auto& mark : *marks) {
+        const auto type = mark.value("type", std::string{});
+        if (type == "bold") text = wrap_mark(std::move(text), "**");
+        else if (type == "italic") text = wrap_mark(std::move(text), "*");
+        else if (type == "link" && mark.contains("attrs")) {
+            const auto href = mark["attrs"].value("href", std::string{});
+            if (!href.empty()) {
+                std::string destination;
+                for (const char c : href) {
+                    if (c == '<') destination += "%3C";
+                    else if (c == '>') destination += "%3E";
+                    else if (c == '\\') destination += "%5C";
+                    else if (c == '\n') destination += "%0A";
+                    else if (c == '\r') destination += "%0D";
+                    else if (c == '\t') destination += "%09";
+                    else if (c == ' ') destination += "%20";
+                    else destination += c;
                 }
+                text = "[" + text + "](<" + destination + ">)";
             }
         }
-        return;
     }
-    if (type == "hardBreak" || type == "horizontalRule") text += '\n';
-    if (type == "image" && node.contains("attrs")) {
-        const auto& attrs = node["attrs"];
-        if (attrs.contains("alt") && attrs["alt"].is_string()) text += attrs["alt"].get<std::string>();
-        text += '\n';
+    return text;
+}
+
+std::string markdown_list_item(std::string_view text, std::string_view marker) {
+    std::string result(marker);
+    const std::string indent(marker.size(), ' ');
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        result += text[i];
+        if (text[i] == '\n' && i + 1 < text.size() && text[i + 1] != '\n') result += indent;
     }
-    if (const auto content = node.find("content"); content != node.end() && content->is_array()) {
-        for (const auto& child : *content) append_document_text(child, text);
+    return result;
+}
+
+std::string document_markdown(const nlohmann::json& node) {
+    if (!node.is_object()) return {};
+    const auto type = node.value("type", std::string{});
+    if (type == "text") return markdown_text(node);
+    if (type == "hardBreak") return "\\\n";
+    const auto attrs = node.find("attrs");
+    if (type == "image") {
+        return attrs != node.end() && attrs->contains("alt") && (*attrs)["alt"].is_string()
+            ? (*attrs)["alt"].get<std::string>() : "";
     }
-    if (type == "paragraph" || type == "heading" || type == "codeBlock"
-        || type == "listItem" || type == "blockquote") {
-        text += '\n';
+    const auto content = node.find("content");
+    if (type == "codeBlock") {
+        std::string text;
+        if (content != node.end()) {
+            for (const auto& child : *content) text += child.value("text", std::string{});
+        }
+        const auto fence = backtick_fence(text);
+        const auto language = attrs != node.end() && attrs->contains("language") && (*attrs)["language"].is_string()
+            ? (*attrs)["language"].get<std::string>() : "";
+        return fence + (language.find_first_of("`\r\n") == std::string::npos ? language : "")
+            + "\n" + text + (text.ends_with('\n') ? "" : "\n") + fence;
     }
+    if (content == node.end()) return {};
+    std::string text;
+    std::int64_t number = attrs != node.end() ? attrs->value("start", 1) : 1;
+    for (const auto& child : *content) {
+        const auto part = document_markdown(child);
+        if (type == "bulletList" || type == "orderedList") {
+            const auto marker = type == "bulletList" ? "- " : std::to_string(number++) + ". ";
+            if (!text.empty()) text += '\n';
+            text += markdown_list_item(part, marker);
+        } else {
+            if (!text.empty() && !part.empty() && type != "paragraph" && type != "heading") text += "\n\n";
+            text += part;
+        }
+    }
+    if (type == "heading") {
+        // Note headings sit one level below the "# Note:" line of the chat copy.
+        const int level = attrs != node.end() ? attrs->value("level", 1) : 1;
+        return std::string(std::clamp(level, 1, 5) + 1, '#') + " " + text;
+    }
+    return text;
 }
 
 } // namespace
@@ -226,11 +297,8 @@ void to_json(nlohmann::json& json, const NoteContent& content) {
     };
 }
 
-std::string note_document_text(const nlohmann::json& document) {
-    std::string text;
-    append_document_text(document, text);
-    while (!text.empty() && text.back() == '\n') text.pop_back();
-    return text;
+std::string note_document_markdown(const nlohmann::json& document) {
+    return document_markdown(document);
 }
 
 void create_note_items_schema(storage::SqliteDatabase& database) {
@@ -334,7 +402,7 @@ NoteText note_get_text(storage::SqliteDatabase& database, std::int64_t id) {
             "SELECT name, content_json FROM note_items WHERE id = ?1 AND kind = 'note'", id);
         if (!statement.step()) fail(NoteFailure::not_found, missing_note_message);
         return {id, statement.text(0),
-            note_document_text(parse_document(statement.text(1), id))};
+            note_document_markdown(parse_document(statement.text(1), id))};
     } catch (const nlohmann::json::exception&) {
         fail(NoteFailure::opening, opening_message);
     } catch (const std::runtime_error& error) {

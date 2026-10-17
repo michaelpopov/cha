@@ -2,7 +2,7 @@ import type { Editor } from '@tiptap/core';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { appendNoteHtml, createNotesEditor } from './editor';
-import { notePageHtml, promptPageUrl } from './pageImport';
+import { notePageHtml, notePageName, promptPageUrl } from './pageImport';
 
 let editor: Editor | undefined;
 afterEach(() => { editor?.destroy(); });
@@ -15,9 +15,12 @@ describe('URL imports', () => {
     ['Read https://example.org', null],
     ['https://example.org read this', null],
     ['https://example.org\nhttps://example.net', null],
-    ['example.org', 'http://example.org/'],
+    ['example.org', null],
+    ['README.md', null],
+    ['main.py', null],
     ['  www.example.org/article?q=1#part\n', 'http://www.example.org/article?q=1#part'],
-    ['example.org/a%20b', 'http://example.org/a%20b'],
+    ['WWW.example.org', 'http://www.example.org/'],
+    ['example.org/a%20b', null],
     ['example.org read this', null],
     ['example.org\nexample.net', null],
     ['reader@example.org', null],
@@ -26,6 +29,14 @@ describe('URL imports', () => {
     ['https://', null],
   ])('detects only a whole web address: %s', (prompt, expected) => {
     expect(promptPageUrl(prompt)).toBe(expected);
+  });
+
+  it('makes a valid note name from a page title', () => {
+    expect(notePageName('  Breaking\n\tnews \u0085 today\r\n')).toBe('Breaking news today');
+    expect(notePageName('\u0000\u001f')).toBe('');
+    const long = notePageName(`${'😀'.repeat(189)} tail`);
+    expect(Array.from(long)).toHaveLength(189);
+    expect(long.endsWith(' ')).toBe(false);
   });
 
   it('appends a title and formatted article, resolves links, removes images, and undoes once', () => {
@@ -68,6 +79,23 @@ describe('URL imports', () => {
     expect(editor.getJSON()).toEqual(before);
     expect(editor.commands.redo()).toBe(true);
     expect(editor.getText({ blockSeparator: '\n' })).toBe('Title\nArticle');
+  });
+
+  it('imports fenced code as an editable code block with its whitespace intact', () => {
+    editor = createNotesEditor();
+    const html = notePageHtml({
+      url: 'https://example.org', title: 'Example',
+      markdown: '```python\ndef embed(text):\n    return model.encode(text)\n```',
+    });
+    expect(appendNoteHtml(editor, html)).toBe(true);
+    expect(editor.isEditable).toBe(true);
+    expect(editor.view.dom.querySelector('pre code')?.textContent)
+      .toBe('def embed(text):\n    return model.encode(text)\n');
+    expect(editor.getJSON().content?.[1]).toMatchObject({
+      type: 'codeBlock', attrs: { language: 'python' },
+    });
+    expect(editor.commands.undo()).toBe(true);
+    expect(editor.isEmpty).toBe(true);
   });
 
   it.each(['<p></p><p>Keep</p>', '<p></p><p></p>'])(

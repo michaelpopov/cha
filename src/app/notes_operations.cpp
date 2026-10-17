@@ -83,7 +83,7 @@ std::shared_ptr<OperationReply> Application::read_note_page(
                 try {
                     // Document imports use the full article, rather than the model tool's 64 KiB limit.
                     const auto result = read_page(config, url, key, cancel,
-                        "https://api.firecrawl.dev/v2/scrape", note_document_byte_limit);
+                        firecrawl_scrape_endpoint, note_document_byte_limit);
                     if (cancel.load()) {
                         reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
                         return;
@@ -95,6 +95,8 @@ std::shared_ptr<OperationReply> Application::read_note_page(
                     }
                     reply->complete({{"url", page.at("url")}, {"title", page.at("title")},
                         {"markdown", page.at("markdown")}});
+                } catch (const WebToolError& error) {
+                    reply->fail(ErrorCode::internal_error, error.what());
                 } catch (const std::exception& error) {
                     log_warn("Note page import failed: " + std::string(error.what()));
                     reply->fail(ErrorCode::internal_error,

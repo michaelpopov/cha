@@ -411,10 +411,8 @@ std::string read_firecrawl(std::string_view url, std::string_view key,
     headers.append("Accept: application/json");
     headers.append("Content-Type: application/json");
     headers.append("Authorization: Bearer " + std::string(key));
-    // AP wraps its desktop and mobile navigation in div.Page-header.
     const auto body = nlohmann::json{{"url", target}, {"formats", {"markdown"}},
-        {"excludeTags", {"img", "picture", "video", "audio", "source", "iframe", "svg", "canvas",
-            ".Page-header"}},
+        {"excludeTags", {"img", "picture", "video", "audio", "source", "iframe", "svg", "canvas"}},
         {"onlyMainContent", true}, {"timeout", 45000}, {"skipTlsVerification", false}}.dump();
     const auto response = request_web_json("Firecrawl", curl, headers, std::string(endpoint),
         body, cancelled, key, "Page reading", 60000L, 8 * 1024 * 1024);

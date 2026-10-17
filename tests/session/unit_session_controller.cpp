@@ -463,12 +463,17 @@ TEST(SessionController, SendsSavedNoteCopiesToEveryCharacterAndRefreshesOnlyOnRe
     const auto second = note_create(database, std::nullopt, NoteItemKind::note, "Other note");
     const auto document = [](std::string text) {
         auto result = nlohmann::json::parse(
-            R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":""}]}]})");
+            R"json({"type":"doc","content":[
+                {"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":""}]},
+                {"type":"bulletList","content":[{"type":"listItem","content":[
+                    {"type":"paragraph","content":[{"type":"text","text":"A list item"}]}]}]},
+                {"type":"codeBlock","attrs":{"language":"python"},"content":[{"type":"text","text":"print(1)"}]}
+            ]})json");
         result["content"][0]["content"][0]["text"] = std::move(text);
         return result;
     };
-    note_save(database, note.id, document("ORIGINAL_NOTE_CONTENT"));
-    note_save(database, second.id, document("SECOND_NOTE_CONTENT"));
+    note_save(database, note.id, document("Original note content"));
+    note_save(database, second.id, document("Second note content"));
 
     std::mutex mutex;
     std::vector<SharedCharacterDefinition> definitions;
@@ -497,31 +502,32 @@ TEST(SessionController, SendsSavedNoteCopiesToEveryCharacterAndRefreshesOnlyOnRe
         ASSERT_EQ(definitions.size(), 2U);
         for (const auto& definition : definitions) {
             const auto& prompt = definition->system_prompt;
-            const auto position = prompt.find(expected);
+            const auto position = prompt.find("### " + std::string(expected));
             ASSERT_NE(position, std::string::npos);
             EXPECT_EQ(prompt.find(expected, position + expected.size()), std::string::npos);
             EXPECT_EQ(prompt.find(absent), std::string::npos);
-            EXPECT_NE(prompt.find("SECOND_NOTE_CONTENT"), std::string::npos);
+            EXPECT_NE(prompt.find("### Second note content"), std::string::npos);
+            EXPECT_NE(prompt.find("- A list item\n\n```python\nprint(1)\n```"), std::string::npos);
         }
     };
     auto controller = open(journal.path);
     ASSERT_TRUE(controller->add_note(note.id).input_consumed);
     ASSERT_TRUE(controller->add_note(second.id).input_consumed);
-    check_prompts(*controller, "ORIGINAL_NOTE_CONTENT", "REVISED_NOTE_CONTENT");
-    note_save(database, note.id, document("REVISED_NOTE_CONTENT"));
+    check_prompts(*controller, "Original note content", "Revised note content");
+    note_save(database, note.id, document("Revised note content"));
     (void)note_rename(database, note.id, "Renamed reference");
-    check_prompts(*controller, "ORIGINAL_NOTE_CONTENT", "REVISED_NOTE_CONTENT");
+    check_prompts(*controller, "Original note content", "Revised note content");
     controller.reset();
     controller = open(journal.path);
-    check_prompts(*controller, "ORIGINAL_NOTE_CONTENT", "REVISED_NOTE_CONTENT");
+    check_prompts(*controller, "Original note content", "Revised note content");
     ASSERT_TRUE(controller->add_note(note.id).input_consumed);
     EXPECT_EQ(controller->view().transcript.entries.back().text,
         "Updated this chat’s copy of note “Renamed reference”.");
-    check_prompts(*controller, "REVISED_NOTE_CONTENT", "ORIGINAL_NOTE_CONTENT");
+    check_prompts(*controller, "Revised note content", "Original note content");
     note_delete(database, note.id);
     controller.reset();
     controller = open(journal.path);
-    check_prompts(*controller, "REVISED_NOTE_CONTENT", "ORIGINAL_NOTE_CONTENT");
+    check_prompts(*controller, "Revised note content", "Original note content");
     controller.reset();
 
     TemporaryJournal unrelated;
@@ -530,7 +536,7 @@ TEST(SessionController, SendsSavedNoteCopiesToEveryCharacterAndRefreshesOnlyOnRe
     ASSERT_TRUE(controller->submit_prompt("operator", "Unrelated chat").input_consumed);
     (void)receive_until_idle(*controller);
     ASSERT_EQ(definitions.size(), 1U);
-    EXPECT_EQ(definitions.front()->system_prompt.find("NOTE_CONTENT"), std::string::npos);
+    EXPECT_EQ(definitions.front()->system_prompt.find("note content"), std::string::npos);
 }
 
 TEST(SessionController, SelectsOneCharacterVariantPerCategoryForEachSession) {

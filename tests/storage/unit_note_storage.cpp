@@ -160,9 +160,9 @@ TEST_F(NoteStorageTest, NewDatabaseKeepsSchema2IdentityAndNoteSchema) {
         std::runtime_error);
 }
 
-TEST(NoteStorage, ExtractsPromptTextWithBlockBoundariesLinksAndImageDescriptions) {
+TEST(NoteStorage, ConvertsNoteBlocksLinksAndImageDescriptionsToMarkdown) {
     const auto document = nlohmann::json::parse(R"json({"type":"doc","content":[
-        {"type":"heading","content":[{"type":"text","text":"Heading"}]},
+        {"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Heading"}]},
         {"type":"paragraph","content":[{"type":"text","text":"Read "},
             {"type":"text","text":"the source","marks":[{"type":"link","attrs":{"href":"https://example.com"}}]},
             {"type":"hardBreak"},{"type":"text","text":"Next line"}]},
@@ -172,12 +172,52 @@ TEST(NoteStorage, ExtractsPromptTextWithBlockBoundariesLinksAndImageDescriptions
         {"type":"image","attrs":{"src":"data:image/png;base64,private-bytes","alt":"A diagram"}},
         {"type":"image","attrs":{"src":"data:image/png;base64,private-bytes","alt":null}}
     ]})json");
-    EXPECT_EQ(note_document_text(document),
-        "Heading\nRead the source (https://example.com)\nNext line\nItem\n\nprint(1)\nprint(2)\nA diagram");
-    EXPECT_EQ(note_document_text(nlohmann::json::parse(empty_note_document)), "");
-    EXPECT_EQ(note_document_text(nlohmann::json::parse(
+    EXPECT_EQ(note_document_markdown(document),
+        "### Heading\n\nRead [the source](<https://example.com>)\\\nNext line\n\n- Item\n\n"
+        "```\nprint(1)\nprint(2)\n```\n\nA diagram");
+    EXPECT_EQ(note_document_markdown(nlohmann::json::parse(empty_note_document)), "");
+    EXPECT_EQ(note_document_markdown(nlohmann::json::parse(
         R"({"type":"doc","content":[{"type":"codeBlock","content":[{"type":"text","text":"    indented code"}]}]})")),
-        "    indented code");
+        "```\n    indented code\n```");
+    EXPECT_EQ(note_document_markdown(nlohmann::json::parse(
+        R"({"type":"doc","content":[{"type":"codeBlock","content":[{"type":"text","text":"print(1)\n"}]}]})")),
+        "```\nprint(1)\n```");
+}
+
+TEST(NoteStorage, KeepsNestedListsNumberingAndParagraphsInMarkdown) {
+    const auto document = nlohmann::json::parse(R"json({"type":"doc","content":[
+        {"type":"orderedList","attrs":{"start":4},"content":[
+            {"type":"listItem","content":[
+                {"type":"paragraph","content":[{"type":"text","text":"First"}]},
+                {"type":"bulletList","content":[{"type":"listItem","content":[
+                    {"type":"paragraph","content":[{"type":"text","text":"Nested"}]},
+                    {"type":"orderedList","attrs":{"start":2},"content":[{"type":"listItem","content":[
+                        {"type":"paragraph","content":[{"type":"text","text":"Deep"}]}]}]}
+                ]}]}]},
+            {"type":"listItem","content":[
+                {"type":"paragraph","content":[{"type":"text","text":"Second"}]},
+                {"type":"paragraph","content":[{"type":"text","text":"Continuation"}]}]}
+        ]}
+    ]})json");
+    EXPECT_EQ(note_document_markdown(document),
+        "4. First\n\n   - Nested\n\n     2. Deep\n"
+        "5. Second\n\n   Continuation");
+}
+
+TEST(NoteStorage, KeepsLiteralTextAndPreservesInlineMarksAndCodeFences) {
+    const auto document = nlohmann::json::parse(R"json({"type":"doc","content":[
+        {"type":"paragraph","content":[
+            {"type":"text","text":"**literal** [text] &lt;\n1. literal list\n"},
+            {"type":"text","text":"Bold ","marks":[{"type":"bold"}]},
+            {"type":"text","text":"italic","marks":[{"type":"italic"}]},
+            {"type":"text","text":" label ","marks":[{"type":"link","attrs":{"href":"https://example.com/a(b)?x=<value>&copy;=a b"}}]}
+        ]},
+        {"type":"codeBlock","attrs":{"language":"python"},"content":[{"type":"text","text":"    x = '**literal**'\n```"}]}
+    ]})json");
+    EXPECT_EQ(note_document_markdown(document),
+        "**literal** [text] &lt;\n1. literal list\n"
+        "**Bold** *italic*[ label ](<https://example.com/a(b)?x=%3Cvalue%3E&copy;=a%20b>)"
+        "\n\n````python\n    x = '**literal**'\n```\n````");
 }
 
 TEST(NoteStorage, SessionLabelErrorsStayUnchanged) {

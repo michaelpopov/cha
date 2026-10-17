@@ -448,12 +448,24 @@ describe('atomic document acceptance', () => {
     ]);
   });
 
+  it('keeps pasted code blocks and their indentation when reopening the document', () => {
+    const created = editor();
+    const code = 'def embed(text):\n    return model.encode(text)\n';
+    created.view.pasteHTML(`<pre><code>${code}</code></pre>`);
+    expect(created.getJSON().content?.[0]).toEqual({
+      type: 'codeBlock', attrs: { language: null }, content: [{ type: 'text', text: code }],
+    });
+    const reopened = editor({ content: created.getJSON() });
+    expect(reopened.isEditable).toBe(true);
+    expect(reopened.view.dom.querySelector('pre code')?.textContent).toBe(code);
+  });
+
   it('blocks editing and save notification when content is invalid', () => {
     const saves: string[] = [];
     const created = editor({
       content: {
         type: 'doc',
-        content: [{ type: 'codeBlock', content: [{ type: 'text', text: 'x' }] }],
+        content: [{ type: 'unsupportedBlock', content: [{ type: 'text', text: 'x' }] }],
       },
       onAcceptedDocument: () => saves.push('save'),
     });

@@ -4,8 +4,15 @@ import { Marked } from 'marked';
 import type { NotePage } from '../api/client';
 import { canonicalNoteLink } from './editor';
 
+// Linkify reads file names such as README.md as domains, so require a scheme or www.
 export function promptPageUrl(text: string): string | null {
-  return canonicalNoteLink(text);
+  return /^(?:https?:\/\/|www\.)/iu.test(text.trim()) ? canonicalNoteLink(text) : null;
+}
+
+// Note names have at most 200 characters and no line breaks; keep room for a " N" suffix.
+export function notePageName(title: string): string {
+  const name = title.replace(/[\s\p{Cc}]+/gu, ' ').trim();
+  return Array.from(name).slice(0, 190).join('').trimEnd();
 }
 
 const markdown = new Marked({
@@ -20,7 +27,8 @@ export function notePageHtml(page: NotePage): string {
   body.innerHTML = DOMPurify.sanitize(rendered, {
     ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'strong', 'b', 'em', 'i',
       'u', 'ul', 'ol', 'li', 'br', 'a', 'pre', 'code', 'blockquote'],
-    ALLOWED_ATTR: ['href', 'start'],
+    // The code block reads its language from the class of <code>.
+    ALLOWED_ATTR: ['href', 'start', 'class'],
     ALLOW_DATA_ATTR: false,
   });
   for (const link of body.querySelectorAll('a')) {

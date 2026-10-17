@@ -62,8 +62,8 @@ void to_json(nlohmann::json& json, const NoteContent& content);
 // Caller owns the transaction. The statements are idempotent.
 void create_note_items_schema(storage::SqliteDatabase& database);
 
-// Text for a model prompt, with block boundaries and link destinations retained.
-[[nodiscard]] std::string note_document_text(const nlohmann::json& document);
+// Markdown for chat context, retaining headings, lists, links, emphasis, and code blocks.
+[[nodiscard]] std::string note_document_markdown(const nlohmann::json& document);
 [[nodiscard]] NoteText note_get_text(storage::SqliteDatabase& database, std::int64_t id);
 
 [[nodiscard]] std::vector<NoteItem> note_list(storage::SqliteDatabase& database);

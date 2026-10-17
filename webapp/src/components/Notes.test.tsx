@@ -83,7 +83,7 @@ describe('Notes in the application', () => {
     const prompt = await screen.findByRole('textbox', { name: 'Prompt' });
     await waitFor(() => expect(noteEditor().isEditable).toBe(true));
     act(() => prompt.focus());
-    fireEvent.change(prompt, { target: { value: 'example.org' } });
+    fireEvent.change(prompt, { target: { value: 'https://example.org' } });
     fireEvent.keyDown(prompt, { key: 'Enter' });
     expect(await screen.findByRole('treeitem', { name: expected })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: `Send to ${expected}` })).toBeInTheDocument();

@@ -39,8 +39,7 @@ TEST(WebRead, RequestsMarkdownAndNormalizesFirecrawl) {
     EXPECT_EQ(sent["onlyMainContent"], true);
     EXPECT_EQ(sent["skipTlsVerification"], false);
     EXPECT_EQ(sent["excludeTags"], Json::array({
-        "img", "picture", "video", "audio", "source", "iframe", "svg", "canvas",
-        ".Page-header"}));
+        "img", "picture", "video", "audio", "source", "iframe", "svg", "canvas"}));
 }
 
 TEST(WebRead, UsesWebReaderFirstAndKeepsItsFinalUrlAndEmptyTitle) {

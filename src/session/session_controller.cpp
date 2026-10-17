@@ -430,6 +430,10 @@ ControllerUpdate SessionController::add_note(
     try {
         const NoteText note = read_note_(note_id);
         if (submission && submission->expired()) return {.notice = "Submission expired"};
+        // Every request sends each note copy in the system prompt.
+        if (note.text.size() > 256 * 1024) {
+            return {.notice = "This note is too large to add to a chat. The limit is 256 KiB of text."};
+        }
         entry = journal_.add_note(note, next_entry_id_);
     } catch (const NoteError& error) {
         return {.notice = error.what()};

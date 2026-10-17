@@ -32,7 +32,7 @@ import {
   type NoteLinkRange,
 } from '../notes/editor';
 import { noteTooLargeMessage } from '../notes/pictures';
-import { notePageHtml, promptPageUrl } from '../notes/pageImport';
+import { notePageHtml, notePageName, promptPageUrl } from '../notes/pageImport';
 import { noteReference } from '../notes/reference';
 import { availableNoteName, noteItemPath } from '../notes/tree';
 import type { useNoteLeave } from '../notes/useNoteLeave';
@@ -977,10 +977,6 @@ export function NotesScreen({
   async function copyReference() {
     if (activeNoteId === null) return;
     const reference = noteReference(activeNoteId);
-    if (reference === null) {
-      setCommandError('This note ID cannot fit in a 6-character reference.');
-      return;
-    }
     setCommandError(null);
     try {
       await navigator.clipboard.writeText(reference);
@@ -1101,7 +1097,7 @@ export function NotesScreen({
             try {
               const page = await client.readNotePage(url);
               if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
-              const title = page.title.trim();
+              const title = notePageName(page.title);
               const note = itemsRef.current.find((item) => item.id === noteId);
               const rename = current.isEmpty && /^New note(?: [1-9]\d*)?$/u.test(note?.name ?? '');
               accepted = appendNoteHtml(current, notePageHtml(page));
