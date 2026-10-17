@@ -2177,6 +2177,7 @@ select.cha-form-control {
 }
 
 .cha-notes-toolbar {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2202,6 +2203,7 @@ select.cha-form-control {
 }
 
 .cha-notes-toolbar-group > .cha-button,
+.cha-notes-toolbar-group > .cha-notes-heading-jump > .cha-button,
 .cha-notes-toolbar-group > .cha-notes-list > .cha-button {
   display: inline-flex;
   flex: none;
@@ -2290,6 +2292,25 @@ select.cha-form-control {
 .cha-notes-list-menu button:hover,
 .cha-notes-list-menu button:focus {
   background: var(--accent);
+}
+
+.cha-notes-heading-jump {
+  display: inline-flex;
+}
+
+.cha-notes-heading-menu {
+  right: 0;
+  left: auto;
+  box-sizing: border-box;
+  width: min(24rem, 100%);
+  min-width: 0;
+  max-height: min(24rem, 60vh);
+  overflow-y: auto;
+}
+
+.cha-notes-heading-menu button {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .cha-notes-screen {

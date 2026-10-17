@@ -24,9 +24,11 @@ import {
   insertPromptParagraph,
   linkRangeAtTarget,
   linkRangeFromSelection,
+  noteHeadings,
   removeNoteLink,
   replaceLinkDestination,
   selectNoteEnd,
+  selectNoteHeading,
   withIsolatedHistory,
   type LinkEditResult,
   type NoteLinkRange,
@@ -48,6 +50,7 @@ import {
   PictureIcon,
   RedoIcon,
   SearchIcon,
+  TextLinesIcon,
   TrashIcon,
   UndoIcon,
 } from './Icons';
@@ -103,13 +106,18 @@ function FormatBar({
   const [, setTick] = useState(0);
   const [listOpen, setListOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
+  const [headingsOpen, setHeadingsOpen] = useState(false);
   const listRoot = useRef<HTMLDivElement | null>(null);
   const listMenu = useRef<HTMLDivElement | null>(null);
   const linkRoot = useRef<HTMLDivElement | null>(null);
   const linkMenu = useRef<HTMLDivElement | null>(null);
+  const headingsRoot = useRef<HTMLDivElement | null>(null);
+  const headingsMenu = useRef<HTMLDivElement | null>(null);
   const pictureInput = useRef<HTMLInputElement | null>(null);
   const editable = editor.isEditable && !editor.isDestroyed;
   const linkRange = linkRangeFromSelection(editor.state);
+  const headings = noteHeadings(editor.state.doc);
+  const showHeadings = headingsOpen && editable && headings.length > 0;
 
   useEffect(() => {
     const bump = () => setTick((value) => value + 1);
@@ -148,6 +156,31 @@ function FormatBar({
     window.addEventListener('pointerdown', dismiss);
     return () => window.removeEventListener('pointerdown', dismiss);
   }, [linkOpen]);
+
+  // A menu that loses its entries or editor closes, so it cannot reappear later
+  // and take focus from the editor.
+  useEffect(() => {
+    if (!showHeadings) {
+      setHeadingsOpen(false);
+      return;
+    }
+    headingsMenu.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && headingsRoot.current?.contains(target)) return;
+      setHeadingsOpen(false);
+    };
+    window.addEventListener('pointerdown', dismiss);
+    return () => window.removeEventListener('pointerdown', dismiss);
+  }, [showHeadings]);
+
+  function chooseHeading(position: number) {
+    setHeadingsOpen(false);
+    if (!selectNoteHeading(editor, position)) return;
+    focusNotesEditor(editor);
+    const element = editor.view.nodeDOM(position);
+    if (element instanceof Element) element.scrollIntoView({ block: 'start', inline: 'nearest' });
+  }
 
   function chooseList(list: 'bullet' | 'ordered') {
     setListOpen(false);
@@ -379,6 +412,43 @@ function FormatBar({
         <button aria-label="Find" className="cha-button" onClick={onFind} title="Find" type="button">
           <SearchIcon />
         </button>
+        <div className="cha-notes-heading-jump" ref={headingsRoot}>
+          <button
+            aria-label="Jump to heading"
+            title="Jump to heading"
+            aria-expanded={showHeadings}
+            aria-haspopup="menu"
+            className="cha-button"
+            disabled={!editable || headings.length === 0}
+            onClick={() => setHeadingsOpen((open) => !open)}
+            type="button"
+          >
+            <TextLinesIcon />
+          </button>
+          {showHeadings && (
+            <div
+              className="cha-notes-list-menu cha-notes-heading-menu"
+              onKeyDown={(event) => menuKeys(event, () => {
+                setHeadingsOpen(false);
+                focusNotesEditor(editor);
+              })}
+              ref={headingsMenu}
+              role="menu"
+            >
+              {headings.map((heading) => (
+                <button
+                  key={heading.position}
+                  onClick={() => chooseHeading(heading.position)}
+                  role="menuitem"
+                  style={{ paddingInlineStart: `${0.6 + (heading.level - 1) * 0.75}rem` }}
+                  type="button"
+                >
+                  {heading.text}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

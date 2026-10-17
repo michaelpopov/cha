@@ -211,6 +211,32 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
   return editor;
 }
 
+export type NoteHeading = { position: number; level: number; text: string };
+
+export function noteHeadings(doc: PmNode): NoteHeading[] {
+  const headings: NoteHeading[] = [];
+  doc.descendants((node, position) => {
+    if (node.type.name === 'heading') {
+      const text = node.textBetween(0, node.content.size, ' ', ' ').replace(/\s+/gu, ' ').trim();
+      if (text) headings.push({ position, level: node.attrs.level as number, text });
+    }
+    return !node.isTextblock;
+  });
+  return headings;
+}
+
+export function selectNoteHeading(editor: Editor, position: number): boolean {
+  if (editor.isDestroyed || !editor.isEditable) return false;
+  const doc = editor.state.doc;
+  if (position < 0 || position >= doc.content.size || doc.nodeAt(position)?.type.name !== 'heading') {
+    return false;
+  }
+  editor.view.dispatch(editor.state.tr
+    .setSelection(TextSelection.create(doc, position + 1))
+    .setMeta('addToHistory', false));
+  return true;
+}
+
 // Opening places the caret at the end. A final image uses a gap cursor.
 // The selection is not a history step.
 export function selectNoteEnd(editor: Editor): void {

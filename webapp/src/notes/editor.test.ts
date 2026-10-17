@@ -13,9 +13,11 @@ import {
   insertTrackedPicture,
   isAllowedNoteLink,
   linkRangeAt,
+  noteHeadings,
   removeNoteLink,
   replaceLinkDestination,
   selectNoteEnd,
+  selectNoteHeading,
   storedWebDestination,
   trackSelectionBookmark,
   transformClipboardHTML,
@@ -198,6 +200,61 @@ describe('note link predicate', () => {
     expect(isAllowedNoteLink('file.txt')).toBe(false);
     expect(isAllowedNoteLink('data:text/plain,hi')).toBe(false);
     expect(isAllowedNoteLink('cha://app')).toBe(false);
+  });
+});
+
+describe('heading navigation', () => {
+  it('collects nonempty headings in document order, including nested headings and hard breaks', () => {
+    const created = editor({ content: '<h1>Overview</h1><p>Not a heading</p><h2> \u00a0 </h2>'
+      + '<ul><li><p>Item</p><h6>Part 1<br>Intro</h6></li></ul><h3>Overview</h3>' });
+    const before = created.getJSON();
+    const headings = noteHeadings(created.state.doc);
+    expect(headings.map(({ level, text }) => ({ level, text }))).toEqual([
+      { level: 1, text: 'Overview' },
+      { level: 6, text: 'Part 1 Intro' },
+      { level: 3, text: 'Overview' },
+    ]);
+    expect(headings[0].position).toBe(0);
+    expect(headings[1].position).toBeGreaterThan(headings[0].position);
+    expect(headings[2].position).toBeGreaterThan(headings[1].position);
+    for (const heading of headings) {
+      expect(created.state.doc.nodeAt(heading.position)?.type.name).toBe('heading');
+    }
+    expect(created.getJSON()).toEqual(before);
+    expect(noteHeadings(editor({ content: '<p>Body</p><h2></h2>' }).state.doc)).toEqual([]);
+  });
+
+  it('selects the requested duplicate without editing, publishing an update, or adding history', () => {
+    const updated = vi.fn();
+    const created = editor({ content: '<h2>Repeat</h2><p>Body</p><h2>Repeat</h2>', onAcceptedDocument: updated });
+    created.view.dispatch(created.state.tr.insertText('New ', 1));
+    updated.mockClear();
+    const before = created.getJSON();
+    const history = undoDepth(created.state);
+    const target = noteHeadings(created.state.doc)[1];
+    expect(selectNoteHeading(created, target.position)).toBe(true);
+    expect(created.state.selection.from).toBe(target.position + 1);
+    expect(created.state.selection.empty).toBe(true);
+    expect(created.getJSON()).toEqual(before);
+    expect(updated).not.toHaveBeenCalled();
+    expect(undoDepth(created.state)).toBe(history);
+    created.commands.undo();
+    expect(created.state.doc.firstChild?.textContent).toBe('Repeat');
+  });
+
+  it('ignores invalid positions, removed headings, and unavailable editors', () => {
+    const created = editor({ content: '<h1>Heading</h1><p>Body</p>' });
+    created.view.dispatch(created.state.tr.setNodeMarkup(0, created.schema.nodes.paragraph));
+    const selection = created.state.selection;
+    for (const position of [-1, 0, 1, created.state.doc.content.size, created.state.doc.content.size + 1]) {
+      expect(selectNoteHeading(created, position)).toBe(false);
+    }
+    expect(created.state.selection.eq(selection)).toBe(true);
+    created.commands.setContent('<h1>Heading</h1>');
+    created.setEditable(false);
+    expect(selectNoteHeading(created, 0)).toBe(false);
+    created.destroy();
+    expect(selectNoteHeading(created, 0)).toBe(false);
   });
 });
 

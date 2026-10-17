@@ -11,6 +11,7 @@ import {
   type NotePage,
 } from '../api/client';
 import { pictureTypeMessage } from '../notes/pictures';
+import { noteHeadings } from '../notes/editor';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveDelayMs, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { AppAction } from '../state/view';
@@ -503,6 +504,141 @@ describe('Notes screen', () => {
     expect(editor.view.dom).toHaveFocus();
     expect(editor.isActive('orderedList')).toBe(true);
     expect(prompt).toHaveValue('Keep');
+  });
+
+  it('jumps to the selected duplicate heading, focuses and scrolls it, without saving', async () => {
+    const saveNote = vi.fn();
+    render(<Harness saveNote={saveNote} getNote={async (id) => ({
+      id, document: {
+        type: 'doc', content: [
+          { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Repeat' }] },
+          { type: 'paragraph', content: [{ type: 'text', text: 'Body' }] },
+          { type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Repeat' }] },
+        ],
+      },
+    })} />);
+    const editor = await openedEditor();
+    const before = editor.getJSON();
+    const target = noteHeadings(editor.state.doc)[1];
+    const element = editor.view.nodeDOM(target.position) as HTMLElement;
+    const scroll = vi.fn(() => {
+      expect(editor.view.dom).toHaveFocus();
+      expect(editor.state.selection.from).toBe(target.position + 1);
+    });
+    element.scrollIntoView = scroll;
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('button', { name: 'Jump to heading' }));
+    const entries = screen.getAllByRole('menuitem', { name: 'Repeat' });
+    expect(entries[0]).toHaveFocus();
+    fireEvent.click(entries[1]);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(scroll).toHaveBeenCalledExactlyOnceWith({ block: 'start', inline: 'nearest' });
+    expect(editor.getJSON()).toEqual(before);
+    expect(editor.can().undo()).toBe(false);
+    await act(async () => { vi.advanceTimersByTime(noteSaveDelayMs + 1); });
+    expect(saveNote).not.toHaveBeenCalled();
+  });
+
+  it('supports heading menu keys, Escape, and outside-pointer dismissal', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const editor = await openedEditor();
+    act(() => editor.commands.setContent('<h1>First</h1><h2>Second</h2><h3>Third</h3>'));
+    const jump = screen.getByRole('button', { name: 'Jump to heading' });
+    act(() => jump.focus());
+    await user.keyboard('{Enter}');
+    expect(jump).toHaveAttribute('aria-expanded', 'true');
+    const entries = screen.getAllByRole('menuitem');
+    expect(entries[0]).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(entries[1]).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(entries[2]).toHaveFocus();
+    await user.keyboard('{Home}{ArrowUp}');
+    expect(entries[2]).toHaveFocus();
+    const target = editor.view.dom.querySelector('h3')!;
+    const scroll = vi.fn();
+    target.scrollIntoView = scroll;
+    await user.keyboard(' ');
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(editor.view.dom).toHaveFocus();
+    fireEvent.click(jump);
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(jump).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom).toHaveFocus();
+    fireEvent.click(jump);
+    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveFocus();
+  });
+
+  it('derives the heading menu after edits and Undo, and hides it while frozen', async () => {
+    let finishSave!: () => void;
+    render(<Harness saveNote={() => new Promise<void>((resolve) => { finishSave = resolve; })} getNote={async (id) => ({
+      id, document: {
+        type: 'doc', content: ['First', 'Second', 'Third'].map((text, index) => ({
+          type: 'heading', attrs: { level: index + 1 }, content: [{ type: 'text', text }],
+        })),
+      },
+    })} />);
+    const editor = await openedEditor();
+    const jump = screen.getByRole('button', { name: 'Jump to heading' });
+    expect(jump).toBeEnabled();
+    act(() => editor.view.dispatch(editor.state.tr.insertText('Renamed', 1, 6)));
+    fireEvent.click(jump);
+    expect(screen.getAllByRole('menuitem').map((entry) => entry.textContent)).toEqual(['Renamed', 'Second', 'Third']);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    act(() => editor.commands.undo());
+    fireEvent.click(jump);
+    expect(screen.getAllByRole('menuitem').map((entry) => entry.textContent)).toEqual(['First', 'Second', 'Third']);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    act(() => {
+      const { doc } = editor.state;
+      const third = doc.child(2);
+      editor.view.dispatch(editor.state.tr.delete(doc.content.size - third.nodeSize, doc.content.size).insert(0, third));
+    });
+    fireEvent.click(jump);
+    expect(screen.getAllByRole('menuitem').map((entry) => entry.textContent)).toEqual(['Third', 'First', 'Second']);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    act(() => {
+      const { doc } = editor.state;
+      const start = doc.child(0).nodeSize;
+      editor.view.dispatch(editor.state.tr.delete(start, start + doc.child(1).nodeSize));
+    });
+    fireEvent.click(jump);
+    expect(screen.getAllByRole('menuitem').map((entry) => entry.textContent)).toEqual(['Third', 'Second']);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    act(() => editor.view.dispatch(editor.state.tr.setNodeMarkup(0, editor.schema.nodes.paragraph)));
+    fireEvent.click(jump);
+    expect(screen.getAllByRole('menuitem').map((entry) => entry.textContent)).toEqual(['Second']);
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
+    expect(editor.isEditable).toBe(false);
+    expect(jump).toBeDisabled();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    await waitFor(() => expect(finishSave).toBeTypeOf('function'));
+    await act(async () => { finishSave(); });
+    expect(screen.getByText('Left the note')).toBeInTheDocument();
+  });
+
+  it('disables heading navigation when all headings are blank or removed', async () => {
+    render(<Harness />);
+    const editor = await openedEditor();
+    const jump = screen.getByRole('button', { name: 'Jump to heading' });
+    expect(jump).toBeDisabled();
+    act(() => editor.commands.setContent('<h2> \u00a0 </h2>'));
+    expect(jump).toBeDisabled();
+    act(() => editor.commands.setContent('<h2>Section</h2>'));
+    expect(jump).toBeEnabled();
+    fireEvent.click(jump);
+    act(() => editor.commands.setContent('<p>Section</p>'));
+    expect(jump).toBeDisabled();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    act(() => editor.view.focus());
+    act(() => editor.commands.setContent('<h2>Section</h2>'));
+    expect(editor.view.dom).toHaveFocus();
+    expect(jump).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
   it.each([1, 2, 3])('toggles heading %s, preserves the selection, and returns focus', async (level) => {
