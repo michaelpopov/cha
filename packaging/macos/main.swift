@@ -152,6 +152,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
 
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
+        let newInstance = windowMenu.addItem(
+            withTitle: "New Instance",
+            action: #selector(startNewInstance(_:)),
+            keyEquivalent: "n")
+        newInstance.target = self
+        windowMenu.addItem(.separator())
         windowMenu.addItem(
             withTitle: "Minimize",
             action: #selector(NSWindow.performMiniaturize(_:)),
@@ -165,6 +171,19 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         NSApp.windowsMenu = windowMenu
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func startNewInstance(_ sender: Any?) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(
+            at: Bundle.main.bundleURL,
+            configuration: configuration
+        ) { _, error in
+            if let error {
+                DispatchQueue.main.async { NSApp.presentError(error) }
+            }
+        }
     }
 
     private func showWindow() {

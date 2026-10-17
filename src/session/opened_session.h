@@ -11,10 +11,12 @@
 #include <string_view>
 
 namespace cha {
+class SessionLease;
 
 // Everything prepared while opening a stored session for its owner thread.
 struct OpenedSession {
     std::string label;
+    std::shared_ptr<SessionLease> lease;
     std::unique_ptr<SessionController> controller;
     // Saves a changed default character to the forum's config, on the owner
     // thread. Every forum gets one; built-in forums have no config file, so the

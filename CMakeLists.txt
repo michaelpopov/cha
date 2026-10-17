@@ -507,8 +507,9 @@ if(BUILD_TESTING)
         tests/support/test_workspace.cpp
     )
     if(NOT WIN32)
-        # The socket fixture used by these transport tests is POSIX-only.
+        # These tests use POSIX child processes or the POSIX-only socket fixture.
         list(APPEND CHA_TEST_SOURCES
+            tests/storage/unit_multi_process.cpp
             tests/providers/unit_provider_client.cpp)
 
         # Lease tests use a fresh executable rather than running C++ code in a
@@ -524,6 +525,10 @@ if(BUILD_TESTING)
         add_executable(cha_oauth_test_helper tests/support/oauth_test_helper.cpp)
         target_link_libraries(cha_oauth_test_helper PRIVATE cha_lib)
         cha_enable_warnings(cha_oauth_test_helper)
+
+        add_executable(cha_multi_test_helper tests/support/multi_test_helper.cpp)
+        target_link_libraries(cha_multi_test_helper PRIVATE cha_lib)
+        cha_enable_warnings(cha_multi_test_helper)
     endif()
 
     add_executable(cha_jev_eval_requests EXCLUDE_FROM_ALL tests/providers/jev_eval_requests.cpp)
@@ -553,6 +558,9 @@ if(BUILD_TESTING)
         target_compile_definitions(
             cha_tests PRIVATE CHA_OAUTH_TEST_HELPER="$<TARGET_FILE:cha_oauth_test_helper>")
         add_dependencies(cha_tests cha_oauth_test_helper)
+        target_compile_definitions(
+            cha_tests PRIVATE CHA_MULTI_TEST_HELPER="$<TARGET_FILE:cha_multi_test_helper>")
+        add_dependencies(cha_tests cha_multi_test_helper)
     endif()
     cha_enable_warnings(cha_tests)
 

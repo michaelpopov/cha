@@ -21,6 +21,7 @@ using LiveSessionHandle = std::shared_ptr<LiveSession>;
 struct LiveSessionReady {};
 
 enum class LiveSessionOpenFailure {
+    busy,
     not_found,
     stopping,
     limit_reached,

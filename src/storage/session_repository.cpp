@@ -96,20 +96,70 @@ void SessionRepository::MaintenanceGuard::recover_sessions() const {
 void SessionRepository::recover_sessions() const {
     Database database(database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);
-    // Call only at startup or after draining live sessions. A rejected submission may
-    // have cleared discardable without saving any entries.
-    database.execute(
-        "DELETE FROM sessions WHERE archived_at IS NOT NULL OR (recent_pending = 1 "
-        "AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.session_key = sessions.session_key))");
-    // Interrupted naming must not hide a conversation that already has content.
-    database.execute(
-        "UPDATE sessions SET recent_pending = 0 WHERE recent_pending = 1 "
-        "AND EXISTS (SELECT 1 FROM entries e WHERE e.session_key = sessions.session_key)");
+    database.execute("DELETE FROM sessions WHERE archived_at IS NOT NULL");
+    std::vector<FullSessionId> candidates;
+    {
+        auto rows = database.prepare(
+            "SELECT f.forum_id, s.session_id FROM sessions s JOIN forums f USING(forum_key) "
+            "WHERE s.recent_pending = 1 AND s.archived_at IS NULL");
+        while (rows.step()) candidates.push_back({rows.text(0), rows.text(1)});
+    }
+    for (const auto& identity : candidates) {
+        try {
+            const auto lease = acquire_session(identity, false, true);
+            Transaction transaction(database);
+            database.prepare(
+                "DELETE FROM sessions WHERE recent_pending = 1 AND archived_at IS NULL "
+                "AND forum_key = (SELECT forum_key FROM forums WHERE forum_id = ?1) "
+                "AND session_id = ?2 AND NOT EXISTS "
+                "(SELECT 1 FROM entries e WHERE e.session_key = sessions.session_key)",
+                identity.forum_id, identity.session_id).run();
+            database.prepare(
+                "UPDATE sessions SET recent_pending = 0 WHERE recent_pending = 1 "
+                "AND forum_key = (SELECT forum_key FROM forums WHERE forum_id = ?1) "
+                "AND session_id = ?2 AND EXISTS "
+                "(SELECT 1 FROM entries e WHERE e.session_key = sessions.session_key)",
+                identity.forum_id, identity.session_id).run();
+            transaction.commit();
+        } catch (const SessionBusyError&) { /* Another owner is still working. */ }
+    }
+}
+
+std::shared_ptr<SessionLease> SessionRepository::acquire_session(
+    const FullSessionId& identity, bool opening, bool skip_local) const {
+    if (identity == temporary_identity_) return {};
+    const std::lock_guard lock(leases_mutex_);
+    std::erase_if(leases_, [](const auto& item) { return item.second.expired(); });
+    const auto found = leases_.find(identity);
+    if (found != leases_.end()) {
+        if (auto lease = found->second.lock()) {
+            if (skip_local) throw SessionBusyError(session_in_use_message);
+            if (opening) pending_.erase(identity);
+            return lease;
+        }
+        leases_.erase(found);
+    }
+    auto lease = std::make_shared<SessionLease>(SessionLease::acquire_file(
+        SessionLease::session_path(database_path_, identity.forum_id, identity.session_id),
+        session_in_use_message));
+    leases_[identity] = lease;
+    return lease;
+}
+
+void SessionRepository::release_pending(const FullSessionId& identity) const {
+    const std::lock_guard lock(leases_mutex_);
+    pending_.erase(identity);
+}
+
+void SessionRepository::release_pending() {
+    const std::lock_guard lock(leases_mutex_);
+    pending_.clear();
 }
 
 void SessionRepository::MaintenanceGuard::retarget(
     std::filesystem::path database_path,
     std::string database_password) {
+    repository_->release_pending();
     repository_->database_path_ = std::move(database_path);
     repository_->database_password_ = std::move(database_password);
 }
@@ -173,7 +223,7 @@ SessionRepository::SessionRepository(
 SessionRepository::~SessionRepository() {
     try {
         const MaintenanceGuard maintenance = reserve_maintenance();
-        maintenance.checkpoint();
+        checkpoint_workspace_session_database(database_path_, database_password_, true);
     } catch (const std::exception& error) {
         log_warn(
             "Failed to checkpoint workspace session database: "
@@ -344,6 +394,10 @@ StoredSession SessionRepository::create(
          ++suffix) {
         const std::string id = suffix == 1
             ? base_id : base_id + "-" + std::to_string(suffix);
+        const FullSessionId identity{std::string(forum_id), id};
+        std::shared_ptr<SessionLease> lease;
+        try { lease = acquire_session(identity, false, true); }
+        catch (const SessionBusyError&) { continue; }
         const std::int64_t updated_at = session_timestamp();
         const std::string effective_label = label.empty()
             ? std::string(temporary_session_label) : label;
@@ -374,6 +428,10 @@ StoredSession SessionRepository::create(
             continue;
         }
         transaction.commit();
+        {
+            const std::lock_guard lock(leases_mutex_);
+            pending_[identity] = std::move(lease);
+        }
         return {
             .identity = {std::string(forum_id), id},
             .label = effective_label,
@@ -390,6 +448,7 @@ StoredSession SessionRepository::rename(
     const FullSessionId& identity,
     std::string label) const {
     const std::shared_lock operation(operation_mutex_);
+    const auto lease = acquire_session(identity);
     require_persistent_forum(identity.forum_id);
     validate_session_label(label);
     Database database(
@@ -420,6 +479,7 @@ StoredSession SessionRepository::rename(
 
 bool SessionRepository::discard_unused(const FullSessionId& identity) const {
     const std::shared_lock operation(operation_mutex_);
+    const auto lease = acquire_session(identity);
     require_persistent_forum(identity.forum_id);
     Database database(database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);
@@ -430,11 +490,14 @@ bool SessionRepository::discard_unused(const FullSessionId& identity) const {
         "AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.session_key = sessions.session_key)",
         std::string_view(identity.forum_id), std::string_view(identity.session_id));
     remove.run();
-    return database.changes() == 1;
+    const bool discarded = database.changes() == 1;
+    release_pending(identity);
+    return discarded;
 }
 
 void SessionRepository::delete_session(const FullSessionId& identity) const {
     const std::shared_lock operation(operation_mutex_);
+    const auto lease = acquire_session(identity);
     require_persistent_forum(identity.forum_id);
     Database database(
         database_path_, Database::Mode::read_write, database_password_);
@@ -452,17 +515,20 @@ void SessionRepository::delete_session(const FullSessionId& identity) const {
         throw missing_session_error(identity.session_id);
     }
     transaction.commit();
+    release_pending(identity);
 }
 
 PreparedSession SessionRepository::prepare(
     const FullSessionId& identity) const {
     const std::shared_lock operation(operation_mutex_);
+    auto lease = acquire_session(identity, true);
     const auto& path = session_database_path(identity);
     const bool temporary = identity == temporary_identity_;
     LoadedSessionDatabase loaded =
         load_session_database(
             path, identity, temporary ? std::string_view{} : database_password_);
     return {
+        .lease = std::move(lease),
         .identity = identity,
         .label = std::move(loaded.metadata.label),
         .database_path = path,
@@ -527,6 +593,7 @@ std::optional<EntryAudioLookup> SessionRepository::lookup_entry_audio(
 void SessionRepository::save_entry_audio(const EntryAudioLookup& entry, const EntryAudio& audio,
     const std::function<bool()>& cancelled) const {
     const std::shared_lock operation(operation_mutex_);
+    const auto lease = acquire_session(entry.identity);
     if (cancelled()) return;
     const auto& path = session_database_path(entry.identity);
     if (entry.database_path != path || audio.audio.empty()) return;
@@ -574,6 +641,7 @@ std::set<EntryId> SessionRepository::cached_audio_entries(const FullSessionId& i
 
 void SessionRepository::clear_session_audio(const FullSessionId& identity) const {
     const std::shared_lock operation(operation_mutex_);
+    const auto lease = acquire_session(identity);
     const auto& path = session_database_path(identity);
     Database database(path, Database::Mode::read_write,
         identity == temporary_identity_ ? std::string_view{} : database_password_);

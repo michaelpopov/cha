@@ -202,6 +202,7 @@ void LiveSession::install(OpenedSession opened) {
         throw std::runtime_error("Session opener returned no controller");
     }
     label_ = std::move(opened.label);
+    lease_ = std::move(opened.lease);
     controller_ = std::move(opened.controller);
     controller_->enable_auto_naming(label_);
     persist_default_character_ = std::move(opened.persist_default_character);
@@ -541,6 +542,7 @@ void LiveSession::finalize(ShutdownReason reason) noexcept {
             log_fatal_once();
         }
         controller_.reset();
+        lease_.reset();
         persist_default_character_ = {};
         mirror_ = {};
         log_event("controller_released_runtime_finished");

@@ -4,7 +4,9 @@
 #include "app/media_operations.h"
 #include "app/r2_database_transfer.h"
 #include "bridge/bridge_protocol.h"
+#include "storage/session_lease.h"
 #include "util/logging.h"
+#include "workspace/workspace_config_store.h"
 #include "util/path_name.h"
 #include "util/text.h"
 
@@ -859,6 +861,10 @@ void handle_chaweb_request(
         write_code(fd, ErrorCode::not_found, stop, "The request was not found.");
     } catch (const app::ApplicationError& error) {
         write_error(fd, status_for(error.code), from_application(error), stop);
+    } catch (const SecondaryProcessError& error) {
+        write_code(fd, ErrorCode::invalid_argument, stop, error.what());
+    } catch (const SessionBusyError& error) {
+        write_code(fd, ErrorCode::invalid_argument, stop, error.what());
     } catch (const std::invalid_argument&) {
         write_code(fd, ErrorCode::invalid_argument, stop);
     } catch (const UnknownVaultError&) {

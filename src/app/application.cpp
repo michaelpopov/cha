@@ -289,7 +289,7 @@ Application::Impl::Impl(
         seed,
         active_password);
     mirror = std::make_shared<SessionMirror>();
-    if (const auto root = session_mirror_root(command.vault)) {
+    if (const auto root = session_mirror_root(command.vault); root && store->is_main()) {
         try {
             mirror->rebuild(root, *sessions);
         } catch (const std::exception& error) {
@@ -298,6 +298,8 @@ Application::Impl::Impl(
                 + std::string(error.what()));
             mirror->rebuild(std::nullopt, *sessions);
         }
+    } else if (root) {
+        log_warn("Secondary process does not write the Markdown mirror");
     }
 
     maintenance_prompt = std::make_shared<const std::string>(
@@ -539,11 +541,18 @@ Application::open_session(
             }
             return *error;
         }
+        if (const auto* failure = std::get_if<LiveSessionOpenFailure>(&outcome);
+            failure && *failure != LiveSessionOpenFailure::open_timeout
+                && *failure != LiveSessionOpenFailure::manager_stopping) {
+            impl_->sessions->release_pending(key);
+        }
     }
     if (std::holds_alternative<LiveSessionReady>(outcome)) {
         return OpenSessionSuccess{key.forum_id, key.session_id};
     }
     switch (std::get<LiveSessionOpenFailure>(outcome)) {
+    case LiveSessionOpenFailure::busy:
+        throw ApplicationError(ErrorCode::invalid_argument, session_in_use_message);
     case LiveSessionOpenFailure::not_found:
         return ErrorCode::not_found;
     case LiveSessionOpenFailure::stopping:
@@ -789,9 +798,13 @@ SessionExport Application::export_session(
         throw ApplicationError(ErrorCode::internal_error);
     }
     try {
-        const PreparedSession prepared = impl_->sessions->prepare(key);
-        return {session_markdown(
-            prepared.label, prepared.restore.entries)};
+        const auto sessions = impl_->sessions->list(forum_id);
+        const auto stored = std::ranges::find(sessions, session_id,
+            [](const StoredSession& session) -> std::string_view {
+                return session.identity.session_id;
+            });
+        if (stored == sessions.end()) throw ApplicationError(ErrorCode::not_found);
+        return {session_markdown(stored->label, impl_->sessions->history(key))};
     } catch (const SessionNotFoundError&) {
         throw ApplicationError(ErrorCode::not_found);
     } catch (const ForumNotFoundError&) {
@@ -1014,9 +1027,7 @@ ForumDetail Application::update_forum(
 void Application::delete_forum(
     std::string_view forum_id,
     std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    workspace::delete_forum(*impl_->store, *impl_->live_sessions, forum_id);
+    impl_->vault_maintenance.delete_forum(forum_id, epoch);
 }
 
 ForumDetail Application::update_forum_members(
@@ -1400,6 +1411,7 @@ std::shared_ptr<OperationReply> Application::start_openai_auth(
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
+        impl_->store->require_main();
         oauth = impl_->openai_auth.get();
     }
     if (!impl_->background_jobs.launch(
@@ -1433,6 +1445,7 @@ std::shared_ptr<OperationReply> Application::poll_openai_auth(
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
+        impl_->store->require_main();
         oauth = impl_->openai_auth.get();
     }
     if (!impl_->background_jobs.launch(
@@ -1462,6 +1475,7 @@ std::shared_ptr<OperationReply> Application::poll_openai_auth(
 OpenAiAuth Application::disconnect_openai_auth(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
+    impl_->store->require_main();
     return settings::disconnect_openai_auth(*impl_->openai_auth);
 }
 
@@ -1561,6 +1575,7 @@ bool Application::join_shutdown(std::chrono::milliseconds grace) {
         : std::chrono::milliseconds::zero();
     joined = impl_->live_sessions->join_shutdown(remaining) && joined;
     joined = impl_->providers.shutdown_until(deadline) && joined;
+    if (joined) impl_->sessions->release_pending();
     impl_->stopped = true;
     impl_->running = false;
     impl_->state.store(ApplicationState::unavailable);

@@ -194,13 +194,6 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
             epoch);
         break;
     }
-    case Method::forum_delete: {
-        require_only_keys(params, {"forum_id"});
-        application.delete_forum(
-            require_identifier(params, "forum_id"), epoch);
-        result = nlohmann::json::object();
-        break;
-    }
     case Method::forum_members_update: {
         const std::string id = require_identifier(params, "forum_id");
         result = application.update_forum_members(

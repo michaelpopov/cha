@@ -85,7 +85,7 @@ type EventHandler = (payload: unknown) => void;
 function changesContext(method: string): boolean {
   return method === 'vault.switch' || method === 'vault.merge' || method === 'vault.update'
     || method === 'vault.upload' || method === 'vault.download'
-    || method === 'vault.import' || method === 'vault.export';
+    || method === 'vault.import' || method === 'vault.export' || method === 'forum.delete';
 }
 
 function needsContext(method: string): boolean {

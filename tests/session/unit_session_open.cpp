@@ -214,6 +214,22 @@ TEST_F(SessionOpenTest, SourceDirectoryEditsDoNotAffectOpening) {
         "Renamed");
 }
 
+TEST_F(SessionOpenTest, SecondaryDefaultCharacterSelectionDoesNotPersistSettings) {
+    auto secondary = WorkspaceConfigStore::open(database_);
+    SessionRepository sessions([&] { return secondary->snapshot(); },
+        secondary->database_path(), secondary->workspace_path(), secondary->welcome_path(),
+        TemporarySessionSeed{{std::string(entrance_id), std::string(welcome_id)}, "Welcome"});
+    const auto stored = sessions.create("lobby", "Secondary");
+    auto opened = open_session(sessions, stored.identity, providers_,
+        std::make_shared<test::TestNotifier>(), *secondary);
+    const auto before = config_content(database_, "forums/lobby/config.toml");
+    const auto snapshot = secondary->snapshot();
+    EXPECT_NO_THROW(opened.persist_default_character("guide"));
+    EXPECT_EQ(config_content(database_, "forums/lobby/config.toml"), before);
+    EXPECT_EQ(secondary->snapshot(), snapshot);
+    EXPECT_TRUE(opened.controller->view().transcript.entries.empty());
+}
+
 TEST_F(SessionOpenTest, ReportsMissingForumAndSession) {
     EXPECT_THROW(
         (void)open({"missing", "session"}),

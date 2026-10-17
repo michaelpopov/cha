@@ -314,6 +314,7 @@ void ApiKeyStore::migrate_vault() {
 }
 
 void ApiKeyStore::migrate() {
+    if (!config_->is_main()) return;
     const std::shared_ptr<const Workspace> current = config_->snapshot();
     if (!current->api_keys().empty() || current->r2_storage()) return;
 

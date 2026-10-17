@@ -109,6 +109,63 @@ void set_r2(Application& application, int port) {
     }, application.context_epoch());
 }
 
+TEST(ApplicationVault, SecondarySharesNotesAndSwitchesWithoutAcquiringMainRole) {
+    TwoVaults pair;
+    auto main = Application::open(pair.command);
+    auto secondary = Application::open(pair.command);
+    const auto epoch = secondary->context_epoch();
+    ASSERT_FALSE(secondary->store().is_main());
+    const auto note = secondary->create_note_item({}, NoteItemKind::note, "Shared", epoch);
+    auto document = secondary->get_note(note.id, epoch).document;
+    document["revision"] = 1;
+    secondary->save_note(note.id, document, epoch);
+    EXPECT_EQ(main->get_note(note.id, main->context_epoch()).document, document);
+    document["revision"] = 2;
+    main->save_note(note.id, document, main->context_epoch());
+    EXPECT_EQ(secondary->get_note(note.id, epoch).document, document);
+    main->delete_note_item(note.id, main->context_epoch());
+    EXPECT_THROW(secondary->save_note(note.id, document, epoch), ApplicationError);
+    EXPECT_TRUE(secondary->list_note_items(epoch).empty());
+
+    EXPECT_THROW((void)secondary->update_persona("alpha", {.display_name = "Refused"}, epoch),
+        SecondaryProcessError);
+    EXPECT_THROW((void)secondary->disconnect_openai_auth(epoch), SecondaryProcessError);
+    EXPECT_THROW((void)main->update_vault("A", {.display_name = "Renamed"}, main->context_epoch()),
+        SessionBusyError);
+    EXPECT_EQ(main->state(), ApplicationState::running);
+    EXPECT_EQ(main->current_vault().get().name, "A");
+
+    const auto switched = secondary->switch_vault("B", {}, epoch);
+    EXPECT_TRUE(secondary->store().is_main());
+    EXPECT_THROW((void)main->update_vault("B", {.display_name = "Renamed"}, main->context_epoch()),
+        SessionBusyError);
+    EXPECT_THROW(main->delete_vault("B", main->context_epoch()), SessionBusyError);
+    (void)secondary->switch_vault("A", {}, switched.context_epoch);
+    EXPECT_FALSE(secondary->store().is_main());
+}
+
+TEST(ApplicationVault, SecondaryDoesNotWriteTheConfiguredMirror) {
+    TwoVaults pair;
+    const auto mirror = pair.workspace_a.root() / "mirror";
+    pair.command.vault.mirror = mirror;
+    pair.command.vaults.front() = pair.command.vault;
+    auto main = Application::open(pair.command);
+    {
+        auto secondary = Application::open(pair.command);
+        (void)secondary->create_session("lobby", "Secondary session", secondary->context_epoch());
+        for (const auto& item : std::filesystem::recursive_directory_iterator(mirror)) {
+            EXPECT_EQ(item.path().filename().string().find("Secondary session"), std::string::npos);
+        }
+    }
+    auto switched = main->switch_vault("B", {}, main->context_epoch());
+    (void)main->switch_vault("A", {}, switched.context_epoch);
+    bool found = false;
+    for (const auto& item : std::filesystem::recursive_directory_iterator(mirror)) {
+        if (item.path().filename().string().find("Secondary session") != std::string::npos) found = true;
+    }
+    EXPECT_TRUE(found);
+}
+
 // Include opaque damaged content: whole-vault and configuration operations
 // must not start parsing every note as part of their validation.
 std::int64_t seed_notes(const std::filesystem::path& path, std::string_view name) {
@@ -731,7 +788,7 @@ TEST(ApplicationVault, ParentMergeDownloadsFreshConfigurationAndPreservesChildId
     EXPECT_TRUE(server.requests()[1].starts_with("GET /bucket/b.sqlite3 HTTP/1.1"));
 }
 
-TEST(ApplicationVault, ParentDownloadFailuresLeaveChildAndLiveSessionsUnchanged) {
+TEST(ApplicationVault, ParentDownloadFailuresPreserveStoredDataAndRestoreAdmission) {
     for (const std::string failure : {"missing", "invalid", "wrong-name"}) {
         SCOPED_TRACE(failure);
         TwoVaults pair;
@@ -754,10 +811,14 @@ TEST(ApplicationVault, ParentDownloadFailuresLeaveChildAndLiveSessionsUnchanged)
         server.start();
         EXPECT_THROW((void)application->merge_parent_vault({}, epoch), std::runtime_error);
         server.join();
-        EXPECT_EQ(application->context_epoch(), epoch);
+        const auto reopened_epoch = application->context_epoch();
+        EXPECT_GT(reopened_epoch, epoch);
         EXPECT_EQ(application->state(), ApplicationState::running);
-        EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(application->snapshot("lobby", created.id, epoch)));
-        EXPECT_EQ(application->get_persona("alpha", epoch).summary.display_name, "Alpha");
+        EXPECT_EQ(std::get<ErrorCode>(application->snapshot("lobby", created.id, reopened_epoch)),
+            ErrorCode::session_not_live);
+        EXPECT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+            application->open_session("lobby", created.id, reopened_epoch)));
+        EXPECT_EQ(application->get_persona("alpha", reopened_epoch).summary.display_name, "Alpha");
         EXPECT_EQ(file_contents(pair.database_b), parent_before);
         EXPECT_EQ(file_contents(pair.command.vaults.back().source), parent_definition);
     }
@@ -783,7 +844,7 @@ TEST(ApplicationVault, ParentMergeDownloadsAProtectedParentWithItsPassword) {
     EXPECT_FALSE(application->current_vault().get().password_protected);
 }
 
-TEST(ApplicationVault, CancellingAStalledParentDownloadPreservesTheCurrentContext) {
+TEST(ApplicationVault, CancellingAStalledParentDownloadRestoresAdmission) {
     TwoVaults pair;
     set_parent(pair);
     MockHttpServer server({http_response("application/toml",
@@ -805,7 +866,7 @@ TEST(ApplicationVault, CancellingAStalledParentDownloadPreservesTheCurrentContex
     EXPECT_EQ(finished, std::future_status::ready);
     EXPECT_THROW((void)download.get(), std::runtime_error);
     server.join();
-    EXPECT_EQ(application->context_epoch(), epoch);
+    EXPECT_GT(application->context_epoch(), epoch);
     EXPECT_EQ(application->state(), ApplicationState::running);
     EXPECT_EQ(file_contents(pair.database_b), before);
 }

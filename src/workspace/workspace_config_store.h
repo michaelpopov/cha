@@ -21,6 +21,11 @@
 #include <vector>
 
 namespace cha {
+class SecondaryProcessError : public std::runtime_error {
+public:
+    SecondaryProcessError() : std::runtime_error(
+        "Settings can be changed only in the main CHA process.") {}
+};
 
 class Workspace;
 struct VoiceSettings;
@@ -181,11 +186,13 @@ public:
         MaintenanceGuard& operator=(const MaintenanceGuard&) = delete;
 
         // Releases the SQLite handle while keeping the process lease, store,
-        // and session storage alive. reopen() validates and publishes
-        // whichever database is present at the same path; it throws
+        // and session storage alive. An exclusive close requires the main role
+        // and exclusive vault use; if another process uses the vault, it throws
+        // SessionBusyError and leaves the store open. reopen() validates and
+        // publishes whichever database is present at the same path; it throws
         // WorkspaceRestartRequiredError if that fails, leaving the store closed
         // and the process unable to serve.
-        void close();
+        void close(bool exclusive = true);
         void reopen();
         void set_password(std::string database_password);
         // Points the closed store at a database whose lease was acquired before
@@ -213,6 +220,8 @@ public:
     WorkspaceConfigStore& operator=(WorkspaceConfigStore&&) = delete;
 
     [[nodiscard]] std::shared_ptr<const Workspace> snapshot() const;
+    [[nodiscard]] bool is_main() const;
+    void require_main() const;
 
     [[nodiscard]] const std::filesystem::path& private_root() const noexcept;
     // Logical root for snapshot/session identity and configuration diagnostics.
@@ -340,7 +349,8 @@ public:
     void merge(
         const std::filesystem::path& source_database_path,
         const SessionLease& source_lease,
-        std::string_view source_password = {});
+        std::string_view source_password = {},
+        const std::function<void()>& prepare_source = {});
 
     [[nodiscard]] std::vector<NoteItem> list_note_items() const;
     [[nodiscard]] NoteItem create_note_item(

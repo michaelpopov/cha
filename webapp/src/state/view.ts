@@ -122,7 +122,7 @@ export interface AppState {
 
 export const initialAppState: AppState = {
   sidebarOpen: true,
-  pictureOpen: true,
+  pictureOpen: false,
   pictureWidth: 280,
   pictureCharacterId: null,
   mainView: 'chat',

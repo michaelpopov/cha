@@ -34,7 +34,7 @@ async function nativeParity() {
   const toggle = (name) => document.querySelector(`button[aria-label="${name}"]`);
   const bounds = (element) => element.getBoundingClientRect();
   try {
-    await until(() => toggle('Hide picture') && document.querySelector('textarea:not(:disabled)'));
+    await until(() => toggle('Show picture') && document.querySelector('textarea:not(:disabled)'));
     await wait(300);
     for (const fixture of pictureFixtures) {
       const image = new Image();
@@ -70,6 +70,8 @@ async function nativeParity() {
       check(bounds(chat).right <= innerWidth + 1, 'chat overflows viewport');
       check(Boolean(document.querySelector('[aria-label="Resize picture"]')) === (pictureOpen && displayed > 0), 'divider visibility failed');
     };
+    await assertLayout(true, false);
+    toggle('Show picture').click();
     await assertLayout(true, true);
     toggle('Hide picture').click();
     await assertLayout(true, false);

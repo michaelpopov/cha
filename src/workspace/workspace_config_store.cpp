@@ -958,7 +958,9 @@ WorkspaceConfigTransfer import_workspace_configuration(
     (void)require_existing_directory(database.parent_path(), "Database parent");
 
     std::optional<SessionLease> lease;
+    std::optional<SessionLease> main_lease;
     if (lease_mode == WorkspaceConfigLease::acquire) {
+        main_lease.emplace(SessionLease::acquire_main(database));
         lease.emplace(SessionLease::acquire(database, busy_message(database)));
     }
 
@@ -988,7 +990,9 @@ WorkspaceConfigTransfer export_workspace_configuration(
         normalize_path(destination_directory);
 
     std::optional<SessionLease> lease;
+    std::optional<SessionLease> main_lease;
     if (lease_mode == WorkspaceConfigLease::acquire) {
+        main_lease.emplace(SessionLease::acquire_main(database));
         lease.emplace(SessionLease::acquire(database, busy_message(database)));
     }
 
@@ -1350,6 +1354,7 @@ struct WorkspaceConfigStore::Impl {
     std::filesystem::path database_path;
     std::string database_password;
     std::optional<SessionLease> lease;
+    std::optional<SessionLease> main_lease;
     std::unique_ptr<Database> database;
     std::optional<RuntimePrivateRoot> tree;
     mutable std::mutex mutex;
@@ -1363,6 +1368,40 @@ struct WorkspaceConfigStore::Impl {
     std::optional<UndoRecord> undo;
 
     enum class UndoUpdate { leave, clear, install };
+
+    void require_main() const {
+        if (!main_lease) throw SecondaryProcessError();
+    }
+
+    void elect_role() {
+        main_lease.reset();
+        try { main_lease.emplace(SessionLease::acquire_main(database_path)); }
+        catch (const SessionBusyError&) { /* Remain secondary until the next open. */ }
+    }
+
+    void change_access(SessionLease::Mode mode, bool reopen) {
+        const bool was_open = bool(database);
+        const auto previous = lease->mode();
+        database.reset();
+        try {
+            lease->change_mode(mode);
+        } catch (...) {
+            const auto failure = std::current_exception();
+            try {
+                lease->change_mode(previous);
+                if (was_open) open_database();
+            } catch (const std::exception& error) {
+                throw WorkspaceRestartRequiredError(error.what());
+            }
+            std::rethrow_exception(failure);
+        }
+        if (reopen) {
+            try { open_database(); }
+            catch (const std::exception& error) {
+                throw WorkspaceRestartRequiredError(error.what());
+            }
+        }
+    }
 
     std::shared_ptr<const Workspace> snapshot() const {
         const std::lock_guard lock(snapshot_mutex);
@@ -1475,57 +1514,67 @@ struct WorkspaceConfigStore::Impl {
     template<typename Writer>
     WorkspaceConfigEditResult edit(
         Writer&& writer,
-        std::string_view deleted_forum_id = {}) {
+        std::string_view deleted_forum_id = {}, bool exclusive = false) {
         const std::lock_guard lock(mutex);
-        const std::shared_ptr<const Workspace> published = snapshot();
-        if (!published || published->root() != tree->workspace()) {
-            fail_path(
-                "Runtime configuration store has no matching loaded workspace");
-        }
-
-        const auto committed_rows = read_workspace_config_files(*database);
-        TextFiles files;
-        for (const auto& row : committed_rows) files.emplace(row.name, row.content);
-        WorkspaceConfigEditor editor(*published, files);
-        auto affected_forum_ids = writer(*published, editor);
-        std::vector<ConfigFile> rows;
-        for (const auto& [name, content] : files) rows.push_back({name, content});
-        validate_config_rows(rows);
-        auto candidate = [&] {
-            try {
-                return std::make_shared<const Workspace>(
-                    Workspace::load(tree->workspace(), files));
-            } catch (const std::runtime_error& error) {
-                throw WorkspaceConfigValidationError(error.what());
+        require_main();
+        exclusive = exclusive || !deleted_forum_id.empty();
+        if (exclusive) change_access(SessionLease::Mode::exclusive, true);
+        const auto perform = [&]() -> WorkspaceConfigEditResult {
+            const std::shared_ptr<const Workspace> published = snapshot();
+            if (!published || published->root() != tree->workspace()) {
+                fail_path(
+                    "Runtime configuration store has no matching loaded workspace");
             }
-        }();
-        if (consume_runtime_fault(WorkspaceConfigFault::validation)) {
-            fail_path("Forced configuration validation failure");
-        }
 
-        commit_and_publish(
-            committed_rows, rows, std::move(candidate), deleted_forum_id,
-            UndoUpdate::clear);
-        return {.affected_forum_ids = std::move(affected_forum_ids)};
+            const auto committed_rows = read_workspace_config_files(*database);
+            TextFiles files;
+            for (const auto& row : committed_rows) files.emplace(row.name, row.content);
+            WorkspaceConfigEditor editor(*published, files);
+            auto affected_forum_ids = writer(*published, editor);
+            std::vector<ConfigFile> rows;
+            for (const auto& [name, content] : files) rows.push_back({name, content});
+            validate_config_rows(rows);
+            auto candidate = [&] {
+                try {
+                    return std::make_shared<const Workspace>(
+                        Workspace::load(tree->workspace(), files));
+                } catch (const std::runtime_error& error) {
+                    throw WorkspaceConfigValidationError(error.what());
+                }
+            }();
+            if (consume_runtime_fault(WorkspaceConfigFault::validation)) {
+                fail_path("Forced configuration validation failure");
+            }
+
+            commit_and_publish(
+                committed_rows, rows, std::move(candidate), deleted_forum_id,
+                UndoUpdate::clear);
+            return {.affected_forum_ids = std::move(affected_forum_ids)};
+        };
+        if (!exclusive) return perform();
+        WorkspaceConfigEditResult result;
+        try { result = perform(); }
+        catch (...) { change_access(SessionLease::Mode::shared, true); throw; }
+        change_access(SessionLease::Mode::shared, true);
+        return result;
     }
 
     WorkspaceConfigListResult list_config(std::string_view prefix) const {
         const std::shared_ptr<const Workspace> published = snapshot();
         const std::string provider = assistant_provider_id(*published);
-        const auto rows = read_workspace_config_files(*database);
         WorkspaceConfigListResult result;
         result.revision = revision;
-        for (const ConfigFile& row : rows) {
-            if (!matches_list_prefix(row.name, prefix)) continue;
-            const ConfigPathPolicy policy = config_path_policy(row.name, provider);
+        for (const auto& [name, content] : published->source_files()) {
+            if (!matches_list_prefix(name, prefix)) continue;
+            const ConfigPathPolicy policy = config_path_policy(name, provider);
             if (!policy.readable) continue;
             if (result.entries.size() == workspace_config_list_limit) {
                 result.truncated = true;
                 break;
             }
             result.entries.push_back({
-                .path = row.name,
-                .bytes = row.content.size(),
+                .path = name,
+                .bytes = content.size(),
                 .readable = policy.readable,
                 .writable = policy.writable,
                 .protection_reason = policy.reason,
@@ -1535,9 +1584,8 @@ struct WorkspaceConfigStore::Impl {
     }
 
     WorkspaceConfigReadResult read_config(std::span<const std::string> paths) const {
-        const auto rows = read_workspace_config_files(*database);
-        TextFiles files;
-        for (const ConfigFile& row : rows) files.emplace(row.name, row.content);
+        const std::shared_ptr<const Workspace> published = snapshot();
+        const TextFiles& files = published->source_files();
         WorkspaceConfigReadResult result;
         result.revision = revision;
         std::size_t result_bytes = 0;
@@ -1575,6 +1623,7 @@ struct WorkspaceConfigStore::Impl {
         WorkspaceConfigRevision version,
         const WorkspaceConfigCancelCheck& check,
         std::string_view action) const {
+        require_main();
         if (cancelled(check)) {
             return failed(
                 WorkspaceConfigApplyError::cancelled,
@@ -1916,11 +1965,16 @@ WorkspaceConfigStore::MaintenanceGuard&
 WorkspaceConfigStore::MaintenanceGuard::operator=(
     MaintenanceGuard&&) noexcept = default;
 
-void WorkspaceConfigStore::MaintenanceGuard::close() {
+void WorkspaceConfigStore::MaintenanceGuard::close(bool exclusive) {
     if (!impl_ || impl_->closed) {
         throw std::logic_error("Workspace database is already closed");
     }
-    impl_->store->database.reset();
+    if (exclusive) {
+        impl_->store->require_main();
+        impl_->store->change_access(SessionLease::Mode::exclusive, false);
+    } else {
+        impl_->store->database.reset();
+    }
     impl_->closed = true;
 }
 
@@ -1943,6 +1997,7 @@ void WorkspaceConfigStore::MaintenanceGuard::retarget(
     store.lease = std::move(lease);
     store.database_path = std::move(database_path);
     store.database_password = std::move(database_password);
+    store.elect_role();
 }
 
 void WorkspaceConfigStore::MaintenanceGuard::reopen() {
@@ -1951,6 +2006,9 @@ void WorkspaceConfigStore::MaintenanceGuard::reopen() {
     }
     WorkspaceConfigStore::Impl& store = *impl_->store;
     try {
+        if (store.lease->mode() == SessionLease::Mode::exclusive) {
+            store.change_access(SessionLease::Mode::shared, false);
+        }
         store.open_database();
 
         store.load_committed_workspace();
@@ -1975,7 +2033,8 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
 
     impl->lease.emplace(
         SessionLease::acquire(
-            impl->database_path, busy_message(impl->database_path)));
+            impl->database_path, vault_in_use_message, SessionLease::Mode::shared));
+    impl->elect_role();
 
     impl->open_database();
 
@@ -1987,6 +2046,15 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
 
 std::shared_ptr<const Workspace> WorkspaceConfigStore::snapshot() const {
     return impl_->snapshot();
+}
+
+bool WorkspaceConfigStore::is_main() const {
+    const std::lock_guard lock(impl_->mutex);
+    return bool(impl_->main_lease);
+}
+void WorkspaceConfigStore::require_main() const {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->require_main();
 }
 
 const std::filesystem::path& WorkspaceConfigStore::private_root()
@@ -2058,8 +2126,9 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_definition(
 
 std::string WorkspaceConfigStore::get_character_instructions() const {
     const std::lock_guard lock(impl_->mutex);
-    return read_workspace_config_file(
-        *impl_->database, "characters/character-voice.md").value_or("");
+    const auto& files = impl_->snapshot()->source_files();
+    const auto found = files.find("characters/character-voice.md");
+    return found == files.end() ? "" : found->second;
 }
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_instructions(
@@ -2227,10 +2296,7 @@ std::string WorkspaceConfigStore::forum_system_prompt(
 
     // Use the normal member editor and loader on a disposable copy. No edits
     // are committed, and the saved persona and existing member overrides stay intact.
-    TextFiles files;
-    for (const auto& row : read_workspace_config_files(*impl_->database)) {
-        files.emplace(row.name, row.content);
-    }
+    TextFiles files = workspace->source_files();
     std::vector<std::string> members;
     for (const auto& member : forum->members) members.push_back(member.character_id);
     members.emplace_back(character_id);
@@ -2563,13 +2629,13 @@ std::optional<WorkspaceCharacterPicture> WorkspaceConfigStore::get_character_pic
     const auto relative = directory->lexically_relative(workspace->root());
     const auto read_picture = [&](std::string_view name, const PictureFormat& format)
         -> std::optional<WorkspaceCharacterPicture> {
-        auto content = read_workspace_config_file(
-            *impl_->database, generic_utf8_path(relative / name));
-        if (content) {
+        const auto& files = workspace->source_files();
+        auto content = files.find(generic_utf8_path(relative / name));
+        if (content != files.end()) {
             return WorkspaceCharacterPicture{
                 .filename = std::string(name),
                 .mime_type = std::string(format.mime_type),
-                .content_base64 = std::move(*content),
+                .content_base64 = content->second,
             };
         }
         return std::nullopt;
@@ -2660,7 +2726,7 @@ WorkspaceConfigApplyResult WorkspaceConfigStore::undo_config(
 void WorkspaceConfigStore::merge(
     const std::filesystem::path& source_database_path,
     const SessionLease& source_lease,
-    std::string_view source_password) {
+    std::string_view source_password, const std::function<void()>& prepare_source) {
     const std::filesystem::path source = normalize_path(source_database_path);
     if (source == database_path()) {
         fail_path(
@@ -2671,44 +2737,45 @@ void WorkspaceConfigStore::merge(
         fail_path("Source database lease is not active");
     }
 
-    const WorkspaceDatabaseState state =
-        inspect_workspace_session_database(source, source_password);
-    if (state != WorkspaceDatabaseState::valid_v2) {
-        fail_database_state(source, state);
-    }
-
-    std::vector<ConfigFile> source_rows;
-    {
-        Database handle(source, Database::Mode::read_write, source_password);
-        validate_workspace_session_database_identity(handle);
-        validate_workspace_session_contents(handle);
-        source_rows = read_workspace_config_files(handle);
-        validate_config_rows(source_rows);
-    }
-
-    Workspace source_workspace = [&] {
-        TextFiles files;
-        for (const auto& row : source_rows) files.emplace(row.name, row.content);
-        return Workspace::load(source, files);
-    }();
-    for (const ConfigFile& row : source_rows) {
-        if (const std::string_view id =
-                stored_directory_id(row.name, "system/providers/");
-            !id.empty() && source_workspace.find_provider(id) == nullptr) {
-            fail_path(
-                "Source directory 'system/providers/" + std::string(id)
-                + "' is invalid");
-        }
-        if (const std::string_view id =
-                stored_directory_id(row.name, "system/styles/");
-            !id.empty() && source_workspace.find_style(id) == nullptr) {
-            fail_path(
-                "Source directory 'system/styles/" + std::string(id)
-                + "' is invalid");
-        }
-    }
-
     (void)impl_->edit([&](const Workspace& published, WorkspaceConfigEditor& editor) {
+        if (prepare_source) prepare_source();
+        const WorkspaceDatabaseState state =
+            inspect_workspace_session_database(source, source_password);
+        if (state != WorkspaceDatabaseState::valid_v2) {
+            fail_database_state(source, state);
+        }
+
+        std::vector<ConfigFile> source_rows;
+        {
+            Database handle(source, Database::Mode::read_write, source_password);
+            validate_workspace_session_database_identity(handle);
+            validate_workspace_session_contents(handle);
+            source_rows = read_workspace_config_files(handle);
+            validate_config_rows(source_rows);
+        }
+
+        Workspace source_workspace = [&] {
+            TextFiles files;
+            for (const auto& row : source_rows) files.emplace(row.name, row.content);
+            return Workspace::load(source, files);
+        }();
+        for (const ConfigFile& row : source_rows) {
+            if (const std::string_view id =
+                    stored_directory_id(row.name, "system/providers/");
+                !id.empty() && source_workspace.find_provider(id) == nullptr) {
+                fail_path(
+                    "Source directory 'system/providers/" + std::string(id)
+                    + "' is invalid");
+            }
+            if (const std::string_view id =
+                    stored_directory_id(row.name, "system/styles/");
+                !id.empty() && source_workspace.find_style(id) == nullptr) {
+                fail_path(
+                    "Source directory 'system/styles/" + std::string(id)
+                    + "' is invalid");
+            }
+        }
+
         TextFiles& candidate = editor.files();
 
         // S's R2 singleton replaces D's even when the saved-key IDs differ.
@@ -2736,7 +2803,7 @@ void WorkspaceConfigStore::merge(
             "next_id = " + std::to_string(next_id) + "\n";
 
         return std::vector<std::string>{};
-    });
+    }, {}, true);
 }
 
 } // namespace cha

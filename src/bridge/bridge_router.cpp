@@ -900,6 +900,15 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     updated, snapshot.active.name, snapshot.vaults.size());
                 break;
             }
+            case Method::forum_delete: {
+                require_only_keys(params, {"forum_id"});
+                const auto forum_id = require_identifier(params, "forum_id");
+                result = run_maintenance([&] {
+                    application.delete_forum(forum_id, epoch);
+                    return nlohmann::json::object();
+                });
+                break;
+            }
             case Method::vault_delete: {
                 application.delete_vault(
                     require_string(params, "vault_name"), epoch);
@@ -1331,6 +1340,10 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             fail(code);
         } catch (const app::ApplicationError& error) {
             fail(error.code, error.what());
+        } catch (const SecondaryProcessError& error) {
+            fail(ErrorCode::invalid_argument, error.what());
+        } catch (const SessionBusyError& error) {
+            fail(ErrorCode::invalid_argument, error.what());
         } catch (const UnknownVaultError& error) {
             fail(ErrorCode::invalid_argument, error.what());
         } catch (const VaultPasswordError& error) {

@@ -2019,7 +2019,9 @@ Workspace Workspace::load(
     const TextFiles& files,
     LoadWarningCollector* warnings) {
     const TextSource source(root, files);
-    return load(std::move(root), source, warnings);
+    auto workspace = load(std::move(root), source, warnings);
+    workspace.source_files_ = files;
+    return workspace;
 }
 
 Workspace Workspace::load(

@@ -885,6 +885,10 @@ std::string AssistantService::execute(
     // Collect redaction values once per call.
     const Redactor redact(links_);
     try {
+        const bool writes_settings = name == "assistant_openai_login"
+            || name == "host_config_write" || name == "vault_config_apply"
+            || name == "add_character";
+        if (writes_settings) links_.store->require_main();
         if (name == "assistant_openai_login") {
             if (parsed.size() != 1 || !parsed.contains("action") || !parsed["action"].is_string()
                 || (parsed["action"] != "start" && parsed["action"] != "complete")) {

@@ -7,6 +7,7 @@
 #include "support/test_workspace.h"
 #include "runtime/command_queue.h"
 #include "workspace/builtins.h"
+#include "workspace/workspace_config_store.h"
 #include "util/base64.h"
 
 #include <gtest/gtest.h>
@@ -1227,6 +1228,45 @@ TEST_F(BridgeRouterTest, ContextNotificationNamesOnlyTheOriginatingRequest) {
     EXPECT_EQ(observer_event["event"], "app.contextChanged");
     EXPECT_FALSE(observer_event.contains("causing_request_id"));
     ack_delivery(*router_, observer, *observer_batch);
+}
+
+TEST_F(BridgeRouterTest, ForumDeletionPreservesItsReplyAcrossMaintenanceAndReportsOtherUsers) {
+    bootstrap_epoch();
+    for (const bool blocked : {true, false}) {
+        SCOPED_TRACE(blocked);
+        auto secondary = blocked ? WorkspaceConfigStore::open(database_) : nullptr;
+        epoch_ = application_->context_epoch();
+        const auto id = next_id_++;
+        router_->handle_request(connection_, request_json(connection_, id, epoch_,
+            "forum.delete", {{"forum_id", "lobby"}}).dump());
+        nlohmann::json reply;
+        bool context_seen = false;
+        for (int i = 0; i < 4 && reply.empty(); ++i) {
+            const auto batch = wait_delivery(*router_, connection_);
+            ASSERT_TRUE(batch);
+            for (const auto& message : batch->at("messages")) {
+                if (message.value("event", "") == "app.contextChanged") {
+                    EXPECT_EQ(message["causing_request_id"], id);
+                    context_seen = true;
+                }
+            }
+            reply = reply_with_id(*batch, id);
+            ack_delivery(*router_, connection_, *batch);
+        }
+        ASSERT_FALSE(reply.empty());
+        EXPECT_TRUE(context_seen);
+        EXPECT_GT(reply["context_epoch"].get<std::uint64_t>(), epoch_);
+        EXPECT_EQ(reply["ok"], !blocked);
+        if (blocked) {
+            EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+            EXPECT_EQ(reply["error"]["message"],
+                "Close other CHA processes using this vault, then try again.");
+            EXPECT_NE(application_->store().snapshot()->find_forum("lobby"), nullptr);
+        } else {
+            EXPECT_EQ(application_->store().snapshot()->find_forum("lobby"), nullptr);
+        }
+        EXPECT_EQ(application_->state(), app::ApplicationState::running);
+    }
 }
 
 TEST_F(BridgeRouterTest, CompletedReplyHoldsAdmissionUntilDeliveryAck) {

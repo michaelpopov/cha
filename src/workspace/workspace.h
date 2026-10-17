@@ -180,6 +180,9 @@ struct HandleResolution {
 // every value it publishes and never exposes filesystem-backed references.
 class Workspace final {
 public:
+    // Original source for raw settings reads and disposable prompt previews.
+    // It belongs to the same immutable snapshot as the parsed configuration.
+    [[nodiscard]] const TextFiles& source_files() const noexcept { return source_files_; }
     static Workspace load(
         std::filesystem::path root,
         LoadWarningCollector* warnings = nullptr);
@@ -307,6 +310,7 @@ private:
     std::optional<R2StorageKey> r2_storage_;
     std::uint64_t next_api_key_id_{1};
     std::vector<WorkspacePersona> personas_;
+    TextFiles source_files_;
     std::vector<WorkspaceCharacter> characters_;
     std::vector<WorkspaceForum> forums_;
     std::unordered_map<std::string, std::size_t> provider_index_;

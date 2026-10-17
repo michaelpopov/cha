@@ -66,7 +66,6 @@ async function nativeParity() {
     ));
     // Layout checks cover the settled state, not animation timing.
     document.querySelector('main').style.transition = 'none';
-    await click('Hide picture');
     await until('picture closed', () => button('Show picture'));
     const chat = composerLayout();
     setValue(message, 'UI smoke draft\nSecond line');

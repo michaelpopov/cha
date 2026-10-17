@@ -761,9 +761,23 @@ TEST_F(ChaWebAdapterTest, ParentMergeReportsR2HttpFailures) {
             ? "R2 vault definition was not found. The bucket may contain a legacy database-only upload; "
                 "upload with the current CHA version before downloading."
             : "R2 download failed with HTTP status 404");
-        EXPECT_EQ(application_->context_epoch(), epoch);
+        // The download starts after local sessions stop, so the failed merge publishes a new context.
+        EXPECT_GT(application_->context_epoch(), epoch);
         EXPECT_EQ(application_->current_vault().get().name, "Child");
     }
+}
+
+TEST_F(ChaWebAdapterTest, VaultTransfersReportOtherProcessesAndTheSecondaryRole) {
+    auto secondary = Application::open(make_command(workspace_, database_));
+    const auto busy = post("/api/cha/v1/vault/download", nlohmann::json::object());
+    EXPECT_EQ(busy.status, 400) << busy.raw;
+    EXPECT_EQ(busy.json["error"]["code"], "invalid_argument");
+    EXPECT_EQ(busy.json["error"]["message"], "Close other CHA processes using this vault, then try again.");
+
+    const auto refused = exchange(*secondary, post_request("/api/cha/v1/vault/download", "{}"));
+    EXPECT_EQ(refused.status, 400) << refused.raw;
+    EXPECT_EQ(refused.json["error"]["code"], "invalid_argument");
+    EXPECT_EQ(refused.json["error"]["message"], "Settings can be changed only in the main CHA process.");
 }
 
 TEST_F(ChaWebAdapterTest, ParentMergeRequiresTheProtectedParentsPassword) {

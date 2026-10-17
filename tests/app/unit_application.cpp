@@ -357,6 +357,51 @@ TEST(Application, SubscribeInstallsInitialSnapshotAtSequenceZero) {
     session->acknowledge_output();
 }
 
+TEST(Application, BackgroundGenerationRetainsSessionOwnershipUntilRetirement) {
+    test::TestWorkspace workspace;
+    MockHttpServer server({http_response(
+        "application/json", R"({"choices":[{"message":{"content":"Finished"}}]})")});
+    workspace.write_provider("test",
+        "host = \"127.0.0.1\"\nport = " + std::to_string(server.port())
+        + "\nhttps = false\nmode = \"net\"\nmodel = \"fake\"\n"
+          "api = \"chat_completions\"\nstream = false\ntimeout_s = 20\n");
+    const auto command = make_command(workspace, test::import_test_database(workspace.root()));
+    auto main = Application::open(command);
+    const auto epoch = main->context_epoch();
+    const auto first = main->create_session("lobby", "Background", epoch);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(main->open_session("lobby", first.id, epoch)));
+    auto handle = main->subscription_handle("lobby", first.id);
+    ASSERT_TRUE(handle);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(main->submit(
+        "lobby", first.id, RawCommand{"Hello"}, epoch)));
+    ASSERT_TRUE(std::get<SessionSnapshot>(main->snapshot("lobby", first.id, epoch)).generation.active);
+    const auto second = main->create_session("lobby", "Selected", epoch);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(main->open_session("lobby", second.id, epoch)));
+    auto secondary = Application::open(command);
+    try {
+        (void)secondary->open_session("lobby", first.id, secondary->context_epoch());
+        FAIL() << "Expected session ownership refusal";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+        EXPECT_STREQ(error.what(), "This session is open in another CHA process.");
+    }
+    // Saved history can still be exported while another process owns the controller.
+    EXPECT_NE(secondary->export_session("lobby", first.id, secondary->context_epoch()).markdown.find("Hello"),
+        std::string::npos);
+    server.start();
+    server.join();
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (handle->lifecycle() != LiveSessionState::finished
+        && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(1ms);
+    ASSERT_EQ(handle->lifecycle(), LiveSessionState::finished);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(secondary->open_session(
+        "lobby", first.id, secondary->context_epoch())));
+    const auto restored = std::get<SessionSnapshot>(secondary->snapshot(
+        "lobby", first.id, secondary->context_epoch()));
+    EXPECT_FALSE(restored.generation.active);
+    EXPECT_EQ(restored.transcript.back().text, "Finished");
+}
+
 TEST(Application, AppearanceAndToolEditsRefreshTheSubscriptionWithoutCancellingGeneration) {
     test::TestWorkspace workspace;
     MockHttpServer server({http_response(
@@ -717,8 +762,8 @@ TEST(Application, CharacterPersonaForumAndFileEditsUseTheStore) {
     EXPECT_EQ(members.summary.members.front().id, "guide");
 
     application->delete_forum(forum.summary.id, epoch);
-    application->delete_character(character.summary.id, epoch);
-    application->delete_persona(persona.summary.id, epoch);
+    application->delete_character(character.summary.id, application->context_epoch());
+    application->delete_persona(persona.summary.id, application->context_epoch());
 }
 
 } // namespace

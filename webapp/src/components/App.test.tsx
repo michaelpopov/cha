@@ -3302,6 +3302,7 @@ describe('picture sizing', () => {
     await waitFor(() => expect(window.location.hash).toBe('#/s/lobby/unused/'));
     const index = events.connections.findIndex(({ key }) => key === 'lobby/unused');
     act(() => events.handlers[index].onSnapshot(unused));
+    await user.click(await screen.findByRole('button', { name: 'Show picture' }));
     expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
     const input = screen.getByRole('textbox', { name: 'Message' });
     await user.type(input, 'Unsent draft');
@@ -3334,6 +3335,7 @@ describe('picture sizing', () => {
   it('clamps keyboard sizing, preserves the preferred width after shrinking and navigation, and keeps toggles independent', async () => {
     const measure = geometry();
     render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show picture' }));
     const divider = await screen.findByRole('separator', { name: 'Resize picture' });
     expect(divider).toHaveAttribute('aria-valuenow', '280');
     fireEvent.keyDown(divider, { key: 'ArrowLeft' });
@@ -3363,6 +3365,7 @@ describe('picture sizing', () => {
       constructor(type: string, init: PointerEventInit) { super(type, init); this.pointerId = init.pointerId ?? 0; }
     });
     render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show picture' }));
     const divider = await screen.findByRole('separator', { name: 'Resize picture' });
     const sidebarWidth = screen.getByRole('separator', { name: 'Resize sidebar' }).getAttribute('aria-valuenow');
     divider.setPointerCapture = vi.fn();
@@ -3389,6 +3392,7 @@ describe('picture sizing', () => {
   it('disables resizing at 128 available pixels, hides it at zero, and restores the preference', async () => {
     const measure = geometry(448);
     render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show picture' }));
     const divider = await screen.findByRole('separator', { name: 'Resize picture' });
     expect(divider).toHaveAttribute('aria-disabled', 'true');
     fireEvent.keyDown(divider, { key: 'ArrowRight' });

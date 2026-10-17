@@ -999,8 +999,9 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, AddsRecentVisibilityWithoutHidingExistin
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, HoldsTheLeaseAgainstRuntimeImportAndExport) {
     const auto store = open_store();
-    EXPECT_THROW(
-        (void)WorkspaceConfigStore::open(database()), SessionBusyError);
+    const auto secondary = open_store();
+    EXPECT_TRUE(store->is_main());
+    EXPECT_FALSE(secondary->is_main());
     EXPECT_THROW(
         (void)import_workspace_configuration(source(), database()),
         SessionBusyError);
@@ -1024,8 +1025,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ClosesSqliteButKeepsLeaseForMaintenance)
 
     EXPECT_EQ(store->workspace_path(), workspace_path);
     expect_session_root_identity(store->snapshot(), workspace_path);
-    EXPECT_THROW(
-        (void)WorkspaceConfigStore::open(database()), SessionBusyError);
+    EXPECT_FALSE(open_store()->is_main());
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsMissingV1AndForeignDatabases) {
@@ -1863,8 +1863,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RetargetReopensTheNewDatabaseInTheSameTr
         std::filesystem::weakly_canonical(
             std::filesystem::absolute(other_database)));
     ASSERT_NE(store->snapshot()->find_persona("beta"), nullptr);
-    EXPECT_THROW(
-        (void)WorkspaceConfigStore::open(other_database), SessionBusyError);
+    EXPECT_FALSE(WorkspaceConfigStore::open(other_database)->is_main());
 #ifndef _WIN32
     EXPECT_EQ(
         test::probe_lease(database()), test::LeaseProbeResult::acquired);
@@ -3366,6 +3365,10 @@ TEST(WorkspaceConfigStore, SystemPromptPreviewUsesSavedSettingsWithoutChangingCo
     EXPECT_NE(member_prompt.find("Member instructions."), std::string::npos);
     EXPECT_NE(member_prompt.find("Guide variant."), std::string::npos);
     const auto preview = store->forum_system_prompt(identity, "mentor");
+    auto secondary = WorkspaceConfigStore::open(database);
+    ASSERT_FALSE(secondary->is_main());
+    const std::vector<std::string> paths{"forums/lobby/config.toml"};
+    const auto original_config = secondary->read_config(paths).files.front().content;
     EXPECT_NE(preview.find("Saved persona instructions."), std::string::npos);
     EXPECT_NE(preview.find("Forum default voice"), std::string::npos);
     EXPECT_NE(preview.find("The Lobby"), std::string::npos);
@@ -3380,6 +3383,17 @@ TEST(WorkspaceConfigStore, SystemPromptPreviewUsesSavedSettingsWithoutChangingCo
     (void)store->apply_forum_members_and_persona(
         "lobby", std::vector<std::string>{"guide", "mentor"}, "writer");
     EXPECT_EQ(preview, store->snapshot()->character_definition(identity, "mentor").system_prompt);
+    EXPECT_EQ(secondary->forum_system_prompt(identity, "mentor"), preview);
+    EXPECT_EQ(secondary->read_config(paths).files.front().content, original_config);
+    EXPECT_EQ(secondary->snapshot()->find_forum_member("lobby", "mentor"), nullptr);
+    EXPECT_THROW((void)secondary->apply_character_definition("guide", "Changed"), SecondaryProcessError);
+    const std::vector<WorkspaceConfigChange> changes{{
+        .path = "characters/guide/CHARACTER.md",
+        .operation = WorkspaceConfigOperation::replace,
+        .content = "Changed",
+    }};
+    EXPECT_THROW((void)secondary->apply_config(secondary->config_revision(), changes), SecondaryProcessError);
+    EXPECT_THROW((void)secondary->undo_config(secondary->config_revision()), SecondaryProcessError);
 }
 
 TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {

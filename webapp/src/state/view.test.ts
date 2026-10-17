@@ -549,12 +549,12 @@ describe('character picture selection', () => {
     for (const action of [{ type: 'show-settings' }, { type: 'show-chat' }, { type: 'vault-context-reset' }] as AppAction[]) {
       state = appReducer(state, action);
       expect(state.pictureWidth).toBe(416);
-      expect(state.pictureOpen).toBe(false);
+      expect(state.pictureOpen).toBe(true);
     }
     expect(state.pictureCharacterId).toBeNull();
     state = appReducer(state, { type: 'conversation-opened', snapshot });
     expect(state.pictureWidth).toBe(416);
-    expect(state.pictureOpen).toBe(false);
+    expect(state.pictureOpen).toBe(true);
     expect(appReducer(state, { type: 'show-initial-conversation' }).pictureCharacterId).toBeNull();
     expect(appReducer(state, { type: 'session-discarded', forumId: snapshot.forum.id, sessionId: snapshot.session_id }).pictureCharacterId).toBeNull();
   });

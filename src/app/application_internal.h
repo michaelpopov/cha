@@ -89,6 +89,7 @@ struct Application::Impl {
         WorkspaceConfigTransfer export_configuration(std::uint64_t epoch);
 
         void publish_vault_names();
+        void delete_forum(std::string_view forum_id, std::uint64_t epoch);
     private:
         MaintenanceResult merge(
             std::string_view source_name,
@@ -104,7 +105,7 @@ struct Application::Impl {
         // Caller holds lifecycle_mutex. False keeps the previous vault selected.
         bool drain_for_maintenance(
             PendingContextNotice& notice,
-            bool cancel_audio = true);
+            bool cancel_audio = true, bool require_main = true);
         void cancel_maintenance_locked(PendingContextNotice& notice);
         void end_maintenance_locked(bool available, PendingContextNotice& notice);
         void reopen(
@@ -114,9 +115,6 @@ struct Application::Impl {
             WorkspaceConfigStore::MaintenanceGuard& database,
             const SessionRepository::MaintenanceGuard& repository);
         void rebuild_mirror(const std::optional<std::filesystem::path>& root);
-        void protect_active_database(
-            std::string password,
-            PendingContextNotice& notice);
         template<typename Operation>
         auto maintain_database(
             std::uint64_t epoch,

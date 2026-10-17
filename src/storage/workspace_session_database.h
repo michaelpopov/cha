@@ -91,6 +91,6 @@ void initialize_workspace_session_database_runtime(
     std::string_view password = {});
 void checkpoint_workspace_session_database(
     const std::filesystem::path& path,
-    std::string_view password = {});
+    std::string_view password = {}, bool passive = false);
 
 } // namespace cha

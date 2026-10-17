@@ -171,6 +171,7 @@ private:
     std::atomic<std::uint64_t> subscribe_ticket_{};
 
     // Runtime-thread only.
+    std::shared_ptr<SessionLease> lease_;
     std::unique_ptr<SessionController> controller_;
     std::shared_ptr<CommandReply> deferred_submit_;
     std::function<std::set<EntryId>()> cached_audio_entries_;

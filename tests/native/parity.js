@@ -66,6 +66,10 @@ async function nativeParity() {
     try {
       if (batch.connection_id !== connection) return;
       for (const reply of batch.messages) {
+        if (reply.event === 'app.contextChanged') {
+          epoch = Math.max(epoch, reply.context_epoch);
+          continue;
+        }
         const complete = pending.get(reply.id);
         if (!complete || reply.connection_id !== connection) continue;
         pending.delete(reply.id);
@@ -124,22 +128,26 @@ async function nativeParity() {
       check(rejected, 'deleted file remained readable');
     }
     await rpc('character.delete', {character_id: character.id});
+    const beforeDelete = epoch;
     await rpc('forum.delete', {forum_id: forum.id});
+    check(epoch > beforeDelete, 'forum deletion did not renew context');
     await rpc('persona.delete', {persona_id: persona.id});
     await rpc('session.delete', {...identity, session_id: other.id});
     const copy = await rpc('vault.create', {display_name: 'Parity copy', copy_from: originalVault, password: null});
     const toMerge = await rpc('persona.create', {display_name: 'Merged persona'});
+    const beforeSwitch = epoch;
     const switched = await rpc('vault.switch', {vault_name: copy.display_name, password: null});
-    check(switched.context_epoch > epoch && switched.state === 'running', 'switch did not renew context');
-    epoch = switched.context_epoch;
+    check(switched.context_epoch > beforeSwitch && switched.context_epoch === epoch
+      && switched.state === 'running', 'switch did not renew context');
+    const beforeMerge = epoch;
     const merged = await rpc('vault.merge', {source_vault: originalVault, password: null});
-    check(merged.context_epoch > epoch && merged.state === 'running', 'merge did not renew context');
-    epoch = merged.context_epoch;
+    check(merged.context_epoch > beforeMerge && merged.context_epoch === epoch
+      && merged.state === 'running', 'merge did not renew context');
     check((await rpc('persona.get', {persona_id: toMerge.id})).display_name === 'Merged persona',
       'vault merge lost the source configuration');
     check((await rpc('session.list', {forum_id: 'lobby'})).some((session) => session.label === 'Renamed parity'),
       'vault merge lost the destination conversation');
-    epoch = (await rpc('vault.switch', {vault_name: originalVault, password: null})).context_epoch;
+    await rpc('vault.switch', {vault_name: originalVault, password: null});
     await rpc('vault.delete', {vault_name: copy.display_name});
     await rpc('persona.delete', {persona_id: toMerge.id});
     await rpc('session.delete', identity);

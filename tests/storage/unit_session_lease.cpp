@@ -43,7 +43,7 @@ TEST_F(SessionLeaseTest, UsesACompanionPathAndIgnoresAnUnlockedExistingFile) {
     const std::filesystem::path database = database_path();
     const std::filesystem::path companion =
         database_path().string() + ".cha-lock";
-    EXPECT_EQ(SessionLease::companion_path(database), companion);
+    EXPECT_EQ(SessionLease::companion_path(database), std::filesystem::weakly_canonical(companion));
 
     std::ofstream(companion) << "left behind after a prior run";
     SessionLease lease = SessionLease::acquire(database, test_busy_message);
@@ -94,6 +94,30 @@ TEST_F(SessionLeaseTest, RejectsMalformedDatabasePaths) {
     EXPECT_THROW(
         (void)SessionLease::companion_path({}),
         std::invalid_argument);
+}
+
+TEST_F(SessionLeaseTest, SharedUseExcludesExclusiveUseAndFailedConversionCanRecover) {
+    const auto database = database_path();
+    auto first = SessionLease::acquire(database, test_busy_message, SessionLease::Mode::shared);
+    auto second = SessionLease::acquire(database, test_busy_message, SessionLease::Mode::shared);
+    EXPECT_THROW((void)SessionLease::acquire(database, test_busy_message), SessionBusyError);
+    EXPECT_THROW(first.change_mode(SessionLease::Mode::exclusive), SessionBusyError);
+    EXPECT_FALSE(first.active());
+    EXPECT_NO_THROW(first.change_mode(SessionLease::Mode::shared));
+    EXPECT_TRUE(first.active());
+}
+
+TEST_F(SessionLeaseTest, SessionNamesDistinguishCaseAndBoundLongImportedIds) {
+    const auto first = SessionLease::session_path(database_path(), "Forum", "session");
+    const auto second = SessionLease::session_path(database_path(), "forum", "session");
+    EXPECT_NE(first, second);
+    EXPECT_EQ(first.parent_path(), second.parent_path());
+    const auto long_id = SessionLease::session_path(database_path(), std::string(240, 'f'), std::string(240, 's'));
+    EXPECT_EQ(long_id.filename().string().size(), 69U);
+    auto a = SessionLease::acquire_file(first, test_busy_message);
+    auto b = SessionLease::acquire_file(second, test_busy_message);
+    auto c = SessionLease::acquire_file(long_id, test_busy_message);
+    EXPECT_TRUE(a.active() && b.active() && c.active());
 }
 
 #ifndef _WIN32

@@ -492,6 +492,7 @@ void validate_workspace_session_contents(Database& database) {
 }
 
 void ensure_session_lifecycle_columns(Database& database) {
+    storage::SqliteTransaction transaction(database);
     bool has_recent_pending = false;
     bool has_discardable = false;
     Statement columns = database.prepare("PRAGMA table_info(sessions)");
@@ -505,9 +506,11 @@ void ensure_session_lifecycle_columns(Database& database) {
     if (!has_discardable) database.execute(
         "ALTER TABLE sessions ADD COLUMN discardable INTEGER NOT NULL "
         "DEFAULT 0 CHECK (discardable IN (0, 1))");
+    transaction.commit();
 }
 
 void ensure_entry_metadata_columns(Database& database) {
+    storage::SqliteTransaction transaction(database);
     bool has_input_tokens = false;
     bool has_output_tokens = false;
     bool has_web_search_used = false;
@@ -518,9 +521,6 @@ void ensure_entry_metadata_columns(Database& database) {
         has_output_tokens |= name == "output_tokens";
         has_web_search_used |= name == "web_search_used";
     }
-    if (has_input_tokens && has_output_tokens && has_web_search_used) return;
-
-    storage::SqliteTransaction transaction(database);
     if (!has_input_tokens) {
         database.execute(
             "ALTER TABLE entries ADD COLUMN input_tokens INTEGER "
@@ -869,16 +869,17 @@ void initialize_workspace_session_database_runtime(
 
 void checkpoint_workspace_session_database(
     const std::filesystem::path& path,
-    std::string_view password) {
+    std::string_view password, bool passive) {
     Database database(path, Database::Mode::read_write, password);
     validate_workspace_session_database_identity(database);
-    Statement checkpoint = database.prepare("PRAGMA wal_checkpoint(TRUNCATE)");
+    Statement checkpoint = database.prepare(passive
+        ? "PRAGMA wal_checkpoint(PASSIVE)" : "PRAGMA wal_checkpoint(TRUNCATE)");
     if (!checkpoint.step()) {
         throw std::runtime_error(
             "Failed to checkpoint workspace session database '"
             + utf8_path(path) + "'");
     }
-    if (checkpoint.integer(0) != 0) {
+    if (!passive && checkpoint.integer(0) != 0) {
         throw std::runtime_error(
             "Workspace session database checkpoint remained busy for '"
             + utf8_path(path) + "'");
