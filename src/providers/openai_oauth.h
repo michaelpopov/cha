@@ -59,8 +59,8 @@ using OpenAiOAuthTransport =
 using OpenAiOAuthClock =
     std::function<std::chrono::system_clock::time_point()>;
 
-// Owns one workspace ChatGPT login: the credential file, current bundle,
-// optional pending device attempt, and the mutex that serializes them.
+// Owns a process's view of the shared ChatGPT login. The local mutex protects
+// memory; a companion-file lock serializes credential reads, writes and refresh.
 class OpenAiOAuth {
 public:
     explicit OpenAiOAuth(std::filesystem::path credential_path);
@@ -115,7 +115,7 @@ private:
         std::string code_verifier,
         std::chrono::system_clock::time_point deadline,
         const std::function<bool()>& cancelled);
-    bool refresh_unlocked();
+    bool refresh_unlocked(std::chrono::system_clock::time_point deadline);
 
     std::filesystem::path credential_path_;
     OpenAiOAuthTransport transport_;

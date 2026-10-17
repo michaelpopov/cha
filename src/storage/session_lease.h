@@ -16,7 +16,7 @@ public:
 
 // Holds one non-blocking, exclusive operating-system lock on a database
 // companion file. The top-level configuration store owns it for the database
-// lifetime.
+// lifetime. The OpenAI OAuth owner also holds it briefly on its credential file.
 class SessionLease {
 public:
     SessionLease() = delete;

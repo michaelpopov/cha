@@ -1,5 +1,6 @@
 #include "providers/openai_oauth.h"
 
+#include "storage/session_lease.h"
 #include "util/curl.h"
 #include "util/json_serialization.h"
 #include "util/logging.h"
@@ -61,6 +62,29 @@ constexpr const char* renew_failed = "OpenAI credentials could not be renewed.";
 constexpr const char* save_failed = "OpenAI credentials could not be saved.";
 constexpr const char* remove_failed = "OpenAI credentials could not be removed.";
 constexpr const char* invalid_file = "OpenAI credential file is invalid.";
+constexpr const char* read_failed = "OpenAI credentials could not be read.";
+
+// Reuse the portable companion-file lock. Keep the file in place when the
+// handle closes, so all processes continue locking the same file after logout.
+SessionLease lock_credentials(
+    const std::filesystem::path& path,
+    std::chrono::milliseconds budget,
+    const std::function<bool()>& cancelled = {}) {
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    while (true) {
+        if (std::chrono::steady_clock::now() >= deadline
+            || (cancelled && cancelled())) {
+            throw std::runtime_error(login_timed_out);
+        }
+        try {
+            return SessionLease::acquire(path, renew_failed);
+        } catch (const SessionBusyError&) {
+            std::this_thread::sleep_for(std::min(
+                std::chrono::steady_clock::duration{std::chrono::milliseconds{50}},
+                deadline - std::chrono::steady_clock::now()));
+        }
+    }
+}
 
 void require_curl(CURLcode result) {
     if (result != CURLE_OK) {
@@ -396,7 +420,13 @@ OpenAiOAuth::OpenAiOAuth(
     if (!clock_) {
         throw std::invalid_argument("OpenAI clock is missing");
     }
-    load_unlocked();
+    try {
+        const auto lease = lock_credentials(credential_path_, network_budget);
+        load_unlocked();
+    } catch (const std::exception&) {
+        error_ = read_failed;
+        log_warn(std::string(read_failed) + " path=" + utf8_path(credential_path_));
+    }
 }
 
 OpenAiOAuthSnapshot OpenAiOAuth::status() const {
@@ -409,13 +439,22 @@ OpenAiOAuthSnapshot OpenAiOAuth::start(std::function<bool()> cancelled) {
     std::lock_guard lock(mutex_);
     discard_expired_attempt_unlocked();
     if (pending_) return snapshot_unlocked();
+    const auto deadline = clock_() + network_budget;
+    try {
+        const auto lease = lock_credentials(credential_path_, network_budget, cancelled);
+        load_unlocked();
+    } catch (const std::exception& error) {
+        error_ = std::string(error.what()) == login_timed_out
+            ? login_timed_out
+            : login_failed;
+        return snapshot_unlocked();
+    }
     if (bundle_) {
         error_ = already_connected;
         return snapshot_unlocked();
     }
 
     error_.reset();
-    const auto deadline = clock_() + network_budget;
     Json body;
     body["client_id"] = std::string(client_id);
     OpenAiOAuthHttpResponse response;
@@ -537,7 +576,10 @@ OpenAiOAuthSnapshot OpenAiOAuth::disconnect() {
     pending_.reset();
     bundle_.reset();
     error_.reset();
-    if (!remove_unlocked()) {
+    try {
+        const auto lease = lock_credentials(credential_path_, network_budget);
+        if (!remove_unlocked()) error_ = remove_failed;
+    } catch (const std::exception&) {
         error_ = remove_failed;
     }
     log_info("OpenAI credentials disconnected");
@@ -555,11 +597,25 @@ std::vector<std::string> OpenAiOAuth::redaction_secrets() const {
 
 OpenAiOAuthRequestCredentials OpenAiOAuth::credentials() {
     std::lock_guard lock(mutex_);
+    const auto deadline = clock_() + network_budget;
+    std::optional<SessionLease> lease;
+    try {
+        lease.emplace(lock_credentials(credential_path_, network_budget));
+    } catch (const std::exception&) {
+        error_ = renew_failed;
+        throw std::runtime_error(renew_failed);
+    }
+    // Another process may have refreshed, signed in, or disconnected since
+    // this owner was created. Never refresh its old in-memory token.
+    load_unlocked();
     if (!bundle_) {
         throw std::runtime_error(not_signed_in);
     }
-    if (needs_refresh(bundle_->expires_at, clock_()) && !refresh_unlocked()) {
-        throw std::runtime_error(error_.value_or(renew_failed));
+    if (needs_refresh(bundle_->expires_at, clock_()) && !refresh_unlocked(deadline)) {
+        // A transient failure keeps the login. Use its token until it expires.
+        if (!bundle_ || bundle_->expires_at <= unix_seconds(clock_())) {
+            throw std::runtime_error(error_.value_or(renew_failed));
+        }
     }
     if (!bundle_) {
         throw std::runtime_error(not_signed_in);
@@ -597,7 +653,6 @@ OpenAiOAuthSnapshot OpenAiOAuth::snapshot_unlocked() const {
 
 void OpenAiOAuth::load_unlocked() {
     bundle_.reset();
-    pending_.reset();
     error_.reset();
 
     std::error_code status_error;
@@ -725,6 +780,25 @@ bool OpenAiOAuth::finish_login_unlocked(
     std::string code_verifier,
     std::chrono::system_clock::time_point deadline,
     const std::function<bool()>& cancelled) {
+    std::optional<SessionLease> lease;
+    try {
+        lease.emplace(lock_credentials(
+            credential_path_,
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - clock_()),
+            cancelled));
+        load_unlocked();
+    } catch (const std::exception& error) {
+        pending_.reset();
+        error_ = std::string(error.what()) == login_timed_out
+            ? login_timed_out
+            : login_failed;
+        return false;
+    }
+    if (bundle_) {
+        pending_.reset();
+        error_ = already_connected;
+        return false;
+    }
     const std::string body = form_encode({
         {"grant_type", "authorization_code"},
         {"client_id", client_id},
@@ -761,7 +835,8 @@ bool OpenAiOAuth::finish_login_unlocked(
         .account_id = std::move(parsed->account_id),
     };
     if (!save_unlocked(bundle)) {
-        abandon_unlocked(save_failed);
+        pending_.reset();
+        error_ = save_failed;
         return false;
     }
     bundle_ = std::move(bundle);
@@ -770,9 +845,8 @@ bool OpenAiOAuth::finish_login_unlocked(
     return true;
 }
 
-bool OpenAiOAuth::refresh_unlocked() {
+bool OpenAiOAuth::refresh_unlocked(std::chrono::system_clock::time_point deadline) {
     if (!bundle_) return false;
-    const auto deadline = clock_() + network_budget;
     const std::string body = form_encode({
         {"grant_type", "refresh_token"},
         {"client_id", client_id},
@@ -782,13 +856,22 @@ bool OpenAiOAuth::refresh_unlocked() {
     try {
         response = post_unlocked(token_path, form_content_type, body, deadline);
     } catch (...) {
-        abandon_unlocked(renew_failed);
+        error_ = renew_failed;
         return false;
     }
 
     auto parsed = parse_token_response(response, clock_());
     if (!parsed) {
-        abandon_unlocked(renew_failed);
+        const std::string code = error_code(parse_json_object(response.body));
+        if ((response.status == 400 || response.status == 401)
+            && (code == "invalid_grant" || code == "refresh_token_expired"
+                || code == "refresh_token_reused" || code == "refresh_token_invalidated")) {
+            abandon_unlocked(renew_failed);
+        } else {
+            // Network, rate-limit, server and unrecognized responses are not
+            // proof that the saved login is invalid. A later call may retry.
+            error_ = renew_failed;
+        }
         return false;
     }
     Bundle bundle{
@@ -798,7 +881,7 @@ bool OpenAiOAuth::refresh_unlocked() {
         .account_id = std::move(parsed->account_id),
     };
     if (!save_unlocked(bundle)) {
-        abandon_unlocked(save_failed);
+        error_ = save_failed;
         return false;
     }
     bundle_ = std::move(bundle);

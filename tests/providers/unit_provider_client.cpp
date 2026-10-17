@@ -1793,9 +1793,8 @@ TEST(ProviderClient, CancellationDuringFailedRefreshCleansUpAndSkipsModel) {
     EXPECT_TRUE(result.message.empty());
     EXPECT_EQ(auth_calls, 1);
     EXPECT_EQ(model_calls, 0);
-    EXPECT_EQ(oauth.status().state, OpenAiOAuthState::signed_out);
-    EXPECT_THROW(oauth.credentials(), std::runtime_error);
-    EXPECT_EQ(auth_calls, 1);
+    // A network failure is not proof that the saved login is invalid.
+    EXPECT_EQ(oauth.status().state, OpenAiOAuthState::connected);
 }
 
 TEST(ProviderClient, SubscriptionUnauthorizedDoesNotRetryOrMutateCredentials) {

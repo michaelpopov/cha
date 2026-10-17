@@ -24,7 +24,15 @@
 #include <vector>
 
 #ifndef _WIN32
+#include <csignal>
+#include <fcntl.h>
+#include <poll.h>
+#include <spawn.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char** environ;
 #endif
 
 namespace cha {
@@ -109,6 +117,80 @@ void expect_sanitized(const std::optional<std::string>& error) {
     EXPECT_FALSE(error->empty());
     EXPECT_FALSE(contains_secret(*error));
 }
+
+#ifndef _WIN32
+class OAuthProcess {
+public:
+    OAuthProcess(
+        const std::filesystem::path& credentials,
+        const std::filesystem::path& response,
+        std::int64_t now) {
+        int commands[2]{-1, -1};
+        int events[2]{-1, -1};
+        try {
+            if (pipe(commands) == -1 || pipe(events) == -1
+                || fcntl(commands[1], F_SETFD, FD_CLOEXEC) == -1
+                || fcntl(events[0], F_SETFD, FD_CLOEXEC) == -1) {
+                throw std::runtime_error("Could not create OAuth helper pipes");
+            }
+            std::string path = credentials.string();
+            std::string command_fd = std::to_string(commands[0]);
+            std::string event_fd = std::to_string(events[1]);
+            std::string response_path = response.string();
+            std::string time = std::to_string(now);
+            char* arguments[]{const_cast<char*>(CHA_OAUTH_TEST_HELPER), path.data(),
+                command_fd.data(), event_fd.data(), response_path.data(), time.data(), nullptr};
+            if (posix_spawn(&process_, CHA_OAUTH_TEST_HELPER, nullptr, nullptr,
+                    arguments, environ) != 0) {
+                throw std::runtime_error("Could not start OAuth helper");
+            }
+        } catch (...) {
+            for (int descriptor : {commands[0], commands[1], events[0], events[1]}) {
+                if (descriptor != -1) (void)close(descriptor);
+            }
+            throw;
+        }
+        (void)close(commands[0]);
+        (void)close(events[1]);
+        commands_ = commands[1];
+        events_ = events[0];
+    }
+
+    ~OAuthProcess() {
+        (void)kill(process_, SIGKILL);
+        while (waitpid(process_, nullptr, 0) == -1 && errno == EINTR) {}
+        (void)close(commands_);
+        (void)close(events_);
+    }
+
+    OAuthProcess(const OAuthProcess&) = delete;
+    OAuthProcess& operator=(const OAuthProcess&) = delete;
+
+    void send(char command) {
+        ssize_t count;
+        do { count = write(commands_, &command, 1); } while (count == -1 && errno == EINTR);
+        if (count != 1) throw std::runtime_error("Could not send OAuth test command");
+    }
+
+    char receive(int timeout_ms = 5000) {
+        pollfd descriptor{events_, POLLIN, 0};
+        int ready;
+        do { ready = ::poll(&descriptor, 1, timeout_ms); } while (ready == -1 && errno == EINTR);
+        if (ready == 0) return '\0';
+        if (ready == -1) throw std::runtime_error("Could not wait for OAuth helper");
+        char event{};
+        ssize_t count;
+        do { count = read(events_, &event, 1); } while (count == -1 && errno == EINTR);
+        if (count != 1) throw std::runtime_error("OAuth helper closed its event pipe");
+        return event;
+    }
+
+private:
+    pid_t process_{-1};
+    int commands_{-1};
+    int events_{-1};
+};
+#endif
 
 class OpenAiOAuthTest : public testing::Test {
 protected:
@@ -627,7 +709,7 @@ TEST_F(OpenAiOAuthTest, FailedRefreshSignsOutWaitersWithoutRetry) {
         unix_now() + 60,
         "acct_test");
     OpenAiOAuth oauth = make_owner();
-    push(json_response(400, {{"error", "fixture-denial"}}));
+    push(json_response(400, {{"error", "invalid_grant"}}));
 
     std::atomic<int> failures{0};
     auto call = [&] {
@@ -648,6 +730,140 @@ TEST_F(OpenAiOAuthTest, FailedRefreshSignsOutWaitersWithoutRetry) {
     EXPECT_EQ(oauth.status().state, OpenAiOAuthState::signed_out);
     EXPECT_FALSE(std::filesystem::exists(path_));
 }
+
+TEST_F(OpenAiOAuthTest, TransientRefreshResponsesKeepLoginAndAllowRetry) {
+    const std::vector<OpenAiOAuthHttpResponse> failures{
+        json_response(429, {{"error", "rate_limit_exceeded"}}),
+        json_response(503, {{"error", "unavailable"}}),
+        json_response(400, {{"error", "unrecognized_error"}}),
+        {200, "{invalid-json"},
+    };
+    for (const auto& failure : failures) {
+        SCOPED_TRACE(failure.status);
+        state_ = std::make_shared<State>();
+        write_bundle(jwt_for_account("acct_test"), "fixture-refresh", unix_now() + 60, "acct_test");
+        auto oauth = make_owner();
+        const std::string original = file_bytes(path_);
+        push(failure);
+        // The saved token has not expired yet, so the request can still use it.
+        EXPECT_EQ(oauth.credentials().access_token, jwt_for_account("acct_test"));
+        EXPECT_EQ(oauth.status().state, OpenAiOAuthState::connected);
+        expect_sanitized(oauth.status().error);
+        EXPECT_EQ(file_bytes(path_), original);
+
+        push(tokens_ok("replacement-refresh"));
+        EXPECT_EQ(oauth.credentials().account_id, "acct_test");
+        EXPECT_FALSE(oauth.status().error);
+        EXPECT_EQ(requests().size(), 2U);
+        EXPECT_EQ(Json::parse(file_bytes(path_)).at("refresh_token"), "replacement-refresh");
+    }
+}
+
+TEST_F(OpenAiOAuthTest, NetworkRefreshFailureKeepsLoginAndAllowsRetry) {
+    // An expired token cannot replace the failed refresh.
+    write_bundle(jwt_for_account("acct_test"), "fixture-refresh", unix_now() - 1, "acct_test");
+    auto oauth = make_owner();
+    const std::string original = file_bytes(path_);
+    // An empty response queue makes the injected transport throw.
+    EXPECT_THROW((void)oauth.credentials(), std::runtime_error);
+    EXPECT_EQ(oauth.status().state, OpenAiOAuthState::connected);
+    expect_sanitized(oauth.status().error);
+    EXPECT_EQ(file_bytes(path_), original);
+    push(tokens_ok());
+    EXPECT_EQ(oauth.credentials().account_id, "acct_test");
+    EXPECT_EQ(requests().size(), 2U);
+}
+
+TEST_F(OpenAiOAuthTest, LoginCompletionDoesNotOverwriteAnotherOwnersLogin) {
+    auto first = make_owner();
+    auto second = make_owner();
+    push(start_ok(1));
+    ASSERT_EQ(first.start().state, OpenAiOAuthState::waiting);
+    ASSERT_EQ(complete_login(second, "other-refresh").state, OpenAiOAuthState::connected);
+    push(poll_approved());
+    const auto result = first.poll();
+    EXPECT_EQ(result.state, OpenAiOAuthState::connected);
+    expect_sanitized(result.error);
+    EXPECT_EQ(Json::parse(file_bytes(path_)).at("refresh_token"), "other-refresh");
+}
+
+#ifndef _WIN32
+TEST_F(OpenAiOAuthTest, TwoProcessesRefreshSharedCredentialsOnce) {
+    write_bundle(jwt_for_account("acct_old"), "old-refresh", unix_now() + 60, "acct_old");
+    const auto response = directory_ / "response.json";
+    const auto tokens = json_response(200, token_payload(jwt_for_account("acct_new"), "new-refresh"));
+    create_private_file(response, Json{{"status", tokens.status}, {"body", tokens.body}}.dump());
+    OAuthProcess first(path_, response, unix_now());
+    ASSERT_EQ(first.receive(), 'L');
+    OAuthProcess second(path_, response, unix_now());
+    ASSERT_EQ(second.receive(), 'L');
+
+    first.send('r');
+    ASSERT_EQ(first.receive(), 'A');
+    ASSERT_EQ(first.receive(), 'R');
+    second.send('r');
+    ASSERT_EQ(second.receive(), 'A');
+    EXPECT_EQ(second.receive(100), '\0');
+    first.send('c');
+    EXPECT_EQ(first.receive(), 'S');
+    // S rather than R proves the waiter adopted the saved bundle without HTTP.
+    EXPECT_EQ(second.receive(), 'S');
+    EXPECT_EQ(Json::parse(file_bytes(path_)).at("refresh_token"), "new-refresh");
+}
+
+TEST_F(OpenAiOAuthTest, ProcessRefreshFailurePreservesLoginForOtherProcess) {
+    write_bundle(jwt_for_account("acct_old"), "old-refresh", unix_now() - 1, "acct_old");
+    const std::string original = file_bytes(path_);
+    const auto response = directory_ / "response.json";
+    create_private_file(response, Json{{"status", 503}, {"body", "unavailable"}}.dump());
+    OAuthProcess first(path_, response, unix_now());
+    ASSERT_EQ(first.receive(), 'L');
+    OAuthProcess second(path_, response, unix_now());
+    ASSERT_EQ(second.receive(), 'L');
+    first.send('r');
+    ASSERT_EQ(first.receive(), 'A');
+    ASSERT_EQ(first.receive(), 'R');
+    first.send('c');
+    EXPECT_EQ(first.receive(), 'E');
+    EXPECT_EQ(file_bytes(path_), original);
+
+    const auto tokens = json_response(200, token_payload(jwt_for_account("acct_new"), "new-refresh"));
+    create_private_file(response, Json{{"status", tokens.status}, {"body", tokens.body}}.dump());
+    second.send('r');
+    ASSERT_EQ(second.receive(), 'A');
+    ASSERT_EQ(second.receive(), 'R');
+    second.send('c');
+    EXPECT_EQ(second.receive(), 'S');
+    first.send('r');
+    ASSERT_EQ(first.receive(), 'A');
+    EXPECT_EQ(first.receive(), 'S');
+}
+
+TEST_F(OpenAiOAuthTest, ProcessDisconnectWaitsForRefreshAndStaysDisconnected) {
+    write_bundle(jwt_for_account("acct_old"), "old-refresh", unix_now() + 60, "acct_old");
+    const auto response = directory_ / "response.json";
+    const auto tokens = json_response(200, token_payload(jwt_for_account("acct_new"), "new-refresh"));
+    create_private_file(response, Json{{"status", tokens.status}, {"body", tokens.body}}.dump());
+    OAuthProcess first(path_, response, unix_now());
+    ASSERT_EQ(first.receive(), 'L');
+    OAuthProcess second(path_, response, unix_now());
+    ASSERT_EQ(second.receive(), 'L');
+    first.send('r');
+    ASSERT_EQ(first.receive(), 'A');
+    ASSERT_EQ(first.receive(), 'R');
+    second.send('d');
+    ASSERT_EQ(second.receive(), 'A');
+    EXPECT_EQ(second.receive(100), '\0');
+    first.send('c');
+    EXPECT_EQ(first.receive(), 'S');
+    EXPECT_EQ(second.receive(), 'D');
+    EXPECT_FALSE(std::filesystem::exists(path_));
+    first.send('r');
+    ASSERT_EQ(first.receive(), 'A');
+    EXPECT_EQ(first.receive(), 'E');
+    EXPECT_FALSE(std::filesystem::exists(path_));
+}
+#endif
 
 TEST_F(OpenAiOAuthTest, ConcurrentNearExpiryRefreshHappensOnce) {
     write_bundle(
@@ -724,18 +940,20 @@ TEST_F(OpenAiOAuthTest, DisconnectAfterInFlightExchangeRemainsEffective) {
     EXPECT_FALSE(std::filesystem::exists(path_));
 }
 
-TEST_F(OpenAiOAuthTest, SaveFailureClearsMemoryAndAttemptsRemoval) {
-    path_ = directory_ / "missing-parent" / "cha.sqlite3.openai-auth.json";
+TEST_F(OpenAiOAuthTest, LoginSaveFailureDoesNotRemoveTheDestination) {
     OpenAiOAuth oauth{path_, transport(), clock()};
     push(start_ok(1));
     ASSERT_EQ(oauth.start().state, OpenAiOAuthState::waiting);
     advance(1s);
     push(poll_approved());
     push(tokens_ok());
+    state_->on_request = [this](const OpenAiOAuthHttpRequest& request) {
+        if (request.url == kTokenUrl) std::filesystem::create_directory(path_);
+    };
     const OpenAiOAuthSnapshot snapshot = oauth.poll();
     EXPECT_EQ(snapshot.state, OpenAiOAuthState::signed_out);
     expect_sanitized(snapshot.error);
-    EXPECT_FALSE(std::filesystem::exists(path_));
+    EXPECT_TRUE(std::filesystem::is_directory(path_));
 }
 
 TEST_F(OpenAiOAuthTest, RestartDoesNotKeepPendingLogin) {

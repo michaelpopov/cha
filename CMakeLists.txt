@@ -520,6 +520,10 @@ if(BUILD_TESTING)
         target_include_directories(
             cha_lease_test_helper PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         cha_enable_warnings(cha_lease_test_helper)
+
+        add_executable(cha_oauth_test_helper tests/support/oauth_test_helper.cpp)
+        target_link_libraries(cha_oauth_test_helper PRIVATE cha_lib)
+        cha_enable_warnings(cha_oauth_test_helper)
     endif()
 
     add_executable(cha_jev_eval_requests EXCLUDE_FROM_ALL tests/providers/jev_eval_requests.cpp)
@@ -546,6 +550,9 @@ if(BUILD_TESTING)
             PRIVATE
                 CHA_LEASE_TEST_HELPER="$<TARGET_FILE:cha_lease_test_helper>")
         add_dependencies(cha_tests cha_lease_test_helper)
+        target_compile_definitions(
+            cha_tests PRIVATE CHA_OAUTH_TEST_HELPER="$<TARGET_FILE:cha_oauth_test_helper>")
+        add_dependencies(cha_tests cha_oauth_test_helper)
     endif()
     cha_enable_warnings(cha_tests)
 
