@@ -107,6 +107,33 @@ TEST(SessionOutput, MergesCompatibleAppendsAndBoundsPendingBytes) {
         AppendPublishResult::SnapshotRequired);
 }
 
+TEST(SessionOutput, GenerationUpdatesSkipTheTranscriptAndFallBackAfterAnAppend) {
+    SessionOutput output;
+    output.attach();
+    output.publish_snapshot(streaming_snapshot("a"));
+    auto status = streaming_snapshot().generation;
+    status.progress = GenerationProgress{.searches_completed = 1};
+    // A pending snapshot takes the new status instead of a second payload.
+    EXPECT_EQ(output.publish_generation(status), AppendPublishResult::Accepted);
+    auto snapshot = output.take();
+    ASSERT_TRUE(snapshot);
+    EXPECT_EQ(snapshot->snapshot.generation, status);
+    output.acknowledge();
+
+    status.progress->pages_read = 1;
+    EXPECT_EQ(output.publish_generation(streaming_snapshot().generation), AppendPublishResult::Accepted);
+    EXPECT_EQ(output.publish_generation(status), AppendPublishResult::Accepted);
+    auto generation = output.take();
+    ASSERT_TRUE(generation);
+    EXPECT_EQ(generation->kind, SessionOutputItem::Kind::generation);
+    EXPECT_EQ(generation->generation, status);
+    EXPECT_EQ(generation->seq, 1U);
+    output.acknowledge();
+
+    EXPECT_EQ(output.publish_append({EntryTextTarget{42}, "b"}), AppendPublishResult::Accepted);
+    EXPECT_EQ(output.publish_generation(status), AppendPublishResult::SnapshotRequired);
+}
+
 TEST(SessionOutput, CloseKeepsTerminalPending) {
     SessionOutput output;
     output.attach();

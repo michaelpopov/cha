@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -7,7 +8,7 @@ import {
   type NoteItem,
   type NotesClient,
 } from '../api/client';
-import { NotesTree, type DeleteNoteItem, type NoteActions } from './NotesTree';
+import { NotesTree, type DeleteNoteItem } from './NotesTree';
 
 const study: NoteItem = { id: 1, parent_id: null, kind: 'folder', name: 'Study' };
 const aardvark: NoteItem = { id: 2, parent_id: null, kind: 'note', name: 'Aardvark' };
@@ -44,8 +45,6 @@ function press(code: string) {
   fireEvent.keyUp(tree, { key: code, code });
 }
 
-let registeredNoteActions: NoteActions | null = null;
-
 function renderTree({
   items = [study, aardvark, philosophy, plan],
   notes,
@@ -69,7 +68,6 @@ function renderTree({
     await refresh();
     return 'deleted';
   });
-  registeredNoteActions = null;
   function Host() {
     const [active, setActive] = useState(activeNoteId);
     return (
@@ -81,7 +79,6 @@ function renderTree({
         onDeleteItem={deleteItem}
         onNoteItems={onNoteItems}
         onOpenNote={(id) => { setActive(id); onOpenNote(id); }}
-        onRegisterNoteActions={(actions) => { registeredNoteActions = actions; }}
         vaultName="Personal"
       />
     );
@@ -91,18 +88,7 @@ function renderTree({
 }
 
 async function chooseAction(name: string, action: string) {
-  const button = screen.queryByRole('button', { name: `Actions for ${name}` });
-  if (!button) {
-    fireEvent.click(screen.getByRole('treeitem', { name }));
-    await waitFor(() => expect(registeredNoteActions).not.toBeNull());
-    act(() => {
-      if (action === 'Rename') registeredNoteActions?.rename();
-      else if (action === 'Delete') registeredNoteActions?.delete();
-      else throw new Error(`Unsupported note action: ${action}`);
-    });
-    return;
-  }
-  fireEvent.click(button);
+  fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
   const menu = await screen.findByRole('menu');
   fireEvent.click(within(menu).getByRole('menuitem', { name: action }));
 }
@@ -174,7 +160,7 @@ describe('Notes tree', () => {
     const input = screen.getByLabelText('EPUB file');
     fireEvent.change(input, { target: { files: [file] } });
     fireEvent.change(input, { target: { files: [file] } });
-    expect(importEpub).toHaveBeenCalledExactlyOnceWith(file, [aardvark]);
+    expect(importEpub).toHaveBeenCalledExactlyOnceWith(file, [aardvark], null);
     expect(screen.getByRole('status')).toHaveTextContent('Importing EPUB…');
     expect(screen.getByRole('button', { name: 'Actions for Personal' })).toBeDisabled();
     items = [aardvark,
@@ -195,18 +181,43 @@ describe('Notes tree', () => {
     const importEpub = vi.fn(async () => { throw new ChaError('invalid_argument', 'Could not parse XML in “text.xhtml”.'); });
     renderTree({ notes: client({ listNoteItems: async () => [study], importEpub }) });
     await screen.findByRole('treeitem', { name: 'Study' });
-    await chooseAction('Study', 'New note');
-    expect(screen.queryByRole('menuitem', { name: 'Import EPUB…' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     const input = screen.getByLabelText('EPUB file');
     const file = new File(['epub'], 'bad.epub');
     for (let attempt = 1; attempt <= 2; attempt++) {
-      await chooseAction('Personal', 'Import EPUB…');
+      await chooseAction('Study', 'Import EPUB…');
       fireEvent.change(input, { target: { files: [file] } });
       expect(await screen.findByRole('alert')).toHaveTextContent('Could not parse XML in “text.xhtml”.');
       expect(importEpub).toHaveBeenCalledTimes(attempt);
+      expect(importEpub).toHaveBeenLastCalledWith(file, [study], study.id);
       expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     }
+  });
+
+  it('imports into the selected subfolder and reveals the book without opening a note', async () => {
+    let items = [study, philosophy, aardvark];
+    const importEpub = vi.fn(async () => {
+      items = [...items,
+        { id: 10, parent_id: philosophy.id, kind: 'folder', name: 'Book' },
+        { id: 11, parent_id: 10, kind: 'note', name: '001. First' },
+      ];
+      return 10;
+    });
+    const { onOpenNote } = renderTree({
+      activeNoteId: aardvark.id,
+      notes: client({ listNoteItems: async () => items, importEpub }),
+    });
+    const studyRow = await screen.findByRole('treeitem', { name: 'Study' });
+    fireEvent.click(studyRow);
+    await chooseAction('Philosophy', 'Import EPUB…');
+    // Changing the focused folder while the file picker is open does not change the destination.
+    fireEvent.click(studyRow);
+    const file = new File(['epub'], 'book.epub');
+    const before = items;
+    fireEvent.change(screen.getByLabelText('EPUB file'), { target: { files: [file] } });
+    expect(importEpub).toHaveBeenCalledExactlyOnceWith(file, before, philosophy.id);
+    expect(await screen.findByRole('treeitem', { name: '001. First' })).toHaveAttribute('aria-level', '5');
+    expect(screen.getByRole('treeitem', { name: 'Book' })).toHaveAttribute('aria-expanded', 'true');
+    expect(onOpenNote).not.toHaveBeenCalled();
   });
 
   it('retries only the listing after an imported book commits but the refresh fails', async () => {
@@ -411,7 +422,8 @@ describe('Notes tree', () => {
   });
 
   it('opens the same menu from the row button and the keyboard', async () => {
-    renderTree();
+    const onOpenNote = vi.fn();
+    renderTree({ onOpenNote });
     const study = await screen.findByRole('treeitem', { name: 'Study' });
     expect(study).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
@@ -428,11 +440,54 @@ describe('Notes tree', () => {
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     expect(study).toHaveFocus();
 
-    fireEvent.click(screen.getByRole('treeitem', { name: 'Aardvark' }));
+    const noteButton = await screen.findByRole('button', { name: 'Actions for Aardvark' });
+    fireEvent.click(noteButton);
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Rename', 'Delete', 'Copy Ref ID',
+    ]);
+    expect(onOpenNote).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(noteButton).toHaveFocus();
     fireEvent.keyDown(screen.getByRole('tree'), { key: 'ContextMenu' });
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Actions for Aardvark' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toHaveFocus();
     expect(screen.getByRole('treeitem', { name: 'Aardvark' })).not.toHaveAttribute('aria-expanded');
+  });
+
+  it.each([
+    [1, '##000001'],
+    [10, '##00000A'],
+    [35, '##00000Z'],
+    [36, '##00000a'],
+    [61, '##00000z'],
+    [62, '##000010'],
+    [3844, '##000100'],
+    [56800235583, '##zzzzzz'],
+  ])('copies note %s as the reference %s from its menu', async (id, reference) => {
+    userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockReset().mockResolvedValue();
+    const { onOpenNote } = renderTree({
+      items: [aardvark, { ...plan, id, parent_id: null }],
+      activeNoteId: aardvark.id,
+    });
+    await screen.findByRole('treeitem', { name: 'Plan' });
+    await chooseAction('Plan', 'Copy Ref ID');
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(reference);
+    expect(onOpenNote).not.toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'Plan' })).toHaveFocus();
+  });
+
+  it('reports a clipboard failure and allows retrying', async () => {
+    userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText')
+      .mockReset().mockRejectedValueOnce(new Error('Denied')).mockResolvedValue();
+    renderTree();
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Copy Ref ID');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not copy the note reference. Try again.');
+    await chooseAction('Aardvark', 'Copy Ref ID');
+    expect(writeText).toHaveBeenLastCalledWith('##000002');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('returns focus to the row when a dialog from the menu is canceled', async () => {
@@ -459,6 +514,7 @@ describe('Notes tree', () => {
     const onBeforeCreateNote = vi.fn(async () => true);
     const onOpenNote = vi.fn();
     renderTree({
+      activeNoteId: aardvark.id,
       onBeforeCreateNote,
       onOpenNote,
       notes: client({
@@ -490,7 +546,7 @@ describe('Notes tree', () => {
     expect(renamedRow).toHaveAttribute('tabindex', '0');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(onBeforeCreateNote).not.toHaveBeenCalled();
-    expect(onOpenNote).toHaveBeenCalledExactlyOnceWith(2);
+    expect(onOpenNote).not.toHaveBeenCalled();
   });
 
   it('keeps a duplicate name in the rename dialog', async () => {

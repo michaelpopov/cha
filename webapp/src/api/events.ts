@@ -7,6 +7,7 @@ export type AppendEvent = components['schemas']['AppendEvent'];
 export interface SessionEventHandlers {
   onSnapshot(snapshot: SessionSnapshot): void;
   onAppend(event: AppendEvent): void;
+  onGeneration(generation: SessionSnapshot['generation']): void;
   onError(): void;
 }
 

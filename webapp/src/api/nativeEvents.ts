@@ -1,4 +1,5 @@
 import {
+  isGenerationState,
   isSessionSnapshot,
   type SessionSnapshot,
 } from './client';
@@ -15,7 +16,7 @@ export interface NativeSessionEvent {
   connection_id: string;
   context_epoch: number;
   subscription_id: string;
-  event: 'session.snapshot' | 'session.append';
+  event: 'session.snapshot' | 'session.append' | 'session.generation';
   forum_id: string;
   session_id: string;
   seq: number;
@@ -27,7 +28,8 @@ export function isNativeSessionEvent(value: unknown): value is NativeSessionEven
       || typeof value.connection_id !== 'string'
       || !Number.isSafeInteger(value.context_epoch)
       || typeof value.subscription_id !== 'string'
-      || (value.event !== 'session.snapshot' && value.event !== 'session.append')
+      || (value.event !== 'session.snapshot' && value.event !== 'session.append'
+        && value.event !== 'session.generation')
       || typeof value.forum_id !== 'string'
       || typeof value.session_id !== 'string'
       || !Number.isSafeInteger(value.seq)
@@ -35,6 +37,7 @@ export function isNativeSessionEvent(value: unknown): value is NativeSessionEven
     return false;
   }
   if (value.event === 'session.snapshot') return isSessionSnapshot(value.payload);
+  if (value.event === 'session.generation') return isGenerationState(value.payload);
   return isRecord(value.payload)
     && isRecord(value.payload.target)
     && typeof value.payload.text === 'string';
@@ -110,6 +113,11 @@ export function createNativeEventProjection(
         fail();
         return;
       }
+      if (event.event === 'session.generation') {
+        nextSeq += 1;
+        handlers.onGeneration(event.payload as SessionSnapshot['generation']);
+        return;
+      }
       const append = {
         ...(event.payload as object),
         seq: event.seq,
@@ -154,6 +162,9 @@ export function createNativeSessionEvents(
         },
         onAppend: (event) => {
           if (!closed) handlers.onAppend(event);
+        },
+        onGeneration: (generation) => {
+          if (!closed) handlers.onGeneration(generation);
         },
         onError: () => {
           if (!closed) handlers.onError();

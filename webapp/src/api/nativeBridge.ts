@@ -183,7 +183,8 @@ export function createEnvelopeNativeBridge(options: {
         rejectAll(new ChaProtocolError());
       } else if (message.event !== 'receiver-error' && message.context_epoch !== epoch) return;
       emit(message.event as string, message);
-      if (message.event === 'session.snapshot' || message.event === 'session.append') {
+      if (message.event === 'session.snapshot' || message.event === 'session.append'
+          || message.event === 'session.generation') {
         emit('session', message);
       }
     }

@@ -15,6 +15,7 @@ struct ControllerGenerationView {
     std::string_view character_id;
     std::string_view character_display_name;
     ResponsePhase phase{ResponsePhase::waiting};
+    const GenerationProgress* progress{};
 };
 
 // A borrowed read model of one live controller, sufficient to build a full

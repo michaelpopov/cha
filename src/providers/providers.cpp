@@ -240,10 +240,10 @@ void ProviderRequest::execute(
         }
         if (!input_.maintenance && input_.web_read_tool && web_read_executor) {
             generation.web_read_tool = [&, config = *input_.web_read_tool](
-                std::string_view url, const std::atomic_bool& cancelled) {
+                std::string_view url, const std::atomic_bool& cancelled, const std::function<void()>& on_fallback) {
                 log_info("Page reading initiated: trigger=model_tool provider="
                     + (config.web_reader_enabled ? "web_reader" : config.read_provider));
-                auto result = web_read_executor(config, url, cancelled);
+                auto result = web_read_executor(config, url, cancelled, on_fallback);
                 if (!cancelled.load()) {
                     log_info("Page reading completed: result_bytes=" + std::to_string(result.size()));
                     mark_web_used();
@@ -255,6 +255,10 @@ void ProviderRequest::execute(
         RequestPayload payload = backend->prepare(generation);
         prepared = std::chrono::steady_clock::now();
         payload.statistics = &statistics;
+        payload.tool_progress = [this, request_id](GenerationToolProgress progress) {
+            progress.request_id = request_id;
+            if (events_.push(std::move(progress))) notifier_->wake();
+        };
         stage = "processing";
         fields += " request_payload_bytes=" + std::to_string(payload.bytes.size());
         if (payload.text_sizes) {

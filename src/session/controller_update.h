@@ -36,8 +36,13 @@ struct TextAppend {
     bool operator==(const TextAppend&) const = default;
 };
 
+// Only the generation status changed, so the transcript need not be sent again.
+struct GenerationChanged {
+    bool operator==(const GenerationChanged&) const = default;
+};
+
 using ControllerStateUpdate =
-    std::variant<NoStateUpdate, SnapshotRequired, TextAppend>;
+    std::variant<NoStateUpdate, SnapshotRequired, TextAppend, GenerationChanged>;
 
 // The observable effect of one command or applied generation event, classified by
 // the controller at the moment it mutates its own state.
@@ -105,8 +110,8 @@ inline void require_snapshot(ControllerUpdate& update) noexcept {
 }
 
 // Combines the effects of two operations applied in this order. Two appends to
-// one target concatenate; every mixed or ambiguous combination becomes
-// SnapshotRequired.
+// one target concatenate and two generation changes stay one; every mixed or
+// ambiguous combination becomes SnapshotRequired.
 [[nodiscard]] ControllerStateUpdate merge_state(
     ControllerStateUpdate all,
     ControllerStateUpdate one);

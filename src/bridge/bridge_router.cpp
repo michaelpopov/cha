@@ -121,13 +121,16 @@ nlohmann::json encode_output_item(
     std::string_view subscription_id,
     std::uint64_t context_epoch,
     const app::SessionOutputItem& item) {
-    const std::string event = item.kind == app::SessionOutputItem::Kind::snapshot
-        ? "session.snapshot"
-        : "session.append";
+    std::string event;
     nlohmann::json payload;
     if (item.kind == app::SessionOutputItem::Kind::snapshot) {
+        event = "session.snapshot";
         payload = item.snapshot;
+    } else if (item.kind == app::SessionOutputItem::Kind::generation) {
+        event = "session.generation";
+        payload = item.generation;
     } else {
+        event = "session.append";
         payload = AppendEvent{item.target, item.text, item.seq};
         payload.erase("seq");
     }

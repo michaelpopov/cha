@@ -151,7 +151,8 @@ std::vector<GenerationEvent> receive_terminal(
     while (std::chrono::steady_clock::now() < deadline) {
         GenerationEvent event = GenerationCompleted{};
         if (request->try_receive(event) == ChannelReadStatus::value) {
-            const bool terminal = !std::holds_alternative<GenerationEventDelta>(event);
+            const bool terminal = !std::holds_alternative<GenerationEventDelta>(event)
+                && !std::holds_alternative<GenerationToolProgress>(event);
             events.push_back(std::move(event));
             if (terminal) return events;
         }
@@ -183,8 +184,8 @@ public:
         std::vector<std::future<std::string>> workers;
         for (int index = 0; index < 4; ++index) {
             workers.push_back(std::async(std::launch::async, [&, index] {
-                const auto& execute = index % 2 == 0 ? payload.web_search_tool : payload.web_read_tool;
-                return execute("https://example.org", cancellation);
+                return index % 2 == 0 ? payload.web_search_tool("https://example.org", cancellation)
+                    : payload.web_read_tool("https://example.org", cancellation, {});
             }));
         }
         for (auto& worker : workers) EXPECT_EQ(worker.get(), "results");
@@ -198,7 +199,7 @@ TEST(Providers, ConcurrentWebCallbacksPublishWebUseOnceBeforeTheTerminal) {
     std::condition_variable changed;
     int started = 0;
     std::atomic_int completed{0};
-    const auto execute = [&](const auto&, auto, const auto&) {
+    const auto execute = [&](const auto&, auto, const auto&, const auto&... ) {
         std::unique_lock lock(mutex);
         ++started;
         changed.notify_all();

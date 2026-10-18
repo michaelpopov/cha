@@ -346,8 +346,10 @@ struct XaiFakeServer::Impl {
             }
         }
         if (saw_done) {
+            std::this_thread::sleep_for(options.after_audio_done_delay);
             for (const std::string& message : options.after_audio_done) {
                 send_frame(client, options.msgpack ? 0x2 : 0x1, message, true);
+                std::this_thread::sleep_for(options.after_audio_done_delay);
             }
         }
         close_socket(client);

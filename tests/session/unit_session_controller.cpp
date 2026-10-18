@@ -1088,6 +1088,49 @@ TEST(SessionController, RecordsCancellationWithoutAnEmptyAssistantEntry) {
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
+TEST(SessionController, ToolProgressIsTemporaryAndClearsOnEveryTerminalOutcome) {
+    for (const auto outcome : {"completed", "cancelled", "failed"}) {
+        SCOPED_TRACE(outcome);
+        TemporaryJournal temporary;
+        auto controller = test::from_test_backends(
+            test::one_backend(std::make_unique<ScriptedBackend>(GenerationResult{}, std::vector<std::string>{}, true)),
+            temporary.path, notifier());
+        (void)controller->submit_prompt("operator", "Question");
+        const auto report = [&](std::size_t id, std::string tool, ToolProgressAction action, RequestId request = 1) {
+            return controller->handle_generation_event(GenerationToolProgress{
+                request, id, std::move(tool), "https://example.org/page", action});
+        };
+        EXPECT_FALSE(has_state_update(report(9, "web_read", ToolProgressAction::started, 999)));
+        EXPECT_EQ(report(1, "web_search", ToolProgressAction::started).state,
+            ControllerStateUpdate{GenerationChanged{}});
+        (void)report(2, "web_read", ToolProgressAction::started);
+        (void)report(3, "web_read", ToolProgressAction::started);
+        ASSERT_NE(controller->view().generation.progress, nullptr);
+        EXPECT_EQ(controller->view().generation.progress->activities.size(), 3u);
+        (void)report(2, "web_read", ToolProgressAction::retrying);
+        EXPECT_TRUE(controller->view().generation.progress->activities[1].retrying);
+        (void)report(1, "web_search", ToolProgressAction::completed);
+        (void)report(2, "web_read", ToolProgressAction::completed);
+        (void)report(3, "web_read", ToolProgressAction::failed);
+        const auto& progress = *controller->view().generation.progress;
+        EXPECT_EQ(progress.searches_completed, 1u);
+        EXPECT_EQ(progress.pages_read, 1u);
+        EXPECT_TRUE(progress.activities.empty());
+        // Duplicate terminal events do not count the same operation twice.
+        EXPECT_FALSE(has_state_update(report(2, "web_read", ToolProgressAction::completed)));
+        (void)controller->handle_generation_event(GenerationEventDelta{1, GenerationDeltaKind::answer, "Answer"});
+        if (std::string_view(outcome) == "completed") (void)controller->handle_generation_event(GenerationCompleted{1});
+        else if (std::string_view(outcome) == "cancelled") (void)controller->handle_generation_event(GenerationCancelled{1});
+        else (void)controller->handle_generation_event(GenerationFailed{1, "Failure"});
+        EXPECT_FALSE(controller->view().generation.active);
+        EXPECT_EQ(controller->view().generation.progress, nullptr);
+        EXPECT_FALSE(has_state_update(report(4, "web_read", ToolProgressAction::started)));
+        for (const auto& entry : load_transcript_entries(temporary.path)) {
+            EXPECT_EQ(entry.text.find("https://example.org/page"), std::string::npos);
+        }
+    }
+}
+
 TEST(SessionController, KeepsReasoningOutOfTheTranscriptWhileAnswerEntersIt) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(

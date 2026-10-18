@@ -459,11 +459,21 @@ describe('notes native client', () => {
   it('prepares the entire EPUB before sending one book import request', async () => {
     const write = vi.fn(() => ({ id: 12 }));
     const client = clientFor({ 'notes.importBook': write });
-    expect(await client.importEpub(epubFile(), [])).toBe(12);
+    expect(await client.importEpub(epubFile(), [], null)).toBe(12);
     expect(write).toHaveBeenCalledTimes(1);
-    expect(write).toHaveBeenCalledWith({ name: 'Book', notes: [{ name: '001. First', document: {
+    expect(write).toHaveBeenCalledWith({ parent_id: null, name: 'Book', notes: [{ name: '001. First', document: {
       type: 'doc', content: [{ type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'First' }] }],
     } }] });
+  });
+
+  it('sends the selected EPUB destination and checks its sibling names', async () => {
+    const write = vi.fn(() => ({ id: 12 }));
+    const client = clientFor({ 'notes.importBook': write });
+    expect(await client.importEpub(epubFile(), [
+      { id: 1, parent_id: null, kind: 'folder', name: 'Research' },
+      { id: 2, parent_id: 1, kind: 'folder', name: 'Book' },
+    ], 1)).toBe(12);
+    expect(write).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ parent_id: 1, name: 'Book 1' }));
   });
 
   it('discards an EPUB prepared across a vault context change without sending it', async () => {
@@ -472,7 +482,7 @@ describe('notes native client', () => {
       const write = vi.fn(() => ({ id: 12 }));
       const bridge = createFakeNativeBridge({ 'notes.importBook': write });
       const client = createNativeChaClient(bridge);
-      const result = client.importEpub(epubFile(), []);
+      const result = client.importEpub(epubFile(), [], null);
       const reader = read.mock.instances[0] as FileReader;
       bridge.setContextEpoch(bridge.contextEpoch() + 1);
       // Finish the original read using the real FileReader implementation.
@@ -494,9 +504,9 @@ describe('notes native client', () => {
   it('does not send a malformed EPUB and rejects an invalid import response', async () => {
     const write = vi.fn(() => ({ id: 0 }));
     const client = clientFor({ 'notes.importBook': write });
-    await expect(client.importEpub(new File(['bad zip'], 'bad.epub'), [])).rejects.toMatchObject({ code: 'invalid_argument' });
+    await expect(client.importEpub(new File(['bad zip'], 'bad.epub'), [], null)).rejects.toMatchObject({ code: 'invalid_argument' });
     expect(write).not.toHaveBeenCalled();
-    await expect(client.importEpub(epubFile(), [])).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.importEpub(epubFile(), [], null)).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
   it('sends the ordinary note methods and accepts guarded replies', async () => {

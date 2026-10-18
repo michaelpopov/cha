@@ -12,11 +12,12 @@
 namespace cha::app {
 
 struct SessionOutputItem {
-    enum class Kind { snapshot, append } kind{Kind::snapshot};
+    enum class Kind { snapshot, append, generation } kind{Kind::snapshot};
     std::uint64_t seq{};
     SessionSnapshot snapshot;
     EntryTextTarget target;
     std::string text;
+    GenerationStatus generation;
 };
 
 // Coalescing owner-to-consumer queue: compatible-append merge, snapshot
@@ -39,6 +40,10 @@ public:
     [[nodiscard]] bool snapshot_needed() const;
     [[nodiscard]] AppendPublishResult publish_append(
         TextAppend append);
+    // Replaces only the generation status. A pending append cannot carry it,
+    // so that case asks the owner for a snapshot.
+    [[nodiscard]] AppendPublishResult publish_generation(
+        GenerationStatus generation);
 
     [[nodiscard]] std::shared_ptr<const SessionOutputItem> take();
     void acknowledge() noexcept;

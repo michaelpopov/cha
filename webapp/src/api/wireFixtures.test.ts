@@ -155,6 +155,11 @@ describe('snapshot validation', () => {
     ['missing character ID', { character_id: undefined }],
     ['non-text character name', { character_display_name: {} }],
     ['unknown phase', { phase: 'complete' }],
+    ['invalid progress count', { progress: { searches_completed: -1, pages_read: 0, activities: [] } }],
+    ['invalid progress tool', { progress: { searches_completed: 0, pages_read: 0,
+      activities: [{ id: 1, tool: 'unknown', argument: 'x', retrying: false }] } }],
+    ['invalid progress activity', { progress: { searches_completed: 0, pages_read: 0,
+      activities: [{ id: 1, tool: 'web_read', argument: {}, retrying: false }] } }],
   ])('rejects generation with %s', (_name, patch) => {
     const value = snapshot();
     expect(isSessionSnapshot({ ...value, generation: { ...value.generation, ...patch } })).toBe(false);

@@ -789,9 +789,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     importVault: () => transferVault('vault.import', 'file_count'),
     exportVault: () => transferVault('vault.export', 'file_count'),
     listNoteItems: async () => (await call('notes.list', {}, isNoteItemList)).items,
-    importEpub: async (file, items) => {
+    importEpub: async (file, items, parentId) => {
       const epoch = bridge.contextEpoch();
-      const request = prepareEpubImport(await readFileBytes(file).bytes, file.name, items);
+      const request = prepareEpubImport(await readFileBytes(file).bytes, file.name, items, parentId);
       if (epoch !== bridge.contextEpoch()) {
         throw new ChaError('vault_changed', 'The active vault changed. Import the EPUB again.');
       }

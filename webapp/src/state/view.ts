@@ -243,6 +243,12 @@ export type AppAction =
   | { type: 'session-discarded'; forumId: string; sessionId: string }
   | { type: 'session-audio-cache'; forumId: string; sessionId: string; entryId?: number; cached: boolean }
   | { type: 'session-append'; forumId: string; sessionId: string; event: AppendEvent }
+  | {
+    type: 'session-generation';
+    forumId: string;
+    sessionId: string;
+    generation: SessionSnapshot['generation'];
+  }
   | { type: 'show-initial-conversation' }
   // The initial session becomes the active conversation. The main panel stays.
   | { type: 'reset-active-conversation' }
@@ -1017,6 +1023,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         },
       };
     case 'session-append':
+    case 'session-generation':
       if (!state.sessionSnapshot
           || state.activeConversation?.forumId !== action.forumId
           || state.activeConversation.sessionId !== action.sessionId
@@ -1026,7 +1033,9 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       }
       return {
         ...state,
-        sessionSnapshot: appendSessionEvent(state.sessionSnapshot, action.event),
+        sessionSnapshot: action.type === 'session-append'
+          ? appendSessionEvent(state.sessionSnapshot, action.event)
+          : { ...state.sessionSnapshot, generation: action.generation },
       };
     case 'show-initial-conversation':
       return state.bootstrap ? showInitialConversation(state, state.bootstrap) : state;

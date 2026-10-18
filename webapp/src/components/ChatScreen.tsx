@@ -29,6 +29,7 @@ import {
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
 import { ConfirmDialog } from './ConfirmDialog';
+import { GenerationProgress } from './GenerationProgress';
 import { Markdown } from './Markdown';
 import {
   CheckIcon,
@@ -824,20 +825,7 @@ export function ChatScreen({
             />
           </Fragment>
         ))}
-        {generation?.active && generation.phase !== 'answering' && (
-          <div className="cha-generation">
-            <div className="cha-generation-status cha-speaker" aria-live="polite">
-              {generation.phase === 'stopping' ? `Stopping ${generation.character_display_name}…` : (
-                <>
-                  <span className="cha-generation-indicator" aria-hidden="true" />
-                  {generation.character_display_name
-                    ? `${generation.character_display_name} is preparing a response…`
-                    : 'Preparing a response…'}
-                </>
-              )}
-            </div>
-          </div>
-        )}
+        {generation && <GenerationProgress generation={generation} key={generation.request_id} />}
         {snapshot?.notice && <p className="cha-session-notice">{snapshot.notice}</p>}
         <div ref={transcriptEnd} />
       </div>

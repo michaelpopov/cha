@@ -3,6 +3,7 @@
 #include "chat/transcript.h"
 
 #include <cstdint>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <variant>
@@ -45,8 +46,19 @@ struct GenerationFailed {
     std::string message;
 };
 
+enum class ToolProgressAction { started, completed, failed, retrying };
+
+struct GenerationToolProgress {
+    RequestId request_id{};
+    std::size_t id{};
+    std::string tool;
+    std::string argument;
+    ToolProgressAction action{ToolProgressAction::started};
+};
+
 using GenerationEvent = std::variant<
     GenerationEventDelta,
+    GenerationToolProgress,
     GenerationCompleted,
     GenerationCancelled,
     GenerationFailed>;

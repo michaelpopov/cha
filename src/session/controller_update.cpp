@@ -13,6 +13,15 @@ ControllerStateUpdate merge_state(
         || std::holds_alternative<SnapshotRequired>(one)) {
         return SnapshotRequired{};
     }
+    if (std::holds_alternative<GenerationChanged>(all)
+        && std::holds_alternative<GenerationChanged>(one)) {
+        return all;
+    }
+    // One payload carries either text or generation status, not both.
+    if (std::holds_alternative<GenerationChanged>(all)
+        || std::holds_alternative<GenerationChanged>(one)) {
+        return SnapshotRequired{};
+    }
     auto& first = std::get<TextAppend>(all);
     auto& second = std::get<TextAppend>(one);
     // Only one target can be represented by a single append event, so a target

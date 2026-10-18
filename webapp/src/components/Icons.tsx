@@ -233,14 +233,6 @@ export function CopyIcon(props: IconProps) {
   );
 }
 
-export function HashIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M4 9h16M3 15h16M10 3 8 21M16 3l-2 18" {...stroke} />
-    </Icon>
-  );
-}
-
 export function PlusIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -359,10 +351,10 @@ export function ListIcon(props: IconProps) {
   );
 }
 
-export function LinkIcon(props: IconProps) {
+export function CodeIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" {...stroke} />
+      <path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16" {...stroke} />
     </Icon>
   );
 }

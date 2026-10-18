@@ -50,11 +50,12 @@ NoteItem Application::create_note_item(
 }
 
 std::int64_t Application::import_note_book(
+    std::optional<std::int64_t> parent_id,
     std::string name, const std::vector<NoteImportEntry>& notes, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     try {
-        return impl_->store->import_note_book(name, notes);
+        return impl_->store->import_note_book(parent_id, name, notes);
     } catch (const NoteError& error) {
         rethrow_note(error);
     }

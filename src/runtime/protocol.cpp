@@ -64,6 +64,16 @@ nlohmann::json generation_json(const GenerationStatus& value) {
         {"phase", to_string(value.phase)},
     };
     put_optional(json, "request_id", value.request_id);
+    if (value.active && value.progress) {
+        const auto& progress = *value.progress;
+        auto activities = nlohmann::json::array();
+        for (const auto& activity : progress.activities) {
+            activities.push_back({{"id", activity.id}, {"tool", activity.tool},
+                {"argument", activity.argument}, {"retrying", activity.retrying}});
+        }
+        json["progress"] = {{"searches_completed", progress.searches_completed},
+            {"pages_read", progress.pages_read}, {"activities", std::move(activities)}};
+    }
     return json;
 }
 
@@ -222,6 +232,10 @@ void to_json(nlohmann::json& json, const CharacterSummary& value) {
     };
     put_optional(json, "description", value.description);
     if (value.voice) json["voice"] = speech_voice_json(*value.voice);
+}
+
+void to_json(nlohmann::json& json, const GenerationStatus& value) {
+    json = generation_json(value);
 }
 
 void to_json(nlohmann::json& json, const SessionSnapshot& value) {

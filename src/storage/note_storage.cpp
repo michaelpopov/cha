@@ -169,8 +169,8 @@ nlohmann::json parse_document(std::string_view text, std::int64_t id) {
     return parsed;
 }
 
-std::string backtick_fence(std::string_view text) {
-    std::size_t length = 3;
+std::string backtick_fence(std::string_view text, std::size_t minimum = 3) {
+    std::size_t length = minimum;
     std::size_t run = 0;
     for (const char c : text) {
         run = c == '`' ? run + 1 : 0;
@@ -195,6 +195,12 @@ std::string markdown_text(const nlohmann::json& node) {
         const auto type = mark.value("type", std::string{});
         if (type == "bold") text = wrap_mark(std::move(text), "**");
         else if (type == "italic") text = wrap_mark(std::move(text), "*");
+        else if (type == "code") {
+            const auto fence = backtick_fence(text, 1);
+            const bool pad = text.starts_with('`') || text.ends_with('`')
+                || (text.starts_with(' ') && text.ends_with(' ') && text.find_first_not_of(' ') != std::string::npos);
+            text = fence + (pad ? " " : "") + text + (pad ? " " : "") + fence;
+        }
         else if (type == "link" && mark.contains("attrs")) {
             const auto href = mark["attrs"].value("href", std::string{});
             if (!href.empty()) {
@@ -378,18 +384,22 @@ NoteItem note_create(
 
 std::int64_t note_import_book(
     storage::SqliteDatabase& database,
+    std::optional<std::int64_t> parent_id,
     std::string_view name,
     const std::vector<NoteImportEntry>& notes) {
     require_name(name);
     if (notes.empty()) fail(NoteFailure::invalid, "The book has no reading-order files.");
     try {
         storage::SqliteTransaction transaction(database);
-        if (name_taken(database, std::nullopt, name, 0)) {
+        if (parent_id) require_folder(database, *parent_id);
+        if (name_taken(database, parent_id, name, 0)) {
             fail(NoteFailure::invalid, duplicate_name_message);
         }
         auto folder = database.prepare(
-            "INSERT INTO note_items (kind, name) VALUES ('folder', ?1)");
-        folder.bind(1, name);
+            "INSERT INTO note_items (parent_id, kind, name) VALUES (?1, 'folder', ?2)");
+        if (parent_id) folder.bind(1, *parent_id);
+        else folder.bind_null(1);
+        folder.bind(2, name);
         folder.run();
         const auto id = database.last_insert_rowid();
         for (const auto& note : notes) {

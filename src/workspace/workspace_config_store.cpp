@@ -2581,9 +2581,10 @@ NoteItem WorkspaceConfigStore::create_note_item(
 }
 
 std::int64_t WorkspaceConfigStore::import_note_book(
+    std::optional<std::int64_t> parent_id,
     std::string_view name, const std::vector<NoteImportEntry>& notes) {
     const std::lock_guard lock(impl_->mutex);
-    return note_import_book(*impl_->database, name, notes);
+    return note_import_book(*impl_->database, parent_id, name, notes);
 }
 
 NoteContent WorkspaceConfigStore::get_note(std::int64_t id) const {

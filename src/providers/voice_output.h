@@ -3,6 +3,7 @@
 #include "storage/session_repository.h"
 #include "workspace/workspace.h"
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <exception>
 #include <functional>
@@ -39,6 +40,12 @@ std::optional<EntryAudio> stream_voice_websocket(
     const WorkspaceVoiceProviderOutput& output, const std::string& key,
     const VoiceOutputRequest& request, const std::function<bool()>& cancelled,
     const AudioChunkCallback& on_audio, const VoiceTextInput& input = {});
+// Shorter deadlines let tests exercise audio inactivity without a three-minute wait.
+std::optional<EntryAudio> stream_voice_websocket_with_timeout(
+    const WorkspaceVoiceProviderOutput& output, const std::string& key,
+    const VoiceOutputRequest& request, const std::function<bool()>& cancelled,
+    const AudioChunkCallback& on_audio, const VoiceTextInput& input,
+    std::chrono::milliseconds idle_timeout);
 std::string entry_speech_text(const EntryAudioLookup& entry);
 bool valid_entry_audio(const EntryAudio& audio);
 

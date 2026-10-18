@@ -59,6 +59,7 @@ export function prepareEpubImport(
   bytes: Uint8Array,
   filename: string,
   items: readonly NoteItem[],
+  parentId: number | null = null,
 ): NoteBookImport {
   // fflate's filter runs before decompression. Never inflate unused resources.
   function read(path: string, text = true): string {
@@ -194,8 +195,8 @@ export function prepareEpubImport(
   notes.forEach((note, index) => { note.name = `${String(index + 1).padStart(digits, '0')}. ${note.name}`; });
   const metadata = elements(pkg, 'metadata')[0];
   const title = metadata ? elements(metadata, 'title').map((title) => notePageName(title.textContent ?? '')).find(Boolean) : '';
-  const name = availableNoteName(items, null, title || notePageName(filename.replace(/\.epub$/iu, '')) || 'Book');
-  const request = { name, notes };
+  const name = availableNoteName(items, parentId, title || notePageName(filename.replace(/\.epub$/iu, '')) || 'Book');
+  const request = { parent_id: parentId, name, notes };
   if (noteDocumentByteLength(request) > requestLimit) {
     throw new ChaError('body_too_large', 'The book exceeds the EPUB import request limit (16 MiB).');
   }

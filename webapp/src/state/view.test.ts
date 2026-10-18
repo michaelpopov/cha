@@ -152,6 +152,18 @@ describe('application navigation reducer', () => {
     });
     expect(state.sessionSnapshot?.transcript[0].text).toBe('Hello there');
 
+    const generation = { ...snapshotFixture.generation, active: true, request_id: 7,
+      progress: { searches_completed: 1, pages_read: 2, activities: [] } };
+    const transcript = state.sessionSnapshot?.transcript;
+    state = appReducer(state, { type: 'session-generation', forumId: 'entrance', sessionId: 'welcome', generation });
+    expect(state.sessionSnapshot?.generation).toEqual(generation);
+    expect(state.sessionSnapshot?.transcript).toBe(transcript);
+    state = appReducer(state, {
+      type: 'session-generation', forumId: 'lobby', sessionId: 'planning',
+      generation: { ...generation, active: false },
+    });
+    expect(state.sessionSnapshot?.generation).toEqual(generation);
+
     const replacement = { ...streamingSnapshot, transcript: [], generation: snapshotFixture.generation };
     state = appReducer(state, { type: 'session-snapshot', snapshot: replacement });
     expect(state.sessionSnapshot).toEqual(replacement);

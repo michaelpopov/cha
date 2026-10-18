@@ -384,7 +384,7 @@ TEST(ProviderClient, ToolInstructionsMatchCapabilitiesAttachedToEachRequest) {
                     Transcript transcript;
                     auto request = client_request(transcript, 1, "Verify this");
                     if (search) request.web_search_tool = [](auto, const auto&) { return "[]"; };
-                    if (read) request.web_read_tool = [](auto, const auto&) { return "Page text"; };
+                    if (read) request.web_read_tool = [](auto, const auto&, const auto&) { return "Page text"; };
                     const auto payload = client.prepare(request);
                     const auto body = Json::parse(payload.bytes);
                     const auto instructions = (api == ProviderApi::responses ? body["instructions"]
@@ -2086,7 +2086,7 @@ TEST(ProviderClientTools, RunsMixedWebCallsInGroupsOfFourAndPreservesOrderedResu
             Transcript transcript;
             auto input = client_request(transcript, 1, "Read and search");
             input.web_search_tool = execute;
-            input.web_read_tool = execute;
+            input.web_read_tool = [&](auto argument, const auto& cancelled, const auto&) { return execute(argument, cancelled); };
             GenerationStatistics statistics;
             auto payload = client.prepare(input);
             payload.statistics = &statistics;
@@ -2175,7 +2175,7 @@ TEST(ProviderClientTools, SearchesThenReadsAndSupportsReadingWithoutSearch) {
                     ++searches;
                     return R"({"url":"https://example.org/page"})";
                 };
-                input.web_read_tool = [&](std::string_view url, const auto&) {
+                input.web_read_tool = [&](std::string_view url, const auto&, const auto&) {
                     EXPECT_EQ(url, "https://example.org/page");
                     ++reads;
                     return R"({"markdown":"# Page\nEvidence"})";
@@ -2228,7 +2228,7 @@ TEST(ProviderClientTools, ReadingReturnsErrorsAndStopsOnCancellation) {
             Transcript transcript;
             auto input = client_request(transcript, 1, "Read");
             std::atomic_bool cancelled{false};
-            input.web_read_tool = [&](auto, const auto&) -> std::string {
+            input.web_read_tool = [&](auto, const auto&, const auto&) -> std::string {
                 ++reads;
                 if (cancel) { cancelled.store(true); return {}; }
                 throw std::runtime_error("private-key");
@@ -2274,13 +2274,53 @@ TEST(ProviderClientTools, ReadingReportsPaymentFailureWithoutExposingResponseBod
             });
         Transcript transcript;
         auto input = client_request(transcript, 1, "Read");
-        input.web_read_tool = [&](std::string_view url, const std::atomic_bool& cancelled) {
+        input.web_read_tool = [&](std::string_view url, const std::atomic_bool& cancelled, const auto&) {
             return read_firecrawl(url, "private-key", cancelled, endpoint);
         };
         const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
         server.join();
         EXPECT_EQ(rounds, 2);
         EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    }
+}
+
+TEST(ProviderClientTools, ReportsConcurrentSearchReadFallbackAndFailures) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        auto definition = network_definition(80, false);
+        definition.provider.config.api = api;
+        int rounds = 0;
+        ProviderClient client(shared_definition(definition), nullptr,
+            [&](const ProviderHttpRequest&, const auto&) {
+                if (++rounds == 1) return tool_reply(api, false, Json::array({
+                    search_call(api, "search", R"({"query":"evidence"})"),
+                    search_call(api, "read", R"({"url":"https://example.org"})", "web_read")}));
+                return tool_reply(api, false, Json::array(), "Answer");
+            });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Research");
+        input.web_search_tool = [](auto, const auto&) -> std::string { throw WebToolError("Search failed"); };
+        input.web_read_tool = [](auto, const auto&, const std::function<void()>& fallback) {
+            fallback();
+            return "Page content";
+        };
+        auto payload = client.prepare(input);
+        std::mutex mutex;
+        std::vector<GenerationToolProgress> events;
+        payload.tool_progress = [&](GenerationToolProgress progress) {
+            std::lock_guard lock(mutex);
+            events.push_back(std::move(progress));
+        };
+        EXPECT_EQ(client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false}).outcome,
+            GenerationOutcome::completed);
+        ASSERT_EQ(events.size(), 5u);
+        std::vector<ToolProgressAction> search, read;
+        for (const auto& event : events) {
+            (event.tool == "web_read" ? read : search).push_back(event.action);
+            EXPECT_EQ(event.argument, event.tool == "web_read" ? "https://example.org" : "evidence");
+            EXPECT_EQ(event.id, event.tool == "web_read" ? 2u : 1u);
+        }
+        EXPECT_EQ(search, (std::vector{ToolProgressAction::started, ToolProgressAction::failed}));
+        EXPECT_EQ(read, (std::vector{ToolProgressAction::started, ToolProgressAction::retrying, ToolProgressAction::completed}));
     }
 }
 
@@ -2316,7 +2356,7 @@ TEST(ProviderClientTools, ReadingStopsAtTheSharedWebToolLimit) {
             });
         Transcript transcript;
         auto input = client_request(transcript, 1, "Read");
-        input.web_read_tool = [&](auto, const auto&) { ++reads; return "{}"; };
+        input.web_read_tool = [&](auto, const auto&, const auto&) { ++reads; return "{}"; };
         const auto result = client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false});
         EXPECT_EQ(result.outcome, GenerationOutcome::completed);
         EXPECT_EQ(reads, 16);
@@ -2601,7 +2641,7 @@ TEST(ProviderClientTools, CancellationDuringSearchStopsTheLoop) {
             return "";
         };
         // Reading raises the shared budget so the response contains a later group.
-        input.web_read_tool = [](auto, const auto&) { return "unused"; };
+        input.web_read_tool = [](auto, const auto&, const auto&) { return "unused"; };
         auto worker = std::async(std::launch::async, [&] {
             auto result = client.perform(client.prepare(input), [](auto) {}, cancelled);
             std::lock_guard lock(mutex);
@@ -3296,7 +3336,7 @@ TEST(ProviderClientTools, MaintenanceOmitsRequiredWebSearch) {
             ++web_calls;
             throw std::runtime_error("web search must not run");
         };
-        input.web_read_tool = [&](auto, const auto&) -> std::string {
+        input.web_read_tool = [&](auto, const auto&, const auto&) -> std::string {
             ++web_calls;
             throw std::runtime_error("web read must not run");
         };

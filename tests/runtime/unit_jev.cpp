@@ -440,6 +440,7 @@ TEST_F(SessionNaming, StartsWithJevAndWaitsForBothBeforeTheReply) {
     EXPECT_EQ(store->snapshot()->find_character(workspace_assistant_id)->reasoning_effort, "high");
     EXPECT_EQ(store->snapshot()->find_provider("query")->config.reasoning_effort, "high");
     EXPECT_NE(title_definitions[0]->system_prompt.find("at most 6 words"), std::string::npos);
+    EXPECT_EQ(title_definitions[0]->system_prompt.find("notes"), std::string::npos);
 
     run_workers();
     const auto update = controller->receive_events(100).update;
@@ -505,6 +506,34 @@ TEST_F(SessionNaming, WorksWithoutJevAndLimitsTheNameToSixWords) {
     EXPECT_TRUE(classified.empty());
     EXPECT_FALSE(controller->is_generating());
 }
+
+class SessionNamingNotes : public SessionNaming, public testing::WithParamInterface<bool> {};
+
+TEST_P(SessionNamingNotes, IncludesSuppliedArticleInNamingContext) {
+    if (!GetParam()) store->apply_jev_update(std::nullopt);
+    controller.reset();
+    {
+        SessionJournal session(journal.path());
+        (void)session.add_note({42, "Postgres storage", "Local NVMe reduces I/O waits."}, 1);
+        (void)session.add_note({43, "Appendix", std::string(8192, 'x') + " appendix-end"}, 2);
+    }
+    controller = make_controller(notifier, load_session_state(journal.path()));
+    controller->enable_auto_naming("New session");
+
+    (void)send("Explain main ideas of the article.");
+    finish();
+
+    ASSERT_EQ(title_inputs.size(), 1u);
+    EXPECT_EQ(title_inputs[0].run.prompt_text, "Explain main ideas of the article.");
+    ASSERT_EQ(title_definitions.size(), 1u);
+    EXPECT_NE(title_definitions[0]->system_prompt.find(
+        "# Note: Postgres storage\n\nLocal NVMe reduces I/O waits."), std::string::npos);
+    // Naming reads only the start of long notes.
+    EXPECT_EQ(title_definitions[0]->system_prompt.find("appendix-end"), std::string::npos);
+    EXPECT_LT(title_definitions[0]->system_prompt.size(), 5000u);
+}
+
+INSTANTIATE_TEST_SUITE_P(WithAndWithoutJev, SessionNamingNotes, testing::Bool());
 
 TEST_F(SessionNaming, ClearCancelsAnUndeliveredNameAndKeepsTheSessionVisible) {
     (void)send("@- Old note");
@@ -868,12 +897,12 @@ TEST_F(JevRouting, PageReadingWorksWithSearchDisabledAndMarksWebUse) {
         }
         GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink,
             const std::atomic_bool& cancelled) override {
-            if (read) EXPECT_EQ(read("https://example.org", cancelled), "Page content");
+            if (read) EXPECT_EQ(read("https://example.org", cancelled, {}), "Page content");
             sink({GenerationDeltaKind::answer, "Answer"});
             return {};
         }
         bool& offered;
-        std::function<std::string(std::string_view, const std::atomic_bool&)> read;
+        WebReadTool read;
     };
     controller.reset();
     providers->shutdown();
@@ -883,7 +912,7 @@ TEST_F(JevRouting, PageReadingWorksWithSearchDisabledAndMarksWebUse) {
     providers = std::make_shared<Providers>(
         [&](SharedCharacterDefinition) { return std::make_unique<ReadBackend>(offered); },
         [this](auto worker) { workers.push_back(std::move(worker)); }, JevExecutor{}, WebSearchExecutor{},
-        [&](const WorkspaceWebSearch& settings, std::string_view url, const auto&) {
+        [&](const WorkspaceWebSearch& settings, std::string_view url, const auto&, const auto&) {
             EXPECT_EQ(url, "https://example.org");
             EXPECT_TRUE(!settings.web_reader_url.empty() || settings.read_provider == "firecrawl");
             ++reads;
@@ -1030,7 +1059,7 @@ TEST_F(JevRouting, ConfiguredWebToolsDoNotRetrieveBeforeOrWithoutAModelCall) {
         [this](const auto& settings, auto query, const auto& cancelled) {
             return search(settings, query, cancelled);
         },
-        [&](const auto&, auto, const auto&) { ++reads; return "Page content"; });
+        [&](const auto&, auto, const auto&, const auto&) { ++reads; return "Page content"; });
     store->apply_web_search_update({"brave", config.api_key_id, true, "firecrawl", config.api_key_id});
     controller = make_controller(notifier);
     (void)send(prompt);

@@ -15,6 +15,7 @@
 #include <string>
 #include <utility>
 #include <string_view>
+#include <vector>
 
 namespace cha {
 namespace {
@@ -220,6 +221,23 @@ TEST(NoteStorage, KeepsLiteralTextAndPreservesInlineMarksAndCodeFences) {
         "\n\n````python\n    x = '**literal**'\n```\n````");
 }
 
+TEST(NoteStorage, PreservesInlineCodeAndLiteralBackticksInChatMarkdown) {
+    for (const auto& [text, expected] : std::vector<std::pair<std::string, std::string>>{
+        {"query()", "`query()`"},
+        {"a`b", "``a`b``"},
+        {"`literal`", "`` `literal` ``"},
+        {" a ", "`  a  `"},
+        {"  ", "`  `"},
+    }) {
+        auto document = nlohmann::json::parse(R"({"type":"doc","content":[{"type":"paragraph","content":[
+            {"type":"text","text":"Before "},
+            {"type":"text","text":"","marks":[{"type":"code"}]},
+            {"type":"text","text":" after"}]}]})");
+        document["content"][0]["content"][1]["text"] = text;
+        EXPECT_EQ(note_document_markdown(document), "Before " + expected + " after");
+    }
+}
+
 TEST(NoteStorage, SessionLabelErrorsStayUnchanged) {
     expect_invalid_argument("Session label must not be empty", [] {
         validate_session_label("");
@@ -341,7 +359,7 @@ TEST_F(NoteStorageTest, NamesParentsAndSiblingNamespace) {
 
 TEST_F(NoteStorageTest, BookImportCommitsOrdinaryEditableNotesAndRejectsCollisions) {
     const auto document = nlohmann::json::parse(empty_note_document);
-    const auto folder = note_import_book(*database_, "Book", {
+    const auto folder = note_import_book(*database_, std::nullopt, "Book", {
         {"001. Introduction", document}, {"002. Introduction", document},
     });
     const auto items = note_list(*database_);
@@ -357,7 +375,7 @@ TEST_F(NoteStorageTest, BookImportCommitsOrdinaryEditableNotesAndRejectsCollisio
     note_save(*database_, items[1].id, edited);
     EXPECT_EQ(note_get(*database_, items[1].id).document, edited);
     expect_note_error(NoteFailure::invalid, "An item with this name already exists here.", [&] {
-        (void)note_import_book(*database_, "Book", {{"001. Other", document}});
+        (void)note_import_book(*database_, std::nullopt, "Book", {{"001. Other", document}});
     });
     EXPECT_EQ(item_count(*database_), 3);
 }
@@ -369,23 +387,48 @@ TEST_F(NoteStorageTest, BookImportRollsBackOnInvalidNamesDocumentsAndInsertFailu
             {"bad\nname", document},
             {"002. Bad document", nlohmann::json::array()},
             valid}) {
-        EXPECT_THROW((void)note_import_book(*database_, "Book", {valid, invalid}), NoteError);
+        EXPECT_THROW((void)note_import_book(*database_, std::nullopt, "Book", {valid, invalid}), NoteError);
         EXPECT_EQ(item_count(*database_), 0);
     }
     auto oversized = document;
     oversized["padding"] = std::string(note_document_byte_limit, 'x');
-    EXPECT_THROW((void)note_import_book(*database_, "Book", {valid, {"002. Large", oversized}}), NoteError);
+    EXPECT_THROW((void)note_import_book(*database_, std::nullopt, "Book", {valid, {"002. Large", oversized}}), NoteError);
     EXPECT_EQ(item_count(*database_), 0);
-    EXPECT_THROW((void)note_import_book(*database_, "", {valid}), NoteError);
-    EXPECT_THROW((void)note_import_book(*database_, "Book", {}), NoteError);
+    EXPECT_THROW((void)note_import_book(*database_, std::nullopt, "", {valid}), NoteError);
+    EXPECT_THROW((void)note_import_book(*database_, std::nullopt, "Book", {}), NoteError);
     database_->execute(
         "CREATE TRIGGER fail_book_note BEFORE INSERT ON note_items "
         "WHEN NEW.name = '002. Fail' BEGIN SELECT RAISE(ABORT, 'test insert failure'); END");
-    EXPECT_THROW((void)note_import_book(*database_, "Book", {valid, {"002. Fail", document}}), NoteError);
+    EXPECT_THROW((void)note_import_book(*database_, std::nullopt, "Book", {valid, {"002. Fail", document}}), NoteError);
     EXPECT_EQ(item_count(*database_), 0);
     database_->execute("DROP TRIGGER fail_book_note");
-    EXPECT_GT(note_import_book(*database_, "Book", {valid}), 0);
+    EXPECT_GT(note_import_book(*database_, std::nullopt, "Book", {valid}), 0);
     EXPECT_EQ(item_count(*database_), 2);
+}
+
+TEST_F(NoteStorageTest, BookImportUsesDestinationFolderAndValidatesItBeforeWriting) {
+    const auto document = nlohmann::json::parse(empty_note_document);
+    const std::vector<NoteImportEntry> notes{{"001. First", document}};
+    const auto parent = note_create(*database_, std::nullopt, NoteItemKind::folder, "Research");
+    const auto nested = note_create(*database_, parent.id, NoteItemKind::folder, "Fiction");
+    (void)note_import_book(*database_, std::nullopt, "Book", notes);
+    const auto imported = note_import_book(*database_, nested.id, "Book", notes);
+    const auto items = note_list(*database_);
+    const auto book = std::find_if(items.begin(), items.end(), [&](const NoteItem& item) {
+        return item.id == imported;
+    });
+    ASSERT_NE(book, items.end());
+    EXPECT_EQ(book->parent_id, nested.id);
+    const auto chapter = std::find_if(items.begin(), items.end(), [&](const NoteItem& item) {
+        return item.parent_id == imported;
+    });
+    ASSERT_NE(chapter, items.end());
+    EXPECT_EQ(note_get(*database_, chapter->id).document, document);
+    const auto count = item_count(*database_);
+    EXPECT_THROW((void)note_import_book(*database_, nested.id, "Book", notes), NoteError);
+    EXPECT_THROW((void)note_import_book(*database_, chapter->id, "Other", notes), NoteError);
+    EXPECT_THROW((void)note_import_book(*database_, 99999, "Other", notes), NoteError);
+    EXPECT_EQ(item_count(*database_), count);
 }
 
 TEST_F(NoteStorageTest, DeleteCascadesAndDoesNotReuseIds) {

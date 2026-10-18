@@ -111,12 +111,13 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
 
 export type NotePage = { url: string; title: string; markdown: string };
 export type NoteBookImport = {
+  parent_id: number | null;
   name: string;
   notes: { name: string; document: Record<string, unknown> }[];
 };
 
 export interface NotesClient {
-  importEpub: (file: File, items: readonly NoteItem[]) => Promise<number>;
+  importEpub: (file: File, items: readonly NoteItem[], parentId: number | null) => Promise<number>;
   readNotePage: (url: string) => Promise<NotePage>;
   listNoteItems: () => Promise<NoteItem[]>;
   createNoteItem: (
@@ -659,13 +660,22 @@ function isTranscriptEntry(value: unknown): boolean {
     && (value.has_cached_audio === undefined || typeof value.has_cached_audio === 'boolean');
 }
 
-function isGenerationState(value: unknown): boolean {
+export function isGenerationState(value: unknown): value is SessionSnapshot['generation'] {
   return isRecord(value)
     && typeof value.active === 'boolean'
     && (value.request_id === undefined || isUnsignedInteger(value.request_id))
     && typeof value.character_id === 'string'
     && typeof value.character_display_name === 'string'
-    && isOneOf(value.phase, ['waiting', 'reasoning', 'answering', 'stopping']);
+    && isOneOf(value.phase, ['waiting', 'reasoning', 'answering', 'stopping'])
+    && (value.progress === undefined || (isRecord(value.progress)
+      && isUnsignedInteger(value.progress.searches_completed)
+      && isUnsignedInteger(value.progress.pages_read)
+      && Array.isArray(value.progress.activities)
+      && value.progress.activities.every((activity: unknown) => isRecord(activity)
+        && isUnsignedInteger(activity.id)
+        && isOneOf(activity.tool, ['web_search', 'web_read'])
+        && typeof activity.argument === 'string'
+        && typeof activity.retrying === 'boolean')));
 }
 
 // Requests and events share this check before publishing parsed JSON to React.

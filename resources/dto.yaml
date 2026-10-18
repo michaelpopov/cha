@@ -1397,6 +1397,35 @@ components:
           description: Whether saved audio is available for this entry.
           type: boolean
 
+    GenerationActivity:
+      type: object
+      additionalProperties: false
+      required: [id, tool, argument, retrying]
+      properties:
+        id:
+          $ref: "#/components/schemas/UnsignedInteger"
+        tool:
+          type: string
+          enum: [web_search, web_read]
+        argument:
+          type: string
+        retrying:
+          type: boolean
+
+    GenerationProgress:
+      type: object
+      additionalProperties: false
+      required: [searches_completed, pages_read, activities]
+      properties:
+        searches_completed:
+          $ref: "#/components/schemas/UnsignedInteger"
+        pages_read:
+          $ref: "#/components/schemas/UnsignedInteger"
+        activities:
+          type: array
+          items:
+            $ref: "#/components/schemas/GenerationActivity"
+
     GenerationState:
       type: object
       additionalProperties: false
@@ -1413,6 +1442,8 @@ components:
         phase:
           type: string
           enum: [waiting, reasoning, answering, stopping]
+        progress:
+          $ref: "#/components/schemas/GenerationProgress"
 
     SessionSnapshot:
       type: object
@@ -1709,7 +1740,7 @@ components:
         subscription_id: {type: string}
         event:
           type: string
-          enum: [session.snapshot, session.append]
+          enum: [session.snapshot, session.append, session.generation]
         forum_id: {type: string}
         session_id: {type: string}
         seq: {$ref: "#/components/schemas/NativeSafeInteger"}

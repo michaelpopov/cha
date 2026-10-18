@@ -694,6 +694,7 @@ GenerationResult ProviderClient::perform(
         } else {
             struct WebCall {
                 std::size_t index;
+                std::size_t id;
                 std::string argument;
                 bool read;
             };
@@ -710,9 +711,10 @@ GenerationResult ProviderClient::perform(
                 }
                 ++tool_calls_used;
                 const bool read = call.name == "web_read";
-                const auto& execute = read ? payload.web_read_tool : payload.web_search_tool;
+                const bool available = read ? static_cast<bool>(payload.web_read_tool)
+                    : static_cast<bool>(payload.web_search_tool);
                 const char* argument = read ? "url" : "query";
-                if ((call.name != "web_search" && !read) || !execute) {
+                if ((call.name != "web_search" && !read) || !available) {
                     ++statistics.tool_calls_rejected;
                     output = R"({"error":"Unknown or unavailable web tool."})";
                 } else if (!arguments.is_object() || arguments.size() != 1
@@ -723,7 +725,7 @@ GenerationResult ProviderClient::perform(
                         ? R"({"error":"web_read requires one non-empty string argument: url."})"
                         : R"({"error":"web_search requires one non-empty string argument: query."})";
                 } else {
-                    calls.push_back({index, arguments[argument].get<std::string>(), read});
+                    calls.push_back({index, static_cast<std::size_t>(tool_calls_used), arguments[argument].get<std::string>(), read});
                 }
             }
             struct WebResult {
@@ -733,9 +735,16 @@ GenerationResult ProviderClient::perform(
             const auto run_web_call = [&payload, &cancellation](const WebCall& call) {
                 WebResult result;
                 const auto started = std::chrono::steady_clock::now();
-                const auto& execute = call.read ? payload.web_read_tool : payload.web_search_tool;
+                const auto report = [&](ToolProgressAction action) {
+                    if (payload.tool_progress) payload.tool_progress({
+                        .id = call.id, .tool = call.read ? "web_read" : "web_search",
+                        .argument = call.argument, .action = action});
+                };
+                report(ToolProgressAction::started);
                 try {
-                    result.output = execute(call.argument, cancellation);
+                    result.output = call.read
+                        ? payload.web_read_tool(call.argument, cancellation, [&] { report(ToolProgressAction::retrying); })
+                        : payload.web_search_tool(call.argument, cancellation);
                 } catch (const WebToolError& error) {
                     result.output = Json{{"error", error.what()}}.dump();
                 } catch (const std::exception&) {
@@ -748,6 +757,8 @@ GenerationResult ProviderClient::perform(
                 result.statistics.duration = std::chrono::steady_clock::now() - started;
                 result.statistics.cancelled = cancellation.load() ? 1 : 0;
                 result.statistics.failed = !result.statistics.cancelled && tool_failed(result.output) ? 1 : 0;
+                report(result.statistics.failed || result.statistics.cancelled
+                    ? ToolProgressAction::failed : ToolProgressAction::completed);
                 result.statistics.result_bytes = result.output.size();
                 return result;
             };

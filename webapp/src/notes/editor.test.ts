@@ -505,6 +505,17 @@ describe('atomic document acceptance', () => {
     ]);
   });
 
+  it('keeps inline code when reopening and pasting formatted text', () => {
+    const created = editor({ content: '<p>Use <code>query()</code> here.</p>' });
+    const reopened = editor({ content: created.getJSON() });
+    expect(reopened.isEditable).toBe(true);
+    expect(reopened.view.dom.querySelector('p > code')?.textContent).toBe('query()');
+    expect(reopened.getText()).toBe('Use query() here.');
+    const pasted = editor();
+    pasted.view.pasteHTML('<p>Use <code>query()</code> here.</p>');
+    expect(pasted.view.dom.querySelector('p > code')?.textContent).toBe('query()');
+  });
+
   it('keeps pasted code blocks and their indentation when reopening the document', () => {
     const created = editor();
     const code = 'def embed(text):\n    return model.encode(text)\n';

@@ -25,6 +25,7 @@ struct XaiFakeServerOptions {
     int http_status = 101;
     int port = 0;
     std::chrono::milliseconds read_timeout{3000};
+    std::chrono::milliseconds after_audio_done_delay{0};
 };
 
 // Loopback ws:// server for one connection. It is test-only.

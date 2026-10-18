@@ -27,6 +27,20 @@ nlohmann::json default_appearance() {
     };
 }
 
+TEST(Protocol, ProgressIsIncludedOnlyForActiveGeneration) {
+    SessionSnapshot snapshot;
+    snapshot.generation.active = true;
+    snapshot.generation.progress = GenerationProgress{
+        1, 3, {{2, "web_read", "https://example.org/page", true}}};
+    auto progress = nlohmann::json(snapshot)["generation"]["progress"];
+    EXPECT_EQ(progress["searches_completed"], 1);
+    EXPECT_EQ(progress["pages_read"], 3);
+    EXPECT_EQ(progress["activities"][0], (nlohmann::json{
+        {"id", 2}, {"tool", "web_read"}, {"argument", "https://example.org/page"}, {"retrying", true}}));
+    snapshot.generation.active = false;
+    EXPECT_FALSE(nlohmann::json(snapshot)["generation"].contains("progress"));
+}
+
 void expect_no_transport_location_fields(const nlohmann::json& value) {
     if (value.is_array()) {
         for (const auto& child : value) {

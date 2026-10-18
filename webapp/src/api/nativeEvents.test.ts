@@ -39,7 +39,7 @@ function event(overrides: Record<string, unknown> = {}) {
 
 describe('native session projection', () => {
   it('invalidates a malformed snapshot before publishing it to the view', () => {
-    const handlers = { onSnapshot: vi.fn(), onAppend: vi.fn(), onError: vi.fn() };
+    const handlers = { onSnapshot: vi.fn(), onAppend: vi.fn(), onGeneration: vi.fn(), onError: vi.fn() };
     const projection = createNativeEventProjection({
       connectionId: 'view-9', contextEpoch: 3, subscriptionId: 'sub-5',
       forumId: 'history', sessionId: 'session-1',
@@ -68,7 +68,7 @@ describe('native session projection', () => {
         forumId: 'history',
         sessionId: 'session-1',
       },
-      { onSnapshot, onAppend, onError },
+      { onSnapshot, onAppend, onGeneration: vi.fn(), onError },
     );
 
     projection.push(event());
@@ -86,6 +86,32 @@ describe('native session projection', () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it('applies generation-only events in sequence and rejects malformed ones', () => {
+    const handlers = { onSnapshot: vi.fn(), onAppend: vi.fn(), onGeneration: vi.fn(), onError: vi.fn() };
+    const scope = {
+      connectionId: 'view-9', contextEpoch: 3, subscriptionId: 'sub-5',
+      forumId: 'history', sessionId: 'session-1',
+    };
+    const generation = { ...snapshotFixture.generation, active: true, request_id: 7,
+      progress: { searches_completed: 1, pages_read: 0, activities: [] } };
+    const projection = createNativeEventProjection(scope, handlers);
+    projection.push(event());
+    projection.push(event({ event: 'session.generation', seq: 1, payload: generation }));
+    projection.push(event({
+      event: 'session.append',
+      seq: 2,
+      payload: { target: { kind: 'entry', entry_id: 1 }, text: 'Hello' },
+    }));
+    expect(handlers.onGeneration).toHaveBeenCalledExactlyOnceWith(generation);
+    expect(handlers.onAppend).toHaveBeenCalledOnce();
+    expect(handlers.onError).not.toHaveBeenCalled();
+
+    const malformed = createNativeEventProjection(scope, { ...handlers, onError: vi.fn() });
+    malformed.push(event());
+    malformed.push(event({ event: 'session.generation', seq: 1, payload: { ...generation, phase: 'done' } }));
+    expect(malformed.invalidated()).toBe(true);
+  });
+
   it('lets a newer snapshot set the baseline and ignores stale subscriptions', () => {
     const onSnapshot = vi.fn();
     const onAppend = vi.fn();
@@ -98,7 +124,7 @@ describe('native session projection', () => {
         forumId: 'history',
         sessionId: 'session-1',
       },
-      { onSnapshot, onAppend, onError },
+      { onSnapshot, onAppend, onGeneration: vi.fn(), onError },
     );
 
     projection.push(event());
@@ -119,6 +145,7 @@ describe('native session projection', () => {
     const handlers = {
       onSnapshot: vi.fn(),
       onAppend: vi.fn(),
+      onGeneration: vi.fn(),
       onError: vi.fn(),
     };
     const gap = createNativeEventProjection(
@@ -149,7 +176,7 @@ describe('native session projection', () => {
         forumId: 'history',
         sessionId: 'session-1',
       },
-      { onSnapshot: vi.fn(), onAppend: vi.fn(), onError: vi.fn() },
+      { onSnapshot: vi.fn(), onAppend: vi.fn(), onGeneration: vi.fn(), onError: vi.fn() },
     );
     unknown.push(event());
     unknown.push(event({
@@ -167,7 +194,7 @@ describe('native session projection', () => {
         forumId: 'history',
         sessionId: 'session-1',
       },
-      { onSnapshot: vi.fn(), onAppend: vi.fn(), onError: vi.fn() },
+      { onSnapshot: vi.fn(), onAppend: vi.fn(), onGeneration: vi.fn(), onError: vi.fn() },
     );
     early.push(event({
       event: 'session.append',
@@ -192,6 +219,7 @@ describe('native session projection', () => {
     const connection = connect('history', 'session-1', {
       onSnapshot,
       onAppend: vi.fn(),
+      onGeneration: vi.fn(),
       onError: vi.fn(),
     });
     expect(posts[0]).toMatchObject({

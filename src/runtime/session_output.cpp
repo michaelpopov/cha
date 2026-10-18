@@ -68,6 +68,26 @@ AppendPublishResult SessionOutput::publish_append(
     return result;
 }
 
+AppendPublishResult SessionOutput::publish_generation(
+    GenerationStatus generation) {
+    std::lock_guard lock(mutex_);
+    // A dirty output builds its next snapshot from current state.
+    if (!attached_ || closed_ || dirty_) return AppendPublishResult::Accepted;
+    if (pending_ && pending_->kind == SessionOutputItem::Kind::append) {
+        return AppendPublishResult::SnapshotRequired;
+    }
+    if (pending_ && pending_->kind == SessionOutputItem::Kind::snapshot) {
+        pending_->snapshot.generation = std::move(generation);
+        return AppendPublishResult::Accepted;
+    }
+    if (pending_) ++collapsed_payloads_;
+    auto item = std::make_shared<SessionOutputItem>();
+    item->kind = SessionOutputItem::Kind::generation;
+    item->generation = std::move(generation);
+    pending_ = std::move(item);
+    return AppendPublishResult::Accepted;
+}
+
 std::shared_ptr<const SessionOutputItem> SessionOutput::take() {
     std::lock_guard lock(mutex_);
     if (in_flight_) return {};

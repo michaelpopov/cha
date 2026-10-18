@@ -604,6 +604,18 @@ export interface components {
             /** @description Whether saved audio is available for this entry. */
             has_cached_audio?: boolean;
         };
+        GenerationActivity: {
+            id: components["schemas"]["UnsignedInteger"];
+            /** @enum {string} */
+            tool: "web_search" | "web_read";
+            argument: string;
+            retrying: boolean;
+        };
+        GenerationProgress: {
+            searches_completed: components["schemas"]["UnsignedInteger"];
+            pages_read: components["schemas"]["UnsignedInteger"];
+            activities: components["schemas"]["GenerationActivity"][];
+        };
         GenerationState: {
             active: boolean;
             request_id?: components["schemas"]["UnsignedInteger"];
@@ -611,6 +623,7 @@ export interface components {
             character_display_name: string;
             /** @enum {string} */
             phase: "waiting" | "reasoning" | "answering" | "stopping";
+            progress?: components["schemas"]["GenerationProgress"];
         };
         SessionSnapshot: {
             forum: components["schemas"]["ForumSummary"];
@@ -745,7 +758,7 @@ export interface components {
             context_epoch: components["schemas"]["NativeSafeInteger"];
             subscription_id: string;
             /** @enum {string} */
-            event: "session.snapshot" | "session.append";
+            event: "session.snapshot" | "session.append" | "session.generation";
             forum_id: string;
             session_id: string;
             seq: components["schemas"]["NativeSafeInteger"];

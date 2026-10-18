@@ -73,7 +73,7 @@ std::optional<nlohmann::json> dispatch_notes_operation(
             require_string(params, "name"),
             epoch));
     case Method::notes_import_book: {
-        require_only_keys(params, {"name", "notes"});
+        require_only_keys(params, {"parent_id", "name", "notes"});
         if (!params.contains("notes") || !params.at("notes").is_array()) {
             throw std::invalid_argument("The request was not valid.");
         }
@@ -83,7 +83,7 @@ std::optional<nlohmann::json> dispatch_notes_operation(
             notes.push_back({require_string(note, "name"), require_document(note)});
         }
         return nlohmann::json{{"id", application.import_note_book(
-            require_string(params, "name"), notes, epoch)}};
+            require_parent_id(params), require_string(params, "name"), notes, epoch)}};
     }
     case Method::notes_get:
         require_only_keys(params, {"id"});

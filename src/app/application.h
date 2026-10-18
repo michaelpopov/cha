@@ -547,6 +547,7 @@ public:
 
     [[nodiscard]] std::vector<NoteItem> list_note_items(std::uint64_t epoch);
     [[nodiscard]] std::int64_t import_note_book(
+        std::optional<std::int64_t> parent_id,
         std::string name, const std::vector<NoteImportEntry>& notes, std::uint64_t epoch);
     [[nodiscard]] NoteItem create_note_item(
         std::optional<std::int64_t> parent_id,

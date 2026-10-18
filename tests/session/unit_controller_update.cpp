@@ -62,6 +62,19 @@ TEST(ControllerUpdate, DifferentTargetAppendsRequireASnapshot) {
         ControllerStateUpdate{SnapshotRequired{}});
 }
 
+TEST(ControllerUpdate, GenerationChangesMergeAndMixedPayloadsRequireASnapshot) {
+    EXPECT_EQ(merge_state(GenerationChanged{}, GenerationChanged{}),
+        ControllerStateUpdate{GenerationChanged{}});
+    EXPECT_EQ(merge_state(NoStateUpdate{}, GenerationChanged{}),
+        ControllerStateUpdate{GenerationChanged{}});
+    EXPECT_EQ(merge_state(GenerationChanged{}, entry_append(7, "a")),
+        ControllerStateUpdate{SnapshotRequired{}});
+    EXPECT_EQ(merge_state(entry_append(7, "a"), GenerationChanged{}),
+        ControllerStateUpdate{SnapshotRequired{}});
+    EXPECT_EQ(merge_state(GenerationChanged{}, SnapshotRequired{}),
+        ControllerStateUpdate{SnapshotRequired{}});
+}
+
 TEST(ControllerUpdate, LifecycleFlagsCombineWithLogicalOr) {
     ControllerUpdate generation;
     merge(generation, {.state = SnapshotRequired{}});

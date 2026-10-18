@@ -27,6 +27,9 @@ struct WebPresentationState {
     const Workspace& workspace,
     const WorkspaceCharacter& character);
 
+// Copies the borrowed generation view into an owning protocol value.
+[[nodiscard]] GenerationStatus to_generation_status(const ControllerGenerationView& generation);
+
 // Copies a borrowed controller view into an owning protocol snapshot, adding
 // web-only identity, lifecycle, and notice fields. Borrowing ends here: the
 // returned value stays valid after the controller mutates or is destroyed, so

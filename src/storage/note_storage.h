@@ -74,6 +74,7 @@ void create_note_items_schema(storage::SqliteDatabase& database);
 [[nodiscard]] std::vector<NoteItem> note_list(storage::SqliteDatabase& database);
 [[nodiscard]] std::int64_t note_import_book(
     storage::SqliteDatabase& database,
+    std::optional<std::int64_t> parent_id,
     std::string_view name,
     const std::vector<NoteImportEntry>& notes);
 [[nodiscard]] NoteItem note_create(

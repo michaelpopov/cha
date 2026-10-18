@@ -154,6 +154,7 @@ private:
         std::optional<std::uint64_t> input_tokens;
         std::optional<std::uint64_t> output_tokens;
         bool web_search_used{false};
+        GenerationProgress progress;
     };
 
     SessionController(
@@ -208,6 +209,7 @@ private:
     void append_configuration_notice(std::string text);
     void cancel_generation_requests() noexcept;
     void apply(const GenerationEventDelta& event, ControllerUpdate& update);
+    void apply(const GenerationToolProgress& event, ControllerUpdate& update);
     void apply(const GenerationCompleted& event, ControllerUpdate& update);
     void apply(const GenerationCancelled& event, ControllerUpdate& update);
     void apply(const GenerationFailed& event, ControllerUpdate& update);

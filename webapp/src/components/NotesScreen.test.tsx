@@ -134,59 +134,54 @@ async function openedEditor(): Promise<Editor> {
 }
 
 describe('Notes screen', () => {
-  it.each([
-    [1, '##000001'],
-    [10, '##00000A'],
-    [35, '##00000Z'],
-    [36, '##00000a'],
-    [61, '##00000z'],
-    [62, '##000010'],
-    [3844, '##000100'],
-    [56800235583, '##zzzzzz'],
-  ])('copies note %s as the reference %s without editing the document', async (id, reference) => {
+  it('toggles code on the selected text and supports undo and redo', async () => {
     const user = userEvent.setup();
-    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+    render(<Harness getNote={async (id) => ({ id, document: documentWith('Alpha beta') })} />);
+    const editor = await openedEditor();
+    act(() => { editor.commands.setTextSelection({ from: 7, to: 11 }); });
+    const code = screen.getByRole('button', { name: 'Code' });
+    expect(screen.queryByRole('button', { name: 'Link' })).not.toBeInTheDocument();
+    await user.click(code);
+    expect(code).toHaveAttribute('aria-pressed', 'true');
+    expect(editor.view.dom.querySelector('code')?.textContent).toBe('beta');
+    expect(editor.getText()).toBe('Alpha beta');
+    expect(editor.view.dom).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(editor.view.dom.querySelector('code')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Redo' }));
+    expect(editor.view.dom.querySelector('code')?.textContent).toBe('beta');
+    await user.click(code);
+    expect(code).toHaveAttribute('aria-pressed', 'false');
+    expect(editor.view.dom.querySelector('code')).toBeNull();
+    expect(editor.getText()).toBe('Alpha beta');
+  });
+
+  it('resizes the whole document without formatting the selected text or saving a change', async () => {
+    const user = userEvent.setup();
     const saveNote = vi.fn();
-    render(<Harness initialId={id} items={[{ ...plan, id }]} saveNote={saveNote} />);
+    render(<Harness saveNote={saveNote} />);
     const editor = await openedEditor();
     const document = editor.getJSON();
+    act(() => { editor.commands.setTextSelection({ from: 2, to: 4 }); });
+    const host = editor.view.dom.closest('.cha-notes-document');
 
-    await user.click(screen.getByRole('button', { name: 'Copy note reference' }));
-
-    expect(writeText).toHaveBeenCalledExactlyOnceWith(reference);
+    await user.click(screen.getByRole('button', { name: 'Increase editor font size' }));
+    expect(host).toHaveStyle({ fontSize: '16px' });
+    expect(editor.state.selection.from).toBe(2);
+    expect(editor.state.selection.to).toBe(4);
+    await user.click(screen.getByRole('button', { name: 'Decrease editor font size' }));
+    expect(host).toHaveStyle({ fontSize: '14px' });
     expect(editor.getJSON()).toEqual(document);
     expect(editor.can().undo()).toBe(false);
-    expect(editor.view.dom).toHaveFocus();
     expect(saveNote).not.toHaveBeenCalled();
   });
 
-  it('copies the current note after switching notes', async () => {
-    const user = userEvent.setup();
-    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+  it('keeps note actions out of the editor toolbar', async () => {
     render(<Harness />);
     await openedEditor();
-    await user.click(screen.getByRole('button', { name: 'Copy note reference' }));
-    expect(writeText).toHaveBeenLastCalledWith('##000004');
-
-    await user.click(screen.getByRole('button', { name: 'Open essay' }));
-    await openedEditor();
-    await user.click(screen.getByRole('button', { name: 'Copy note reference' }));
-    expect(writeText).toHaveBeenLastCalledWith('##000005');
-  });
-
-  it('reports a clipboard failure and allows retrying', async () => {
-    const user = userEvent.setup();
-    const writeText = vi.spyOn(navigator.clipboard, 'writeText')
-      .mockRejectedValueOnce(new Error('Denied')).mockResolvedValue();
-    render(<Harness />);
-    await openedEditor();
-    const button = screen.getByRole('button', { name: 'Copy note reference' });
-    await user.click(button);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not copy the note reference. Try again.');
-
-    await user.click(button);
-    expect(writeText).toHaveBeenLastCalledWith('##000004');
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    for (const name of ['Rename', 'Delete', 'Copy note reference', 'Copy Ref ID']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
   });
 
   it.each([
@@ -918,11 +913,15 @@ describe('Notes screen', () => {
     expect(saveNote).toHaveBeenCalled();
   });
 
-  it('edits and removes a link from the toolbar and the context menu', async () => {
+  it('edits and removes a link from the context menu', async () => {
     const openWindow = vi.spyOn(window, 'open').mockReturnValue(null);
     render(<Harness />);
     const editor = await openedEditor();
-    expect(screen.getByRole('button', { name: 'Link' })).toBeDisabled();
+    const openLinkMenu = () => {
+      const anchor = editor.view.dom.querySelector('a');
+      if (!anchor) throw new Error('Link is missing.');
+      fireEvent.contextMenu(anchor);
+    };
     act(() => {
       editor.commands.setContent({
         type: 'doc',
@@ -940,15 +939,12 @@ describe('Notes screen', () => {
       });
       editor.commands.setTextSelection(2);
     });
-    expect(screen.getByRole('button', { name: 'Link' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    openLinkMenu();
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     expect(screen.queryByRole('menuitem', { name: 'Edit link' })).not.toBeInTheDocument();
-    expect(editor.view.dom).toHaveFocus();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    openLinkMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit link' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Edit link' });
+    await screen.findByRole('dialog', { name: 'Edit link' });
     const url = screen.getByRole('textbox', { name: 'URL' });
     fireEvent.change(url, { target: { value: 'mailto:user@example.com' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
@@ -959,7 +955,7 @@ describe('Notes screen', () => {
     expect(editor.view.dom).toHaveFocus();
     expect(JSON.stringify(editor.getJSON())).toContain('https://example.com/a');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    openLinkMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit link' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'URL' }), { target: { value: 'http://example.org/b' } });
     fireEvent.submit(screen.getByRole('textbox', { name: 'URL' }));
@@ -982,10 +978,5 @@ describe('Notes screen', () => {
     expect(JSON.stringify(editor.getJSON())).toContain('"type":"bold"');
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     expect(editor.view.dom.querySelector('a')?.getAttribute('href')).toBe('https://example.com/a');
-    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove link' }));
-    expect(editor.view.dom).toHaveFocus();
-    expect(editor.view.dom.querySelector('a')).toBeNull();
-    expect(dialog).toBeTruthy();
   });
 });

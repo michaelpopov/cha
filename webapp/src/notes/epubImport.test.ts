@@ -2,6 +2,7 @@ import { getSchema } from '@tiptap/core';
 import { zipSync, strToU8 } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
+import type { NoteItem } from '../api/client';
 import { prepareEpubImport } from './epubImport';
 import { createNotesEditor, notesExtensions } from './editor';
 import { noteDocumentByteLimit } from './documentBytes';
@@ -257,6 +258,18 @@ describe('EPUB import', () => {
     expect(prepareEpubImport(archive(book('<p>Text</p>', '')), 'Fallback.epub', []).name).toBe('Fallback');
     expect(prepareEpubImport(archive(book('<p>Text</p>', '')), '.epub', []).name).toBe('Book');
     expect(prepareEpubImport(archive(book('<p>Text</p>')), 'file.epub', []).notes[0].name).toBe('001. text');
+  });
+
+  it('checks book names only in the selected destination', () => {
+    const bytes = archive(book('<p>Text</p>', '<dc:title>Book</dc:title>'));
+    const items: NoteItem[] = [
+      { id: 1, parent_id: null, kind: 'folder', name: 'Book' },
+      { id: 2, parent_id: null, kind: 'folder', name: 'Research' },
+      { id: 3, parent_id: 2, kind: 'folder', name: 'Book' },
+      { id: 4, parent_id: null, kind: 'folder', name: 'Other' },
+    ];
+    expect(prepareEpubImport(bytes, 'file.epub', items, 2)).toMatchObject({ parent_id: 2, name: 'Book 1' });
+    expect(prepareEpubImport(bytes, 'file.epub', items, 4)).toMatchObject({ parent_id: 4, name: 'Book' });
   });
 
   // The 1000-file book takes about 1.5 s alone and can exceed the 5 s default on a busy machine.

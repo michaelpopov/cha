@@ -29,9 +29,10 @@ std::string search_tavily(std::string_view query, std::string_view key,
     std::string_view endpoint = "https://api.tavily.com/search");
 
 using WebReadExecutor = std::function<std::string(
-    const WorkspaceWebSearch&, std::string_view, const std::atomic_bool&)>;
+    const WorkspaceWebSearch&, std::string_view, const std::atomic_bool&, const std::function<void()>&)>;
 
 inline constexpr std::string_view firecrawl_scrape_endpoint = "https://api.firecrawl.dev/v2/scrape";
+inline constexpr std::size_t page_read_byte_limit = 64 * 1024;
 
 // Returns title, URL, and Markdown as JSON. Model tools default to a 64 KiB cap.
 std::string read_firecrawl(std::string_view url, std::string_view key,
@@ -46,6 +47,6 @@ std::string read_web_reader(std::string_view url, std::string_view base_url,
 std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
     std::string_view firecrawl_key, const std::atomic_bool& cancelled,
     std::string_view firecrawl_endpoint = firecrawl_scrape_endpoint,
-    std::size_t output_byte_limit = 64 * 1024);
+    std::size_t output_byte_limit = page_read_byte_limit, const std::function<void()>& on_fallback = {});
 
 } // namespace cha

@@ -561,12 +561,8 @@ describe('Notes in the application', () => {
   }
 
   async function deleteItem(name: string, kind: 'note' | 'folder') {
-    if (kind === 'folder') {
-      fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
-      fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
-    } else {
-      fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    }
+    fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
     const label = kind === 'folder'
       ? `Delete “${name}” and all notes and folders inside it? This cannot be undone in CHA.`
       : `Delete “${name}”? This cannot be undone in CHA.`;
@@ -577,7 +573,7 @@ describe('Notes in the application', () => {
     return dialog;
   }
 
-  it('targets the open note and returns editor focus when Rename or Delete is canceled', async () => {
+  it('targets the note menu and returns row focus when Rename or Delete is canceled', async () => {
     const renameNoteItem = vi.fn();
     const deleteNoteItem = vi.fn();
     const saveNote = vi.fn();
@@ -590,19 +586,21 @@ describe('Notes in the application', () => {
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Saved plan');
     const editor = noteEditor();
-    expect(screen.queryByRole('button', { name: 'Actions for Plan' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions for Plan' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Actions for Study' })).toBeInTheDocument();
     act(() => screen.getByRole('treeitem', { name: 'Study' }).focus());
-    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
     const rename = await screen.findByRole('dialog', { name: 'Rename “Plan”' });
     expect(within(rename).getByRole('textbox', { name: 'Name' })).toHaveValue('Plan');
     fireEvent.click(within(rename).getByRole('button', { name: 'Cancel' }));
-    expect(editor.view.dom).toHaveFocus();
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(screen.getByRole('treeitem', { name: 'Plan' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
     const deletion = await screen.findByRole('dialog', { name: 'Delete “Plan”? This cannot be undone in CHA.' });
     expect(within(deletion).getByRole('button', { name: 'Cancel' })).toHaveFocus();
     fireEvent.click(within(deletion).getByRole('button', { name: 'Cancel' }));
-    expect(editor.view.dom).toHaveFocus();
+    expect(screen.getByRole('treeitem', { name: 'Plan' })).toHaveFocus();
     expect(noteEditor()).toBe(editor);
     expect(renameNoteItem).not.toHaveBeenCalled();
     expect(deleteNoteItem).not.toHaveBeenCalled();
@@ -630,14 +628,14 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     expect(await screen.findByText('Saved plan')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Actions for Plan' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Draft' } });
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Rename “Plan”' })).getByRole('button', { name: 'Rename' }));
     expect(await screen.findByRole('button', { name: 'Send to Draft' })).toBeInTheDocument();
     expect(screen.getByText('Saved plan')).toBeInTheDocument();
     expect(getNote).toHaveBeenCalledOnce();
-    expect(noteEditor().view.dom).toHaveFocus();
+    expect(screen.getByRole('treeitem', { name: 'Draft' })).toHaveFocus();
   });
 
   it('deletes an open note without saving the remainder and keeps the draft', async () => {

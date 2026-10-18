@@ -113,10 +113,12 @@ TEST(WebRead, FallsBackToFirecrawlForFailedEmptyOrInvalidReaderResults) {
         settings.web_reader_url = "http://127.0.0.1:" + std::to_string(server.port());
         settings.web_reader_enabled = true;
         settings.read_provider = "firecrawl";
+        int fallbacks = 0;
         const auto output = Json::parse(read_page(settings, "https://example.org/original", "key",
-            std::atomic_bool{false}, settings.web_reader_url + "/v2/scrape"));
+            std::atomic_bool{false}, settings.web_reader_url + "/v2/scrape", 64 * 1024, [&] { ++fallbacks; }));
         server.join();
         EXPECT_EQ(output["markdown"], "Fallback content");
+        EXPECT_EQ(fallbacks, 1);
         ASSERT_EQ(server.requests().size(), 2u);
         EXPECT_TRUE(server.requests()[0].starts_with("POST /extract HTTP/1.1\r\n"));
         EXPECT_TRUE(server.requests()[1].starts_with("POST /v2/scrape HTTP/1.1\r\n"));

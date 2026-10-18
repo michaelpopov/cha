@@ -94,11 +94,12 @@ struct RequestPayload {
     std::optional<std::string> session_id;
     std::optional<RequestTextSizes> text_sizes;
     std::function<std::string(std::string_view, const std::atomic_bool&)> web_search_tool;
-    std::function<std::string(std::string_view, const std::atomic_bool&)> web_read_tool;
+    WebReadTool web_read_tool;
     std::function<std::string(
         std::string_view, std::string_view, const std::atomic_bool&)> maintenance_tool;
     // Optional diagnostics owned by the caller, alive until perform() returns.
     GenerationStatistics* statistics{};
+    std::function<void(GenerationToolProgress)> tool_progress;
 };
 
 // Receives one semantic transport fragment without attaching request identity.

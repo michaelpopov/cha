@@ -455,6 +455,11 @@ void LiveSession::publish_update(
             return;
         }
     }
+    if (std::holds_alternative<GenerationChanged>(state)
+        && output_->publish_generation(to_generation_status(controller_->view().generation))
+            == AppendPublishResult::Accepted) {
+        return;
+    }
     publish_current_snapshot();
 }
 

@@ -462,7 +462,8 @@ std::string read_web_reader(std::string_view url, std::string_view base_url,
 
 std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
     std::string_view firecrawl_key, const std::atomic_bool& cancelled,
-    std::string_view firecrawl_endpoint, std::size_t output_byte_limit) {
+    std::string_view firecrawl_endpoint, std::size_t output_byte_limit,
+    const std::function<void()>& on_fallback) {
     if (cancelled.load()) return {};
     if (config.web_reader_enabled) {
         if (!config.web_reader_api_key_id.empty())
@@ -473,6 +474,7 @@ std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
             if (cancelled.load()) return {};
             if (config.read_provider != "firecrawl" || firecrawl_key.empty()) throw;
             log_info("web_reader page reading failed; trying Firecrawl");
+            if (on_fallback) on_fallback();
         }
     }
     if (cancelled.load()) return {};

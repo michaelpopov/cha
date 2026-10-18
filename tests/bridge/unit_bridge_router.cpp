@@ -2310,7 +2310,7 @@ TEST_F(BridgeRouterTest, NotesRejectOneByteOverTheDocumentLimit) {
 TEST_F(BridgeRouterTest, BookImportWireContractAndValidation) {
     (void)bootstrap_epoch();
     const auto document = nlohmann::json::parse(empty_note_document);
-    const nlohmann::json request = {{"name", "Book"}, {"notes", {
+    const nlohmann::json request = {{"parent_id", nullptr}, {"name", "Book"}, {"notes", {
         {{"name", "001. First"}, {"document", document}},
         {{"name", "002. Second"}, {"document", document}},
     }}};
@@ -2326,14 +2326,39 @@ TEST_F(BridgeRouterTest, BookImportWireContractAndValidation) {
     expect_note_error(call("notes.importBook", request), "invalid_argument",
         "An item with this name already exists here.");
     for (const nlohmann::json& invalid : {
-            nlohmann::json{{"name", "Other"}, {"notes", nlohmann::json::object()}},
-            nlohmann::json{{"name", "Other"}, {"notes", {{{"name", "001. Bad"}, {"document", nullptr}}}}},
-            nlohmann::json{{"name", "Other"}, {"notes", {{{"name", "001. Bad"}, {"document", document}, {"extra", 1}}}}},
-            nlohmann::json{{"name", "Other"}, {"notes", nlohmann::json::array()}},
+            nlohmann::json{{"parent_id", nullptr}, {"name", "Other"}, {"notes", nlohmann::json::object()}},
+            nlohmann::json{{"parent_id", nullptr}, {"name", "Other"}, {"notes", {{{"name", "001. Bad"}, {"document", nullptr}}}}},
+            nlohmann::json{{"parent_id", nullptr}, {"name", "Other"}, {"notes", {{{"name", "001. Bad"}, {"document", document}, {"extra", 1}}}}},
+            nlohmann::json{{"parent_id", nullptr}, {"name", "Other"}, {"notes", nlohmann::json::array()}},
         }) {
         EXPECT_FALSE(call("notes.importBook", invalid)["ok"]);
     }
     EXPECT_EQ(call("notes.list")["result"]["items"].size(), 3U);
+}
+
+TEST_F(BridgeRouterTest, BookImportUsesSelectedFolderAndRejectsInvalidParents) {
+    (void)bootstrap_epoch();
+    const auto folder = call("notes.create", {
+        {"parent_id", nullptr}, {"kind", "folder"}, {"name", "Research"},
+    })["result"]["id"];
+    const auto document = nlohmann::json::parse(empty_note_document);
+    nlohmann::json request = {{"parent_id", folder}, {"name", "Book"}, {"notes", {
+        {{"name", "001. First"}, {"document", document}},
+    }}};
+    const auto imported = call("notes.importBook", request);
+    ASSERT_TRUE(imported["ok"]) << imported.dump();
+    const auto items = call("notes.list")["result"]["items"];
+    ASSERT_EQ(items.size(), 3U);
+    EXPECT_EQ(items[1]["id"], imported["result"]["id"]);
+    EXPECT_EQ(items[1]["parent_id"], folder);
+    EXPECT_EQ(items[2]["parent_id"], imported["result"]["id"]);
+    for (const auto& invalid : {nlohmann::json(0), nlohmann::json(-1), nlohmann::json("folder"), items[2]["id"]}) {
+        request["parent_id"] = invalid;
+        EXPECT_FALSE(call("notes.importBook", request)["ok"]);
+    }
+    request.erase("parent_id");
+    EXPECT_FALSE(call("notes.importBook", request)["ok"]);
+    EXPECT_EQ(call("notes.list")["result"]["items"], items);
 }
 
 TEST_F(BridgeRouterTest, NotesRejectStaleVaultContext) {
@@ -2362,7 +2387,7 @@ TEST_F(BridgeRouterTest, NotesRejectStaleVaultContext) {
     ASSERT_TRUE(call("notes.save", {{"id", id}, {"document", changed}})["ok"]);
     epoch_ = old_epoch;
     expect_note_error(
-        call("notes.importBook", {{"name", "Stale Book"}, {"notes", {
+        call("notes.importBook", {{"parent_id", nullptr}, {"name", "Stale Book"}, {"notes", {
             {{"name", "001. First"}, {"document", original}},
         }}}),
         "vault_changed", "The vault context has changed.");

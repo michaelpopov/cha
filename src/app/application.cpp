@@ -266,12 +266,12 @@ Application::Impl::Impl(
               throw std::runtime_error("Unsupported web search provider");
           },
           [keys = api_keys.get()](const WorkspaceWebSearch& config, std::string_view url,
-              const std::atomic_bool& cancelled) {
+              const std::atomic_bool& cancelled, const std::function<void()>& on_fallback) {
               if (cancelled.load()) return std::string{};
               const auto key = config.read_provider == "firecrawl"
                   && keys->find(config.firecrawl_api_key_id)
                   ? keys->value(config.firecrawl_api_key_id) : std::string{};
-              return read_page(config, url, key, cancelled);
+              return read_page(config, url, key, cancelled, firecrawl_scrape_endpoint, page_read_byte_limit, on_fallback);
           },
           [this](std::string_view name, std::string_view arguments,
               const MaintenanceContext& context, const std::atomic_bool& cancelled) {

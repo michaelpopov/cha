@@ -1,6 +1,9 @@
 #include "providers/voice_output.h"
 #include "support/xai_fake_server.h"
+#include "support/test_workspace.h"
+#include "util/logging.h"
 #include <gtest/gtest.h>
+#include <fstream>
 #include <future>
 #include <thread>
 
@@ -21,6 +24,110 @@ WorkspaceVoiceProviderOutput output_for(const XaiFakeServer& server, bool fish, 
     return {.url = "http://127.0.0.1:" + std::to_string(server.port()) + (fish ? "/v1/tts" : "/v1/text-to-speech"),
         .model = std::move(model), .output_format = fish ? "mp3" : "mp3_44100_128", .connection = "websocket"};
 }
+}
+
+class VoiceWebSocketDiagnostics : public testing::Test {
+protected:
+    test::TestWorkspace fixture;
+    void SetUp() override { initialize_diagnostic_logging(fixture.root() / "voice.log", "debug"); }
+    void TearDown() override { shutdown_diagnostic_logging(); }
+    std::string logs() {
+        std::ifstream file(fixture.root() / "voice.log");
+        return {std::istreambuf_iterator<char>(file), {}};
+    }
+};
+
+TEST_F(VoiceWebSocketDiagnostics, AudioKeepsAllProtocolsAliveBeyondTheInitialDeadline) {
+    for (const auto* model : {"s2.1-pro", "eleven_flash_v2_5", "eleven_v4"}) {
+        SCOPED_TRACE(model);
+        const bool fish = std::string_view(model).starts_with('s');
+        const auto chunk = fish ? packed({{"event", "audio"}, {"audio", Json::binary({'a'})}})
+            : Json{{"audio", "YQ=="}}.dump();
+        const auto done = fish ? packed({{"event", "finish"}, {"reason", "stop"}})
+            : Json{{std::string_view(model) == "eleven_v4" ? "is_final" : "isFinal", true}}.dump();
+        XaiFakeServer server({.after_audio_done = {chunk, chunk, chunk, chunk, done},
+            .speech = true, .msgpack = fish, .after_audio_done_delay = 150ms});
+        server.start();
+        const auto output = output_for(server, fish, model);
+        const auto result = stream_voice_websocket_with_timeout(output, "fixture-secret",
+            make_voice_output_request(output, "Private speech text.",
+                {.reference_id = "voice", .provider = fish ? "fishaudio" : "elevenlabs"}),
+            [] { return false; }, {}, {}, 500ms);
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->audio, "aaaa");
+        server.join();
+    }
+    const auto log = logs();
+    EXPECT_NE(log.find("Voice WebSocket started:"), std::string::npos);
+    EXPECT_NE(log.find("Voice WebSocket connected:"), std::string::npos);
+    EXPECT_NE(log.find("Voice WebSocket text completed:"), std::string::npos);
+    EXPECT_NE(log.find("Voice WebSocket first audio:"), std::string::npos);
+    EXPECT_NE(log.find("outcome=completed"), std::string::npos);
+    EXPECT_NE(log.find("audio_chunks=4 audio_bytes=4"), std::string::npos);
+    EXPECT_EQ(log.find("fixture-secret"), std::string::npos);
+    EXPECT_EQ(log.find("Private speech text."), std::string::npos);
+}
+
+TEST_F(VoiceWebSocketDiagnostics, TimesOutWhenAudioIsAbsentOrStopsBeforeCompletion) {
+    for (const bool partial_audio : {false, true}) {
+        SCOPED_TRACE(partial_audio);
+        XaiFakeServer server({.speech = true,
+            .after_text = partial_audio ? std::vector<std::string>{R"({"audio":"YQ=="})"}
+                : std::vector<std::string>{},
+            .after_audio_done_delay = 600ms});
+        server.start();
+        const auto output = output_for(server, false, "eleven_flash_v2_5");
+        try {
+            (void)stream_voice_websocket_with_timeout(output, "fixture-secret",
+                make_voice_output_request(output, "Private speech text.",
+                    {.reference_id = "voice", .provider = "elevenlabs"}),
+                [] { return false; }, {}, {}, 200ms);
+            FAIL() << "Expected an audio inactivity timeout";
+        } catch (const std::runtime_error& error) {
+            EXPECT_STREQ(error.what(), "Voice WebSocket timed out waiting for audio.");
+        }
+        server.join();
+    }
+    const auto log = logs();
+    EXPECT_NE(log.find("outcome=failed"), std::string::npos);
+    EXPECT_NE(log.find("text_complete=true"), std::string::npos);
+    EXPECT_NE(log.find("audio_chunks=0 audio_bytes=0 first_audio_ms=unreported last_audio_ago_ms=unreported"), std::string::npos);
+    EXPECT_NE(log.find("audio_chunks=1 audio_bytes=1"), std::string::npos);
+    EXPECT_NE(log.find("last_event=\"audio\""), std::string::npos);
+    EXPECT_NE(log.find("error=\"Voice WebSocket timed out waiting for audio.\""), std::string::npos);
+}
+
+TEST_F(VoiceWebSocketDiagnostics, InvalidUtf8EventKeepsTheOriginalFailure) {
+    XaiFakeServer server({.after_audio_done = {packed({{"event", "audio"}, {"audio", Json::binary({'a'})}}),
+        packed({{"event", std::string("\xff")}})}, .speech = true, .msgpack = true});
+    server.start();
+    const auto output = output_for(server, true, "s2.1-pro");
+    try {
+        (void)stream_voice_websocket(output, "fixture-secret",
+            make_voice_output_request(output, "Private speech text.",
+                {.reference_id = "voice", .provider = "fishaudio"}), [] { return false; }, {});
+        FAIL() << "Expected a disconnect failure";
+    } catch (const std::runtime_error& error) {
+        EXPECT_STREQ(error.what(), "Voice WebSocket disconnected before synthesis completed.");
+    }
+    server.join();
+    EXPECT_NE(logs().find("outcome=failed"), std::string::npos);
+}
+
+TEST_F(VoiceWebSocketDiagnostics, LogsProviderErrorsWithCredentialsRedacted) {
+    XaiFakeServer server({.after_audio_done = {R"({"error":"Invalid voice; fixture-secret"})"}, .speech = true});
+    server.start();
+    const auto output = output_for(server, false, "eleven_flash_v2_5");
+    EXPECT_THROW(download_voice_output(output, "fixture-secret",
+        make_voice_output_request(output, "Private speech text.",
+            {.reference_id = "voice", .provider = "elevenlabs"}), [] { return false; }), std::runtime_error);
+    server.join();
+    const auto log = logs();
+    EXPECT_NE(log.find("Voice WebSocket provider error:"), std::string::npos);
+    EXPECT_NE(log.find("Invalid voice; [REDACTED]"), std::string::npos);
+    EXPECT_NE(log.find("outcome=failed"), std::string::npos);
+    EXPECT_EQ(log.find("fixture-secret"), std::string::npos);
+    EXPECT_EQ(log.find("Private speech text."), std::string::npos);
 }
 
 TEST(VoiceWebSocket, StreamsAllThreeProtocolsBeforeInputEndsAndDrainsFinalAudio) {

@@ -369,7 +369,9 @@ void AudioDownloadManager::worker() {
         try {
             run(job);
         } catch (const std::exception& error) {
-            log_warn(error.what());
+            log_warn("Audio download failed: forum_id=" + job->entry.identity.forum_id
+                + " session_id=" + job->entry.identity.session_id
+                + " entry_id=" + std::to_string(job->entry.entry_id) + " error=" + error.what());
             failed = true;
         }
         {
@@ -389,6 +391,11 @@ void AudioDownloadManager::worker() {
     changed_.notify_all();
 }
 void AudioDownloadManager::run(const std::shared_ptr<Job>& job) {
+    const std::string fields = " forum_id=" + job->entry.identity.forum_id
+        + " session_id=" + job->entry.identity.session_id
+        + " entry_id=" + std::to_string(job->entry.entry_id)
+        + " provider=" + job->request.provider + " model=" + job->output.model;
+    log_info("Audio download started:" + fields + " live=" + (job->live ? "true" : "false"));
     if (job->live) { run_live(job); return; }
     struct Finish {
         AudioStream& stream;
@@ -411,16 +418,20 @@ void AudioDownloadManager::run(const std::shared_ptr<Job>& job) {
             return;
         }
         try {
+            log_info("Audio download attempt:" + fields + " attempt=" + std::to_string(attempt + 1));
             result = transport_(job->output, job->key, job->request, cancelled,
                 [&](std::string_view type, std::string_view bytes) {
                     if (!cancelled()) job->stream->append(type, bytes);
                 });
             if (!result || cancelled()) return;
             if (!valid_entry_audio(*result)) throw std::runtime_error("Voice provider returned invalid audio.");
-        } catch (const std::exception&) {
+        } catch (const std::exception& error) {
             if (cancelled()) return;
             // Restarting after publishing audio would repeat words already played.
+            // worker() logs the final failure.
             if (attempt == 3 || !job->stream->empty()) throw;
+            log_warn("Audio download attempt failed; retrying:" + fields
+                + " attempt=" + std::to_string(attempt + 1) + " error=" + error.what());
             std::unique_lock lock(mutex_);
             changed_.wait_for(lock, 50ms, cancelled);
             continue;

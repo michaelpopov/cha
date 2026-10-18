@@ -1280,6 +1280,19 @@ select:disabled {
   animation: cha-generation-pulse 1.6s ease-in-out infinite;
 }
 
+.cha-generation-details,
+.cha-generation-counts {
+  margin: 0.4rem 0 0 0.9rem;
+  color: var(--muted-foreground);
+  font-size: 0.85em;
+}
+
+.cha-generation-details summary { cursor: pointer; }
+.cha-generation-activities { display: grid; gap: 0.65rem; margin-top: 0.65rem; }
+.cha-generation-activity { overflow-wrap: anywhere; }
+.cha-generation-activity > div:first-child { color: var(--foreground); }
+.cha-generation-source { color: var(--muted-foreground); }
+
 @keyframes cha-generation-pulse {
   0%, 100% { opacity: 0.35; }
   50% { opacity: 0.8; }
@@ -2225,7 +2238,8 @@ select.cha-form-control {
   font-size: 0.65em;
 }
 
-.cha-notes-heading[aria-pressed='true'] {
+.cha-notes-heading[aria-pressed='true'],
+.cha-notes-code[aria-pressed='true'] {
   color: var(--accent-foreground);
   background: var(--accent);
 }
@@ -2332,6 +2346,11 @@ select.cha-form-control {
 .cha-notes-document .ProseMirror {
   min-height: 8rem;
   padding: 0.75rem 0.15rem 1.25rem;
+}
+
+.cha-notes-document .ProseMirror :not(pre) > code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+  font-size: inherit;
 }
 
 .cha-notes-status {

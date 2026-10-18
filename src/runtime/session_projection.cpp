@@ -37,6 +37,17 @@ std::optional<SpeechVoice> resolve_speech_voice(
     return resolve_speech_voice_id(workspace, character.voice_id);
 }
 
+GenerationStatus to_generation_status(const ControllerGenerationView& generation) {
+    return {
+        .active = generation.active,
+        .request_id = generation.request_id,
+        .character_id = std::string(generation.character_id),
+        .character_display_name = std::string(generation.character_display_name),
+        .phase = generation.phase,
+        .progress = generation.progress ? std::optional(*generation.progress) : std::nullopt,
+    };
+}
+
 SessionSnapshot to_snapshot(
     const Workspace& workspace,
     const FullSessionId& identity,
@@ -67,13 +78,7 @@ SessionSnapshot to_snapshot(
             controller.transcript.entries.end(),
         },
         .covered_until = controller.transcript.covered_until,
-        .generation = {
-            .active = controller.generation.active,
-            .request_id = controller.generation.request_id,
-            .character_id = std::string(controller.generation.character_id),
-            .character_display_name = std::string(controller.generation.character_display_name),
-            .phase = controller.generation.phase,
-        },
+        .generation = to_generation_status(controller.generation),
         .notice = presentation.notice,
         .lifecycle = presentation.lifecycle,
         .shutdown_reason = presentation.shutdown_reason,

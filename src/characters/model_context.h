@@ -20,6 +20,8 @@ inline constexpr std::string_view shared_history_heading =
     "Shared chat history (JSONL):";
 
 using SharedModelHistory = std::shared_ptr<const ModelHistory>;
+using WebReadTool = std::function<std::string(std::string_view, const std::atomic_bool&,
+    const std::function<void()>&)>;
 
 // One logical model run. Durable transcript entry IDs are assigned only when
 // the controller activates the run.
@@ -43,7 +45,7 @@ struct GenerationRequest {
     SharedModelHistory history;
     RunSpec run;
     std::function<std::string(std::string_view, const std::atomic_bool&)> web_search_tool;
-    std::function<std::string(std::string_view, const std::atomic_bool&)> web_read_tool;
+    WebReadTool web_read_tool;
     // Bound maintenance tool. Empty for ordinary conversations.
     std::function<std::string(
         std::string_view, std::string_view, const std::atomic_bool&)> maintenance_tool;

@@ -384,7 +384,6 @@ export function appendNoteHtml(editor: Editor, html: string): boolean {
 export function notesExtensions() {
   return [
     StarterKit.configure({
-      code: false,
       blockquote: false,
       strike: false,
       horizontalRule: false,
@@ -511,11 +510,6 @@ export function linkRangeAt(doc: PmNode, pos: number): NoteLinkRange | null {
   return spans.find((span) => safe >= span.from && safe < span.to)
     ?? spans.find((span) => safe === span.to)
     ?? null;
-}
-
-export function linkRangeFromSelection(state: EditorState): NoteLinkRange | null {
-  const { from, to } = state.selection;
-  return linkRangeAt(state.doc, from) ?? (to === from ? null : linkRangeAt(state.doc, to));
 }
 
 // A pointer acts on a link only when the event target is inside its <a> element.

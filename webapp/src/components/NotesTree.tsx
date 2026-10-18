@@ -20,6 +20,7 @@ import {
   focusAfterRemoval,
   type NoteTreeRow,
 } from '../notes/tree';
+import { noteReference } from '../notes/reference';
 
 type CreateKind = 'note' | 'folder';
 
@@ -67,9 +68,7 @@ export type DeleteNoteItem = (
 ) => Promise<NoteDeleteResult>;
 
 export type NoteActions = {
-  rename(): void;
   renamed(note: NoteItem): void;
-  delete(): void;
 };
 
 type RefreshResult = 'applied' | 'ignored' | 'failed';
@@ -113,9 +112,9 @@ export function NotesTree({
   const revealId = useRef<{ id: number | string; expand: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const epubInput = useRef<HTMLInputElement | null>(null);
+  const epubParentId = useRef<number | null>(null);
   const clientRef = useRef(client);
   const openRef = useRef(onOpenNote);
-  const activeNoteRef = useRef(activeNoteId);
   const beforeCreateRef = useRef(onBeforeCreateNote);
   const onNoteItemsRef = useRef(onNoteItems);
   const onDeleteRef = useRef(onDeleteItem);
@@ -125,7 +124,6 @@ export function NotesTree({
   const dialogRef = useRef(dialog);
   clientRef.current = client;
   openRef.current = onOpenNote;
-  activeNoteRef.current = activeNoteId;
   beforeCreateRef.current = onBeforeCreateNote;
   onNoteItemsRef.current = onNoteItems;
   onDeleteRef.current = onDeleteItem;
@@ -353,13 +351,13 @@ export function NotesTree({
     }
   }
 
-  async function importEpub(file: File) {
+  async function importEpub(file: File, parentId: number | null) {
     if (!canMutateNow()) return;
     busy.current = true;
     setImporting(true);
     setError(null);
     try {
-      const folderId = await clientRef.current.importEpub(file, itemsRef.current);
+      const folderId = await clientRef.current.importEpub(file, itemsRef.current, parentId);
       if (!alive.current) return;
       await refreshListing(folderId, true);
     } catch (failure: unknown) {
@@ -384,7 +382,6 @@ export function NotesTree({
   function openMenu(sourceId: string, anchor: HTMLElement) {
     if (!canMutateNow()) return;
     const item = treeRef.current.getItemInstance(sourceId);
-    if (!item.isFolder()) return;
     item.setFocused();
     // The row already exists. A deferred tree focus would steal focus back
     // after the menu (or its dialog) has focused its first control.
@@ -412,14 +409,16 @@ export function NotesTree({
     return source;
   }
 
-  function startRename(source = takeMenuSource()) {
+  function startRename() {
+    const source = takeMenuSource();
     if (!source || !canMutateNow()) return;
     setDialog({
       action: 'rename', sourceId: source.id, name: source.name, error: null, pending: false,
     });
   }
 
-  function startDelete(source = takeMenuSource()) {
+  function startDelete() {
+    const source = takeMenuSource();
     if (!source || !canMutateNow()) return;
     setDialog({
       action: 'delete',
@@ -429,6 +428,17 @@ export function NotesTree({
       error: null,
       pending: false,
     });
+  }
+
+  async function copyReference() {
+    const source = takeMenuSource();
+    if (!source || source.kind !== 'note') return;
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(noteReference(source.id));
+    } catch {
+      if (alive.current) setError('Could not copy the note reference. Try again.');
+    }
   }
 
   async function submitRename() {
@@ -501,31 +511,20 @@ export function NotesTree({
   const canMutate = loaded && !stale && !listing && dialog === null && !busy.current;
   const activeNoteAvailable = items.some((item) => item.id === activeNoteId && item.kind === 'note');
   const rows = tree.getItems();
+  const menuIsNote = menu !== null && index.rows[menu.sourceId]?.kind === 'note';
   const menuParentId = menu?.sourceId === 'vault' ? null : Number(menu?.sourceId);
   const containerProps = tree.getContainerProps('Notes');
 
-  // The actions find the open note when they run, so the owner's state changes
-  // only when they become available or unavailable.
+  // Page imports can rename the open note without reloading the tree.
   useEffect(() => {
     if (!canMutate || !activeNoteAvailable) return;
-    const source = () => itemsRef.current.find((item) => (
-      item.id === activeNoteRef.current && item.kind === 'note'
-    ));
     onRegisterNoteActions?.({
-      rename: () => {
-        const note = source();
-        if (note) startRename(note);
-      },
       renamed: (note) => {
         if (!alive.current) return;
         const next = itemsRef.current.map((item) => item.id === note.id ? note : item);
         itemsRef.current = next;
         setItems(next);
         onNoteItemsRef.current(next);
-      },
-      delete: () => {
-        const note = source();
-        if (note) startDelete(note);
       },
     });
     return () => onRegisterNoteActions?.(null);
@@ -551,7 +550,7 @@ export function NotesTree({
         onChange={(event) => {
           const file = event.currentTarget.files?.[0];
           event.currentTarget.value = '';
-          if (file) void importEpub(file);
+          if (file) void importEpub(file, epubParentId.current);
         }}
         ref={epubInput}
         type="file"
@@ -581,26 +580,24 @@ export function NotesTree({
                 {data.kind === 'folder' ? (item.isExpanded() ? '▾' : '▸') : ''}
               </span>
               <span className="cha-notes-label">{data.name}</span>
-              {data.kind === 'folder' && (
-                <button
-                  aria-expanded={menu?.sourceId === data.id ? true : undefined}
-                  aria-haspopup="menu"
-                  aria-label={`Actions for ${data.name}`}
-                  className="cha-notes-menu-button"
-                  disabled={!canMutate}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openMenu(data.id, event.currentTarget);
-                  }}
-                  onMouseDown={(event) => event.stopPropagation()}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  tabIndex={-1}
-                  type="button"
-                >
-                  <span aria-hidden="true">⋯</span>
-                </button>
-              )}
+              <button
+                aria-expanded={menu?.sourceId === data.id ? true : undefined}
+                aria-haspopup="menu"
+                aria-label={`Actions for ${data.name}`}
+                className="cha-notes-menu-button"
+                disabled={!canMutate}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openMenu(data.id, event.currentTarget);
+                }}
+                onMouseDown={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+                tabIndex={-1}
+                type="button"
+              >
+                <span aria-hidden="true">⋯</span>
+              </button>
             </div>
           );
         })}
@@ -613,13 +610,18 @@ export function NotesTree({
           role="menu"
           style={{
             left: Math.max(8, Math.min(menu.x, window.innerWidth - 168)),
-            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menu.sourceId !== 'vault' ? 180 : 140))),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menuIsNote || menu.sourceId === 'vault' ? 140 : 220))),
           }}
         >
-          <button onClick={() => beginCreate('note', menuParentId)} role="menuitem" type="button">New note</button>
-          <button onClick={() => beginCreate('folder', menuParentId)} role="menuitem" type="button">New folder</button>
-          {menu.sourceId === 'vault' && (
+          {!menuIsNote && (
+            <>
+              <button onClick={() => beginCreate('note', menuParentId)} role="menuitem" type="button">New note</button>
+              <button onClick={() => beginCreate('folder', menuParentId)} role="menuitem" type="button">New folder</button>
+            </>
+          )}
+          {!menuIsNote && (
             <button onClick={() => {
+              epubParentId.current = menuParentId;
               closeMenu(true);
               epubInput.current?.click();
             }} role="menuitem" type="button">Import EPUB…</button>
@@ -629,6 +631,9 @@ export function NotesTree({
               <button onClick={() => startRename()} role="menuitem" type="button">Rename</button>
               <button onClick={() => startDelete()} role="menuitem" type="button">Delete</button>
             </>
+          )}
+          {menuIsNote && (
+            <button onClick={() => void copyReference()} role="menuitem" type="button">Copy Ref ID</button>
           )}
         </div>,
         document.body,

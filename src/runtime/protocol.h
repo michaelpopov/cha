@@ -570,6 +570,7 @@ void to_json(nlohmann::json& json, const ForumSummary& value);
 void to_json(nlohmann::json& json, const PersonaSummary& value);
 void to_json(nlohmann::json& json, const SessionListing& value);
 void to_json(nlohmann::json& json, const CharacterSummary& value);
+void to_json(nlohmann::json& json, const GenerationStatus& value);
 void to_json(nlohmann::json& json, const SessionSnapshot& value);
 void to_json(nlohmann::json& json, const CommandResult& value);
 void to_json(nlohmann::json& json, const CreateSessionSuccess& value);

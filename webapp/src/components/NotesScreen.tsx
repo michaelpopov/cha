@@ -23,7 +23,6 @@ import {
   importPictureFile,
   insertPromptParagraph,
   linkRangeAtTarget,
-  linkRangeFromSelection,
   noteHeadings,
   removeNoteLink,
   replaceLinkDestination,
@@ -35,23 +34,19 @@ import {
 } from '../notes/editor';
 import { noteTooLargeMessage } from '../notes/pictures';
 import { notePageHtml, notePageName, promptPageUrl } from '../notes/pageImport';
-import { noteReference } from '../notes/reference';
 import { availableNoteName, noteItemPath } from '../notes/tree';
 import type { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveFailedMessage, useNoteSave, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { DataAction, NavigationAction } from '../state/view';
 import {
   CloseIcon,
-  EditIcon,
-  HashIcon,
+  CodeIcon,
   HighlighterIcon,
-  LinkIcon,
   ListIcon,
   PictureIcon,
   RedoIcon,
   SearchIcon,
   TextLinesIcon,
-  TrashIcon,
   UndoIcon,
 } from './Icons';
 import { menuKeys, type NoteActions } from './NotesTree';
@@ -86,36 +81,28 @@ function runHistory(editor: Editor, command: 'undo' | 'redo') {
 
 function FormatBar({
   editor,
+  fontSize,
+  onFontSizeChange,
   toolbarRef,
   onFind,
-  noteActions,
-  onCopyReference,
   onPicture,
-  onEditLink,
-  onRemoveLink,
 }: {
   editor: Editor;
+  fontSize: number;
+  onFontSizeChange(size: number): void;
   toolbarRef: { current: HTMLDivElement | null };
   onFind(): void;
-  noteActions: NoteActions | null;
-  onCopyReference(): void;
   onPicture(file: File): void;
-  onEditLink(range: NoteLinkRange): void;
-  onRemoveLink(range: NoteLinkRange): void;
 }) {
   const [, setTick] = useState(0);
   const [listOpen, setListOpen] = useState(false);
-  const [linkOpen, setLinkOpen] = useState(false);
   const [headingsOpen, setHeadingsOpen] = useState(false);
   const listRoot = useRef<HTMLDivElement | null>(null);
   const listMenu = useRef<HTMLDivElement | null>(null);
-  const linkRoot = useRef<HTMLDivElement | null>(null);
-  const linkMenu = useRef<HTMLDivElement | null>(null);
   const headingsRoot = useRef<HTMLDivElement | null>(null);
   const headingsMenu = useRef<HTMLDivElement | null>(null);
   const pictureInput = useRef<HTMLInputElement | null>(null);
   const editable = editor.isEditable && !editor.isDestroyed;
-  const linkRange = linkRangeFromSelection(editor.state);
   const headings = noteHeadings(editor.state.doc);
   const showHeadings = headingsOpen && editable && headings.length > 0;
 
@@ -144,18 +131,6 @@ function FormatBar({
     window.addEventListener('pointerdown', dismiss);
     return () => window.removeEventListener('pointerdown', dismiss);
   }, [listOpen]);
-
-  useEffect(() => {
-    if (!linkOpen) return;
-    linkMenu.current?.querySelector<HTMLButtonElement>('button')?.focus();
-    const dismiss = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && linkRoot.current?.contains(target)) return;
-      setLinkOpen(false);
-    };
-    window.addEventListener('pointerdown', dismiss);
-    return () => window.removeEventListener('pointerdown', dismiss);
-  }, [linkOpen]);
 
   // A menu that loses its entries or editor closes, so it cannot reappear later
   // and take focus from the editor.
@@ -262,6 +237,28 @@ function FormatBar({
         </button>
       </div>
       <div className="cha-notes-toolbar-group">
+        <button
+          aria-label="Decrease editor font size"
+          title="Decrease font size"
+          className="cha-button"
+          disabled={fontSize <= 10}
+          onClick={() => onFontSizeChange(Math.max(10, fontSize - 2))}
+          type="button"
+        >
+          A−
+        </button>
+        <button
+          aria-label="Increase editor font size"
+          title="Increase font size"
+          className="cha-button"
+          disabled={fontSize >= 30}
+          onClick={() => onFontSizeChange(Math.min(30, fontSize + 2))}
+          type="button"
+        >
+          A+
+        </button>
+      </div>
+      <div className="cha-notes-toolbar-group">
         {([1, 2, 3] as const).map((level) => (
           <button
             aria-label={`Heading ${level}`}
@@ -330,82 +327,16 @@ function FormatBar({
         >
           <PictureIcon />
         </button>
-        <div className="cha-notes-list" ref={linkRoot}>
-          <button
-            aria-label="Link"
-            title="Link"
-            aria-expanded={linkOpen}
-            aria-haspopup="menu"
-            className="cha-button"
-            disabled={!editable || !linkRange}
-            onClick={() => setLinkOpen((open) => !open)}
-            type="button"
-          >
-            <LinkIcon />
-          </button>
-          {linkOpen && linkRange && (
-            <div
-              className="cha-notes-list-menu"
-              onKeyDown={(event) => menuKeys(event, () => {
-                setLinkOpen(false);
-                focusNotesEditor(editor);
-              })}
-              ref={linkMenu}
-              role="menu"
-            >
-              <button
-                onClick={() => {
-                  setLinkOpen(false);
-                  onEditLink(linkRange);
-                }}
-                role="menuitem"
-                type="button"
-              >
-                Edit link
-              </button>
-              <button
-                onClick={() => {
-                  setLinkOpen(false);
-                  onRemoveLink(linkRange);
-                }}
-                role="menuitem"
-                type="button"
-              >
-                Remove link
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="cha-notes-toolbar-group">
         <button
-          aria-label="Copy note reference"
-          className="cha-button"
-          onClick={onCopyReference}
-          title="Copy note reference"
+          aria-label="Code"
+          title="Code"
+          aria-pressed={editor.isActive('code')}
+          className="cha-button cha-notes-code"
+          disabled={!editable}
+          onClick={() => runMark(editor, () => editor.chain().toggleCode().run())}
           type="button"
         >
-          <HashIcon />
-        </button>
-        <button
-          aria-label="Rename"
-          className="cha-button"
-          disabled={!editable || !noteActions}
-          onClick={() => noteActions?.rename()}
-          title="Rename"
-          type="button"
-        >
-          <EditIcon />
-        </button>
-        <button
-          aria-label="Delete"
-          className="cha-button"
-          disabled={!editable || !noteActions}
-          onClick={() => noteActions?.delete()}
-          title="Delete"
-          type="button"
-        >
-          <TrashIcon />
+          <CodeIcon />
         </button>
       </div>
       <div className="cha-notes-toolbar-group">
@@ -727,6 +658,7 @@ export function NotesScreen({
 }) {
   const [phase, setPhase] = useState<Phase>(activeNoteId === null ? 'empty' : 'loading');
   const [editing, setEditing] = useState(false);
+  const [fontSize, setFontSize] = useState(14);
   const [openError, setOpenError] = useState<string | null>(null);
   const [promptError, setPromptError] = useState<string | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -1044,19 +976,6 @@ export function NotesScreen({
     return () => onRegisterDispose(() => undefined);
   }, [editorLiveRef, onRegisterDispose]);
 
-  async function copyReference() {
-    if (activeNoteId === null) return;
-    const reference = noteReference(activeNoteId);
-    setCommandError(null);
-    try {
-      await navigator.clipboard.writeText(reference);
-    } catch {
-      if (noteIdRef.current === activeNoteId && epochRef.current === notesEpoch) {
-        setCommandError('Could not copy the note reference. Try again.');
-      }
-    }
-  }
-
   const path = activeNoteId === null ? '' : noteItemPath(noteItems, activeNoteId);
   const sendLabel = path ? `Send to ${path}` : 'Send';
   const failure = save.saveError ? saveDetail(save.saveError.message) : null;
@@ -1072,19 +991,10 @@ export function NotesScreen({
       {phase === 'ready' && editor && (
         <FormatBar
           editor={editor}
-          noteActions={noteActions}
-          onCopyReference={() => void copyReference()}
-          onEditLink={(range) => {
-            setLinkMenu(null);
-            setLinkEdit(range);
-          }}
+          fontSize={fontSize}
+          onFontSizeChange={setFontSize}
           onFind={openFind}
           onPicture={onPicture}
-          onRemoveLink={(range) => {
-            setLinkMenu(null);
-            const current = editorRef.current;
-            if (current) removeNoteLink(current, range);
-          }}
           toolbarRef={toolbarRef}
         />
       )}
@@ -1106,7 +1016,7 @@ export function NotesScreen({
           wholeWord={wholeWord}
         />
       )}
-      <div className="cha-notes-document" ref={hostRef}>
+      <div className="cha-notes-document" ref={hostRef} style={{ fontSize }}>
         {phase === 'loading' && <p role="status">Opening…</p>}
         {phase === 'error' && (
           <div role="alert">
