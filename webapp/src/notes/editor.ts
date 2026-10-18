@@ -381,7 +381,7 @@ export function appendNoteHtml(editor: Editor, html: string): boolean {
   return !editor.state.doc.eq(before);
 }
 
-function notesExtensions() {
+export function notesExtensions() {
   return [
     StarterKit.configure({
       code: false,
@@ -673,7 +673,7 @@ function cleanClipboardNode(node: Node, word: boolean): void {
     if (!src.startsWith('data:')) node.remove();
     return;
   }
-  if (tag === 'TABLE') {
+  if (node instanceof HTMLTableElement) {
     flattenClipboardTable(node);
     return;
   }
@@ -710,11 +710,14 @@ function normalizeClipboardAnchor(anchor: HTMLElement): void {
   anchor.removeAttribute('rel');
 }
 
-function flattenClipboardTable(table: HTMLElement): void {
-  const rows = table instanceof HTMLTableElement ? [...table.rows] : [...table.querySelectorAll('tr')];
+export function flattenClipboardTable(table: HTMLTableElement): void {
   const fragment = table.ownerDocument.createDocumentFragment();
-  for (const row of rows) {
-    if (!(row instanceof HTMLTableRowElement) || row.closest('table') !== table) continue;
+  if (table.caption) {
+    const caption = table.ownerDocument.createElement('div');
+    caption.append(...table.caption.childNodes);
+    fragment.append(caption);
+  }
+  for (const row of [...table.rows]) {
     const paragraph = table.ownerDocument.createElement('p');
     // ProseMirror keeps a tab only when the element white-space contains "pre".
     paragraph.style.whiteSpace = 'pre-wrap';

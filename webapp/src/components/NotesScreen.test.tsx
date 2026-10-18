@@ -454,7 +454,8 @@ describe('Notes screen', () => {
     expect(await screen.findByText('Essay text')).toBeInTheDocument();
     expect(cancel).toHaveBeenCalled();
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Spoken');
-    expect(screen.getByRole('button', { name: 'Send to Essay' })).toBeEnabled();
+    // The note text appears one render before the opened editor enables Send.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send to Essay' })).toBeEnabled());
     expect((await openedEditor()).getText()).toBe('Essay text');
   });
 

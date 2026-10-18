@@ -50,6 +50,11 @@ struct NoteContent {
     nlohmann::json document = nlohmann::json::object();
 };
 
+struct NoteImportEntry {
+    std::string name;
+    nlohmann::json document;
+};
+
 struct NoteText {
     std::int64_t id{};
     std::string name;
@@ -67,6 +72,10 @@ void create_note_items_schema(storage::SqliteDatabase& database);
 [[nodiscard]] NoteText note_get_text(storage::SqliteDatabase& database, std::int64_t id);
 
 [[nodiscard]] std::vector<NoteItem> note_list(storage::SqliteDatabase& database);
+[[nodiscard]] std::int64_t note_import_book(
+    storage::SqliteDatabase& database,
+    std::string_view name,
+    const std::vector<NoteImportEntry>& notes);
 [[nodiscard]] NoteItem note_create(
     storage::SqliteDatabase& database,
     std::optional<std::int64_t> parent_id,

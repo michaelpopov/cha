@@ -1,3 +1,6 @@
+import { prepareEpubImport } from '../notes/epubImport';
+import { readFileBytes } from '../notes/pictures';
+
 import {
   type NoteItem,
   type NoteContent,
@@ -786,6 +789,18 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     importVault: () => transferVault('vault.import', 'file_count'),
     exportVault: () => transferVault('vault.export', 'file_count'),
     listNoteItems: async () => (await call('notes.list', {}, isNoteItemList)).items,
+    importEpub: async (file, items) => {
+      const epoch = bridge.contextEpoch();
+      const request = prepareEpubImport(await readFileBytes(file).bytes, file.name, items);
+      if (epoch !== bridge.contextEpoch()) {
+        throw new ChaError('vault_changed', 'The active vault changed. Import the EPUB again.');
+      }
+      const result = await call('notes.importBook', request, (value): value is { id: number } => (
+        isRecord(value) && Object.keys(value).length === 1
+        && Number.isSafeInteger(value.id) && (value.id as number) > 0
+      ));
+      return result.id;
+    },
     createNoteItem: (parentId, kind, name) => call(
       'notes.create',
       { parent_id: parentId, kind, name },

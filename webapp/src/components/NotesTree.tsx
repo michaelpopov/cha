@@ -100,6 +100,7 @@ export function NotesTree({
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listing, setListing] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const generation = useRef(0);
@@ -109,8 +110,9 @@ export function NotesTree({
   const loadedRef = useRef(false);
   const dataRef = useRef(buildNoteIndex([]));
   const signatureRef = useRef<string | null>(null);
-  const revealId = useRef<number | string | null>(null);
+  const revealId = useRef<{ id: number | string; expand: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const epubInput = useRef<HTMLInputElement | null>(null);
   const clientRef = useRef(client);
   const openRef = useRef(onOpenNote);
   const activeNoteRef = useRef(activeNoteId);
@@ -238,9 +240,9 @@ export function NotesTree({
   }
 
   useLayoutEffect(() => {
-    const id = revealId.current;
-    if (id === null) return;
-    const key = String(id);
+    const reveal = revealId.current;
+    if (reveal === null) return;
+    const key = String(reveal.id);
     if (!dataRef.current.rows[key]) return;
     const current = treeRef.current;
     if (!current.getItems().some((item) => item.getId() === key)) {
@@ -257,6 +259,7 @@ export function NotesTree({
     const target = current.getItemInstance(key);
     if (!target.getElement()) return;
     revealId.current = null;
+    if (reveal.expand && target.isFolder()) target.expand();
     target.setFocused();
     // A deferred tree focus could overwrite focus in the newly opened editor.
     target.getElement()?.focus();
@@ -271,7 +274,7 @@ export function NotesTree({
       && dialogRef.current === null;
   }
 
-  async function refreshListing(reveal: number | null): Promise<RefreshResult> {
+  async function refreshListing(reveal: number | null, expand = false): Promise<RefreshResult> {
     const gen = ++generation.current;
     try {
       const next = await clientRef.current.listNoteItems();
@@ -282,7 +285,7 @@ export function NotesTree({
       setStale(false);
       setError(null);
       onNoteItemsRef.current(next);
-      revealId.current = reveal ?? 'vault';
+      revealId.current = { id: reveal ?? 'vault', expand };
       return 'applied';
     } catch (failure: unknown) {
       if (!alive.current || gen !== generation.current) return 'ignored';
@@ -347,6 +350,23 @@ export function NotesTree({
       keepDialogError(failure, 'The item could not be created.');
     } finally {
       busy.current = false;
+    }
+  }
+
+  async function importEpub(file: File) {
+    if (!canMutateNow()) return;
+    busy.current = true;
+    setImporting(true);
+    setError(null);
+    try {
+      const folderId = await clientRef.current.importEpub(file, itemsRef.current);
+      if (!alive.current) return;
+      await refreshListing(folderId, true);
+    } catch (failure: unknown) {
+      if (alive.current) setError(publicErrorMessage(failure, 'The EPUB could not be imported.'));
+    } finally {
+      busy.current = false;
+      if (alive.current) setImporting(false);
     }
   }
 
@@ -517,10 +537,25 @@ export function NotesTree({
         <p className="cha-error-message" role="alert">
           {error}
           {' '}
-          <button className="cha-button cha-button-ghost" onClick={retryList} type="button">Retry</button>
+          {(!loaded || stale) && (
+            <button className="cha-button cha-button-ghost" onClick={retryList} type="button">Retry</button>
+          )}
         </p>
       )}
       {!loaded && !error && <p role="status">Loading notes…</p>}
+      {importing && <p role="status">Importing EPUB…</p>}
+      <input
+        accept=".epub"
+        aria-label="EPUB file"
+        hidden
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = '';
+          if (file) void importEpub(file);
+        }}
+        ref={epubInput}
+        type="file"
+      />
       <div
         {...containerProps}
         className="cha-notes-tree"
@@ -578,11 +613,17 @@ export function NotesTree({
           role="menu"
           style={{
             left: Math.max(8, Math.min(menu.x, window.innerWidth - 168)),
-            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menu.sourceId !== 'vault' ? 180 : 100))),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menu.sourceId !== 'vault' ? 180 : 140))),
           }}
         >
           <button onClick={() => beginCreate('note', menuParentId)} role="menuitem" type="button">New note</button>
           <button onClick={() => beginCreate('folder', menuParentId)} role="menuitem" type="button">New folder</button>
+          {menu.sourceId === 'vault' && (
+            <button onClick={() => {
+              closeMenu(true);
+              epubInput.current?.click();
+            }} role="menuitem" type="button">Import EPUB…</button>
+          )}
           {menu.sourceId !== 'vault' && (
             <>
               <button onClick={() => startRename()} role="menuitem" type="button">Rename</button>

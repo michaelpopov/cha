@@ -339,6 +339,55 @@ TEST_F(NoteStorageTest, NamesParentsAndSiblingNamespace) {
     EXPECT_EQ(found->name, "Plan");
 }
 
+TEST_F(NoteStorageTest, BookImportCommitsOrdinaryEditableNotesAndRejectsCollisions) {
+    const auto document = nlohmann::json::parse(empty_note_document);
+    const auto folder = note_import_book(*database_, "Book", {
+        {"001. Introduction", document}, {"002. Introduction", document},
+    });
+    const auto items = note_list(*database_);
+    ASSERT_EQ(items.size(), 3U);
+    EXPECT_EQ(items[0].id, folder);
+    EXPECT_EQ(items[0].parent_id, std::nullopt);
+    EXPECT_EQ(items[0].kind, NoteItemKind::folder);
+    EXPECT_EQ(items[1].parent_id, folder);
+    EXPECT_EQ(items[2].parent_id, folder);
+    EXPECT_EQ(note_get(*database_, items[1].id).document, document);
+    auto edited = document;
+    edited["content"][0]["content"] = {{{"type", "text"}, {"text", "Edited"}}};
+    note_save(*database_, items[1].id, edited);
+    EXPECT_EQ(note_get(*database_, items[1].id).document, edited);
+    expect_note_error(NoteFailure::invalid, "An item with this name already exists here.", [&] {
+        (void)note_import_book(*database_, "Book", {{"001. Other", document}});
+    });
+    EXPECT_EQ(item_count(*database_), 3);
+}
+
+TEST_F(NoteStorageTest, BookImportRollsBackOnInvalidNamesDocumentsAndInsertFailures) {
+    const auto document = nlohmann::json::parse(empty_note_document);
+    const NoteImportEntry valid{"001. Good", document};
+    for (const auto& invalid : std::vector<NoteImportEntry>{
+            {"bad\nname", document},
+            {"002. Bad document", nlohmann::json::array()},
+            valid}) {
+        EXPECT_THROW((void)note_import_book(*database_, "Book", {valid, invalid}), NoteError);
+        EXPECT_EQ(item_count(*database_), 0);
+    }
+    auto oversized = document;
+    oversized["padding"] = std::string(note_document_byte_limit, 'x');
+    EXPECT_THROW((void)note_import_book(*database_, "Book", {valid, {"002. Large", oversized}}), NoteError);
+    EXPECT_EQ(item_count(*database_), 0);
+    EXPECT_THROW((void)note_import_book(*database_, "", {valid}), NoteError);
+    EXPECT_THROW((void)note_import_book(*database_, "Book", {}), NoteError);
+    database_->execute(
+        "CREATE TRIGGER fail_book_note BEFORE INSERT ON note_items "
+        "WHEN NEW.name = '002. Fail' BEGIN SELECT RAISE(ABORT, 'test insert failure'); END");
+    EXPECT_THROW((void)note_import_book(*database_, "Book", {valid, {"002. Fail", document}}), NoteError);
+    EXPECT_EQ(item_count(*database_), 0);
+    database_->execute("DROP TRIGGER fail_book_note");
+    EXPECT_GT(note_import_book(*database_, "Book", {valid}), 0);
+    EXPECT_EQ(item_count(*database_), 2);
+}
+
 TEST_F(NoteStorageTest, DeleteCascadesAndDoesNotReuseIds) {
     const auto root = note_create(*database_, std::nullopt, NoteItemKind::folder, "Root");
     const auto child = note_create(*database_, root.id, NoteItemKind::folder, "Child");

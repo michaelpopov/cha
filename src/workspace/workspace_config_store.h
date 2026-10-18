@@ -353,6 +353,8 @@ public:
         const std::function<void()>& prepare_source = {});
 
     [[nodiscard]] std::vector<NoteItem> list_note_items() const;
+    [[nodiscard]] std::int64_t import_note_book(
+        std::string_view name, const std::vector<NoteImportEntry>& notes);
     [[nodiscard]] NoteItem create_note_item(
         std::optional<std::int64_t> parent_id,
         NoteItemKind kind,

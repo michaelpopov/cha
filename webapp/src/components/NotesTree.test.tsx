@@ -27,6 +27,7 @@ function deferred<T>() {
 function client(overrides: Partial<NotesClient> = {}): NotesClient {
   return {
     listNoteItems: async () => [],
+    importEpub: async () => { throw new Error('notes.importBook'); },
     createNoteItem: async () => { throw new Error('notes.create'); },
     getNote: async () => { throw new Error('notes.get'); },
     readNotePage: async () => { throw new Error('notes.readPage'); },
@@ -154,8 +155,73 @@ describe('Notes tree', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Actions for Personal' })).toBeEnabled());
     expect(screen.getAllByRole('treeitem')).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Personal' }));
-    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['New note', 'New folder']);
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['New note', 'New folder', 'Import EPUB…']);
     expect(screen.queryByRole('button', { name: 'New note' })).not.toBeInTheDocument();
+  });
+
+  it('imports once, disables mutations while busy, expands the folder and leaves the active note open', async () => {
+    let items = [aardvark];
+    const pending = deferred<number>();
+    const importEpub = vi.fn(() => pending.promise);
+    const { onOpenNote, onBeforeCreateNote } = renderTree({
+      activeNoteId: aardvark.id,
+      notes: client({ listNoteItems: async () => items, importEpub }),
+    });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Personal', 'Import EPUB…');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    const file = new File(['epub'], 'book.epub');
+    const input = screen.getByLabelText('EPUB file');
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(importEpub).toHaveBeenCalledExactlyOnceWith(file, [aardvark]);
+    expect(screen.getByRole('status')).toHaveTextContent('Importing EPUB…');
+    expect(screen.getByRole('button', { name: 'Actions for Personal' })).toBeDisabled();
+    items = [aardvark,
+      { id: 10, parent_id: null, kind: 'folder', name: 'Book' },
+      { id: 11, parent_id: 10, kind: 'note', name: '001. First' },
+    ];
+    await act(async () => pending.resolve(10));
+    expect(await screen.findByRole('treeitem', { name: '001. First' })).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'Book' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('treeitem', { name: 'Aardvark' })).toHaveAttribute('aria-current', 'true');
+    expect(onOpenNote).not.toHaveBeenCalled();
+    expect(onBeforeCreateNote).not.toHaveBeenCalled();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions for Personal' })).toBeEnabled();
+  });
+
+  it('shows import errors and can select the same file again', async () => {
+    const importEpub = vi.fn(async () => { throw new ChaError('invalid_argument', 'Could not parse XML in “text.xhtml”.'); });
+    renderTree({ notes: client({ listNoteItems: async () => [study], importEpub }) });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    await chooseAction('Study', 'New note');
+    expect(screen.queryByRole('menuitem', { name: 'Import EPUB…' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const input = screen.getByLabelText('EPUB file');
+    const file = new File(['epub'], 'bad.epub');
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await chooseAction('Personal', 'Import EPUB…');
+      fireEvent.change(input, { target: { files: [file] } });
+      expect(await screen.findByRole('alert')).toHaveTextContent('Could not parse XML in “text.xhtml”.');
+      expect(importEpub).toHaveBeenCalledTimes(attempt);
+      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    }
+  });
+
+  it('retries only the listing after an imported book commits but the refresh fails', async () => {
+    const folder: NoteItem = { id: 10, parent_id: null, kind: 'folder', name: 'Book' };
+    const importEpub = vi.fn(async () => 10);
+    const listNoteItems = vi.fn().mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce([folder]);
+    renderTree({ notes: client({ listNoteItems, importEpub }) });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Actions for Personal' })).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('EPUB file'), { target: { files: [new File(['epub'], 'book.epub')] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load notes.');
+    expect(screen.getByRole('button', { name: 'Actions for Personal' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('treeitem', { name: 'Book' })).toBeInTheDocument();
+    expect(importEpub).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the root and disables its menu when the first listing fails', async () => {

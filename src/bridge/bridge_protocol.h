@@ -138,6 +138,7 @@ enum class Method {
     openai_auth_disconnect,
     notes_list,
     notes_create,
+    notes_import_book,
     notes_get,
     notes_read_page,
     notes_save,

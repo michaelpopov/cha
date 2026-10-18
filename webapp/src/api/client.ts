@@ -110,8 +110,13 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
 }
 
 export type NotePage = { url: string; title: string; markdown: string };
+export type NoteBookImport = {
+  name: string;
+  notes: { name: string; document: Record<string, unknown> }[];
+};
 
 export interface NotesClient {
+  importEpub: (file: File, items: readonly NoteItem[]) => Promise<number>;
   readNotePage: (url: string) => Promise<NotePage>;
   listNoteItems: () => Promise<NoteItem[]>;
   createNoteItem: (

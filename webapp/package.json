@@ -32,6 +32,7 @@
     "@tiptap/starter-kit": "3.30.3",
     "codec-parser": "2.5.0",
     "dompurify": "3.4.13",
+    "fflate": "0.8.3",
     "linkifyjs": "4.3.3",
     "marked": "18.0.9",
     "mse-audio-wrapper": "1.4.15",

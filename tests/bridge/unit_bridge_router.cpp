@@ -2307,6 +2307,35 @@ TEST_F(BridgeRouterTest, NotesRejectOneByteOverTheDocumentLimit) {
     EXPECT_EQ(stored_note_content(database_, id), exact.dump());
 }
 
+TEST_F(BridgeRouterTest, BookImportWireContractAndValidation) {
+    (void)bootstrap_epoch();
+    const auto document = nlohmann::json::parse(empty_note_document);
+    const nlohmann::json request = {{"name", "Book"}, {"notes", {
+        {{"name", "001. First"}, {"document", document}},
+        {{"name", "002. Second"}, {"document", document}},
+    }}};
+    const auto imported = call("notes.importBook", request);
+    ASSERT_TRUE(imported["ok"]) << imported.dump();
+    EXPECT_EQ(imported["result"].size(), 1U);
+    const auto folder = imported["result"]["id"].get<std::int64_t>();
+    const auto items = call("notes.list")["result"]["items"];
+    ASSERT_EQ(items.size(), 3U);
+    EXPECT_EQ(items[0]["id"], folder);
+    EXPECT_EQ(items[1]["parent_id"], folder);
+    EXPECT_EQ(call("notes.get", {{"id", items[1]["id"]}})["result"]["document"], document);
+    expect_note_error(call("notes.importBook", request), "invalid_argument",
+        "An item with this name already exists here.");
+    for (const nlohmann::json& invalid : {
+            nlohmann::json{{"name", "Other"}, {"notes", nlohmann::json::object()}},
+            nlohmann::json{{"name", "Other"}, {"notes", {{{"name", "001. Bad"}, {"document", nullptr}}}}},
+            nlohmann::json{{"name", "Other"}, {"notes", {{{"name", "001. Bad"}, {"document", document}, {"extra", 1}}}}},
+            nlohmann::json{{"name", "Other"}, {"notes", nlohmann::json::array()}},
+        }) {
+        EXPECT_FALSE(call("notes.importBook", invalid)["ok"]);
+    }
+    EXPECT_EQ(call("notes.list")["result"]["items"].size(), 3U);
+}
+
 TEST_F(BridgeRouterTest, NotesRejectStaleVaultContext) {
     const auto old_epoch = bootstrap_epoch();
     const auto created_note = call("notes.create", {
@@ -2332,6 +2361,11 @@ TEST_F(BridgeRouterTest, NotesRejectStaleVaultContext) {
     const auto changed = nlohmann::json::parse(R"({"type":"doc","text":"copy"})");
     ASSERT_TRUE(call("notes.save", {{"id", id}, {"document", changed}})["ok"]);
     epoch_ = old_epoch;
+    expect_note_error(
+        call("notes.importBook", {{"name", "Stale Book"}, {"notes", {
+            {{"name", "001. First"}, {"document", original}},
+        }}}),
+        "vault_changed", "The vault context has changed.");
     expect_note_error(
         call("notes.save", {{"id", id}, {"document", original}}),
         "vault_changed",

@@ -339,7 +339,7 @@ it('replaces persona Markdown from the compact file action', async () => {
   Object.defineProperty(file, 'text', {
     value: vi.fn(async () => '# Replacement\n\nFresh text.'),
   });
-  fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, {
+  fireEvent.change(container.querySelector('.cha-definition-upload input[type="file"]') as HTMLInputElement, {
     target: { files: [file] },
   });
 

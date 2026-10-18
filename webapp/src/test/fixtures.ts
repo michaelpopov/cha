@@ -377,6 +377,7 @@ export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}):
     importVault: async () => 0,
     exportVault: async () => 0,
     listNoteItems: async () => [],
+    importEpub: unavailable('notes.importBook'),
     createNoteItem: unavailable('notes.create'),
     getNote: unavailable('notes.get'),
     readNotePage: unavailable('notes.readPage'),

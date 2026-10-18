@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import { strToU8, zipSync } from 'fflate';
 
 import { ChaProtocolError, isCommandResult, type SessionSnapshot } from './client';
 import { createFakeNativeBridge } from './nativeBridge';
@@ -446,7 +447,59 @@ describe('notes native client', () => {
     }
   });
 
-  it('sends the seven methods and accepts guarded replies', async () => {
+  function epubFile() {
+    const files = {
+      'META-INF/container.xml': '<container><rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+      'book.opf': '<package><metadata><title>Book</title></metadata><manifest><item id="a" href="text.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+      'text.xhtml': '<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>First</h1></body></html>',
+    };
+    return new File([zipSync(Object.fromEntries(Object.entries(files).map(([path, text]) => [path, strToU8(text)])))], 'book.epub');
+  }
+
+  it('prepares the entire EPUB before sending one book import request', async () => {
+    const write = vi.fn(() => ({ id: 12 }));
+    const client = clientFor({ 'notes.importBook': write });
+    expect(await client.importEpub(epubFile(), [])).toBe(12);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write).toHaveBeenCalledWith({ name: 'Book', notes: [{ name: '001. First', document: {
+      type: 'doc', content: [{ type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'First' }] }],
+    } }] });
+  });
+
+  it('discards an EPUB prepared across a vault context change without sending it', async () => {
+    const read = vi.spyOn(FileReader.prototype, 'readAsArrayBuffer').mockImplementation(() => {});
+    try {
+      const write = vi.fn(() => ({ id: 12 }));
+      const bridge = createFakeNativeBridge({ 'notes.importBook': write });
+      const client = createNativeChaClient(bridge);
+      const result = client.importEpub(epubFile(), []);
+      const reader = read.mock.instances[0] as FileReader;
+      bridge.setContextEpoch(bridge.contextEpoch() + 1);
+      // Finish the original read using the real FileReader implementation.
+      read.mockRestore();
+      const bytes = await new Promise<ArrayBuffer>((resolve) => {
+        const other = new FileReader();
+        other.onload = () => resolve(other.result as ArrayBuffer);
+        other.readAsArrayBuffer(epubFile());
+      });
+      Object.defineProperty(reader, 'result', { value: bytes });
+      reader.onload?.call(reader, new ProgressEvent('load') as ProgressEvent<FileReader>);
+      await expect(result).rejects.toMatchObject({ code: 'vault_changed' });
+      expect(write).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it('does not send a malformed EPUB and rejects an invalid import response', async () => {
+    const write = vi.fn(() => ({ id: 0 }));
+    const client = clientFor({ 'notes.importBook': write });
+    await expect(client.importEpub(new File(['bad zip'], 'bad.epub'), [])).rejects.toMatchObject({ code: 'invalid_argument' });
+    expect(write).not.toHaveBeenCalled();
+    await expect(client.importEpub(epubFile(), [])).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
+  it('sends the ordinary note methods and accepts guarded replies', async () => {
     const calls: unknown[] = [];
     const client = clientFor({
       'notes.list': (params) => {

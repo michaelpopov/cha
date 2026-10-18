@@ -376,6 +376,40 @@ NoteItem note_create(
     }
 }
 
+std::int64_t note_import_book(
+    storage::SqliteDatabase& database,
+    std::string_view name,
+    const std::vector<NoteImportEntry>& notes) {
+    require_name(name);
+    if (notes.empty()) fail(NoteFailure::invalid, "The book has no reading-order files.");
+    try {
+        storage::SqliteTransaction transaction(database);
+        if (name_taken(database, std::nullopt, name, 0)) {
+            fail(NoteFailure::invalid, duplicate_name_message);
+        }
+        auto folder = database.prepare(
+            "INSERT INTO note_items (kind, name) VALUES ('folder', ?1)");
+        folder.bind(1, name);
+        folder.run();
+        const auto id = database.last_insert_rowid();
+        for (const auto& note : notes) {
+            require_name(note.name);
+            const auto compact = compact_document(note.document, 0, true);
+            auto insert = database.prepare(
+                "INSERT INTO note_items (parent_id, kind, name, content_json) "
+                "VALUES (?1, 'note', ?2, ?3)");
+            insert.bind(1, id);
+            insert.bind(2, note.name);
+            insert.bind(3, compact);
+            insert.run();
+        }
+        transaction.commit();
+        return id;
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, NoteFailure::saving, change_message);
+    }
+}
+
 NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id) {
     try {
         storage::SqliteTransaction transaction(database);
