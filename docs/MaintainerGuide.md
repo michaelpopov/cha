@@ -1258,13 +1258,18 @@ Do not include the global character again in the member addition.
 
 A global character directory can also contain Markdown files named
 `_<category>_<variant>.md`, for example `_1_1.md`, `_1_2.md`, and `_2_1.md`.
-Both filename components must parse as integers. CHA chooses one file per
-category, in category order, and adds its trimmed text to the effective profile
-and character description. Selection is seeded by forum ID, session ID,
-character ID, and category. Reopening the same session with unchanged files
-keeps the same selection; adding another category does not change existing
-category choices. Variation text is read literally, without template expansion. Variations are session-specific and do not change the global
-catalog description.
+Both filename components must parse as integers. For each session, CHA chooses
+a random count from zero through the number of categories and selects that
+many distinct categories. From each selected category it chooses one file, and
+it adds the trimmed texts, in category order, to the effective profile and
+character description. The category selection is seeded by forum ID, session
+ID, and character ID; the file choice in a category is also seeded by the
+category. Reopening the same session with unchanged files keeps the same
+selection. Changing the files in an existing category does not change which
+categories are selected or the files chosen in other categories; adding or
+removing a category can change which categories are selected. Variation text
+is read literally, without template expansion. Variations are session-specific
+and do not change the global catalog description.
 
 ### Final system-prompt composition
 

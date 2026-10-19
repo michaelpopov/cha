@@ -283,8 +283,9 @@ The other utilities support important boundaries:
   substitutions with containment and cycle/resource limits. Persona prompts
   use `persona.id`, `persona.display_name`, and their own `[prompt]` variables;
   editors retain unexpanded source. Character member prompts add to the global
-  profile, and numbered `_<category>_<variant>.md` files supply stable choices
-  per session. See the maintainer guide for composition boundaries and examples.
+  profile, and numbered `_<category>_<variant>.md` files supply a stable random
+  set of categories per session, with one file from each selected category. See
+  the maintainer guide for composition boundaries and examples.
 - `logging.*` owns the process logging lifetime.
 
 Checkpoint: locate one caller of each utility and state whether it is a domain

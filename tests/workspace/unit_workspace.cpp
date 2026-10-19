@@ -1068,6 +1068,69 @@ TEST(Workspace, BuildsEntranceCharacterDefinitionWithVariants) {
     EXPECT_EQ(definition.system_prompt.find("\"name\":\"Entrance\""), std::string::npos);
 }
 
+TEST(Workspace, InsertsCharacterVariantsBeforeLastProfileClosingTag) {
+    test::TestWorkspace fixture;
+    const auto directory = fixture.root() / "characters" / "guide";
+    std::ofstream(directory.parent_path() / "character-voice.md") << "Character voice.";
+    std::ofstream(directory / "PROFILE.md") << "Base profile.";
+    const std::vector<std::pair<std::string, std::string>> cases{
+        {
+            "$$(../character-voice.md)\n\n<character_profile>\n"
+            "$$(PROFILE.md)\n</character_profile>\nAfter profile.",
+            "Character voice.\n\n<character_profile>\nBase profile.\n\n"
+            "<session_traits>\nVariant trait.\n</session_traits>\n"
+            "</character_profile>\nAfter profile.",
+        },
+        {
+            "<character_profile>Earlier profile.</character_profile>\n"
+            "<character_profile>$$(PROFILE.md)</character_profile>",
+            "<character_profile>Earlier profile.</character_profile>\n"
+            "<character_profile>Base profile.\n\n<session_traits>\nVariant trait.\n"
+            "</session_traits>\n</character_profile>",
+        },
+    };
+    for (const auto& [prompt, expected] : cases) {
+        std::ofstream(directory / "CHARACTER.md") << prompt;
+        const Workspace workspace = Workspace::load(fixture.root());
+        const auto definition = workspace.character_definition("lobby", "guide", "Variant trait.");
+        EXPECT_EQ(definition.character_prompt, expected);
+        EXPECT_TRUE(definition.system_prompt.starts_with("# Conversation protocol\n"));
+        EXPECT_NE(definition.system_prompt.find(
+            "<character_instructions>\n" + expected
+            + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
+            std::string::npos);
+        EXPECT_EQ(definition.character_description,
+            workspace.find_character("guide")->markdown + "\n\nVariant trait.");
+    }
+}
+
+TEST(Workspace, CombinesBaseForumAndVariantDescriptionsInsideProfile) {
+    test::TestWorkspace fixture;
+    const auto character = fixture.root() / "characters" / "guide";
+    const auto member = fixture.root() / "forums" / "lobby" / "members" / "guide";
+    std::ofstream(character / "CHARACTER.md")
+        << "Character voice.\n<character_profile>$$(PROFILE.md)</character_profile>\n";
+    std::ofstream(character / "PROFILE.md") << "Base profile.\n\n";
+    std::ofstream(member / "CHARACTER.md")
+        << "<character_profile>$$(PROFILE.md)</character_profile>";
+    std::ofstream(member / "PROFILE.md") << "\nForum trait for $${forum.display_name}.\n\n";
+    const Workspace workspace = Workspace::load(fixture.root());
+    const auto definition = workspace.character_definition("lobby", "guide", "\n\nVariant trait.\n\n");
+    const std::string expected =
+        "Character voice.\n<character_profile>Base profile.\n\n"
+        "Forum trait for The Lobby.\n\n<session_traits>\nVariant trait.\n"
+        "</session_traits>\n</character_profile>\n";
+    EXPECT_EQ(definition.character_prompt, expected);
+    EXPECT_TRUE(definition.system_prompt.starts_with("# Conversation protocol\n"));
+    EXPECT_NE(definition.system_prompt.find(
+        "<character_instructions>\n" + expected
+        + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
+        std::string::npos);
+    EXPECT_EQ(definition.character_description,
+        "Base profile.\n\nForum trait for The Lobby.\n\nVariant trait.");
+    EXPECT_EQ(workspace.find_character("guide")->markdown, "Base profile.");
+}
+
 TEST(Workspace, LoadsNestedDefinitionsAndKeepsCatalogsOrdered) {
     test::TestWorkspace fixture;
     const std::filesystem::path character =

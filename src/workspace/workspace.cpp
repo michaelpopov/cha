@@ -20,6 +20,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <ranges>
@@ -975,17 +976,26 @@ std::string character_variants(
             categories[*category].push_back(text);
         }
     }
+    // Keep the selection stable when reopening a session.
+    const std::string key = identity.forum_id + "/" + identity.session_id + "/"
+        + character.character.id;
+    const auto digest = sha256_digest(key);
+    std::seed_seq seed(digest.begin(), digest.end());
+    std::mt19937 random(seed);
+    std::vector<int> selected;
+    std::ranges::sample(std::views::keys(categories), std::back_inserter(selected),
+        std::uniform_int_distribution<std::ptrdiff_t>(0, std::ssize(categories))(random),
+        random);
     std::string result;
-    for (const auto& [category, variants] : categories) {
-        // Seed each category separately so the selection survives reopening a
-        // session and does not depend on other characters or categories.
-        const auto digest = sha256_digest(identity.forum_id + "/"
-            + identity.session_id + "/" + character.character.id + "/"
-            + std::to_string(category));
-        std::seed_seq seed(digest.begin(), digest.end());
-        std::mt19937 random(seed);
+    for (const int category : selected) {
+        // Seed each category separately so that changes to one category do not
+        // change the variants chosen in other categories.
+        const auto category_digest = sha256_digest(key + "/" + std::to_string(category));
+        std::seed_seq category_seed(category_digest.begin(), category_digest.end());
+        std::mt19937 category_random(category_seed);
+        const auto& variants = categories.at(category);
         const auto index = std::uniform_int_distribution<std::size_t>(
-            0, variants.size() - 1)(random);
+            0, variants.size() - 1)(category_random);
         const auto text = trim_view(variants[index]);
         if (!text.empty()) {
             if (!result.empty()) result += "\n\n";
