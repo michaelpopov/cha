@@ -9,8 +9,8 @@ import {
 import { bootstrapFixture, fixtureClient, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
 
-const plan: NoteItem = { id: 4, parent_id: null, kind: 'note', name: 'Plan' };
-const study: NoteItem = { id: 1, parent_id: null, kind: 'folder', name: 'Study' };
+const plan: NoteItem = { id: 4, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
+const study: NoteItem = { id: 1, has_compressed: false, parent_id: null, kind: 'folder', name: 'Study' };
 
 function noteDocument(text: string) {
   return {
@@ -61,6 +61,117 @@ function typeInNote(text: string) {
 }
 
 describe('Notes in the application', () => {
+  it('saves pending edits before compression and cancels during saving without sending', async () => {
+    let finishSave!: () => void;
+    const compressNote = vi.fn();
+    const saveNote = vi.fn((_id: number, _document: Record<string, unknown>) => new Promise<void>((resolve) => { finishSave = resolve; }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      saveNote, compressNote,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    act(() => typeInNote(' edited'));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
+    expect(screen.getByRole('status')).toHaveTextContent('Saving “Plan”…');
+    expect(noteEditor().isEditable).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await act(async () => finishSave());
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(compressNote).not.toHaveBeenCalled();
+    expect(noteEditor().isEditable).toBe(true);
+    expect(saveNote.mock.calls[0][1]).toEqual(noteEditor().getJSON());
+  });
+
+  it('does not compress after a failed save and saves again on the next attempt', async () => {
+    const compressNote = vi.fn(async () => undefined);
+    const saveNote = vi.fn()
+      .mockRejectedValueOnce(new ChaError('internal_error', 'The note could not be saved.'))
+      .mockResolvedValue(undefined);
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      saveNote,
+      compressNote,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    act(() => typeInNote(' edited'));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert'))
+      .toHaveTextContent('The note could not be saved.'));
+    expect(compressNote).not.toHaveBeenCalled();
+    expect(noteEditor().isEditable).toBe(true);
+    expect(noteEditor().getText()).toContain('edited');
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    await waitFor(() => expect(compressNote).toHaveBeenCalledOnce());
+    expect(saveNote).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not delay a window close while the compression request runs', async () => {
+    const post = vi.fn();
+    window.__CHA_NATIVE_CONNECTION_ID__ = 'view-1';
+    window.__CHA_NATIVE_POST__ = post;
+    try {
+      const compressNote = vi.fn((_id: number, _signal: AbortSignal) => new Promise<void>(() => undefined));
+      render(<App client={fixtureClient({
+        listNoteItems: async () => [plan],
+        getNote: async (id) => ({ id, document: noteDocument('Original') }),
+        compressNote,
+      })} />);
+      await openNotes();
+      fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+      await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+      fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+      await waitFor(() => expect(compressNote).toHaveBeenCalledOnce());
+      act(() => window.__CHA_NATIVE_PREPARE_CLOSE__?.(7));
+      await waitFor(() => expect(post.mock.calls.map(([message]) => JSON.parse(message as string)))
+        .toContainEqual({ native_action: 'close_reply', connection_id: 'view-1', attempt_id: 7, result: 'ready' }));
+    } finally {
+      delete window.__CHA_NATIVE_POST__;
+      delete window.__CHA_NATIVE_CONNECTION_ID__;
+    }
+  });
+
+  it('keeps editing frozen and delays refresh until cancellation is confirmed', async () => {
+    let fail!: (error: unknown) => void;
+    const compressNote = vi.fn((_id: number, _signal: AbortSignal) => new Promise<void>((_resolve, reject) => { fail = reject; }));
+    const listNoteItems = vi.fn(async () => [{ ...plan, has_compressed: true }]);
+    render(<App client={fixtureClient({
+      listNoteItems,
+      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      compressNote,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    // The open note has nothing to save, so Saving never shows.
+    expect(screen.getByRole('status')).toHaveTextContent('Compressing “Plan”…');
+    expect(noteEditor().isEditable).toBe(false);
+    await waitFor(() => expect(compressNote).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(compressNote.mock.calls[0][1].aborted).toBe(true);
+    expect(listNoteItems).toHaveBeenCalledTimes(1);
+    expect(noteEditor().isEditable).toBe(false);
+    await act(async () => fail(new ChaError('operation_cancelled', 'Cancelled.')));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(listNoteItems).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(noteEditor().isEditable).toBe(true);
+    expect(screen.getByRole('img', { name: 'Compressed version saved' })).toBeInTheDocument();
+  });
+
   it.each([0, 1, 3])('uses an available page title in the tree and Send label with %s existing names', async (count) => {
     const original = { ...plan, name: 'New note 1' };
     const siblings = Array.from({ length: count }, (_, index) => ({
@@ -145,7 +256,7 @@ describe('Notes in the application', () => {
   });
 
   it.each(['immediate', 'delayed'])('focuses the new note editor with %s loading', async (loading) => {
-    const created: NoteItem = { id: 9, parent_id: null, kind: 'note', name: 'New note' };
+    const created: NoteItem = { id: 9, has_compressed: false, parent_id: null, kind: 'note', name: 'New note' };
     let items = [plan];
     let finishOpen!: () => void;
     const newDocument = { type: 'doc', content: [{ type: 'paragraph' }] };
@@ -198,7 +309,7 @@ describe('Notes in the application', () => {
   });
 
   it('saves before another note and before a Chat session', async () => {
-    const essay: NoteItem = { id: 5, parent_id: null, kind: 'note', name: 'Essay' };
+    const essay: NoteItem = { id: 5, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
     const saveNote = vi.fn(async (_id: number, _document: Record<string, unknown>) => undefined);
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan, essay],
@@ -756,7 +867,7 @@ describe('Notes in the application', () => {
   });
 
   it('keeps an unrelated note editable and blocks navigation during deletion', async () => {
-    const essay: NoteItem = { id: 5, parent_id: null, kind: 'note', name: 'Essay' };
+    const essay: NoteItem = { id: 5, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
     let finishDelete: () => void = () => {};
     const getNote = vi.fn(async (id: number) => ({
       id,

@@ -19,8 +19,8 @@ import { fixtureClient } from '../test/fixtures';
 import { VoiceInputSession } from '../voiceInput';
 import { NotesScreen } from './NotesScreen';
 
-const plan: NoteItem = { id: 4, parent_id: null, kind: 'note', name: 'Plan' };
-const essay: NoteItem = { id: 5, parent_id: null, kind: 'note', name: 'Essay' };
+const plan: NoteItem = { id: 4, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
+const essay: NoteItem = { id: 5, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
 
 const voiceRuntime = {
   provider: 'openai' as const,
@@ -221,13 +221,13 @@ describe('Notes screen', () => {
     [[], 'Title', 'Title'],
     [[], 'New note', 'New note'],
   ] as const)('chooses an available title among siblings %j', async (names, title, expected) => {
-    const folder: NoteItem = { id: 3, parent_id: null, kind: 'folder', name: 'Folder' };
+    const folder: NoteItem = { id: 3, has_compressed: false, parent_id: null, kind: 'folder', name: 'Folder' };
     const original = { ...plan, parent_id: folder.id, name: 'New note' };
     const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...original, id, name }));
     render(<Harness
       items={[folder, original,
-        { id: 20, parent_id: null, kind: 'note', name: 'Title' },
-        ...names.map((name, index) => ({ id: 30 + index, parent_id: folder.id, kind: 'note' as const, name })),
+        { id: 20, has_compressed: false, parent_id: null, kind: 'note', name: 'Title' },
+        ...names.map((name, index) => ({ id: 30 + index, has_compressed: false, parent_id: folder.id, kind: 'note' as const, name })),
       ]}
       getNote={async (id) => ({ id, document: documentWith('') })}
       readNotePage={async () => ({ url: 'https://example.org/', title, markdown: 'Article' })}

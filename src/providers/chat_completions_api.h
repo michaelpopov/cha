@@ -74,6 +74,7 @@ private:
     bool done_{};
     bool received_reasoning_{};
     bool received_answer_{};
+    bool refused_{};
     GenerationTokenUsage usage_;
     nlohmann::json message_{{"role", "assistant"}};
 };

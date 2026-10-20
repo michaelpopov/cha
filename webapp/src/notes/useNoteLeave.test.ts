@@ -862,7 +862,7 @@ describe('deletion slot', () => {
       started = view.result.current.leaveNoteThen(async () => true);
     });
     await act(async () => { await Promise.resolve(); });
-    expect(view.result.current.beginDelete()).toBe(false);
+    expect(view.result.current.beginNoteAction()).toBe(false);
     const action = vi.fn(async () => true);
     await expect(view.result.current.leaveNoteThen(action)).resolves.toBe(false);
     expect(action).not.toHaveBeenCalled();
@@ -870,12 +870,12 @@ describe('deletion slot', () => {
       hang.resolve(true);
       await started;
     });
-    expect(view.result.current.beginDelete()).toBe(true);
-    expect(view.result.current.beginDelete()).toBe(false);
+    expect(view.result.current.beginNoteAction()).toBe(true);
+    expect(view.result.current.beginNoteAction()).toBe(false);
     const duringDelete = vi.fn(async () => true);
     await expect(view.result.current.leaveNoteThen(duringDelete)).resolves.toBe(false);
     expect(duringDelete).not.toHaveBeenCalled();
-    act(() => view.result.current.endDelete());
+    act(() => view.result.current.endNoteAction());
     expect(view.result.current.pendingKind).toBeNull();
   });
 
@@ -884,14 +884,14 @@ describe('deletion slot', () => {
     const save = openSave({ hasUnsaved: () => false, inFlightSerial: () => null });
     const view = renderHook(() => useNoteLeave(() => save));
     act(() => {
-      expect(view.result.current.beginDelete()).toBe(true);
+      expect(view.result.current.beginNoteAction()).toBe(true);
       view.result.current.prepareClose(30);
       view.result.current.prepareClose(31);
       view.result.current.closeAborted(30);
     });
     expect(closePosts()).toEqual([]);
-    expect(view.result.current.pendingKind).toBe('delete');
-    await act(async () => view.result.current.endDelete());
+    expect(view.result.current.pendingKind).toBe('action');
+    await act(async () => view.result.current.endNoteAction());
     expect(closePosts()).toEqual([{
       native_action: 'close_reply',
       connection_id: 'view-4',
@@ -905,10 +905,10 @@ describe('deletion slot', () => {
     const save = openSave({ hasUnsaved: () => true });
     const view = renderHook(() => useNoteLeave(() => save));
     act(() => {
-      view.result.current.beginDelete();
+      view.result.current.beginNoteAction();
       view.result.current.prepareClose(32);
       view.result.current.closeAborted(32);
-      view.result.current.endDelete();
+      view.result.current.endNoteAction();
     });
     expect(closePosts()).toEqual([]);
     expect(save.freeze).not.toHaveBeenCalled();

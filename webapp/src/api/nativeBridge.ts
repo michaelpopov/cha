@@ -239,7 +239,8 @@ export function createEnvelopeNativeBridge(options: {
         const abort = () => {
           const request = pending.get(id);
           if (!request) return;
-          pending.delete(id);
+          // Compression waits for the terminal reply before the next list read.
+          if (method !== 'notes.compress') pending.delete(id);
           if (invokeOptions?.cancelMethod) {
             const cancelId = nextId;
             nextId += 1;
@@ -251,7 +252,9 @@ export function createEnvelopeNativeBridge(options: {
               params: { request_id: id },
             });
           }
-          reject(new DOMException('The operation was aborted.', 'AbortError'));
+          if (method !== 'notes.compress') {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          }
         };
         invokeOptions?.signal?.addEventListener('abort', abort, { once: true });
         pending.set(id, {

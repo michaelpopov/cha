@@ -113,6 +113,37 @@ protected:
     std::unique_ptr<Database> database_;
 };
 
+TEST_F(NoteStorageTest, CompressionPreservesOriginalAndSurvivesEditsAndReopen) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Source");
+    EXPECT_FALSE(note.has_compressed);
+    const auto original = raw_content(*database_, note.id);
+    note_save_compressed(*database_, note.id, "First compressed text");
+    EXPECT_TRUE(note_list(*database_).front().has_compressed);
+    EXPECT_EQ(raw_content(*database_, note.id), original);
+    note_save(*database_, note.id, {{"type", "doc"}, {"changed", true}});
+    EXPECT_TRUE(note_rename(*database_, note.id, "Renamed").has_compressed);
+    note_save_compressed(*database_, note.id, "Replacement");
+    database_.reset();
+    database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+    auto stored = database_->prepare("SELECT compressed_text FROM note_items WHERE id = ?1", note.id);
+    ASSERT_TRUE(stored.step());
+    EXPECT_EQ(stored.text(0), "Replacement");
+    EXPECT_THROW(note_save_compressed(*database_, note.id, " \n\t"), NoteError);
+}
+
+TEST_F(NoteStorageTest, AddsCompressionColumnToExistingNotesOnce) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Old note");
+    database_->execute("ALTER TABLE note_items DROP COLUMN compressed_text");
+    for (int count = 0; count < 2; ++count) {
+        storage::SqliteTransaction transaction(*database_);
+        create_note_items_schema(*database_);
+        transaction.commit();
+    }
+    EXPECT_FALSE(note_list(*database_).front().has_compressed);
+    EXPECT_EQ(note_get(*database_, note.id).document, nlohmann::json::parse(empty_note_document));
+    note_save_compressed(*database_, note.id, "Compressed after upgrade");
+}
+
 TEST_F(NoteStorageTest, NewDatabaseKeepsSchema2IdentityAndNoteSchema) {
     EXPECT_EQ(
         database_->pragma_integer("user_version"),

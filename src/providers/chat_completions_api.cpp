@@ -19,6 +19,12 @@ namespace {
 
 using Json = nlohmann::json;
 
+bool has_refusal(const Json& message) {
+    const auto refusal = message.find("refusal");
+    return refusal != message.end() && refusal->is_string()
+        && !refusal->get_ref<const std::string&>().empty();
+}
+
 std::optional<std::uint64_t> token_count(
     const Json& usage,
     std::string_view field) {
@@ -164,10 +170,7 @@ std::string build_chat_completions_request_body(
         body["stream_options"] = Json{{"include_usage", true}};
     }
     if (!config.reasoning_effort.empty()) {
-        std::string_view host = config.host;
-        if (host.ends_with('.')) host.remove_suffix(1);
-        if (ascii_iequals(host, "api.mistral.ai")
-            && (config.model == "mistral-large" || config.model.starts_with("mistral-large-"))) {
+        if (!provider_supports_reasoning_effort(config, ProviderApi::chat_completions)) {
             log_warn("Ignoring reasoning_effort for non-reasoning Mistral model "
                 + config.model);
         } else {
@@ -255,10 +258,12 @@ StreamDecodeResult ChatCompletionsStreamDecoder::finish() {
             usage_,
         }, true};
     }
-    return {tool_call_result(message_, ProviderApi::chat_completions,
+    auto result = tool_call_result(message_, ProviderApi::chat_completions,
         received_answer_, usage_, collect_tool_calls_,
         "Streaming response completed without answer content", finish_reason_,
-        argument_limit_, maintenance_), false};
+        argument_limit_, maintenance_);
+    result.refused = refused_;
+    return {std::move(result), false};
 }
 
 void ChatCompletionsStreamDecoder::accumulate_delta(const Json& delta) {
@@ -331,9 +336,10 @@ bool ChatCompletionsStreamDecoder::handle_event_data(std::string_view data) {
             return true;
         }
         const Json::json_pointer reason_pointer("/choices/0/finish_reason");
-        if (collect_tool_calls_ && value.contains(reason_pointer) && value.at(reason_pointer).is_string())
+        if (value.contains(reason_pointer) && value.at(reason_pointer).is_string())
             finish_reason_ = value.at(reason_pointer).get<std::string>();
         if (!value.contains(delta_pointer) || !value.at(delta_pointer).is_object()) return true;
+        refused_ = refused_ || has_refusal(value.at(delta_pointer));
         if (collect_tool_calls_) accumulate_delta(value.at(delta_pointer));
     } catch (const Json::parse_error&) {
         if (protocol_error_.empty()) protocol_error_ = "Streaming event contained malformed JSON";
@@ -405,13 +411,15 @@ GenerationResult decode_chat_completions_response(
         return {GenerationOutcome::protocol_error, protocol_error};
     }
     const Json::json_pointer reason_pointer("/choices/0/finish_reason");
-    const std::string finish_reason = collect_tool_calls && value.contains(reason_pointer)
+    const std::string finish_reason = value.contains(reason_pointer)
             && value.at(reason_pointer).is_string()
         ? value.at(reason_pointer).get<std::string>() : std::string{};
-    return tool_call_result(value.at(message_pointer), ProviderApi::chat_completions,
+    auto result = tool_call_result(value.at(message_pointer), ProviderApi::chat_completions,
         received_answer, usage, collect_tool_calls,
         "Response completed without answer content", finish_reason,
         argument_limit, maintenance);
+    result.refused = has_refusal(value.at(message_pointer));
+    return result;
 }
 
 } // namespace cha

@@ -131,6 +131,8 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::notes_read_page, "notes.readPage"},
     {Method::notes_read_picture, "notes.readPicture"},
     {Method::notes_save, "notes.save"},
+    {Method::notes_compress, "notes.compress"},
+    {Method::notes_compress_cancel, "notes.compressCancel"},
     {Method::notes_rename, "notes.rename"},
     {Method::notes_delete, "notes.delete"},
 };

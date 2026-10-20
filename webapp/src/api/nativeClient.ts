@@ -153,11 +153,12 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
 
 function isNoteItem(value: unknown): value is NoteItem {
   return isRecord(value)
-    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name'])
+    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed'])
     && isNoteId(value.id)
     && isNoteParent(value.parent_id)
     && (value.kind === 'folder' || value.kind === 'note')
-    && typeof value.name === 'string';
+    && typeof value.name === 'string'
+    && typeof value.has_compressed === 'boolean';
 }
 
 function isNoteItemList(value: unknown): value is { items: NoteItem[] } {
@@ -827,6 +828,12 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     )),
     saveNote: async (id, document) => {
       await call('notes.save', { id, document }, isEmptyResult);
+    },
+    compressNote: async (id, signal) => {
+      const result = await bridge.invoke('notes.compress', { id }, {
+        signal, cancelMethod: 'notes.compressCancel',
+      });
+      if (!isEmptyResult(result)) throw new ChaProtocolError();
     },
     renameNoteItem: (id, name) => call('notes.rename', { id, name }, isNoteItem),
     deleteNoteItem: async (id) => {

@@ -444,8 +444,8 @@ describe('native CHA client', () => {
 });
 
 describe('notes native client', () => {
-  const folder = { id: 1, parent_id: null, kind: 'folder', name: 'Plan' };
-  const note = { id: 4, parent_id: 1, kind: 'note', name: 'Draft' };
+  const folder = { id: 1, has_compressed: false, parent_id: null, kind: 'folder', name: 'Plan' };
+  const note = { id: 4, has_compressed: false, parent_id: 1, kind: 'note', name: 'Draft' };
   const document = { type: 'doc', content: [{ type: 'paragraph' }] };
 
   function clientFor(handlers: Record<string, (params: unknown) => unknown>) {
@@ -498,8 +498,8 @@ describe('notes native client', () => {
     const write = vi.fn(() => ({ id: 12 }));
     const client = clientFor({ 'notes.importBook': write });
     expect(await client.importEpub(epubFile(), [
-      { id: 1, parent_id: null, kind: 'folder', name: 'Research' },
-      { id: 2, parent_id: 1, kind: 'folder', name: 'Book' },
+      { id: 1, has_compressed: false, parent_id: null, kind: 'folder', name: 'Research' },
+      { id: 2, has_compressed: false, parent_id: 1, kind: 'folder', name: 'Book' },
     ], 1)).toBe(12);
     expect(write).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ parent_id: 1, name: 'Book 1' }));
   });

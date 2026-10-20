@@ -247,6 +247,7 @@ TEST(ResponsesApi, DecodesTwoTextDeltasThenCompletion) {
         "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":9,\"cache_write_tokens\":7}}}}\n\n");
     const StreamDecodeResult result = decoder.finish();
     EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
+    EXPECT_FALSE(result.result.refused);
     EXPECT_FALSE(result.describe_response);
     EXPECT_EQ(output.answer(), "Hello world");
     EXPECT_EQ(output.deltas().size(), 2U);
@@ -288,7 +289,27 @@ TEST(ResponsesApi, EmitsRefusalDeltaAsAnswer) {
         "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n");
     const StreamDecodeResult result = decoder.finish();
     EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
+    EXPECT_TRUE(result.result.refused);
     EXPECT_EQ(output.answer(), "I cannot help");
+}
+
+TEST(ResponsesApi, ReportsRefusalWithPartialAnswerFromTerminalEvents) {
+    for (const auto* refusal : {
+        "data: {\"type\":\"response.refusal.done\",\"refusal\":\"No\"}\n\n"
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\","
+        "\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"refusal\",\"refusal\":\"No\"}]}]}}\n\n",
+    }) {
+        SCOPED_TRACE(refusal);
+        Output output;
+        ResponsesStreamDecoder decoder(output.sink());
+        decoder.consume("data: {\"type\":\"response.output_text.delta\",\"delta\":\"Partial answer\"}\n\n");
+        decoder.consume(refusal);
+        const auto result = decoder.finish();
+        EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
+        EXPECT_TRUE(result.result.refused);
+        EXPECT_EQ(output.answer(), "Partial answer");
+    }
 }
 
 TEST(ResponsesApi, ReportsInvalidAndFailedEvents) {
@@ -517,6 +538,7 @@ TEST(ResponsesApi, DecodesNonStreamingRefusalAsAnswer) {
     })";
     const GenerationResult result = decode_responses_response(body, output.sink());
     EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    EXPECT_TRUE(result.refused);
     EXPECT_EQ(output.answer(), "No");
 }
 

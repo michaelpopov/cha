@@ -12,6 +12,7 @@ import {
 } from 'react';
 
 import {
+  ChaError,
   publicErrorMessage,
   type Bootstrap,
   type ChaClient,
@@ -77,7 +78,7 @@ import {
 } from './PersonaScreens';
 import { SessionsScreen } from './SessionsScreen';
 import { NotesScreen } from './NotesScreen';
-import { NotesTree, type DeleteNoteItem, type NoteActions } from './NotesTree';
+import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions } from './NotesTree';
 import { Sidebar } from './Sidebar';
 import { TransliterationProvider } from './TransliterationMode';
 import { ApiKeyScreen, ApiKeysScreen, NewApiKeyScreen } from './ApiKeySettings';
@@ -732,8 +733,51 @@ export function App({
     return [...text].length;
   }, [client]);
 
+  const compressNote = useCallback<CompressNote>(async (sourceId, signal, ready) => {
+    if (!noteLeave.beginNoteAction()) {
+      throw new ChaError('invalid_argument', 'A notes action is already in progress.');
+    }
+    const epoch = notesEpochRef.current;
+    const noteId = activeNoteIdRef.current;
+    const save = sourceId === noteId ? noteSaveRef.current : null;
+    const sameNote = () => notesEpochRef.current === epoch && activeNoteIdRef.current === noteId;
+    let holdsSlot = true;
+    let canceledUncovered = false;
+    try {
+      if (save?.isOpen) {
+        canceledUncovered = save.freeze();
+        const admitted = save.inFlightSerial();
+        // With nothing to save, the dialog shows Compressing at once.
+        if (admitted !== null || save.hasUnsaved()) {
+          await save.waitInFlight();
+          if (signal.aborted || !sameNote()) return false;
+          // As when leaving a note, only a failed save that was in flight stops here;
+          // an older failure gets a new save attempt.
+          if (save.saveError?.serial === admitted || !await save.flushRemaining()) {
+            throw new ChaError('internal_error', save.saveError?.message ?? 'The note could not be saved.');
+          }
+        }
+      }
+      if (signal.aborted || notesEpochRef.current !== epoch) return false;
+      holdsSlot = false;
+      noteLeave.endNoteAction();
+      ready();
+      await client.compressNote(sourceId, signal);
+      return true;
+    } catch (failure) {
+      if (failure instanceof ChaError && failure.code === 'operation_cancelled') return false;
+      throw failure;
+    } finally {
+      if (save?.isOpen && sameNote()) {
+        save.unfreeze();
+        if (canceledUncovered && save.hasUnsaved() && !save.saveError) save.submitNow();
+      }
+      if (holdsSlot) noteLeave.endNoteAction();
+    }
+  }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
+
   const deleteNoteItem = useCallback<DeleteNoteItem>(async (sourceId, listing, refresh) => {
-    if (!noteLeave.beginDelete()) return 'busy';
+    if (!noteLeave.beginNoteAction()) return 'busy';
     const epoch = notesEpochRef.current;
     const noteId = activeNoteIdRef.current;
     const affected = noteInSubtree(listing, sourceId, noteId);
@@ -769,9 +813,9 @@ export function App({
       }
       throw error;
     } finally {
-      noteLeave.endDelete();
+      noteLeave.endNoteAction();
     }
-  }, [client, dispatch, noteLeave.beginDelete, noteLeave.endDelete]);
+  }, [client, dispatch, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
 
   useEffect(() => {
     if (!contextEvents) return;
@@ -1049,6 +1093,7 @@ export function App({
                 getNoteLength={getNoteLength}
                 onBeforeCreateNote={beforeCreateNote}
                 onDeleteItem={deleteNoteItem}
+                onCompressNote={compressNote}
                 onNoteItems={setNoteItems}
                 onOpenNote={requestOpenNote}
                 vaultName={state.bootstrap?.vault_name ?? ''}

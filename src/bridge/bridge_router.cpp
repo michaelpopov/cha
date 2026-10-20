@@ -84,6 +84,8 @@ bool deadline_exempt(Method method) noexcept {
     case Method::vault_export:
     case Method::vault_r2_download:
     case Method::notes_read_page:
+    case Method::notes_compress:
+    case Method::notes_compress_cancel:
         return true;
     default:
         return false;
@@ -1301,6 +1303,16 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = nlohmann::json::object();
                 break;
             }
+            case Method::notes_compress:
+                require_only_keys(params, {"id"});
+                start_background(connection_id, id, application.compress_note(
+                    connection_id, id, static_cast<std::int64_t>(require_safe_id(params, "id")), epoch));
+                return;
+            case Method::notes_compress_cancel:
+                require_only_keys(params, {"request_id"});
+                application.cancel_note_compression(
+                    connection_id, require_safe_id(params, "request_id"), epoch);
+                break;
             case Method::notes_read_page:
                 require_only_keys(params, {"url"});
                 start_background(connection_id, id, application.read_note_page(

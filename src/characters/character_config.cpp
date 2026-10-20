@@ -43,6 +43,17 @@ bool valid_openrouter_targets(const ModelBackendConfig& config) {
     return true;
 }
 
+bool provider_supports_reasoning_effort(const ModelBackendConfig& config, ProviderApi api) {
+    if (api == ProviderApi::responses) {
+        return !(is_direct_openai_host(config.host)
+            && (config.model == "gpt-4o" || config.model.starts_with("gpt-4o-")));
+    }
+    std::string_view host = config.host;
+    if (host.ends_with('.')) host.remove_suffix(1);
+    return !(ascii_iequals(host, "api.mistral.ai")
+        && (config.model == "mistral-large" || config.model.starts_with("mistral-large-")));
+}
+
 std::string_view to_string(Mode value) {
     switch (value) {
     case Mode::net: return "net";

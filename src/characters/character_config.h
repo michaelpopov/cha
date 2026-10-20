@@ -66,6 +66,7 @@ struct ModelBackendConfig {
 };
 
 bool valid_openrouter_targets(const ModelBackendConfig& config);
+bool provider_supports_reasoning_effort(const ModelBackendConfig& config, ProviderApi api);
 bool provider_supports_web_search(const ModelBackendConfig& config);
 // Value rules only; callers supply file/request context and validate references.
 std::optional<std::string_view> provider_config_error(

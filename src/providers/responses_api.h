@@ -58,6 +58,7 @@ private:
     bool done_{};
     bool completed_successfully_{};
     bool received_answer_{};
+    bool refused_{};
     bool describe_response_{true};
     GenerationTokenUsage usage_;
     std::map<int, nlohmann::json> output_items_;

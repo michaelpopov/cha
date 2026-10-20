@@ -43,6 +43,7 @@ struct NoteItem {
     std::optional<std::int64_t> parent_id;
     NoteItemKind kind{NoteItemKind::folder};
     std::string name;
+    bool has_compressed{};
 };
 
 struct NoteContent {
@@ -89,6 +90,8 @@ void note_save(
     storage::SqliteDatabase& database,
     std::int64_t id,
     const nlohmann::json& document);
+void note_save_compressed(
+    storage::SqliteDatabase& database, std::int64_t id, std::string_view text);
 [[nodiscard]] NoteItem note_rename(
     storage::SqliteDatabase& database,
     std::int64_t id,

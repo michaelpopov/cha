@@ -50,6 +50,33 @@ constexpr std::string_view two_part_stream =
     "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n"
     "data: [DONE]\n\n";
 
+TEST(ChatCompletionsApi, ReportsExplicitRefusalsWithoutChangingAnswerText) {
+    using Json = nlohmann::json;
+    for (const auto& [refusal, refused] : std::vector<std::pair<Json, bool>>{
+             {nullptr, false}, {"", false}, {"I cannot help", true}}) {
+        for (const bool stream : {false, true}) {
+            SCOPED_TRACE(refusal.dump() + (stream ? " streaming" : " non-streaming"));
+            Output output;
+            const Json message{{"content", "Partial answer"}, {"refusal", refusal}};
+            GenerationResult result;
+            if (stream) {
+                ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+                decoder.consume("data: " + Json{{"choices", Json::array({{{"delta", message}}})}}.dump()
+                    + "\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+                    "data: [DONE]\n\n");
+                result = decoder.finish().result;
+            } else {
+                result = decode_chat_completions_response(Json{{"choices", Json::array({{
+                    {"message", message}, {"finish_reason", "stop"},
+                }})}}.dump(), ReasoningFormat::automatic, output.sink());
+            }
+            EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+            EXPECT_EQ(result.refused, refused);
+            EXPECT_EQ(output.answer(), "Partial answer");
+        }
+    }
+}
+
 TEST(ChatCompletionsApi, OmitsUnsupportedReasoningForDirectMistralLarge) {
     GenerationRequest request;
     request.history = std::make_shared<const ModelHistory>();

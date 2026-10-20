@@ -9,7 +9,7 @@ export type LeaveNoteThen = <T>(
   options?: { previousUrl?: string },
 ) => Promise<T | false>;
 
-export type PendingOperationKind = 'leave' | 'delete' | null;
+export type PendingOperationKind = 'leave' | 'action' | null;
 
 type LeaveChoice = 'retry' | 'stay' | 'discard';
 type IntentKind = 'navigate' | 'close';
@@ -181,14 +181,14 @@ export function useNoteLeave(
     return false;
   }, [finish, stayIntent, waitForChoice]);
 
-  const beginDelete = useCallback(() => {
+  const beginNoteAction = useCallback(() => {
     if (intentRef.current || pendingKindRef.current !== null || runningAction.current) return false;
-    setSlot('delete');
+    setSlot('action');
     return true;
   }, [setSlot]);
 
-  const endDelete = useCallback(() => {
-    if (pendingKindRef.current !== 'delete') return;
+  const endNoteAction = useCallback(() => {
+    if (pendingKindRef.current !== 'action') return;
     setSlot(null);
     resumeDeferredClose();
   }, [resumeDeferredClose, setSlot]);
@@ -404,8 +404,8 @@ export function useNoteLeave(
 
   return {
     leaveNoteThen,
-    beginDelete,
-    endDelete,
+    beginNoteAction,
+    endNoteAction,
     retry,
     stay,
     discard,

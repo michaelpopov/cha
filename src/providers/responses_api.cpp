@@ -82,6 +82,20 @@ bool is_successful_completed_status(std::string_view status) {
     return status.empty() || status == "completed";
 }
 
+bool has_refusal(const Json& output) {
+    for (const auto& item : output) {
+        if (first_string_field(item, "type") != "message") continue;
+        const auto role = first_string_field(item, "role");
+        if (!role.empty() && role != "assistant") continue;
+        const auto content = item.find("content");
+        if (content == item.end() || !content->is_array()) continue;
+        for (const auto& part : *content) {
+            if (first_string_field(part, "type") == "refusal") return true;
+        }
+    }
+    return false;
+}
+
 // One extra byte keeps an oversized call detectable and unexecuted.
 void bound_function_call_text(Json& item, std::size_t argument_limit) {
     if (!item.is_object() || item.value("type", "") != "function_call") return;
@@ -136,8 +150,7 @@ std::string build_responses_request_body(
         body["instructions"] = std::move(instructions);
     }
     if (!config.reasoning_effort.empty()) {
-        if (is_direct_openai_host(config.host)
-            && (config.model == "gpt-4o" || config.model.starts_with("gpt-4o-"))) {
+        if (!provider_supports_reasoning_effort(config, ProviderApi::responses)) {
             log_warn("Ignoring reasoning_effort for non-reasoning OpenAI model "
                 + config.model);
         } else {
@@ -242,10 +255,12 @@ StreamDecodeResult ResponsesStreamDecoder::finish() {
             usage_,
         }, true};
     }
-    return {tool_call_result(output_, ProviderApi::responses,
+    auto result = tool_call_result(output_, ProviderApi::responses,
         received_answer_, usage_, collect_tool_calls_,
         "Streaming response completed without answer content", {},
-        argument_limit_, maintenance_), false};
+        argument_limit_, maintenance_);
+    result.refused = refused_;
+    return {std::move(result), false};
 }
 
 bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
@@ -269,6 +284,8 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
         return true;
     }
     const std::string type = type_iterator->get<std::string>();
+
+    if (type == "response.refusal.delta" || type == "response.refusal.done") refused_ = true;
 
     if (type == "response.output_text.delta" || type == "response.refusal.delta") {
         const auto delta = value.find("delta");
@@ -327,6 +344,9 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
         if (response != value.end() && response->is_object()) {
             usage_ = responses_token_usage(*response);
             const auto output = response->find("output");
+            if (output != response->end() && output->is_array()) {
+                refused_ = refused_ || has_refusal(*output);
+            }
             if (collect_tool_calls_ && output != response->end() && output->is_array()) {
                 output_ = *output;
                 for (auto& item : output_) bound_function_call_text(item, argument_limit_);
@@ -587,9 +607,11 @@ GenerationResult decode_responses_response(
         }
     }
 
-    return tool_call_result(*output, ProviderApi::responses, received_answer, usage,
+    auto result = tool_call_result(*output, ProviderApi::responses, received_answer, usage,
         collect_tool_calls, "Response completed without answer content", {},
         argument_limit, maintenance);
+    result.refused = has_refusal(*output);
+    return result;
 }
 
 } // namespace cha

@@ -88,6 +88,7 @@ NoteItem read_item(storage::SqliteStatement& statement) {
     else throw std::runtime_error(
         "Note item " + std::to_string(item.id) + " has an invalid kind");
     item.name = statement.text(3);
+    item.has_compressed = statement.integer(4) != 0;
     if (item.id <= 0 || item.id > note_id_limit) {
         throw std::runtime_error(
             "Note item " + std::to_string(item.id) + " has an invalid id");
@@ -123,7 +124,8 @@ std::optional<NoteItem> find_item(
     storage::SqliteDatabase& database,
     std::int64_t id) {
     storage::SqliteStatement statement = database.prepare(
-        "SELECT id, parent_id, kind, name FROM note_items WHERE id = ?1");
+        "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL "
+        "FROM note_items WHERE id = ?1");
     statement.bind(1, id);
     if (!statement.step()) return std::nullopt;
     return read_item(statement);
@@ -293,6 +295,7 @@ void to_json(nlohmann::json& json, const NoteItem& item) {
             : nlohmann::json(nullptr)},
         {"kind", kind_name(item.kind)},
         {"name", item.name},
+        {"has_compressed", item.has_compressed},
     };
 }
 
@@ -316,6 +319,7 @@ CREATE TABLE IF NOT EXISTS note_items (
     kind TEXT NOT NULL CHECK (kind IN ('folder', 'note')),
     name TEXT NOT NULL COLLATE BINARY,
     content_json TEXT,
+    compressed_text TEXT,
     CHECK (
         (kind = 'folder' AND content_json IS NULL)
         OR (kind = 'note' AND content_json IS NOT NULL)
@@ -335,13 +339,24 @@ CREATE TABLE IF NOT EXISTS session_notes (
     PRIMARY KEY (session_key, note_id)
 ) STRICT;
 )sql");
+    bool has_compressed_column = false;
+    {
+        auto columns = database.prepare("PRAGMA table_info(note_items)");
+        while (columns.step()) {
+            if (columns.text(1) == "compressed_text") has_compressed_column = true;
+        }
+    }
+    if (!has_compressed_column) {
+        database.execute("ALTER TABLE note_items ADD COLUMN compressed_text TEXT");
+    }
 }
 
 std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {
     try {
         storage::SqliteTransaction transaction(database);
         storage::SqliteStatement statement = database.prepare(
-            "SELECT id, parent_id, kind, name FROM note_items ORDER BY id");
+            "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL "
+            "FROM note_items ORDER BY id");
         std::vector<NoteItem> items;
         while (statement.step()) items.push_back(read_item(statement));
         transaction.commit();
@@ -474,6 +489,25 @@ void note_save(
             if (!existing.step()) fail(NoteFailure::not_found, missing_note_message);
             fail(NoteFailure::invalid, not_note_message);
         }
+        transaction.commit();
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, NoteFailure::saving, saving_message);
+    }
+}
+
+void note_save_compressed(
+    storage::SqliteDatabase& database, std::int64_t id, std::string_view text) {
+    if (text.find_first_not_of(" \t\r\n") == std::string_view::npos) {
+        fail(NoteFailure::invalid, "The provider returned no compressed text.");
+    }
+    try {
+        storage::SqliteTransaction transaction(database);
+        auto update = database.prepare(
+            "UPDATE note_items SET compressed_text = ?1 WHERE id = ?2 AND kind = 'note'");
+        update.bind(1, text);
+        update.bind(2, id);
+        update.run();
+        if (database.changes() != 1) fail(NoteFailure::not_found, missing_note_message);
         transaction.commit();
     } catch (const std::runtime_error& error) {
         throw sql_failure(error, NoteFailure::saving, saving_message);

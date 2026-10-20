@@ -387,6 +387,7 @@ export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}):
     saveNote: unavailable('notes.save'),
     renameNoteItem: unavailable('notes.rename'),
     deleteNoteItem: unavailable('notes.delete'),
+    compressNote: unavailable('notes.compress'),
     ...overrides,
   };
   return client;

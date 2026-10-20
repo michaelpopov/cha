@@ -5,6 +5,10 @@
 #include "util/base64.h"
 #include "util/logging.h"
 
+namespace cha {
+std::string_view embedded_compression_prompt();
+}
+
 namespace cha::app {
 namespace {
 
@@ -25,6 +29,122 @@ ErrorCode note_error_code(NoteFailure failure) {
 }
 
 } // namespace
+
+std::shared_ptr<OperationReply> Application::compress_note(
+    std::string_view connection_id, std::uint64_t request_id,
+    std::int64_t id, std::uint64_t epoch) {
+    auto reply = std::make_shared<OperationReply>();
+    NoteText note;
+    SharedCharacterDefinition definition;
+    std::shared_ptr<PendingMediaRegistry::PendingMedia> pending;
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+        const auto workspace = impl_->store->snapshot();
+        const auto* provider = workspace->find_provider(workspace->notes().compression_provider_id);
+        if (!provider) {
+            throw ApplicationError(ErrorCode::invalid_argument,
+                "Select a compression provider in Settings → Notes.");
+        }
+        if (!provider_supports_reasoning_effort(provider->config, provider->config.api)) {
+            throw ApplicationError(ErrorCode::invalid_argument,
+                "This compression provider's model does not support xhigh reasoning effort.");
+        }
+        try { note = impl_->store->get_note_text(id); }
+        catch (const NoteError& error) { rethrow_note(error); }
+        if (note.text.find_first_not_of(" \t\r\n") == std::string::npos) {
+            throw ApplicationError(ErrorCode::invalid_argument, "This note has no text to compress.");
+        }
+        auto config = provider->config;
+        config.reasoning_effort = "xhigh";
+        config.timeout_s = 0;
+        config.web_search = WebSearchMode::off;
+        definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
+            .character = {"note-compression", "Note compression"},
+            .provider = {provider->id, std::move(config)},
+            .system_prompt = std::string(embedded_compression_prompt()),
+        });
+        pending = impl_->pending_media.remember(std::string(connection_id), request_id);
+    }
+    try {
+        if (impl_->background_jobs.launch(
+                [owner = impl_.get(), reply, pending, definition = std::move(definition),
+                 note = std::move(note), epoch](std::atomic_bool& cancel) {
+                    PendingMediaRegistry::Cleanup cleanup{owner->pending_media, pending};
+                    try {
+                        GenerationRequest request{
+                            .history = std::make_shared<const ModelHistory>(),
+                            .run = {
+                                .target = definition->character,
+                                .author = {"", "User"},
+                                .prompt_text = note.text,
+                            },
+                            .include_tool_instructions = false,
+                        };
+                        std::unique_ptr<ProviderClient> client;
+                        try {
+                            client = std::make_unique<ProviderClient>(
+                                definition, owner->openai_auth.get(), owner->api_keys.get());
+                        } catch (const std::exception& error) {
+                            // Setup errors, such as a missing API key, are settings the user can fix.
+                            throw ApplicationError(ErrorCode::invalid_argument, error.what());
+                        }
+                        std::string answer;
+                        const auto result = client->perform(client->prepare(request),
+                            [&answer](GenerationDelta delta) {
+                                if (delta.kind == GenerationDeltaKind::answer) answer += delta.text;
+                            }, *pending->cancelled);
+                        {
+                            // Cancel takes this lock too: either it prevents the save or the save wins.
+                            const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                            if (pending->cancelled->load() || cancel.load()
+                                || result.outcome == GenerationOutcome::cancelled) {
+                                throw ApplicationError(ErrorCode::operation_cancelled,
+                                    "The operation was cancelled.");
+                            }
+                            owner->require_admitted(epoch);
+                            if (result.refused) {
+                                throw ApplicationError(ErrorCode::internal_error,
+                                    "The provider refused to compress this note.");
+                            }
+                            if (result.outcome != GenerationOutcome::completed) {
+                                throw ApplicationError(ErrorCode::internal_error, result.message.empty()
+                                    ? "The compression provider returned an error." : result.message);
+                            }
+                            if (result.finish_reason == "length" || result.finish_reason == "content_filter") {
+                                throw ApplicationError(ErrorCode::internal_error,
+                                    "The provider returned incomplete compressed text.");
+                            }
+                            owner->store->save_compressed_note(note.id, answer);
+                        }
+                        // A later Cancel must not turn a committed save into a cancellation reply.
+                        reply->complete(nlohmann::json::object());
+                    } catch (const NoteError& error) {
+                        reply->fail(note_error_code(error.failure), error.what());
+                    } catch (const ApplicationError& error) {
+                        reply->fail(error.code, error.what());
+                    } catch (const std::exception& error) {
+                        log_warn("Note compression failed: " + std::string(error.what()));
+                        reply->fail(ErrorCode::internal_error, "Try again.");
+                    } catch (...) {
+                        reply->fail(ErrorCode::internal_error, "Try again.");
+                    }
+                })) return reply;
+    } catch (...) {
+        impl_->pending_media.forget(pending);
+        throw;
+    }
+    impl_->pending_media.forget(pending);
+    reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
+    return reply;
+}
+
+void Application::cancel_note_compression(
+    std::string_view connection_id, std::uint64_t request_id, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    impl_->pending_media.cancel(connection_id, request_id);
+}
 
 std::vector<NoteItem> Application::list_note_items(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);

@@ -129,6 +129,7 @@ export interface NotesClient {
   ) => Promise<NoteItem>;
   getNote: (id: number) => Promise<NoteContent>;
   saveNote: (id: number, document: Record<string, unknown>) => Promise<void>;
+  compressNote: (id: number, signal: AbortSignal) => Promise<void>;
   renameNoteItem: (id: number, name: string) => Promise<NoteItem>;
   deleteNoteItem: (id: number) => Promise<void>;
 }

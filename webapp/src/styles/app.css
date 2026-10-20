@@ -2228,6 +2228,46 @@ select.cha-form-control {
   opacity: 0.45;
 }
 
+.cha-notes-compressed {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.cha-compress-dialog {
+  max-width: min(28rem, calc(100vw - 2rem));
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.cha-compress-status {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.cha-compress-spinner {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: cha-compress-spin 1s linear infinite;
+}
+
+@keyframes cha-compress-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cha-compress-spinner {
+    animation: none;
+  }
+}
+
 .cha-notes-toolbar {
   position: relative;
   display: flex;

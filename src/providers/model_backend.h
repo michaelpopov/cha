@@ -48,6 +48,10 @@ struct GenerationResult {
     std::vector<ToolCall> tool_calls;
     // Protocol-specific assistant message/output items needed for continuation.
     std::string continuation;
+    // Chat Completions terminal status; auxiliary callers can reject partial answers.
+    std::string finish_reason;
+    // Explicit provider refusal; answer deltas remain available for chat display.
+    bool refused{};
 };
 
 // How one streaming response ended. Failures the stream itself does not explain

@@ -312,7 +312,7 @@ describe('EPUB import', () => {
 
   it('cleans Unicode names, uses fallbacks and avoids existing root names', () => {
     const result = prepareEpubImport(archive(book('<h1> </h1><h2>' + '😀'.repeat(220) + '</h2>', '<dc:title> </dc:title><dc:title> Book\n Title </dc:title>')), 'file.epub', [
-      { id: 1, parent_id: null, kind: 'folder', name: 'Book Title' },
+      { id: 1, has_compressed: false, parent_id: null, kind: 'folder', name: 'Book Title' },
     ]);
     expect(result.name).toBe('Book Title 1');
     expect(Array.from(result.notes[0].name)).toHaveLength(195);
@@ -324,10 +324,10 @@ describe('EPUB import', () => {
   it('checks book names only in the selected destination', () => {
     const bytes = archive(book('<p>Text</p>', '<dc:title>Book</dc:title>'));
     const items: NoteItem[] = [
-      { id: 1, parent_id: null, kind: 'folder', name: 'Book' },
-      { id: 2, parent_id: null, kind: 'folder', name: 'Research' },
-      { id: 3, parent_id: 2, kind: 'folder', name: 'Book' },
-      { id: 4, parent_id: null, kind: 'folder', name: 'Other' },
+      { id: 1, has_compressed: false, parent_id: null, kind: 'folder', name: 'Book' },
+      { id: 2, has_compressed: false, parent_id: null, kind: 'folder', name: 'Research' },
+      { id: 3, has_compressed: false, parent_id: 2, kind: 'folder', name: 'Book' },
+      { id: 4, has_compressed: false, parent_id: null, kind: 'folder', name: 'Other' },
     ];
     expect(prepareEpubImport(bytes, 'file.epub', items, 2)).toMatchObject({ parent_id: 2, name: 'Book 1' });
     expect(prepareEpubImport(bytes, 'file.epub', items, 4)).toMatchObject({ parent_id: 4, name: 'Book' });

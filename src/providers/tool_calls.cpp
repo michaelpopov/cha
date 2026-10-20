@@ -277,6 +277,7 @@ GenerationResult tool_call_result(const nlohmann::json& continuation,
     std::string_view no_answer_message, std::string_view finish_reason,
     std::size_t argument_limit, bool maintenance) {
     GenerationResult result{GenerationOutcome::completed, {}, usage};
+    result.finish_reason = finish_reason;
     if (!collect_tool_calls) {
         if (received_answer) return result;
         return {GenerationOutcome::protocol_error, std::string(no_answer_message), usage};

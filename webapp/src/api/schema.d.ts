@@ -718,6 +718,7 @@ export interface components {
             id: components["schemas"]["NoteId"];
             parent_id: number | null;
             kind: components["schemas"]["NoteItemKind"];
+            has_compressed: boolean;
             name: string;
         };
         NoteItemList: {

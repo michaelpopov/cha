@@ -10,10 +10,10 @@ import {
 } from '../api/client';
 import { NotesTree, type DeleteNoteItem } from './NotesTree';
 
-const study: NoteItem = { id: 1, parent_id: null, kind: 'folder', name: 'Study' };
-const aardvark: NoteItem = { id: 2, parent_id: null, kind: 'note', name: 'Aardvark' };
-const philosophy: NoteItem = { id: 3, parent_id: 1, kind: 'folder', name: 'Philosophy' };
-const plan: NoteItem = { id: 4, parent_id: 3, kind: 'note', name: 'Plan' };
+const study: NoteItem = { id: 1, has_compressed: false, parent_id: null, kind: 'folder', name: 'Study' };
+const aardvark: NoteItem = { id: 2, has_compressed: false, parent_id: null, kind: 'note', name: 'Aardvark' };
+const philosophy: NoteItem = { id: 3, has_compressed: false, parent_id: 1, kind: 'folder', name: 'Philosophy' };
+const plan: NoteItem = { id: 4, has_compressed: false, parent_id: 3, kind: 'note', name: 'Plan' };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -36,6 +36,7 @@ function client(overrides: Partial<NotesClient> = {}): NotesClient {
     saveNote: async () => { throw new Error('notes.save'); },
     renameNoteItem: async () => { throw new Error('notes.rename'); },
     deleteNoteItem: async () => { throw new Error('notes.delete'); },
+    compressNote: async () => { throw new Error('notes.compress'); },
     ...overrides,
   };
 }
@@ -81,6 +82,7 @@ function renderTree({
         getNoteLength={getNoteLength}
         onBeforeCreateNote={onBeforeCreateNote}
         onDeleteItem={deleteItem}
+        onCompressNote={async (id, signal, ready) => { ready(); await notesClient.compressNote(id, signal); return true; }}
         onNoteItems={onNoteItems}
         onOpenNote={(id) => { setActive(id); onOpenNote(id); }}
         vaultName="Personal"
@@ -98,6 +100,70 @@ async function chooseAction(name: string, action: string) {
 }
 
 describe('Notes tree', () => {
+  it('compresses again, waits for the result, and keeps the saved dot through rename', async () => {
+    const operation = deferred<void>();
+    let current = { ...aardvark, has_compressed: true };
+    const compressNote = vi.fn((_id: number, _signal: AbortSignal) => operation.promise);
+    const listNoteItems = vi.fn(async () => [current]);
+    renderTree({ notes: client({
+      listNoteItems, compressNote,
+      renameNoteItem: async (_id, name) => { current = { ...current, name }; return current; },
+    }) });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    expect(screen.getByRole('img', { name: 'Compressed version saved' })).toBeInTheDocument();
+    await chooseAction('Aardvark', 'Compress');
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByRole('status')).toHaveTextContent('Compressing “Aardvark”…');
+    expect(fireEvent.keyDown(dialog, { key: 'Escape' })).toBe(false);
+    expect(fireEvent.keyDown(dialog, { key: 'Escape' })).toBe(false);
+    fireEvent(dialog, new Event('cancel', { cancelable: true }));
+    expect(dialog).toBeInTheDocument();
+    const cancelSignal = compressNote.mock.calls[0]?.[1] as AbortSignal;
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(cancelSignal.aborted).toBe(true);
+    expect(listNoteItems).toHaveBeenCalledTimes(1);
+    expect(dialog).toBeInTheDocument();
+    await act(async () => operation.resolve());
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('treeitem', { name: 'Aardvark' })).toHaveFocus();
+    await chooseAction('Aardvark', 'Rename');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Renamed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    expect(await screen.findByRole('treeitem', { name: 'Renamed' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Compressed version saved' })).toBeInTheDocument();
+  });
+
+  it('reports a saved compression accurately when the list cannot refresh', async () => {
+    renderTree({ notes: client({
+      listNoteItems: vi.fn().mockResolvedValueOnce([aardvark]).mockRejectedValueOnce(new Error('Offline')),
+      compressNote: async () => undefined,
+    }) });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Compress');
+    const dialog = screen.getByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByRole('alert'))
+      .toHaveTextContent('Compression was saved for “Aardvark”, but the notes list could not be refreshed.'));
+    expect(dialog).not.toHaveTextContent('Could not compress');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('shows a provider failure on two lines, closes on Escape, and keeps the dot', async () => {
+    renderTree({ notes: client({
+      listNoteItems: async () => [{ ...aardvark, has_compressed: true }],
+      compressNote: async () => { throw new ChaError('internal_error', 'The provider request timed out.'); },
+    }) });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Compress');
+    expect((await screen.findByRole('alert')).textContent)
+      .toBe('Could not compress “Aardvark”.\nThe provider request timed out.');
+    const dialog = screen.getByRole('dialog');
+    expect(fireEvent.keyDown(dialog, { key: 'Escape' })).toBe(true);
+    fireEvent(dialog, new Event('cancel', { cancelable: true }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Compressed version saved' })).toBeInTheDocument();
+  });
+
   it('orders folders first and exposes levels, expansion, and keyboard activation', async () => {
     const onOpenNote = vi.fn();
     renderTree({ onOpenNote });
@@ -168,8 +234,8 @@ describe('Notes tree', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Importing EPUB…');
     expect(screen.getByRole('button', { name: 'Actions for Personal' })).toBeDisabled();
     items = [aardvark,
-      { id: 10, parent_id: null, kind: 'folder', name: 'Book' },
-      { id: 11, parent_id: 10, kind: 'note', name: '001. First' },
+      { id: 10, has_compressed: false, parent_id: null, kind: 'folder', name: 'Book' },
+      { id: 11, has_compressed: false, parent_id: 10, kind: 'note', name: '001. First' },
     ];
     await act(async () => pending.resolve(10));
     expect(await screen.findByRole('treeitem', { name: '001. First' })).toBeInTheDocument();
@@ -201,8 +267,8 @@ describe('Notes tree', () => {
     let items = [study, philosophy, aardvark];
     const importEpub = vi.fn(async () => {
       items = [...items,
-        { id: 10, parent_id: philosophy.id, kind: 'folder', name: 'Book' },
-        { id: 11, parent_id: 10, kind: 'note', name: '001. First' },
+        { id: 10, has_compressed: false, parent_id: philosophy.id, kind: 'folder', name: 'Book' },
+        { id: 11, has_compressed: false, parent_id: 10, kind: 'note', name: '001. First' },
       ];
       return 10;
     });
@@ -225,7 +291,7 @@ describe('Notes tree', () => {
   });
 
   it('retries only the listing after an imported book commits but the refresh fails', async () => {
-    const folder: NoteItem = { id: 10, parent_id: null, kind: 'folder', name: 'Book' };
+    const folder: NoteItem = { id: 10, has_compressed: false, parent_id: null, kind: 'folder', name: 'Book' };
     const importEpub = vi.fn(async () => 10);
     const listNoteItems = vi.fn().mockResolvedValueOnce([])
       .mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce([folder]);
@@ -268,11 +334,11 @@ describe('Notes tree', () => {
 
   it('suggests available names and creates notes in the chosen folder after confirmation', async () => {
     let current: NoteItem[] = [study, philosophy,
-      { id: 7, parent_id: 3, kind: 'folder', name: 'New note' },
-      { id: 8, parent_id: 3, kind: 'note', name: 'New note 2' }];
+      { id: 7, has_compressed: false, parent_id: 3, kind: 'folder', name: 'New note' },
+      { id: 8, has_compressed: false, parent_id: 3, kind: 'note', name: 'New note 2' }];
     let nextId = 10;
     const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => {
-      const item = { id: nextId++, parent_id, kind, name };
+      const item = { id: nextId++, has_compressed: false, parent_id, kind, name };
       current = [...current, item];
       return item;
     });
@@ -321,9 +387,9 @@ describe('Notes tree', () => {
   });
 
   it('creates numbered folders without leaving the open note', async () => {
-    let current: NoteItem[] = [study, { id: 5, parent_id: 1, kind: 'folder', name: 'New folder' }];
+    let current: NoteItem[] = [study, { id: 5, has_compressed: false, parent_id: 1, kind: 'folder', name: 'New folder' }];
     const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => {
-      const item = { id: 6, parent_id, kind, name };
+      const item = { id: 6, has_compressed: false, parent_id, kind, name };
       current = [...current, item];
       return item;
     });
@@ -341,7 +407,7 @@ describe('Notes tree', () => {
 
   it('disables menus while creating and captures the destination', async () => {
     const leave = deferred<boolean>();
-    const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => ({ id: 9, parent_id, kind, name }));
+    const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => ({ id: 9, has_compressed: false, parent_id, kind, name }));
     renderTree({ notes: client({ listNoteItems: async () => [study, aardvark], createNoteItem }), onBeforeCreateNote: () => leave.promise });
     await screen.findByRole('treeitem', { name: 'Study' });
     await chooseAction('Study', 'New note');
@@ -357,7 +423,7 @@ describe('Notes tree', () => {
     let failRefresh = false;
     const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => {
       failRefresh = true;
-      return { id: 9, parent_id, kind, name };
+      return { id: 9, has_compressed: false, parent_id, kind, name };
     });
     renderTree({ notes: client({
       listNoteItems: async () => {
@@ -379,7 +445,7 @@ describe('Notes tree', () => {
   it('keeps creation errors and the entered name in the dialog for retry', async () => {
     const createNoteItem = vi.fn()
       .mockRejectedValueOnce(new ChaError('invalid_argument', 'That name is already used.'))
-      .mockResolvedValueOnce({ id: 9, parent_id: 1, kind: 'folder', name: 'Archive' });
+      .mockResolvedValueOnce({ id: 9, has_compressed: false, parent_id: 1, kind: 'folder', name: 'Archive' });
     renderTree({ notes: client({ listNoteItems: async () => [study], createNoteItem }) });
     await screen.findByRole('treeitem', { name: 'Study' });
     await chooseAction('Study', 'New folder');
@@ -397,7 +463,7 @@ describe('Notes tree', () => {
   it.each(['note', 'folder'] as const)('creates a %s with the entered name', async (kind) => {
     let current: NoteItem[] = [study];
     const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => {
-      const item = { id: 9, parent_id, kind, name };
+      const item = { id: 9, has_compressed: false, parent_id, kind, name };
       current = [...current, item];
       return item;
     });
@@ -447,7 +513,7 @@ describe('Notes tree', () => {
     const noteButton = await screen.findByRole('button', { name: 'Actions for Aardvark' });
     fireEvent.click(noteButton);
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
-      'Rename', 'Delete', 'Copy Ref ID',
+      'Rename', 'Compress', 'Delete', 'Copy Ref ID',
     ]);
     expect(onOpenNote).not.toHaveBeenCalled();
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
@@ -512,7 +578,7 @@ describe('Notes tree', () => {
 
   it('renames the active note without reopening or leaving it', async () => {
     const renameNoteItem = vi.fn(async (id: number, name: string) => (
-      { id, parent_id: null, kind: 'note' as const, name }
+      { id, has_compressed: false, parent_id: null, kind: 'note' as const, name }
     ));
     let renamed = false;
     const onBeforeCreateNote = vi.fn(async () => true);
