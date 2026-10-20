@@ -446,6 +446,10 @@ void to_json(nlohmann::json& json, const SessionNamingSettings& value) {
     json = {{"provider", value.provider}, {"reasoning_effort", value.reasoning_effort}};
 }
 
+void to_json(nlohmann::json& json, const NotesSettings& value) {
+    json = {{"compression_provider", value.compression_provider}};
+}
+
 void to_json(nlohmann::json& json, const WebSearchSettings& value) {
     json = {{"provider", value.provider}, {"api_key", value.api_key},
         {"tool_enabled", value.tool_enabled}, {"read_provider", value.read_provider},

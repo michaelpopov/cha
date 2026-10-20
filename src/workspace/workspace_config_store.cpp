@@ -2480,6 +2480,13 @@ void WorkspaceConfigStore::apply_session_naming_update(const WorkspaceSessionNam
     });
 }
 
+void WorkspaceConfigStore::apply_notes_update(const WorkspaceNotes& settings) {
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_notes(settings);
+        return std::vector<std::string>{};
+    });
+}
+
 void WorkspaceConfigStore::apply_web_search_update(const WorkspaceWebSearch& settings) {
     (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
         editor.write_web_search(settings);

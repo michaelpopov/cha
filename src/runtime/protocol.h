@@ -436,6 +436,10 @@ struct SessionNamingSettings {
     std::string reasoning_effort;
 };
 
+struct NotesSettings {
+    std::string compression_provider;
+};
+
 struct WebSearchSettings {
     std::string provider{"brave"};
     std::string api_key;
@@ -593,6 +597,7 @@ void to_json(nlohmann::json& json, const StyleDetail& value);
 void to_json(nlohmann::json& json, const VoiceDetail& value);
 void to_json(nlohmann::json& json, const JevSettings& value);
 void to_json(nlohmann::json& json, const SessionNamingSettings& value);
+void to_json(nlohmann::json& json, const NotesSettings& value);
 void to_json(nlohmann::json& json, const WebSearchSettings& value);
 void to_json(nlohmann::json& json, const VoiceInputSettings& value);
 void to_json(nlohmann::json& json, const VoiceInputRuntime& value);

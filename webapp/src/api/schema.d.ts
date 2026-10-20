@@ -318,6 +318,9 @@ export interface components {
             /** @enum {string} */
             reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh";
         };
+        NotesSettings: {
+            compression_provider: string;
+        };
         WebSearchSettings: {
             /** @enum {string} */
             read_provider: "off" | "firecrawl";

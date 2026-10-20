@@ -1481,6 +1481,35 @@ WorkspaceSessionNaming load_session_naming_settings(
     }
 }
 
+WorkspaceNotes load_notes_settings(
+    const TextSource& source,
+    const Workspace& workspace,
+    const LoadWarnings& warnings) {
+    const auto path = workspace.root() / "system" / "notes" / "config.toml";
+    if (!source.is_regular_file(path)) return {};
+    try {
+        const auto table = read_toml(source, path, "notes config");
+        for (const auto& [key, value] : table) {
+            (void)value;
+            if (key.str() != "compression_provider")
+                warnings.emit(path, "Ignoring unused notes setting: " + std::string(key.str()));
+        }
+        WorkspaceNotes settings{
+            .compression_provider_id = table["compression_provider"].value_or(std::string{}),
+        };
+        if (!settings.compression_provider_id.empty()
+            && !workspace.find_provider(settings.compression_provider_id)) {
+            warnings.emit(path, "Notes compression provider '" + settings.compression_provider_id
+                + "' is unavailable; ignoring it");
+            settings.compression_provider_id.clear();
+        }
+        return settings;
+    } catch (const std::exception& error) {
+        warnings.emit(path, "Notes settings are ignored: " + std::string(error.what()));
+        return {};
+    }
+}
+
 bool valid_web_reader_url(std::string_view value) {
     if (value.empty()) return true;
     if (value.size() > 4096 || value.find_first_of(" \t\r\n?#") != std::string_view::npos
@@ -2083,6 +2112,7 @@ Workspace Workspace::load(
     workspace.jev_ = load_jev_settings(source, workspace.root_, load_warnings);
     workspace.session_naming_ =
         load_session_naming_settings(source, workspace, load_warnings);
+    workspace.notes_ = load_notes_settings(source, workspace, load_warnings);
     workspace.web_search_ =
         load_web_search_settings(source, workspace.root_, load_warnings);
     workspace.voice_input_ =

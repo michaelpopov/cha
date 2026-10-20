@@ -94,6 +94,7 @@ import { NewVoiceScreen, VoiceScreen, VoiceSettingsScreen, VoicesScreen } from '
 import { R2StorageScreen } from './R2StorageSettings';
 import { SessionSettingsScreen } from './SessionSettings';
 import { WebSearchSettingsScreen } from './WebSearchSettings';
+import { NotesSettingsScreen } from './NotesSettings';
 
 interface ScreenProps extends ChatActions {
   playbackPositions: Map<string, Map<number, number>>;
@@ -359,6 +360,7 @@ function Screen({
       <VoicesScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-jev': return <SessionSettingsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />;
+    case 'settings-notes': return <NotesSettingsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />;
     case 'settings-web-search': return <WebSearchSettingsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />;
     case 'settings-voice-input': return (
       <VoiceSettingsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />

@@ -59,6 +59,7 @@ export type XaiVoiceStartResult = components['schemas']['XaiVoiceStartResult'];
 export type XaiVoicePieces = components['schemas']['XaiVoicePieces'];
 export type JevSettings = components['schemas']['JevSettings'];
 export type SessionNamingSettings = components['schemas']['SessionNamingSettings'];
+export type NotesSettings = components['schemas']['NotesSettings'];
 export type WebSearchSettings = components['schemas']['WebSearchSettings'];
 export type VoiceOutputSettings = components['schemas']['VoiceOutputSettings'];
 export type VoiceOutputRuntime = components['schemas']['VoiceOutputRuntime'];
@@ -227,6 +228,8 @@ export interface ChaClient {
   disableJev(): Promise<void>;
   getSessionNamingSettings(): Promise<SessionNamingSettings>;
   saveSessionNamingSettings(settings: SessionNamingSettings): Promise<SessionNamingSettings>;
+  getNotesSettings(): Promise<NotesSettings>;
+  saveNotesSettings(settings: NotesSettings): Promise<NotesSettings>;
   getWebSearchSettings(): Promise<WebSearchSettings>;
   saveWebSearchSettings(settings: WebSearchSettings): Promise<WebSearchSettings>;
   getVoiceOutputSettings(): Promise<VoiceOutputSettings | null>;
@@ -560,6 +563,10 @@ export function isJevSettings(value: unknown): value is JevSettings {
 export function isSessionNamingSettings(value: unknown): value is SessionNamingSettings {
   return isRecord(value) && typeof value.provider === 'string'
     && isOneOf(value.reasoning_effort, ['none', 'low', 'medium', 'high', 'xhigh']);
+}
+
+export function isNotesSettings(value: unknown): value is NotesSettings {
+  return isRecord(value) && typeof value.compression_provider === 'string';
 }
 
 export function isWebSearchSettings(value: unknown): value is WebSearchSettings {

@@ -50,6 +50,7 @@ public:
     void delete_voice(std::string_view voice_id);
     void write_jev(const std::optional<WorkspaceJev>& settings);
     void write_session_naming(const WorkspaceSessionNaming& settings);
+    void write_notes(const WorkspaceNotes& settings);
     void write_web_search(const WorkspaceWebSearch& settings);
     void write_voice_input(const WorkspaceVoiceInput& settings);
     void write_voice_output(const WorkspaceVoiceOutput& settings);

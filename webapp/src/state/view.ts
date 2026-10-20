@@ -53,6 +53,7 @@ export type MainView =
   | 'settings-voices'
   | 'settings-voice-input'
   | 'settings-jev'
+  | 'settings-notes'
   | 'settings-web-search'
   | 'settings-new-voice'
   | 'settings-voice'
@@ -224,6 +225,7 @@ export type AppAction =
   | { type: 'show-settings-voices' }
   | { type: 'show-settings-voice-input' }
   | { type: 'show-settings-jev' }
+  | { type: 'show-settings-notes' }
   | { type: 'show-settings-web-search' }
   | { type: 'show-settings-new-voice' }
   | { type: 'inspect-voice'; voiceId: string; voiceName: string }
@@ -303,6 +305,7 @@ export type NavigationAction = Extract<AppAction, {
     | 'show-settings-voices'
     | 'show-settings-voice-input'
     | 'show-settings-jev'
+    | 'show-settings-notes'
     | 'show-settings-web-search'
     | 'show-settings-new-voice'
     | 'inspect-voice'
@@ -870,6 +873,8 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       };
     case 'show-settings-jev':
       return { ...state, mainView: 'settings-jev', ...idleSessionOperation() };
+    case 'show-settings-notes':
+      return { ...state, mainView: 'settings-notes', ...idleSessionOperation() };
     case 'show-settings-web-search':
       return { ...state, mainView: 'settings-web-search', ...idleSessionOperation() };
     case 'show-settings-voice-input':
@@ -1085,6 +1090,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-new-style': return 'New style';
     case 'settings-voices': return 'Voices';
     case 'settings-jev': return 'Session settings';
+    case 'settings-notes': return 'Notes settings';
     case 'settings-web-search': return 'Search API';
     case 'settings-voice-input': return 'Voice settings';
     case 'settings-new-voice': return 'New voice';

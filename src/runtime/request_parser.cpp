@@ -494,6 +494,16 @@ SessionNamingSettings parse_session_naming_settings(const nlohmann::json& json) 
         required_field<std::string>(json, "reasoning_effort")};
 }
 
+NotesSettings parse_notes_settings(const nlohmann::json& json) {
+    if (!json.is_object()) throw std::invalid_argument("Invalid notes settings");
+    for (const auto& [key, value] : json.items()) {
+        (void)value;
+        if (key != "compression_provider")
+            log_warn("Ignoring unused notes setting: " + key);
+    }
+    return {required_field<std::string>(json, "compression_provider")};
+}
+
 WebSearchSettings parse_web_search_settings(const nlohmann::json& json) {
     if (!json.is_object()) throw std::invalid_argument("Invalid web search settings");
     for (const auto& [key, value] : json.items()) {

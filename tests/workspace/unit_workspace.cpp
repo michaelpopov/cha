@@ -505,6 +505,15 @@ TEST(Workspace, MissingSessionNamingProviderFallsBackToAssistant) {
     EXPECT_EQ(workspace.session_naming().reasoning_effort, "high");
 }
 
+TEST(Workspace, MissingNotesCompressionProviderIsIgnored) {
+    test::TestWorkspace fixture;
+    const auto config = fixture.root() / "system" / "notes" / "config.toml";
+    std::filesystem::create_directories(config.parent_path());
+    std::ofstream(config) << "compression_provider = \"missing\"\n";
+    const auto workspace = Workspace::load(fixture.root());
+    EXPECT_TRUE(workspace.notes().compression_provider_id.empty());
+}
+
 TEST(Workspace, ObsoleteSearchSettingsDoNotPreventDeletingAQueryProvider) {
     test::TestWorkspace fixture;
     fixture.write_provider("query", "host = 'test'\nport = 1\nmode = 'test'\nmodel = 'fake'\n");

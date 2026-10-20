@@ -102,6 +102,10 @@ void disable_jev(WorkspaceConfigStore& store);
 [[nodiscard]] SessionNamingSettings save_session_naming_settings(
     WorkspaceConfigStore& store, const SessionNamingSettings& update);
 
+[[nodiscard]] NotesSettings get_notes_settings(const Workspace& workspace);
+[[nodiscard]] NotesSettings save_notes_settings(
+    WorkspaceConfigStore& store, const NotesSettings& update);
+
 [[nodiscard]] WebSearchSettings get_web_search_settings(const Workspace& workspace);
 [[nodiscard]] WebSearchSettings save_web_search_settings(
     WorkspaceConfigStore& store, const WebSearchSettings& update);

@@ -19,6 +19,22 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it('reads and saves notes settings through the native bridge', async () => {
+    const settings = { compression_provider: 'provider_7' };
+    const save = vi.fn(() => settings);
+    const client = createNativeChaClient(createFakeNativeBridge({
+      'notesSettings.get': () => settings,
+      'notesSettings.save': save,
+    }));
+    expect(await client.getNotesSettings()).toEqual(settings);
+    expect(await client.saveNotesSettings(settings)).toEqual(settings);
+    expect(save).toHaveBeenCalledWith(settings);
+    const invalid = createNativeChaClient(createFakeNativeBridge({
+      'notesSettings.get': () => ({ compression_provider: 42 }),
+    }));
+    await expect(invalid.getNotesSettings()).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it('loads the forum system prompt using saved server settings', async () => {
     const response = { system_prompt: '<instructions>\nFull prompt.\n</instructions>' };
     const read = vi.fn(() => response);

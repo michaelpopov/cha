@@ -35,9 +35,11 @@ import {
   isVoiceOutputSettings,
   isJevSettings,
   isSessionNamingSettings,
+  isNotesSettings,
   isWebSearchSettings,
   type JevSettings,
   type SessionNamingSettings,
+  type NotesSettings,
   type WebSearchSettings,
   type ApiKeyDetail,
   type AudioDownloadAcceptance,
@@ -611,6 +613,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     getSessionNamingSettings: () => call('sessionNaming.get', {}, isSessionNamingSettings),
     saveSessionNamingSettings: (settings: SessionNamingSettings) => call(
       'sessionNaming.save', settings, isSessionNamingSettings),
+    getNotesSettings: () => call('notesSettings.get', {}, isNotesSettings),
+    saveNotesSettings: (settings: NotesSettings) => call(
+      'notesSettings.save', settings, isNotesSettings),
     getWebSearchSettings: () => call('webSearch.get', {}, isWebSearchSettings),
     saveWebSearchSettings: (settings: WebSearchSettings) => call(
       'webSearch.save', settings, isWebSearchSettings),

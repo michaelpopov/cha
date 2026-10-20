@@ -1269,6 +1269,18 @@ SessionNamingSettings Application::save_session_naming_settings(
     return settings::save_session_naming_settings(*impl_->store, update);
 }
 
+NotesSettings Application::get_notes_settings(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_notes_settings(*impl_->store->snapshot());
+}
+
+NotesSettings Application::save_notes_settings(NotesSettings update, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::save_notes_settings(*impl_->store, update);
+}
+
 WebSearchSettings Application::get_web_search_settings(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);

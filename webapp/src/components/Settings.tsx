@@ -48,6 +48,8 @@ export function SettingsNavigation({ navigate }: { navigate: Dispatch<Navigation
         />
         <SettingsRow icon={<SettingsIcon />} label="Session settings"
           onClick={() => navigate({ type: 'show-settings-jev' })} />
+        <SettingsRow icon={<SettingsIcon />} label="Notes settings"
+          onClick={() => navigate({ type: 'show-settings-notes' })} />
         <SettingsRow icon={<SettingsIcon />} label="Search API"
           onClick={() => navigate({ type: 'show-settings-web-search' })} />
         <SettingsRow

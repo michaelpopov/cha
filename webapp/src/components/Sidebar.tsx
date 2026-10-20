@@ -96,6 +96,7 @@ const settingsViews: MainView[] = [
   'settings-voices',
   'settings-voice-input',
   'settings-jev',
+  'settings-notes',
   'settings-web-search',
   'settings-new-voice',
   'settings-voice',

@@ -500,6 +500,25 @@ TEST_F(BridgeRouterTest, SavesSessionNamingSettings) {
     EXPECT_EQ(call("sessionNaming.get")["result"], settings);
 }
 
+TEST_F(BridgeRouterTest, SavesNotesSettingsAndIgnoresUnusedFields) {
+    bootstrap_epoch();
+    const auto initial = call("notesSettings.get");
+    ASSERT_TRUE(initial["ok"]);
+    EXPECT_EQ(initial["result"], nlohmann::json({{"compression_provider", ""}}));
+    const nlohmann::json settings{{"compression_provider", "test"}};
+    auto obsolete = settings;
+    obsolete["unused"] = true;
+    ASSERT_TRUE(call("notesSettings.save", obsolete)["ok"]);
+    EXPECT_EQ(call("notesSettings.get")["result"], settings);
+    for (const auto& invalid : {
+            nlohmann::json{{"compression_provider", "missing"}},
+            nlohmann::json{{"compression_provider", 42}},
+            nlohmann::json::object()}) {
+        EXPECT_FALSE(call("notesSettings.save", invalid)["ok"]);
+        EXPECT_EQ(call("notesSettings.get")["result"], settings);
+    }
+}
+
 TEST_F(BridgeRouterTest, PageReadingSettingsRetainKeyAndAreIndependentOfSearch) {
     bootstrap_epoch();
     auto settings = call("webSearch.get")["result"];

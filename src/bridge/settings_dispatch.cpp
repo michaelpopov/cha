@@ -110,6 +110,13 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         result = application.save_session_naming_settings(
             parse_session_naming_settings(params), epoch);
         break;
+    case Method::notes_settings_get:
+        require_only_keys(params, {});
+        result = application.get_notes_settings(epoch);
+        break;
+    case Method::notes_settings_save:
+        result = application.save_notes_settings(parse_notes_settings(params), epoch);
+        break;
     case Method::web_search_get:
         require_only_keys(params, {});
         result = application.get_web_search_settings(epoch);

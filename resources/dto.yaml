@@ -706,6 +706,14 @@ components:
           type: string
           enum: [none, low, medium, high, xhigh]
 
+    NotesSettings:
+      type: object
+      additionalProperties: false
+      required: [compression_provider]
+      properties:
+        compression_provider:
+          type: string
+
     WebSearchSettings:
       type: object
       additionalProperties: false

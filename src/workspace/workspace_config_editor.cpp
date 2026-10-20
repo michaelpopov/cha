@@ -233,7 +233,8 @@ void WorkspaceConfigEditor::delete_provider(std::string_view provider_id) {
             throw std::invalid_argument("Provider is in use");
         }
     }
-    if (workspace_.session_naming_.provider_id == provider_id) {
+    if (workspace_.session_naming_.provider_id == provider_id
+        || workspace_.notes_.compression_provider_id == provider_id) {
         throw std::invalid_argument("Provider is in use");
     }
     remove_directory(path->second.parent_path());
@@ -440,6 +441,16 @@ void WorkspaceConfigEditor::write_session_naming(const WorkspaceSessionNaming& s
     table.insert("naming_provider", settings.provider_id);
     table.insert("naming_reasoning_effort", settings.reasoning_effort);
     write_toml(workspace_.root_ / "system" / "session" / "config.toml", table);
+}
+
+void WorkspaceConfigEditor::write_notes(const WorkspaceNotes& settings) {
+    if (!settings.compression_provider_id.empty()
+        && !workspace_.find_provider(settings.compression_provider_id)) {
+        throw std::invalid_argument("Select an existing provider for notes compression.");
+    }
+    toml::table table;
+    table.insert("compression_provider", settings.compression_provider_id);
+    write_toml(workspace_.root_ / "system" / "notes" / "config.toml", table);
 }
 
 void WorkspaceConfigEditor::write_web_search(const WorkspaceWebSearch& settings) {

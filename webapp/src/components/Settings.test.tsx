@@ -20,6 +20,7 @@ import { NewVoiceScreen, VoiceScreen, VoiceSettingsScreen, VoicesScreen } from '
 import { R2StorageScreen } from './R2StorageSettings';
 import { SettingsNavigation } from './Settings';
 import { SessionSettingsScreen } from './SessionSettings';
+import { NotesSettingsScreen } from './NotesSettings';
 import { WebSearchSettingsScreen } from './WebSearchSettings';
 
 afterEach(() => {
@@ -168,7 +169,7 @@ describe('Settings screens', () => {
 
     const destinations = screen.getAllByRole('button');
     expect(destinations.map((button) => button.textContent)).toEqual([
-      'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Session settings', 'Search API', 'Voices', 'API Keys',
+      'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Session settings', 'Notes settings', 'Search API', 'Voices', 'API Keys',
     ]);
     for (const [label, type] of [
       ['Personas', 'show-personas'],
@@ -178,6 +179,7 @@ describe('Settings screens', () => {
       ['Providers', 'show-settings-providers'],
       ['Styles', 'show-settings-styles'],
       ['Session settings', 'show-settings-jev'],
+      ['Notes settings', 'show-settings-notes'],
       ['Search API', 'show-settings-web-search'],
       ['Voices', 'show-settings-voices'],
       ['API Keys', 'show-settings-api-keys'],
@@ -2420,6 +2422,48 @@ describe('web search settings', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Search settings could not be saved.');
     expect(screen.getByLabelText('API provider')).toHaveValue('tavily');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  });
+});
+
+describe('notes settings', () => {
+  it('shows provider names and saves or clears the provider ID', async () => {
+    const user = userEvent.setup();
+    const saveNotesSettings = vi.fn(async (settings) => settings);
+    render(<NotesSettingsScreen client={fixtureClient({
+      saveNotesSettings,
+      listProviders: async () => [
+        { id: 'provider_7', display_name: 'Notes model', model: 'fake', host: 'localhost' },
+      ],
+    })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
+    const select = await screen.findByLabelText('Compression provider');
+    expect(select).toHaveValue('');
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toBeDisabled();
+    await user.selectOptions(select, 'Notes model');
+    await user.click(save);
+    expect(saveNotesSettings).toHaveBeenLastCalledWith({ compression_provider: 'provider_7' });
+    expect(save).toBeDisabled();
+    await user.selectOptions(select, '');
+    await user.click(save);
+    expect(saveNotesSettings).toHaveBeenLastCalledWith({ compression_provider: '' });
+  });
+
+  it('keeps the selected provider when saving fails', async () => {
+    const user = userEvent.setup();
+    render(<NotesSettingsScreen client={fixtureClient({
+      getNotesSettings: async () => ({ compression_provider: 'test' }),
+      listProviders: async () => [
+        { id: 'test', display_name: 'Test', model: 'fake', host: 'localhost' },
+      ],
+      saveNotesSettings: async () => { throw new ChaError('internal_error', 'Notes settings could not be saved.'); },
+    })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
+    const select = await screen.findByLabelText('Compression provider');
+    expect(select).toHaveValue('test');
+    await user.selectOptions(select, '');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Notes settings could not be saved.');
+    expect(select).toHaveValue('');
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
 });

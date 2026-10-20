@@ -311,6 +311,8 @@ export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}):
     saveJevSettings: async (settings) => settings,
     getSessionNamingSettings: async () => ({ provider: '', reasoning_effort: 'low' }),
     saveSessionNamingSettings: async (settings) => settings,
+    getNotesSettings: async () => ({ compression_provider: '' }),
+    saveNotesSettings: async (settings) => settings,
     disableJev: async () => {},
     getWebSearchSettings: async () => ({
       provider: 'brave', api_key: '', tool_enabled: false,

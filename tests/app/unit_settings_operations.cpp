@@ -165,6 +165,35 @@ TEST(ApplicationSettings, SavesSessionNamingProviderAndEffort) {
     EXPECT_EQ(reopened.reasoning_effort, "high");
 }
 
+TEST(ApplicationSettings, SavesNotesCompressionProviderInTheVault) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    EXPECT_TRUE(application->get_notes_settings(epoch).compression_provider.empty());
+
+    const auto provider = application->create_provider(
+        {.display_name = "Notes model", .copy_from = "test"}, epoch);
+    const auto saved = application->save_notes_settings({provider.id}, epoch);
+    EXPECT_EQ(saved.compression_provider, provider.id);
+    EXPECT_THROW((void)application->save_notes_settings({"missing"}, epoch), ApplicationError);
+    EXPECT_EQ(application->get_notes_settings(epoch).compression_provider, provider.id);
+    EXPECT_EQ(application->get_provider(provider.id, epoch).used_by,
+        (std::vector<std::string>{"Notes compression"}));
+    EXPECT_THROW(application->delete_provider(provider.id, epoch), ApplicationError);
+
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    const auto reopened_epoch = application->context_epoch();
+    EXPECT_EQ(application->get_notes_settings(reopened_epoch).compression_provider, provider.id);
+
+    EXPECT_TRUE(application->save_notes_settings({""}, reopened_epoch).compression_provider.empty());
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    EXPECT_TRUE(application->get_notes_settings(application->context_epoch()).compression_provider.empty());
+    EXPECT_NO_THROW(application->delete_provider(provider.id, application->context_epoch()));
+}
+
 TEST(ApplicationSettings, SavesCharacterWhenNewProviderCannotUseSearchOverride) {
     test::TestWorkspace workspace;
     workspace.write_provider("fireworks",

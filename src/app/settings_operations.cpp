@@ -46,6 +46,9 @@ std::vector<std::string> provider_uses(
     if (workspace.session_naming().provider_id == provider_id) {
         result.emplace_back("Session naming");
     }
+    if (workspace.notes().compression_provider_id == provider_id) {
+        result.emplace_back("Notes compression");
+    }
     return result;
 }
 
@@ -693,6 +696,17 @@ SessionNamingSettings save_session_naming_settings(
             fail(ErrorCode::invalid_argument, error.what());
         }
         return get_session_naming_settings(*store.snapshot());
+    });
+}
+
+NotesSettings get_notes_settings(const Workspace& workspace) {
+    return {workspace.notes().compression_provider_id};
+}
+
+NotesSettings save_notes_settings(WorkspaceConfigStore& store, const NotesSettings& update) {
+    return with_settings_edit([&] {
+        store.apply_notes_update({update.compression_provider});
+        return get_notes_settings(*store.snapshot());
     });
 }
 
