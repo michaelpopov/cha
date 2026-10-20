@@ -24,7 +24,7 @@ function insertText(created: Editor, text: string): void {
 }
 
 function setup(save: (document: Record<string, unknown>) => Promise<void>, contextKey: unknown = 'vault') {
-  const created = createNotesEditor();
+  const created = createNotesEditor({ readPicture: async () => new Uint8Array() });
   const element = created.options.element;
   if (element instanceof HTMLElement && !element.isConnected) document.body.appendChild(element);
   open.push(created);

@@ -204,9 +204,7 @@ TEST_F(BridgeRouterTest, NotePictureReadingUsesBinaryDownloadWithoutReaderConfig
     ASSERT_TRUE(reply["ok"]) << reply;
     EXPECT_EQ(reply["result"], (nlohmann::json{{"base64", "iVBORw0KGgoA"}}));
     EXPECT_FALSE(call("notes.readPicture", nlohmann::json::object())["ok"]);
-    const auto failed = call("notes.readPicture", {{"url", "file:///private/file"}});
-    EXPECT_TRUE(failed["ok"]);
-    EXPECT_EQ(failed["result"]["base64"], "");
+    EXPECT_FALSE(call("notes.readPicture", {{"url", "file:///private/file"}})["ok"]);
 }
 
 TEST_F(BridgeRouterTest, NotePageReadingReportsConfigurationAndFetchFailures) {

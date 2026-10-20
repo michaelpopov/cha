@@ -130,7 +130,7 @@ describe('EPUB import', () => {
     expect(text(doc)).toContain('Left\tRight');
     expect(json).toContain('"type":"orderedList","attrs":{"start":4,"type":"a"}');
     expect(json).toContain('  code\\nline');
-    const editor = createNotesEditor({ content: doc });
+    const editor = createNotesEditor({ content: doc, readPicture: async () => new Uint8Array() });
     try {
       expect(editor.isEditable).toBe(true);
       editor.commands.insertContent('Edited');

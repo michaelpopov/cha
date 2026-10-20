@@ -1,7 +1,7 @@
 import type { JSONContent } from '@tiptap/core';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import { redoDepth, undoDepth } from '@tiptap/pm/history';
-import { Fragment, Slice } from '@tiptap/pm/model';
+import { DOMParser as PmDOMParser, Fragment, Slice } from '@tiptap/pm/model';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
@@ -41,8 +41,8 @@ if (typeof ClipboardEvent === 'undefined') {
 
 const open: Editor[] = [];
 
-function editor(options?: NotesEditorOptions): Editor {
-  const created = createNotesEditor(options);
+function editor(options: Partial<NotesEditorOptions> = {}): Editor {
+  const created = createNotesEditor({ readPicture: async () => new Uint8Array(), ...options });
   const element = created.options.element;
   if (element instanceof HTMLElement && !element.isConnected) document.body.appendChild(element);
   open.push(created);
@@ -127,6 +127,8 @@ function dropSlice(
   transfer: { files?: { length: number }; types?: string[] },
 ): boolean {
   const event = { dataTransfer: transfer } as unknown as DragEvent;
+  // jsdom has no layout, so the drop point is the current selection.
+  vi.spyOn(created.view, 'posAtCoords').mockReturnValue({ pos: created.state.selection.from, inside: -1 });
   let handled = false;
   created.view.someProp('handleDrop', (fn) => {
     handled = !!fn(created.view, event, slice, false);
@@ -1076,7 +1078,7 @@ describe('find and replace', () => {
     expect(created.getText()).toBe('a a');
   });
 
-  it('rejects invalid images in a paste or a non-file drop', () => {
+  it('ignores invalid images in a paste or a non-file drop', async () => {
     const saves: string[] = [];
     const created = editor({
       content: '<p>keep</p>',
@@ -1089,6 +1091,7 @@ describe('find and replace', () => {
     const slice = imageSlice(created);
     expect(pasteSlice(created, slice)).toBe(true);
     expect(dropSlice(created, slice, { files: { length: 0 }, types: ['text/html'] })).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(created.getJSON()).toEqual(before);
     expect(created.state.selection.toJSON()).toEqual(selection);
     expect(undoDepth(created.state)).toBe(depth);
@@ -1259,32 +1262,17 @@ describe('pictures and clipboard', () => {
     expect(undoDepth(created.state)).toBe(0);
   });
 
-  it('inserts one valid image and undoes it', () => {
+  it('inserts one valid image and undoes it', async () => {
     const created = editor({ content: '<p>keep</p>' });
     const src = pngSrc();
     const depth = undoDepth(created.state);
     expect(created.view.pasteHTML(`<img src="${src}">`)).toBe(true);
-    expect(JSON.stringify(created.getJSON())).toContain(src);
+    await vi.waitFor(() => expect(JSON.stringify(created.getJSON())).toContain(src));
     expect(undoDepth(created.state)).toBe(depth + 1);
     created.commands.undo();
     expect(created.getText()).toBe('keep');
     created.commands.redo();
     expect(JSON.stringify(created.getJSON())).toContain(src);
-  });
-
-  it('rejects a mixed paste that contains an invalid image', () => {
-    const errors: string[] = [];
-    const created = editor({
-      content: '<p>keep</p>',
-      onCommandError: (message) => errors.push(message),
-    });
-    selectText(created, 'keep', 0, 4);
-    const before = created.getJSON();
-    const depth = undoDepth(created.state);
-    expect(created.view.pasteHTML('<p>NEW <img src="data:image/png;base64,aa"> END</p>')).toBe(true);
-    expect(created.getJSON()).toEqual(before);
-    expect(undoDepth(created.state)).toBe(depth);
-    expect(errors).toEqual([pictureTypeMessage]);
   });
 
   it('uses plain text when the clipboard image type is unsupported', () => {
@@ -1332,21 +1320,24 @@ describe('pictures and clipboard', () => {
     expect(undoDepth(created.state)).toBe(0);
   });
 
-  it('keeps a selection when unsupported paste has no text alternative', () => {
-    const created = editor({ content: '<p>keep</p>' });
+  it('keeps a selection when unsupported paste has no text alternative', async () => {
+    const readPicture = vi.fn(async () => new Uint8Array());
+    const created = editor({ content: '<p>keep</p>', readPicture });
     selectText(created, 'keep', 0, 4);
     const before = created.getJSON();
     const selection = created.state.selection.toJSON();
     expect(created.view.pasteHTML('<script>no()</script><img src="https://example.com/a.png">')).toBe(true);
+    await vi.waitFor(() => expect(readPicture).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(created.getJSON()).toEqual(before);
     expect(created.state.selection.toJSON()).toEqual(selection);
     expect(undoDepth(created.state)).toBe(0);
   });
 
-  it('omits a remote image and keeps the surrounding text', () => {
+  it('omits a remote image that cannot be loaded and keeps the surrounding text', async () => {
     const created = editor({ content: '<p></p>' });
     expect(created.view.pasteHTML('<p>hello <img src="https://example.com/a.png"> there</p>')).toBe(true);
-    expect(created.getText()).toContain('hello');
+    await vi.waitFor(() => expect(created.getText()).toContain('hello'));
     expect(created.getText()).toContain('there');
     expect(JSON.stringify(created.getJSON())).not.toContain('https://example.com/a.png');
   });
@@ -1445,6 +1436,280 @@ describe('pictures and clipboard', () => {
     expect(readPicture).not.toHaveBeenCalled();
   });
 
+  it('imports 17 pictures while leaving bridge capacity for other requests', async () => {
+    let active = 0;
+    let peak = 0;
+    const readPicture = vi.fn(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      try {
+        // The bridge invalidates the connection above 16 outstanding ordinary requests.
+        if (active > 16) throw new Error('Too many in-flight requests.');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        return new Uint8Array(pngHeader);
+      } finally {
+        active -= 1;
+      }
+    });
+    const created = editor({ readPicture });
+    created.view.pasteHTML('<p>Text</p>' + Array.from({ length: 17 }, (_, index) => (
+      `<img src="https://example.org/${index}.png">`
+    )).join(''));
+    await vi.waitFor(() => expect(readPicture).toHaveBeenCalledTimes(17));
+    expect(peak).toBeLessThan(16);
+    await vi.waitFor(() => expect(created.view.dom.querySelectorAll('img[src]')).toHaveLength(17));
+    expect(undoDepth(created.state)).toBe(1);
+  });
+
+  it('shares download capacity across five overlapping picture pastes', async () => {
+    let active = 0;
+    let peak = 0;
+    const readPicture = vi.fn(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      try {
+        if (active > 16) throw new Error('Too many in-flight requests.');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        return new Uint8Array(pngHeader);
+      } finally {
+        active -= 1;
+      }
+    });
+    const created = editor({ readPicture });
+    const html = '<p>Text</p>' + Array.from({ length: 4 }, (_, index) => (
+      `<img src="https://example.org/${index}.png">`
+    )).join('');
+    for (let repeat = 0; repeat < 5; repeat += 1) created.view.pasteHTML(html);
+    await vi.waitFor(() => expect(readPicture).toHaveBeenCalledTimes(20));
+    expect(peak).toBeLessThan(16);
+    await vi.waitFor(() => expect(created.view.dom.querySelectorAll('img[src]')).toHaveLength(20));
+    expect(created.getText().match(/Text/g)).toHaveLength(5);
+    expect(undoDepth(created.state)).toBe(5);
+  });
+
+  it.each([
+    { initial: 'empty', staggered: false },
+    { initial: 'selected', staggered: false },
+    { initial: 'empty', staggered: true },
+    { initial: 'selected', staggered: true },
+  ])('keeps distinct pastes in order ($initial content, staggered: $staggered)', async ({ initial, staggered }) => {
+    const pictures = Array.from({ length: 3 }, (_, index) => (
+      new Uint8Array([...pngHeader, index])
+    ));
+    let finishSecond: (() => void) | undefined;
+    const created = editor({
+      content: initial === 'selected' ? '<p>Replace me</p>' : '',
+      readPicture: async (src) => {
+        const index = Number(new URL(src).pathname.slice(1, -4));
+        if (staggered && index === 1) {
+          return new Promise<Uint8Array>((resolve) => { finishSecond = () => resolve(pictures[index]); });
+        }
+        return pictures[index];
+      },
+    });
+    if (initial === 'selected') created.commands.selectAll();
+    const before = created.getJSON();
+    const expected = pictures.flatMap((bytes, index) => [
+      { type: 'paragraph', content: [`Paste ${index + 1}`] },
+      { type: 'image', src: (pictureFromBytes(bytes) as { src: string }).src },
+    ]);
+    for (let index = 0; index < pictures.length; index += 1) {
+      // First has appeared; Second is downloading when Third is pasted.
+      if (staggered && index === 2) await vi.waitFor(() => expect(finishSecond).toBeDefined());
+      created.view.pasteHTML(`<p>Paste ${index + 1}</p><img src="https://example.org/${index}.png">`);
+    }
+    finishSecond?.();
+    await vi.waitFor(() => expect(created.view.dom.querySelectorAll('img[src]')).toHaveLength(3));
+    expect(docOf(created)).toEqual(expected);
+    expect(created.state.selection).toBeInstanceOf(GapCursor);
+    expect(created.state.selection.from).toBe(created.state.doc.content.size);
+    expect(undoDepth(created.state)).toBe(3);
+    const after = created.getJSON();
+    for (let remaining = 2; remaining > 0; remaining -= 1) {
+      expect(created.commands.undo()).toBe(true);
+      expect(docOf(created)).toEqual(expected.slice(0, remaining * 2));
+    }
+    expect(created.commands.undo()).toBe(true);
+    expect(created.getJSON()).toEqual(before);
+    for (let index = 0; index < pictures.length; index += 1) expect(created.commands.redo()).toBe(true);
+    expect(created.getJSON()).toEqual(after);
+  });
+
+  it('keeps independently chosen paste positions while pictures load', async () => {
+    let finish!: (bytes: Uint8Array) => void;
+    const readPicture = vi.fn(() => new Promise<Uint8Array>((resolve) => { finish = resolve; }));
+    const created = editor({
+      content: '<p>Alpha</p><p>Omega</p>',
+      readPicture,
+    });
+    const before = created.getJSON();
+    selectText(created, 'Alpha', 0);
+    created.view.pasteHTML('<p>First</p><img src="https://example.org/first.png">');
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    selectText(created, 'Omega', 5);
+    created.view.pasteHTML('<p>Second</p><img src="https://example.org/second.png">');
+    finish(new Uint8Array(pngHeader));
+    // Second has its own download and must retain the position chosen above.
+    await vi.waitFor(() => expect(readPicture).toHaveBeenCalledTimes(2));
+    expect(created.state.selection.from).toBe(created.state.doc.content.size - 1);
+    finish(new Uint8Array(pngHeader));
+    await vi.waitFor(() => expect(created.getText()).toContain('Second'));
+    const text = created.getText();
+    expect(text.indexOf('First')).toBeLessThan(text.indexOf('Alpha'));
+    expect(text.indexOf('Alpha')).toBeLessThan(text.indexOf('Omega'));
+    expect(text.indexOf('Omega')).toBeLessThan(text.indexOf('Second'));
+    expect(created.view.dom.querySelectorAll('img[src]')).toHaveLength(2);
+    expect(created.commands.undo()).toBe(true);
+    expect(created.getText()).toContain('First');
+    expect(created.getText()).not.toContain('Second');
+    expect(created.commands.undo()).toBe(true);
+    expect(created.getJSON()).toEqual(before);
+  });
+
+  it.each([false, true])('maps waiting pastes through undo (redo: %s)', async (redo) => {
+    let finishSecond!: () => void;
+    const created = editor({
+      readPicture: async (src) => src.includes('second')
+        ? new Promise<Uint8Array>((resolve) => { finishSecond = () => resolve(new Uint8Array(pngHeader)); })
+        : new Uint8Array(pngHeader),
+    });
+    for (const name of ['First', 'Second', 'Third']) {
+      created.view.pasteHTML(`<p>${name}</p><img src="https://example.org/${name.toLowerCase()}.png">`);
+    }
+    await vi.waitFor(() => expect(finishSecond).toBeDefined());
+    const first = created.getJSON();
+    expect(created.commands.undo()).toBe(true);
+    expect(created.isEmpty).toBe(true);
+    if (redo) expect(created.commands.redo()).toBe(true);
+    finishSecond();
+    await vi.waitFor(() => expect(created.getText()).toContain('Third'));
+    const text = created.getText();
+    expect(text.indexOf('Second')).toBeLessThan(text.indexOf('Third'));
+    if (redo) expect(text.indexOf('First')).toBeLessThan(text.indexOf('Second'));
+    else expect(text).not.toContain('First');
+    expect(created.view.dom.querySelectorAll('img[src]')).toHaveLength(redo ? 3 : 2);
+    expect(created.commands.undo()).toBe(true);
+    expect(created.commands.undo()).toBe(true);
+    if (redo) expect(created.getJSON()).toEqual(first);
+    else expect(created.isEmpty).toBe(true);
+  });
+
+  it.each(['destroyed', 'read-only'])('skips a queued paste for a %s editor and continues the next import', async (cancel) => {
+    let finish!: (bytes: Uint8Array) => void;
+    const first = editor({ readPicture: () => new Promise((resolve) => { finish = resolve; }) });
+    first.view.pasteHTML('<p>First</p><img src="https://example.org/first.png">');
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    const cancelledReader = vi.fn(async () => new Uint8Array(pngHeader));
+    const cancelled = editor({ readPicture: cancelledReader });
+    cancelled.view.pasteHTML('<p>Closed</p><img src="https://example.org/closed.png">');
+    const nextReader = vi.fn(async () => new Uint8Array(pngHeader));
+    const next = editor({ readPicture: nextReader });
+    next.view.pasteHTML('<p>Next</p><img src="https://example.org/next.png">');
+    if (cancel === 'destroyed') cancelled.destroy();
+    else cancelled.setEditable(false);
+    finish(new Uint8Array(pngHeader));
+    await vi.waitFor(() => expect(next.view.dom.querySelector('img[src]')).not.toBeNull());
+    expect(cancelledReader).not.toHaveBeenCalled();
+    expect(nextReader).toHaveBeenCalledOnce();
+    expect(next.getText().trim()).toBe('Next');
+  });
+
+  it.each(['destroyed', 'read-only'])('stops an active import for a %s editor after its current batch', async (cancel) => {
+    const finish: Array<() => void> = [];
+    const readPicture = vi.fn(() => new Promise<Uint8Array>((resolve) => {
+      finish.push(() => resolve(new Uint8Array(pngHeader)));
+    }));
+    const accepted = vi.fn();
+    const cancelled = editor({ readPicture, onAcceptedDocument: accepted });
+    cancelled.view.pasteHTML('<p>Cancelled</p>' + Array.from({ length: 17 }, (_, index) => (
+      `<img src="https://example.org/${index}.png">`
+    )).join(''));
+    await vi.waitFor(() => expect(readPicture).toHaveBeenCalledTimes(4));
+    const next = editor({ readPicture: async () => new Uint8Array(pngHeader) });
+    next.view.pasteHTML('<p>Next</p><img src="https://example.org/next.png">');
+    if (cancel === 'destroyed') cancelled.destroy();
+    else cancelled.setEditable(false, false);
+    finish.forEach((resolve) => resolve());
+    await vi.waitFor(() => expect(next.getText()).toContain('Next'));
+    expect(readPicture).toHaveBeenCalledTimes(4);
+    expect(accepted).not.toHaveBeenCalled();
+    expect(undoDepth(next.state)).toBe(1);
+    expect(next.commands.undo()).toBe(true);
+    expect(next.isEmpty).toBe(true);
+  });
+
+  it('keeps a picture when replacing selected text frees enough room', async () => {
+    const bytes = new Uint8Array(200);
+    bytes.set(pngHeader);
+    const src = (pictureFromBytes(bytes) as { src: string }).src;
+    const created = editor({
+      content: `<p>${'x'.repeat(350)}</p>`, byteLimit: 500, readPicture: async () => bytes,
+    });
+    const replacement = created.schema.node('doc', null, [
+      created.schema.node('paragraph', null, created.schema.text('Replacement')),
+      created.schema.node('image', { src }),
+    ]);
+    expect(noteDocumentByteLength(replacement)).toBeLessThan(500);
+    created.commands.selectAll();
+    const before = created.getJSON();
+    created.view.pasteHTML('<p>Replacement</p><img src="https://example.org/p.png">');
+    await vi.waitFor(() => expect(created.getText()).toContain('Replacement'));
+    expect(created.view.dom.querySelector('img[src]')).toHaveAttribute('src', src);
+    expect(noteDocumentByteLength(created.state.doc)).toBeLessThanOrEqual(500);
+    expect(undoDepth(created.state)).toBe(1);
+    created.commands.undo();
+    expect(created.getJSON()).toEqual(before);
+  });
+
+  it.each(['paste', 'drop'] as const)('keeps linked text when %s rules make the picture exceed the limit', async (place) => {
+    const bytes = new Uint8Array(200);
+    bytes.set(pngHeader);
+    const errors = vi.fn();
+    const created = editor({ byteLimit: 500, readPicture: async () => bytes, onCommandError: errors });
+    const before = created.getJSON();
+    const html = '<p>See https://example.org/x now</p><img src="https://example.org/p.png">';
+    if (place === 'paste') {
+      created.view.pasteHTML(html);
+    } else {
+      const body = document.createElement('div');
+      body.innerHTML = transformClipboardHTML(html);
+      const slice = PmDOMParser.fromSchema(created.schema).parseSlice(body);
+      expect(dropSlice(created, slice, { files: { length: 0 }, types: ['text/html'] })).toBe(true);
+    }
+    await vi.waitFor(() => expect(created.getText()).toBe('See https://example.org/x now'));
+    expect(created.view.dom.querySelector('a')).toHaveAttribute('href', 'https://example.org/x');
+    expect(created.view.dom.querySelector('img[src]')).toBeNull();
+    expect(noteDocumentByteLength(created.state.doc)).toBeLessThanOrEqual(500);
+    expect(errors).not.toHaveBeenCalled();
+    expect(undoDepth(created.state)).toBe(1);
+    const after = created.getJSON();
+    created.commands.undo();
+    expect(created.getJSON()).toEqual(before);
+    created.commands.redo();
+    expect(created.getJSON()).toEqual(after);
+  });
+
+  it('links pasted web addresses when the paste also has a picture', async () => {
+    const created = editor({ readPicture: async () => new Uint8Array(pngHeader) });
+    created.view.pasteHTML('<p>See https://example.org/x now</p><img src="https://example.org/p.png">');
+    await vi.waitFor(() => expect(created.view.dom.querySelector('img[src]')).not.toBeNull());
+    expect(created.view.dom.querySelector('a')).toHaveAttribute('href', 'https://example.org/x');
+  });
+
+  it('downloads the pictures of a web drop and inserts them with the text', async () => {
+    const readPicture = vi.fn(async () => new Uint8Array(pngHeader));
+    const created = editor({ content: '<p>Keep</p>', readPicture });
+    const dropped = document.createElement('div');
+    dropped.innerHTML = transformClipboardHTML('<p>Dragged</p><img src="https://example.org/p.png">');
+    const slice = PmDOMParser.fromSchema(created.schema).parseSlice(dropped);
+    expect(dropSlice(created, slice, { files: { length: 0 }, types: ['text/html'] })).toBe(true);
+    await vi.waitFor(() => expect(created.view.dom.querySelector('img[src]')).not.toBeNull());
+    expect(readPicture).toHaveBeenCalledWith('https://example.org/p.png');
+    expect(created.getText()).toContain('Dragged');
+    expect(created.getText()).toContain('Keep');
+    expect(undoDepth(created.state)).toBe(1);
+  });
+
   it('flattens a table and keeps a bold cell', () => {
     const created = editor({ content: '<p></p>' });
     created.view.pasteHTML('<table><tr><td><b>A</b></td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>');
@@ -1532,7 +1797,7 @@ describe('pictures and clipboard', () => {
     expect(transformClipboardHTML('<p>Hi</p><iframe src="https://example.com"></iframe>')).not.toContain('iframe');
   });
 
-  it('lets a valid non-file image drop through and consumes every file drop', () => {
+  it('consumes every file drop and imports a valid non-file image drop', async () => {
     const created = editor({ content: '<p>keep</p>' });
     const before = created.getJSON();
     const selection = created.state.selection.toJSON();
@@ -1542,7 +1807,6 @@ describe('pictures and clipboard', () => {
       0,
       0,
     );
-    expect(dropSlice(created, valid, { files: { length: 0 }, types: ['text/html'] })).toBe(false);
     expect(dropSlice(created, valid, { files: { length: 1 }, types: ['Files', 'text/html'] })).toBe(true);
     const text = new Slice(
       Fragment.from(created.schema.nodes.paragraph.create(null, created.schema.text('NEW'))),
@@ -1554,6 +1818,9 @@ describe('pictures and clipboard', () => {
     expect(created.getJSON()).toEqual(before);
     expect(created.state.selection.toJSON()).toEqual(selection);
     expect(undoDepth(created.state)).toBe(depth);
+    expect(dropSlice(created, valid, { files: { length: 0 }, types: ['text/html'] })).toBe(true);
+    await vi.waitFor(() => expect(JSON.stringify(created.getJSON())).toContain('data:image/png'));
+    expect(undoDepth(created.state)).toBe(depth + 1);
   });
 
   it('inserts at the mapped bookmark and ignores a later caret', () => {

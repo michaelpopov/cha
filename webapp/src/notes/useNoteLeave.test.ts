@@ -112,7 +112,7 @@ describe('leaveNoteThen', () => {
     try {
       const first = deferred();
       const saveNote = vi.fn(() => first.promise);
-      const editor = createNotesEditor();
+      const editor = createNotesEditor({ readPicture: async () => new Uint8Array() });
       const element = editor.options.element;
       if (element instanceof HTMLElement && !element.isConnected) document.body.appendChild(element);
       editors.push(editor);
@@ -491,7 +491,7 @@ describe('native close', () => {
 
   it('rejects a pending picture and prompt insertion after a clean note replies ready', async () => {
     host();
-    const editor = createNotesEditor();
+    const editor = createNotesEditor({ readPicture: async () => new Uint8Array() });
     const saveNote = vi.fn(async () => undefined);
     const view = renderHook(() => {
       const save = useNoteSave({ editor, noteId: 4, contextKey: 'vault', save: saveNote });

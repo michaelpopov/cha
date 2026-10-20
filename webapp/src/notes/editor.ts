@@ -19,6 +19,7 @@ import {
   PluginKey,
   TextSelection,
   type EditorState,
+  type Selection,
   type SelectionBookmark,
   type Transaction,
 } from '@tiptap/pm/state';
@@ -41,6 +42,10 @@ import {
 
 const notesIsolatedMeta = 'notesIsolated';
 const notesIsolatedCloseMeta = 'notesIsolatedClose';
+const notesPictureFallbackMeta = 'notesPictureFallback';
+const notesPasteSelectionMeta = 'notesPasteSelection';
+// Overlapping imports share the four picture download slots.
+let noteImportTail = Promise.resolve();
 
 // Tiptap 3.30.3 types `capturedTransaction` as private. The capture path
 // still reads and writes that runtime field.
@@ -60,7 +65,7 @@ type Gate = {
 export type NotesEditorOptions = {
   content?: Content;
   byteLimit?: number;
-  readPicture?: NotePictureReader;
+  readPicture: NotePictureReader;
   onAcceptedDocument?: () => void;
   onRejectedContent?: () => void;
   onCommandError?: (message: string) => void;
@@ -129,7 +134,7 @@ export function withIsolatedHistory(editor: Editor, run: () => boolean): boolean
   }
 }
 
-export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
+export function createNotesEditor(options: NotesEditorOptions): Editor {
   const byteLimit = options.byteLimit ?? noteDocumentByteLimit;
   const gate: Gate = { blocked: false };
   let editor!: Editor;
@@ -138,7 +143,7 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
       acceptNotesTransaction(editor, transaction, byteLimit, gate, options.onCommandError);
     },
     transformPastedHTML(html: string) {
-      return transformClipboardHTML(html, !!options.readPicture);
+      return transformClipboardHTML(html);
     },
     handleClick(view: EditorView, _pos: number, event: MouseEvent) {
       if (event.button !== 0) return false;
@@ -158,20 +163,9 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
     },
     handlePaste(view: EditorView, event: ClipboardEvent, slice: Slice) {
       if (slice.size > 0) {
-        let hasPicture = false;
-        slice.content.descendants((node) => {
-          if (node.type.name === 'image') hasPicture = true;
-        });
-        if (hasPicture && options.readPicture) {
-          void importNoteSlice(editor, slice, options.readPicture, () => true, false, byteLimit);
-          return true;
-        }
-        const imageError = fragmentImageError(slice.content);
-        if (imageError) {
-          options.onCommandError?.(imageError);
-          return true;
-        }
-        return false;
+        if (!hasPicture(slice.content)) return false;
+        void importNoteSlice(editor, slice, options.readPicture, () => true, 'paste', byteLimit);
+        return true;
       }
       const file = clipboardImageFile(event.clipboardData);
       if (file) {
@@ -188,9 +182,20 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
       }
       return true;
     },
-    handleDrop(_view: EditorView, event: DragEvent, slice: Slice) {
+    handleDrop(view: EditorView, event: DragEvent, slice: Slice, moved: boolean) {
       if (dropHasFiles(event)) return true;
       if (slice.size === 0) return true;
+      if (!moved && hasPicture(slice.content)) {
+        const target = view.posAtCoords({ left: event.clientX, top: event.clientY });
+        const $pos = target && view.state.doc.resolve(target.pos);
+        // A note without text has no cursor position, and a selected picture would be replaced.
+        const at = $pos && TextSelection.between($pos, $pos);
+        if (at?.empty) {
+          void importNoteSlice(editor, slice, options.readPicture, () => true, 'drop', byteLimit,
+            at.getBookmark());
+          return true;
+        }
+      }
       const imageError = fragmentImageError(slice.content);
       if (imageError) {
         options.onCommandError?.(imageError);
@@ -372,55 +377,109 @@ export function insertPromptParagraph(editor: Editor, text: string): boolean {
   return !editor.state.doc.eq(before);
 }
 
-// Both page import and HTML paste use the existing embedded picture nodes.
+function hasPicture(fragment: Fragment): boolean {
+  let found = false;
+  fragment.descendants((node) => {
+    if (node.type.name === 'image') found = true;
+  });
+  return found;
+}
+
+// Page import, paste, and drop use the existing embedded picture nodes.
 async function importNoteSlice(
   editor: Editor,
   slice: Slice,
   readPicture: NotePictureReader,
   stillCurrent: () => boolean,
-  append: boolean,
+  place: 'end' | 'paste' | 'drop',
   byteLimit: number,
+  at: SelectionBookmark = editor.state.selection.getBookmark(),
 ): Promise<boolean> {
   const available = () => !editor.isDestroyed && editor.isEditable && stillCurrent();
   if (!available()) return false;
-  const tracked = trackSelectionBookmark(editor);
-  let pictureBytes = 0;
-  const embed = async (fragment: Fragment): Promise<Fragment> => {
-    const nodes: PmNode[] = [];
-    for (const node of fragment.content) {
-      if (!available()) break;
-      if (node.type.name === 'image') {
-        if (pictureBytes >= byteLimit) continue;
-        const src = await loadNotePicture(String(node.attrs.src ?? ''), readPicture);
-        if (src && src.length <= byteLimit - pictureBytes) {
-          pictureBytes += src.length;
-          nodes.push(node.type.create({ ...node.attrs, src }, null, node.marks));
-        }
-      } else {
-        nodes.push(node.isLeaf ? node : node.copy(await embed(node.content)));
+  const tracked = trackSelectionBookmark(editor, at);
+  const previousImport = noteImportTail;
+  let finishImport!: () => void;
+  noteImportTail = new Promise<void>((resolve) => { finishImport = resolve; });
+  try {
+    await previousImport;
+    if (!available()) return false;
+    const sources: string[] = [];
+    slice.content.descendants((node) => {
+      if (node.type.name === 'image') sources.push(String(node.attrs.src ?? ''));
+    });
+    const pictures: Array<string | null> = [];
+    let budget = byteLimit;
+    // Leave room for saves and other requests under the bridge's 16-request limit.
+    for (let start = 0; start < sources.length; start += 4) {
+      if (!available()) return false;
+      const batch = await Promise.all(sources.slice(start, start + 4).map((src) => loadNotePicture(src, readPicture)));
+      for (const src of batch) {
+        const kept = src && src.length <= budget ? src : null;
+        if (kept) budget -= kept.length;
+        pictures.push(kept);
       }
     }
-    return Fragment.fromArray(nodes);
-  };
-  try {
-    let content = await embed(slice.content);
     if (!available()) return false;
+    let next = 0;
+    const embed = (fragment: Fragment): Fragment => {
+      const nodes: PmNode[] = [];
+      fragment.forEach((node) => {
+        if (node.type.name !== 'image') {
+          nodes.push(node.isLeaf ? node : node.copy(embed(node.content)));
+          return;
+        }
+        const src = pictures[next++];
+        if (src) {
+          nodes.push(node.type.create({ ...node.attrs, src }, null, node.marks));
+        }
+      });
+      return Fragment.fromArray(nodes);
+    };
+    let content = embed(slice.content);
+    if (!content.size) {
+      if (place === 'end') throw new Error('The page has no readable text.');
+      return false;
+    }
     const build = () => {
       const tr = editor.state.tr;
-      if (append) {
+      if (place === 'end') {
         const doc = editor.state.doc;
         const empty = doc.childCount === 1 && doc.firstChild?.type.name === 'paragraph'
           && doc.firstChild.content.size === 0;
-        return tr.replaceWith(empty ? 0 : doc.content.size, doc.content.size, content);
+        tr.replaceWith(empty ? 0 : doc.content.size, doc.content.size, content);
+      } else {
+        const open = Slice.maxOpen(content);
+        const selection = tracked.current().resolve(editor.state.doc);
+        tr.setSelection(selection).replaceSelection(
+          new Slice(content, Math.min(slice.openStart, open.openStart), Math.min(slice.openEnd, open.openEnd)),
+        );
+        if (place === 'paste') {
+          let end: number | undefined;
+          tr.mapping.maps.at(-1)?.forEach((_from, _to, _newFrom, newTo) => { end ??= newTo; });
+          if (end !== undefined) {
+            const live = editor.state.selection;
+            const movedOutside = live.from < selection.from || live.to > selection.to;
+            // Keep a selection moved elsewhere; otherwise leave a caret after
+            // the slice, including a final picture that the next paste must keep.
+            tr.setSelection(movedOutside
+              ? live.map(tr.doc, tr.mapping)
+              : new GapCursor(tr.doc.resolve(end)).getBookmark().resolve(tr.doc));
+            tr.setMeta(notesPasteSelectionMeta, { from: selection, to: end });
+          }
+        }
       }
-      const open = Slice.maxOpen(content);
-      return tr.setSelection(tracked.current().resolve(editor.state.doc)).replaceSelection(
-        new Slice(content, Math.min(slice.openStart, open.openStart), Math.min(slice.openEnd, open.openEnd)),
-      );
+      closeHistory(tr);
+      tr.setMeta(notesIsolatedMeta, true);
+      tr.setMeta('preventAutolink', true);
+      tr.setMeta(notesPictureFallbackMeta, withoutLastPicture);
+      tr.setStoredMarks([]);
+      // Paste rules and scrolling expect ProseMirror's paste and drop metadata.
+      if (place !== 'end') tr.setMeta('uiEvent', place).scrollIntoView();
+      return tr;
     };
-    let tr = build();
-    // Pictures must not prevent otherwise valid text from being inserted.
-    while (noteDocumentByteLength(tr.doc) > byteLimit) {
+    // The size gate can retry after paste rules, without changing existing pictures.
+    const withoutLastPicture = (): Transaction | null => {
       let removed = false;
       const omitLastPicture = (fragment: Fragment): Fragment => {
         const nodes = [...fragment.content];
@@ -436,19 +495,14 @@ async function importNoteSlice(
         return Fragment.fromArray(nodes);
       };
       content = omitLastPicture(content);
-      if (!removed) break;
-      tr = build();
-    }
-    if (!content.size) return false;
-    closeHistory(tr);
-    tr.setMeta(notesIsolatedMeta, true);
-    tr.setMeta('preventAutolink', true);
-    tr.setStoredMarks([]);
+      return removed && content.size ? build() : null;
+    };
     const before = editor.state.doc;
-    editor.view.dispatch(tr);
+    editor.view.dispatch(build());
     return !editor.state.doc.eq(before);
   } finally {
     tracked.stop();
+    finishImport();
   }
 }
 
@@ -462,7 +516,7 @@ export async function appendNoteHtml(
   const body = document.createElement('div');
   body.innerHTML = html;
   const content = PmDOMParser.fromSchema(editor.schema).parse(body).content;
-  return importNoteSlice(editor, new Slice(content, 0, 0), readPicture, stillCurrent, true, byteLimit);
+  return importNoteSlice(editor, new Slice(content, 0, 0), readPicture, stillCurrent, 'end', byteLimit);
 }
 
 export function notesExtensions() {
@@ -520,29 +574,38 @@ function acceptNotesTransaction(
     return;
   }
   if (gate.blocked) return;
-  tagIsolated(transaction);
   const prevState = editor.state;
-  const { state, transactions } = prevState.applyTransaction(transaction);
-  const rootApplied = transactions.includes(transaction);
-  if (!rootApplied) {
-    editor.emit('beforeTransaction', { editor, transaction, nextState: state });
+  for (;;) {
+    tagIsolated(transaction);
+    const { state, transactions } = prevState.applyTransaction(transaction);
+    const rootApplied = transactions.includes(transaction);
+    if (!rootApplied) {
+      editor.emit('beforeTransaction', { editor, transaction, nextState: state });
+      return;
+    }
+    const changed = transactions.some((item) => item.docChanged) && !prevState.doc.eq(state.doc);
+    if (changed && !editor.isEditable) return;
+    if (changed && noteDocumentByteLength(state.doc) > byteLimit) {
+      const withoutPicture = transaction.getMeta(notesPictureFallbackMeta) as (() => Transaction | null) | undefined;
+      const retry = withoutPicture?.();
+      if (retry) {
+        transaction = retry;
+        continue;
+      }
+      onCommandError?.(noteTooLargeMessage);
+      return;
+    }
+    publishNotesTransaction(editor, transaction, prevState, state, transactions);
+    if (
+      changed
+      && transaction.getMeta(notesIsolatedMeta) === true
+      && !isHistoryTransaction(transaction)
+    ) {
+      const closeTr = closeHistory(editor.state.tr);
+      closeTr.setMeta(notesIsolatedCloseMeta, true);
+      editor.view.dispatch(closeTr);
+    }
     return;
-  }
-  const changed = transactions.some((item) => item.docChanged) && !prevState.doc.eq(state.doc);
-  if (changed && !editor.isEditable) return;
-  if (changed && noteDocumentByteLength(state.doc) > byteLimit) {
-    onCommandError?.(noteTooLargeMessage);
-    return;
-  }
-  publishNotesTransaction(editor, transaction, prevState, state, transactions);
-  if (
-    changed
-    && transaction.getMeta(notesIsolatedMeta) === true
-    && !isHistoryTransaction(transaction)
-  ) {
-    const closeTr = closeHistory(editor.state.tr);
-    closeTr.setMeta(notesIsolatedCloseMeta, true);
-    editor.view.dispatch(closeTr);
   }
 }
 
@@ -648,13 +711,21 @@ function rangeFits(editor: Editor, range: NoteLinkRange): boolean {
   return range.from >= 0 && range.to <= editor.state.doc.content.size && range.from < range.to;
 }
 
-export function trackSelectionBookmark(editor: Editor): {
+export function trackSelectionBookmark(
+  editor: Editor,
+  start: SelectionBookmark = editor.state.selection.getBookmark(),
+): {
   current(): SelectionBookmark;
   stop(): void;
 } {
-  let bookmark = editor.state.selection.getBookmark();
+  let bookmark = start;
   const apply = ({ transaction }: { transaction: Transaction }) => {
-    bookmark = bookmark.map(transaction.mapping);
+    const pasted = transaction.getMeta(notesPasteSelectionMeta) as { from: Selection; to: number } | undefined;
+    // Another paste at the same selection follows the entire inserted slice,
+    // including a final picture where a text bookmark cannot place the caret.
+    bookmark = pasted?.from.eq(bookmark.resolve(transaction.before))
+      ? new GapCursor(transaction.doc.resolve(pasted.to)).getBookmark()
+      : bookmark.map(transaction.mapping);
   };
   editor.on('transaction', apply);
   return {
@@ -720,9 +791,9 @@ const removedClipboardTags = new Set([
   'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'VIDEO', 'AUDIO', 'CANVAS', 'SVG', 'FORM',
 ]);
 
-export function transformClipboardHTML(html: string, keepRemotePictures = false): string {
+export function transformClipboardHTML(html: string): string {
   const document = new DOMParser().parseFromString(html, 'text/html');
-  cleanClipboardNode(document.body, wordClipboardHTML(html, document), keepRemotePictures);
+  cleanClipboardNode(document.body, wordClipboardHTML(html, document));
   return document.body.innerHTML;
 }
 
@@ -738,8 +809,8 @@ function wordClipboardHTML(html: string, document: Document): boolean {
   return false;
 }
 
-function cleanClipboardNode(node: Node, word: boolean, keepRemotePictures: boolean): void {
-  for (const child of [...node.childNodes]) cleanClipboardNode(child, word, keepRemotePictures);
+function cleanClipboardNode(node: Node, word: boolean): void {
+  for (const child of [...node.childNodes]) cleanClipboardNode(child, word);
   if (!(node instanceof HTMLElement)) return;
   const tag = node.tagName;
   if (removedClipboardTags.has(tag)) {
@@ -751,7 +822,7 @@ function cleanClipboardNode(node: Node, word: boolean, keepRemotePictures: boole
     if (src.startsWith('data:')) return;
     try {
       const url = new URL(src, node.ownerDocument.baseURI);
-      if (keepRemotePictures && ['http:', 'https:'].includes(url.protocol)) node.setAttribute('src', url.href);
+      if (['http:', 'https:'].includes(url.protocol)) node.setAttribute('src', url.href);
       else node.remove();
     } catch {
       node.remove();

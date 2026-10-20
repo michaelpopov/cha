@@ -129,17 +129,19 @@ std::shared_ptr<OperationReply> Application::read_note_picture(
         impl_->require_admitted(epoch);
     }
     if (!impl_->background_jobs.launch([reply, url = std::move(url)](std::atomic_bool& cancel) {
-            std::string bytes;
             try {
-                bytes = cha::read_note_picture(url, cancel);
-            } catch (const std::exception&) {
-                log_warn("Note picture could not be loaded; keeping the text");
+                const auto bytes = cha::read_note_picture(url, cancel);
+                if (cancel.load()) {
+                    reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
+                    return;
+                }
+                reply->complete({{"base64", encode_base64(bytes)}});
+            } catch (const WebToolError& error) {
+                reply->fail(ErrorCode::internal_error, error.what());
+            } catch (const std::exception& error) {
+                log_warn("Note picture download failed: " + std::string(error.what()));
+                reply->fail(ErrorCode::internal_error, "Could not load the picture.");
             }
-            if (cancel.load()) {
-                reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
-                return;
-            }
-            reply->complete({{"base64", encode_base64(bytes)}});
         })) {
         reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
     }

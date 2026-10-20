@@ -95,11 +95,12 @@ std::string bounded_search_output(std::string_view provider, nlohmann::ordered_j
     return output;
 }
 
+// A picture download follows redirects and keeps its binary body out of the debug log.
 std::string request_web_response(std::string_view provider, CurlHandle& curl,
     const CurlHeaders& headers, const std::string& url, const std::string& body,
     const std::atomic_bool& cancelled, std::string_view key,
     std::string subject, long timeout_ms = 10000L,
-    std::size_t max_bytes = 1024 * 1024, bool follow_redirects = false) {
+    std::size_t max_bytes = 1024 * 1024, bool picture = false) {
     const auto lower_subject = fold_ascii(subject);
     const std::string label = std::string(provider) + " " + lower_subject;
     const auto started = std::chrono::steady_clock::now();
@@ -123,7 +124,7 @@ std::string request_web_response(std::string_view provider, CurlHandle& curl,
     require(curl_easy_setopt(curl.get(), CURLOPT_ACCEPT_ENCODING, ""));
     require(curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L));
     require(curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS, timeout_ms));
-    require(curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, follow_redirects ? 1L : 0L));
+    require(curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, picture ? 1L : 0L));
     require(curl_easy_setopt(curl.get(), CURLOPT_PROTOCOLS_STR, "http,https"));
     require(curl_easy_setopt(curl.get(), CURLOPT_REDIR_PROTOCOLS_STR, "http,https"));
     require(curl_easy_setopt(curl.get(), CURLOPT_MAXREDIRS, 5L));
@@ -167,6 +168,7 @@ std::string request_web_response(std::string_view provider, CurlHandle& curl,
         + " duration_ms=" + std::to_string(std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - started).count())
         + " response_bytes=" + std::to_string(response.size()));
+    if (!picture) log_debug_payload(label + " raw response", response, key);
     if (buffer.too_large) fail_web(provider, subject, subject + " response size limit exceeded");
     if (completed->data.result != CURLE_OK)
         fail_web(provider, subject, subject + " connection failed: " + std::string(curl_easy_strerror(completed->data.result)));
@@ -185,7 +187,6 @@ nlohmann::ordered_json request_web_json(std::string_view provider, CurlHandle& c
         cancelled, key, subject, timeout_ms, max_bytes);
     if (cancelled.load()) return {};
     const auto lower_subject = fold_ascii(subject);
-    log_debug_payload(std::string(provider) + " " + lower_subject + " raw response", response, key);
     // Bound depth while parsing, before any recursive copy of the response.
     const auto check_depth = [&](int depth, nlohmann::ordered_json::parse_event_t,
         nlohmann::ordered_json&) {

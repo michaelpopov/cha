@@ -49,7 +49,7 @@ describe('URL imports', () => {
   });
 
   it('appends a title and formatted article, resolves links, skips failed images, and undoes once', async () => {
-    editor = createNotesEditor({ content: '<p>Existing text</p>' });
+    editor = createNotesEditor({ content: '<p>Existing text</p>', readPicture });
     editor.commands.setTextSelection({ from: 1, to: 5 });
     const before = editor.getJSON();
     const html = notePageHtml({
@@ -78,7 +78,7 @@ describe('URL imports', () => {
   });
 
   it('replaces the initial empty paragraph and restores it with undo', async () => {
-    editor = createNotesEditor();
+    editor = createNotesEditor({ readPicture });
     const before = editor.getJSON();
     const html = notePageHtml({ url: 'https://example.org', title: 'Title', markdown: 'Article' });
     expect(await appendNoteHtml(editor, html)).toBe(true);
@@ -91,7 +91,7 @@ describe('URL imports', () => {
   });
 
   it('imports fenced code as an editable code block with its whitespace intact', async () => {
-    editor = createNotesEditor();
+    editor = createNotesEditor({ readPicture });
     const html = notePageHtml({
       url: 'https://example.org', title: 'Example',
       markdown: '```python\ndef embed(text):\n    return model.encode(text)\n```',
@@ -109,7 +109,7 @@ describe('URL imports', () => {
 
   it.each(['<p></p><p>Keep</p>', '<p></p><p></p>'])(
     'preserves existing blank paragraphs in %s', async (content) => {
-      editor = createNotesEditor({ content });
+      editor = createNotesEditor({ content, readPicture });
       const before = editor.getJSON().content ?? [];
       expect(await appendNoteHtml(editor, '<h1>Title</h1><p>Article</p>')).toBe(true);
       expect(editor.getJSON().content?.slice(0, before.length)).toEqual(before);
@@ -117,7 +117,7 @@ describe('URL imports', () => {
   );
 
   it('preserves an empty paragraph from the imported content', async () => {
-    editor = createNotesEditor();
+    editor = createNotesEditor({ readPicture });
     expect(await appendNoteHtml(editor, '<p></p><h1>Title</h1><p>Article</p>')).toBe(true);
     expect(editor.getJSON().content?.map((node) => node.type)).toEqual(['paragraph', 'heading', 'paragraph']);
   });
@@ -131,7 +131,7 @@ describe('URL imports', () => {
   });
 
   it('rejects an oversized import without changing the document or undo history', async () => {
-    editor = createNotesEditor({ content: '<p>Keep</p>', byteLimit: 300 });
+    editor = createNotesEditor({ content: '<p>Keep</p>', byteLimit: 300, readPicture });
     const before = editor.getJSON();
     expect(await appendNoteHtml(editor, `<p>${'x'.repeat(400)}</p>`)).toBe(false);
     expect(editor.getJSON()).toEqual(before);
@@ -141,7 +141,7 @@ describe('URL imports', () => {
   });
 
   it('embeds page pictures in place, resolves their URLs, and skips failures', async () => {
-    editor = createNotesEditor();
+    editor = createNotesEditor({ readPicture });
     const before = editor.getJSON();
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const reader = vi.fn(async (url: string) => {
@@ -167,7 +167,7 @@ describe('URL imports', () => {
   });
 
   it('keeps imported text when pictures cannot fit in the note', async () => {
-    editor = createNotesEditor({ byteLimit: 500 });
+    editor = createNotesEditor({ byteLimit: 500, readPicture });
     const bytes = new Uint8Array(400);
     bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const html = notePageHtml({ url: 'https://example.org', title: 'Title',
@@ -178,8 +178,15 @@ describe('URL imports', () => {
     expect(editor.view.dom.querySelector('img[src]')).toBeNull();
   });
 
+  it('reports a page whose only pictures cannot be loaded', async () => {
+    editor = createNotesEditor({ readPicture });
+    const html = notePageHtml({ url: 'https://example.org', title: '', markdown: '![Photo](/p.png)' });
+    await expect(appendNoteHtml(editor, html)).rejects.toThrow('The page has no readable text.');
+    expect(editor.isEmpty).toBe(true);
+  });
+
   it('does not insert a page when its editor context changes during a picture download', async () => {
-    editor = createNotesEditor();
+    editor = createNotesEditor({ readPicture });
     let finish!: (bytes: Uint8Array) => void;
     let current = true;
     const pending = appendPictures(editor,
@@ -205,7 +212,7 @@ describe('URL imports', () => {
       'notes.readPicture': (params) => readPicture(params as { url: string }),
     }));
     const page = await client.readNotePage('https://example.org/news/article');
-    editor = createNotesEditor();
+    editor = createNotesEditor({ readPicture: client.readNotePicture });
     const before = editor.getJSON();
     expect(await appendPictures(editor, notePageHtml(page), client.readNotePicture, () => true)).toBe(true);
     expect(readPicture.mock.calls.map(([{ url }]) => url)).toEqual([

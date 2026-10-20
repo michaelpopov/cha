@@ -117,6 +117,7 @@
   "notes.importBook": {"requires_context_epoch": true, "changes_context": false},
   "notes.get": {"requires_context_epoch": true, "changes_context": false},
   "notes.readPage": {"requires_context_epoch": true, "changes_context": false},
+  "notes.readPicture": {"requires_context_epoch": true, "changes_context": false},
   "notes.save": {"requires_context_epoch": true, "changes_context": false},
   "notes.rename": {"requires_context_epoch": true, "changes_context": false},
   "notes.delete": {"requires_context_epoch": true, "changes_context": false}
