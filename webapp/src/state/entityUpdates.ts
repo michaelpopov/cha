@@ -86,7 +86,7 @@ export function applyForumUpdate(state: AppState, forum: ForumDetail): AppState 
     ...state.bootstrap,
     forums: state.bootstrap.forums.map((forum) => (
       forum.id === summary.id ? summary : forum
-    )),
+    )).sort((left, right) => left.display_name.localeCompare(right.display_name)),
   };
   const sessionSnapshot = state.sessionSnapshot?.forum.id === summary.id
     ? {

@@ -107,7 +107,7 @@ describe('Notes in the application', () => {
     expect(window.location.href).toBe(address);
     fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Chat draft');
-    expect(screen.getByLabelText('Recent forums')).toBeInTheDocument();
+    expect(screen.getByLabelText('Forums')).toBeInTheDocument();
     expect(window.location.href).toBe(address);
   });
 

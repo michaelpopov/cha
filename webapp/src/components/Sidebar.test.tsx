@@ -37,40 +37,38 @@ describe('Sidebar navigation', () => {
   it.each(['loading', 'failed', 'incompatible'] as const)(
     'does not report empty lists when bootstrap is %s', (bootstrapStatus) => {
       renderSidebar({ ...initialAppState, bootstrapStatus });
-      expect(screen.queryByText('No recent forums')).not.toBeInTheDocument();
       expect(screen.queryByText('No recent sessions')).not.toBeInTheDocument();
-      expect(within(screen.getByRole('navigation', { name: 'Recent forums' }))
+      expect(within(screen.getByRole('navigation', { name: 'Forums' }))
         .queryAllByRole('button')).toHaveLength(0);
       expect(within(screen.getByLabelText('Recent sessions'))
         .queryAllByRole('button')).toHaveLength(0);
     },
   );
 
-  it('reports empty lists after bootstrap loads with no recent sessions', () => {
+  it('reports an empty list after bootstrap loads with no recent sessions', () => {
     renderSidebar({
       ...readyState(),
       bootstrap: { ...bootstrapFixture, recent_sessions: [] },
     });
-    expect(screen.getByText('No recent forums')).toBeInTheDocument();
     expect(screen.getByText('No recent sessions')).toBeInTheDocument();
   });
 
-  it('replaces configuration links with recent forums above recent sessions', async () => {
+  it('shows forums above recent sessions', async () => {
     const { dispatch } = renderSidebar();
     for (const name of ['Personas', 'Characters', 'Forums']) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
-    const forums = screen.getByRole('navigation', { name: 'Recent forums' });
+    const forums = screen.getByRole('navigation', { name: 'Forums' });
     const sessions = screen.getByLabelText('Recent sessions');
     expect(forums.compareDocumentPosition(sessions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByText('Recent Forums')).toBeInTheDocument();
+    expect(screen.getByText('Forums')).toBeInTheDocument();
     expect(screen.getByText('Recent Sessions')).toBeInTheDocument();
     expect(screen.getByLabelText('Vault')).toHaveValue('Personal');
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings' });
   });
 
-  it('excludes Entrance and deduplicates other forums in first session occurrence order', async () => {
+  it('shows all forums in bootstrap order, including Entrance and forums without recent sessions', async () => {
     const [entrance, lobby] = bootstrapFixture.forums;
     const [welcome, planning] = bootstrapFixture.recent_sessions;
     const state = {
@@ -94,9 +92,9 @@ describe('Sidebar navigation', () => {
       },
     };
     const { dispatch } = renderSidebar(state);
-    const forums = within(screen.getByRole('navigation', { name: 'Recent forums' }));
+    const forums = within(screen.getByRole('navigation', { name: 'Forums' }));
     expect(forums.getAllByRole('button').filter((button) => !button.hasAttribute('aria-haspopup')).map((button) => button.textContent)).toEqual([
-      'The Lobby', 'Studio',
+      'Entrance', 'Studio', 'The Lobby', 'Unused',
     ]);
     await userEvent.click(forums.getByRole('button', { name: 'The Lobby' }));
     expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'select-forum', forumId: 'lobby' });
@@ -115,24 +113,21 @@ describe('Sidebar navigation', () => {
       },
     });
 
-    expect(within(screen.getByRole('navigation', { name: 'Recent forums' }))
+    expect(within(screen.getByRole('navigation', { name: 'Forums' }))
       .getByRole('button', { name: 'The Lobby' })).toBeInTheDocument();
     expect(screen.getByLabelText('Actions for Planning')).toBeInTheDocument();
     expect(screen.queryByLabelText('Actions for Welcome')).not.toBeInTheDocument();
   });
 
-  it.each([
-    ['empty sessions', { ...readyState(), bootstrap: { ...bootstrapFixture, recent_sessions: [] } }],
-    ['only Entrance sessions', {
-      ...readyState(),
-      bootstrap: { ...bootstrapFixture, recent_sessions: [bootstrapFixture.recent_sessions[0]] },
-    }],
-    ['unresolved forums', { ...readyState(), bootstrap: { ...bootstrapFixture, forums: [] } }],
-  ] satisfies [string, AppState][])('handles %s without showing forum links', (_label, state) => {
-    renderSidebar(state);
-    const forums = within(screen.getByRole('navigation', { name: 'Recent forums' }));
-    expect(forums.queryAllByRole('button')).toHaveLength(0);
-    expect(forums.getByText('No recent forums')).toBeInTheDocument();
+  it('offers forum actions only for stored forums', () => {
+    renderSidebar();
+    const forums = within(screen.getByRole('navigation', { name: 'Forums' }));
+    expect(forums.getByLabelText('Actions for forum The Lobby')).toBeInTheDocument();
+    expect(forums.queryByLabelText('Actions for forum Entrance')).not.toBeInTheDocument();
+    fireEvent.contextMenu(forums.getByRole('button', { name: 'Entrance' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    fireEvent.contextMenu(forums.getByRole('button', { name: 'The Lobby' }));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
   });
 
   it('preserves recent session order, selection, and opening behavior', async () => {
@@ -165,7 +160,7 @@ describe('Sidebar navigation', () => {
 
   it.each([
     'sessions', 'forum-detail', 'forum-members', 'forum-file', 'new-forum-file',
-  ] satisfies MainView[])('keeps only the selected recent forum current on %s', (mainView) => {
+  ] satisfies MainView[])('keeps only the selected forum current on %s', (mainView) => {
     const lobby = bootstrapFixture.forums[1];
     renderSidebar({
       ...readyState(),
@@ -180,7 +175,7 @@ describe('Sidebar navigation', () => {
         ],
       },
     });
-    const forums = within(screen.getByRole('navigation', { name: 'Recent forums' }));
+    const forums = within(screen.getByRole('navigation', { name: 'Forums' }));
     expect(forums.getByRole('button', { name: 'The Lobby' })).toHaveClass('is-current');
     expect(forums.getByRole('button', { name: 'The Lobby' })).toHaveAttribute('aria-current', 'page');
     expect(forums.getByRole('button', { name: 'Studio' })).not.toHaveClass('is-current');
@@ -189,9 +184,9 @@ describe('Sidebar navigation', () => {
 
   it.each([
     'chat', 'forums', 'new-forum', 'settings', 'personas', 'characters',
-  ] satisfies MainView[])('does not highlight a recent forum on %s', (mainView) => {
+  ] satisfies MainView[])('does not highlight a forum on %s', (mainView) => {
     renderSidebar({ ...readyState(), mainView, currentForumId: 'lobby' });
-    const forum = within(screen.getByRole('navigation', { name: 'Recent forums' }))
+    const forum = within(screen.getByRole('navigation', { name: 'Forums' }))
       .getByRole('button', { name: 'The Lobby' });
     expect(forum).not.toHaveClass('is-current');
     expect(forum).not.toHaveAttribute('aria-current');
@@ -493,16 +488,16 @@ describe('Sidebar session actions', () => {
   });
 });
 
-describe('Sidebar recents divider', () => {
+describe('Sidebar forums divider', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  function recentsDivider() {
-    return screen.getByRole('separator', { name: 'Resize recent forums and recent sessions' });
+  function forumsDivider() {
+    return screen.getByRole('separator', { name: 'Resize forums and recent sessions' });
   }
 
   it('moves with the arrow, Home, and End keys and stays between 15 and 85', () => {
     renderSidebar();
-    const divider = recentsDivider();
+    const divider = forumsDivider();
     expect(divider).toHaveAttribute('aria-valuenow', '40');
     expect(divider).toHaveAttribute('aria-valuemin', '15');
     expect(divider).toHaveAttribute('aria-valuemax', '85');
@@ -532,7 +527,7 @@ describe('Sidebar recents divider', () => {
         constructor(type: string, init: PointerEventInit) { super(type, init); this.pointerId = init.pointerId ?? 0; }
       });
       renderSidebar();
-      const divider = recentsDivider();
+      const divider = forumsDivider();
       const sections = divider.parentElement!;
       // 412 pixels of sections less the 12-pixel divider leave 400 pixels to share.
       Object.defineProperty(sections, 'clientHeight', { configurable: true, value: 412 });

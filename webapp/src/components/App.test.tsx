@@ -2582,10 +2582,10 @@ it('shows an invalid session address reached from Settings and lets the reader l
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
 
-it('opens recent forums in Sessions and offers New session only for a stored forum', async () => {
+it('opens sidebar forums in Sessions and offers New session only for a stored forum', async () => {
   render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
 
-  const forums = within(screen.getByRole('navigation', { name: 'Recent forums' }));
+  const forums = within(screen.getByRole('navigation', { name: 'Forums' }));
   const lobby = await forums.findByRole('button', { name: 'The Lobby' });
   fireEvent.click(lobby);
   expect(await screen.findByRole('button', { name: 'New session' }))
@@ -2593,10 +2593,7 @@ it('opens recent forums in Sessions and offers New session only for a stored for
   expect(lobby).toHaveAttribute('aria-current', 'page');
   expect(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' })).toHaveClass('is-current');
 
-  expect(forums.queryByRole('button', { name: 'Entrance' })).not.toBeInTheDocument();
-  await openSettingsNavigation();
-  fireEvent.click(screen.getByRole('button', { name: 'Forums' }));
-  fireEvent.click(screen.getByRole('button', { name: 'EntranceAssistant' }));
+  fireEvent.click(forums.getByRole('button', { name: 'Entrance' }));
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument());
   expect(screen.queryByRole('button', { name: /New session/ })).not.toBeInTheDocument();
   expect(lobby).not.toHaveAttribute('aria-current');
@@ -2610,7 +2607,7 @@ it('offers New session when the initial conversation belongs to a stored forum',
   };
   render(<App client={fixtureClient({ getBootstrap: async () => bootstrap })} connectSessionEvents={inertSessionEvents} />);
 
-  const forums = within(screen.getByRole('navigation', { name: 'Recent forums' }));
+  const forums = within(screen.getByRole('navigation', { name: 'Forums' }));
   fireEvent.click(await forums.findByRole('button', { name: 'The Lobby' }));
   expect(await screen.findByRole('button', { name: 'New session' })).toBeInTheDocument();
 

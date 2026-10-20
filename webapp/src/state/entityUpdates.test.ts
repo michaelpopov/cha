@@ -92,7 +92,7 @@ describe.each([
     expect(state).toEqual(before);
   });
 
-  it('propagates a forum rename while preserving other forums and the conversation', () => {
+  it('propagates a forum rename in name order while preserving other forums and the conversation', () => {
     const state = stateWithConversation(forumIndex);
     const before = structuredClone(state);
     const updated = appReducer(state, {
@@ -100,8 +100,9 @@ describe.each([
       forum: { ...forumDetailFixture, display_name: 'Brain Trust' },
     });
 
-    expect(updated.bootstrap!.forums[1].display_name).toBe('Brain Trust');
-    expect(updated.bootstrap!.forums[0]).toEqual(before.bootstrap!.forums[0]);
+    expect(updated.bootstrap!.forums.map(({ display_name }) => display_name))
+      .toEqual(['Brain Trust', 'Entrance']);
+    expect(updated.bootstrap!.forums[1]).toEqual(before.bootstrap!.forums[0]);
     expect(updated.bootstrap!.characters).toEqual(before.bootstrap!.characters);
     expect(updated.bootstrap!.personas).toEqual(before.bootstrap!.personas);
     expect(updated.activeConversation).toEqual(before.activeConversation);

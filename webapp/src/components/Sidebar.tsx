@@ -58,11 +58,11 @@ const forumViews: MainView[] = [
   'forum-members',
 ];
 
-const minimumRecentForumsShare = 15;
-const maximumRecentForumsShare = 85;
+const minimumForumsShare = 15;
+const maximumForumsShare = 85;
 
-function clampRecentForumsShare(share: number) {
-  return Math.min(maximumRecentForumsShare, Math.max(minimumRecentForumsShare, share));
+function clampForumsShare(share: number) {
+  return Math.min(maximumForumsShare, Math.max(minimumForumsShare, share));
 }
 
 const settingsViews: MainView[] = [
@@ -204,12 +204,6 @@ export function Sidebar({
 }: SidebarProps) {
   const forums = new Map(state.bootstrap?.forums.map((forum) => [forum.id, forum]));
   const recents = state.bootstrap?.recent_sessions ?? [];
-  const recentForums = [...new Set(recents.map((session) => session.forum_id))]
-    .flatMap((id) => {
-      if (id === state.bootstrap?.entrance_forum_id) return [];
-      const forum = forums.get(id);
-      return forum ? [forum] : [];
-    });
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -217,7 +211,7 @@ export function Sidebar({
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [vaultPrompt, setVaultPrompt] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const [recentForumsShare, setRecentForumsShare] = useState(40);
+  const [forumsShare, setForumsShare] = useState(40);
   const [recentResize, setRecentResize] = useState<{
     pointerId: number;
     startY: number;
@@ -327,19 +321,21 @@ export function Sidebar({
       >
       <div
         className={`cha-sidebar-recent-sections${recentResize ? ' is-resizing-recents' : ''}`}
-        style={{ gridTemplateRows: `minmax(3rem, ${recentForumsShare}fr) 0.75rem minmax(3rem, ${100 - recentForumsShare}fr)` }}
+        style={{ gridTemplateRows: `minmax(3rem, ${forumsShare}fr) 0.75rem minmax(3rem, ${100 - forumsShare}fr)` }}
       >
         <div className="cha-sidebar-recent-section">
-          <div className="cha-section-label">Recent Forums</div>
-          <nav className="cha-sidebar-nav" aria-label="Recent forums">
-            {state.bootstrap && recentForums.length === 0 && <p className="cha-empty-list">No recent forums</p>}
-            {recentForums.map((forum) => {
+          <div className="cha-section-label">Forums</div>
+          <nav className="cha-sidebar-nav" aria-label="Forums">
+            {state.bootstrap?.forums.map((forum) => {
               const current = forumViews.includes(state.mainView) && state.currentForumId === forum.id;
+              const canCreateSessions = forum.id !== state.bootstrap?.entrance_forum_id;
               return (
                 <div
                   className={`cha-recent-row ${current ? 'is-current' : ''}`}
                   key={forum.id}
-                  onContextMenu={(event) => openMenu(event, { kind: 'forum', forumId: forum.id }, event.currentTarget)}
+                  onContextMenu={canCreateSessions
+                    ? (event) => openMenu(event, { kind: 'forum', forumId: forum.id }, event.currentTarget)
+                    : undefined}
                 >
                   <button
                     aria-current={current ? 'page' : undefined}
@@ -351,36 +347,38 @@ export function Sidebar({
                     <ForumsIcon />
                     <span className="cha-primary-line">{forum.display_name}</span>
                   </button>
-                  <button
-                    aria-expanded={menu?.kind === 'forum' && menu.forumId === forum.id}
-                    aria-haspopup="menu"
-                    aria-label={`Actions for forum ${forum.display_name}`}
-                    className="cha-recent-more"
-                    disabled={state.bootstrapStatus !== 'ready'}
-                    onClick={(event) => openMenu(event, { kind: 'forum', forumId: forum.id }, event.currentTarget)}
-                    type="button"
-                  >
-                    <MoreIcon />
-                  </button>
+                  {canCreateSessions && (
+                    <button
+                      aria-expanded={menu?.kind === 'forum' && menu.forumId === forum.id}
+                      aria-haspopup="menu"
+                      aria-label={`Actions for forum ${forum.display_name}`}
+                      className="cha-recent-more"
+                      disabled={state.bootstrapStatus !== 'ready'}
+                      onClick={(event) => openMenu(event, { kind: 'forum', forumId: forum.id }, event.currentTarget)}
+                      type="button"
+                    >
+                      <MoreIcon />
+                    </button>
+                  )}
                 </div>
               );
             })}
           </nav>
         </div>
         <div
-          aria-label="Resize recent forums and recent sessions"
+          aria-label="Resize forums and recent sessions"
           aria-orientation="horizontal"
-          aria-valuemax={maximumRecentForumsShare}
-          aria-valuemin={minimumRecentForumsShare}
-          aria-valuenow={Math.round(recentForumsShare)}
+          aria-valuemax={maximumForumsShare}
+          aria-valuemin={minimumForumsShare}
+          aria-valuenow={Math.round(forumsShare)}
           className="cha-sidebar-recent-resize"
           onKeyDown={(event) => {
             if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
             event.preventDefault();
-            setRecentForumsShare((share) => {
-              if (event.key === 'Home') return minimumRecentForumsShare;
-              if (event.key === 'End') return maximumRecentForumsShare;
-              return clampRecentForumsShare(share + (event.key === 'ArrowUp' ? -3 : 3));
+            setForumsShare((share) => {
+              if (event.key === 'Home') return minimumForumsShare;
+              if (event.key === 'End') return maximumForumsShare;
+              return clampForumsShare(share + (event.key === 'ArrowUp' ? -3 : 3));
             });
           }}
           onLostPointerCapture={finishRecentResize}
@@ -391,11 +389,11 @@ export function Sidebar({
             if (height <= 0) return;
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
-            setRecentResize({ pointerId: event.pointerId, startY: event.clientY, startShare: recentForumsShare, height });
+            setRecentResize({ pointerId: event.pointerId, startY: event.clientY, startShare: forumsShare, height });
           }}
           onPointerMove={(event) => {
             if (recentResize?.pointerId !== event.pointerId) return;
-            setRecentForumsShare(clampRecentForumsShare(
+            setForumsShare(clampForumsShare(
               recentResize.startShare + (event.clientY - recentResize.startY) / recentResize.height * 100,
             ));
           }}
