@@ -223,7 +223,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
     Providers& provider = *providers;
     NoteReader read_note = [path = database_path](std::int64_t id) {
         storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
-        return note_get_text(database, id);
+        return note_get_text(database, id, /*prefer_compressed=*/ true);
     };
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(read_workspace),

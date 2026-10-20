@@ -12,6 +12,8 @@ std::string_view embedded_compression_prompt();
 namespace cha::app {
 namespace {
 
+constexpr std::size_t note_compression_min_bytes = 4 * 1024;
+
 ErrorCode note_error_code(NoteFailure failure) {
     switch (failure) {
     case NoteFailure::invalid: return ErrorCode::invalid_argument;
@@ -40,6 +42,15 @@ std::shared_ptr<OperationReply> Application::compress_note(
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
+        try { note = impl_->store->get_note_text(id); }
+        catch (const NoteError& error) { rethrow_note(error); }
+        if (note.text.size() < note_compression_min_bytes) {
+            throw ApplicationError(ErrorCode::invalid_argument,
+                "This note is under 4 KiB and does not need compression.");
+        }
+        if (note.text.find_first_not_of(" \t\r\n") == std::string::npos) {
+            throw ApplicationError(ErrorCode::invalid_argument, "This note has no text to compress.");
+        }
         const auto workspace = impl_->store->snapshot();
         const auto* provider = workspace->find_provider(workspace->notes().compression_provider_id);
         if (!provider) {
@@ -51,11 +62,6 @@ std::shared_ptr<OperationReply> Application::compress_note(
             && !provider_supports_reasoning_effort(provider->config, provider->config.api)) {
             throw ApplicationError(ErrorCode::invalid_argument,
                 "This compression provider's model does not support " + effort + " reasoning effort.");
-        }
-        try { note = impl_->store->get_note_text(id); }
-        catch (const NoteError& error) { rethrow_note(error); }
-        if (note.text.find_first_not_of(" \t\r\n") == std::string::npos) {
-            throw ApplicationError(ErrorCode::invalid_argument, "This note has no text to compress.");
         }
         auto config = provider->config;
         config.reasoning_effort = effort;

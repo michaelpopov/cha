@@ -524,10 +524,14 @@ TEST(SessionController, SendsSavedNoteCopiesToEveryCharacterAndRefreshesOnlyOnRe
     EXPECT_EQ(controller->view().transcript.entries.back().text,
         "Updated this chat’s copy of note “Renamed reference”.");
     check_prompts(*controller, "Revised note content", "Original note content");
+    note_save_compressed(database, note.id, "### Compressed note content");
+    check_prompts(*controller, "Revised note content", "Compressed note content");
+    ASSERT_TRUE(controller->add_note(note.id).input_consumed);
+    check_prompts(*controller, "Compressed note content", "Revised note content");
     note_delete(database, note.id);
     controller.reset();
     controller = open(journal.path);
-    check_prompts(*controller, "Revised note content", "Original note content");
+    check_prompts(*controller, "Compressed note content", "Revised note content");
     controller.reset();
 
     TemporaryJournal unrelated;

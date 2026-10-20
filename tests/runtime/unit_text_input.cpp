@@ -323,6 +323,30 @@ TEST(TextInput, RejectsANoteAboveTheChatSizeLimitAndKeepsTheDraft) {
     EXPECT_EQ(journal.notes_prompt(), "# Note: Large\n\n" + std::string(256 * 1024, 'a'));
 }
 
+TEST(TextInput, UsesCompressedNoteTextForAttachmentsAndTheChatSizeLimit) {
+    TemporaryTextSession temporary;
+    storage::SqliteDatabase database(temporary.path, storage::SqliteDatabase::Mode::read_write);
+    const auto note = note_create(database, std::nullopt, NoteItemKind::note, "Large");
+    auto document = nlohmann::json::parse(
+        R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":""}]}]})");
+    document["content"][0]["content"][0]["text"] = std::string(256 * 1024 + 1, 'a');
+    note_save(database, note.id, document);
+    note_save_compressed(database, note.id, "Short version\n\n- Key point");
+    auto controller = test::from_test_workspace(
+        std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
+    ASSERT_TRUE(handle_text_input(*controller, "operator", "##000001").clear_input);
+    SessionJournal journal(temporary.path);
+    EXPECT_EQ(journal.notes_prompt(), "# Note: Large\n\nShort version\n\n- Key point");
+
+    note_save_compressed(database, note.id, std::string(256 * 1024 + 1, 'b'));
+    const auto rejected = handle_text_input(*controller, "operator", "##000001");
+    EXPECT_FALSE(rejected.clear_input);
+    EXPECT_EQ(rejected.session.notice,
+        "This note is too large to add to a chat. The limit is 256 KiB of text.");
+    EXPECT_EQ(controller->view().transcript.entries.size(), 1U);
+    EXPECT_EQ(journal.notes_prompt(), "# Note: Large\n\nShort version\n\n- Key point");
+}
+
 TEST(TextInput, DecodesCaseSensitiveBase62ReferencesAndPreservesMissingNoteDrafts) {
     TemporaryTextSession temporary;
     storage::SqliteDatabase database(temporary.path, storage::SqliteDatabase::Mode::read_write);

@@ -126,6 +126,7 @@ describe('Notes tree', () => {
     await chooseAction('Aardvark', 'Show compressed');
     const dialog = screen.getByRole('dialog', { name: 'Compressed version of “Aardvark”' });
     expect(within(dialog).getByRole('status')).toHaveTextContent('Loading…');
+    expect(within(dialog).queryByText(/^Compression:/)).not.toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveFocus();
     expect(getNote).toHaveBeenCalledExactlyOnceWith(aardvark.id);
     await act(async () => content.resolve({
@@ -156,8 +157,29 @@ describe('Notes tree', () => {
     await chooseAction('Aardvark', 'Show compressed');
     expect(await screen.findByRole('alert')).toHaveTextContent(missing
       ? 'No compressed version is stored for this note.' : 'That note was not found.');
+    expect(screen.queryByText(/^Compression:/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['Original text has twenty chars.', 'Short', '6.2:1'],
+    ['😀😀😀😀', '😀', '4.0:1'],
+    ['Short', 'Longer summary', '0.4:1'],
+    ['', 'Summary', '0.0:1'],
+    ['Original', '', 'N/A'],
+  ])('shows the compression ratio for original %j and compressed %j', async (original, compressed, ratio) => {
+    renderTree({ notes: client({
+      listNoteItems: async () => [{ ...aardvark, has_compressed: true }],
+      getNote: async () => ({ id: aardvark.id, compressed_text: compressed,
+        document: { type: 'doc', content: [{ type: 'paragraph',
+          ...(original ? { content: [{ type: 'text', text: original }] } : {}),
+        }] },
+      }),
+    }) });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Show compressed');
+    expect(await screen.findByText(`Compression: ${ratio}`)).toBeInTheDocument();
   });
 
   it('compresses again, waits for the result, and keeps the saved dot through rename', async () => {
@@ -184,13 +206,52 @@ describe('Notes tree', () => {
     expect(listNoteItems).toHaveBeenCalledTimes(1);
     expect(dialog).toBeInTheDocument();
     await act(async () => operation.resolve());
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(within(dialog).getByRole('status')).toHaveTextContent('Compressed “Aardvark”.');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'Aardvark' })).toHaveFocus();
     await chooseAction('Aardvark', 'Rename');
     fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Renamed' } });
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
     expect(await screen.findByRole('treeitem', { name: 'Renamed' })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Compressed version saved' })).toBeInTheDocument();
+  });
+
+  it.each(['Close', 'Escape'])('stops the timer at completion and keeps the result open until %s', async (close) => {
+    const operation = deferred<void>();
+    const refresh = deferred<NoteItem[]>();
+    const compressNote = vi.fn((_id: number, _signal: AbortSignal) => operation.promise);
+    renderTree({ notes: client({
+      listNoteItems: vi.fn().mockResolvedValueOnce([aardvark]).mockReturnValueOnce(refresh.promise),
+      compressNote,
+    }) });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    vi.useFakeTimers({ toFake: ['performance', 'setInterval', 'clearInterval'] });
+    try {
+      await chooseAction('Aardvark', 'Compress');
+      const dialog = screen.getByRole('dialog');
+      const timer = within(dialog).getByRole('timer', { name: 'Elapsed time' });
+      expect(timer).toHaveTextContent('00:00');
+      expect(dialog.querySelector('.cha-compress-spinner')).not.toBeNull();
+      act(() => { vi.advanceTimersByTime(65_000); });
+      expect(timer).toHaveTextContent('01:05');
+      await act(async () => operation.resolve());
+      expect(within(dialog).getByRole('status')).toHaveTextContent('Compressed “Aardvark”.');
+      expect(dialog.querySelector('.cha-compress-spinner')).toBeNull();
+      const button = within(dialog).getByRole('button', { name: 'Close' });
+      expect(button).toHaveFocus();
+      act(() => { vi.advanceTimersByTime(10_000); });
+      expect(timer).toHaveTextContent('01:05');
+      if (close === 'Close') fireEvent.click(button);
+      else fireEvent(dialog, new Event('cancel', { cancelable: true }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(compressNote.mock.calls[0][1].aborted).toBe(false);
+      await act(async () => refresh.reject(new Error('Offline')));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
   });
 
   it('reports a saved compression accurately when the list cannot refresh', async () => {
@@ -204,6 +265,21 @@ describe('Notes tree', () => {
     await waitFor(() => expect(within(dialog).getByRole('alert'))
       .toHaveTextContent('Compression was saved for “Aardvark”, but the notes list could not be refreshed.'));
     expect(dialog).not.toHaveTextContent('Could not compress');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('shows the short-note message without a failure prefix and closes', async () => {
+    const message = 'This note is under 4 KiB and does not need compression.';
+    renderTree({ notes: client({
+      listNoteItems: async () => [aardvark],
+      compressNote: async () => { throw new ChaError('invalid_argument', message); },
+    }) });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Compress');
+    expect((await screen.findByRole('alert')).textContent).toBe(message);
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.querySelector('.cha-compress-spinner')).toBeNull();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });

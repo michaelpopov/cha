@@ -457,13 +457,17 @@ NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id) {
     }
 }
 
-NoteText note_get_text(storage::SqliteDatabase& database, std::int64_t id) {
+NoteText note_get_text(
+    storage::SqliteDatabase& database, std::int64_t id, bool prefer_compressed) {
     try {
         auto statement = database.prepare(
-            "SELECT name, content_json FROM note_items WHERE id = ?1 AND kind = 'note'", id);
+            "SELECT name, content_json, compressed_text FROM note_items "
+            "WHERE id = ?1 AND kind = 'note'", id);
         if (!statement.step()) fail(NoteFailure::not_found, missing_note_message);
         return {id, statement.text(0),
-            note_document_markdown(parse_document(statement.text(1), id))};
+            prefer_compressed && !statement.is_null(2)
+                ? statement.text(2)
+                : note_document_markdown(parse_document(statement.text(1), id))};
     } catch (const nlohmann::json::exception&) {
         fail(NoteFailure::opening, opening_message);
     } catch (const std::runtime_error& error) {

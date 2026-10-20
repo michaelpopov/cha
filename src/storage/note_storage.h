@@ -71,7 +71,8 @@ void create_note_items_schema(storage::SqliteDatabase& database);
 
 // Markdown for chat context, retaining headings, lists, links, emphasis, and code blocks.
 [[nodiscard]] std::string note_document_markdown(const nlohmann::json& document);
-[[nodiscard]] NoteText note_get_text(storage::SqliteDatabase& database, std::int64_t id);
+[[nodiscard]] NoteText note_get_text(
+    storage::SqliteDatabase& database, std::int64_t id, bool prefer_compressed = false);
 
 [[nodiscard]] std::vector<NoteItem> note_list(storage::SqliteDatabase& database);
 [[nodiscard]] std::int64_t note_import_book(

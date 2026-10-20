@@ -113,6 +113,17 @@ to remain usable. Do not delete unique facts simply to shorten a section.
 The result should be a dense reference suited to the source's subject,
 preserving its reasoning as well as its facts.
 
+Illustrative narrative example:
+Source: "On my first day at the laboratory, I went to a meeting. It took place
+in a windowless room, where six engineers were discussing a pump that had
+failed. I had worked with that pump before. But because I was new, I kept
+quiet. Then the team leader asked me about my experience. I described a seal
+problem I had seen before, and the team agreed that they would inspect the seal."
+Compressed: "First day at the laboratory: six engineers discussed a failed
+pump in a windowless meeting room. I stayed silent because I was new, despite
+experience with that pump. The team leader asked about my experience; I
+described a past seal problem, and the team agreed to inspect the seal."
+
 4. HANDLE CODE CAREFULLY
 
 - Preserve code that communicates essential algorithms,
@@ -170,6 +181,15 @@ preserving its reasoning as well as its facts.
 - If two sections contradict each other, preserve the
   distinction rather than inventing a reconciliation.
 
+Illustrative fidelity example:
+Source: "In a study of managers, greater power was associated with less
+perspective-taking. The researchers suggested that this might reduce
+considerate behavior."
+Good compression: "Study of managers: greater power correlated with less
+perspective-taking; researchers proposed reduced considerate behavior as a
+possible consequence."
+Bad compression: "High-status people are less kind."
+
 7. COMPRESSION PRIORITY
 
 Optimize in this order:
@@ -190,7 +210,7 @@ compression depends on the source chapter.
 
 If the chapter's overall argument or relationships between sections
 are difficult to see after compression, append one short paragraph
-under "Chapter overview", translated into the source language.
+under the heading "## Chapter overview", translated into the source language.
 
 State the central problem, approach, and relationships explicitly
 supported by the source. Preserve qualifications needed for accuracy.

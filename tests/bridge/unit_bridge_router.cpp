@@ -2202,7 +2202,7 @@ nlohmann::json text_document(std::string_view text) {
 
 NoteItem compression_source(app::Application& application, std::uint64_t epoch) {
     const auto note = application.create_note_item({}, NoteItemKind::note, "Source", epoch);
-    application.save_note(note.id, text_document("Original source"), epoch);
+    application.save_note(note.id, text_document("Original source" + std::string(4096, 'a')), epoch);
     return note;
 }
 
@@ -2306,7 +2306,7 @@ TEST_F(BridgeRouterTest, CompressionRefusalsPreserveSavedTextAcrossProviderApis)
             configure_compression(*application_, server.port(), api, stream, epoch_);
             const auto note = application_->create_note_item({}, NoteItemKind::note,
                 std::string(api) + (stream ? " streaming" : " non-streaming"), epoch_);
-            const auto original = text_document("Original source");
+            const auto original = text_document("Original source" + std::string(4096, 'a'));
             application_->save_note(note.id, original, epoch_);
             expect_note_error(call("notes.compress", {{"id", note.id}}), "internal_error",
                 "The provider refused to compress this note.");
@@ -2339,8 +2339,7 @@ TEST_F(BridgeRouterTest, CompressesOriginalAndReplacesOnlyCompleteAnswersAcrossP
             configure_compression(*application_, server.port(), api, stream, epoch_);
             const auto note = application_->create_note_item({}, NoteItemKind::note,
                 std::string(api) + (stream ? " stream" : " single"), epoch_);
-            const auto original = nlohmann::json::parse(
-                R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Original technical content"}]}]})");
+            const auto original = text_document("Original technical content" + std::string(4096, 'a'));
             application_->save_note(note.id, original, epoch_);
             EXPECT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
             EXPECT_EQ(stored_compression(database_, note.id), "First compression");
@@ -2389,14 +2388,50 @@ TEST_F(BridgeRouterTest, CompressionUsesSelectedEffortAcrossProviderApis) {
     }
 }
 
-TEST_F(BridgeRouterTest, CompressionReportsProviderSettingsAndEmptyNotes) {
+TEST_F(BridgeRouterTest, CompressionSkipsShortMarkdownBeforeProviderValidation) {
     bootstrap_epoch();
     const auto note = application_->create_note_item({}, NoteItemKind::note, "Source", epoch_);
     expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
+        "This note is under 4 KiB and does not need compression.");
+    const auto short_document = text_document(std::string(4095, 'a'));
+    ASSERT_GT(short_document.dump().size(), 4096U);
+    application_->save_note(note.id, short_document, epoch_);
+    expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
+        "This note is under 4 KiB and does not need compression.");
+
+    MockHttpServer server({compression_response("chat_completions", false, "Compressed text")});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        note_save_compressed(database, note.id, "Existing compression");
+    }
+    expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
+        "This note is under 4 KiB and does not need compression.");
+    EXPECT_EQ(stored_compression(database_, note.id), "Existing compression");
+    EXPECT_EQ(application_->get_note(note.id, epoch_).document, short_document);
+
+    // Count UTF-8 bytes, not characters, and allow exactly 4 KiB.
+    std::string text;
+    for (int i = 0; i < 2048; ++i) text += "é";
+    ASSERT_EQ(text.size(), 4096U);
+    application_->save_note(note.id, text_document(text), epoch_);
+    ASSERT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
+    server.join();
+    ASSERT_EQ(server.requests().size(), 1U);
+    EXPECT_EQ(stored_compression(database_, note.id), "Compressed text");
+}
+
+TEST_F(BridgeRouterTest, CompressionReportsProviderSettingsAndEmptyNotes) {
+    bootstrap_epoch();
+    const auto note = compression_source(*application_, epoch_);
+    expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
         "Select a compression provider in Settings → Notes.");
-    (void)application_->save_notes_settings({"test"}, epoch_);
+    application_->save_note(note.id, text_document(std::string(4096, ' ')), epoch_);
     expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
         "This note has no text to compress.");
+    application_->save_note(note.id, text_document("Original source" + std::string(4096, 'a')), epoch_);
+    (void)application_->save_notes_settings({"test"}, epoch_);
     for (const auto api : {"chat_completions", "responses"}) {
         nlohmann::json provider = application_->get_provider("test", epoch_);
         for (const char* key : {"id", "used_by", "writable"}) provider.erase(key);
@@ -2407,7 +2442,6 @@ TEST_F(BridgeRouterTest, CompressionReportsProviderSettingsAndEmptyNotes) {
         expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
             "This compression provider's model does not support high reasoning effort.");
     }
-    application_->save_note(note.id, text_document("Original source"), epoch_);
     nlohmann::json provider = application_->get_provider("test", epoch_);
     for (const char* key : {"id", "used_by", "writable"}) provider.erase(key);
     provider["host"] = "127.0.0.1";
@@ -2517,11 +2551,12 @@ TEST_F(BridgeRouterTest, CompressionKeepsAResultAfterAnEditButNotAfterDeletion) 
         *router_, connection_, next_id_, epoch_, "notes.compress", {{"id", note.id}});
     router_->run_ordinary_tasks();
     ASSERT_TRUE(server.wait_for_requests(1, 2s));
-    application_->save_note(note.id, text_document("Edited source"), epoch_);
+    const auto edited = text_document("Edited source" + std::string(4096, 'a'));
+    application_->save_note(note.id, edited, epoch_);
     server.resume_responses();
     EXPECT_TRUE(wait_replies(*router_, connection_, {compress})[compress]["ok"]);
     EXPECT_EQ(stored_compression(database_, note.id), "From the original");
-    EXPECT_EQ(application_->get_note(note.id, epoch_).document, text_document("Edited source"));
+    EXPECT_EQ(application_->get_note(note.id, epoch_).document, edited);
 
     server.pause_before_response(2);
     compress = queue_request(

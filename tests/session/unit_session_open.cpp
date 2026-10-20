@@ -129,6 +129,8 @@ TEST_F(SessionOpenTest, WelcomeCopiesNotesFromTheActiveVaultAndKeepsItsOwnCopy) 
     EXPECT_EQ(journal.notes_prompt(), "# Note: Reference\n\nOriginal");
     store_->save_note(note.id, nlohmann::json::parse(
         R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Revised"}]}]})"));
+    store_->save_compressed_note(note.id, "Compressed");
+    EXPECT_EQ(store_->get_note_text(note.id).text, "Revised");
     {
         auto opened = open(welcome);
         EXPECT_EQ(journal.notes_prompt(), "# Note: Reference\n\nOriginal");
@@ -136,7 +138,7 @@ TEST_F(SessionOpenTest, WelcomeCopiesNotesFromTheActiveVaultAndKeepsItsOwnCopy) 
         EXPECT_EQ(opened.controller->view().transcript.entries.back().text,
             "Updated this chat’s copy of note “Reference”.");
     }
-    EXPECT_EQ(journal.notes_prompt(), "# Note: Reference\n\nRevised");
+    EXPECT_EQ(journal.notes_prompt(), "# Note: Reference\n\nCompressed");
     const auto other = sessions_->create("lobby", "Other");
     const auto other_prepared = sessions_->prepare(other.identity);
     SessionJournal vault_session(other_prepared.database_path, other_prepared.session_key);

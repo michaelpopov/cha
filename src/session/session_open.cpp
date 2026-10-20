@@ -32,7 +32,7 @@ OpenedSession open_session(
         .lease = std::move(prepared.lease),
         .controller = SessionController::from_workspace(
             [&config] { return config.snapshot(); },
-            [&config](std::int64_t id) { return config.get_note_text(id); },
+            [&config](std::int64_t id) { return config.get_note_text(id, /*prefer_compressed=*/ true); },
             forum->default_character_id,
             forum->default_persona_id,
             prepared.database_path,

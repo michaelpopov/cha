@@ -657,6 +657,11 @@ select:disabled {
   margin-top: 1rem;
 }
 
+.cha-compression-ratio {
+  align-self: center;
+  margin-right: auto;
+}
+
 .cha-settings-form .cha-checkbox-row {
   display: flex;
   align-items: center;

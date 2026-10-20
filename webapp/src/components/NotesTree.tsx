@@ -1,5 +1,6 @@
 import { hotkeysCoreFeature, syncDataLoaderFeature } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
+import { generateText } from '@tiptap/core';
 import {
   useEffect,
   useLayoutEffect,
@@ -10,7 +11,9 @@ import {
 import { createPortal } from 'react-dom';
 
 import {
+  ChaError,
   publicErrorMessage,
+  type NoteContent,
   type NoteItem,
   type NotesClient,
 } from '../api/client';
@@ -21,6 +24,7 @@ import {
   type NoteTreeRow,
 } from '../notes/tree';
 import { noteReference } from '../notes/reference';
+import { notesExtensions } from '../notes/editor';
 
 type CreateKind = 'note' | 'folder';
 
@@ -218,7 +222,7 @@ export function NotesTree({
     return () => {
       alive.current = false;
       const current = dialogRef.current;
-      if (current?.action === 'compress') current.controller.abort();
+      if (current?.action === 'compress' && current.pending) current.controller.abort();
     };
   }, []);
 
@@ -268,7 +272,7 @@ export function NotesTree({
 
   useLayoutEffect(() => {
     const reveal = revealId.current;
-    if (reveal === null) return;
+    if (reveal === null || dialog !== null) return;
     const key = String(reveal.id);
     if (!dataRef.current.rows[key]) return;
     const current = treeRef.current;
@@ -489,18 +493,20 @@ export function NotesTree({
           ? { ...current, phase: 'compressing' } : current);
       });
       if (!alive.current) return;
+      if (saved) setDialog({ ...captured, pending: false });
       const refreshed = await refreshListing(source.id);
       if (!alive.current) return;
       if (refreshed === 'failed' && saved) {
-        setDialog({ ...captured, pending: false,
-          error: `Compression was saved for “${source.name}”, but the notes list could not be refreshed.` });
-        return;
+        setDialog((current) => current?.action === 'compress' && current.controller === captured.controller
+          ? { ...current, error: `Compression was saved for “${source.name}”, but the notes list could not be refreshed.` }
+          : current);
       }
-      setDialog(null);
+      if (!saved) setDialog(null);
     } catch (failure: unknown) {
-      // The dialog keeps line breaks, so the reason shows on its own line.
+      const reason = publicErrorMessage(failure, 'Try again.');
       if (alive.current) setDialog({ ...captured, pending: false,
-        error: `Could not compress “${source.name}”.\n${publicErrorMessage(failure, 'Try again.')}` });
+        error: failure instanceof ChaError && failure.code === 'invalid_argument'
+          ? reason : `Could not compress “${source.name}”.\n${reason}` });
     } finally {
       busy.current = false;
     }
@@ -798,8 +804,12 @@ function CompressedDialog({ client, sourceId, name, onClose }: {
 }) {
   const button = useRef<HTMLButtonElement | null>(null);
   const element = useDialogElement(() => button.current?.focus());
-  const [text, setText] = useState<string | null>(null);
+  const [note, setNote] = useState<NoteContent | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const text = note?.compressed_text ?? null;
+  const originalText = note
+    ? generateText({ type: 'doc', ...note.document }, notesExtensions(), { blockSeparator: '\n' }) : '';
+  const ratio = text ? `${([...originalText].length / [...text].length).toFixed(1)}:1` : 'N/A';
 
   useEffect(() => {
     let cancelled = false;
@@ -807,7 +817,7 @@ function CompressedDialog({ client, sourceId, name, onClose }: {
       (note) => {
         if (cancelled) return;
         if (note.compressed_text === undefined) setError('No compressed version is stored for this note.');
-        else setText(note.compressed_text);
+        else setNote(note);
       },
       (failure: unknown) => {
         if (!cancelled) setError(publicErrorMessage(failure, 'The compressed note could not be loaded.'));
@@ -824,6 +834,7 @@ function CompressedDialog({ client, sourceId, name, onClose }: {
       {text !== null && <pre aria-label="Compressed note text" tabIndex={0}>{text}</pre>}
       {error && <p className="cha-error-message" role="alert">{error}</p>}
       <div className="cha-dialog-actions">
+        {text !== null && <span className="cha-compression-ratio">Compression: {ratio}</span>}
         <button className="cha-button cha-button-ghost" type="button" ref={button} onClick={onClose}>Close</button>
       </div>
     </dialog>, document.body,
@@ -836,6 +847,15 @@ function CompressDialog({ dialog, onClose }: {
 }) {
   const button = useRef<HTMLButtonElement | null>(null);
   const element = useDialogElement(() => button.current?.focus());
+  const [startedAt] = useState(() => performance.now());
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  useEffect(() => {
+    const update = () => setElapsedSeconds(Math.floor((performance.now() - startedAt) / 1000));
+    update();
+    if (!dialog.pending) return;
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [dialog.pending, startedAt]);
   return createPortal(
     <dialog className="cha-dialog cha-compress-dialog" ref={element}
       aria-label={`Compress “${dialog.name}”`}
@@ -848,10 +868,15 @@ function CompressDialog({ dialog, onClose }: {
         <p role="alert">{dialog.error}</p>
       ) : (
         <p className="cha-compress-status" role="status">
-          <span className="cha-compress-spinner" aria-hidden="true" />
-          <span>{dialog.phase === 'saving' ? 'Saving' : 'Compressing'} “{dialog.name}”…</span>
+          {dialog.pending && <span className="cha-compress-spinner" aria-hidden="true" />}
+          <span>{dialog.pending
+            ? `${dialog.phase === 'saving' ? 'Saving' : 'Compressing'} “${dialog.name}”…`
+            : `Compressed “${dialog.name}”.`}</span>
         </p>
       )}
+      <p role="timer" aria-label="Elapsed time">
+        {String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:{String(elapsedSeconds % 60).padStart(2, '0')}
+      </p>
       <div className="cha-dialog-actions">
         <button className="cha-button" type="button" ref={button}
           onClick={() => { if (dialog.pending) dialog.controller.abort(); else onClose(); }}>
