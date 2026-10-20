@@ -6,6 +6,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -56,6 +57,13 @@ const forumViews: MainView[] = [
   'new-forum-file',
   'forum-members',
 ];
+
+const minimumRecentForumsShare = 15;
+const maximumRecentForumsShare = 85;
+
+function clampRecentForumsShare(share: number) {
+  return Math.min(maximumRecentForumsShare, Math.max(minimumRecentForumsShare, share));
+}
 
 const settingsViews: MainView[] = [
   'personas',
@@ -209,6 +217,17 @@ export function Sidebar({
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [vaultPrompt, setVaultPrompt] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const [recentForumsShare, setRecentForumsShare] = useState(40);
+  const [recentResize, setRecentResize] = useState<{
+    pointerId: number;
+    startY: number;
+    startShare: number;
+    height: number;
+  } | null>(null);
+
+  function finishRecentResize(event: PointerEvent<HTMLDivElement>) {
+    if (recentResize?.pointerId === event.pointerId) setRecentResize(null);
+  }
 
   function closeMenu(restore = true) {
     if (restore) menu?.restoreFocus?.focus();
@@ -306,7 +325,10 @@ export function Sidebar({
         hidden={state.sidebarTab !== 'chat'}
         role="tabpanel"
       >
-      <div className="cha-sidebar-recent-sections">
+      <div
+        className={`cha-sidebar-recent-sections${recentResize ? ' is-resizing-recents' : ''}`}
+        style={{ gridTemplateRows: `minmax(3rem, ${recentForumsShare}fr) 0.75rem minmax(3rem, ${100 - recentForumsShare}fr)` }}
+      >
         <div className="cha-sidebar-recent-section">
           <div className="cha-section-label">Recent Forums</div>
           <nav className="cha-sidebar-nav" aria-label="Recent forums">
@@ -345,6 +367,42 @@ export function Sidebar({
             })}
           </nav>
         </div>
+        <div
+          aria-label="Resize recent forums and recent sessions"
+          aria-orientation="horizontal"
+          aria-valuemax={maximumRecentForumsShare}
+          aria-valuemin={minimumRecentForumsShare}
+          aria-valuenow={Math.round(recentForumsShare)}
+          className="cha-sidebar-recent-resize"
+          onKeyDown={(event) => {
+            if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            setRecentForumsShare((share) => {
+              if (event.key === 'Home') return minimumRecentForumsShare;
+              if (event.key === 'End') return maximumRecentForumsShare;
+              return clampRecentForumsShare(share + (event.key === 'ArrowUp' ? -3 : 3));
+            });
+          }}
+          onLostPointerCapture={finishRecentResize}
+          onPointerCancel={finishRecentResize}
+          onPointerDown={(event) => {
+            if (event.button !== 0 || recentResize) return;
+            const height = event.currentTarget.parentElement!.clientHeight - event.currentTarget.offsetHeight;
+            if (height <= 0) return;
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setRecentResize({ pointerId: event.pointerId, startY: event.clientY, startShare: recentForumsShare, height });
+          }}
+          onPointerMove={(event) => {
+            if (recentResize?.pointerId !== event.pointerId) return;
+            setRecentForumsShare(clampRecentForumsShare(
+              recentResize.startShare + (event.clientY - recentResize.startY) / recentResize.height * 100,
+            ));
+          }}
+          onPointerUp={finishRecentResize}
+          role="separator"
+          tabIndex={0}
+        />
         <div className="cha-sidebar-recent-section">
           <div className="cha-section-label">Recent Sessions</div>
           <div className="cha-recents" aria-label="Recent sessions">

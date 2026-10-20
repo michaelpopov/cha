@@ -152,7 +152,50 @@ select:disabled {
   display: grid;
   min-height: 0;
   flex: 1;
-  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.cha-sidebar-recent-resize {
+  position: relative;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.cha-sidebar-recent-resize::before,
+.cha-sidebar-recent-resize::after {
+  position: absolute;
+  content: '';
+}
+
+.cha-sidebar-recent-resize::before {
+  inset: 50% 0.55rem auto;
+  height: 1px;
+  background: var(--border);
+}
+
+.cha-sidebar-recent-resize::after {
+  top: calc(50% - 1px);
+  left: calc(50% - 0.75rem);
+  width: 1.5rem;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--muted-foreground);
+}
+
+.cha-sidebar-recent-resize:hover,
+.cha-sidebar-recent-resize:focus-visible,
+.is-resizing-recents .cha-sidebar-recent-resize {
+  background: var(--surface);
+}
+
+.cha-sidebar-recent-resize:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.is-resizing-recents,
+.is-resizing-recents * {
+  cursor: ns-resize;
+  user-select: none;
 }
 
 .cha-sidebar-recent-section {
@@ -166,10 +209,6 @@ select:disabled {
   min-height: 0;
   align-content: start;
   overflow-y: auto;
-}
-
-.cha-sidebar-nav {
-  max-height: 12rem;
 }
 
 .cha-side-action,
