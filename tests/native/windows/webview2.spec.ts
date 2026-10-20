@@ -111,7 +111,8 @@ async function waitForApplication(page: Page): Promise<void> {
 async function newNote(page: Page, name: string): Promise<void> {
   await waitForApplication(page);
   await page.getByRole('tab', { name: 'Notes', exact: true }).click();
-  await page.getByRole('button', { name: 'New note', exact: true }).first().click();
+  await page.getByRole('treeitem').first().getByRole('button').click();
+  await page.getByRole('menuitem', { name: 'New note', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New note', exact: true });
   await dialog.getByLabel('Name', { exact: true }).fill(name);
   await dialog.getByRole('button', { name: 'Create', exact: true }).click();
