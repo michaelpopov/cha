@@ -7,6 +7,7 @@ import { ChaError, type NoteBookImport, type NoteItem } from '../api/client';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 import { canonicalNoteLink, flattenClipboardTable, noteHeadings, notesExtensions } from './editor';
 import { notePageName } from './pageImport';
+import { embeddedImageError, pictureByteLimit, pictureFromBytes } from './pictures';
 import { availableNoteName } from './tree';
 
 const textFileLimit = 16 * 1024 * 1024;
@@ -14,7 +15,7 @@ const requestLimit = textFileLimit - 64 * 1024;
 const epubNamespace = 'http://www.idpf.org/2007/ops';
 const xhtmlNamespace = 'http://www.w3.org/1999/xhtml';
 const omittedTags = [
-  'img', 'svg', 'script', 'style', 'iframe', 'object', 'embed', 'applet',
+  'svg', 'script', 'style', 'iframe', 'object', 'embed', 'applet',
   'video', 'audio', 'canvas', 'form', 'input', 'button', 'select', 'textarea',
 ];
 // Keep the EPUB link policy separate from the sanitizer used by page import.
@@ -62,21 +63,29 @@ export function prepareEpubImport(
   parentId: number | null = null,
 ): NoteBookImport {
   // fflate's filter runs before decompression. Never inflate unused resources.
-  function read(path: string, text = true): string {
+  function readBytes(path: string, limit: number | null = textFileLimit): Uint8Array {
     let found = false;
     try {
       const files = unzipSync(bytes, { filter: (file) => {
         if (file.name !== path) return false;
         found = true;
-        if (!text) return false;
-        if (file.originalSize > textFileLimit) {
-          throw new ChaError('body_too_large', `“${path}” exceeds the 16 MiB EPUB file limit.`);
+        if (limit === null) return false;
+        if (file.originalSize > limit) {
+          throw new ChaError('body_too_large', `“${path}” exceeds the ${limit / (1024 * 1024)} MiB EPUB file limit.`);
         }
         return true;
       } });
       if (!found) invalid(`The EPUB is missing “${path}”.`);
-      if (!text) return '';
-      const content = files[path];
+      return files[path] ?? new Uint8Array();
+    } catch (failure) {
+      if (failure instanceof ChaError) throw failure;
+      invalid(`Could not read “${path}” from the EPUB.`);
+    }
+  }
+
+  function read(path: string): string {
+    const content = readBytes(path);
+    try {
       // UTF-16 XML identifies its byte order with a BOM or the opening "<?".
       let encoding = 'utf-8';
       if ((content[0] === 0xff && content[1] === 0xfe)
@@ -87,9 +96,21 @@ export function prepareEpubImport(
         encoding = 'utf-16be';
       }
       return new TextDecoder(encoding, { fatal: true }).decode(content);
-    } catch (failure) {
-      if (failure instanceof ChaError) throw failure;
+    } catch {
       invalid(`Could not read “${path}” from the EPUB.`);
+    }
+  }
+
+  function readPicture(source: string, chapterPath: string): string | null {
+    if (source.startsWith('data:')) return embeddedImageError(source) ? null : source;
+    const path = source ? resolvePath(source, chapterPath) : null;
+    if (!path) return null;
+    try {
+      const picture = pictureFromBytes(readBytes(path, pictureByteLimit));
+      return 'src' in picture ? picture.src : null;
+    } catch {
+      // Missing, oversized or unreadable pictures must not discard the chapter.
+      return null;
     }
   }
 
@@ -137,6 +158,13 @@ export function prepareEpubImport(
   const parser = NoteParser.fromSchema(schema);
   const seen = new Set<string>();
   const notes: NoteBookImport['notes'] = [];
+  const illustrated: Array<{
+    path: string;
+    body: HTMLElement;
+    pictures: Array<{ image: HTMLImageElement; source: string }>;
+    note: NoteBookImport['notes'][number];
+    size: number;
+  }> = [];
   for (const ref of elements(spine, 'itemref')) {
     const entry = entries.find((item) => item.getAttribute('id') === ref.getAttribute('idref'));
     const href = entry?.getAttribute('href');
@@ -145,6 +173,8 @@ export function prepareEpubImport(
     if (seen.has(path)) continue;
     seen.add(path);
     let doc = schema.topNodeType.createAndFill()!;
+    let noteBody: HTMLElement | null = null;
+    const pictures: Array<{ image: HTMLImageElement; source: string }> = [];
     if (entry.getAttribute('media-type') === 'application/xhtml+xml') {
       const xml = parseXml(read(path), path);
       // A body outside the XHTML namespace does not become the inert document's body.
@@ -170,25 +200,45 @@ export function prepareEpubImport(
         ADD_FORBID_CONTENTS: omittedTags,
         FORBID_ATTR: ['target', 'rel'],
       });
+      // Pictures are read after all text is known. An empty source keeps their place.
+      for (const image of inert.body.querySelectorAll('img')) {
+        const placeholder = inert.createElement('img');
+        placeholder.setAttribute('src', '');
+        for (const attribute of ['alt', 'title']) {
+          if (image.hasAttribute(attribute)) placeholder.setAttribute(attribute, image.getAttribute(attribute)!);
+        }
+        image.replaceWith(placeholder);
+        pictures.push({ image: placeholder, source: image.getAttribute('src') ?? '' });
+      }
+      // Pictures use the editor's existing block nodes, without empty wrapper paragraphs.
+      for (const paragraph of inert.body.querySelectorAll('p')) {
+        if (paragraph.querySelector('img') && !paragraph.textContent?.trim()) {
+          paragraph.replaceWith(...paragraph.childNodes);
+        }
+      }
       for (const table of [...inert.body.querySelectorAll('table')].reverse()) {
         flattenClipboardTable(table);
       }
+      noteBody = inert.body;
       try {
         doc = parser.parse(inert.body);
       } catch {
         invalid(`Could not convert “${path}” to a note.`);
       }
     } else {
-      read(path, false); // Require the spine entry, but omit its media content.
+      readBytes(path, null); // Require the spine entry, but omit its media content.
     }
     const content = doc.toJSON() as Record<string, unknown>;
-    if (noteDocumentByteLength(content) > noteDocumentByteLimit) {
+    const size = noteDocumentByteLength(content);
+    if (size > noteDocumentByteLimit) {
       throw new ChaError('body_too_large', `The note from “${path}” exceeds 12 MiB.`);
     }
     const basename = path.slice(path.lastIndexOf('/') + 1).replace(/\.[^.]*$/u, '');
     const name = labels.get(path) || notePageName(noteHeadings(doc)[0]?.text ?? '')
       || notePageName(basename) || 'File';
-    notes.push({ name, document: content });
+    const note = { name, document: content };
+    notes.push(note);
+    if (noteBody && pictures.length) illustrated.push({ path, body: noteBody, pictures, note, size });
   }
   if (!notes.length) invalid('The book has no reading-order files.');
   const digits = Math.max(3, String(notes.length).length);
@@ -197,8 +247,26 @@ export function prepareEpubImport(
   const title = metadata ? elements(metadata, 'title').map((title) => notePageName(title.textContent ?? '')).find(Boolean) : '';
   const name = availableNoteName(items, parentId, title || notePageName(filename.replace(/\.epub$/iu, '')) || 'Book');
   const request = { parent_id: parentId, name, notes };
-  if (noteDocumentByteLength(request) > requestLimit) {
+  let free = requestLimit - noteDocumentByteLength(request);
+  if (free < 0) {
     throw new ChaError('body_too_large', 'The book exceeds the EPUB import request limit (16 MiB).');
+  }
+  // Pictures use the space that the text leaves, in reading order. A picture that does not fit is skipped.
+  for (const { path, body, pictures, note, size } of illustrated) {
+    let noteFree = noteDocumentByteLimit - size;
+    for (const { image, source } of pictures) {
+      const src = readPicture(source, path);
+      // The size already counts the quotes of the empty placeholder source.
+      const added = src === null ? 0 : noteDocumentByteLength(src) - 2;
+      if (src !== null && added <= Math.min(free, noteFree)) {
+        image.setAttribute('src', src);
+        free -= added;
+        noteFree -= added;
+      } else {
+        image.remove();
+      }
+    }
+    note.document = parser.parse(body).toJSON() as Record<string, unknown>;
   }
   return request;
 }

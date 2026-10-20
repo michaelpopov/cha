@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 import type { NoteItem } from '../api/client';
 import { prepareEpubImport } from './epubImport';
 import { createNotesEditor, notesExtensions } from './editor';
-import { noteDocumentByteLimit } from './documentBytes';
+import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
+import { pictureByteLimit, pictureFromBytes } from './pictures';
 
 const container = (path: string) => `<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="${path}" media-type="application/oebps-package+xml"/></rootfiles></container>`;
 const xhtml = (body: string) => `<html xmlns="http://www.w3.org/1999/xhtml"><head><title/></head><body>${body}</body></html>`;
@@ -13,8 +14,10 @@ const pkg = (manifest: string, spine: string, metadata = '<dc:title>Test Book</d
 const item = (id: string, href: string, extra = '') => `<item id="${id}" href="${href}" media-type="application/xhtml+xml" ${extra}/>`;
 const ref = (id: string, extra = '') => `<itemref idref="${id}" ${extra}/>`;
 
-function archive(files: Record<string, string>): Uint8Array {
-  return zipSync(Object.fromEntries(Object.entries(files).map(([path, text]) => [path, strToU8(text)])));
+function archive(files: Record<string, string | Uint8Array>): Uint8Array {
+  return zipSync(Object.fromEntries(Object.entries(files).map(([path, content]) => [
+    path, typeof content === 'string' ? strToU8(content) : content,
+  ])));
 }
 
 function utf16(text: string, littleEndian: boolean, bom = true): Uint8Array {
@@ -140,7 +143,7 @@ describe('EPUB import', () => {
     }
   });
 
-  it('removes all media, scripts, styles, interactive controls and internal link destinations', () => {
+  it('removes unsupported media, scripts, styles, interactive controls and internal link destinations', () => {
     const result = prepareEpubImport(archive(book(`<p><a href="book.io/chapter.xhtml">Internal</a> <a href="#top">Fragment</a>
       <a href=" HTTPS://example.com/page ">External</a><a href="mailto:a@example.com">Mail</a></p>
       <script>bad()</script><style>bad{}</style><form>Form</form><button>Button</button><textarea>Input</textarea>
@@ -239,7 +242,65 @@ describe('EPUB import', () => {
     ] });
   });
 
-  it('imports empty, image-only and non-XHTML spine files as empty notes', () => {
+  it.each([
+    ['PNG', [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+    ['JPEG', [0xff, 0xd8, 0xff]],
+    ['GIF', [0x47, 0x49, 0x46, 0x38, 0x39, 0x61]],
+    ['WebP', [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]],
+  ])('embeds %s pictures from encoded chapter-relative paths in reading order', (_format, header) => {
+    const bytes = new Uint8Array(header);
+    const files = book('');
+    files['Book/package.opf'] = pkg(item('text', 'Text/chapter.xhtml'), ref('text'));
+    files['Book/Text/chapter.xhtml'] = `<h:html xmlns:h="http://www.w3.org/1999/xhtml"><h:body>
+      <h:p>Before</h:p><h:p><h:img src="../Pictures/%E7%AB%A0%20%23%25.bin" alt="Illustration" title="Caption" width="1"/></h:p>
+      <h:p>After</h:p></h:body></h:html>`;
+    const doc = prepareEpubImport(archive({ ...files, 'Book/Pictures/章 #%.bin': bytes }), 'file.epub', []).notes[0].document;
+    const picture = pictureFromBytes(bytes);
+    if (!('src' in picture)) throw new Error('Expected a picture');
+    expect(doc).toMatchObject({ type: 'doc', content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'Before' }] },
+      { type: 'image', attrs: { src: picture.src, alt: 'Illustration', title: 'Caption', width: null } },
+      { type: 'paragraph', content: [{ type: 'text', text: 'After' }] },
+    ] });
+    const editor = createNotesEditor({ content: doc, readPicture: async () => { throw new Error('Unexpected download'); } });
+    try {
+      expect(editor.view.dom.querySelector('img')).toHaveAttribute('src', picture.src);
+      expect(editor.getJSON()).toEqual(doc);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it('imports image-only chapters and valid data pictures', () => {
+    const bytes = new Uint8Array([0xff, 0xd8, 0xff]);
+    const picture = pictureFromBytes(bytes);
+    if (!('src' in picture)) throw new Error('Expected a picture');
+    const doc = prepareEpubImport(archive({
+      ...book(`<p><img src="cover.jpg"/></p><img src="${picture.src}"/>`),
+      'Book/cover.jpg': bytes,
+    }), 'file.epub', []).notes[0].document;
+    expect(doc).toMatchObject({ type: 'doc', content: [
+      { type: 'image', attrs: { src: picture.src } },
+      { type: 'image', attrs: { src: picture.src } },
+    ] });
+  });
+
+  it('keeps chapter text when pictures are missing, oversized, unsupported or external', () => {
+    const oversized = new Uint8Array(pictureByteLimit + 1);
+    oversized.set([0xff, 0xd8, 0xff]);
+    const doc = prepareEpubImport(archive({
+      ...book(`<p>Before<img src="missing.png"/><img src="large.jpg"/><img src="bad.png"/>
+        <img src="drawing.svg"/><img src="https://example.com/remote.jpg"/><img src="//example.com/remote.jpg"/>
+        <img src="file:///tmp/local.jpg"/><img src="data:image/png;base64,AA=="/>After</p>`),
+      'Book/large.jpg': oversized,
+      'Book/bad.png': 'Not an image',
+      'Book/drawing.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>',
+    }), 'file.epub', []).notes[0].document;
+    expect(text(doc)).toBe('Before After');
+    expect(JSON.stringify(doc)).not.toContain('"type":"image"');
+  });
+
+  it('imports empty, missing-image-only and non-XHTML spine files as empty notes', () => {
     const files = book('<img src="cover.png"/>');
     files['Book/package.opf'] = pkg(item('text', 'text.xhtml') + item('empty', 'empty.xhtml') + '<item id="svg" href="cover.svg" media-type="image/svg+xml"/>', ref('text') + ref('empty') + ref('svg'));
     files['Book/empty.xhtml'] = xhtml('');
@@ -323,5 +384,25 @@ describe('EPUB import', () => {
     files['Book/second.xhtml'] = files['Book/text.xhtml'];
     files['Book/package.opf'] = pkg(item('text', 'text.xhtml') + item('second', 'second.xhtml'), ref('text') + ref('second'));
     expect(() => prepareEpubImport(archive(files), 'file.epub', [])).toThrow('request limit');
+  });
+
+  it('skips pictures that do not fit the note and book size limits', () => {
+    const bytes = new Uint8Array(pictureByteLimit);
+    bytes.set([0xff, 0xd8, 0xff]);
+    const pictures = (doc: Record<string, unknown>) => JSON.stringify(doc).match(/"type":"image"/gu)?.length ?? 0;
+    const note = prepareEpubImport(archive({
+      ...book('<img src="picture.jpg"/>'.repeat(9) + '<p>After</p>'),
+      'Book/picture.jpg': bytes,
+    }), 'file.epub', []).notes[0].document;
+    expect(pictures(note)).toBe(8);
+    expect(text(note)).toBe('After');
+    expect(noteDocumentByteLength(note)).toBeLessThanOrEqual(noteDocumentByteLimit);
+    const files = book('<img src="picture.jpg"/>'.repeat(6) + '<p>First</p>');
+    files['Book/second.xhtml'] = xhtml('<img src="picture.jpg"/>'.repeat(6) + '<p>Second</p>');
+    files['Book/package.opf'] = pkg(item('text', 'text.xhtml') + item('second', 'second.xhtml'), ref('text') + ref('second'));
+    const result = prepareEpubImport(archive({ ...files, 'Book/picture.jpg': bytes }), 'file.epub', []);
+    expect(result.notes.map((item) => pictures(item.document))).toEqual([6, 5]);
+    expect(result.notes.map((item) => text(item.document))).toEqual(['First', 'Second']);
+    expect(noteDocumentByteLength(result)).toBeLessThanOrEqual(16 * 1024 * 1024 - 64 * 1024);
   });
 });
