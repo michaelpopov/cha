@@ -320,6 +320,8 @@ export interface components {
         };
         NotesSettings: {
             compression_provider: string;
+            /** @enum {string} */
+            compression_reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh";
         };
         WebSearchSettings: {
             /** @enum {string} */
@@ -730,6 +732,7 @@ export interface components {
         NoteContent: {
             id: components["schemas"]["NoteId"];
             document: components["schemas"]["NoteDocument"];
+            compressed_text?: string;
         };
         BridgeInfo: {
             /** @enum {integer} */

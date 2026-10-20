@@ -20,7 +20,7 @@ function loadFixture(name: string): unknown {
 
 describe('native CHA client', () => {
   it('reads and saves notes settings through the native bridge', async () => {
-    const settings = { compression_provider: 'provider_7' };
+    const settings = { compression_provider: 'provider_7', compression_reasoning_effort: 'medium' as const };
     const save = vi.fn(() => settings);
     const client = createNativeChaClient(createFakeNativeBridge({
       'notesSettings.get': () => settings,
@@ -448,6 +448,12 @@ describe('notes native client', () => {
   const note = { id: 4, has_compressed: false, parent_id: 1, kind: 'note', name: 'Draft' };
   const document = { type: 'doc', content: [{ type: 'paragraph' }] };
 
+  it('reads compressed text with the original note document', async () => {
+    const content = { id: 4, document, compressed_text: 'Stored summary\nSecond line' };
+    const client = clientFor({ 'notes.get': () => content });
+    expect(await client.getNote(4)).toEqual(content);
+  });
+
   function clientFor(handlers: Record<string, (params: unknown) => unknown>) {
     return createNativeChaClient(createFakeNativeBridge(handlers));
   }
@@ -592,6 +598,8 @@ describe('notes native client', () => {
     ['notes.list', { items: [{ ...folder, kind: 'file' }] }],
     ['notes.list', { item: [] }],
     ['notes.get', { id: 4, document: [] }],
+    ['notes.get', { id: 4, document, compressed_text: null }],
+    ['notes.get', { id: 4, document, compressed_text: 42 }],
     ['notes.get', { id: 4, document, extra: true }],
     ['notes.get', { id: 4 }],
     ['notes.save', { ok: true }],

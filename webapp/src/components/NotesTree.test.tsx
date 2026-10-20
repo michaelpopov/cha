@@ -100,6 +100,66 @@ async function chooseAction(name: string, action: string) {
 }
 
 describe('Notes tree', () => {
+  it('disables Show compressed without stored text and skips it with the arrow keys', async () => {
+    renderTree();
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Aardvark' }));
+    expect(screen.getByRole('menuitem', { name: 'Show compressed' })).toBeDisabled();
+    screen.getByRole('menuitem', { name: 'Compress' }).focus();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' });
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowUp' });
+    expect(screen.getByRole('menuitem', { name: 'Compress' })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    expect(screen.queryByRole('menuitem', { name: 'Show compressed' })).not.toBeInTheDocument();
+  });
+
+  it('loads the saved compressed text in a read-only dialog and restores focus on close', async () => {
+    const content = deferred<{ id: number; document: {}; compressed_text: string }>();
+    const getNote = vi.fn(() => content.promise);
+    const onOpenNote = vi.fn();
+    renderTree({ notes: client({
+      listNoteItems: async () => [{ ...aardvark, has_compressed: true }], getNote,
+    }), onOpenNote });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Show compressed');
+    const dialog = screen.getByRole('dialog', { name: 'Compressed version of “Aardvark”' });
+    expect(within(dialog).getByRole('status')).toHaveTextContent('Loading…');
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveFocus();
+    expect(getNote).toHaveBeenCalledExactlyOnceWith(aardvark.id);
+    await act(async () => content.resolve({
+      id: aardvark.id, document: {}, compressed_text: 'Stored summary\n<script>plain text</script>',
+    }));
+    const text = within(dialog).getByLabelText('Compressed note text');
+    expect(text.textContent).toBe('Stored summary\n<script>plain text</script>');
+    expect(dialog.querySelector('script')).toBeNull();
+    expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(onOpenNote).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'Aardvark' })).toHaveFocus();
+    await chooseAction('Aardvark', 'Show compressed');
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])('shows a closable error if compressed text cannot be read (missing=%s)', async (missing) => {
+    renderTree({ notes: client({
+      listNoteItems: async () => [{ ...aardvark, has_compressed: true }],
+      getNote: async () => {
+        if (missing) return { id: aardvark.id, document: {} };
+        throw new ChaError('not_found', 'That note was not found.');
+      },
+    }) });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Show compressed');
+    expect(await screen.findByRole('alert')).toHaveTextContent(missing
+      ? 'No compressed version is stored for this note.' : 'That note was not found.');
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it('compresses again, waits for the result, and keeps the saved dot through rename', async () => {
     const operation = deferred<void>();
     let current = { ...aardvark, has_compressed: true };
@@ -513,7 +573,7 @@ describe('Notes tree', () => {
     const noteButton = await screen.findByRole('button', { name: 'Actions for Aardvark' });
     fireEvent.click(noteButton);
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
-      'Rename', 'Compress', 'Delete', 'Copy Ref ID',
+      'Rename', 'Compress', 'Show compressed', 'Delete', 'Copy Ref ID',
     ]);
     expect(onOpenNote).not.toHaveBeenCalled();
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });

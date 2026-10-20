@@ -49,6 +49,7 @@ struct NoteItem {
 struct NoteContent {
     std::int64_t id{};
     nlohmann::json document = nlohmann::json::object();
+    std::optional<std::string> compressed_text;
 };
 
 struct NoteImportEntry {

@@ -165,19 +165,23 @@ TEST(ApplicationSettings, SavesSessionNamingProviderAndEffort) {
     EXPECT_EQ(reopened.reasoning_effort, "high");
 }
 
-TEST(ApplicationSettings, SavesNotesCompressionProviderInTheVault) {
+TEST(ApplicationSettings, SavesNotesCompressionSettingsInTheVault) {
     test::TestWorkspace workspace;
     const auto database = test::import_test_database(workspace.root());
     auto application = Application::open(make_command(workspace, database));
     const auto epoch = application->context_epoch();
     EXPECT_TRUE(application->get_notes_settings(epoch).compression_provider.empty());
+    EXPECT_EQ(application->get_notes_settings(epoch).compression_reasoning_effort, "high");
 
     const auto provider = application->create_provider(
         {.display_name = "Notes model", .copy_from = "test"}, epoch);
-    const auto saved = application->save_notes_settings({provider.id}, epoch);
+    const auto saved = application->save_notes_settings({provider.id, "medium"}, epoch);
     EXPECT_EQ(saved.compression_provider, provider.id);
+    EXPECT_EQ(saved.compression_reasoning_effort, "medium");
     EXPECT_THROW((void)application->save_notes_settings({"missing"}, epoch), ApplicationError);
+    EXPECT_THROW((void)application->save_notes_settings({provider.id, "invalid"}, epoch), ApplicationError);
     EXPECT_EQ(application->get_notes_settings(epoch).compression_provider, provider.id);
+    EXPECT_EQ(application->get_notes_settings(epoch).compression_reasoning_effort, "medium");
     EXPECT_EQ(application->get_provider(provider.id, epoch).used_by,
         (std::vector<std::string>{"Notes compression"}));
     EXPECT_THROW(application->delete_provider(provider.id, epoch), ApplicationError);
@@ -186,6 +190,7 @@ TEST(ApplicationSettings, SavesNotesCompressionProviderInTheVault) {
     application = Application::open(make_command(workspace, database));
     const auto reopened_epoch = application->context_epoch();
     EXPECT_EQ(application->get_notes_settings(reopened_epoch).compression_provider, provider.id);
+    EXPECT_EQ(application->get_notes_settings(reopened_epoch).compression_reasoning_effort, "medium");
 
     EXPECT_TRUE(application->save_notes_settings({""}, reopened_epoch).compression_provider.empty());
     application.reset();

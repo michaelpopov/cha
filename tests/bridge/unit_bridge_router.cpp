@@ -505,15 +505,18 @@ TEST_F(BridgeRouterTest, SavesNotesSettingsAndIgnoresUnusedFields) {
     bootstrap_epoch();
     const auto initial = call("notesSettings.get");
     ASSERT_TRUE(initial["ok"]);
-    EXPECT_EQ(initial["result"], nlohmann::json({{"compression_provider", ""}}));
-    const nlohmann::json settings{{"compression_provider", "test"}};
+    EXPECT_EQ(initial["result"], nlohmann::json({{"compression_provider", ""}, {"compression_reasoning_effort", "high"}}));
+    const nlohmann::json settings{{"compression_provider", "test"}, {"compression_reasoning_effort", "medium"}};
     auto obsolete = settings;
     obsolete["unused"] = true;
     ASSERT_TRUE(call("notesSettings.save", obsolete)["ok"]);
     EXPECT_EQ(call("notesSettings.get")["result"], settings);
     for (const auto& invalid : {
-            nlohmann::json{{"compression_provider", "missing"}},
-            nlohmann::json{{"compression_provider", 42}},
+            nlohmann::json{{"compression_provider", "missing"}, {"compression_reasoning_effort", "high"}},
+            nlohmann::json{{"compression_provider", 42}, {"compression_reasoning_effort", "high"}},
+            nlohmann::json{{"compression_provider", "test"}, {"compression_reasoning_effort", "invalid"}},
+            nlohmann::json{{"compression_provider", "test"}, {"compression_reasoning_effort", 42}},
+            nlohmann::json{{"compression_provider", "test"}},
             nlohmann::json::object()}) {
         EXPECT_FALSE(call("notesSettings.save", invalid)["ok"]);
         EXPECT_EQ(call("notesSettings.get")["result"], settings);
@@ -2357,9 +2360,31 @@ TEST_F(BridgeRouterTest, CompressesOriginalAndReplacesOnlyCompleteAnswersAcrossP
                 EXPECT_NE(body.dump().find("Original technical content"), std::string::npos);
                 EXPECT_EQ(body.dump().find("Updated compression"), std::string::npos);
                 EXPECT_NE(body.dump().find("COMPRESSION RULES"), std::string::npos);
-                if (std::string_view(api) == "responses") EXPECT_EQ(body["reasoning"]["effort"], "xhigh");
-                else EXPECT_EQ(body["reasoning_effort"], "xhigh");
+                if (std::string_view(api) == "responses") EXPECT_EQ(body["reasoning"]["effort"], "high");
+                else EXPECT_EQ(body["reasoning_effort"], "high");
             }
+        }
+    }
+}
+
+TEST_F(BridgeRouterTest, CompressionUsesSelectedEffortAcrossProviderApis) {
+    bootstrap_epoch();
+    const auto note = compression_source(*application_, epoch_);
+    for (const auto api : {"chat_completions", "responses"}) {
+        for (const auto effort : {"none", "low", "medium", "high", "xhigh"}) {
+            SCOPED_TRACE(std::string(api) + " " + effort);
+            MockHttpServer server({compression_response(api, false, "Compressed text")});
+            server.start();
+            configure_compression(*application_, server.port(), api, false, epoch_);
+            ASSERT_TRUE(call("notesSettings.save", {{"compression_provider", "test"},
+                {"compression_reasoning_effort", effort}})["ok"]);
+            ASSERT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
+            server.join();
+            ASSERT_EQ(server.requests().size(), 1U);
+            const auto body = nlohmann::json::parse(request_body(server.requests().front()));
+            if (std::string_view(api) == "responses") EXPECT_EQ(body["reasoning"]["effort"], effort);
+            else EXPECT_EQ(body["reasoning_effort"], effort);
+            EXPECT_EQ(application_->get_provider("test", epoch_).reasoning_effort, "low");
         }
     }
 }
@@ -2380,7 +2405,7 @@ TEST_F(BridgeRouterTest, CompressionReportsProviderSettingsAndEmptyNotes) {
         provider["model"] = std::string_view(api) == "responses" ? "gpt-4o" : "mistral-large-latest";
         (void)application_->update_provider("test", provider, epoch_);
         expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
-            "This compression provider's model does not support xhigh reasoning effort.");
+            "This compression provider's model does not support high reasoning effort.");
     }
     application_->save_note(note.id, text_document("Original source"), epoch_);
     nlohmann::json provider = application_->get_provider("test", epoch_);
@@ -2599,6 +2624,16 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
     ASSERT_TRUE(call("notes.save", {{"id", note_id}, {"document", document}})["ok"]);
     ASSERT_TRUE(call("notes.save", {{"id", note_id}, {"document", document}})["ok"]);
     EXPECT_EQ(call("notes.get", {{"id", note_id}})["result"]["document"], document);
+
+    EXPECT_FALSE(call("notes.get", {{"id", note_id}})["result"].contains("compressed_text"));
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        note_save_compressed(database, note_id, "Stored compressed text");
+    }
+    const auto compressed = call("notes.get", {{"id", note_id}});
+    ASSERT_TRUE(compressed["ok"]);
+    EXPECT_EQ(compressed["result"]["compressed_text"], "Stored compressed text");
+    EXPECT_EQ(compressed["result"]["document"], document);
 
     const auto renamed = call("notes.rename", {{"id", note_id}, {"name", "Final"}});
     ASSERT_TRUE(renamed["ok"]);

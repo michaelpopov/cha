@@ -567,7 +567,8 @@ export function isSessionNamingSettings(value: unknown): value is SessionNamingS
 }
 
 export function isNotesSettings(value: unknown): value is NotesSettings {
-  return isRecord(value) && typeof value.compression_provider === 'string';
+  return isRecord(value) && typeof value.compression_provider === 'string'
+    && isOneOf(value.compression_reasoning_effort, ['none', 'low', 'medium', 'high', 'xhigh']);
 }
 
 export function isWebSearchSettings(value: unknown): value is WebSearchSettings {

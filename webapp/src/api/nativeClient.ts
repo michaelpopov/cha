@@ -170,9 +170,11 @@ function isNoteItemList(value: unknown): value is { items: NoteItem[] } {
 
 function isNoteContent(value: unknown): value is NoteContent {
   return isRecord(value)
-    && hasExactKeys(value, ['id', 'document'])
+    && hasExactKeys(value, 'compressed_text' in value
+      ? ['id', 'document', 'compressed_text'] : ['id', 'document'])
     && isNoteId(value.id)
-    && isRecord(value.document);
+    && isRecord(value.document)
+    && (!('compressed_text' in value) || typeof value.compressed_text === 'string');
 }
 
 function isEmptyResult(value: unknown): value is Record<string, never> {

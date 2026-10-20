@@ -46,9 +46,11 @@ std::shared_ptr<OperationReply> Application::compress_note(
             throw ApplicationError(ErrorCode::invalid_argument,
                 "Select a compression provider in Settings → Notes.");
         }
-        if (!provider_supports_reasoning_effort(provider->config, provider->config.api)) {
+        const auto& effort = workspace->notes().compression_reasoning_effort;
+        if (effort != "none"
+            && !provider_supports_reasoning_effort(provider->config, provider->config.api)) {
             throw ApplicationError(ErrorCode::invalid_argument,
-                "This compression provider's model does not support xhigh reasoning effort.");
+                "This compression provider's model does not support " + effort + " reasoning effort.");
         }
         try { note = impl_->store->get_note_text(id); }
         catch (const NoteError& error) { rethrow_note(error); }
@@ -56,7 +58,7 @@ std::shared_ptr<OperationReply> Application::compress_note(
             throw ApplicationError(ErrorCode::invalid_argument, "This note has no text to compress.");
         }
         auto config = provider->config;
-        config.reasoning_effort = "xhigh";
+        config.reasoning_effort = effort;
         config.timeout_s = 0;
         config.web_search = WebSearchMode::off;
         definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{

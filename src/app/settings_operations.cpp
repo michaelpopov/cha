@@ -700,12 +700,12 @@ SessionNamingSettings save_session_naming_settings(
 }
 
 NotesSettings get_notes_settings(const Workspace& workspace) {
-    return {workspace.notes().compression_provider_id};
+    return {workspace.notes().compression_provider_id, workspace.notes().compression_reasoning_effort};
 }
 
 NotesSettings save_notes_settings(WorkspaceConfigStore& store, const NotesSettings& update) {
     return with_settings_edit([&] {
-        store.apply_notes_update({update.compression_provider});
+        store.apply_notes_update({update.compression_provider, update.compression_reasoning_effort});
         return get_notes_settings(*store.snapshot());
     });
 }

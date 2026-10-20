@@ -498,10 +498,11 @@ NotesSettings parse_notes_settings(const nlohmann::json& json) {
     if (!json.is_object()) throw std::invalid_argument("Invalid notes settings");
     for (const auto& [key, value] : json.items()) {
         (void)value;
-        if (key != "compression_provider")
+        if (key != "compression_provider" && key != "compression_reasoning_effort")
             log_warn("Ignoring unused notes setting: " + key);
     }
-    return {required_field<std::string>(json, "compression_provider")};
+    return {required_field<std::string>(json, "compression_provider"),
+        required_field<std::string>(json, "compression_reasoning_effort")};
 }
 
 WebSearchSettings parse_web_search_settings(const nlohmann::json& json) {

@@ -37,7 +37,8 @@ export function NotesSettingsScreen({ client, navigate }: SettingsScreenProps) {
   }, [client, reload.epoch, reload.attempt]);
 
   const dirty = settings !== null && saved !== null
-    && settings.compression_provider !== saved.compression_provider;
+    && (settings.compression_provider !== saved.compression_provider
+      || settings.compression_reasoning_effort !== saved.compression_reasoning_effort);
   reload.markDirty(dirty);
 
   async function save(event: FormEvent) {
@@ -65,9 +66,15 @@ export function NotesSettingsScreen({ client, navigate }: SettingsScreenProps) {
     {settings && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
       <label>Compression provider<select className="cha-form-control" disabled={pending}
         value={settings.compression_provider}
-        onChange={(event) => setSettings({ compression_provider: event.target.value })}>
+        onChange={(event) => setSettings({ ...settings, compression_provider: event.target.value })}>
         <option value="">Select provider</option>
         {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}
+      </select></label>
+      <label>Effort<select className="cha-form-control" disabled={pending}
+        value={settings.compression_reasoning_effort}
+        onChange={(event) => setSettings({ ...settings, compression_reasoning_effort: event.target.value as NotesSettings['compression_reasoning_effort'] })}>
+        <option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option>
+        <option value="high">High</option><option value="xhigh">Extra high</option>
       </select></label>
       <div className="cha-settings-form-actions">
         <button className="cha-button cha-button-primary" type="submit"

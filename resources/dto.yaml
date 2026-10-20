@@ -709,10 +709,13 @@ components:
     NotesSettings:
       type: object
       additionalProperties: false
-      required: [compression_provider]
+      required: [compression_provider, compression_reasoning_effort]
       properties:
         compression_provider:
           type: string
+        compression_reasoning_effort:
+          type: string
+          enum: [none, low, medium, high, xhigh]
 
     WebSearchSettings:
       type: object
@@ -1687,6 +1690,8 @@ components:
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
         document: {$ref: "#/components/schemas/NoteDocument"}
+        compressed_text:
+          type: string
 
     BridgeInfo:
       type: object

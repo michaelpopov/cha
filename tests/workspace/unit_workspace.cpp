@@ -512,6 +512,22 @@ TEST(Workspace, MissingNotesCompressionProviderIsIgnored) {
     std::ofstream(config) << "compression_provider = \"missing\"\n";
     const auto workspace = Workspace::load(fixture.root());
     EXPECT_TRUE(workspace.notes().compression_provider_id.empty());
+    EXPECT_EQ(workspace.notes().compression_reasoning_effort, "high");
+}
+
+TEST(Workspace, NotesCompressionEffortDefaultsToHigh) {
+    test::TestWorkspace fixture;
+    EXPECT_EQ(Workspace::load(fixture.root()).notes().compression_reasoning_effort, "high");
+    const auto config = fixture.root() / "system" / "notes" / "config.toml";
+    std::filesystem::create_directories(config.parent_path());
+    for (const auto* effort : {"none", "low", "medium", "high", "xhigh", "invalid"}) {
+        std::ofstream(config) << "compression_provider = 'test'\ncompression_reasoning_effort = '"
+                              << effort << "'\n";
+        const auto settings = Workspace::load(fixture.root()).notes();
+        EXPECT_EQ(settings.compression_provider_id, "test");
+        EXPECT_EQ(settings.compression_reasoning_effort,
+            std::string_view(effort) == "invalid" ? "high" : effort);
+    }
 }
 
 TEST(Workspace, ObsoleteSearchSettingsDoNotPreventDeletingAQueryProvider) {

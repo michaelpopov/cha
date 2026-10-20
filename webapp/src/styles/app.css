@@ -618,13 +618,15 @@ select:disabled {
   box-shadow: 0 1rem 3rem rgb(0 0 0 / 25%);
 }
 
-.cha-system-prompt-dialog {
+.cha-system-prompt-dialog,
+.cha-compressed-note-dialog {
   width: min(52rem, calc(100vw - 2rem));
   max-width: none;
   max-height: calc(100dvh - 2rem);
 }
 
-.cha-system-prompt-dialog pre {
+.cha-system-prompt-dialog pre,
+.cha-compressed-note-dialog pre {
   height: min(60vh, 32rem);
   margin: 0;
   overflow: auto;

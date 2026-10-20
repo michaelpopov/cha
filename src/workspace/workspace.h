@@ -102,6 +102,7 @@ struct WorkspaceSessionNaming {
 
 struct WorkspaceNotes {
     std::string compression_provider_id;
+    std::string compression_reasoning_effort{"high"};
 };
 
 void validate_jev_config(const WorkspaceJev& config);

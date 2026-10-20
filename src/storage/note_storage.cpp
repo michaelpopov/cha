@@ -304,6 +304,7 @@ void to_json(nlohmann::json& json, const NoteContent& content) {
         {"id", content.id},
         {"document", content.document},
     };
+    if (content.compressed_text) json["compressed_text"] = *content.compressed_text;
 }
 
 std::string note_document_markdown(const nlohmann::json& document) {
@@ -439,7 +440,7 @@ NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id) {
     try {
         storage::SqliteTransaction transaction(database);
         storage::SqliteStatement statement = database.prepare(
-            "SELECT kind, content_json FROM note_items WHERE id = ?1");
+            "SELECT kind, content_json, compressed_text FROM note_items WHERE id = ?1");
         statement.bind(1, id);
         if (!statement.step()) fail(NoteFailure::not_found, missing_note_message);
         if (statement.text(0) != "note") {
@@ -447,7 +448,8 @@ NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id) {
         }
         if (statement.is_null(1)) fail(NoteFailure::opening, opening_message);
         nlohmann::json document = parse_document(statement.text(1), id);
-        NoteContent content{id, std::move(document)};
+        NoteContent content{id, std::move(document), std::nullopt};
+        if (!statement.is_null(2)) content.compressed_text = statement.text(2);
         transaction.commit();
         return content;
     } catch (const std::runtime_error& error) {

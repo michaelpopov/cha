@@ -2427,6 +2427,39 @@ describe('web search settings', () => {
 });
 
 describe('notes settings', () => {
+  it('defaults effort to high and saves effort changes with the selected provider', async () => {
+    const user = userEvent.setup();
+    const saveNotesSettings = vi.fn(async (settings) => settings);
+    render(<NotesSettingsScreen client={fixtureClient({
+      getNotesSettings: async () => ({ compression_provider: 'test', compression_reasoning_effort: 'high' }),
+      listProviders: async () => [
+        { id: 'test', display_name: 'Test', model: 'fake', host: 'localhost' },
+      ],
+      saveNotesSettings,
+    })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
+    const effort = await screen.findByLabelText('Effort');
+    expect(effort).toHaveValue('high');
+    expect(Array.from((effort as HTMLSelectElement).options, (option) => option.value))
+      .toEqual(['none', 'low', 'medium', 'high', 'xhigh']);
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toBeDisabled();
+    for (const value of ['none', 'low', 'medium', 'high', 'xhigh']) {
+      await user.selectOptions(effort, value);
+      expect(save).toBeEnabled();
+      await user.click(save);
+      expect(saveNotesSettings).toHaveBeenLastCalledWith({
+        compression_provider: 'test', compression_reasoning_effort: value,
+      });
+      expect(save).toBeDisabled();
+    }
+    await user.selectOptions(screen.getByLabelText('Compression provider'), '');
+    expect(effort).toHaveValue('xhigh');
+    await user.click(save);
+    expect(saveNotesSettings).toHaveBeenLastCalledWith({
+      compression_provider: '', compression_reasoning_effort: 'xhigh',
+    });
+  });
+
   it('shows provider names and saves or clears the provider ID', async () => {
     const user = userEvent.setup();
     const saveNotesSettings = vi.fn(async (settings) => settings);
@@ -2442,17 +2475,17 @@ describe('notes settings', () => {
     expect(save).toBeDisabled();
     await user.selectOptions(select, 'Notes model');
     await user.click(save);
-    expect(saveNotesSettings).toHaveBeenLastCalledWith({ compression_provider: 'provider_7' });
+    expect(saveNotesSettings).toHaveBeenLastCalledWith({ compression_provider: 'provider_7', compression_reasoning_effort: 'high' });
     expect(save).toBeDisabled();
     await user.selectOptions(select, '');
     await user.click(save);
-    expect(saveNotesSettings).toHaveBeenLastCalledWith({ compression_provider: '' });
+    expect(saveNotesSettings).toHaveBeenLastCalledWith({ compression_provider: '', compression_reasoning_effort: 'high' });
   });
 
-  it('keeps the selected provider when saving fails', async () => {
+  it('keeps the selected provider and effort when saving fails', async () => {
     const user = userEvent.setup();
     render(<NotesSettingsScreen client={fixtureClient({
-      getNotesSettings: async () => ({ compression_provider: 'test' }),
+      getNotesSettings: async () => ({ compression_provider: 'test', compression_reasoning_effort: 'high' }),
       listProviders: async () => [
         { id: 'test', display_name: 'Test', model: 'fake', host: 'localhost' },
       ],
@@ -2461,9 +2494,11 @@ describe('notes settings', () => {
     const select = await screen.findByLabelText('Compression provider');
     expect(select).toHaveValue('test');
     await user.selectOptions(select, '');
+    await user.selectOptions(screen.getByLabelText('Effort'), 'medium');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Notes settings could not be saved.');
     expect(select).toHaveValue('');
+    expect(screen.getByLabelText('Effort')).toHaveValue('medium');
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
 });

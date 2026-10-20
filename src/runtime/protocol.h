@@ -438,6 +438,7 @@ struct SessionNamingSettings {
 
 struct NotesSettings {
     std::string compression_provider;
+    std::string compression_reasoning_effort{"high"};
 };
 
 struct WebSearchSettings {

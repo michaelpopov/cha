@@ -116,8 +116,11 @@ protected:
 TEST_F(NoteStorageTest, CompressionPreservesOriginalAndSurvivesEditsAndReopen) {
     const auto note = note_create(*database_, {}, NoteItemKind::note, "Source");
     EXPECT_FALSE(note.has_compressed);
+    EXPECT_FALSE(note_get(*database_, note.id).compressed_text.has_value());
+    EXPECT_FALSE(nlohmann::json(note_get(*database_, note.id)).contains("compressed_text"));
     const auto original = raw_content(*database_, note.id);
     note_save_compressed(*database_, note.id, "First compressed text");
+    EXPECT_EQ(note_get(*database_, note.id).compressed_text, "First compressed text");
     EXPECT_TRUE(note_list(*database_).front().has_compressed);
     EXPECT_EQ(raw_content(*database_, note.id), original);
     note_save(*database_, note.id, {{"type", "doc"}, {"changed", true}});
@@ -125,6 +128,8 @@ TEST_F(NoteStorageTest, CompressionPreservesOriginalAndSurvivesEditsAndReopen) {
     note_save_compressed(*database_, note.id, "Replacement");
     database_.reset();
     database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+    EXPECT_EQ(note_get(*database_, note.id).compressed_text, "Replacement");
+    EXPECT_EQ(nlohmann::json(note_get(*database_, note.id))["compressed_text"], "Replacement");
     auto stored = database_->prepare("SELECT compressed_text FROM note_items WHERE id = ?1", note.id);
     ASSERT_TRUE(stored.step());
     EXPECT_EQ(stored.text(0), "Replacement");

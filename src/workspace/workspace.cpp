@@ -1491,12 +1491,17 @@ WorkspaceNotes load_notes_settings(
         const auto table = read_toml(source, path, "notes config");
         for (const auto& [key, value] : table) {
             (void)value;
-            if (key.str() != "compression_provider")
+            if (key.str() != "compression_provider" && key.str() != "compression_reasoning_effort")
                 warnings.emit(path, "Ignoring unused notes setting: " + std::string(key.str()));
         }
         WorkspaceNotes settings{
             .compression_provider_id = table["compression_provider"].value_or(std::string{}),
+            .compression_reasoning_effort = table["compression_reasoning_effort"].value_or(std::string("high")),
         };
+        if (!valid_reasoning_effort(settings.compression_reasoning_effort)) {
+            warnings.emit(path, "Ignoring unsupported notes compression effort; using high");
+            settings.compression_reasoning_effort = "high";
+        }
         if (!settings.compression_provider_id.empty()
             && !workspace.find_provider(settings.compression_provider_id)) {
             warnings.emit(path, "Notes compression provider '" + settings.compression_provider_id

@@ -448,8 +448,12 @@ void WorkspaceConfigEditor::write_notes(const WorkspaceNotes& settings) {
         && !workspace_.find_provider(settings.compression_provider_id)) {
         throw std::invalid_argument("Select an existing provider for notes compression.");
     }
+    if (!valid_reasoning_effort(settings.compression_reasoning_effort)) {
+        throw std::invalid_argument("Select a valid effort for notes compression.");
+    }
     toml::table table;
     table.insert("compression_provider", settings.compression_provider_id);
+    table.insert("compression_reasoning_effort", settings.compression_reasoning_effort);
     write_toml(workspace_.root_ / "system" / "notes" / "config.toml", table);
 }
 

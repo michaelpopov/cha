@@ -60,7 +60,13 @@ type CompressDialogState = {
   error: string | null;
 };
 
-type DialogState = CreateDialogState | RenameDialogState | DeleteDialogState | CompressDialogState;
+type CompressedDialogState = {
+  action: 'show-compressed';
+  sourceId: number;
+  name: string;
+};
+
+type DialogState = CreateDialogState | RenameDialogState | DeleteDialogState | CompressDialogState | CompressedDialogState;
 
 type MenuState = {
   sourceId: string;
@@ -500,6 +506,12 @@ export function NotesTree({
     }
   }
 
+  function showCompressed() {
+    const source = takeMenuSource();
+    if (!source || source.kind !== 'note' || !source.has_compressed) return;
+    setDialog({ action: 'show-compressed', sourceId: source.id, name: source.name });
+  }
+
   async function copyReference() {
     const source = takeMenuSource();
     if (!source || source.kind !== 'note') return;
@@ -683,7 +695,7 @@ export function NotesTree({
           role="menu"
           style={{
             left: Math.max(8, Math.min(menu.x, window.innerWidth - 168)),
-            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menuIsNote ? 180 : menu.sourceId === 'vault' ? 140 : 220))),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menuIsNote ? 220 : menu.sourceId === 'vault' ? 140 : 220))),
           }}
         >
           {!menuIsNote && (
@@ -703,7 +715,11 @@ export function NotesTree({
             <>
               <button onClick={() => startRename()} role="menuitem" type="button">Rename</button>
               {menuIsNote && (
-                <button onClick={() => void startCompress()} role="menuitem" type="button">Compress</button>
+                <>
+                  <button onClick={() => void startCompress()} role="menuitem" type="button">Compress</button>
+                  <button disabled={!index.rows[menu.sourceId]?.hasCompressed}
+                    onClick={showCompressed} role="menuitem" type="button">Show compressed</button>
+                </>
               )}
               <button onClick={() => startDelete()} role="menuitem" type="button">Delete</button>
             </>
@@ -749,12 +765,16 @@ export function NotesTree({
       {dialog?.action === 'compress' && (
         <CompressDialog dialog={dialog} onClose={() => setDialog(null)} />
       )}
+      {dialog?.action === 'show-compressed' && (
+        <CompressedDialog client={client} sourceId={dialog.sourceId} name={dialog.name}
+          onClose={() => setDialog(null)} />
+      )}
     </div>
   );
 }
 
 export function menuKeys(event: ReactKeyboardEvent<HTMLDivElement>, close: () => void) {
-  const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+  const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')];
   const current = items.indexOf(document.activeElement as HTMLButtonElement);
   let next = current;
   if (event.key === 'ArrowDown') next = (current + 1) % items.length;
@@ -768,6 +788,46 @@ export function menuKeys(event: ReactKeyboardEvent<HTMLDivElement>, close: () =>
   } else return;
   event.preventDefault();
   items[next]?.focus();
+}
+
+function CompressedDialog({ client, sourceId, name, onClose }: {
+  client: NotesClient;
+  sourceId: number;
+  name: string;
+  onClose(): void;
+}) {
+  const button = useRef<HTMLButtonElement | null>(null);
+  const element = useDialogElement(() => button.current?.focus());
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void client.getNote(sourceId).then(
+      (note) => {
+        if (cancelled) return;
+        if (note.compressed_text === undefined) setError('No compressed version is stored for this note.');
+        else setText(note.compressed_text);
+      },
+      (failure: unknown) => {
+        if (!cancelled) setError(publicErrorMessage(failure, 'The compressed note could not be loaded.'));
+      },
+    );
+    return () => { cancelled = true; };
+  }, [client, sourceId]);
+
+  return createPortal(
+    <dialog className="cha-dialog cha-compressed-note-dialog" ref={element}
+      aria-label={`Compressed version of “${name}”`}
+      onCancel={(event) => { event.preventDefault(); onClose(); }}>
+      {text === null && !error && <p role="status">Loading…</p>}
+      {text !== null && <pre aria-label="Compressed note text" tabIndex={0}>{text}</pre>}
+      {error && <p className="cha-error-message" role="alert">{error}</p>}
+      <div className="cha-dialog-actions">
+        <button className="cha-button cha-button-ghost" type="button" ref={button} onClick={onClose}>Close</button>
+      </div>
+    </dialog>, document.body,
+  );
 }
 
 function CompressDialog({ dialog, onClose }: {
