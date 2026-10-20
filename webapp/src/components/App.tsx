@@ -1,4 +1,4 @@
-import type { Editor } from '@tiptap/core';
+import { generateText, type Editor } from '@tiptap/core';
 import {
   useCallback,
   useEffect,
@@ -32,6 +32,7 @@ import {
 } from '../state/promptDrafts';
 import { saveMarkdownDownload } from '../download';
 import { noteInSubtree } from '../notes/tree';
+import { notesExtensions } from '../notes/editor';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import type { NoteSaveHandle } from '../notes/useNoteSave';
 import { reloadApplication, writeAppRoute } from '../state/route';
@@ -715,6 +716,20 @@ export function App({
     return true;
   }, [noteLeave.leaveNoteThen]);
 
+  const getNoteLength = useCallback(async (id: number) => {
+    const openText = () => {
+      const editor = editorLiveRef.current;
+      return activeNoteIdRef.current === id && editor && !editor.isDestroyed
+        ? editor.getText({ blockSeparator: '\n' }) : null;
+    };
+    let text = openText();
+    if (text === null) {
+      const note = await client.getNote(id);
+      text = openText() ?? generateText(note.document, notesExtensions(), { blockSeparator: '\n' });
+    }
+    return [...text].length;
+  }, [client]);
+
   const deleteNoteItem = useCallback<DeleteNoteItem>(async (sourceId, listing, refresh) => {
     if (!noteLeave.beginDelete()) return 'busy';
     const epoch = notesEpochRef.current;
@@ -1029,6 +1044,7 @@ export function App({
                 activeNoteId={state.activeNoteId}
                 browsing={state.sidebarTab === 'notes'}
                 client={client}
+                getNoteLength={getNoteLength}
                 onBeforeCreateNote={beforeCreateNote}
                 onDeleteItem={deleteNoteItem}
                 onNoteItems={setNoteItems}

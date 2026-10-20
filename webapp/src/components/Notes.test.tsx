@@ -560,9 +560,10 @@ describe('Notes in the application', () => {
     return screen.getByRole('region', { name: 'Note' });
   }
 
-  async function deleteItem(name: string, kind: 'note' | 'folder') {
+  async function deleteItem(name: string, kind: 'note' | 'folder', confirm = true) {
     fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    if (!confirm) return;
     const label = kind === 'folder'
       ? `Delete “${name}” and all notes and folders inside it? This cannot be undone in CHA.`
       : `Delete “${name}”? This cannot be undone in CHA.`;
@@ -573,18 +574,84 @@ describe('Notes in the application', () => {
     return dialog;
   }
 
+  it.each([
+    { text: '', confirm: false },
+    { text: 'x'.repeat(15), confirm: false },
+    { text: 'x'.repeat(16), confirm: true },
+    { text: '😀'.repeat(15), confirm: false },
+  ])('checks the body of an unopened note before deletion ($text)', async ({ text, confirm }) => {
+    let removed = false;
+    const deleteNoteItem = vi.fn(async () => { removed = true; });
+    const getNote = vi.fn(async (id: number) => ({
+      id,
+      document: text ? noteDocument(text) : { type: 'doc', content: [{ type: 'paragraph' }] },
+    }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => removed ? [] : [plan],
+      getNote,
+      deleteNoteItem,
+    })} />);
+    await openNotes();
+    await deleteItem('Plan', 'note', confirm);
+    await waitFor(() => expect(deleteNoteItem).toHaveBeenCalledExactlyOnceWith(4));
+    expect(getNote).toHaveBeenCalledExactlyOnceWith(4);
+    await waitFor(() => expect(screen.queryByRole('treeitem', { name: 'Plan' })).not.toBeInTheDocument());
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { saved: 'A long saved note body', edited: 'Short', confirm: false },
+    { saved: 'Short', edited: 'A long unsaved note body', confirm: true },
+  ])('uses unsaved text for deletion confirmation ($edited)', async ({ saved, edited, confirm }) => {
+    let removed = false;
+    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument(saved) }));
+    const deleteNoteItem = vi.fn(async () => { removed = true; });
+    render(<App client={fixtureClient({
+      listNoteItems: async () => removed ? [] : [plan],
+      getNote,
+      deleteNoteItem,
+      saveNote: async () => undefined,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText(saved);
+    act(() => { noteEditor().commands.setContent(noteDocument(edited)); });
+    await deleteItem('Plan', 'note', confirm);
+    await waitFor(() => expect(deleteNoteItem).toHaveBeenCalledExactlyOnceWith(4));
+    expect(getNote).toHaveBeenCalledOnce();
+  });
+
+  it('uses live edits if a note opens while its deletion length is being read', async () => {
+    let finishRead!: (note: { id: number; document: Record<string, unknown> }) => void;
+    const getNote = vi.fn((id: number) => getNote.mock.calls.length === 1
+      ? new Promise<{ id: number; document: Record<string, unknown> }>((resolve) => { finishRead = resolve; })
+      : Promise.resolve({ id, document: noteDocument('Short') }));
+    const deleteNoteItem = vi.fn();
+    render(<App client={fixtureClient({ listNoteItems: async () => [plan], getNote, deleteNoteItem })} />);
+    await openNotes();
+    await deleteItem('Plan', 'note', false);
+    await waitFor(() => expect(getNote).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Short');
+    act(() => { noteEditor().commands.setContent(noteDocument('A long unsaved note body')); });
+    await act(async () => { finishRead({ id: 4, document: noteDocument('Short') }); });
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Delete “Plan”?');
+    expect(deleteNoteItem).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  });
+
   it('targets the note menu and returns row focus when Rename or Delete is canceled', async () => {
     const renameNoteItem = vi.fn();
     const deleteNoteItem = vi.fn();
     const saveNote = vi.fn();
     render(<App client={fixtureClient({
       listNoteItems: async () => [study, plan],
-      getNote: async (id) => ({ id, document: noteDocument('Saved plan') }),
+      getNote: async (id) => ({ id, document: noteDocument('Saved plan contents') }),
       renameNoteItem, deleteNoteItem, saveNote,
     })} />);
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    await screen.findByText('Saved plan');
+    await screen.findByText('Saved plan contents');
     const editor = noteEditor();
     expect(screen.getByRole('button', { name: 'Actions for Plan' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Actions for Study' })).toBeInTheDocument();
@@ -640,7 +707,7 @@ describe('Notes in the application', () => {
 
   it('deletes an open note without saving the remainder and keeps the draft', async () => {
     const saveNote = vi.fn(async () => undefined);
-    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
+    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan contents') }));
     let removed = false;
     render(<App client={fixtureClient({
       listNoteItems: async () => (removed ? [study] : [study, plan]),
@@ -650,14 +717,14 @@ describe('Notes in the application', () => {
     })} />);
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    expect(await screen.findByText('Saved plan')).toBeInTheDocument();
+    expect(await screen.findByText('Saved plan contents')).toBeInTheDocument();
     const prompt = screen.getByRole('textbox', { name: 'Prompt' });
     fireEvent.change(prompt, { target: { value: 'Remember this' } });
     typeInNote(' more');
     await deleteItem('Plan', 'note');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled());
     expect(within(noteRegion()).queryByRole('button', { name: 'New note' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Saved plan more')).not.toBeInTheDocument();
+    expect(screen.queryByText('Saved plan contents more')).not.toBeInTheDocument();
     expect(prompt).toHaveValue('Remember this');
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
     expect(saveNote).not.toHaveBeenCalled();
@@ -669,7 +736,7 @@ describe('Notes in the application', () => {
     const saveNote = vi.fn(async (_id: number, _document: Record<string, unknown>) => undefined);
     render(<App client={fixtureClient({
       listNoteItems: async () => [study, plan],
-      getNote: async (id: number) => ({ id, document: noteDocument('Saved plan') }),
+      getNote: async (id: number) => ({ id, document: noteDocument('Saved plan contents') }),
       saveNote,
       deleteNoteItem: async () => {
         throw new ChaError('invalid_argument', 'The note is still open in the vault.');
@@ -677,15 +744,15 @@ describe('Notes in the application', () => {
     })} />);
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    expect(await screen.findByText('Saved plan')).toBeInTheDocument();
+    expect(await screen.findByText('Saved plan contents')).toBeInTheDocument();
     typeInNote(' more');
     await deleteItem('Plan', 'note');
     expect(await screen.findByRole('alert')).toHaveTextContent('The note is still open in the vault.');
     expect(screen.queryByRole('dialog', { name: 'Could not save “Plan”.' })).not.toBeInTheDocument();
     expect(noteEditor().isEditable).toBe(true);
-    expect(noteEditor().getText()).toContain('Saved plan more');
+    expect(noteEditor().getText()).toContain('Saved plan contents more');
     await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
-    expect(JSON.stringify(saveNote.mock.calls[0][1])).toContain('Saved plan more');
+    expect(JSON.stringify(saveNote.mock.calls[0][1])).toContain('Saved plan contents more');
   });
 
   it('keeps an unrelated note editable and blocks navigation during deletion', async () => {
@@ -704,7 +771,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     expect(await screen.findByText('Saved plan')).toBeInTheDocument();
-    await deleteItem('Study', 'folder');
+    await deleteItem('Study', 'folder', false);
     expect(noteEditor().isEditable).toBe(true);
     typeInNote(' stays');
     fireEvent.click(screen.getByRole('treeitem', { name: 'Essay' }));
@@ -720,7 +787,7 @@ describe('Notes in the application', () => {
   it('does not close a note opened after a deletion from the previous vault', async () => {
     const events = contextBus();
     let finishDelete: () => void = () => {};
-    const getNote = vi.fn(async () => ({ id: 4, document: noteDocument('Gamma') }));
+    const getNote = vi.fn(async () => ({ id: 4, document: noteDocument('Gamma note contents') }));
     render(<App
       client={fixtureClient({
         listNoteItems: async () => [plan],
@@ -732,10 +799,10 @@ describe('Notes in the application', () => {
     />);
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    expect(await screen.findByText('Gamma')).toBeInTheDocument();
+    expect(await screen.findByText('Gamma note contents')).toBeInTheDocument();
     await deleteItem('Plan', 'note');
     events.emit();
-    await waitFor(() => expect(screen.queryByText('Gamma')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('Gamma note contents')).not.toBeInTheDocument());
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     expect(getNote).toHaveBeenCalledOnce();
     finishDelete();
@@ -744,8 +811,8 @@ describe('Notes in the application', () => {
       await Promise.resolve();
     });
     fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' }));
-    expect(await screen.findByText('Gamma')).toBeInTheDocument();
+    expect(await screen.findByText('Gamma note contents')).toBeInTheDocument();
     await waitFor(() => expect(getNote).toHaveBeenCalledTimes(2));
-    expect(screen.getByText('Gamma')).toBeInTheDocument();
+    expect(screen.getByText('Gamma note contents')).toBeInTheDocument();
   });
 });

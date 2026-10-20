@@ -75,6 +75,7 @@ type RefreshResult = 'applied' | 'ignored' | 'failed';
 
 export function NotesTree({
   client,
+  getNoteLength,
   browsing,
   activeNoteId,
   onOpenNote,
@@ -85,6 +86,7 @@ export function NotesTree({
   onRegisterNoteActions,
 }: {
   client: NotesClient;
+  getNoteLength(id: number): Promise<number>;
   browsing: boolean;
   activeNoteId: number | null;
   onOpenNote(id: number): void;
@@ -417,17 +419,32 @@ export function NotesTree({
     });
   }
 
-  function startDelete() {
+  async function startDelete() {
     const source = takeMenuSource();
     if (!source || !canMutateNow()) return;
-    setDialog({
+    const captured: DeleteDialogState = {
       action: 'delete',
       sourceId: source.id,
       name: source.name,
       kind: source.kind,
       error: null,
       pending: false,
-    });
+    };
+    busy.current = true;
+    const gen = generation.current;
+    let confirm = true;
+    try {
+      confirm = source.kind === 'folder'
+        ? itemsRef.current.some((item) => item.parent_id === source.id)
+        : await getNoteLength(source.id) >= 16;
+    } catch {
+      // If the note cannot be read, keep the existing confirmation.
+    } finally {
+      busy.current = false;
+    }
+    if (!alive.current || gen !== generation.current) return;
+    if (confirm) setDialog(captured);
+    else await submitDelete(captured);
   }
 
   async function copyReference() {
@@ -461,14 +478,13 @@ export function NotesTree({
     }
   }
 
-  async function submitDelete() {
-    const captured = dialogRef.current;
+  async function submitDelete(captured = dialogRef.current) {
     if (!captured || captured.action !== 'delete' || captured.pending || busy.current) return;
     if (!requireFresh(captured.sourceId)) return;
     const listing = itemsRef.current;
     const reveal = focusAfterRemoval(listing, captured.sourceId);
     busy.current = true;
-    setDialog({ ...captured, pending: true, error: null });
+    if (dialogRef.current) setDialog({ ...captured, pending: true, error: null });
     const refresh = async () => {
       const result = await refreshListing(reveal);
       if (result === 'failed') throw new Error('The notes list could not be refreshed.');

@@ -53,6 +53,7 @@ function renderTree({
   onOpenNote = vi.fn(),
   onBeforeCreateNote = vi.fn(async () => true),
   onDeleteItem,
+  getNoteLength = vi.fn(async () => 16),
 }: {
   items?: NoteItem[];
   notes?: NotesClient;
@@ -60,6 +61,7 @@ function renderTree({
   onOpenNote?: (id: number) => void;
   onBeforeCreateNote?: () => Promise<boolean>;
   onDeleteItem?: DeleteNoteItem;
+  getNoteLength?: (id: number) => Promise<number>;
 } = {}) {
   const onNoteItems = vi.fn();
   const notesClient = notes ?? client({ listNoteItems: async () => items });
@@ -76,6 +78,7 @@ function renderTree({
         activeNoteId={active}
         browsing
         client={notesClient}
+        getNoteLength={getNoteLength}
         onBeforeCreateNote={onBeforeCreateNote}
         onDeleteItem={deleteItem}
         onNoteItems={onNoteItems}
@@ -569,13 +572,13 @@ describe('Notes tree', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   });
 
-  it('focuses Cancel, keeps rows on cancel, and deletes an empty folder with the contents warning', async () => {
+  it('focuses Cancel and keeps the contents warning for a folder containing another folder', async () => {
     const deleteNoteItem = vi.fn(async (_id: number) => undefined);
     let removed = false;
     renderTree({
-      items: [study],
+      items: [study, philosophy],
       notes: client({
-        listNoteItems: async () => (removed ? [] : [study]),
+        listNoteItems: async () => (removed ? [] : [study, philosophy]),
         deleteNoteItem: async (id) => {
           removed = true;
           await deleteNoteItem(id);
@@ -598,6 +601,76 @@ describe('Notes tree', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete folder' }));
     await waitFor(() => expect(deleteNoteItem).toHaveBeenCalledExactlyOnceWith(1));
     await waitFor(() => expect(screen.queryByRole('treeitem', { name: 'Study' })).not.toBeInTheDocument());
+  });
+
+  it('deletes an empty folder without a confirmation or a note read', async () => {
+    const getNoteLength = vi.fn(async () => 16);
+    let removed = false;
+    const deleteNoteItem = vi.fn(async () => { removed = true; });
+    renderTree({
+      getNoteLength,
+      notes: client({
+        listNoteItems: async () => removed ? [] : [study],
+        deleteNoteItem,
+      }),
+    });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    await chooseAction('Study', 'Delete');
+    await waitFor(() => expect(deleteNoteItem).toHaveBeenCalledExactlyOnceWith(1));
+    await waitFor(() => expect(screen.queryByRole('treeitem', { name: 'Study' })).not.toBeInTheDocument());
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(getNoteLength).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 15, 16, 17])('checks confirmation for a note with %s characters', async (length) => {
+    const getNoteLength = vi.fn(async () => length);
+    let removed = false;
+    const deleteNoteItem = vi.fn(async () => { removed = true; });
+    renderTree({
+      getNoteLength,
+      notes: client({ listNoteItems: async () => removed ? [study] : [study, aardvark], deleteNoteItem }),
+    });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Delete');
+    if (length >= 16) {
+      const dialog = await screen.findByRole('dialog');
+      expect(deleteNoteItem).not.toHaveBeenCalled();
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete note' }));
+    }
+    await waitFor(() => expect(deleteNoteItem).toHaveBeenCalledExactlyOnceWith(2));
+    expect(getNoteLength).toHaveBeenCalledExactlyOnceWith(2);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Actions for Study' })).toBeEnabled());
+  });
+
+  it('keeps confirmation when a note cannot be read', async () => {
+    const onDeleteItem = vi.fn<DeleteNoteItem>(async () => 'deleted');
+    renderTree({ getNoteLength: async () => { throw new Error('read failed'); }, onDeleteItem });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Delete');
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Delete “Aardvark”?');
+    expect(onDeleteItem).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed immediate deletion in the existing dialog', async () => {
+    const onDeleteItem = vi.fn<DeleteNoteItem>(async () => { throw new Error('Delete failed'); });
+    renderTree({ getNoteLength: async () => 15, onDeleteItem });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Delete');
+    expect(await screen.findByRole('alert')).toHaveTextContent('That item could not be deleted.');
+    expect(screen.getByRole('treeitem', { name: 'Aardvark' })).toBeInTheDocument();
+    expect(onDeleteItem).toHaveBeenCalledOnce();
+  });
+
+  it('does not delete after the tree unmounts during a note read', async () => {
+    const length = deferred<number>();
+    const onDeleteItem = vi.fn<DeleteNoteItem>(async () => 'deleted');
+    renderTree({ getNoteLength: () => length.promise, onDeleteItem });
+    await screen.findByRole('treeitem', { name: 'Aardvark' });
+    await chooseAction('Aardvark', 'Delete');
+    cleanup();
+    await act(async () => { length.resolve(0); });
+    expect(onDeleteItem).not.toHaveBeenCalled();
   });
 
   it('focuses a nearby row after deletion and reports a missing item', async () => {
@@ -636,7 +709,6 @@ describe('Notes tree', () => {
     });
     await screen.findByRole('treeitem', { name: 'Study' });
     await chooseAction('Study', 'Delete');
-    fireEvent.click(screen.getByRole('button', { name: 'Delete folder' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('That item is no longer in the list.');
     expect(screen.getByRole('treeitem', { name: 'Study' })).toBeInTheDocument();
   });
@@ -646,7 +718,7 @@ describe('Notes tree', () => {
     renderTree({ items: [study, aardvark], onDeleteItem });
     await screen.findByRole('treeitem', { name: 'Aardvark' });
     await chooseAction('Aardvark', 'Delete');
-    fireEvent.click(screen.getByRole('button', { name: 'Delete note' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete note' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('A notes action is already in progress.');
     expect(screen.getByRole('dialog', { name: 'Delete “Aardvark”? This cannot be undone in CHA.' })).toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'Aardvark' })).toBeInTheDocument();
