@@ -380,6 +380,7 @@ export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}):
     importEpub: unavailable('notes.importBook'),
     createNoteItem: unavailable('notes.create'),
     getNote: unavailable('notes.get'),
+    readNotePicture: async () => new Uint8Array(),
     readNotePage: unavailable('notes.readPage'),
     saveNote: unavailable('notes.save'),
     renameNoteItem: unavailable('notes.rename'),

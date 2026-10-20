@@ -38,15 +38,19 @@ inline constexpr std::size_t page_read_byte_limit = 64 * 1024;
 std::string read_firecrawl(std::string_view url, std::string_view key,
     const std::atomic_bool& cancelled,
     std::string_view endpoint = firecrawl_scrape_endpoint,
-    std::size_t output_byte_limit = 64 * 1024);
+    std::size_t output_byte_limit = 64 * 1024, bool include_images = false);
 
 std::string read_web_reader(std::string_view url, std::string_view base_url,
-    const std::atomic_bool& cancelled, std::size_t output_byte_limit = 64 * 1024);
+    const std::atomic_bool& cancelled, std::size_t output_byte_limit = 64 * 1024, bool include_images = false);
 
 // Enabled web_reader runs first; enabled Firecrawl is the fallback.
 std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
     std::string_view firecrawl_key, const std::atomic_bool& cancelled,
     std::string_view firecrawl_endpoint = firecrawl_scrape_endpoint,
-    std::size_t output_byte_limit = page_read_byte_limit, const std::function<void()>& on_fallback = {});
+    std::size_t output_byte_limit = page_read_byte_limit, const std::function<void()>& on_fallback = {},
+    bool include_images = false);
+
+// Downloads at most 1 MiB. Format validation uses the existing note picture checks.
+std::string read_note_picture(std::string_view url, const std::atomic_bool& cancelled);
 
 } // namespace cha

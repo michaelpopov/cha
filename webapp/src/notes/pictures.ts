@@ -122,3 +122,17 @@ export function readFileBytes(file: File): { bytes: Promise<Uint8Array>; release
     },
   };
 }
+
+export type NotePictureReader = (url: string) => Promise<Uint8Array>;
+
+export async function loadNotePicture(src: string, readPicture: NotePictureReader): Promise<string | null> {
+  if (src.startsWith('data:')) return embeddedImageError(src) ? null : src;
+  try {
+    const url = new URL(src);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+    const picture = pictureFromBytes(await readPicture(url.href));
+    return 'src' in picture ? picture.src : null;
+  } catch {
+    return null;
+  }
+}

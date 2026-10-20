@@ -807,6 +807,12 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       isNoteItem,
     ),
     getNote: (id) => call('notes.get', { id }, isNoteContent),
+    readNotePicture: async (url) => {
+      const result = await call('notes.readPicture', { url }, (value): value is { base64: string } => (
+        isRecord(value) && Object.keys(value).length === 1 && typeof value.base64 === 'string'
+      ));
+      return Uint8Array.from(atob(result.base64), (character) => character.charCodeAt(0));
+    },
     readNotePage: (url) => call('notes.readPage', { url }, (value): value is NotePage => (
       isRecord(value)
       && Object.keys(value).length === 3

@@ -447,6 +447,18 @@ describe('notes native client', () => {
     }
   });
 
+  it('downloads picture bytes using the notes bridge', async () => {
+    const read = vi.fn(() => ({ base64: 'iVBORw0KGgo=' }));
+    const client = clientFor({ 'notes.readPicture': read });
+    expect(await client.readNotePicture('https://example.org/p.png'))
+      .toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    expect(read).toHaveBeenCalledWith({ url: 'https://example.org/p.png' });
+    for (const invalid of [{ base64: 42 }, { base64: '', extra: true }, {}]) {
+      await expect(clientFor({ 'notes.readPicture': () => invalid }).readNotePicture('https://example.org/p.png'))
+        .rejects.toThrow();
+    }
+  });
+
   function epubFile() {
     const files = {
       'META-INF/container.xml': '<container><rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',

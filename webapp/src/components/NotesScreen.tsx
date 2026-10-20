@@ -740,6 +740,7 @@ export function NotesScreen({
         try {
           created = createNotesEditor({
             content: content.document as Content,
+            readPicture: (url) => clientRef.current.readNotePicture(url),
             onRejectedContent: () => { rejected = true; },
             onCommandError: (message) => {
               if (cancelled || noteIdRef.current !== noteId) return;
@@ -1080,7 +1081,9 @@ export function NotesScreen({
               const title = notePageName(page.title);
               const note = itemsRef.current.find((item) => item.id === noteId);
               const rename = current.isEmpty && /^New note(?: [1-9]\d*)?$/u.test(note?.name ?? '');
-              accepted = appendNoteHtml(current, notePageHtml(page));
+              accepted = await appendNoteHtml(current, notePageHtml(page),
+                (url) => client.readNotePicture(url), () => sameEditorContext(current, noteId, epoch));
+              if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
               if (accepted && rename && title && note) {
                 try {
                   const name = availableNoteName(itemsRef.current, note.parent_id, title, noteId);

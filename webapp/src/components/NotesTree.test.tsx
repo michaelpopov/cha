@@ -31,6 +31,7 @@ function client(overrides: Partial<NotesClient> = {}): NotesClient {
     importEpub: async () => { throw new Error('notes.importBook'); },
     createNoteItem: async () => { throw new Error('notes.create'); },
     getNote: async () => { throw new Error('notes.get'); },
+    readNotePicture: async () => new Uint8Array(),
     readNotePage: async () => { throw new Error('notes.readPage'); },
     saveNote: async () => { throw new Error('notes.save'); },
     renameNoteItem: async () => { throw new Error('notes.rename'); },

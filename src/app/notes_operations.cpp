@@ -2,6 +2,7 @@
 
 #include "providers/web_search.h"
 #include "storage/note_storage.h"
+#include "util/base64.h"
 #include "util/logging.h"
 
 namespace cha::app {
@@ -95,7 +96,7 @@ std::shared_ptr<OperationReply> Application::read_note_page(
                 try {
                     // Document imports use the full article, rather than the model tool's 64 KiB limit.
                     const auto result = read_page(config, url, key, cancel,
-                        firecrawl_scrape_endpoint, note_document_byte_limit);
+                        firecrawl_scrape_endpoint, note_document_byte_limit, {}, true);
                     if (cancel.load()) {
                         reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
                         return;
@@ -115,6 +116,31 @@ std::shared_ptr<OperationReply> Application::read_note_page(
                         "Could not retrieve the web page. Try again.");
                 }
             })) {
+        reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
+    }
+    return reply;
+}
+
+std::shared_ptr<OperationReply> Application::read_note_picture(
+    std::string url, std::uint64_t epoch) {
+    auto reply = std::make_shared<OperationReply>();
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+    }
+    if (!impl_->background_jobs.launch([reply, url = std::move(url)](std::atomic_bool& cancel) {
+            std::string bytes;
+            try {
+                bytes = cha::read_note_picture(url, cancel);
+            } catch (const std::exception&) {
+                log_warn("Note picture could not be loaded; keeping the text");
+            }
+            if (cancel.load()) {
+                reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
+                return;
+            }
+            reply->complete({{"base64", encode_base64(bytes)}});
+        })) {
         reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
     }
     return reply;

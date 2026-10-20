@@ -141,6 +141,7 @@ enum class Method {
     notes_import_book,
     notes_get,
     notes_read_page,
+    notes_read_picture,
     notes_save,
     notes_rename,
     notes_delete,

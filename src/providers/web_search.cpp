@@ -95,11 +95,11 @@ std::string bounded_search_output(std::string_view provider, nlohmann::ordered_j
     return output;
 }
 
-nlohmann::ordered_json request_web_json(std::string_view provider, CurlHandle& curl,
+std::string request_web_response(std::string_view provider, CurlHandle& curl,
     const CurlHeaders& headers, const std::string& url, const std::string& body,
     const std::atomic_bool& cancelled, std::string_view key,
     std::string subject, long timeout_ms = 10000L,
-    std::size_t max_bytes = 1024 * 1024) {
+    std::size_t max_bytes = 1024 * 1024, bool follow_redirects = false) {
     const auto lower_subject = fold_ascii(subject);
     const std::string label = std::string(provider) + " " + lower_subject;
     const auto started = std::chrono::steady_clock::now();
@@ -123,7 +123,10 @@ nlohmann::ordered_json request_web_json(std::string_view provider, CurlHandle& c
     require(curl_easy_setopt(curl.get(), CURLOPT_ACCEPT_ENCODING, ""));
     require(curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L));
     require(curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS, timeout_ms));
-    require(curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 0L));
+    require(curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, follow_redirects ? 1L : 0L));
+    require(curl_easy_setopt(curl.get(), CURLOPT_PROTOCOLS_STR, "http,https"));
+    require(curl_easy_setopt(curl.get(), CURLOPT_REDIR_PROTOCOLS_STR, "http,https"));
+    require(curl_easy_setopt(curl.get(), CURLOPT_MAXREDIRS, 5L));
     require(curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION,
         +[](char* data, size_t size, size_t count, void* user) -> size_t {
             auto& received = *static_cast<ResponseBuffer*>(user);
@@ -164,13 +167,25 @@ nlohmann::ordered_json request_web_json(std::string_view provider, CurlHandle& c
         + " duration_ms=" + std::to_string(std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - started).count())
         + " response_bytes=" + std::to_string(response.size()));
-    log_debug_payload(label + " raw response", response, key);
     if (buffer.too_large) fail_web(provider, subject, subject + " response size limit exceeded");
     if (completed->data.result != CURLE_OK)
         fail_web(provider, subject, subject + " connection failed: " + std::string(curl_easy_strerror(completed->data.result)));
     if (status != 200)
         fail_web(provider, subject, subject + " HTTP " + std::to_string(status));
 
+    return response;
+}
+
+nlohmann::ordered_json request_web_json(std::string_view provider, CurlHandle& curl,
+    const CurlHeaders& headers, const std::string& url, const std::string& body,
+    const std::atomic_bool& cancelled, std::string_view key,
+    std::string subject, long timeout_ms = 10000L,
+    std::size_t max_bytes = 1024 * 1024) {
+    const auto response = request_web_response(provider, curl, headers, url, body,
+        cancelled, key, subject, timeout_ms, max_bytes);
+    if (cancelled.load()) return {};
+    const auto lower_subject = fold_ascii(subject);
+    log_debug_payload(std::string(provider) + " " + lower_subject + " raw response", response, key);
     // Bound depth while parsing, before any recursive copy of the response.
     const auto check_depth = [&](int depth, nlohmann::ordered_json::parse_event_t,
         nlohmann::ordered_json&) {
@@ -315,8 +330,8 @@ std::string page_prefix(std::string_view markdown, std::size_t byte_limit) {
 }
 
 std::string page_output(std::string_view provider, std::string_view url,
-    std::string_view title, std::string_view markdown, std::size_t byte_limit) {
-    const auto text = without_page_images(markdown);
+    std::string_view title, std::string_view markdown, std::size_t byte_limit, bool include_images) {
+    const auto text = include_images ? std::string(markdown) : without_page_images(markdown);
     markdown = text;
     if (trim_view(markdown).empty()) fail_web(provider, "Page reading", "Page returned no readable content");
     nlohmann::ordered_json result{{"url", url}, {"title", utf8_prefix(title, 1024)},
@@ -403,7 +418,7 @@ std::string search_tavily(std::string_view query, std::string_view key,
 }
 
 std::string read_firecrawl(std::string_view url, std::string_view key,
-    const std::atomic_bool& cancelled, std::string_view endpoint, std::size_t output_byte_limit) {
+    const std::atomic_bool& cancelled, std::string_view endpoint, std::size_t output_byte_limit, bool include_images) {
     if (cancelled.load()) return {};
     const auto target = read_url("Firecrawl", url, key);
     CurlHandle curl;
@@ -411,9 +426,14 @@ std::string read_firecrawl(std::string_view url, std::string_view key,
     headers.append("Accept: application/json");
     headers.append("Content-Type: application/json");
     headers.append("Authorization: Bearer " + std::string(key));
+    auto excluded = nlohmann::json::array({"video", "audio", "source", "iframe", "svg", "canvas"});
+    if (!include_images) {
+        excluded.insert(excluded.begin(), "picture");
+        excluded.insert(excluded.begin(), "img");
+    }
     const auto body = nlohmann::json{{"url", target}, {"formats", {"markdown"}},
-        {"excludeTags", {"img", "picture", "video", "audio", "source", "iframe", "svg", "canvas"}},
-        {"onlyMainContent", true}, {"timeout", 45000}, {"skipTlsVerification", false}}.dump();
+        {"excludeTags", excluded}, {"onlyMainContent", true},
+        {"timeout", 45000}, {"skipTlsVerification", false}}.dump();
     const auto response = request_web_json("Firecrawl", curl, headers, std::string(endpoint),
         body, cancelled, key, "Page reading", 60000L, 8 * 1024 * 1024);
     if (response.is_null()) return {};
@@ -432,11 +452,11 @@ std::string read_firecrawl(std::string_view url, std::string_view key,
     const auto title = metadata.contains("title") && metadata["title"].is_string()
         ? metadata["title"].get<std::string>() : std::string{};
     return page_output("Firecrawl", target, title,
-        data.value("markdown", std::string{}), output_byte_limit);
+        data.value("markdown", std::string{}), output_byte_limit, include_images);
 }
 
 std::string read_web_reader(std::string_view url, std::string_view base_url,
-    const std::atomic_bool& cancelled, std::size_t output_byte_limit) {
+    const std::atomic_bool& cancelled, std::size_t output_byte_limit, bool include_images) {
     if (cancelled.load()) return {};
     const auto target = page_url("web_reader", url);
     auto endpoint = page_url("web_reader", base_url);
@@ -457,19 +477,19 @@ std::string read_web_reader(std::string_view url, std::string_view base_url,
         fail_web("web_reader", "Page reading", "Invalid page reading response");
     const auto final_url = page_url("web_reader", response["url"].get<std::string>());
     return page_output("web_reader", final_url, response["title"].get<std::string>(),
-        response["markdown"].get<std::string>(), output_byte_limit);
+        response["markdown"].get<std::string>(), output_byte_limit, include_images);
 }
 
 std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
     std::string_view firecrawl_key, const std::atomic_bool& cancelled,
     std::string_view firecrawl_endpoint, std::size_t output_byte_limit,
-    const std::function<void()>& on_fallback) {
+    const std::function<void()>& on_fallback, bool include_images) {
     if (cancelled.load()) return {};
     if (config.web_reader_enabled) {
         if (!config.web_reader_api_key_id.empty())
             log_warn("web_reader API key is saved but unused; the service has no API-key authentication contract");
         try {
-            return read_web_reader(url, config.web_reader_url, cancelled, output_byte_limit);
+            return read_web_reader(url, config.web_reader_url, cancelled, output_byte_limit, include_images);
         } catch (const WebToolError&) {
             if (cancelled.load()) return {};
             if (config.read_provider != "firecrawl" || firecrawl_key.empty()) throw;
@@ -479,8 +499,18 @@ std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
     }
     if (cancelled.load()) return {};
     if (config.read_provider == "firecrawl")
-        return read_firecrawl(url, firecrawl_key, cancelled, firecrawl_endpoint, output_byte_limit);
+        return read_firecrawl(url, firecrawl_key, cancelled, firecrawl_endpoint, output_byte_limit, include_images);
     throw WebToolError("Page reading is not configured");
+}
+
+std::string read_note_picture(std::string_view url, const std::atomic_bool& cancelled) {
+    if (cancelled.load()) return {};
+    const auto target = page_url("Note picture", url);
+    CurlHandle curl;
+    CurlHeaders headers;
+    headers.append("Accept: image/png, image/jpeg, image/webp, image/gif");
+    return request_web_response("Note picture", curl, headers, target, {}, cancelled, {},
+        "Picture loading", 10000L, 1024 * 1024, true);
 }
 
 } // namespace cha

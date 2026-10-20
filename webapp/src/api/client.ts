@@ -119,6 +119,7 @@ export type NoteBookImport = {
 export interface NotesClient {
   importEpub: (file: File, items: readonly NoteItem[], parentId: number | null) => Promise<number>;
   readNotePage: (url: string) => Promise<NotePage>;
+  readNotePicture: (url: string) => Promise<Uint8Array>;
   listNoteItems: () => Promise<NoteItem[]>;
   createNoteItem: (
     parentId: number | null,

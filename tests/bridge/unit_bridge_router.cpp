@@ -186,11 +186,27 @@ TEST_F(BridgeRouterTest, NotePageReadingUsesConfiguredReaderAndKeepsLongArticles
     ASSERT_TRUE(reply["ok"]) << reply;
     EXPECT_EQ(reply["result"]["url"], page["url"]);
     EXPECT_EQ(reply["result"]["title"], page["title"]);
-    EXPECT_EQ(reply["result"]["markdown"], article + "\n\n");
+    EXPECT_EQ(reply["result"]["markdown"], page["markdown"]);
     EXPECT_EQ(reply["result"].size(), 3u);
     EXPECT_TRUE(call("notes.list")["result"]["items"].empty());
     ASSERT_EQ(server.requests().size(), 1u);
     EXPECT_TRUE(server.requests()[0].starts_with("POST /extract HTTP/1.1\r\n"));
+}
+
+TEST_F(BridgeRouterTest, NotePictureReadingUsesBinaryDownloadWithoutReaderConfiguration) {
+    bootstrap_epoch();
+    const std::string bytes("\x89PNG\r\n\x1a\n\0", 9);
+    MockHttpServer server({http_response("image/png", bytes)});
+    server.start();
+    const auto reply = call("notes.readPicture", {{"url",
+        "http://127.0.0.1:" + std::to_string(server.port()) + "/picture.png"}});
+    server.join();
+    ASSERT_TRUE(reply["ok"]) << reply;
+    EXPECT_EQ(reply["result"], (nlohmann::json{{"base64", "iVBORw0KGgoA"}}));
+    EXPECT_FALSE(call("notes.readPicture", nlohmann::json::object())["ok"]);
+    const auto failed = call("notes.readPicture", {{"url", "file:///private/file"}});
+    EXPECT_TRUE(failed["ok"]);
+    EXPECT_EQ(failed["result"]["base64"], "");
 }
 
 TEST_F(BridgeRouterTest, NotePageReadingReportsConfigurationAndFetchFailures) {

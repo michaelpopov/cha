@@ -557,6 +557,8 @@ public:
     [[nodiscard]] NoteContent get_note(std::int64_t id, std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> read_note_page(
         std::string url, std::uint64_t epoch);
+    [[nodiscard]] std::shared_ptr<OperationReply> read_note_picture(
+        std::string url, std::uint64_t epoch);
     void save_note(
         std::int64_t id,
         const nlohmann::json& document,

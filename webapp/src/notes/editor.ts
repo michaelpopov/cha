@@ -6,11 +6,11 @@ import { closeHistory, isHistoryTransaction } from '@tiptap/pm/history';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import {
   DOMParser as PmDOMParser,
-  type Fragment,
+  Fragment,
   type Node as PmNode,
   type ResolvedPos,
   type Schema,
-  type Slice,
+  Slice,
 } from '@tiptap/pm/model';
 import {
   AllSelection,
@@ -29,6 +29,8 @@ import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 import {
   clipboardImageFile,
   embeddedImageError,
+  loadNotePicture,
+  type NotePictureReader,
   noteTooLargeMessage,
   pictureByteLimit,
   pictureFromBytes,
@@ -58,6 +60,7 @@ type Gate = {
 export type NotesEditorOptions = {
   content?: Content;
   byteLimit?: number;
+  readPicture?: NotePictureReader;
   onAcceptedDocument?: () => void;
   onRejectedContent?: () => void;
   onCommandError?: (message: string) => void;
@@ -135,7 +138,7 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
       acceptNotesTransaction(editor, transaction, byteLimit, gate, options.onCommandError);
     },
     transformPastedHTML(html: string) {
-      return transformClipboardHTML(html);
+      return transformClipboardHTML(html, !!options.readPicture);
     },
     handleClick(view: EditorView, _pos: number, event: MouseEvent) {
       if (event.button !== 0) return false;
@@ -155,6 +158,14 @@ export function createNotesEditor(options: NotesEditorOptions = {}): Editor {
     },
     handlePaste(view: EditorView, event: ClipboardEvent, slice: Slice) {
       if (slice.size > 0) {
+        let hasPicture = false;
+        slice.content.descendants((node) => {
+          if (node.type.name === 'image') hasPicture = true;
+        });
+        if (hasPicture && options.readPicture) {
+          void importNoteSlice(editor, slice, options.readPicture, () => true, false, byteLimit);
+          return true;
+        }
         const imageError = fragmentImageError(slice.content);
         if (imageError) {
           options.onCommandError?.(imageError);
@@ -361,24 +372,97 @@ export function insertPromptParagraph(editor: Editor, text: string): boolean {
   return !editor.state.doc.eq(before);
 }
 
-export function appendNoteHtml(editor: Editor, html: string): boolean {
-  if (editor.isDestroyed || !editor.isEditable) return false;
+// Both page import and HTML paste use the existing embedded picture nodes.
+async function importNoteSlice(
+  editor: Editor,
+  slice: Slice,
+  readPicture: NotePictureReader,
+  stillCurrent: () => boolean,
+  append: boolean,
+  byteLimit: number,
+): Promise<boolean> {
+  const available = () => !editor.isDestroyed && editor.isEditable && stillCurrent();
+  if (!available()) return false;
+  const tracked = trackSelectionBookmark(editor);
+  let pictureBytes = 0;
+  const embed = async (fragment: Fragment): Promise<Fragment> => {
+    const nodes: PmNode[] = [];
+    for (const node of fragment.content) {
+      if (!available()) break;
+      if (node.type.name === 'image') {
+        if (pictureBytes >= byteLimit) continue;
+        const src = await loadNotePicture(String(node.attrs.src ?? ''), readPicture);
+        if (src && src.length <= byteLimit - pictureBytes) {
+          pictureBytes += src.length;
+          nodes.push(node.type.create({ ...node.attrs, src }, null, node.marks));
+        }
+      } else {
+        nodes.push(node.isLeaf ? node : node.copy(await embed(node.content)));
+      }
+    }
+    return Fragment.fromArray(nodes);
+  };
+  try {
+    let content = await embed(slice.content);
+    if (!available()) return false;
+    const build = () => {
+      const tr = editor.state.tr;
+      if (append) {
+        const doc = editor.state.doc;
+        const empty = doc.childCount === 1 && doc.firstChild?.type.name === 'paragraph'
+          && doc.firstChild.content.size === 0;
+        return tr.replaceWith(empty ? 0 : doc.content.size, doc.content.size, content);
+      }
+      const open = Slice.maxOpen(content);
+      return tr.setSelection(tracked.current().resolve(editor.state.doc)).replaceSelection(
+        new Slice(content, Math.min(slice.openStart, open.openStart), Math.min(slice.openEnd, open.openEnd)),
+      );
+    };
+    let tr = build();
+    // Pictures must not prevent otherwise valid text from being inserted.
+    while (noteDocumentByteLength(tr.doc) > byteLimit) {
+      let removed = false;
+      const omitLastPicture = (fragment: Fragment): Fragment => {
+        const nodes = [...fragment.content];
+        for (let index = nodes.length - 1; index >= 0 && !removed; index -= 1) {
+          const node = nodes[index];
+          if (node.type.name === 'image') {
+            nodes.splice(index, 1);
+            removed = true;
+          } else if (!node.isLeaf) {
+            nodes[index] = node.copy(omitLastPicture(node.content));
+          }
+        }
+        return Fragment.fromArray(nodes);
+      };
+      content = omitLastPicture(content);
+      if (!removed) break;
+      tr = build();
+    }
+    if (!content.size) return false;
+    closeHistory(tr);
+    tr.setMeta(notesIsolatedMeta, true);
+    tr.setMeta('preventAutolink', true);
+    tr.setStoredMarks([]);
+    const before = editor.state.doc;
+    editor.view.dispatch(tr);
+    return !editor.state.doc.eq(before);
+  } finally {
+    tracked.stop();
+  }
+}
+
+export async function appendNoteHtml(
+  editor: Editor,
+  html: string,
+  readPicture: NotePictureReader,
+  stillCurrent: () => boolean,
+  byteLimit = noteDocumentByteLimit,
+): Promise<boolean> {
   const body = document.createElement('div');
   body.innerHTML = html;
   const content = PmDOMParser.fromSchema(editor.schema).parse(body).content;
-  const before = editor.state.doc;
-  const emptyParagraph = before.childCount === 1
-    && before.firstChild?.type.name === 'paragraph'
-    && before.firstChild.content.size === 0;
-  const tr = editor.state.tr.replaceWith(
-    emptyParagraph ? 0 : before.content.size, before.content.size, content,
-  );
-  closeHistory(tr);
-  tr.setMeta(notesIsolatedMeta, true);
-  tr.setMeta('preventAutolink', true);
-  tr.setStoredMarks([]);
-  editor.view.dispatch(tr);
-  return !editor.state.doc.eq(before);
+  return importNoteSlice(editor, new Slice(content, 0, 0), readPicture, stillCurrent, true, byteLimit);
 }
 
 export function notesExtensions() {
@@ -636,9 +720,9 @@ const removedClipboardTags = new Set([
   'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'VIDEO', 'AUDIO', 'CANVAS', 'SVG', 'FORM',
 ]);
 
-export function transformClipboardHTML(html: string): string {
+export function transformClipboardHTML(html: string, keepRemotePictures = false): string {
   const document = new DOMParser().parseFromString(html, 'text/html');
-  cleanClipboardNode(document.body, wordClipboardHTML(html, document));
+  cleanClipboardNode(document.body, wordClipboardHTML(html, document), keepRemotePictures);
   return document.body.innerHTML;
 }
 
@@ -654,8 +738,8 @@ function wordClipboardHTML(html: string, document: Document): boolean {
   return false;
 }
 
-function cleanClipboardNode(node: Node, word: boolean): void {
-  for (const child of [...node.childNodes]) cleanClipboardNode(child, word);
+function cleanClipboardNode(node: Node, word: boolean, keepRemotePictures: boolean): void {
+  for (const child of [...node.childNodes]) cleanClipboardNode(child, word, keepRemotePictures);
   if (!(node instanceof HTMLElement)) return;
   const tag = node.tagName;
   if (removedClipboardTags.has(tag)) {
@@ -664,7 +748,14 @@ function cleanClipboardNode(node: Node, word: boolean): void {
   }
   if (tag === 'IMG') {
     const src = node.getAttribute('src') ?? '';
-    if (!src.startsWith('data:')) node.remove();
+    if (src.startsWith('data:')) return;
+    try {
+      const url = new URL(src, node.ownerDocument.baseURI);
+      if (keepRemotePictures && ['http:', 'https:'].includes(url.protocol)) node.setAttribute('src', url.href);
+      else node.remove();
+    } catch {
+      node.remove();
+    }
     return;
   }
   if (node instanceof HTMLTableElement) {

@@ -1351,6 +1351,100 @@ describe('pictures and clipboard', () => {
     expect(JSON.stringify(created.getJSON())).not.toContain('https://example.com/a.png');
   });
 
+  it('downloads pasted web pictures and inserts the text and pictures with one undo', async () => {
+    const readPicture = vi.fn(async () => new Uint8Array(pngHeader));
+    const created = editor({ content: '<p>Keep</p>', readPicture });
+    selectText(created, 'Keep', 0, 4);
+    const before = created.getJSON();
+    created.view.pasteHTML('<p>Before</p><img src="https://example.org/p.png"><p>After</p>');
+    await vi.waitFor(() => expect(created.view.dom.querySelector('img[src]')).not.toBeNull());
+    expect(readPicture).toHaveBeenCalledWith('https://example.org/p.png');
+    expect(created.getJSON().content?.map((node) => node.type)).toEqual(['paragraph', 'image', 'paragraph']);
+    expect(created.getText()).toContain('Before');
+    expect(created.getText()).toContain('After');
+    const after = created.getJSON();
+    expect(undoDepth(created.state)).toBe(1);
+    created.commands.undo();
+    expect(created.getJSON()).toEqual(before);
+    created.commands.redo();
+    expect(created.getJSON()).toEqual(after);
+    expect(readPicture).toHaveBeenCalledOnce();
+  });
+
+  it.each(['failed', 'unsupported', 'oversized'])('keeps pasted text when a picture is %s', async (failure) => {
+    const errors = vi.fn();
+    const readPicture = vi.fn(async () => {
+      if (failure === 'failed') throw new Error('download failed');
+      if (failure === 'unsupported') return new Uint8Array([1, 2, 3]);
+      const bytes = new Uint8Array(1024 * 1024 + 1);
+      bytes.set(pngHeader);
+      return bytes;
+    });
+    const created = editor({ readPicture, onCommandError: errors });
+    created.view.pasteHTML('<p><b>Before</b></p><img src="https://example.org/p.png"><p>After</p>');
+    await vi.waitFor(() => expect(created.getText()).toContain('After'));
+    expect(created.view.dom.querySelector('strong')).toHaveTextContent('Before');
+    expect(created.view.dom.querySelector('img[src]')).toBeNull();
+    expect(errors).not.toHaveBeenCalled();
+    expect(undoDepth(created.state)).toBe(1);
+  });
+
+  it('keeps pasted text when the embedded picture would exceed the note limit', async () => {
+    const bytes = new Uint8Array(300);
+    bytes.set(pngHeader);
+    const created = editor({ byteLimit: 450, readPicture: async () => bytes });
+    created.view.pasteHTML('<p>Before</p><img src="https://example.org/p.png"><p>After</p>');
+    await vi.waitFor(() => expect(created.getText()).toContain('After'));
+    expect(created.getText()).toContain('Before');
+    expect(created.view.dom.querySelector('img[src]')).toBeNull();
+  });
+
+  it('tracks a pending paste position while the user types elsewhere', async () => {
+    let finish!: (bytes: Uint8Array) => void;
+    const created = editor({ content: '<p>Keep</p>',
+      readPicture: () => new Promise((resolve) => { finish = resolve; }) });
+    selectText(created, 'Keep', 0, 4);
+    created.view.pasteHTML('<p>Before</p><img src="https://example.org/p.png"><p>After</p>');
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    created.view.dispatch(created.state.tr.insertText('Extra ', 1));
+    finish(new Uint8Array(pngHeader));
+    await vi.waitFor(() => expect(created.getText()).toContain('After'));
+    expect(created.getText()).toContain('Extra ');
+    expect(created.getText()).not.toContain('Keep');
+    expect(created.view.dom.querySelector('img[src]')).not.toBeNull();
+  });
+
+  it('discards a pending web paste when the editor is destroyed', async () => {
+    let finish!: (bytes: Uint8Array) => void;
+    const created = editor({ readPicture: () => new Promise((resolve) => { finish = resolve; }) });
+    const accepted = vi.fn();
+    created.on('update', accepted);
+    created.view.pasteHTML('<p>Before</p><img src="https://example.org/p.png">');
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    created.destroy();
+    finish(new Uint8Array(pngHeader));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(accepted).not.toHaveBeenCalled();
+  });
+
+  it('resolves a copied picture against a clipboard base URL', async () => {
+    const readPicture = vi.fn(async () => new Uint8Array(pngHeader));
+    const created = editor({ readPicture });
+    created.view.pasteHTML('<base href="https://example.org/article/"><p>Text</p><img src="../p.png">');
+    await vi.waitFor(() => expect(created.view.dom.querySelector('img[src]')).not.toBeNull());
+    expect(readPicture).toHaveBeenCalledWith('https://example.org/p.png');
+  });
+
+  it('keeps text around an invalid embedded picture in web clipboard HTML', async () => {
+    const readPicture = vi.fn();
+    const created = editor({ readPicture });
+    created.view.pasteHTML('<p>Before</p><img src="data:image/png;base64,aa"><p>After</p>');
+    await vi.waitFor(() => expect(created.getText()).toContain('After'));
+    expect(created.getText()).toContain('Before');
+    expect(created.view.dom.querySelector('img[src]')).toBeNull();
+    expect(readPicture).not.toHaveBeenCalled();
+  });
+
   it('flattens a table and keeps a bold cell', () => {
     const created = editor({ content: '<p></p>' });
     created.view.pasteHTML('<table><tr><td><b>A</b></td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>');

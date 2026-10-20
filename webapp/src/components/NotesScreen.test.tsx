@@ -11,7 +11,7 @@ import {
   type NotePage,
 } from '../api/client';
 import { pictureTypeMessage } from '../notes/pictures';
-import { noteHeadings } from '../notes/editor';
+import { noteHeadings, selectNoteEnd } from '../notes/editor';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveDelayMs, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { AppAction } from '../state/view';
@@ -50,6 +50,7 @@ function Harness({
   getNote = async (id: number) => ({ id, document: documentWith(id === 5 ? 'Essay text' : 'Alpha') }),
   saveNote = async () => undefined,
   readNotePage = async () => { throw new Error('Page reading is unavailable.'); },
+  readNotePicture = async () => new Uint8Array(),
   renameNoteItem = async (id: number, name: string) => ({ ...plan, id, name }),
   draft = '',
   voice = false,
@@ -60,6 +61,7 @@ function Harness({
   getNote?: (id: number) => Promise<NoteContent>;
   saveNote?: (id: number, document: Record<string, unknown>) => Promise<void>;
   readNotePage?: (url: string) => Promise<NotePage>;
+  readNotePicture?: (url: string) => Promise<Uint8Array>;
   renameNoteItem?: (id: number, name: string) => Promise<NoteItem>;
   draft?: string;
   voice?: boolean;
@@ -81,6 +83,7 @@ function Harness({
     getNote: (id) => getNoteRef.current(id),
     saveNote: (id, document) => saveNoteRef.current(id, document),
     readNotePage,
+    readNotePicture,
     renameNoteItem,
     getVoiceInputRuntime: async () => (voice ? { ...voiceRuntime, send_phrase: sendPhrase } : null),
   })).current;
@@ -298,6 +301,32 @@ describe('Notes screen', () => {
       expect(prompt).toHaveValue('Next');
     },
   );
+
+  it('uses the picture client for both page imports and HTML paste', async () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const readNotePicture = vi.fn(async () => bytes);
+    render(<Harness
+      readNotePage={async () => ({ url: 'https://example.org/article', title: 'Title',
+        markdown: 'Before\n\n![Photo](/page.png)\n\nAfter' })}
+      readNotePicture={readNotePicture}
+      draft="https://example.org/article"
+    />);
+    const editor = await openedEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(''));
+    expect(readNotePicture).toHaveBeenCalledWith('https://example.org/page.png');
+    expect(editor.view.dom.querySelectorAll('img[src]')).toHaveLength(1);
+    act(() => {
+      selectNoteEnd(editor);
+      editor.view.pasteHTML('<p>Pasted</p><img src="https://example.org/paste.png">',
+        new Event('paste') as ClipboardEvent);
+    });
+    await waitFor(() => expect(editor.view.dom.querySelectorAll('img[src]')).toHaveLength(2));
+    expect(readNotePicture).toHaveBeenCalledWith('https://example.org/paste.png');
+    expect(editor.getText()).toContain('Before');
+    expect(editor.getText()).toContain('After');
+    expect(editor.getText()).toContain('Pasted');
+  });
 
   it('keeps the URL on failure, dismisses the error, and retries with Send', async () => {
     const readNotePage = vi.fn()

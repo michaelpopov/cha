@@ -42,6 +42,69 @@ TEST(WebRead, RequestsMarkdownAndNormalizesFirecrawl) {
         "img", "picture", "video", "audio", "source", "iframe", "svg", "canvas"}));
 }
 
+TEST(WebRead, NoteImportsKeepPicturesWhileModelReadsRemainTextOnly) {
+    using Json = nlohmann::json;
+    const std::string markdown = "Before\n\n![Photo](../photo.png)\n\nAfter";
+    MockHttpServer server({http_response("application/json",
+        Json{{"success", true}, {"data", {{"markdown", markdown}}}}.dump())});
+    server.start();
+    const auto result = Json::parse(read_firecrawl("https://example.org/article", "key",
+        std::atomic_bool{false}, "http://127.0.0.1:" + std::to_string(server.port()),
+        12 * 1024 * 1024, true));
+    server.join();
+    EXPECT_EQ(result["markdown"], markdown);
+    const auto request = Json::parse(server.requests()[0].substr(server.requests()[0].find("\r\n\r\n") + 4));
+    for (const auto& tag : request["excludeTags"]) {
+        EXPECT_NE(tag, "img");
+        EXPECT_NE(tag, "picture");
+    }
+}
+
+TEST(NotePicture, DownloadsBinaryAndFollowsHttpRedirects) {
+    const std::string bytes("\x89PNG\r\n\x1a\n\0", 9);
+    MockHttpServer server({
+        "HTTP/1.1 302 Found\r\nLocation: /final.png\r\nContent-Length: 8\r\nConnection: close\r\n\r\nRedirect",
+        http_response("image/png", bytes)});
+    server.start();
+    EXPECT_EQ(read_note_picture("http://127.0.0.1:" + std::to_string(server.port()) + "/first",
+        std::atomic_bool{false}), bytes);
+    server.join();
+    ASSERT_EQ(server.requests().size(), 2u);
+    EXPECT_TRUE(server.requests()[1].starts_with("GET /final.png HTTP/1.1"));
+    EXPECT_EQ(server.requests()[0].find("Authorization:"), std::string::npos);
+}
+
+TEST(NotePicture, RejectsOversizedDownloadsHttpErrorsAndNonWebUrls) {
+    for (const auto& response : {
+        http_response("image/png", std::string(1024 * 1024 + 1, 'x')),
+        std::string("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+        std::string("HTTP/1.1 302 Found\r\nLocation: file:///private/file\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")}) {
+        MockHttpServer server({response});
+        server.start();
+        EXPECT_THROW(read_note_picture("http://127.0.0.1:" + std::to_string(server.port()),
+            std::atomic_bool{false}), WebToolError);
+        server.join();
+    }
+    for (const auto* url : {"file:///private/file", "ftp://example.org/p.png", "https://user:pass@example.org/p.png"})
+        EXPECT_THROW(read_note_picture(url, std::atomic_bool{false}), WebToolError);
+}
+
+TEST(NotePicture, CancelsAnActiveDownload) {
+    MockHttpServer server({http_response("image/png", "picture")});
+    server.pause_before_response(1);
+    server.start();
+    std::atomic_bool cancelled{false};
+    auto pending = std::async(std::launch::async, [&] {
+        return read_note_picture("http://127.0.0.1:" + std::to_string(server.port()), cancelled);
+    });
+    EXPECT_TRUE(server.wait_for_requests(1, 2s));
+    cancelled.store(true);
+    EXPECT_EQ(pending.wait_for(2s), std::future_status::ready);
+    server.resume_responses();
+    EXPECT_TRUE(pending.get().empty());
+    server.join();
+}
+
 TEST(WebRead, UsesWebReaderFirstAndKeepsItsFinalUrlAndEmptyTitle) {
     using Json = nlohmann::json;
     const Json body{{"url", "https://example.org/final?q=1"}, {"title", ""},
