@@ -79,8 +79,17 @@ bool is_youtube_url(std::string_view url) {
         || name == "youtu.be" || name == "www.youtu.be";
 }
 
-std::string format_youtube_transcript(const Workspace& workspace, std::string text,
+std::string transcript_title(std::string_view text) {
+    text = trim_view(text);
+    const auto first_line = text.substr(0, text.find('\n'));
+    return first_line.starts_with("# ") ? std::string(trim_view(first_line.substr(2))) : std::string{};
+}
+
+std::string format_youtube_transcript(const Workspace& workspace, std::string text, std::string& title,
     OpenAiOAuth* oauth, ApiKeyStore* api_keys, const std::atomic_bool& cancel) {
+    title = trim_view(title);
+    if (title.empty()) title = transcript_title(text);
+    if (!title.empty() && transcript_title(text) != title) text = "# " + title + "\n\n" + text;
     const auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
         .character = {"youtube-transcript", "YouTube transcript"},
         .provider = note_editing_provider(workspace),
@@ -109,6 +118,16 @@ std::string format_youtube_transcript(const Workspace& workspace, std::string te
     if (answer.text.find_first_not_of(" \t\r\n") == std::string::npos) {
         throw ApplicationError(ErrorCode::internal_error,
             "Could not format the YouTube transcript. Try again.");
+    }
+    const auto formatted_title = transcript_title(answer.text);
+    if (title.empty()) title = formatted_title;
+    if (!title.empty()) {
+        auto body = trim_view(answer.text);
+        if (!formatted_title.empty()) {
+            const auto end = body.find('\n');
+            body = end == std::string_view::npos ? std::string_view{} : trim_view(body.substr(end + 1));
+        }
+        answer.text = "# " + title + "\n\n" + std::string(body);
     }
     if (answer.text.size() > note_document_byte_limit) {
         throw ApplicationError(ErrorCode::body_too_large, "The transcript is too large to import.");
@@ -323,9 +342,11 @@ std::shared_ptr<OperationReply> Application::read_note_page(
                             const std::lock_guard lifecycle(owner->lifecycle_mutex);
                             owner->require_admitted(epoch);
                         }
+                        auto title = page.at("title").get<std::string>();
                         page["markdown"] = format_youtube_transcript(*workspace,
-                            page.at("markdown").get<std::string>(), owner->openai_auth.get(),
+                            page.at("markdown").get<std::string>(), title, owner->openai_auth.get(),
                             owner->api_keys.get(), cancel);
+                        page["title"] = std::move(title);
                     }
                     reply->complete({{"url", page.at("url")}, {"title", page.at("title")},
                         {"markdown", page.at("markdown")}});

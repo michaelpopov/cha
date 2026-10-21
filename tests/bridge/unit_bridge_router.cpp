@@ -2332,7 +2332,7 @@ TEST_F(BridgeRouterTest, YoutubeNoteImportsUseTranscriptPromptAndCompressionSett
             provider.join();
             ASSERT_TRUE(reply["ok"]) << reply;
             EXPECT_EQ(reply["result"], (nlohmann::json{{"url", final_url}, {"title", "Video title"},
-                {"markdown", "This is a readable transcript.\n\nHere is another idea."}}));
+                {"markdown", "# Video title\n\nThis is a readable transcript.\n\nHere is another idea."}}));
             ASSERT_EQ(provider.requests().size(), 1U);
             const auto body = nlohmann::json::parse(request_body(provider.requests().front()));
             EXPECT_FALSE(body.contains("tools"));
@@ -2344,12 +2344,49 @@ TEST_F(BridgeRouterTest, YoutubeNoteImportsUseTranscriptPromptAndCompressionSett
             } else {
                 EXPECT_EQ(body["reasoning_effort"], effort);
                 EXPECT_EQ(body["messages"][0]["content"], prompt);
-                EXPECT_EQ(body["messages"][1]["content"], "from User:\n" + page["markdown"].get<std::string>());
+                EXPECT_EQ(body["messages"][1]["content"], "from User:\n# Video title\n\n" + page["markdown"].get<std::string>());
             }
             EXPECT_EQ(application_->get_provider("test", epoch_).reasoning_effort, "low");
         }
     }
     EXPECT_TRUE(call("notes.list")["result"]["items"].empty());
+}
+
+TEST_F(BridgeRouterTest, YoutubeNoteImportsKeepTitlesThroughFormatting) {
+    bootstrap_epoch();
+    struct Example {
+        std::string title;
+        std::string transcript;
+        std::string formatted;
+        std::string expected_title;
+    };
+    for (const auto& example : std::vector<Example>{
+            {"", "# Original video title\n\nRaw transcript", "Edited transcript", "Original video title"},
+            {"", "Raw transcript", "# Generated title\n\nEdited transcript", "Generated title"},
+            {"Video title", "Raw transcript", "# Video title\n\nEdited transcript", "Video title"},
+            {"Video title", "Raw transcript", "# Changed title\n\nEdited transcript", "Video title"},
+            {" \t", "Raw transcript", "\n# Generated title\r\n\r\nEdited transcript", "Generated title"},
+        }) {
+        SCOPED_TRACE(example.formatted);
+        const nlohmann::json page{{"url", "https://youtu.be/video"}, {"title", example.title},
+            {"markdown", example.transcript}};
+        MockHttpServer reader({http_response("application/json", page.dump())});
+        MockHttpServer provider({compression_response("chat_completions", false, example.formatted)});
+        reader.start();
+        provider.start();
+        configure_compression(*application_, provider.port(), "chat_completions", false, epoch_);
+        auto settings = call("webSearch.get")["result"];
+        settings["web_reader_enabled"] = true;
+        settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+        ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+
+        const auto reply = call("notes.readPage", {{"url", "https://youtu.be/video"}});
+        reader.join();
+        provider.join();
+        ASSERT_TRUE(reply["ok"]) << reply;
+        EXPECT_EQ(reply["result"]["title"], example.expected_title);
+        EXPECT_EQ(reply["result"]["markdown"], "# " + example.expected_title + "\n\nEdited transcript");
+    }
 }
 
 TEST_F(BridgeRouterTest, NoteImportsDoNotFormatOtherSitesOrYoutubeLookalikes) {
