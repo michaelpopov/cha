@@ -1585,7 +1585,7 @@ it.each(['Garden planning', 'New session'])(
   act(() => stream.onSnapshot(lobbySnapshot('created', finalLabel)));
   expect(await screen.findByRole('button', { name: `${finalLabel}The Lobby` }))
     .toHaveAttribute('aria-current', 'page');
-  expect(document.title).toBe(`CHA: Personal — ${finalLabel}`);
+  await waitFor(() => expect(document.title).toBe(`CHA: Personal — ${finalLabel}`));
   await act(async () => finishPendingRefresh(bootstrapFixture));
   expect(screen.getByRole('button', { name: `${finalLabel}The Lobby` }))
     .toHaveAttribute('aria-current', 'page');

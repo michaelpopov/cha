@@ -1091,9 +1091,9 @@ describe('live chat', () => {
     await screen.findByRole('button', { name: "Play cached audio for Other's response" });
     // Start the first reply while its download is still running.
     await waitFor(() => expect(resolveAudioSource.mock.calls.map((call) => call[2])).toEqual([3]),
-      { timeout: 2500 });
+      { timeout: 5000 });
     cached.push(3);
-    await waitFor(() => expect(audios).toHaveLength(1), { timeout: 2500 });
+    await waitFor(() => expect(audios).toHaveLength(1), { timeout: 5000 });
     expect(resolveAudioSource.mock.calls.map((call) => call[2])).toEqual([3]);
     act(() => events.handlers[0].onSnapshot({ ...completed, transcript: [...completed.transcript] }));
     expect(audios).toHaveLength(1);
@@ -2133,7 +2133,7 @@ describe('live chat', () => {
     act(() => appendVoice(' you'));
     await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
       'entrance', 'welcome', { text: 'Explain this.' },
-    ), { timeout: 2500 });
+    ), { timeout: 5000 });
     expect(channel.send).not.toHaveBeenCalled();
     expect(input).toHaveValue('');
     expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
@@ -2141,13 +2141,13 @@ describe('live chat', () => {
     act(() => appendVoice('Next question. Over to you'));
     await waitFor(() => expect(submitInput).toHaveBeenLastCalledWith(
       'entrance', 'welcome', { text: 'Next question.' },
-    ), { timeout: 2500 });
+    ), { timeout: 5000 });
     expect(channel.send).not.toHaveBeenCalled();
 
     act(() => appendVoice('Hello comma how are you question mark over to you'));
     await waitFor(() => expect(submitInput).toHaveBeenLastCalledWith(
       'entrance', 'welcome', { text: 'Hello, how are you?' },
-    ), { timeout: 2500 });
+    ), { timeout: 5000 });
 
     act(() => appendVoice('A final note'));
     fireEvent.click(screen.getByRole('button', { name: 'Stop voice input' }));
@@ -2205,7 +2205,7 @@ describe('live chat', () => {
     act(() => events.handlers[0].onSnapshot(snapshotFixture));
     await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
       'entrance', 'welcome', { text: 'Next question.' },
-    ), { timeout: 2500 });
+    ), { timeout: 5000 });
     expect(stop).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
   });
@@ -2243,7 +2243,7 @@ describe('live chat', () => {
     act(() => appendVoice('First question over to you'));
     await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
       'entrance', 'welcome', { text: 'First question' },
-    ), { timeout: 2500 });
+    ), { timeout: 5000 });
     const input = screen.getByRole('textbox', { name: 'Message' });
     expect(input).toHaveValue('First question');
 

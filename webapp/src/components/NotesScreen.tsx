@@ -31,6 +31,7 @@ import {
   toggleNoteHighlight,
 } from '../notes/editor';
 import { noteClipboardCommand } from '../notes/clipboard';
+import { selectNoteHighlight, type NoteHighlight } from '../notes/highlights';
 import { notePageHtml, notePageName, promptPageUrl } from '../notes/pageImport';
 import { noteFileHtml, noteFileTooLarge, promptFilePath } from '../notes/fileImport';
 import { availableNoteName, noteItemPath } from '../notes/tree';
@@ -50,6 +51,7 @@ import {
   UndoIcon,
 } from './Icons';
 import { menuKeys, type NoteActions, type SetNoteReadOnly } from './NotesTree';
+import { NoteHighlights } from './NoteHighlights';
 import { PromptInput } from './PromptInput';
 import { SidebarToggle } from './TopBar';
 
@@ -94,6 +96,13 @@ function focusNotesEditor(editor: Editor | null) {
   });
 }
 
+function scrollToHighlight(editor: Editor) {
+  const host = editor.view.dom.closest('.cha-notes-document');
+  if (!host) return;
+  const top = editor.view.coordsAtPos(editor.state.selection.from).top;
+  host.scrollTop += top - host.getBoundingClientRect().top - host.clientHeight / 2;
+}
+
 function runMark(editor: Editor, command: () => boolean) {
   if (!editor.isEditable || editor.isDestroyed) return;
   withIsolatedHistory(editor, command);
@@ -107,6 +116,7 @@ function runHistory(editor: Editor, command: 'undo' | 'redo') {
 
 function FormatBar({
   editor,
+  onHighlight,
   frozen,
   fontSize,
   onFontSizeChange,
@@ -115,6 +125,7 @@ function FormatBar({
   onPicture,
 }: {
   editor: Editor;
+  onHighlight(highlight: NoteHighlight): void;
   frozen: boolean;
   fontSize: number;
   onFontSizeChange(size: number): void;
@@ -434,6 +445,12 @@ function FormatBar({
             </div>
           )}
         </div>
+        <NoteHighlights
+          editor={editor}
+          frozen={frozen}
+          onChoose={onHighlight}
+          onClose={() => focusNotesEditor(editor)}
+        />
       </div>
     </div>
   );
@@ -954,6 +971,17 @@ export function NotesScreen({
     queueMicrotask(() => findInputRef.current?.focus());
   }
 
+  function chooseHighlight(highlight: NoteHighlight) {
+    const current = editorRef.current;
+    if (!current || current.isDestroyed || save.frozen) return;
+    if (!selectNoteHighlight(current, highlight)) {
+      setCommandError('This highlight has changed or was removed.');
+      return;
+    }
+    focusNotesEditor(current);
+    scrollToHighlight(current);
+  }
+
   openFindRef.current = openFind;
 
   function closeFind() {
@@ -1116,6 +1144,7 @@ export function NotesScreen({
       {phase === 'ready' && editor && (
         <FormatBar
           editor={editor}
+          onHighlight={chooseHighlight}
           frozen={save.frozen}
           fontSize={fontSize}
           onFontSizeChange={setFontSize}

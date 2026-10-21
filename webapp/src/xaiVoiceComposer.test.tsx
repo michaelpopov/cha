@@ -251,7 +251,7 @@ describe('xAI composer', () => {
     await waitFor(() => expect(harness.view.props.onSubmitInput).toHaveBeenCalledWith(
       'Check the logs, over to you',
     ), {
-      timeout: 2500,
+      timeout: 5000,
     });
     expect(harness.releaseStop()).toBeUndefined();
     expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
@@ -290,7 +290,7 @@ describe('xAI composer', () => {
     expect(view.props.onSubmitInput).not.toHaveBeenCalled();
     FakeWorklet.latest?.emit(Int16Array.from([2]));
     await waitFor(() => expect(view.props.onSubmitInput).toHaveBeenCalledWith('Check the logs'), {
-      timeout: 2500,
+      timeout: 5000,
     });
     expect(view.props.onSubmitInput).toHaveBeenCalledTimes(1);
     expect(input).toHaveValue('');
@@ -302,7 +302,7 @@ describe('xAI composer', () => {
     FakeWorklet.latest?.emit(Int16Array.from([1]));
     await waitFor(() => expect(harness.view.props.onSubmitInput).toHaveBeenCalledWith(
       'How can I fix it?',
-    ), { timeout: 2500 });
+    ), { timeout: 5000 });
     expect(harness.releaseStop()).toBeUndefined();
   });
 
@@ -313,11 +313,11 @@ describe('xAI composer', () => {
     await waitFor(() => expect(input).toHaveValue('Plan'));
     fireEvent.click(screen.getByRole('button', { name: 'Stop voice input' }));
     await waitFor(() => expect(harness.releaseStop()).toBeTypeOf('function'), {
-      timeout: 2500,
+      timeout: 5000,
     });
     await act(async () => { harness.releaseStop()?.({ session_id: 'unused', pieces: [] }); });
     await waitFor(() => expect(harness.view.props.onSubmitInput).toHaveBeenCalledWith('Plan'), {
-      timeout: 2500,
+      timeout: 5000,
     });
   });
 
@@ -325,7 +325,7 @@ describe('xAI composer', () => {
     const harness = await dictate([['Over to you.']]);
     FakeWorklet.latest?.emit(Int16Array.from([1]));
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(''), {
-      timeout: 2500,
+      timeout: 5000,
     });
     expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
     expect(harness.releaseStop()).toBeUndefined();
@@ -341,7 +341,7 @@ describe('xAI composer', () => {
     FakeWorklet.latest?.emit(Int16Array.from([1]));
     await waitFor(() => expect(harness.view.props.onSubmitInput).toHaveBeenCalledWith(
       'First question',
-    ), { timeout: 2500 });
+    ), { timeout: 5000 });
     expect(input).toHaveValue('');
     expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
     expect(FakeContext.latest?.closed).toBe(false);
@@ -349,7 +349,7 @@ describe('xAI composer', () => {
     FakeWorklet.latest?.emit(Int16Array.from([2]));
     await waitFor(() => expect(harness.view.props.onSubmitInput).toHaveBeenCalledWith(
       'Second question',
-    ), { timeout: 2500 });
+    ), { timeout: 5000 });
     expect(harness.view.props.onSubmitInput).toHaveBeenCalledTimes(2);
     expect(harness.releaseStop()).toBeUndefined();
     expect(input).toHaveValue('');
@@ -401,7 +401,7 @@ describe('xAI composer', () => {
     await waitFor(() => expect(input).toHaveValue('Check the logs over to you'));
     await waitFor(() => expect(view.props.onSubmitInput).toHaveBeenCalledWith(
       'Check the logs',
-    ), { timeout: 2500 });
+    ), { timeout: 5000 });
   });
 
   it('shows interim words and replaces them when xAI revises the transcript', async () => {

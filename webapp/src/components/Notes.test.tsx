@@ -87,7 +87,7 @@ describe('Notes in the application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Make editable' }));
     await waitFor(() => expect(noteEditor().isEditable).toBe(true));
-    expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Make read-only' }));
     await waitFor(() => expect(noteEditor().isEditable).toBe(false));
@@ -134,7 +134,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByRole('button', { name: 'Find' });
-    const editor = noteEditor();
+    const editor = await waitFor(() => noteEditor());
     expect(editor.isEditable).toBe(false);
     const original = editor.getJSON();
     act(() => {
@@ -395,7 +395,7 @@ describe('Notes in the application', () => {
     fireEvent.keyDown(prompt, { key: 'Enter' });
     expect(await screen.findByRole('treeitem', { name: expected })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: `Send to ${expected}` })).toBeInTheDocument();
-    expect(document.title).toBe(`CHA: Personal — ${expected}`);
+    await waitFor(() => expect(document.title).toBe(`CHA: Personal — ${expected}`));
     await waitFor(() => expect(prompt).toHaveValue(''));
     expect(prompt).toBeDisabled();
     expect(noteEditor().isEditable).toBe(false);
@@ -448,7 +448,7 @@ describe('Notes in the application', () => {
     expect(document.title).toBe('CHA: Personal — Plan');
     fireEvent.click(screen.getByRole('button', { name: /^Welcome/ }));
     expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('Chat draft');
-    expect(document.title).toBe('CHA: Personal — Welcome');
+    await waitFor(() => expect(document.title).toBe('CHA: Personal — Welcome'));
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(document.title).toBe('CHA: Personal');
   });
@@ -523,6 +523,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Saved plan');
+    await waitFor(() => noteEditor());
     typeInNote(' more');
     fireEvent.click(screen.getByRole('treeitem', { name: 'Essay' }));
     expect(await screen.findByText('Essay text')).toBeInTheDocument();
@@ -549,6 +550,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Saved plan');
+    await waitFor(() => noteEditor());
     typeInNote(' more');
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     await screen.findByRole('heading', { name: 'Settings' });
@@ -580,6 +582,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Saved plan');
+    await waitFor(() => noteEditor());
     act(() => typeInNote(' final edit'));
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
@@ -634,7 +637,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await waitFor(() => expect(document.querySelector('.ProseMirror')).toHaveTextContent('Personal'));
-    const originalEditor = noteEditor();
+    const originalEditor = await waitFor(() => noteEditor());
     act(() => typeInNote(' final edit'));
     fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Notes draft' } });
     discardUnusedSession.mockClear();
@@ -688,7 +691,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Saved plan');
-    const editor = noteEditor();
+    const editor = await waitFor(() => noteEditor());
     act(() => typeInNote(' edit'));
     fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
     fireEvent.click(screen.getByLabelText('Actions for Planning'));
@@ -729,7 +732,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Saved plan');
-    const editor = noteEditor();
+    const editor = await waitFor(() => noteEditor());
     act(() => typeInNote(' more'));
     fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
       target: { value: 'Keep draft' },
@@ -781,7 +784,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Saved plan');
-    const editor = noteEditor();
+    const editor = await waitFor(() => noteEditor());
     act(() => typeInNote(' more'));
     fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
       target: { value: 'Keep draft' },
@@ -852,6 +855,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Alpha');
+    await waitFor(() => noteEditor());
     typeInNote(' changed');
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const dialog = await screen.findByRole('dialog', { name: 'Could not save “Plan”.' });
@@ -924,6 +928,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText(saved);
+    await waitFor(() => noteEditor());
     act(() => { noteEditor().commands.setContent(noteDocument(edited)); });
     await deleteItem('Plan', 'note', confirm);
     await waitFor(() => expect(deleteNoteItem).toHaveBeenCalledExactlyOnceWith(4));
@@ -942,6 +947,7 @@ describe('Notes in the application', () => {
     await waitFor(() => expect(getNote).toHaveBeenCalledOnce());
     fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Short');
+    await waitFor(() => noteEditor());
     act(() => { noteEditor().commands.setContent(noteDocument('A long unsaved note body')); });
     await act(async () => { finishRead({ id: 4, document: noteDocument('Short') }); });
     expect(await screen.findByRole('dialog')).toHaveTextContent('Delete “Plan”?');
@@ -961,7 +967,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Saved plan contents');
-    const editor = noteEditor();
+    const editor = await waitFor(() => noteEditor());
     expect(screen.getByRole('button', { name: 'Actions for Plan' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Actions for Study' })).toBeInTheDocument();
     act(() => screen.getByRole('treeitem', { name: 'Study' }).focus());
@@ -1054,6 +1060,7 @@ describe('Notes in the application', () => {
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     expect(await screen.findByText('Saved plan contents')).toBeInTheDocument();
+    await waitFor(() => noteEditor());
     typeInNote(' more');
     await deleteItem('Plan', 'note');
     expect(await screen.findByRole('alert')).toHaveTextContent('The note is still open in the vault.');

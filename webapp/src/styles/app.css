@@ -2400,6 +2400,7 @@ select.cha-form-control {
 
 .cha-notes-toolbar-group > .cha-button,
 .cha-notes-toolbar-group > .cha-notes-heading-jump > .cha-button,
+.cha-notes-toolbar-group > .cha-notes-highlights > .cha-button,
 .cha-notes-toolbar-group > .cha-notes-list > .cha-button {
   display: inline-flex;
   flex: none;
@@ -2508,6 +2509,21 @@ select.cha-form-control {
 .cha-notes-heading-menu button {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.cha-notes-highlights {
+  display: inline-flex;
+}
+
+.cha-notes-highlights-menu p {
+  margin: 0.45rem 0.6rem;
+}
+
+.cha-notes-highlight-excerpt {
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 
 .cha-notes-screen {

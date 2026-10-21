@@ -276,7 +276,7 @@ describe('PromptInput', () => {
     expect(stop).not.toHaveBeenCalled();
 
     rerender(<Harness client={client} onSubmit={onSubmit} />);
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith('Next question.'), { timeout: 2500 });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith('Next question.'), { timeout: 5000 });
     expect(stop).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
   });

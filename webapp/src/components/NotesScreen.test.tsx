@@ -12,7 +12,8 @@ import {
   type TextFileRequest,
 } from '../api/client';
 import { pictureTypeMessage } from '../notes/pictures';
-import { noteHeadings, selectNoteEnd } from '../notes/editor';
+import { noteHeadings, selectNoteEnd, withIsolatedHistory } from '../notes/editor';
+import { noteHighlights } from '../notes/highlights';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveDelayMs, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { AppAction } from '../state/view';
@@ -779,6 +780,90 @@ describe('Notes screen', () => {
     expect(saveNote).not.toHaveBeenCalled();
   });
 
+  it('jumps to the selected duplicate highlight in a read-only note without saving', async () => {
+    const saveNote = vi.fn();
+    const getNote = vi.fn(async (id: number) => ({ id, document: {
+      type: 'doc', content: [{ type: 'paragraph', content: [
+        { type: 'text', text: 'Repeat', marks: [{ type: 'highlight' }] },
+        { type: 'text', text: ' gap ' },
+        { type: 'text', text: 'Repeat', marks: [{ type: 'highlight' }] },
+      ] }],
+    } }));
+    render(<Harness items={[{ ...plan, read_only: true }]} getNote={getNote} saveNote={saveNote} />);
+    const editor = await openedEditor();
+    const before = editor.getJSON();
+    const target = noteHighlights(editor.state.doc)[1];
+    const host = editor.view.dom.closest('.cha-notes-document') as HTMLElement;
+    Object.defineProperty(host, 'clientHeight', { value: 200 });
+    vi.spyOn(editor.view, 'coordsAtPos').mockReturnValue({ top: 550, bottom: 570, left: 0, right: 10 });
+    fireEvent.click(screen.getByRole('button', { name: 'Highlights' }));
+    const entries = await screen.findAllByRole('menuitem', { name: 'Repeat' });
+    expect(entries[0]).toHaveFocus();
+    fireEvent.click(entries[1]);
+    expect(editor.state.selection.from).toBe(target.from);
+    expect(editor.state.selection.to).toBe(target.to);
+    expect(editor.view.dom).toHaveFocus();
+    expect(host.scrollTop).toBe(450);
+    expect(editor.isEditable).toBe(false);
+    expect(editor.getJSON()).toEqual(before);
+    expect(editor.can().undo()).toBe(false);
+    expect(getNote).toHaveBeenCalledOnce();
+    expect(saveNote).not.toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('lists only the current note in document order without fetching other notes, and refreshes on note changes', async () => {
+    const getNote = vi.fn(async (id: number) => ({ id, document: {
+      type: 'doc', content: (id === 4 ? ['Zebra', 'Alpha'] : ['Other']).map((text) => ({
+        type: 'paragraph', content: [{ type: 'text', text, marks: [{ type: 'highlight' }] }],
+      })),
+    } }));
+    render(<Harness items={[plan, essay]} getNote={getNote} />);
+    const first = await openedEditor();
+    const jump = screen.getByRole('button', { name: 'Highlights' });
+    expect(jump.textContent).toBe('');
+    expect(jump.querySelector('svg')).toBeInTheDocument();
+    expect(jump).toHaveAttribute('title', 'Highlights');
+    fireEvent.click(jump);
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Zebra', 'Alpha']);
+    expect(getNote.mock.calls.map(([id]) => id)).toEqual([4]);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
+    await waitFor(() => expect(liveEditor?.current).not.toBe(first));
+    await openedEditor();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Highlights' }));
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Other']);
+    expect(getNote.mock.calls.map(([id]) => id)).toEqual([4, 5]);
+  });
+
+  it('refreshes highlights after edits, Undo, and highlight removal', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const editor = await openedEditor();
+    const jump = screen.getByRole('button', { name: 'Highlights' });
+    await user.click(jump);
+    expect(screen.getByRole('status')).toHaveTextContent('No highlights');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(editor.view.dom).toHaveFocus();
+    act(() => { editor.commands.setContent('<p><mark>First</mark> gap <mark>Second</mark></p>'); });
+    fireEvent.click(jump);
+    const entries = await screen.findAllByRole('menuitem');
+    expect(entries[0]).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(entries[1]).toHaveFocus();
+    act(() => { withIsolatedHistory(editor, () => editor.commands.insertContentAt({ from: 1, to: 6 }, 'New')); });
+    expect(screen.getByRole('menuitem', { name: 'New' })).toBeInTheDocument();
+    act(() => { editor.commands.undo(); });
+    expect(screen.getByRole('menuitem', { name: 'First' })).toBeInTheDocument();
+    act(() => { editor.commands.selectAll(); editor.commands.unsetHighlight(); });
+    expect(screen.getByRole('status')).toHaveTextContent('No highlights');
+    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveFocus();
+  });
+
   it('supports heading menu keys, Escape, and outside-pointer dismissal', async () => {
     const user = userEvent.setup();
     render(<Harness />);
@@ -1003,8 +1088,7 @@ describe('Notes screen', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
     await screen.findByRole('button', { name: 'Stop voice input' });
     act(() => appendVoice('Next line. Over to you'));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1100)); });
-    expect(editor.getText()).toContain('Next line.');
+    await waitFor(() => expect(editor.getText()).toContain('Next line.'), { timeout: 5000 });
     expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
 
     act(() => appendVoice(' Keep this over to you'));

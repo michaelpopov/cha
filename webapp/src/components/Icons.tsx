@@ -332,6 +332,14 @@ export function PictureIcon(props: IconProps) {
   );
 }
 
+export function BookmarkIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 3.5h12v17l-6-4-6 4z" {...stroke} />
+    </Icon>
+  );
+}
+
 export function HighlighterIcon(props: IconProps) {
   return (
     <Icon {...props}>
