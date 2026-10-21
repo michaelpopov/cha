@@ -41,6 +41,42 @@ it('strips scripts, image fetches, raw HTML, and link interactivity', () => {
   expect(container).toHaveTextContent('<button onclick="window.bad = true">raw control</button>');
 });
 
+it('renders table headers, rows, alignment, and inline Markdown', () => {
+  render(<Markdown source={
+    '| Machine | Memory | Status |\n'
+      + '| :--- | ---: | :---: |\n'
+      + '| **Framework Desktop** | 64 GB | `ready` |\n'
+      + '| GMKtec EVO-X2 | 128 GB | Available |'
+  } />);
+
+  expect(screen.getByRole('table')).toBeInTheDocument();
+  expect(screen.getAllByRole('row')).toHaveLength(3);
+  expect(screen.getAllByRole('columnheader').map((cell) => cell.textContent))
+    .toEqual(['Machine', 'Memory', 'Status']);
+  expect(screen.getByRole('columnheader', { name: 'Memory' })).toHaveAttribute('align', 'right');
+  expect(screen.getByRole('cell', { name: '64 GB' })).toHaveAttribute('align', 'right');
+  expect(screen.getByRole('cell', { name: 'ready' })).toHaveAttribute('align', 'center');
+  expect(screen.getByText('Framework Desktop').tagName).toBe('STRONG');
+  expect(screen.getByText('ready').tagName).toBe('CODE');
+});
+
+it('keeps table cell HTML inert and fenced tables literal', () => {
+  const { container } = render(<Markdown source={
+    '| Content |\n| --- |\n'
+      + '| <img src="https://example.test/tracker.png" onerror="alert(1)"> |\n'
+      + '| [Unsafe](javascript:alert(1)) |\n'
+      + '| ![portrait](https://example.test/image.png) |\n\n'
+      + '```md\n| Literal |\n| --- |\n| Cell |\n```'
+  } />);
+
+  expect(screen.getAllByRole('table')).toHaveLength(1);
+  expect(screen.getByRole('cell', { name: /<img src=/ })).toBeInTheDocument();
+  expect(screen.getByRole('cell', { name: 'Unsafe' })).toBeInTheDocument();
+  expect(screen.getByRole('cell', { name: 'portrait' })).toBeInTheDocument();
+  expect(container.querySelector('pre code')).toHaveTextContent('| Literal | | --- | | Cell |');
+  expect(container.querySelector('img, a, script, [onerror]')).toBeNull();
+});
+
 it('opens only the fixed OpenAI device verification link', () => {
   const { container } = render(<Markdown source={
     '[Open ChatGPT](https://auth.openai.com/codex/device)\n\n'

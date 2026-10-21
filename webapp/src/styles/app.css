@@ -1044,6 +1044,30 @@ select:disabled {
   margin: 0.4rem 0;
 }
 
+.cha-markdown table {
+  display: block;
+  max-width: 100%;
+  margin: 0.6rem 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+  overflow-wrap: normal;
+}
+
+.cha-markdown th,
+.cha-markdown td {
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.cha-markdown th {
+  font-weight: 700;
+  text-align: left;
+}
+
+.cha-markdown [align='center'] { text-align: center; }
+.cha-markdown [align='right'] { text-align: right; }
+
 .cha-markdown ul,
 .cha-markdown ol {
   margin: 0.45rem 0;
@@ -1125,6 +1149,7 @@ select:disabled {
 
 .cha-message {
   display: grid;
+  min-width: 0;
   max-width: 82%;
   gap: 0.25rem;
 }
@@ -1227,6 +1252,7 @@ select:disabled {
 }
 
 .cha-message-text {
+  min-width: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }

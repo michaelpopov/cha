@@ -13,7 +13,7 @@ function escapeHtml(value: string): string {
 
 const markdown = new Marked({
   async: false,
-  gfm: false,
+  gfm: true,
   renderer: {
     html({ text }) {
       return escapeHtml(text);
@@ -34,6 +34,7 @@ const markdown = new Marked({
 const allowedTags = [
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'p', 'strong', 'em', 'ul', 'ol', 'li', 'code', 'pre', 'br', 'hr', 'blockquote', 'a',
+  'table', 'thead', 'tbody', 'tr', 'th', 'td',
 ];
 
 export function renderRestrictedMarkdown(source: string): string {
@@ -41,7 +42,7 @@ export function renderRestrictedMarkdown(source: string): string {
   if (typeof rendered !== 'string') throw new TypeError('Markdown rendering became asynchronous.');
   return DOMPurify.sanitize(rendered, {
     ALLOWED_TAGS: allowedTags,
-    ALLOWED_ATTR: ['href', 'target', 'rel'],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'align'],
     KEEP_CONTENT: true,
   });
 }

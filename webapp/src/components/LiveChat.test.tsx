@@ -1831,13 +1831,17 @@ describe('live chat', () => {
       transcript: [{
         ...entry,
         text: '# Answer\n\nA **complete** answer.\n\n- One\n- Two\n\n```js\nconst x = 1;\n```\n\n'
-          + '<img src="https://example.test/tracker" onerror="alert(1)">',
+          + '<img src="https://example.test/tracker" onerror="alert(1)">\n\n'
+          + '| Machine | Memory |\n| :--- | ---: |\n| Framework Desktop | 64 GB |',
       }],
     }));
 
     expect(screen.getByText('complete').tagName).toBe('STRONG');
     expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual(['One', 'Two']);
     expect(screen.getByText('const x = 1;').parentElement?.tagName).toBe('PRE');
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Memory' })).toHaveAttribute('align', 'right');
+    expect(screen.getByRole('cell', { name: '64 GB' })).toHaveAttribute('align', 'right');
     expect(document.querySelector('.cha-message-text img')).toBeNull();
     expect(document.querySelector('.cha-message-text [onerror]')).toBeNull();
   });
