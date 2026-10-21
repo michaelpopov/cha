@@ -2293,6 +2293,186 @@ std::string compression_refusal(std::string_view api, bool stream, bool partial_
         + "data: " + Json{{"type", "response.completed"}, {"response", response}}.dump() + "\n\n");
 }
 
+TEST_F(BridgeRouterTest, YoutubeNoteImportsUseTranscriptPromptAndCompressionSettings) {
+    bootstrap_epoch();
+    std::ifstream prompt_file(std::filesystem::path(CHA_SOURCE_DIRECTORY) / "resources/youtube-transcript.md");
+    const std::string prompt{std::istreambuf_iterator<char>(prompt_file), std::istreambuf_iterator<char>()};
+    ASSERT_FALSE(prompt.empty());
+    const std::vector<std::pair<std::string, std::string>> urls{
+        {"https://www.youtube.com/watch?v=video", "https://www.youtube.com/watch?v=video"},
+        {"https://youtu.be/video", "https://www.youtube.com/watch?v=video"},
+        {"https://M.YouTube.com/shorts/video", "https://www.youtube.com/shorts/video"},
+        {"https://example.org/redirect", "https://www.youtube.com/watch?v=video"},
+    };
+    std::size_t example = 0;
+    for (const auto api : {"chat_completions", "responses"}) {
+        for (const bool stream : {false, true}) {
+            const auto& [url, final_url] = urls[example++];
+            const std::string effort = stream ? "xhigh" : "none";
+            SCOPED_TRACE(std::string(api) + " " + url);
+            const nlohmann::json page{{"url", final_url}, {"title", "Video title"},
+                {"markdown", "00:00 um this is a raw transcript and here is another idea"}};
+            MockHttpServer reader({http_response("application/json", page.dump())});
+            MockHttpServer provider({compression_response(api, stream,
+                "This is a readable transcript.\n\nHere is another idea.")});
+            reader.start();
+            provider.start();
+            configure_compression(*application_, provider.port(), api, stream, epoch_);
+            ASSERT_TRUE(call("notesSettings.save", {{"compression_provider", "test"},
+                {"compression_reasoning_effort", effort}})["ok"]);
+            auto settings = call("webSearch.get")["result"];
+            settings["web_reader_enabled"] = true;
+            settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+            ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+
+            const auto reply = call("notes.readPage", {{"url", url}});
+            reader.join();
+            provider.join();
+            ASSERT_TRUE(reply["ok"]) << reply;
+            EXPECT_EQ(reply["result"], (nlohmann::json{{"url", final_url}, {"title", "Video title"},
+                {"markdown", "This is a readable transcript.\n\nHere is another idea."}}));
+            ASSERT_EQ(provider.requests().size(), 1U);
+            const auto body = nlohmann::json::parse(request_body(provider.requests().front()));
+            EXPECT_FALSE(body.contains("tools"));
+            EXPECT_NE(body.dump().find("raw transcript"), std::string::npos);
+            EXPECT_EQ(body.dump().find("COMPRESSION RULES"), std::string::npos);
+            if (std::string_view(api) == "responses") {
+                EXPECT_EQ(body["reasoning"]["effort"], effort);
+                EXPECT_NE(body.dump().find(nlohmann::json(prompt).dump()), std::string::npos);
+            } else {
+                EXPECT_EQ(body["reasoning_effort"], effort);
+                EXPECT_EQ(body["messages"][0]["content"], prompt);
+                EXPECT_EQ(body["messages"][1]["content"], "from User:\n" + page["markdown"].get<std::string>());
+            }
+            EXPECT_EQ(application_->get_provider("test", epoch_).reasoning_effort, "low");
+        }
+    }
+    EXPECT_TRUE(call("notes.list")["result"]["items"].empty());
+}
+
+TEST_F(BridgeRouterTest, NoteImportsDoNotFormatOtherSitesOrYoutubeLookalikes) {
+    bootstrap_epoch();
+    for (const auto url : {"https://example.org/youtube.com", "https://youtube.com.example.org/watch",
+            "https://notyoutube.com/watch", "https://example.org/?url=https://youtu.be/video"}) {
+        SCOPED_TRACE(url);
+        const nlohmann::json page{{"url", url}, {"title", "Article"}, {"markdown", "Original article"}};
+        MockHttpServer reader({http_response("application/json", page.dump())});
+        reader.start();
+        auto settings = call("webSearch.get")["result"];
+        settings["web_reader_enabled"] = true;
+        settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+        ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+        const auto reply = call("notes.readPage", {{"url", url}});
+        reader.join();
+        ASSERT_TRUE(reply["ok"]) << reply;
+        EXPECT_EQ(reply["result"], page);
+    }
+}
+
+TEST_F(BridgeRouterTest, YoutubeNoteImportsReportMissingCompressionProvider) {
+    bootstrap_epoch();
+    const nlohmann::json page{{"url", "https://youtu.be/video"}, {"title", "Video"}, {"markdown", "Transcript"}};
+    MockHttpServer reader({http_response("application/json", page.dump())});
+    reader.start();
+    auto settings = call("webSearch.get")["result"];
+    settings["web_reader_enabled"] = true;
+    settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    expect_note_error(call("notes.readPage", {{"url", "https://youtu.be/video"}}), "invalid_argument",
+        "Select a compression provider in Settings → Notes.");
+    reader.join();
+}
+
+TEST_F(BridgeRouterTest, YoutubeNoteImportsRejectFailedOrIncompleteFormatting) {
+    bootstrap_epoch();
+    const nlohmann::json page{{"url", "https://youtu.be/video"}, {"title", "Video"}, {"markdown", "Transcript"}};
+    for (const auto api : {"chat_completions", "responses"}) {
+        for (const bool stream : {false, true}) {
+            SCOPED_TRACE(std::string(api) + (stream ? " streaming" : " non-streaming"));
+            const auto reader_response = http_response("application/json", page.dump());
+            MockHttpServer reader({reader_response, reader_response, reader_response, reader_response});
+            MockHttpServer provider({compression_response(api, stream, "Partial answer", true),
+                compression_refusal(api, stream, true), compression_response(api, stream, " \n "),
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"});
+            reader.start();
+            provider.start();
+            configure_compression(*application_, provider.port(), api, stream, epoch_);
+            auto settings = call("webSearch.get")["result"];
+            settings["web_reader_enabled"] = true;
+            settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+            ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+            std::string incomplete = "The transcript is too long to format.";
+            if (std::string_view(api) == "responses") {
+                incomplete = stream ? "Responses stream ended incomplete: max_output_tokens"
+                    : "Responses body status was incomplete: max_output_tokens";
+            }
+            const std::vector<std::string> messages{incomplete,
+                "The provider refused to format this transcript.",
+                "Could not format the YouTube transcript. Try again.",
+                "Inference server returned HTTP 503: unknown server error"};
+            for (const auto& message : messages) {
+                const auto reply = call("notes.readPage", {{"url", "https://youtu.be/video"}});
+                expect_note_error(reply, "internal_error", message);
+                EXPECT_FALSE(reply.contains("result"));
+            }
+            reader.join();
+            provider.join();
+        }
+    }
+}
+
+TEST_F(BridgeRouterTest, YoutubeNoteImportsDoNotStartFormattingAfterAVaultChange) {
+    bootstrap_epoch();
+    const nlohmann::json page{{"url", "https://youtu.be/video"}, {"title", "Video"}, {"markdown", "Transcript"}};
+    MockHttpServer reader({http_response("application/json", page.dump())});
+    reader.pause_before_response(1);
+    reader.start();
+    // The provider never answers, so a provider call would fail at the 1 s limit.
+    MockHttpServer provider({});
+    configure_compression(*application_, provider.port(), "chat_completions", false, epoch_, 1);
+    auto settings = call("webSearch.get")["result"];
+    settings["web_reader_enabled"] = true;
+    settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    const auto copy = application_->create_vault(VaultCreate{
+        .display_name = "Copied",
+        .copy_from = "Test",
+        .password = {},
+    }, epoch_);
+    const auto read = queue_request(
+        *router_, connection_, next_id_, epoch_, "notes.readPage", {{"url", "https://youtu.be/video"}});
+    router_->run_ordinary_tasks();
+    ASSERT_TRUE(reader.wait_for_requests(1, 2s));
+    (void)application_->switch_vault(copy.name, {}, epoch_);
+    reader.resume_responses();
+    auto replies = wait_replies(*router_, connection_, {read});
+    ASSERT_EQ(replies.size(), 1U);
+    EXPECT_EQ(replies[read]["error"]["code"], "vault_changed");
+    reader.join();
+}
+
+TEST_F(BridgeRouterTest, YoutubeNoteImportsKeepTheProviderTimeout) {
+    bootstrap_epoch();
+    const nlohmann::json page{{"url", "https://youtu.be/video"}, {"title", "Video"}, {"markdown", "Transcript"}};
+    MockHttpServer reader({http_response("application/json", page.dump())});
+    // Without Content-Length, the body ends when the server closes, after the saved 1 s limit.
+    MockHttpServer slow({"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
+        + nlohmann::json{{"choices", nlohmann::json::array({{
+            {"message", {{"content", "Slow transcript"}}}, {"finish_reason", "stop"},
+        }})}}.dump()}, false, 1200ms);
+    reader.start();
+    slow.start();
+    configure_compression(*application_, slow.port(), "chat_completions", false, epoch_, 1, 2);
+    auto settings = call("webSearch.get")["result"];
+    settings["web_reader_enabled"] = true;
+    settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    expect_note_error(call("notes.readPage", {{"url", "https://youtu.be/video"}}),
+        "internal_error", "HTTP request failed: Timeout was reached");
+    reader.join();
+    slow.join();
+}
+
 TEST_F(BridgeRouterTest, CompressionRefusalsPreserveSavedTextAcrossProviderApis) {
     bootstrap_epoch();
     for (const auto api : {"chat_completions", "responses"}) {

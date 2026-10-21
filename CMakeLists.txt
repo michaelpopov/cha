@@ -266,6 +266,7 @@ target_link_libraries(cha_sqlite3 PUBLIC OpenSSL::Crypto)
 add_library(cha_lib STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/compression_prompt.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/youtube_transcript_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/assistant_maintenance.cpp
@@ -360,6 +361,13 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
     COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/compression-prompt.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/compression_prompt.cpp -DSYMBOL=embedded_compression_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
     DEPENDS resources/compression-prompt.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/youtube_transcript_prompt.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/youtube-transcript.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/youtube_transcript_prompt.cpp -DSYMBOL=embedded_youtube_transcript_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/youtube-transcript.md cmake/embed_text.cmake
     VERBATIM)
 
 add_custom_command(
