@@ -2995,8 +2995,9 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
     EXPECT_EQ(folder["result"]["parent_id"], nullptr);
     EXPECT_EQ(folder["result"]["kind"], "folder");
     EXPECT_EQ(folder["result"]["name"], "Plan");
-    EXPECT_EQ(folder["result"].size(), 5);
+    EXPECT_EQ(folder["result"].size(), 6);
     EXPECT_EQ(folder["result"]["has_compressed"], false);
+    EXPECT_EQ(folder["result"]["read_only"], false);
     const auto folder_id = folder["result"]["id"].get<std::int64_t>();
 
     const auto note = call("notes.create", {
@@ -3160,6 +3161,56 @@ TEST_F(BridgeRouterTest, NotesRejectOneByteOverTheDocumentLimit) {
     EXPECT_EQ(stored_note_content(database_, id), exact.dump());
 }
 
+TEST_F(BridgeRouterTest, ReadOnlyNoteWireContractAndValidation) {
+    bootstrap_epoch();
+    const auto note = call("notes.create", {
+        {"parent_id", nullptr}, {"kind", "note"}, {"name", "Source"},
+    });
+    ASSERT_TRUE(note["ok"]);
+    const auto id = note["result"]["id"];
+    const auto locked = call("notes.setReadOnly", {{"id", id}, {"read_only", true}});
+    ASSERT_TRUE(locked["ok"]) << locked.dump();
+    EXPECT_EQ(locked["result"]["read_only"], true);
+    EXPECT_EQ(call("notes.list")["result"]["items"][0]["read_only"], true);
+    const nlohmann::json document = {{"type", "doc"}, {"changed", true}};
+    expect_note_error(call("notes.save", {{"id", id}, {"document", document}}),
+        "invalid_argument", "This note is read-only. Make it editable first.");
+    ASSERT_TRUE(call("notes.setReadOnly", {{"id", id}, {"read_only", false}})["ok"]);
+    ASSERT_TRUE(call("notes.save", {{"id", id}, {"document", document}})["ok"]);
+    for (const auto& invalid : {nlohmann::json{{"id", id}},
+            nlohmann::json{{"id", id}, {"read_only", 1}},
+            nlohmann::json{{"id", id}, {"read_only", true}, {"extra", true}}}) {
+        EXPECT_FALSE(call("notes.setReadOnly", invalid)["ok"]);
+    }
+}
+
+TEST_F(BridgeRouterTest, ScrollPositionWireContractAndValidation) {
+    bootstrap_epoch();
+    const auto note = call("notes.create", {
+        {"parent_id", nullptr}, {"kind", "note"}, {"name", "Reading"},
+    });
+    ASSERT_TRUE(note["ok"]);
+    const auto id = note["result"]["id"];
+    const auto original = call("notes.get", {{"id", id}})["result"];
+    EXPECT_EQ(original["scroll_top"], 0);
+    ASSERT_TRUE(call("notes.setReadOnly", {{"id", id}, {"read_only", true}})["ok"]);
+    const auto saved = call("notes.saveScrollPosition", {{"id", id}, {"scroll_top", 1200}});
+    ASSERT_TRUE(saved["ok"]) << saved.dump();
+    EXPECT_TRUE(saved["result"].empty());
+    EXPECT_EQ(call("notes.get", {{"id", id}})["result"]["scroll_top"], 1200);
+    EXPECT_EQ(call("notes.get", {{"id", id}})["result"]["document"], original["document"]);
+    for (const auto& invalid : {nlohmann::json{{"id", id}},
+            nlohmann::json{{"id", id}, {"scroll_top", -1}},
+            nlohmann::json{{"id", id}, {"scroll_top", 1.5}},
+            nlohmann::json{{"id", id}, {"scroll_top", "100"}},
+            nlohmann::json{{"id", id}, {"scroll_top", 9007199254740992ULL}},
+            nlohmann::json{{"id", id}, {"scroll_top", 0}, {"extra", true}}}) {
+        EXPECT_FALSE(call("notes.saveScrollPosition", invalid)["ok"]);
+    }
+    ASSERT_TRUE(call("notes.saveScrollPosition", {{"id", id}, {"scroll_top", 0}})["ok"]);
+    EXPECT_EQ(call("notes.get", {{"id", id}})["result"]["scroll_top"], 0);
+}
+
 TEST_F(BridgeRouterTest, BookImportWireContractAndValidation) {
     (void)bootstrap_epoch();
     const auto document = nlohmann::json::parse(empty_note_document);
@@ -3175,6 +3226,8 @@ TEST_F(BridgeRouterTest, BookImportWireContractAndValidation) {
     ASSERT_EQ(items.size(), 3U);
     EXPECT_EQ(items[0]["id"], folder);
     EXPECT_EQ(items[1]["parent_id"], folder);
+    EXPECT_EQ(items[1]["read_only"], true);
+    EXPECT_EQ(items[2]["read_only"], true);
     EXPECT_EQ(call("notes.get", {{"id", items[1]["id"]}})["result"]["document"], document);
     expect_note_error(call("notes.importBook", request), "invalid_argument",
         "An item with this name already exists here.");
@@ -3239,6 +3292,10 @@ TEST_F(BridgeRouterTest, NotesRejectStaleVaultContext) {
     const auto changed = nlohmann::json::parse(R"({"type":"doc","text":"copy"})");
     ASSERT_TRUE(call("notes.save", {{"id", id}, {"document", changed}})["ok"]);
     epoch_ = old_epoch;
+    expect_note_error(call("notes.saveScrollPosition", {{"id", id}, {"scroll_top", 100}}),
+        "vault_changed", "The vault context has changed.");
+    expect_note_error(call("notes.setReadOnly", {{"id", id}, {"read_only", true}}),
+        "vault_changed", "The vault context has changed.");
     expect_note_error(
         call("notes.importBook", {{"parent_id", nullptr}, {"name", "Stale Book"}, {"notes", {
             {{"name", "001. First"}, {"document", original}},

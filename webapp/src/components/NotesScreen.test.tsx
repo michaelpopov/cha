@@ -20,8 +20,8 @@ import { fixtureClient } from '../test/fixtures';
 import { VoiceInputSession } from '../voiceInput';
 import { NotesScreen } from './NotesScreen';
 
-const plan: NoteItem = { id: 4, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
-const essay: NoteItem = { id: 5, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
+const plan: NoteItem = { id: 4, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
+const essay: NoteItem = { id: 5, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
 
 const voiceRuntime = {
   provider: 'openai' as const,
@@ -50,6 +50,7 @@ function Harness({
   items = [plan],
   getNote = async (id: number) => ({ id, document: documentWith(id === 5 ? 'Essay text' : 'Alpha') }),
   saveNote = async () => undefined,
+  saveNoteScrollPosition = async () => undefined,
   readNotePage = async () => { throw new Error('Page reading is unavailable.'); },
   readNoteTextFile = async () => { throw new Error('File reading is unavailable.'); },
   readNotePicture = async () => new Uint8Array(),
@@ -62,6 +63,7 @@ function Harness({
   items?: NoteItem[];
   getNote?: (id: number) => Promise<NoteContent>;
   saveNote?: (id: number, document: Record<string, unknown>) => Promise<void>;
+  saveNoteScrollPosition?: (id: number, scrollTop: number) => Promise<void>;
   readNotePage?: (url: string) => Promise<NotePage>;
   readNoteTextFile?: (path: string) => Promise<TextFileRequest | null>;
   readNotePicture?: (url: string) => Promise<Uint8Array>;
@@ -85,6 +87,7 @@ function Harness({
   const client = useRef(fixtureClient({
     getNote: (id) => getNoteRef.current(id),
     saveNote: (id, document) => saveNoteRef.current(id, document),
+    saveNoteScrollPosition,
     readNotePage,
     readNoteTextFile,
     readNotePicture,
@@ -116,6 +119,7 @@ function Harness({
         noteRequest={request}
         notesEpoch={1}
         onDraftChange={setText}
+        onSetNoteReadOnly={async (id, readOnly) => ({ ...plan, id, read_only: readOnly })}
         onRegisterDispose={(dispose) => { disposeRef.current = dispose; }}
         onRegisterSave={(save) => { saveRef.current = save; }}
         sidebarOpen
@@ -141,6 +145,53 @@ async function openedEditor(): Promise<Editor> {
 }
 
 describe('Notes screen', () => {
+  it('restores a note position and opens a note without one at the top', async () => {
+    render(<Harness getNote={async (id) => ({
+      id, document: documentWith('Reading'), ...(id === 4 ? { scroll_top: 680 } : {}),
+    })} />);
+    await openedEditor();
+    const host = document.querySelector('.cha-notes-document')!;
+    expect(host.scrollTop).toBe(680);
+    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
+    await waitFor(() => expect(liveEditor?.current?.getText()).toBe('Reading'));
+    await waitFor(() => expect(host.scrollTop).toBe(0));
+  });
+
+  it('saves the latest reading position of an unchanged read-only note only when leaving', async () => {
+    const saveNoteScrollPosition = vi.fn(async () => undefined);
+    const saveNote = vi.fn(async () => undefined);
+    render(<Harness items={[{ ...plan, read_only: true }]} saveNote={saveNote}
+      saveNoteScrollPosition={saveNoteScrollPosition} />);
+    const editor = await openedEditor();
+    const host = document.querySelector('.cha-notes-document')!;
+    host.scrollTop = 840;
+    fireEvent.scroll(host);
+    fireEvent.blur(editor.view.dom);
+    expect(saveNoteScrollPosition).not.toHaveBeenCalled();
+    host.scrollTop = 920;
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
+    await screen.findByText('Left the note');
+    expect(saveNoteScrollPosition).toHaveBeenCalledExactlyOnceWith(4, 920);
+    expect(saveNote).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('restores after a picture loads unless the reader has moved (moved: %s)', async (moved) => {
+    vi.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(false);
+    render(<Harness getNote={async (id) => ({
+      id, scroll_top: 680, document: { type: 'doc', content: [
+        { type: 'image', attrs: { src: 'data:image/png;base64,iVBORw0KGgo=' } },
+        ...documentWith('Reading').content,
+      ] },
+    })} />);
+    const editor = await openedEditor();
+    const host = document.querySelector('.cha-notes-document')!;
+    const picture = editor.view.dom.querySelector('img')!;
+    host.scrollTop = 100;
+    if (moved) fireEvent.wheel(host);
+    fireEvent.load(picture);
+    expect(host.scrollTop).toBe(moved ? 100 : 680);
+  });
+
   it('toggles code on the selected text and supports undo and redo', async () => {
     const user = userEvent.setup();
     render(<Harness getNote={async (id) => ({ id, document: documentWith('Alpha beta') })} />);
@@ -385,13 +436,13 @@ describe('Notes screen', () => {
     [[], 'Title', 'Title'],
     [[], 'New note', 'New note'],
   ] as const)('chooses an available title among siblings %j', async (names, title, expected) => {
-    const folder: NoteItem = { id: 3, has_compressed: false, parent_id: null, kind: 'folder', name: 'Folder' };
+    const folder: NoteItem = { id: 3, read_only: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Folder' };
     const original = { ...plan, parent_id: folder.id, name: 'New note' };
     const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...original, id, name }));
     render(<Harness
       items={[folder, original,
-        { id: 20, has_compressed: false, parent_id: null, kind: 'note', name: 'Title' },
-        ...names.map((name, index) => ({ id: 30 + index, has_compressed: false, parent_id: folder.id, kind: 'note' as const, name })),
+        { id: 20, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Title' },
+        ...names.map((name, index) => ({ id: 30 + index, read_only: false, has_compressed: false, parent_id: folder.id, kind: 'note' as const, name })),
       ]}
       getNote={async (id) => ({ id, document: documentWith('') })}
       readNotePage={async () => ({ url: 'https://example.org/', title, markdown: 'Article' })}

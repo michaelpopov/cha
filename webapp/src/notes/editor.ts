@@ -209,6 +209,7 @@ export function createNotesEditor(options: NotesEditorOptions): Editor {
     element: options.element === undefined ? document.createElement('div') : options.element,
     content: options.content ?? '',
     extensions: notesExtensions(),
+    coreExtensionOptions: { tabindex: { value: '0' } },
     injectCSS: false,
     enableInputRules: false,
     enablePasteRules: ['link'],
@@ -243,7 +244,7 @@ export function noteHeadings(doc: PmNode): NoteHeading[] {
 }
 
 export function selectNoteHeading(editor: Editor, position: number): boolean {
-  if (editor.isDestroyed || !editor.isEditable) return false;
+  if (editor.isDestroyed) return false;
   const doc = editor.state.doc;
   if (position < 0 || position >= doc.content.size || doc.nodeAt(position)?.type.name !== 'heading') {
     return false;

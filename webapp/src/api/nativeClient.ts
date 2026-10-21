@@ -154,12 +154,13 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
 
 function isNoteItem(value: unknown): value is NoteItem {
   return isRecord(value)
-    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed'])
+    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'read_only'])
     && isNoteId(value.id)
     && isNoteParent(value.parent_id)
     && (value.kind === 'folder' || value.kind === 'note')
     && typeof value.name === 'string'
-    && typeof value.has_compressed === 'boolean';
+    && typeof value.has_compressed === 'boolean'
+    && typeof value.read_only === 'boolean';
 }
 
 function isNoteItemList(value: unknown): value is { items: NoteItem[] } {
@@ -171,11 +172,15 @@ function isNoteItemList(value: unknown): value is { items: NoteItem[] } {
 
 function isNoteContent(value: unknown): value is NoteContent {
   return isRecord(value)
-    && hasExactKeys(value, 'compressed_text' in value
-      ? ['id', 'document', 'compressed_text'] : ['id', 'document'])
+    && hasExactKeys(value, ['id', 'document',
+      ...('compressed_text' in value ? ['compressed_text'] : []),
+      ...('scroll_top' in value ? ['scroll_top'] : []),
+    ])
     && isNoteId(value.id)
     && isRecord(value.document)
-    && (!('compressed_text' in value) || typeof value.compressed_text === 'string');
+    && (!('compressed_text' in value) || typeof value.compressed_text === 'string')
+    && (!('scroll_top' in value) || (typeof value.scroll_top === 'number'
+      && Number.isSafeInteger(value.scroll_top) && value.scroll_top >= 0));
 }
 
 function isEmptyResult(value: unknown): value is Record<string, never> {
@@ -841,6 +846,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     saveNote: async (id, document) => {
       await call('notes.save', { id, document }, isEmptyResult);
     },
+    saveNoteScrollPosition: async (id, scrollTop) => {
+      await call('notes.saveScrollPosition', { id, scroll_top: scrollTop }, isEmptyResult);
+    },
     compressNote: async (id, signal, skipIneligible = false) => {
       const result = await bridge.invoke('notes.compress', { id, ...(skipIneligible ? { skip_ineligible: true } : {}) }, {
         signal, cancelMethod: 'notes.compressCancel',
@@ -850,6 +858,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
         && (result.skipped === 'already_compressed' || result.skipped === 'too_small')) return result.skipped;
       throw new ChaProtocolError();
     },
+    setNoteReadOnly: (id, readOnly) => call('notes.setReadOnly', { id, read_only: readOnly }, isNoteItem),
     renameNoteItem: (id, name) => call('notes.rename', { id, name }, isNoteItem),
     deleteNoteItem: async (id) => {
       await call('notes.delete', { id }, isEmptyResult);

@@ -66,18 +66,25 @@ async function nativeParity() {
       check(document.querySelector('.ProseMirror') === previousEditor
         && previousEditor?.textContent === previousText, 'import changed the open note');
       first.click();
-      const editor = await until('editable imported note', () => {
-        const node = document.querySelector('.ProseMirror[contenteditable="true"]');
-        return node?.textContent.includes('Readable') && node;
+      const editor = await until('read-only imported note', () => {
+        const node = document.querySelector('.ProseMirror[contenteditable="false"]');
+        return node !== previousEditor && node?.textContent.includes('Readable') && node;
       });
+      check(document.querySelector('textarea[aria-label="Prompt"]').disabled, 'read-only prompt enabled');
+      editor.focus();
+      check(document.activeElement === editor, 'read-only note cannot receive keyboard focus');
       check(editor.querySelector('h1')?.textContent === 'Original heading', 'original heading changed');
       check(editor.querySelector('strong')?.textContent === 'bold', 'bold formatting lost');
       check(editor.querySelector('pre')?.textContent === '  code\nline', 'code block changed');
       check(editor.textContent.includes('Left\tRight'), 'table text lost');
       check(editor.querySelectorAll('a').length === 1
         && editor.querySelector('a').getAttribute('href') === 'https://example.com/source', 'link policy changed');
-      check(!editor.querySelector('img, svg') && !editor.textContent.includes('Omitted SVG'), 'media stored in note');
+      check(!editor.querySelector('img:not(.ProseMirror-separator), svg')
+        && !editor.textContent.includes('Omitted SVG'), 'media stored in note');
       check(!window.__epubScriptRan, 'book script executed');
+      button('Actions for 001. Introduction').click();
+      (await until('unlock action', () => button('Make editable'))).click();
+      await until('editable note', () => editor.contentEditable === 'true');
       editor.focus();
       const selection = window.getSelection();
       const range = document.createRange();
@@ -93,6 +100,18 @@ async function nativeParity() {
       await wait(25);
       row('001. Introduction').click();
       await until('saved imported note', () => document.querySelector('.ProseMirror')?.textContent.includes('Edited EPUB note'));
+      button('Actions for 001. Introduction').click();
+      (await until('lock action', () => button('Make read-only'))).click();
+      await until('locked note', () => document.querySelector('.ProseMirror[contenteditable="false"]')
+        && document.querySelector('textarea[aria-label="Prompt"]').disabled
+        && button('Actions for 001. Introduction'));
+      row('002. Second').click();
+      await until('second note after locking', () => document.querySelector('.ProseMirror')?.textContent === 'Second');
+      row('001. Introduction').click();
+      await until('reopened locked note', () => {
+        const node = document.querySelector('.ProseMirror[contenteditable="false"]');
+        return node?.textContent.includes('Edited EPUB note');
+      });
       // Collapse this book so the next fixture's duplicate note names are unambiguous.
       row(fixture.name).click();
       await until('folder collapsed', () => row(fixture.name)?.getAttribute('aria-expanded') === 'false');
@@ -100,7 +119,7 @@ async function nativeParity() {
     }
     await wait(100);
     check(violations.length === 0, 'book image triggered a resource request');
-    return { ok: true, completed, checks: 'TOC names, spine order, XHTML, formatting, media removal, edit/save/reopen' };
+    return { ok: true, completed, checks: 'TOC names, spine order, XHTML, formatting, media removal, unlock/edit/save/lock/reopen' };
   } catch (error) {
     return { ok: false, step, completed, reason: String(error.message || error) };
   } finally {

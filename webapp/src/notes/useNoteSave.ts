@@ -18,10 +18,11 @@ export type NoteSaveHandle = {
   inFlightSerial(): number | null;
   waitInFlight(): Promise<void>;
   freeze(): boolean;
-  unfreeze(): void;
+  unfreeze(editable?: boolean): void;
   submitNow(): void;
   flushRemaining(): Promise<boolean>;
   dispose(): void;
+  saveScrollPosition?(): Promise<void>;
 };
 
 type Origin = {
@@ -42,11 +43,13 @@ export function useNoteSave({
   noteId,
   contextKey,
   save,
+  saveScrollPosition,
 }: {
   editor: Editor | null;
   noteId: number | null;
   contextKey: unknown;
   save: (document: Record<string, unknown>) => Promise<void>;
+  saveScrollPosition?: () => Promise<void>;
 }): NoteSaveHandle {
   const editorRef = useRef(editor);
   const noteIdRef = useRef(noteId);
@@ -64,6 +67,7 @@ export function useNoteSave({
   const deadlineGen = useRef(0);
   const saveDue = useRef(false);
   const frozenRef = useRef(false);
+  const editableBeforeFreeze = useRef(true);
   const [frozen, setFrozen] = useState(false);
   const [saveError, setSaveError] = useState<NoteSaveError | null>(null);
   const saveErrorRef = useRef<NoteSaveError | null>(null);
@@ -175,9 +179,12 @@ export function useNoteSave({
   }, []);
 
   const freeze = useCallback(() => {
+    const current = editorRef.current;
+    if (!frozenRef.current && current && !current.isDestroyed) {
+      editableBeforeFreeze.current = current.isEditable;
+    }
     frozenRef.current = true;
     setFrozen(true);
-    const current = editorRef.current;
     if (current && !current.isDestroyed) current.setEditable(false, false);
     let canceled = false;
     if (deadline.current !== null) {
@@ -191,11 +198,11 @@ export function useNoteSave({
     return canceled && editSerial.current > savedSerial.current;
   }, [clearDeadline]);
 
-  const unfreeze = useCallback(() => {
+  const unfreeze = useCallback((editable = editableBeforeFreeze.current) => {
     frozenRef.current = false;
     setFrozen(false);
     const current = editorRef.current;
-    if (current && !current.isDestroyed) current.setEditable(true, false);
+    if (current && !current.isDestroyed) current.setEditable(editable, false);
   }, []);
 
   const submitNow = useCallback(() => {
@@ -240,5 +247,6 @@ export function useNoteSave({
     submitNow,
     flushRemaining,
     dispose,
+    saveScrollPosition,
   };
 }

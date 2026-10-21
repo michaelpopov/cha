@@ -132,6 +132,8 @@ export interface NotesClient {
   ) => Promise<NoteItem>;
   getNote: (id: number) => Promise<NoteContent>;
   saveNote: (id: number, document: Record<string, unknown>) => Promise<void>;
+  saveNoteScrollPosition: (id: number, scrollTop: number) => Promise<void>;
+  setNoteReadOnly: (id: number, readOnly: boolean) => Promise<NoteItem>;
   compressNote: (id: number, signal: AbortSignal, skipIneligible?: boolean) => Promise<void | NoteCompressionSkip>;
   renameNoteItem: (id: number, name: string) => Promise<NoteItem>;
   deleteNoteItem: (id: number) => Promise<void>;

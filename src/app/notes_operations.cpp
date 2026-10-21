@@ -405,6 +405,27 @@ void Application::save_note(
     }
 }
 
+void Application::save_note_scroll_position(
+    std::int64_t id, std::int64_t scroll_top, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    try {
+        impl_->store->save_note_scroll_position(id, scroll_top);
+    } catch (const NoteError& error) {
+        rethrow_note(error);
+    }
+}
+
+NoteItem Application::set_note_read_only(std::int64_t id, bool read_only, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    try {
+        return impl_->store->set_note_read_only(id, read_only);
+    } catch (const NoteError& error) {
+        rethrow_note(error);
+    }
+}
+
 NoteItem Application::rename_note_item(
     std::int64_t id,
     std::string name,

@@ -89,6 +89,7 @@ NoteItem read_item(storage::SqliteStatement& statement) {
         "Note item " + std::to_string(item.id) + " has an invalid kind");
     item.name = statement.text(3);
     item.has_compressed = statement.integer(4) != 0;
+    item.read_only = statement.integer(5) != 0;
     if (item.id <= 0 || item.id > note_id_limit) {
         throw std::runtime_error(
             "Note item " + std::to_string(item.id) + " has an invalid id");
@@ -124,7 +125,7 @@ std::optional<NoteItem> find_item(
     storage::SqliteDatabase& database,
     std::int64_t id) {
     storage::SqliteStatement statement = database.prepare(
-        "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL "
+        "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL, read_only "
         "FROM note_items WHERE id = ?1");
     statement.bind(1, id);
     if (!statement.step()) return std::nullopt;
@@ -296,6 +297,7 @@ void to_json(nlohmann::json& json, const NoteItem& item) {
         {"kind", kind_name(item.kind)},
         {"name", item.name},
         {"has_compressed", item.has_compressed},
+        {"read_only", item.read_only},
     };
 }
 
@@ -303,6 +305,7 @@ void to_json(nlohmann::json& json, const NoteContent& content) {
     json = nlohmann::json{
         {"id", content.id},
         {"document", content.document},
+        {"scroll_top", content.scroll_top},
     };
     if (content.compressed_text) json["compressed_text"] = *content.compressed_text;
 }
@@ -321,6 +324,8 @@ CREATE TABLE IF NOT EXISTS note_items (
     name TEXT NOT NULL COLLATE BINARY,
     content_json TEXT,
     compressed_text TEXT,
+    read_only INTEGER NOT NULL DEFAULT 0 CHECK (read_only IN (0, 1)),
+    scroll_top INTEGER NOT NULL DEFAULT 0 CHECK (scroll_top >= 0 AND scroll_top <= 9007199254740991),
     CHECK (
         (kind = 'folder' AND content_json IS NULL)
         OR (kind = 'note' AND content_json IS NOT NULL)
@@ -348,14 +353,24 @@ CREATE TABLE IF NOT EXISTS session_files (
 ) STRICT;
 )sql");
     bool has_compressed_column = false;
+    bool has_read_only_column = false;
+    bool has_scroll_top_column = false;
     {
         auto columns = database.prepare("PRAGMA table_info(note_items)");
         while (columns.step()) {
             if (columns.text(1) == "compressed_text") has_compressed_column = true;
+            if (columns.text(1) == "read_only") has_read_only_column = true;
+            if (columns.text(1) == "scroll_top") has_scroll_top_column = true;
         }
     }
     if (!has_compressed_column) {
         database.execute("ALTER TABLE note_items ADD COLUMN compressed_text TEXT");
+    }
+    if (!has_read_only_column) {
+        database.execute("ALTER TABLE note_items ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0 CHECK (read_only IN (0, 1))");
+    }
+    if (!has_scroll_top_column) {
+        database.execute("ALTER TABLE note_items ADD COLUMN scroll_top INTEGER NOT NULL DEFAULT 0 CHECK (scroll_top >= 0 AND scroll_top <= 9007199254740991)");
     }
 }
 
@@ -363,7 +378,7 @@ std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {
     try {
         storage::SqliteTransaction transaction(database);
         storage::SqliteStatement statement = database.prepare(
-            "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL "
+            "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL, read_only "
             "FROM note_items ORDER BY id");
         std::vector<NoteItem> items;
         while (statement.step()) items.push_back(read_item(statement));
@@ -429,8 +444,8 @@ std::int64_t note_import_book(
             require_name(note.name);
             const auto compact = compact_document(note.document, 0, true);
             auto insert = database.prepare(
-                "INSERT INTO note_items (parent_id, kind, name, content_json) "
-                "VALUES (?1, 'note', ?2, ?3)");
+                "INSERT INTO note_items (parent_id, kind, name, content_json, read_only) "
+                "VALUES (?1, 'note', ?2, ?3, 1)");
             insert.bind(1, id);
             insert.bind(2, note.name);
             insert.bind(3, compact);
@@ -447,7 +462,7 @@ NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id) {
     try {
         storage::SqliteTransaction transaction(database);
         storage::SqliteStatement statement = database.prepare(
-            "SELECT kind, content_json, compressed_text FROM note_items WHERE id = ?1");
+            "SELECT kind, content_json, compressed_text, scroll_top FROM note_items WHERE id = ?1");
         statement.bind(1, id);
         if (!statement.step()) fail(NoteFailure::not_found, missing_note_message);
         if (statement.text(0) != "note") {
@@ -457,6 +472,7 @@ NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id) {
         nlohmann::json document = parse_document(statement.text(1), id);
         NoteContent content{id, std::move(document), std::nullopt};
         if (!statement.is_null(2)) content.compressed_text = statement.text(2);
+        content.scroll_top = statement.integer(3);
         transaction.commit();
         return content;
     } catch (const std::runtime_error& error) {
@@ -489,22 +505,57 @@ void note_save(
     const std::string compact = compact_document(document, id, true);
     try {
         storage::SqliteTransaction transaction(database);
+        const auto item = find_item(database, id);
+        if (!item) fail(NoteFailure::not_found, missing_note_message);
+        if (item->kind != NoteItemKind::note) fail(NoteFailure::invalid, not_note_message);
+        if (item->read_only) fail(NoteFailure::invalid, "This note is read-only. Make it editable first.");
         storage::SqliteStatement update = database.prepare(
             "UPDATE note_items SET content_json = ?1 "
             "WHERE id = ?2 AND kind = 'note'");
         update.bind(1, compact);
         update.bind(2, id);
         update.run();
-        if (database.changes() != 1) {
-            storage::SqliteStatement existing = database.prepare(
-                "SELECT 1 FROM note_items WHERE id = ?1");
-            existing.bind(1, id);
-            if (!existing.step()) fail(NoteFailure::not_found, missing_note_message);
-            fail(NoteFailure::invalid, not_note_message);
-        }
         transaction.commit();
     } catch (const std::runtime_error& error) {
         throw sql_failure(error, NoteFailure::saving, saving_message);
+    }
+}
+
+void note_save_scroll_position(
+    storage::SqliteDatabase& database, std::int64_t id, std::int64_t scroll_top) {
+    if (scroll_top < 0 || scroll_top > note_id_limit) {
+        fail(NoteFailure::invalid, "The scroll position is not valid.");
+    }
+    try {
+        storage::SqliteTransaction transaction(database);
+        const auto item = find_item(database, id);
+        if (!item) fail(NoteFailure::not_found, missing_note_message);
+        if (item->kind != NoteItemKind::note) fail(NoteFailure::invalid, not_note_message);
+        auto update = database.prepare(
+            "UPDATE note_items SET scroll_top = ?1 WHERE id = ?2", scroll_top, id);
+        update.run();
+        transaction.commit();
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, NoteFailure::saving, change_message);
+    }
+}
+
+NoteItem note_set_read_only(
+    storage::SqliteDatabase& database, std::int64_t id, bool read_only) {
+    try {
+        storage::SqliteTransaction transaction(database);
+        auto item = find_item(database, id);
+        if (!item) fail(NoteFailure::not_found, missing_note_message);
+        if (item->kind != NoteItemKind::note) fail(NoteFailure::invalid, not_note_message);
+        auto update = database.prepare("UPDATE note_items SET read_only = ?1 WHERE id = ?2");
+        update.bind(1, static_cast<std::int64_t>(read_only));
+        update.bind(2, id);
+        update.run();
+        item->read_only = read_only;
+        transaction.commit();
+        return *item;
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, NoteFailure::saving, change_message);
     }
 }
 

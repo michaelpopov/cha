@@ -133,6 +133,8 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::notes_read_text_file, "notes.readTextFile"},
     {Method::notes_read_picture, "notes.readPicture"},
     {Method::notes_save, "notes.save"},
+    {Method::notes_save_scroll_position, "notes.saveScrollPosition"},
+    {Method::notes_set_read_only, "notes.setReadOnly"},
     {Method::notes_compress, "notes.compress"},
     {Method::notes_compress_cancel, "notes.compressCancel"},
     {Method::notes_rename, "notes.rename"},

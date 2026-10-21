@@ -108,6 +108,21 @@ std::optional<nlohmann::json> dispatch_notes_operation(
         application.save_note(
             require_note_id(params), require_document(params), epoch);
         return nlohmann::json::object();
+    case Method::notes_save_scroll_position: {
+        require_only_keys(params, {"id", "scroll_top"});
+        const auto top = params.contains("scroll_top") ? as_safe_uint(params.at("scroll_top")) : std::nullopt;
+        if (!top) throw std::invalid_argument("The scroll position is not valid.");
+        application.save_note_scroll_position(
+            require_note_id(params), static_cast<std::int64_t>(*top), epoch);
+        return nlohmann::json::object();
+    }
+    case Method::notes_set_read_only:
+        require_only_keys(params, {"id", "read_only"});
+        if (!params.contains("read_only") || !params.at("read_only").is_boolean()) {
+            throw std::invalid_argument("The read-only state must be a boolean.");
+        }
+        return nlohmann::json(application.set_note_read_only(
+            require_note_id(params), params.at("read_only").get<bool>(), epoch));
     case Method::notes_rename:
         require_only_keys(params, {"id", "name"});
         return nlohmann::json(application.rename_note_item(

@@ -44,12 +44,14 @@ struct NoteItem {
     NoteItemKind kind{NoteItemKind::folder};
     std::string name;
     bool has_compressed{};
+    bool read_only{};
 };
 
 struct NoteContent {
     std::int64_t id{};
     nlohmann::json document = nlohmann::json::object();
     std::optional<std::string> compressed_text;
+    std::int64_t scroll_top{};
 };
 
 struct NoteImportEntry {
@@ -94,6 +96,10 @@ void note_save(
     const nlohmann::json& document);
 void note_save_compressed(
     storage::SqliteDatabase& database, std::int64_t id, std::string_view text);
+void note_save_scroll_position(
+    storage::SqliteDatabase& database, std::int64_t id, std::int64_t scroll_top);
+[[nodiscard]] NoteItem note_set_read_only(
+    storage::SqliteDatabase& database, std::int64_t id, bool read_only);
 [[nodiscard]] NoteItem note_rename(
     storage::SqliteDatabase& database,
     std::int64_t id,

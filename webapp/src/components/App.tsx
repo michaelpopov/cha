@@ -80,7 +80,7 @@ import {
 } from './PersonaScreens';
 import { SessionsScreen } from './SessionsScreen';
 import { NotesScreen } from './NotesScreen';
-import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions } from './NotesTree';
+import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions, type SetNoteReadOnly } from './NotesTree';
 import { Sidebar } from './Sidebar';
 import { TransliterationProvider } from './TransliterationMode';
 import { ApiKeyScreen, ApiKeysScreen, NewApiKeyScreen } from './ApiKeySettings';
@@ -110,6 +110,7 @@ interface ScreenProps extends ChatActions {
   onNotesDraftChange(next: string): void;
   noteItems: readonly NoteItem[];
   noteActions: NoteActions | null;
+  onSetNoteReadOnly: SetNoteReadOnly;
   editorLiveRef: { current: Editor | null };
   leave: {
     decisionOpen: boolean;
@@ -145,6 +146,7 @@ function Screen({
   onNotesDraftChange,
   noteItems,
   noteActions,
+  onSetNoteReadOnly,
   editorLiveRef,
   leave,
   onRegisterSave,
@@ -404,6 +406,7 @@ function Screen({
         leave={leave}
         noteItems={noteItems}
         noteActions={noteActions}
+        onSetNoteReadOnly={onSetNoteReadOnly}
         noteRequest={state.noteRequest}
         notesEpoch={state.notesEpoch}
         onDraftChange={onNotesDraftChange}
@@ -708,7 +711,7 @@ export function App({
       && state.activeNoteId === id
       && live
       && !live.isDestroyed
-      && live.isEditable
+      && !noteSaveRef.current?.frozen
     ) {
       live.view.focus();
       return;
@@ -737,6 +740,31 @@ export function App({
     }
     return [...text].length;
   }, [client]);
+
+  const setNoteReadOnly = useCallback<SetNoteReadOnly>(async (sourceId, readOnly) => {
+    if (!noteLeave.beginNoteAction()) {
+      throw new ChaError('invalid_argument', 'A notes action is already in progress.');
+    }
+    const epoch = notesEpochRef.current;
+    const save = sourceId === activeNoteIdRef.current ? noteSaveRef.current : null;
+    let updated: NoteItem | undefined;
+    try {
+      if (save?.isOpen) {
+        save.freeze();
+        await save.waitInFlight();
+        if (!await save.flushRemaining()) {
+          throw new ChaError('internal_error', save.saveError?.message ?? 'The note could not be saved.');
+        }
+      }
+      updated = await client.setNoteReadOnly(sourceId, readOnly);
+      return updated;
+    } finally {
+      if (save?.isOpen && notesEpochRef.current === epoch && activeNoteIdRef.current === sourceId) {
+        save.unfreeze(updated ? !updated.read_only : undefined);
+      }
+      noteLeave.endNoteAction();
+    }
+  }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
 
   const compressNote = useCallback<CompressNote>(async (sourceId, signal, ready, skipIneligible) => {
     if (!noteLeave.beginNoteAction()) {
@@ -1108,6 +1136,7 @@ export function App({
                 onBeforeCreateNote={beforeCreateNote}
                 onDeleteItem={deleteNoteItem}
                 onCompressNote={compressNote}
+                onSetNoteReadOnly={setNoteReadOnly}
                 onNoteItems={setNoteItems}
                 onOpenNote={requestOpenNote}
                 vaultName={state.bootstrap?.vault_name ?? ''}
@@ -1175,6 +1204,7 @@ export function App({
                 leave={noteLeave}
                 noteItems={noteItems}
                 noteActions={noteActions}
+                onSetNoteReadOnly={setNoteReadOnly}
                 notesDraft={drafts.notes}
                 onDraftChange={editChat}
                 onNotesDraftChange={editNotes}

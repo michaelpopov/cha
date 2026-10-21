@@ -147,6 +147,8 @@ enum class Method {
     notes_read_text_file,
     notes_read_picture,
     notes_save,
+    notes_save_scroll_position,
+    notes_set_read_only,
     notes_compress,
     notes_compress_cancel,
     notes_rename,

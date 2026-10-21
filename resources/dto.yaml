@@ -1667,7 +1667,7 @@ components:
     NoteItem:
       type: object
       additionalProperties: false
-      required: [id, parent_id, kind, name, has_compressed]
+      required: [id, parent_id, kind, name, has_compressed, read_only]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
         parent_id:
@@ -1676,6 +1676,8 @@ components:
           maximum: 9007199254740991
         kind: {$ref: "#/components/schemas/NoteItemKind"}
         has_compressed:
+          type: boolean
+        read_only:
           type: boolean
         name:
           type: string
@@ -1703,6 +1705,10 @@ components:
         document: {$ref: "#/components/schemas/NoteDocument"}
         compressed_text:
           type: string
+        scroll_top:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
 
     BridgeInfo:
       type: object

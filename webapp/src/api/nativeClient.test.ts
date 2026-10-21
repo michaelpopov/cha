@@ -454,8 +454,8 @@ describe('native CHA client', () => {
 });
 
 describe('notes native client', () => {
-  const folder = { id: 1, has_compressed: false, parent_id: null, kind: 'folder', name: 'Plan' };
-  const note = { id: 4, has_compressed: false, parent_id: 1, kind: 'note', name: 'Draft' };
+  const folder = { id: 1, read_only: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Plan' };
+  const note = { id: 4, read_only: false, has_compressed: false, parent_id: 1, kind: 'note', name: 'Draft' };
   const document = { type: 'doc', content: [{ type: 'paragraph' }] };
 
   it('reads compressed text with the original note document', async () => {
@@ -542,8 +542,8 @@ describe('notes native client', () => {
     const write = vi.fn(() => ({ id: 12 }));
     const client = clientFor({ 'notes.importBook': write });
     expect(await client.importEpub(epubFile(), [
-      { id: 1, has_compressed: false, parent_id: null, kind: 'folder', name: 'Research' },
-      { id: 2, has_compressed: false, parent_id: 1, kind: 'folder', name: 'Book' },
+      { id: 1, read_only: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Research' },
+      { id: 2, read_only: false, has_compressed: false, parent_id: 1, kind: 'folder', name: 'Book' },
     ], 1)).toBe(12);
     expect(write).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ parent_id: 1, name: 'Book 1' }));
   });
@@ -600,9 +600,17 @@ describe('notes native client', () => {
         calls.push(['save', params]);
         return {};
       },
+      'notes.saveScrollPosition': (params) => {
+        calls.push(['saveScrollPosition', params]);
+        return {};
+      },
       'notes.rename': (params) => {
         calls.push(['rename', params]);
         return { ...note, name: 'Final' };
+      },
+      'notes.setReadOnly': (params) => {
+        calls.push(['setReadOnly', params]);
+        return { ...note, read_only: true };
       },
       'notes.delete': (params) => {
         calls.push(['delete', params]);
@@ -615,7 +623,9 @@ describe('notes native client', () => {
     expect(await client.getNote(4)).toEqual({ id: 4, document });
     await client.saveNote(4, document);
     await client.saveNote(4, { type: 'doc', extra: true });
+    await client.saveNoteScrollPosition(4, 1200);
     expect(await client.renameNoteItem(4, 'Final')).toEqual({ ...note, name: 'Final' });
+    expect(await client.setNoteReadOnly(4, true)).toEqual({ ...note, read_only: true });
     await client.deleteNoteItem(4);
     expect(calls).toEqual([
       ['list', {}],
@@ -623,9 +633,21 @@ describe('notes native client', () => {
       ['get', { id: 4 }],
       ['save', { id: 4, document }],
       ['save', { id: 4, document: { type: 'doc', extra: true } }],
+      ['saveScrollPosition', { id: 4, scroll_top: 1200 }],
       ['rename', { id: 4, name: 'Final' }],
+      ['setReadOnly', { id: 4, read_only: true }],
       ['delete', { id: 4 }],
     ]);
+  });
+
+  it('accepts a saved position with or without compressed text', async () => {
+    for (const result of [
+      { id: 4, document, scroll_top: 1200 },
+      { id: 4, document, scroll_top: 0, compressed_text: 'Summary' },
+    ]) {
+      const client = clientFor({ 'notes.get': () => result });
+      expect(await client.getNote(4)).toEqual(result);
+    }
   });
 
   it.each([
@@ -638,9 +660,15 @@ describe('notes native client', () => {
     ['notes.get', { id: 4, document: [] }],
     ['notes.get', { id: 4, document, compressed_text: null }],
     ['notes.get', { id: 4, document, compressed_text: 42 }],
+    ['notes.get', { id: 4, document, scroll_top: -1 }],
+    ['notes.get', { id: 4, document, scroll_top: 0.5 }],
+    ['notes.get', { id: 4, document, scroll_top: 9007199254740992 }],
+    ['notes.get', { id: 4, document, scroll_top: '100' }],
     ['notes.get', { id: 4, document, extra: true }],
     ['notes.get', { id: 4 }],
     ['notes.save', { ok: true }],
+    ['notes.saveScrollPosition', { ok: true }],
+    ['notes.setReadOnly', { ...note, read_only: 'true' }],
     ['notes.delete', []],
     ['notes.create', { ...note, name: 1 }],
   ])('rejects a malformed %s reply', async (method, result) => {
@@ -648,6 +676,8 @@ describe('notes native client', () => {
     const action = method === 'notes.list' ? client.listNoteItems()
       : method === 'notes.get' ? client.getNote(4)
       : method === 'notes.save' ? client.saveNote(4, document)
+      : method === 'notes.saveScrollPosition' ? client.saveNoteScrollPosition(4, 100)
+      : method === 'notes.setReadOnly' ? client.setNoteReadOnly(4, true)
       : method === 'notes.delete' ? client.deleteNoteItem(4)
       : client.createNoteItem(null, 'folder', 'Plan');
     await expect(action).rejects.toBeInstanceOf(ChaProtocolError);

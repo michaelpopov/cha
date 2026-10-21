@@ -108,8 +108,10 @@ export type DeleteNoteItem = (
 ) => Promise<NoteDeleteResult>;
 
 export type NoteActions = {
-  renamed(note: NoteItem): void;
+  updated(note: NoteItem): void;
 };
+
+export type SetNoteReadOnly = (id: number, readOnly: boolean) => Promise<NoteItem>;
 
 // True when saved, false when cancelled, or the reason a folder note was skipped.
 export type CompressNote = (
@@ -127,6 +129,7 @@ export function NotesTree({
   onBeforeCreateNote,
   onDeleteItem,
   onCompressNote,
+  onSetNoteReadOnly,
   onNoteItems,
   vaultName,
   onRegisterNoteActions,
@@ -139,6 +142,7 @@ export function NotesTree({
   onBeforeCreateNote(): Promise<boolean>;
   onDeleteItem: DeleteNoteItem;
   onCompressNote: CompressNote;
+  onSetNoteReadOnly: SetNoteReadOnly;
   onNoteItems(items: NoteItem[]): void;
   vaultName: string;
   onRegisterNoteActions?(actions: NoteActions | null): void;
@@ -472,6 +476,28 @@ export function NotesTree({
     });
   }
 
+  function updateItem(note: NoteItem) {
+    if (!alive.current) return;
+    const next = itemsRef.current.map((item) => item.id === note.id ? note : item);
+    itemsRef.current = next;
+    setItems(next);
+    onNoteItemsRef.current(next);
+  }
+
+  async function toggleReadOnly() {
+    const source = takeMenuSource();
+    if (!source || source.kind !== 'note' || !canMutateNow()) return;
+    busy.current = true;
+    setError(null);
+    try {
+      updateItem(await onSetNoteReadOnly(source.id, !source.read_only));
+    } catch (failure: unknown) {
+      if (alive.current) setError(publicErrorMessage(failure, 'The change could not be saved.'));
+    } finally {
+      busy.current = false;
+    }
+  }
+
   async function startDelete() {
     const source = takeMenuSource();
     if (!source || !canMutateNow()) return;
@@ -690,20 +716,14 @@ export function NotesTree({
   const menuParentId = menu?.sourceId === 'vault' ? null : Number(menu?.sourceId);
   const containerProps = tree.getContainerProps('Notes');
 
-  // Page imports can rename the open note without reloading the tree.
+  // Imports update the open note without reloading the tree.
   useEffect(() => {
-    if (!canMutate || !activeNoteAvailable) return;
+    if (!activeNoteAvailable) return;
     onRegisterNoteActions?.({
-      renamed: (note) => {
-        if (!alive.current) return;
-        const next = itemsRef.current.map((item) => item.id === note.id ? note : item);
-        itemsRef.current = next;
-        setItems(next);
-        onNoteItemsRef.current(next);
-      },
+      updated: updateItem,
     });
     return () => onRegisterNoteActions?.(null);
-  }, [activeNoteAvailable, canMutate, onRegisterNoteActions]);
+  }, [activeNoteAvailable, onRegisterNoteActions]);
 
   return (
     <div className="cha-notes-browser">
@@ -808,6 +828,12 @@ export function NotesTree({
           {menu.sourceId !== 'vault' && (
             <>
               <button onClick={() => startRename()} role="menuitem" type="button">Rename</button>
+              {menuIsNote && (
+                <button onClick={() => void toggleReadOnly()} role="menuitem" type="button">
+                  {items.find((item) => String(item.id) === menu.sourceId)?.read_only
+                    ? 'Make editable' : 'Make read-only'}
+                </button>
+              )}
               <button onClick={() => void startCompress()} role="menuitem" type="button">Compress</button>
               {menuIsNote && (
                 <button disabled={!index.rows[menu.sourceId]?.hasCompressed}

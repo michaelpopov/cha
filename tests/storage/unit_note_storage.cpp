@@ -149,6 +149,90 @@ TEST_F(NoteStorageTest, AddsCompressionColumnToExistingNotesOnce) {
     note_save_compressed(*database_, note.id, "Compressed after upgrade");
 }
 
+TEST_F(NoteStorageTest, ReadOnlyStateSurvivesReopenAndProtectsOnlyContent) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Source");
+    EXPECT_FALSE(note.read_only);
+    const auto original = note_get(*database_, note.id).document;
+    EXPECT_TRUE(note_set_read_only(*database_, note.id, true).read_only);
+    database_.reset();
+    database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+    EXPECT_TRUE(note_list(*database_).front().read_only);
+    EXPECT_EQ(nlohmann::json(note_list(*database_).front())["read_only"], true);
+    expect_note_error(NoteFailure::invalid, "This note is read-only. Make it editable first.", [&] {
+        note_save(*database_, note.id, {{"changed", true}});
+    });
+    EXPECT_EQ(note_get(*database_, note.id).document, original);
+    EXPECT_TRUE(note_rename(*database_, note.id, "Renamed").read_only);
+    note_save_compressed(*database_, note.id, "Summary");
+    EXPECT_EQ(note_get(*database_, note.id).compressed_text, "Summary");
+    EXPECT_EQ(note_get_text(*database_, note.id, true).text, "Summary");
+    EXPECT_FALSE(note_set_read_only(*database_, note.id, false).read_only);
+    note_save(*database_, note.id, {{"changed", true}});
+    EXPECT_EQ(note_get(*database_, note.id).document, nlohmann::json({{"changed", true}}));
+    EXPECT_TRUE(note_set_read_only(*database_, note.id, true).read_only);
+    note_delete(*database_, note.id);
+    EXPECT_TRUE(note_list(*database_).empty());
+    EXPECT_THROW((void)note_set_read_only(*database_, note.id, false), NoteError);
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Folder");
+    EXPECT_THROW((void)note_set_read_only(*database_, folder.id, true), NoteError);
+}
+
+TEST_F(NoteStorageTest, AddsReadOnlyColumnToExistingNotesOnceAndKeepsThemEditable) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Existing");
+    database_->execute("ALTER TABLE note_items DROP COLUMN read_only");
+    for (int count = 0; count < 2; ++count) {
+        storage::SqliteTransaction transaction(*database_);
+        create_note_items_schema(*database_);
+        transaction.commit();
+    }
+    EXPECT_FALSE(note_list(*database_).front().read_only);
+    note_save(*database_, note.id, {{"changed", true}});
+    EXPECT_TRUE(note_set_read_only(*database_, note.id, true).read_only);
+}
+
+TEST_F(NoteStorageTest, ScrollPositionsArePerNoteAndSurviveReadOnlyAndReopen) {
+    const auto first = note_create(*database_, {}, NoteItemKind::note, "First");
+    const auto second = note_create(*database_, {}, NoteItemKind::note, "Second");
+    EXPECT_EQ(note_get(*database_, first.id).scroll_top, 0);
+    const auto original = raw_content(*database_, first.id);
+    note_save_scroll_position(*database_, first.id, 1250);
+    (void)note_set_read_only(*database_, second.id, true);
+    note_save_scroll_position(*database_, second.id, 750);
+    database_.reset();
+    database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+    EXPECT_EQ(note_get(*database_, first.id).scroll_top, 1250);
+    EXPECT_EQ(note_get(*database_, second.id).scroll_top, 750);
+    EXPECT_EQ(nlohmann::json(note_get(*database_, second.id))["scroll_top"], 750);
+    EXPECT_EQ(raw_content(*database_, first.id), original);
+    note_save_scroll_position(*database_, first.id, 0);
+    EXPECT_EQ(note_get(*database_, first.id).scroll_top, 0);
+    EXPECT_THROW(note_save_scroll_position(*database_, first.id, -1), NoteError);
+    EXPECT_THROW(note_save_scroll_position(*database_, first.id, note_id_limit + 1), NoteError);
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Folder");
+    expect_note_error(NoteFailure::invalid, "That item is not a note.", [&] {
+        note_save_scroll_position(*database_, folder.id, 10);
+    });
+    note_delete(*database_, first.id);
+    expect_note_error(NoteFailure::not_found, "That note was not found.", [&] {
+        note_save_scroll_position(*database_, first.id, 10);
+    });
+}
+
+TEST_F(NoteStorageTest, AddsScrollColumnToExistingNotesOnceAndPreservesContent) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Existing");
+    const auto original = raw_content(*database_, note.id);
+    database_->execute("ALTER TABLE note_items DROP COLUMN scroll_top");
+    for (int count = 0; count < 2; ++count) {
+        storage::SqliteTransaction transaction(*database_);
+        create_note_items_schema(*database_);
+        transaction.commit();
+    }
+    EXPECT_EQ(note_get(*database_, note.id).scroll_top, 0);
+    EXPECT_EQ(raw_content(*database_, note.id), original);
+    note_save_scroll_position(*database_, note.id, 640);
+    EXPECT_EQ(note_get(*database_, note.id).scroll_top, 640);
+}
+
 TEST_F(NoteStorageTest, NewDatabaseKeepsSchema2IdentityAndNoteSchema) {
     EXPECT_EQ(
         database_->pragma_integer("user_version"),
@@ -393,7 +477,7 @@ TEST_F(NoteStorageTest, NamesParentsAndSiblingNamespace) {
     EXPECT_EQ(found->name, "Plan");
 }
 
-TEST_F(NoteStorageTest, BookImportCommitsOrdinaryEditableNotesAndRejectsCollisions) {
+TEST_F(NoteStorageTest, BookImportCommitsReadOnlyNotesAndRejectsCollisions) {
     const auto document = nlohmann::json::parse(empty_note_document);
     const auto folder = note_import_book(*database_, std::nullopt, "Book", {
         {"001. Introduction", document}, {"002. Introduction", document},
@@ -405,9 +489,14 @@ TEST_F(NoteStorageTest, BookImportCommitsOrdinaryEditableNotesAndRejectsCollisio
     EXPECT_EQ(items[0].kind, NoteItemKind::folder);
     EXPECT_EQ(items[1].parent_id, folder);
     EXPECT_EQ(items[2].parent_id, folder);
+    EXPECT_FALSE(items[0].read_only);
+    EXPECT_TRUE(items[1].read_only);
+    EXPECT_TRUE(items[2].read_only);
     EXPECT_EQ(note_get(*database_, items[1].id).document, document);
     auto edited = document;
     edited["content"][0]["content"] = {{{"type", "text"}, {"text", "Edited"}}};
+    EXPECT_THROW(note_save(*database_, items[1].id, edited), NoteError);
+    EXPECT_FALSE(note_set_read_only(*database_, items[1].id, false).read_only);
     note_save(*database_, items[1].id, edited);
     EXPECT_EQ(note_get(*database_, items[1].id).document, edited);
     expect_note_error(NoteFailure::invalid, "An item with this name already exists here.", [&] {

@@ -2611,6 +2611,16 @@ void WorkspaceConfigStore::save_note(
     note_save(*impl_->database, id, document);
 }
 
+void WorkspaceConfigStore::save_note_scroll_position(std::int64_t id, std::int64_t scroll_top) {
+    const std::lock_guard lock(impl_->mutex);
+    note_save_scroll_position(*impl_->database, id, scroll_top);
+}
+
+NoteItem WorkspaceConfigStore::set_note_read_only(std::int64_t id, bool read_only) {
+    const std::lock_guard lock(impl_->mutex);
+    return note_set_read_only(*impl_->database, id, read_only);
+}
+
 void WorkspaceConfigStore::save_compressed_note(std::int64_t id, std::string_view text) {
     const std::lock_guard lock(impl_->mutex);
     note_save_compressed(*impl_->database, id, text);

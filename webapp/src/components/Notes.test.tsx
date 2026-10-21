@@ -9,8 +9,8 @@ import {
 import { bootstrapFixture, fixtureClient, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
 
-const plan: NoteItem = { id: 4, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
-const study: NoteItem = { id: 1, has_compressed: false, parent_id: null, kind: 'folder', name: 'Study' };
+const plan: NoteItem = { id: 4, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
+const study: NoteItem = { id: 1, read_only: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Study' };
 
 function noteDocument(text: string) {
   return {
@@ -61,6 +61,162 @@ function typeInNote(text: string) {
 }
 
 describe('Notes in the application', () => {
+  it('saves pending edits before locking, then unlocks and locks again', async () => {
+    let finishSave!: () => void;
+    const saveNote = vi.fn(() => new Promise<void>((resolve) => { finishSave = resolve; }));
+    const setNoteReadOnly = vi.fn(async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      saveNote, setNoteReadOnly,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    act(() => typeInNote(' edited'));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Make read-only' }));
+    await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
+    expect(setNoteReadOnly).not.toHaveBeenCalled();
+    expect(noteEditor().isEditable).toBe(false);
+    await act(async () => finishSave());
+    await waitFor(() => expect(setNoteReadOnly).toHaveBeenCalledWith(plan.id, true));
+    expect(saveNote.mock.calls[0]).toEqual([plan.id, noteEditor().getJSON()]);
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Bold' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make editable' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make read-only' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(false));
+    expect(setNoteReadOnly.mock.calls.map((call) => call[1])).toEqual([true, false, true]);
+    expect(saveNote).toHaveBeenCalledOnce();
+  });
+
+  it.each(['save', 'lock'])('keeps the note editable and its content intact when %s fails', async (failure) => {
+    const saveNote = vi.fn(async () => {
+      if (failure === 'save') throw new ChaError('internal_error', 'Save failed.');
+    });
+    const setNoteReadOnly = vi.fn(async (): Promise<NoteItem> => {
+      throw new ChaError('internal_error', 'Lock failed.');
+    });
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      saveNote, setNoteReadOnly,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    act(() => typeInNote(' edited'));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Make read-only' }));
+    await waitFor(() => expect(screen.getAllByRole('alert').some((alert) =>
+      alert.textContent?.includes(failure === 'save' ? 'Save failed.' : 'Lock failed.'))).toBe(true));
+    expect(noteEditor().isEditable).toBe(true);
+    expect(noteEditor().getText()).toContain('edited');
+    if (failure === 'save') expect(setNoteReadOnly).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    expect(await screen.findByRole('menuitem', { name: 'Make read-only' })).toBeInTheDocument();
+  });
+
+  it('opens read-only notes with search and copying available and stays read-only after compression', async () => {
+    const locked = { ...plan, read_only: true };
+    const saveNote = vi.fn();
+    const compressNote = vi.fn(async () => undefined);
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [locked],
+      getNote: async (id) => ({ id, document: noteDocument('Original text') }),
+      saveNote, compressNote,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByRole('button', { name: 'Find' });
+    const editor = noteEditor();
+    expect(editor.isEditable).toBe(false);
+    const original = editor.getJSON();
+    act(() => {
+      editor.commands.selectAll();
+      typeInNote('Rejected');
+      editor.commands.toggleBold();
+      editor.commands.undo();
+    });
+    expect(editor.state.selection.empty).toBe(false);
+    expect(editor.getJSON()).toEqual(original);
+    fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Find' }), { target: { value: 'Original' } });
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    await waitFor(() => expect(compressNote).toHaveBeenCalledOnce());
+    await within(screen.getByRole('dialog')).findByRole('button', { name: 'Close' });
+    expect(editor.isEditable).toBe(false);
+    expect(saveNote).not.toHaveBeenCalled();
+  });
+
+  it.each(['web', 'path', 'picker'])('saves and locks the note after a successful %s import', async (source) => {
+    let saved: Record<string, unknown> = source === 'web'
+      ? { type: 'doc', content: [{ type: 'paragraph' }] } : noteDocument('Original');
+    const saveNote = vi.fn(async (_id: number, document: Record<string, unknown>) => { saved = document; });
+    const setNoteReadOnly = vi.fn(async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }));
+    const other = { ...plan, id: 5, name: 'Other' };
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan, other],
+      getNote: async (id) => ({ id, document: saved }),
+      readNotePage: async () => ({ url: 'https://example.org/', title: 'Title', markdown: 'Imported' }),
+      readNoteTextFile: async () => ({ name: '/tmp/file.txt', text: 'Imported' }),
+      saveNote, setNoteReadOnly,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    if (source === 'picker') {
+      fireEvent.change(screen.getByLabelText('Text file', { selector: 'input' }), {
+        target: { files: [new File(['Imported'], 'file.txt')] },
+      });
+    } else {
+      const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+      fireEvent.change(prompt, { target: { value: source === 'web' ? 'https://example.org/' : '/tmp/file.txt' } });
+      fireEvent.keyDown(prompt, { key: 'Enter' });
+    }
+    await waitFor(() => expect(setNoteReadOnly).toHaveBeenCalledWith(plan.id, true));
+    expect(saveNote).toHaveBeenCalledOnce();
+    expect(saveNote.mock.invocationCallOrder[0]).toBeLessThan(setNoteReadOnly.mock.invocationCallOrder[0]);
+    expect(noteEditor().getText()).toContain('Imported');
+    expect(noteEditor().isEditable).toBe(false);
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('');
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Other' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(false));
+    expect(noteEditor().getText()).toContain('Imported');
+  });
+
+  it('keeps a note with text editable after a web import', async () => {
+    const saveNote = vi.fn(async () => undefined);
+    const setNoteReadOnly = vi.fn(async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      readNotePage: async () => ({ url: 'https://example.org/', title: 'Title', markdown: 'Imported' }),
+      saveNote, setNoteReadOnly,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+    fireEvent.change(prompt, { target: { value: 'https://example.org/' } });
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    await waitFor(() => expect(noteEditor().getText()).toContain('Imported'));
+    await waitFor(() => expect(prompt).toHaveValue(''));
+    expect(setNoteReadOnly).not.toHaveBeenCalled();
+    expect(noteEditor().isEditable).toBe(true);
+  });
+
   it.each([false, true])('saves an edited subfolder note before compression or stops when cancelled (cancel=%s)', async (cancel) => {
     const nested = { ...study, id: 2, parent_id: study.id, name: 'Nested' };
     const child = { ...plan, parent_id: nested.id };
@@ -185,7 +341,7 @@ describe('Notes in the application', () => {
   it('keeps editing frozen and delays refresh until cancellation is confirmed', async () => {
     let fail!: (error: unknown) => void;
     const compressNote = vi.fn((_id: number, _signal: AbortSignal) => new Promise<void>((_resolve, reject) => { fail = reject; }));
-    const listNoteItems = vi.fn(async () => [{ ...plan, has_compressed: true }]);
+    const listNoteItems = vi.fn(async () => [{ ...plan, read_only: false, has_compressed: true }]);
     render(<App client={fixtureClient({
       listNoteItems,
       getNote: async (id) => ({ id, document: noteDocument('Original') }),
@@ -228,6 +384,7 @@ describe('Notes in the application', () => {
       saveNote: async () => undefined,
       readNotePage: async () => ({ url: 'https://example.org/', title: 'Article title', markdown: 'Article text' }),
       renameNoteItem,
+      setNoteReadOnly: async (id, readOnly) => ({ ...original, id, name: expected, read_only: readOnly }),
     })} />);
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'New note 1' }));
@@ -240,7 +397,8 @@ describe('Notes in the application', () => {
     expect(screen.getByRole('button', { name: `Send to ${expected}` })).toBeInTheDocument();
     expect(document.title).toBe(`CHA: Personal — ${expected}`);
     await waitFor(() => expect(prompt).toHaveValue(''));
-    expect(prompt).toHaveFocus();
+    expect(prompt).toBeDisabled();
+    expect(noteEditor().isEditable).toBe(false);
     expect(renameNoteItem).toHaveBeenCalledWith(plan.id, expected);
     expect(noteEditor().getText({ blockSeparator: '\n' })).toBe('Article title\nArticle text');
     expect(getNote).toHaveBeenCalledOnce();
@@ -296,7 +454,7 @@ describe('Notes in the application', () => {
   });
 
   it.each(['immediate', 'delayed'])('focuses the new note editor with %s loading', async (loading) => {
-    const created: NoteItem = { id: 9, has_compressed: false, parent_id: null, kind: 'note', name: 'New note' };
+    const created: NoteItem = { id: 9, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'New note' };
     let items = [plan];
     let finishOpen!: () => void;
     const newDocument = { type: 'doc', content: [{ type: 'paragraph' }] };
@@ -349,7 +507,7 @@ describe('Notes in the application', () => {
   });
 
   it('saves before another note and before a Chat session', async () => {
-    const essay: NoteItem = { id: 5, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
+    const essay: NoteItem = { id: 5, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
     const saveNote = vi.fn(async (_id: number, _document: Record<string, unknown>) => undefined);
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan, essay],
@@ -907,7 +1065,7 @@ describe('Notes in the application', () => {
   });
 
   it('keeps an unrelated note editable and blocks navigation during deletion', async () => {
-    const essay: NoteItem = { id: 5, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
+    const essay: NoteItem = { id: 5, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
     let finishDelete: () => void = () => {};
     const getNote = vi.fn(async (id: number) => ({
       id,

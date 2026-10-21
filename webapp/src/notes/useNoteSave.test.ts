@@ -51,6 +51,18 @@ afterEach(() => {
 });
 
 describe('note save scheduling', () => {
+  it('restores a read-only editor after a temporary freeze', () => {
+    const save = vi.fn(async () => undefined);
+    const { editor, view } = setup(save);
+    editor.setEditable(false, false);
+    act(() => { view.result.current.freeze(); });
+    act(() => { view.result.current.unfreeze(); });
+    expect(editor.isEditable).toBe(false);
+    act(() => { view.result.current.unfreeze(true); });
+    expect(editor.isEditable).toBe(true);
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('sends the latest document five seconds after the first uncovered edit', async () => {
     const save = vi.fn<(document: Record<string, unknown>) => Promise<void>>(async () => undefined);
     const { editor, view } = setup(save);

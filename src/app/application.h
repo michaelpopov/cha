@@ -570,6 +570,8 @@ public:
         std::int64_t id,
         const nlohmann::json& document,
         std::uint64_t epoch);
+    [[nodiscard]] NoteItem set_note_read_only(std::int64_t id, bool read_only, std::uint64_t epoch);
+    void save_note_scroll_position(std::int64_t id, std::int64_t scroll_top, std::uint64_t epoch);
     [[nodiscard]] NoteItem rename_note_item(
         std::int64_t id,
         std::string name,

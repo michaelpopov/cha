@@ -53,7 +53,7 @@ import {
   TextLinesIcon,
   UndoIcon,
 } from './Icons';
-import { menuKeys, type NoteActions } from './NotesTree';
+import { menuKeys, type NoteActions, type SetNoteReadOnly } from './NotesTree';
 import { PromptInput } from './PromptInput';
 import { SidebarToggle } from './TopBar';
 
@@ -82,7 +82,7 @@ function preserveNoteScroll(editor: Editor, run: () => void) {
 }
 
 function focusNotesEditor(editor: Editor | null) {
-  if (!editor || editor.isDestroyed || !editor.isEditable) return;
+  if (!editor || editor.isDestroyed) return;
   // Restoring the DOM selection can scroll to an offscreen caret even when
   // focus itself uses preventScroll.
   preserveNoteScroll(editor, () => editor.view.focus());
@@ -101,6 +101,7 @@ function runHistory(editor: Editor, command: 'undo' | 'redo') {
 
 function FormatBar({
   editor,
+  frozen,
   fontSize,
   onFontSizeChange,
   toolbarRef,
@@ -108,6 +109,7 @@ function FormatBar({
   onPicture,
 }: {
   editor: Editor;
+  frozen: boolean;
   fontSize: number;
   onFontSizeChange(size: number): void;
   toolbarRef: { current: HTMLDivElement | null };
@@ -125,7 +127,7 @@ function FormatBar({
   const fontAnchor = useRef<{ block: Element; share: number } | null>(null);
   const editable = editor.isEditable && !editor.isDestroyed;
   const headings = noteHeadings(editor.state.doc);
-  const showHeadings = headingsOpen && editable && headings.length > 0;
+  const showHeadings = headingsOpen && !frozen && !editor.isDestroyed && headings.length > 0;
 
   function format(command: () => boolean) {
     preserveNoteScroll(editor, () => runMark(editor, command));
@@ -396,7 +398,7 @@ function FormatBar({
             aria-expanded={showHeadings}
             aria-haspopup="menu"
             className="cha-button"
-            disabled={!editable || headings.length === 0}
+            disabled={frozen || editor.isDestroyed || headings.length === 0}
             onClick={() => setHeadingsOpen((open) => !open)}
             type="button"
           >
@@ -539,6 +541,7 @@ function FindBar({
           Replace
           <input
             className="cha-form-control"
+            disabled={!editor.isEditable}
             onChange={(event) => onReplacement(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== 'Enter') return;
@@ -674,6 +677,7 @@ export function NotesScreen({
   activeNoteId,
   noteItems,
   noteActions = null,
+  onSetNoteReadOnly,
   draft,
   onDraftChange,
   sidebarOpen,
@@ -691,6 +695,7 @@ export function NotesScreen({
   activeNoteId: number | null;
   noteItems: readonly NoteItem[];
   noteActions?: NoteActions | null;
+  onSetNoteReadOnly: SetNoteReadOnly;
   draft: string;
   onDraftChange(next: string): void;
   sidebarOpen: boolean;
@@ -713,7 +718,11 @@ export function NotesScreen({
   const [editor, setEditor] = useState<Editor | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const name = noteItems.find((item) => item.id === activeNoteId)?.name ?? 'note';
+  const scrollTopRef = useRef(0);
+  const activeItem = noteItems.find((item) => item.id === activeNoteId);
+  const name = activeItem?.name ?? 'note';
+  // The note stays read-only until the tree list confirms its state.
+  const readOnly = activeItem?.read_only ?? true;
   const noteIdRef = useRef(activeNoteId);
   const itemsRef = useRef(noteItems);
   const clientRef = useRef(client);
@@ -761,6 +770,11 @@ export function NotesScreen({
       const id = noteIdRef.current;
       if (id === null) return;
       await client.saveNote(id, document);
+    },
+    saveScrollPosition: async () => {
+      const host = hostRef.current;
+      if (!host || !editor || editor.isDestroyed || editorRef.current !== editor || activeNoteId === null) return;
+      await client.saveNoteScrollPosition(activeNoteId, Math.max(0, Math.round(host.scrollTop)));
     },
   });
 
@@ -818,6 +832,7 @@ export function NotesScreen({
         }
         selectNoteEnd(created);
         created.setEditable(false, false);
+        scrollTopRef.current = content.scroll_top ?? 0;
         editorRef.current = created;
         setEditor(created);
         setPhase('ready');
@@ -839,20 +854,45 @@ export function NotesScreen({
     };
   }, [activeNoteId, noteRequest, notesEpoch]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (!editor || editor.isDestroyed) return;
     const element = editor.options.element;
     if (!host || !(element instanceof HTMLElement)) return;
     host.appendChild(element);
+    const screen = host.parentElement ?? host;
+    const pictures = Array.from(element.querySelectorAll('img'));
+    const restore = () => { host.scrollTop = scrollTopRef.current; };
+    // Embedded pictures can change the document height after it is attached.
+    // Stop restoring as soon as the user starts to interact with the note.
+    const stopRestoring = () => {
+      element.removeEventListener('load', pictureLoaded, true);
+      element.removeEventListener('error', pictureLoaded, true);
+      for (const event of ['wheel', 'pointerdown', 'touchstart', 'keydown']) {
+        screen.removeEventListener(event, stopRestoring);
+      }
+    };
+    const pictureLoaded = () => {
+      restore();
+      if (pictures.every((picture) => picture.complete)) stopRestoring();
+    };
+    restore();
+    if (pictures.some((picture) => !picture.complete)) {
+      element.addEventListener('load', pictureLoaded, true);
+      element.addEventListener('error', pictureLoaded, true);
+      for (const event of ['wheel', 'pointerdown', 'touchstart', 'keydown']) {
+        screen.addEventListener(event, stopRestoring, { passive: true });
+      }
+    }
     return () => {
+      stopRestoring();
       element.remove();
     };
   }, [editor]);
 
   useEffect(() => {
     if (phase !== 'ready' || !editor || editor.isDestroyed) return;
-    editor.setEditable(true, false);
+    editor.setEditable(!readOnly, false);
     setEditing(true);
     editorLiveRef.current = editor;
     const dom = editor.view.dom as HTMLElement & { chaEditor?: Editor };
@@ -863,7 +903,7 @@ export function NotesScreen({
       if (dom.chaEditor === editor) delete dom.chaEditor;
       if (editorLiveRef.current === editor) editorLiveRef.current = null;
     };
-  }, [editor, editorLiveRef, phase]);
+  }, [editor, editorLiveRef, phase, readOnly]);
 
   useEffect(() => {
     setFindOpen(false);
@@ -989,13 +1029,29 @@ export function NotesScreen({
     try {
       const name = availableNoteName(itemsRef.current, note.parent_id, title, note.id);
       const renamed = await client.renameNoteItem(note.id, name);
-      noteActions?.renamed(renamed);
+      noteActions?.updated(renamed);
     } catch (failure: unknown) {
       if (stillCurrent()) {
         setPromptError(`The ${source} was imported, but the note could not be renamed. `
           + publicErrorMessage(failure, 'Try renaming the note again.'));
       }
     }
+  }
+
+  async function lockImportedNote(noteId: number) {
+    const current = editorRef.current;
+    const epoch = epochRef.current;
+    const sameNote = () => editorRef.current === current
+      && noteIdRef.current === noteId && epochRef.current === epoch;
+    try {
+      noteActions?.updated(await onSetNoteReadOnly(noteId, true));
+    } catch (failure: unknown) {
+      if (sameNote()) {
+        setPromptError('The content was imported, but the note could not be made read-only. '
+          + publicErrorMessage(failure, 'Try Make read-only from the note menu.'));
+      }
+    }
+    return sameNote();
   }
 
   async function loadNoteFile(file: File | string): Promise<boolean | null> {
@@ -1029,7 +1085,8 @@ export function NotesScreen({
       if (title && note && defaultNoteName.test(note.name)) {
         await renameImportedNote(note, title, 'file', stillCurrent);
       }
-      return stillCurrent();
+      if (!stillCurrent()) return false;
+      return await lockImportedNote(noteId);
     } catch (failure: unknown) {
       if (stillCurrent()) setPromptError(publicErrorMessage(failure, 'The file could not be loaded. Try again.'));
       return false;
@@ -1098,6 +1155,7 @@ export function NotesScreen({
       {phase === 'ready' && editor && (
         <FormatBar
           editor={editor}
+          frozen={save.frozen}
           fontSize={fontSize}
           onFontSizeChange={setFontSize}
           onFind={openFind}
@@ -1166,7 +1224,7 @@ export function NotesScreen({
       <PromptInput
         key={activeNoteId}
         client={client}
-        enabled
+        enabled={!readOnly}
         inputLabel="Prompt"
         microphoneEnabled
         onChange={onDraftChange}
@@ -1193,12 +1251,16 @@ export function NotesScreen({
               if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
               const title = notePageName(page.title);
               const note = itemsRef.current.find((item) => item.id === noteId);
-              const rename = current.isEmpty && defaultNoteName.test(note?.name ?? '');
+              const wasEmpty = current.isEmpty;
+              const rename = wasEmpty && defaultNoteName.test(note?.name ?? '');
               accepted = await appendNoteHtml(current, notePageHtml(page),
                 (url) => client.readNotePicture(url), () => sameEditorContext(current, noteId, epoch));
               if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
               if (accepted && rename && title && note) {
                 await renameImportedNote(note, title, 'page', () => sameEditorContext(current, noteId, epoch));
+              }
+              if (accepted && wasEmpty && sameEditorContext(current, noteId, epoch)) {
+                return { clear_input: await lockImportedNote(noteId) };
               }
             } catch (failure: unknown) {
               if (sameEditorContext(current, noteId, epoch)) {

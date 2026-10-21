@@ -31,6 +31,15 @@ function noCloseWork(save: NoteSaveHandle | null): boolean {
   return !save.isOpen && save.inFlightSerial() === null && !save.hasUnsaved();
 }
 
+async function saveScrollPosition(save: NoteSaveHandle) {
+  try {
+    await save.saveScrollPosition?.();
+  } catch (failure) {
+    // Losing the reading position must not prevent navigation or app close.
+    console.warn('Could not save the note scroll position.', failure);
+  }
+}
+
 export function useNoteLeave(
   getSave: () => NoteSaveHandle | null,
   options?: { disposeEditor?: () => void },
@@ -95,6 +104,8 @@ export function useNoteLeave(
     save: NoteSaveHandle,
     mode: 'keep' | 'discard',
   ): Promise<unknown> => {
+    if (intentRef.current !== intent) return false;
+    await saveScrollPosition(save);
     if (intentRef.current !== intent) return false;
     if (mode === 'discard') {
       await save.waitInFlight();
@@ -271,17 +282,16 @@ export function useNoteLeave(
       const current = getSaveRef.current() ?? save;
       const failedAdmitted = admitted !== null && current.saveError?.serial === admitted;
       const needsFlush = !failedAdmitted && current.hasUnsaved();
+      let saved = !failedAdmitted;
       if (needsFlush) {
         intent.canceledUncovered = false;
         intent.submitted = true;
-        const ok = await current.flushRemaining();
+        saved = await current.flushRemaining();
         if (!closeStillOwned(intent, token) || closeAttempt.current !== attemptId) return;
-        if (ok) {
-          replyNativeClose(attemptId, 'ready');
-          closePhase.current = null;
-          return;
-        }
-      } else if (!failedAdmitted) {
+      }
+      if (saved) {
+        await saveScrollPosition(current);
+        if (!closeStillOwned(intent, token) || closeAttempt.current !== attemptId) return;
         replyNativeClose(attemptId, 'ready');
         closePhase.current = null;
         return;
@@ -297,6 +307,8 @@ export function useNoteLeave(
       }
       if (choice === 'discard') {
         await save.waitInFlight();
+        if (!closeStillOwned(intent, token)) return;
+        await saveScrollPosition(current);
         if (!closeStillOwned(intent, token)) return;
         save.dispose();
         disposeEditorRef.current?.();

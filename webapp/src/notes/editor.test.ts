@@ -254,7 +254,7 @@ describe('heading navigation', () => {
     expect(created.state.selection.eq(selection)).toBe(true);
     created.commands.setContent('<h1>Heading</h1>');
     created.setEditable(false);
-    expect(selectNoteHeading(created, 0)).toBe(false);
+    expect(selectNoteHeading(created, 0)).toBe(true);
     created.destroy();
     expect(selectNoteHeading(created, 0)).toBe(false);
   });

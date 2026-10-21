@@ -726,6 +726,7 @@ export interface components {
             parent_id: number | null;
             kind: components["schemas"]["NoteItemKind"];
             has_compressed: boolean;
+            read_only: boolean;
             name: string;
         };
         NoteItemList: {
@@ -738,6 +739,7 @@ export interface components {
             id: components["schemas"]["NoteId"];
             document: components["schemas"]["NoteDocument"];
             compressed_text?: string;
+            scroll_top?: number;
         };
         BridgeInfo: {
             /** @enum {integer} */

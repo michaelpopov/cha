@@ -41,6 +41,38 @@ afterEach(() => {
 });
 
 describe('leaveNoteThen', () => {
+  it('waits for a clean note scroll position before navigating', async () => {
+    const pending = deferred();
+    const saveScrollPosition = vi.fn(() => pending.promise);
+    const save = openSave({ hasUnsaved: () => false, saveScrollPosition });
+    const view = renderHook(() => useNoteLeave(() => save));
+    const action = vi.fn();
+    let finished: Promise<unknown> | undefined;
+    await act(async () => { finished = view.result.current.leaveNoteThen(action); });
+    expect(saveScrollPosition).toHaveBeenCalledOnce();
+    expect(action).not.toHaveBeenCalled();
+    await act(async () => { pending.resolve(); await finished; });
+    expect(action).toHaveBeenCalledOnce();
+    expect(save.flushRemaining).not.toHaveBeenCalled();
+  });
+
+  it('logs a scroll position save failure and still navigates', async () => {
+    const failure = new Error('Disk unavailable');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const save = openSave({
+      hasUnsaved: () => false,
+      saveScrollPosition: async () => { throw failure; },
+    });
+    const view = renderHook(() => useNoteLeave(() => save));
+    const action = vi.fn(() => 'done');
+    await act(async () => {
+      expect(await view.result.current.leaveNoteThen(action)).toBe('done');
+    });
+    expect(warn).toHaveBeenCalledWith('Could not save the note scroll position.', failure);
+    expect(action).toHaveBeenCalledOnce();
+    warn.mockRestore();
+  });
+
   it('runs the action immediately when no note is open', async () => {
     const view = renderHook(() => useNoteLeave(() => null));
     const action = vi.fn(() => 'ok');
@@ -434,6 +466,20 @@ describe('native close', () => {
     window.__CHA_NATIVE_CONNECTION_ID__ = 'view-4';
     window.__CHA_NATIVE_POST__ = vi.fn();
   }
+
+  it.each([false, true])('waits for the scroll position before replying ready (abort: %s)', async (abort) => {
+    host();
+    const pending = deferred();
+    const saveScrollPosition = vi.fn(() => pending.promise);
+    const save = openSave({ hasUnsaved: () => false, saveScrollPosition });
+    const view = renderHook(() => useNoteLeave(() => save));
+    await act(async () => { view.result.current.prepareClose(1); });
+    expect(saveScrollPosition).toHaveBeenCalledOnce();
+    expect(closePosts()).toEqual([]);
+    if (abort) act(() => { view.result.current.closeAborted(1); });
+    await act(async () => { pending.resolve(); await pending.promise; });
+    expect(closePosts().some((message) => message.result === 'ready')).toBe(!abort);
+  });
 
   it('replies ready immediately when there is no editor and no save', () => {
     host();
