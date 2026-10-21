@@ -306,7 +306,16 @@ TEST(VoiceWebSocket, CleansFormattingAcrossEveryPossibleChunkBoundary) {
         "Intro. [reference label][id] Final.",
         "Intro.\n- - -\nFinal.",
         "Intro.\n* * *\nFinal.",
-        "Intro.\n_ _ _\nFinal."}) {
+        "Intro.\n_ _ _\nFinal.",
+        "Intro.\n\n| Name | Value |\n| :--- | ---: |\n| Secret | 123 |\n\nFinal.",
+        "Intro.\n| Name |\n| - |\n| Secret |\nAfter table.\n\nFinal.",
+        "Intro.\n| Name |\n| - |\n# Heading\nFinal.",
+        "Intro.\n```bash``` is inline code.\nFinal.",
+        "Intro.\n````cpp\nsecret();\n```\nstill_secret();\n````\nFinal.",
+        "Intro.\n~~~json\n{\"secret\": 123}\n~~~\nFinal.",
+        "Intro.\n![Secret image][image]\nFinal.",
+        "Intro.\nhttps://example.org/secret\nFinal.",
+        "Intro.\nKeep a | b in prose.\nThis is not a table.\nFinal."}) {
         for (const auto* provider : {"fishaudio", "elevenlabs"}) {
             const auto final = speech_text_prefix(text, provider, true);
             std::string spoken;
@@ -320,5 +329,6 @@ TEST(VoiceWebSocket, CleansFormattingAcrossEveryPossibleChunkBoundary) {
     }
     EXPECT_EQ(speech_text_prefix("Words without punctuation continue ", "fishaudio", false), "Words without punctuation continue");
     EXPECT_EQ(speech_text_prefix("First sentence. Second", "fishaudio", false), "First sentence.");
+    EXPECT_EQ(speech_text_prefix("Intro.\n| Name | Value", "fishaudio", false), "Intro.");
 }
 }

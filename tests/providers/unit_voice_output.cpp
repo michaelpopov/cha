@@ -278,9 +278,9 @@ TEST(FishAudio, PreparesPlainSpeechAndParagraphPausesWithoutChangingSourceText) 
         {"Title\n=====\n\nParagraph\n---\nNext\n\n* * *\n\nEnd",
             "Title [long pause] Paragraph [long pause] Next [long pause] End"},
         {"Before\n```cpp\ncall();\n```\n\nUse `value` and ``another`value``.\n~~~text\nAfter\n~~~",
-            "Before\ncall(); [long pause] Use value and another`value.\nAfter"},
+            "Before [long pause] Use  and ."},
         {"Before\n```cpp\ncall();\n```\n~~~text\nAfter\n~~~\n\nEnd",
-            "Before\ncall();\nAfter [long pause] End"},
+            "Before [long pause] End"},
         {"***Both***, **bold *and italic***, ~~old~~, and __strong _inside___!",
             "Both, bold and italic, old, and strong inside!"},
         {"Read [**the guide**](https://example.org/guide) and [section](#part). "
@@ -306,6 +306,50 @@ TEST(FishAudio, PreparesPlainSpeechAndParagraphPausesWithoutChangingSourceText) 
         VoiceSynthesis{.reference_id = "voice"}), std::invalid_argument);
 }
 
+TEST(VoiceOutput, OmitsNonSpokenContentForBothProviders) {
+    const std::vector<std::pair<std::string, std::string>> cases{
+        {"Before.\n\n| Name | Value |\n| :--- | ---: |\n| Secret | 123 |\n\nAfter.", "Before.\n\nAfter."},
+        {"Before.\n| Name |\n| - |\n| Secret |\nAfter table.\n\nAfter.", "Before.\n\nAfter table.\n\nAfter."},
+        {"Before.\n| Name |\n| - |\n# Heading\nText.", "Before.\n\nHeading\nText."},
+        {"Before.\r\n> | Name | Value |\r\n> | --- | --- |\r\n> | Secret | 123 |\r\n\r\nAfter.",
+            "Before.\n\nAfter."},
+        {"Before.\n````cpp\nsecret();\n```\nstill_secret();\n````\nAfter.", "Before.\n\nAfter."},
+        {"Before.\n~~~json\n{\"secret\": 123}\n~~~\nAfter.", "Before.\n\nAfter."},
+        {"Before.\n```cpp\nunfinished_secret();", "Before."},
+        {"Before. `secret()` After.", "Before.  After."},
+        {"It costs 5` dollars.\n\nNext.", "It costs 5 dollars.\n\nNext."},
+        {"```bash``` is inline code.\n\nNext.", "is inline code.\n\nNext."},
+        {"Before.\n![Secret diagram](attachment.png)\nAfter.", "Before.\n\nAfter."},
+        {"Before.\n![Secret diagram][image]\nAfter.", "Before.\n\nAfter."},
+        {"Read [the guide](https://example.org/path) and [section](#part).\n"
+            "https://example.org/secret\nwww.example.org/secret\n<https://example.org/secret>",
+            "Read the guide and section."},
+        {"Keep a | b in prose.\nThis is not a table.", "Keep a | b in prose.\nThis is not a table."},
+        {"Keep C#, snake_case, 2 * 3, and [soft] voice tags.", "Keep C#, snake_case, 2 * 3, and [soft] voice tags."},
+    };
+    for (const auto* provider : {"fishaudio", "elevenlabs"}) {
+        const WorkspaceVoiceProviderOutput output{
+            .model = "test-model", .output_format = std::string_view(provider) == "fishaudio" ? "mp3" : "mp3_44100_128",
+        };
+        for (const auto& [source, expected] : cases) {
+            SCOPED_TRACE(source);
+            SCOPED_TRACE(provider);
+            auto spoken = expected;
+            if (std::string_view(provider) == "fishaudio") {
+                for (auto at = spoken.find("\n\n"); at != std::string::npos; at = spoken.find("\n\n"))
+                    spoken.replace(at, 2, " [long pause] ");
+            }
+            EXPECT_EQ(make_voice_output_request(output, source,
+                {.reference_id = "voice", .provider = provider}).body.at("text"), spoken);
+        }
+        for (const auto* source : {"| Name | Value |\n| --- | --- |\n| Secret | 123 |",
+                 "```cpp\nsecret();\n```", "`secret()`", "https://example.org/secret"}) {
+            EXPECT_THROW(make_voice_output_request(output, source,
+                {.reference_id = "voice", .provider = provider}), std::invalid_argument);
+        }
+    }
+}
+
 TEST(FishAudio, PreviewSendsCleanedTextAndPauseMarkers) {
     MockHttpServer server({
         "HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nContent-Length: 5\r\nConnection: close\r\n\r\naudio",
@@ -316,7 +360,8 @@ TEST(FishAudio, PreviewSendsCleanedTextAndPauseMarkers) {
         .model = "s2.1-pro", .output_format = "mp3",
     };
     const auto request = make_fish_audio_request(output,
-        {{"text", "**Hello**\n\n> _World_."}, {"reference_id", "voice"}});
+        {{"text", "**Hello**\n\n> _World_.\n\n| Name | Value |\n| --- | --- |\n| Secret | 123 |\n\n"
+            "```cpp\nsecret();\n```\nhttps://example.org/secret"}, {"reference_id", "voice"}});
     VoiceOutputProxy proxy;
     const auto result = proxy.synthesize(output, "secret", request, [] { return false; });
     server.join();

@@ -19,16 +19,73 @@ namespace cha {
 namespace {
 using Json = nlohmann::json;
 
+// Re-read the existing response instead of keeping a second streaming buffer.
+// A table header must start with '|', so other unfinished lines can be spoken.
+std::string speech_content(std::string_view source, bool complete) {
+    static const std::regex table_separator(
+        R"(\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?)");
+    const auto content = [](std::string_view line) {
+        line = trim_view(line);
+        while (line.starts_with('>')) line = trim_view(line.substr(1));
+        return line;
+    };
+    std::string text;
+    char fence = 0;
+    std::size_t fence_size = 0;
+    bool table = false;
+    for (std::size_t start = 0; start < source.size();) {
+        const auto end = source.find('\n', start);
+        const auto next = end == std::string_view::npos ? source.size() : end + 1;
+        const auto line = content(source.substr(start, next - start));
+        // Hold an unfinished line that can still become a table row or a fence.
+        if (end == std::string_view::npos && !complete && (fence || table
+            || line.starts_with('|') || line.starts_with('`') || line.starts_with('~'))) break;
+        const auto run = line.empty() ? 0 : line.find_first_not_of(line.front());
+        const auto count = run == std::string_view::npos ? line.size() : run;
+        if (fence) {
+            if (!line.empty() && line.front() == fence && count >= fence_size
+                && trim_view(line.substr(count)).empty()) fence = 0;
+            text += '\n';
+        } else if (!line.empty() && (line.front() == '`' || line.front() == '~') && count >= 3
+            && (line.front() == '~' || line.substr(count).find('`') == std::string_view::npos)) {
+            table = false;
+            fence = line.front();
+            fence_size = count;
+            text += '\n';
+        } else if (table && line.find('|') != std::string_view::npos) {
+            text += '\n';
+        } else {
+            table = false;
+            if (line.starts_with('|')) {
+                const auto separator_end = source.find('\n', next);
+                if (separator_end == std::string_view::npos && !complete) break;
+                const auto separator = content(source.substr(next,
+                    separator_end == std::string_view::npos ? source.size() - next : separator_end - next));
+                if (separator.find('|') != std::string_view::npos
+                    && std::regex_match(separator.begin(), separator.end(), table_separator)) {
+                    table = true;
+                    text += '\n';
+                    start = separator_end == std::string_view::npos ? source.size() : separator_end + 1;
+                    continue;
+                }
+            }
+            text.append(source.substr(start, next - start));
+        }
+        start = next;
+    }
+    return text;
+}
+
 std::string prepare_speech_text(std::string_view source, const char* pause = " [long pause] ") {
     std::string text = remove_url_references(source);
     static const std::regex line_prefix(
         R"((^|\n)[ \t]*(#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+(\[[ xX]\][ \t]+)?|[0-9]{1,9}[.)][ \t]+))");
-    static const std::regex fence(R"((^|\n)[ \t]*(`{3,}|~{3,})[^\r\n]*\r?(?=\n|$))");
     static const std::regex rule(R"((^|\n)[ \t]*((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,}|=+)[ \t]*\r?(?=\n|$))");
     static const std::regex heading_end(R"(((^|\n)[ \t]*#{1,6}[ \t]+[^\r\n]*?)[ \t]+#+[ \t]*\r?(?=\n|$))");
-    static const std::regex link(R"(!?\[([^\]\r\n]*)\]\([^\r\n)]*\))");
+    static const std::regex image(R"(!\[[^\]\r\n]*\](\([^\r\n)]*\)|\[[^\]\r\n]*\]))");
+    static const std::regex link(R"(\[([^\]\r\n]*)\]\([^\r\n)]*\))");
     static const std::regex reference_link(R"(\[([^\]\r\n]+)\]\[[^\]\r\n]*\])");
-    static const std::regex code(R"((`+)([\s\S]*?)\1)");
+    static const std::regex code(R"((`+)[\s\S]*?\1)");
     static const std::regex emphasis(R"((\*{1,3}|~~)(\S([\s\S]*?\S)?)\1)");
     // Underscores inside identifiers such as snake_case are not formatting.
     static const std::regex underscore_emphasis(
@@ -43,11 +100,13 @@ std::string prepare_speech_text(std::string_view source, const char* pause = " [
         if (plain == text) break;
         text = std::move(plain);
     }
-    text = std::regex_replace(text, fence, "");
+    text = std::regex_replace(text, image, "");
     text = std::regex_replace(text, link, "$1");
     text = std::regex_replace(text, reference_link, "$1");
-    text = std::regex_replace(text, code, "$2");
+    text = std::regex_replace(text, code, "");
     text = std::regex_replace(text, escape, "$1");
+    // A stray backtick is not code; keep the text after it.
+    std::erase(text, '`');
     for (;;) {
         auto plain = std::regex_replace(text, emphasis, "$2");
         plain = std::regex_replace(plain, underscore_emphasis, "$1$3");
@@ -125,6 +184,8 @@ bool perform_transfer(CURL* curl, const char* error_buffer, const std::function<
 } // namespace
 
 std::string speech_text_prefix(std::string_view source, std::string_view provider, bool complete) {
+    const auto content = speech_content(source, complete);
+    source = content;
     if (!complete) {
         std::size_t stable = 0;
         std::vector<std::string> markers;
@@ -346,7 +407,7 @@ VoiceOutputRequest make_voice_output_request(
     if (synthesis.decoding_failure) std::rethrow_exception(synthesis.decoding_failure);
     if (!synthesis.reference_id || synthesis.reference_id->empty())
         throw std::invalid_argument("Missing voice ID");
-    const auto spoken = text ? prepare_speech_text(*text, "\n\n") : std::string{};
+    const auto spoken = text ? speech_text_prefix(*text, "elevenlabs", true) : std::string{};
     if (text && spoken.empty()) throw std::invalid_argument("Missing speech text");
     for (const auto& name : synthesis.ignored_settings)
         log_warn("Ignoring unsupported ElevenLabs voice setting: " + name);
@@ -382,7 +443,7 @@ VoiceOutputRequest make_fish_audio_request(
     for (const auto& name : synthesis.ignored_settings) {
         log_warn("Ignoring unsupported FishAudio voice setting: " + name);
     }
-    const auto spoken = text ? prepare_speech_text(*text) : std::string{};
+    const auto spoken = text ? speech_text_prefix(*text, "fishaudio", true) : std::string{};
     if (text && spoken.empty()) throw std::invalid_argument("Missing speech text");
     VoiceOutputRequest request{
         .model = output.model,
