@@ -9,6 +9,7 @@
 #include "workspace/builtins.h"
 #include "workspace/workspace_config_store.h"
 #include "util/base64.h"
+#include "util/path_name.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -425,6 +426,34 @@ TEST_F(BridgeRouterTest, AttachesTextFilesWithoutCreatingNotesOrClearingThePromp
         "This file is too large to add to a chat. The limit is 256 KiB of text.");
     ++epoch_;
     EXPECT_EQ(call("session.attachTextFile", file)["error"]["code"], "vault_changed");
+}
+
+TEST_F(BridgeRouterTest, SubmitsAbsoluteTextFilePathsAsAttachmentsAndKeepsMissingPathsInTheEditor) {
+    bootstrap_epoch();
+    const auto created = call("session.create", {{"forum_id", "lobby"}, {"label", "Files"}});
+    ASSERT_TRUE(created["ok"]) << created;
+    const std::string session_id = created["result"]["id"];
+    const nlohmann::json identity{{"forum_id", "lobby"}, {"session_id", session_id}};
+    ASSERT_TRUE(call("session.open", identity)["ok"]);
+    const auto path = workspace_.root() / "plan with spaces.md";
+    std::ofstream(path, std::ios::binary) << "# Plan\n\nFile context";
+    auto submit = identity;
+    submit["input"] = {{"text", utf8_path(path)}};
+    const auto attached = call("session.submit", submit);
+    ASSERT_TRUE(attached["ok"]) << attached;
+    EXPECT_TRUE(attached["result"]["clear_input"]);
+    const auto snapshot = call("session.snapshot", identity);
+    ASSERT_TRUE(snapshot["ok"]) << snapshot;
+    EXPECT_FALSE(snapshot["result"]["generation"]["active"]);
+    ASSERT_EQ(snapshot["result"]["transcript"].size(), 1U);
+    EXPECT_EQ(snapshot["result"]["transcript"].back()["text"],
+        "Added file “" + utf8_path(path) + "” to this chat.");
+    std::filesystem::remove(path);
+    submit["input"] = {{"text", utf8_path(workspace_.root() / "missing.md")}};
+    const auto missing = call("session.submit", submit);
+    ASSERT_TRUE(missing["ok"]) << missing;
+    EXPECT_FALSE(missing["result"]["clear_input"]);
+    EXPECT_EQ(missing["result"]["notice"], "That file was not found.");
 }
 
 TEST_F(BridgeRouterTest, InfoBootstrapCreateOpenSubmitStopSnapshotAndClose) {

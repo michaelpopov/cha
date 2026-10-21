@@ -275,7 +275,8 @@ void LiveSession::execute(OwnerCommand command) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) {
             return handle_text_input(
-                controller, controller.view().default_persona_id, std::move(value.text), command.reply->submission());
+                controller, controller.view().default_persona_id, std::move(value.text), command.reply->submission(),
+                value.attach_paths);
         } else if constexpr (std::is_same_v<T, AttachTextFileCommand>) {
             return {.session = controller.add_text_file(
                 value.name, value.text, command.reply->submission())};

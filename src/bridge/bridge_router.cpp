@@ -1442,6 +1442,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                             ErrorCode::prompt_too_large);
                         return;
                     }
+                    input.attach_paths = true;
                     command = std::move(input);
                     break;
                 }

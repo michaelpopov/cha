@@ -125,6 +125,8 @@ struct SessionSnapshot {
 // session persona, so a submitter cannot choose one.
 struct RawCommand {
     std::string text;
+    // Only the desktop app reads paths on its own computer.
+    bool attach_paths{};
 };
 
 struct AttachTextFileCommand {

@@ -27,6 +27,8 @@
 
 namespace cha {
 
+inline constexpr std::size_t text_file_byte_limit = 256 * 1024;
+
 class Workspace;
 struct WorkspaceForum;
 

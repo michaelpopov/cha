@@ -7,12 +7,14 @@
 #include "support/test_backends.h"
 #include "support/test_controller.h"
 #include "support/test_notifier.h"
+#include "util/path_name.h"
 
 #include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -144,11 +146,12 @@ TEST(TextInput, DispatchesTheRemainingSlashCommands) {
         temporary.path,
         notifier());
 
+    // The desktop app also treats these as commands, not as file paths.
     for (const std::string_view removed : {
              "/info", "/characters", "/agents", "/@Guide",
              "/style sans-bold", "/cover", "/uncover", "/stop", "/exit"}) {
         const CommandResult result =
-            handle_text_input(*controller, "operator", std::string(removed));
+            handle_text_input(*controller, "operator", std::string(removed), {}, true);
         EXPECT_TRUE(result.clear_input) << removed;
         ASSERT_TRUE(result.session.notice) << removed;
         EXPECT_NE(result.session.notice->find("Unknown command"), std::string::npos)
@@ -230,6 +233,122 @@ TEST(TextInput, RecordsAnInlineSelfNote) {
         "thinking out loud");
 
     controller->shutdown();
+}
+
+TEST(TextInput, AttachesAndRefreshesAnAbsoluteFilePathWithoutGeneratingAReply) {
+    TemporaryTextSession temporary;
+    test::TestWorkspace files;
+    const auto path = files.root() / path_from_utf8("Plan с пробелами.md");
+    const std::string name = utf8_path(path);
+    std::ofstream(path, std::ios::binary) << "\xef\xbb\xbf# План\n\nOriginal content";
+    {
+        auto controller = test::from_test_workspace(
+            std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
+        const auto result = handle_text_input(*controller, "operator", " \t" + name + "\n", {}, true);
+        ASSERT_TRUE(result.clear_input);
+        EXPECT_TRUE(result.session.input_consumed);
+        EXPECT_FALSE(controller->is_generating());
+        EXPECT_FALSE(controller->is_naming());
+        ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
+        EXPECT_EQ(controller->view().transcript.entries.front().kind, EntryKind::notice);
+        EXPECT_EQ(controller->view().transcript.entries.front().text,
+            "Added file “" + name + "” to this chat.");
+        SessionJournal journal(temporary.path);
+        EXPECT_EQ(journal.notes_prompt(), "# File: " + name + "\n\n# План\n\nOriginal content");
+        std::ofstream(path, std::ios::binary) << "Revised content";
+        EXPECT_EQ(journal.notes_prompt(), "# File: " + name + "\n\n# План\n\nOriginal content");
+        ASSERT_TRUE(handle_text_input(*controller, "operator", "\"" + name + "\"", {}, true).clear_input);
+        EXPECT_EQ(journal.notes_prompt(), "# File: " + name + "\n\nRevised content");
+    }
+    std::filesystem::remove(path);
+    auto controller = test::from_test_workspace(
+        std::vector<CharacterDefinition>{definition()}, temporary.path, notifier(),
+        load_session_state(temporary.path));
+    SessionJournal journal(temporary.path);
+    EXPECT_EQ(journal.notes_prompt(), "# File: " + name + "\n\nRevised content");
+    const auto missing = handle_text_input(
+        *controller, "operator", utf8_path(files.root() / "missing.md"), {}, true);
+    EXPECT_FALSE(missing.clear_input);
+    EXPECT_EQ(missing.session.notice, "That file was not found.");
+    EXPECT_EQ(controller->view().transcript.entries.size(), 2U);
+    EXPECT_EQ(journal.notes_prompt(), "# File: " + name + "\n\nRevised content");
+    EXPECT_TRUE(handle_text_input(*controller, "operator", "/clear").clear_input);
+    EXPECT_TRUE(journal.notes_prompt().empty());
+}
+
+TEST(TextInput, RejectsDirectoriesAndInvalidTextFilesWithoutChangingTheSession) {
+    TemporaryTextSession temporary;
+    test::TestWorkspace files;
+    auto controller = test::from_test_workspace(
+        std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
+    const auto directory = handle_text_input(*controller, "operator", utf8_path(files.root()), {}, true);
+    EXPECT_FALSE(directory.clear_input);
+    EXPECT_EQ(directory.session.notice, "The path does not refer to a regular file.");
+    const auto path = files.root() / "input.txt";
+    for (const auto& [content, expected] : std::vector<std::pair<std::string, std::string>>{
+            {" \n\t", "The file is empty."},
+            {std::string("a\0b", 3), "Choose a UTF-8 text file."},
+            {"\xff\xfe", "Choose a UTF-8 text file."},
+            {std::string(text_file_byte_limit + 1, 'x'),
+                "This file is too large to add to a chat. The limit is 256 KiB of text."},
+            {"\xef\xbb\xbf" + std::string(text_file_byte_limit + 1, 'x'),
+                "This file is too large to add to a chat. The limit is 256 KiB of text."}}) {
+        std::ofstream output(path, std::ios::binary);
+        output.write(content.data(), static_cast<std::streamsize>(content.size()));
+        output.close();
+        const auto result = handle_text_input(*controller, "operator", utf8_path(path), {}, true);
+        EXPECT_FALSE(result.clear_input);
+        EXPECT_EQ(result.session.notice, expected);
+        EXPECT_TRUE(controller->view().transcript.empty());
+        EXPECT_FALSE(controller->is_generating());
+    }
+    std::ofstream(path, std::ios::binary) << std::string(text_file_byte_limit, 'x');
+    EXPECT_TRUE(handle_text_input(*controller, "operator", utf8_path(path), {}, true).clear_input);
+}
+
+TEST(TextInput, KeysAttachedFilesByTheirFullPath) {
+    TemporaryTextSession temporary;
+    test::TestWorkspace files;
+    const auto first = files.root() / "a" / "README.md";
+    const auto second = files.root() / "b" / "README.md";
+    std::filesystem::create_directories(first.parent_path());
+    std::filesystem::create_directories(second.parent_path());
+    std::ofstream(first) << "First";
+    std::ofstream(second) << "Second";
+    auto controller = test::from_test_workspace(
+        std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
+    ASSERT_TRUE(handle_text_input(*controller, "operator", utf8_path(first), {}, true).clear_input);
+    ASSERT_TRUE(handle_text_input(*controller, "operator", utf8_path(second), {}, true).clear_input);
+    EXPECT_EQ(SessionJournal(temporary.path).notes_prompt(),
+        "# File: " + utf8_path(first) + "\n\nFirst\n\n# File: " + utf8_path(second) + "\n\nSecond");
+}
+
+TEST(TextInput, AcceptsOnlyStandaloneAbsolutePathsForAttachment) {
+    TemporaryTextSession temporary;
+    test::TestWorkspace files;
+    const auto path = files.root() / "reference.txt";
+    std::ofstream(path) << "Attachment content";
+    auto controller = test::from_test_workspace(
+        std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
+    (void)controller->set_default_character_by_id("-");
+    for (const auto& input : {"Read " + utf8_path(path), std::string("reference.txt"),
+            "@- " + utf8_path(path)}) {
+        EXPECT_TRUE(handle_text_input(*controller, "operator", input, {}, true).session.input_consumed);
+        ASSERT_FALSE(controller->view().transcript.empty());
+        EXPECT_EQ(controller->view().transcript.entries.back().kind, EntryKind::human);
+        EXPECT_TRUE(SessionJournal(temporary.path).notes_prompt().empty());
+    }
+    (void)handle_text_input(*controller, "operator", utf8_path(path) + "\nExplain this file", {}, true);
+    EXPECT_TRUE(SessionJournal(temporary.path).notes_prompt().empty());
+    // A prompt can start with a path. A missing last part with spaces is not a file.
+    const auto prompt = handle_text_input(
+        *controller, "operator", utf8_path(files.root() / "build.log fails, why?"), {}, true);
+    EXPECT_NE(prompt.session.notice, "That file was not found.");
+    EXPECT_TRUE(SessionJournal(temporary.path).notes_prompt().empty());
+    // ChaWeb does not attach paths.
+    (void)handle_text_input(*controller, "operator", utf8_path(path));
+    EXPECT_TRUE(SessionJournal(temporary.path).notes_prompt().empty());
+    EXPECT_FALSE(controller->is_generating());
 }
 
 TEST(TextInput, CopiesAndRefreshesANoteWithoutGeneratingAReply) {

@@ -1,10 +1,14 @@
 #include "runtime/text_input.h"
 
 #include "session/session_controller.h"
+#include "util/path_name.h"
 #include "util/text.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <utility>
 
@@ -20,6 +24,38 @@ constexpr std::array descriptors{
     CommandDescriptor{"/mcast", CommandKind::mcast},
     CommandDescriptor{"/clear", CommandKind::clear},
 };
+
+// Returns no update when the text is a prompt that starts with a path.
+std::optional<ControllerUpdate> attach_file_path(
+    SessionController& controller, const std::filesystem::path& path,
+    std::shared_ptr<SubmissionState> submission) {
+    if (submission && submission->expired()) return ControllerUpdate{.notice = "Submission expired"};
+    std::error_code error;
+    const auto status = std::filesystem::status(path, error);
+    const bool missing = status.type() == std::filesystem::file_type::not_found;
+    if (missing || error) {
+        // "C:\logs\build.log fails, why?" is a prompt, not a missing file.
+        if (std::ranges::any_of(utf8_path(path.filename()), is_space)) return std::nullopt;
+        if (missing) return ControllerUpdate{.notice = "That file was not found."};
+        return ControllerUpdate{.notice = "The file could not be read. Check the path and permissions."};
+    }
+    if (!std::filesystem::is_regular_file(status)) {
+        return ControllerUpdate{.notice = "The path does not refer to a regular file."};
+    }
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return ControllerUpdate{.notice = "The file could not be read. Check the path and permissions."};
+    // Read one extra byte so a large or growing file is rejected without loading it all.
+    std::string text(text_file_byte_limit + 1, '\0');
+    file.read(text.data(), static_cast<std::streamsize>(text.size()));
+    text.resize(static_cast<std::size_t>(file.gcount()));
+    if (file.bad() || (file.fail() && !file.eof())) {
+        return ControllerUpdate{.notice = "The file could not be read. Try again."};
+    }
+    if (text.size() <= text_file_byte_limit && text.starts_with("\xef\xbb\xbf")) {
+        text.erase(0, 3);
+    }
+    return controller.add_text_file(utf8_path(path), text, std::move(submission));
+}
 
 std::optional<std::int64_t> parse_note_reference(std::string_view input) {
     input = trim_view(input);
@@ -211,7 +247,8 @@ CommandResult handle_text_input(
     SessionController& controller,
     std::string_view author_id,
     std::string input,
-    std::shared_ptr<SubmissionState> submission) {
+    std::shared_ptr<SubmissionState> submission,
+    bool attach_paths) {
     CommandResult result;
     if (trim_view(input).empty()) {
         return result;
@@ -227,6 +264,26 @@ CommandResult handle_text_input(
         return result;
     }
     const Command command = parse_command(input);
+    std::string_view trimmed = trim_view(input);
+    if (trimmed.size() >= 2 && trimmed.front() == '"' && trimmed.back() == '"') {
+        // Windows "Copy as path" puts quotes around the path.
+        trimmed = trimmed.substr(1, trimmed.size() - 2);
+    }
+    // A slash command name such as "/info" has no second '/'.
+    if (attach_paths
+        && (command.kind == CommandKind::text
+            || (command.kind == CommandKind::unknown && trimmed.find('/', 1) != std::string_view::npos))
+        && trimmed.find_first_of("\r\n") == std::string_view::npos
+        && trimmed.find('\0') == std::string_view::npos) {
+        const auto path = path_from_utf8(trimmed);
+        if (path.is_absolute()) {
+            if (auto update = attach_file_path(controller, path, submission)) {
+                result.session = std::move(*update);
+                result.clear_input = result.session.input_consumed;
+                return result;
+            }
+        }
+    }
     if (command.kind == CommandKind::text) {
         AddressedPrompt prompt = parse_addressed_prompt(input);
         result.session = controller.submit_prompt(

@@ -56,11 +56,13 @@ using MulticastParseResult =
     MulticastParseError error);
 
 // Translates the web chat grammar into typed session-layer calls and the
-// command result returned to the bridge.
+// command result returned to the bridge. With attach_paths, a single absolute
+// path attaches a local text file.
 [[nodiscard]] CommandResult handle_text_input(
     SessionController& controller,
     std::string_view author_id,
     std::string input,
-    std::shared_ptr<SubmissionState> submission = {});
+    std::shared_ptr<SubmissionState> submission = {},
+    bool attach_paths = false);
 
 } // namespace cha
