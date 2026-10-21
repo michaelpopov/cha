@@ -485,6 +485,17 @@ describe('notes native client', () => {
     }
   });
 
+  it('reads a local note file and validates the reply, including an ordinary prompt', async () => {
+    const file = { name: '/tmp/plan.md', text: '# Plan' };
+    const read = vi.fn(() => file);
+    expect(await clientFor({ 'notes.readTextFile': read }).readNoteTextFile(file.name)).toEqual(file);
+    expect(read).toHaveBeenCalledWith({ path: file.name });
+    expect(await clientFor({ 'notes.readTextFile': () => null }).readNoteTextFile('/tmp/log fails')).toBeNull();
+    for (const invalid of [{ ...file, text: 42 }, { ...file, extra: true }, {}]) {
+      await expect(clientFor({ 'notes.readTextFile': () => invalid }).readNoteTextFile(file.name)).rejects.toThrow();
+    }
+  });
+
   it('reads a page using the notes bridge and validates its reply', async () => {
     const page = { url: 'https://example.org/final', title: 'Title', markdown: '**Text**' };
     const read = vi.fn(() => page);

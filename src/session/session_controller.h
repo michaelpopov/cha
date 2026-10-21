@@ -14,6 +14,7 @@
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
 #include "util/text.h"
+#include "util/text_file.h"
 #include "util/wake_notifier.h"
 
 #include <cstddef>
@@ -26,8 +27,6 @@
 #include <vector>
 
 namespace cha {
-
-inline constexpr std::size_t text_file_byte_limit = 256 * 1024;
 
 class Workspace;
 struct WorkspaceForum;

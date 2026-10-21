@@ -9,6 +9,7 @@ import {
   type NoteContent,
   type NoteItem,
   type NotePage,
+  type TextFileRequest,
 } from '../api/client';
 import { pictureTypeMessage } from '../notes/pictures';
 import { noteHeadings, selectNoteEnd } from '../notes/editor';
@@ -50,6 +51,7 @@ function Harness({
   getNote = async (id: number) => ({ id, document: documentWith(id === 5 ? 'Essay text' : 'Alpha') }),
   saveNote = async () => undefined,
   readNotePage = async () => { throw new Error('Page reading is unavailable.'); },
+  readNoteTextFile = async () => { throw new Error('File reading is unavailable.'); },
   readNotePicture = async () => new Uint8Array(),
   renameNoteItem = async (id: number, name: string) => ({ ...plan, id, name }),
   draft = '',
@@ -61,6 +63,7 @@ function Harness({
   getNote?: (id: number) => Promise<NoteContent>;
   saveNote?: (id: number, document: Record<string, unknown>) => Promise<void>;
   readNotePage?: (url: string) => Promise<NotePage>;
+  readNoteTextFile?: (path: string) => Promise<TextFileRequest | null>;
   readNotePicture?: (url: string) => Promise<Uint8Array>;
   renameNoteItem?: (id: number, name: string) => Promise<NoteItem>;
   draft?: string;
@@ -83,6 +86,7 @@ function Harness({
     getNote: (id) => getNoteRef.current(id),
     saveNote: (id, document) => saveNoteRef.current(id, document),
     readNotePage,
+    readNoteTextFile,
     readNotePicture,
     renameNoteItem,
     getVoiceInputRuntime: async () => (voice ? { ...voiceRuntime, send_phrase: sendPhrase } : null),
@@ -185,6 +189,166 @@ describe('Notes screen', () => {
     for (const name of ['Rename', 'Delete', 'Copy note reference', 'Copy Ref ID']) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
+  });
+
+  it('replaces a note from the picker, keeps the prompt, saves, and undoes in one step', async () => {
+    const saveNote = vi.fn(async () => undefined);
+    const renameNoteItem = vi.fn();
+    render(<Harness draft="Keep this draft" saveNote={saveNote} renameNoteItem={renameNoteItem} />);
+    const editor = await openedEditor();
+    const input = screen.getByLabelText('Text file');
+    const click = vi.spyOn(input, 'click');
+    fireEvent.click(screen.getByRole('button', { name: 'Load text file' }));
+    expect(click).toHaveBeenCalledOnce();
+    fireEvent.change(input, { target: { files: [new File(['# Imported\n\n**Body**'], 'plan.md')] } });
+    await waitFor(() => expect(editor.getText({ blockSeparator: '\n' })).toBe('Imported\nBody'));
+    expect(editor.view.dom.querySelector('strong')?.textContent).toBe('Body');
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this draft');
+    expect(renameNoteItem).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(editor.getText()).toBe('Alpha');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Redo' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    expect(editor.getText({ blockSeparator: '\n' })).toBe('Imported\nBody');
+    const document = editor.getJSON();
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
+    await waitFor(() => expect(saveNote).toHaveBeenCalledWith(plan.id, document));
+  });
+
+  it.each(['New note', 'New note 12', 'My note', 'New note draft'])(
+    'imports a path and renames %s only if it has a default name, even with existing content', async (name) => {
+      const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...plan, id, name }));
+      const readNoteTextFile = vi.fn(async () => ({ name: '/tmp/plan with spaces.md', text: '# Title\n\nNew content' }));
+      render(<Harness
+        items={[{ ...plan, name }, { ...essay, name: 'Title' }]}
+        readNoteTextFile={readNoteTextFile} renameNoteItem={renameNoteItem}
+        draft='  "/tmp/plan with spaces.md"  '
+      />);
+      const editor = await openedEditor();
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' });
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(''));
+      expect(readNoteTextFile).toHaveBeenCalledWith('/tmp/plan with spaces.md');
+      expect(editor.getText({ blockSeparator: '\n' })).toBe('Title\nNew content');
+      if (/^New note(?: \d+)?$/u.test(name)) expect(renameNoteItem).toHaveBeenCalledWith(plan.id, 'Title 1');
+      else expect(renameNoteItem).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps plain text literal and leaves a default name when there is no title', async () => {
+    const renameNoteItem = vi.fn();
+    render(<Harness items={[{ ...plan, name: 'New note' }]} renameNoteItem={renameNoteItem} />);
+    const editor = await openedEditor();
+    fireEvent.change(screen.getByLabelText('Text file'), {
+      target: { files: [new File(['<b>Literal</b>\r\n**Text**\n    indented\tline  end'], 'input.txt')] },
+    });
+    await waitFor(() => expect(editor.getText()).toBe('<b>Literal</b>\n**Text**\n    indented\tline  end'));
+    expect(editor.view.dom.querySelector('strong')).toBeNull();
+    expect(renameNoteItem).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['empty.txt', ' \n', 'The file is empty.'],
+    ['binary.txt', 'a\0b', 'Choose a UTF-8 text file.'],
+    ['invalid.txt', new Uint8Array([0xff, 0xfe]), 'Choose a UTF-8 text file.'],
+    ['large.txt', 'x'.repeat(256 * 1024 + 1), 'This file is too large to load into a note. The limit is 256 KiB of text.'],
+    ['comment.md', '<!-- Only a comment -->', 'The file has no readable text.'],
+    ['picture.md', '![Missing](https://example.org/missing.png)', 'The file has no readable text.'],
+    ['list-picture.md', '- ![Missing](https://example.org/missing.png)', 'The file has no readable text.'],
+    ['empty-picture.md', '<p></p>\n\n![Missing](https://example.org/missing.png)', 'The file has no readable text.'],
+  ] as const)('preserves the note and prompt for rejected picker file %s', async (name, content, message) => {
+    const file = new File([content], name);
+    render(<Harness draft="Keep this" />);
+    const editor = await openedEditor();
+    fireEvent.change(screen.getByLabelText('Text file'), { target: { files: [file] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    expect(editor.getText()).toBe('Alpha');
+    expect(editor.can().undo()).toBe(false);
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this');
+  });
+
+  it('accepts a picture-only Markdown file when the picture loads', async () => {
+    const readNotePicture = vi.fn(async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    render(<Harness readNotePicture={readNotePicture} />);
+    const editor = await openedEditor();
+    fireEvent.change(screen.getByLabelText('Text file'), {
+      target: { files: [new File(['![Photo](https://example.org/photo.png)'], 'picture.md')] },
+    });
+    await waitFor(() => expect(editor.view.dom.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,iVBORw0KGgo='));
+    expect(readNotePicture).toHaveBeenCalledWith('https://example.org/photo.png');
+    expect(editor.getText()).not.toContain('Alpha');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps a failed path, permits retry, and keeps text typed during the import', async () => {
+    let finish!: (file: TextFileRequest) => void;
+    const readNoteTextFile = vi.fn()
+      .mockRejectedValueOnce(new ChaError('invalid_argument', 'That file was not found.'))
+      .mockImplementationOnce(() => new Promise<TextFileRequest>((resolve) => { finish = resolve; }));
+    render(<Harness draft="/tmp/plan.md" readNoteTextFile={readNoteTextFile} />);
+    const editor = await openedEditor();
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    expect(await screen.findByRole('alert')).toHaveTextContent('That file was not found.');
+    expect(prompt).toHaveValue('/tmp/plan.md');
+    expect(editor.getText()).toBe('Alpha');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send to Plan' })).toBeEnabled());
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    await waitFor(() => expect(readNoteTextFile).toHaveBeenCalledTimes(2));
+    fireEvent.change(prompt, { target: { value: '/tmp/plan.md Next' } });
+    await act(async () => finish({ name: '/tmp/plan.md', text: '# Title\n\nBody' }));
+    await waitFor(() => expect(prompt).toHaveValue('Next'));
+    expect(editor.getText({ blockSeparator: '\n' })).toBe('Title\nBody');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('clears a successful path when the file already matches the note', async () => {
+    render(<Harness draft="/tmp/plan.txt" readNoteTextFile={async () => ({ name: '/tmp/plan.txt', text: 'Alpha' })} />);
+    const editor = await openedEditor();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(''));
+    expect(editor.getText()).toBe('Alpha');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps imported file content and clears the path if automatic renaming fails', async () => {
+    const renameNoteItem = vi.fn().mockRejectedValue(new ChaError('internal_error', 'The item could not be changed.'));
+    render(<Harness items={[{ ...plan, name: 'New note' }]} draft="/tmp/plan.md"
+      readNoteTextFile={async () => ({ name: '/tmp/plan.md', text: '# Title\n\nBody' })}
+      renameNoteItem={renameNoteItem} />);
+    const editor = await openedEditor();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' });
+    expect(await screen.findByRole('alert')).toHaveTextContent('The file was imported, but the note could not be renamed.');
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(''));
+    expect(editor.getText({ blockSeparator: '\n' })).toBe('Title\nBody');
+  });
+
+  it('keeps ordinary prompts that start with a path', async () => {
+    const readNoteTextFile = vi.fn(async () => null);
+    render(<Harness draft="/tmp/build.log fails, why?" readNoteTextFile={readNoteTextFile} />);
+    const editor = await openedEditor();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(''));
+    expect(editor.getText()).toContain('Alpha');
+    expect(editor.getText()).toContain('/tmp/build.log fails, why?');
+  });
+
+  it('does not import into another note after switching while a path loads', async () => {
+    let finish!: (file: TextFileRequest) => void;
+    const readNoteTextFile = vi.fn(() => new Promise<TextFileRequest>((resolve) => { finish = resolve; }));
+    const renameNoteItem = vi.fn();
+    render(<Harness items={[{ ...plan, name: 'New note' }]} draft="/tmp/plan.md"
+      readNoteTextFile={readNoteTextFile} renameNoteItem={renameNoteItem} />);
+    await openedEditor();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' });
+    await waitFor(() => expect(readNoteTextFile).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
+    const editor = await openedEditor();
+    await act(async () => finish({ name: '/tmp/plan.md', text: '# Late' }));
+    expect(editor.getText()).toBe('Essay text');
+    expect(renameNoteItem).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('/tmp/plan.md');
+    expect(screen.getByRole('button', { name: 'Load text file' })).toBeEnabled();
   });
 
   it.each([

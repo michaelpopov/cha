@@ -20,7 +20,7 @@ import {
   type TextFileRequest,
 } from '../api/client';
 import { useAudioDownloads } from '../audioDownloads';
-import { readTextFile } from '../textFile';
+import { readTextFile, textFileAccept } from '../textFile';
 import { ChatPictureLayout } from './ChatPicture';
 import { SidebarToggle } from './TopBar';
 import type { AppState, DataAction, NavigationAction } from '../state/view';
@@ -942,7 +942,7 @@ export function ChatScreen({
               <FileUpIcon />
             </button>
             <input
-              accept="text/*,.txt,.md,.csv,.tsv,.json,.yaml,.yml,.toml,.xml,.log,.py,.js,.ts,.tsx,.jsx,.cpp,.h,.c,.rs,.go,.sh,.css,.html,.sql"
+              accept={textFileAccept}
               aria-label="Text file"
               className="cha-file-input"
               onChange={(event) => {

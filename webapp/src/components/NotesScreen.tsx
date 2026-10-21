@@ -17,6 +17,7 @@ import {
   type NoteItem,
   type NotesClient,
 } from '../api/client';
+import { readTextFile, textFileAccept } from '../textFile';
 import {
   appendNoteHtml,
   createNotesEditor,
@@ -26,6 +27,7 @@ import {
   noteHeadings,
   removeNoteLink,
   replaceLinkDestination,
+  replaceNoteHtml,
   selectNoteEnd,
   selectNoteHeading,
   withIsolatedHistory,
@@ -34,6 +36,7 @@ import {
 } from '../notes/editor';
 import { noteTooLargeMessage } from '../notes/pictures';
 import { notePageHtml, notePageName, promptPageUrl } from '../notes/pageImport';
+import { noteFileHtml, noteFileTooLarge, promptFilePath } from '../notes/fileImport';
 import { availableNoteName, noteItemPath } from '../notes/tree';
 import type { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveFailedMessage, useNoteSave, type NoteSaveHandle } from '../notes/useNoteSave';
@@ -41,6 +44,7 @@ import type { DataAction, NavigationAction } from '../state/view';
 import {
   CloseIcon,
   CodeIcon,
+  FileUpIcon,
   HighlighterIcon,
   ListIcon,
   PictureIcon,
@@ -59,6 +63,8 @@ type LeaveHandle = Pick<
 >;
 
 type Phase = 'empty' | 'loading' | 'ready' | 'error';
+
+const defaultNoteName = /^New note(?: [1-9]\d*)?$/u;
 
 function saveDetail(message: string): string {
   return message === noteSaveFailedMessage ? 'Check the vault and try again.' : message;
@@ -661,6 +667,9 @@ export function NotesScreen({
   const [fontSize, setFontSize] = useState(14);
   const [openError, setOpenError] = useState<string | null>(null);
   const [promptError, setPromptError] = useState<string | null>(null);
+  const [importingFile, setImportingFile] = useState(false);
+  const [promptPending, setPromptPending] = useState(false);
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -825,6 +834,7 @@ export function NotesScreen({
     setUseRegex(false);
     setCommandError(null);
     setPromptError(null);
+    setPromptPending(false);
     setLinkEdit(null);
     setLinkMenu(null);
   }, [activeNoteId]);
@@ -933,6 +943,61 @@ export function NotesScreen({
     });
   }
 
+  async function renameImportedNote(
+    note: NoteItem, title: string, source: 'page' | 'file', stillCurrent: () => boolean,
+  ) {
+    try {
+      const name = availableNoteName(itemsRef.current, note.parent_id, title, note.id);
+      const renamed = await client.renameNoteItem(note.id, name);
+      noteActions?.renamed(renamed);
+    } catch (failure: unknown) {
+      if (stillCurrent()) {
+        setPromptError(`The ${source} was imported, but the note could not be renamed. `
+          + publicErrorMessage(failure, 'Try renaming the note again.'));
+      }
+    }
+  }
+
+  async function loadNoteFile(file: File | string): Promise<boolean | null> {
+    const current = editorRef.current;
+    const noteId = noteIdRef.current;
+    const epoch = epochRef.current;
+    if (!current || noteId === null || !sameEditorContext(current, noteId, epoch)) return false;
+    const stillCurrent = () => sameEditorContext(current, noteId, epoch);
+    setImportingFile(true);
+    setPromptError(null);
+    try {
+      let source;
+      if (typeof file === 'string') {
+        source = await client.readNoteTextFile(file);
+      } else {
+        try {
+          source = { name: file.name, text: await readTextFile(file, noteFileTooLarge) };
+        } catch (failure: unknown) {
+          if (stillCurrent()) setPromptError((failure as Error).message);
+          return false;
+        }
+      }
+      if (!stillCurrent()) return false;
+      // A prompt can start with a path and still be ordinary text.
+      if (!source) return null;
+      const { html, title, preserveWhitespace } = noteFileHtml(source);
+      const accepted = await replaceNoteHtml(current, html,
+        (url) => client.readNotePicture(url), stillCurrent, preserveWhitespace);
+      if (!accepted || !stillCurrent()) return false;
+      const note = itemsRef.current.find((item) => item.id === noteId);
+      if (title && note && defaultNoteName.test(note.name)) {
+        await renameImportedNote(note, title, 'file', stillCurrent);
+      }
+      return stillCurrent();
+    } catch (failure: unknown) {
+      if (stillCurrent()) setPromptError(publicErrorMessage(failure, 'The file could not be loaded. Try again.'));
+      return false;
+    } finally {
+      setImportingFile(false);
+    }
+  }
+
   function onFindTerm(value: string) {
     setFindTerm(value);
     editorRef.current?.commands.setSearchTerm(value);
@@ -985,6 +1050,7 @@ export function NotesScreen({
     && editor !== null
     && !editor.isDestroyed
     && editor.isEditable
+    && !importingFile
     && !save.frozen;
 
   return (
@@ -1065,12 +1131,19 @@ export function NotesScreen({
         microphoneEnabled
         onChange={onDraftChange}
         onError={setPromptError}
+        onSubmittingChange={setPromptPending}
         onSubmit={async (text) => {
           const current = editorRef.current;
           const noteId = noteIdRef.current;
           const epoch = epochRef.current;
           if (!current || current.isDestroyed || !current.isEditable || noteId === null) {
             return { clear_input: false };
+          }
+          const filePath = promptFilePath(text);
+          if (filePath) {
+            const imported = await loadNoteFile(filePath);
+            if (imported !== null) return { clear_input: imported };
+            if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
           }
           const url = promptPageUrl(text);
           let accepted: boolean;
@@ -1080,21 +1153,12 @@ export function NotesScreen({
               if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
               const title = notePageName(page.title);
               const note = itemsRef.current.find((item) => item.id === noteId);
-              const rename = current.isEmpty && /^New note(?: [1-9]\d*)?$/u.test(note?.name ?? '');
+              const rename = current.isEmpty && defaultNoteName.test(note?.name ?? '');
               accepted = await appendNoteHtml(current, notePageHtml(page),
                 (url) => client.readNotePicture(url), () => sameEditorContext(current, noteId, epoch));
               if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
               if (accepted && rename && title && note) {
-                try {
-                  const name = availableNoteName(itemsRef.current, note.parent_id, title, noteId);
-                  const renamed = await client.renameNoteItem(noteId, name);
-                  noteActions?.renamed(renamed);
-                } catch (failure: unknown) {
-                  if (sameEditorContext(current, noteId, epoch)) {
-                    setPromptError('The page was imported, but the note could not be renamed. '
-                      + publicErrorMessage(failure, 'Try renaming the note again.'));
-                  }
-                }
+                await renameImportedNote(note, title, 'page', () => sameEditorContext(current, noteId, epoch));
               }
             } catch (failure: unknown) {
               if (sameEditorContext(current, noteId, epoch)) {
@@ -1121,6 +1185,29 @@ export function NotesScreen({
               className="cha-sidebar-toggle"
               dispatch={dispatch}
               sidebarOpen={sidebarOpen}
+            />
+            <button
+              aria-label="Load text file"
+              aria-busy={importingFile}
+              className="cha-speech-cache-toggle"
+              disabled={!submitEnabled || promptPending}
+              onClick={() => fileInput.current?.click()}
+              title="Load text file"
+              type="button"
+            >
+              <FileUpIcon />
+            </button>
+            <input
+              accept={textFileAccept}
+              aria-label="Text file"
+              className="cha-file-input"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void loadNoteFile(file);
+              }}
+              ref={fileInput}
+              type="file"
             />
             {transliteration}
           </div>

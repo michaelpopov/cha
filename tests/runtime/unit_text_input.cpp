@@ -341,9 +341,14 @@ TEST(TextInput, AcceptsOnlyStandaloneAbsolutePathsForAttachment) {
     (void)handle_text_input(*controller, "operator", utf8_path(path) + "\nExplain this file", {}, true);
     EXPECT_TRUE(SessionJournal(temporary.path).notes_prompt().empty());
     // A prompt can start with a path. A missing last part with spaces is not a file.
+    const auto text = utf8_path(files.root() / "build.log fails, why?");
     const auto prompt = handle_text_input(
-        *controller, "operator", utf8_path(files.root() / "build.log fails, why?"), {}, true);
-    EXPECT_NE(prompt.session.notice, "That file was not found.");
+        *controller, "operator", text, {}, true);
+    EXPECT_TRUE(prompt.clear_input);
+    ASSERT_TRUE(prompt.session.input_consumed);
+    ASSERT_FALSE(controller->view().transcript.empty());
+    EXPECT_EQ(controller->view().transcript.entries.back().kind, EntryKind::human);
+    EXPECT_EQ(controller->view().transcript.entries.back().text, text);
     EXPECT_TRUE(SessionJournal(temporary.path).notes_prompt().empty());
     // ChaWeb does not attach paths.
     (void)handle_text_input(*controller, "operator", utf8_path(path));

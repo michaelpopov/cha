@@ -466,20 +466,10 @@ ControllerUpdate SessionController::add_text_file(
         || name.find('\0') != std::string_view::npos) {
         return {.notice = "The file name is not valid."};
     }
-    if (text.size() > text_file_byte_limit) {
-        return {.notice = "This file is too large to add to a chat. The limit is 256 KiB of text."};
-    }
-    if (trim_view(text).empty()) return {.notice = "The file is empty."};
-    if (std::any_of(text.begin(), text.end(), [](unsigned char c) {
-            return c < 32 && c != '\n' && c != '\r' && c != '\t' && c != '\f';
-        })) {
-        return {.notice = "Choose a UTF-8 text file."};
-    }
     try {
-        // Disk attachments can contain invalid UTF-8, which JSON model requests cannot send.
-        (void)nlohmann::json(text).dump();
-    } catch (const nlohmann::json::type_error&) {
-        return {.notice = "Choose a UTF-8 text file."};
+        validate_text_file(text, "This file is too large to add to a chat. The limit is 256 KiB of text.");
+    } catch (const std::invalid_argument& error) {
+        return {.notice = error.what()};
     }
     TranscriptEntry entry;
     try {

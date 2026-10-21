@@ -33,6 +33,7 @@ function client(overrides: Partial<NotesClient> = {}): NotesClient {
     getNote: async () => { throw new Error('notes.get'); },
     readNotePicture: async () => new Uint8Array(),
     readNotePage: async () => { throw new Error('notes.readPage'); },
+    readNoteTextFile: async () => { throw new Error('notes.readTextFile'); },
     saveNote: async () => { throw new Error('notes.save'); },
     renameNoteItem: async () => { throw new Error('notes.rename'); },
     deleteNoteItem: async () => { throw new Error('notes.delete'); },

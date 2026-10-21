@@ -2,9 +2,11 @@ import { readFileBytes } from './notes/pictures';
 
 export const textFileByteLimit = 256 * 1024;
 export const textFileTooLarge = 'This file is too large to add to a chat. The limit is 256 KiB of text.';
+export const textFileAccept = 'text/*,.txt,.md,.markdown,.mdown,.mkd,.csv,.tsv,.json,.yaml,.yml,.toml,.xml,.log,'
+  + '.py,.js,.ts,.tsx,.jsx,.cpp,.h,.c,.rs,.go,.sh,.css,.html,.sql';
 
-export async function readTextFile(file: File): Promise<string> {
-  if (file.size > textFileByteLimit) throw new Error(textFileTooLarge);
+export async function readTextFile(file: File, tooLargeMessage = textFileTooLarge): Promise<string> {
+  if (file.size > textFileByteLimit) throw new Error(tooLargeMessage);
   let bytes: Uint8Array;
   try {
     bytes = await readFileBytes(file).bytes;

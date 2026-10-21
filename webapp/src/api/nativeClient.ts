@@ -5,6 +5,7 @@ import {
   type NoteItem,
   type NoteContent,
   type NotePage,
+  type TextFileRequest,
   type NotesClient,
   ChaError,
   ChaProtocolError,
@@ -820,6 +821,10 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       isNoteItem,
     ),
     getNote: (id) => call('notes.get', { id }, isNoteContent),
+    readNoteTextFile: (path) => call('notes.readTextFile', { path }, (value): value is TextFileRequest | null => (
+      value === null || (isRecord(value) && Object.keys(value).length === 2
+        && typeof value.name === 'string' && typeof value.text === 'string')
+    )),
     readNotePicture: async (url) => {
       const result = await call('notes.readPicture', { url }, (value): value is { base64: string } => (
         isRecord(value) && Object.keys(value).length === 1 && typeof value.base64 === 'string'

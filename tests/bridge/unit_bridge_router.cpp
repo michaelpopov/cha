@@ -172,6 +172,47 @@ protected:
     std::uint64_t next_id_{1};
 };
 
+TEST_F(BridgeRouterTest, NoteTextFileReadingUsesFullPathsAndValidatesTextWithoutChangingNotes) {
+    bootstrap_epoch();
+    const auto path = workspace_.root() / path_from_utf8("Plan с пробелами.md");
+    const auto read = [&] { return call("notes.readTextFile", {{"path", utf8_path(path)}}); };
+    std::ofstream(path, std::ios::binary) << "\xef\xbb\xbf# Title\n\nBody";
+    const auto reply = read();
+    ASSERT_TRUE(reply["ok"]) << reply;
+    EXPECT_EQ(reply["result"], (nlohmann::json{{"name", utf8_path(path)}, {"text", "# Title\n\nBody"}}));
+    EXPECT_TRUE(call("notes.list")["result"]["items"].empty());
+    for (const auto& [text, message] : std::vector<std::pair<std::string, std::string>>{
+            {" \n\t", "The file is empty."},
+            {std::string("a\0b", 3), "Choose a UTF-8 text file."},
+            {"\xff\xfe", "Choose a UTF-8 text file."},
+            {std::string(256 * 1024 + 1, 'x'),
+                "This file is too large to load into a note. The limit is 256 KiB of text."}}) {
+        std::ofstream file(path, std::ios::binary);
+        file.write(text.data(), static_cast<std::streamsize>(text.size()));
+        file.close();
+        const auto invalid = read();
+        EXPECT_FALSE(invalid["ok"]) << invalid;
+        EXPECT_EQ(invalid["error"]["message"], message);
+    }
+    const auto directory = call("notes.readTextFile", {{"path", utf8_path(workspace_.root())}});
+    EXPECT_FALSE(directory["ok"]);
+    EXPECT_EQ(directory["error"]["message"], "The path does not refer to a regular file.");
+    const auto missing = call("notes.readTextFile", {{"path", utf8_path(workspace_.root() / "missing.md")}});
+    EXPECT_FALSE(missing["ok"]);
+    EXPECT_EQ(missing["error"]["message"], "That file was not found.");
+    const auto prompt = call("notes.readTextFile", {{"path", utf8_path(workspace_.root() / "build.log fails, why?")}});
+    ASSERT_TRUE(prompt["ok"]) << prompt;
+    EXPECT_TRUE(prompt["result"].is_null());
+    for (const auto& params : std::vector<nlohmann::json>{
+            nlohmann::json::object(), {{"path", "relative.md"}}, {{"path", 3}},
+            {{"path", utf8_path(path)}, {"extra", true}}, {{"path", utf8_path(path) + "\ntext"}},
+            {{"path", utf8_path(path) + std::string(1, '\0')}}}) {
+        EXPECT_FALSE(call("notes.readTextFile", params)["ok"]);
+    }
+    ++epoch_;
+    EXPECT_EQ(read()["error"]["code"], "vault_changed");
+}
+
 TEST_F(BridgeRouterTest, NotePageReadingUsesConfiguredReaderAndKeepsLongArticles) {
     bootstrap_epoch();
     const std::string article = "A **formatted** article.\n\n" + std::string(80000, 'x');

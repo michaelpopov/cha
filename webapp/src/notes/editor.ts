@@ -26,6 +26,7 @@ import {
 import { Decoration, DecorationSet, type EditorProps, type EditorView } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import { find } from 'linkifyjs';
+import { ChaError } from '../api/client';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 import {
   clipboardImageFile,
@@ -391,7 +392,7 @@ async function importNoteSlice(
   slice: Slice,
   readPicture: NotePictureReader,
   stillCurrent: () => boolean,
-  place: 'end' | 'paste' | 'drop',
+  place: 'end' | 'replace' | 'paste' | 'drop',
   byteLimit: number,
   at: SelectionBookmark = editor.state.selection.getBookmark(),
 ): Promise<boolean> {
@@ -437,17 +438,20 @@ async function importNoteSlice(
       return Fragment.fromArray(nodes);
     };
     let content = embed(slice.content);
+    if (place === 'replace' && !content.textBetween(0, content.size).trim() && !hasPicture(content)) {
+      throw new ChaError('invalid_argument', noteFileNoText);
+    }
     if (!content.size) {
       if (place === 'end') throw new Error('The page has no readable text.');
       return false;
     }
     const build = () => {
       const tr = editor.state.tr;
-      if (place === 'end') {
+      if (place === 'end' || place === 'replace') {
         const doc = editor.state.doc;
         const empty = doc.childCount === 1 && doc.firstChild?.type.name === 'paragraph'
           && doc.firstChild.content.size === 0;
-        tr.replaceWith(empty ? 0 : doc.content.size, doc.content.size, content);
+        tr.replaceWith(empty || place === 'replace' ? 0 : doc.content.size, doc.content.size, content);
       } else {
         const open = Slice.maxOpen(content);
         const selection = tracked.current().resolve(editor.state.doc);
@@ -475,7 +479,7 @@ async function importNoteSlice(
       tr.setMeta(notesPictureFallbackMeta, withoutLastPicture);
       tr.setStoredMarks([]);
       // Paste rules and scrolling expect ProseMirror's paste and drop metadata.
-      if (place !== 'end') tr.setMeta('uiEvent', place).scrollIntoView();
+      if (place === 'paste' || place === 'drop') tr.setMeta('uiEvent', place).scrollIntoView();
       return tr;
     };
     // The size gate can retry after paste rules, without changing existing pictures.
@@ -499,7 +503,7 @@ async function importNoteSlice(
     };
     const before = editor.state.doc;
     editor.view.dispatch(build());
-    return !editor.state.doc.eq(before);
+    return !editor.state.doc.eq(before) || (place === 'replace' && editor.state.doc.content.eq(content));
   } finally {
     tracked.stop();
     finishImport();
@@ -517,6 +521,21 @@ export async function appendNoteHtml(
   body.innerHTML = html;
   const content = PmDOMParser.fromSchema(editor.schema).parse(body).content;
   return importNoteSlice(editor, new Slice(content, 0, 0), readPicture, stillCurrent, 'end', byteLimit);
+}
+
+export const noteFileNoText = 'The file has no readable text.';
+
+export async function replaceNoteHtml(
+  editor: Editor,
+  html: string,
+  readPicture: NotePictureReader,
+  stillCurrent: () => boolean,
+  preserveWhitespace = false,
+): Promise<boolean> {
+  const body = document.createElement('div');
+  body.innerHTML = html;
+  const content = PmDOMParser.fromSchema(editor.schema).parse(body, { preserveWhitespace }).content;
+  return importNoteSlice(editor, new Slice(content, 0, 0), readPicture, stillCurrent, 'replace', noteDocumentByteLimit);
 }
 
 export function notesExtensions() {

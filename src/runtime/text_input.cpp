@@ -4,12 +4,11 @@
 #include "util/path_name.h"
 #include "util/text.h"
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 
 namespace cha {
@@ -30,31 +29,14 @@ std::optional<ControllerUpdate> attach_file_path(
     SessionController& controller, const std::filesystem::path& path,
     std::shared_ptr<SubmissionState> submission) {
     if (submission && submission->expired()) return ControllerUpdate{.notice = "Submission expired"};
-    std::error_code error;
-    const auto status = std::filesystem::status(path, error);
-    const bool missing = status.type() == std::filesystem::file_type::not_found;
-    if (missing || error) {
-        // "C:\logs\build.log fails, why?" is a prompt, not a missing file.
-        if (std::ranges::any_of(utf8_path(path.filename()), is_space)) return std::nullopt;
-        if (missing) return ControllerUpdate{.notice = "That file was not found."};
-        return ControllerUpdate{.notice = "The file could not be read. Check the path and permissions."};
+    std::optional<std::string> text;
+    try {
+        text = read_text_file(path);
+    } catch (const std::invalid_argument& error) {
+        return ControllerUpdate{.notice = error.what()};
     }
-    if (!std::filesystem::is_regular_file(status)) {
-        return ControllerUpdate{.notice = "The path does not refer to a regular file."};
-    }
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return ControllerUpdate{.notice = "The file could not be read. Check the path and permissions."};
-    // Read one extra byte so a large or growing file is rejected without loading it all.
-    std::string text(text_file_byte_limit + 1, '\0');
-    file.read(text.data(), static_cast<std::streamsize>(text.size()));
-    text.resize(static_cast<std::size_t>(file.gcount()));
-    if (file.bad() || (file.fail() && !file.eof())) {
-        return ControllerUpdate{.notice = "The file could not be read. Try again."};
-    }
-    if (text.size() <= text_file_byte_limit && text.starts_with("\xef\xbb\xbf")) {
-        text.erase(0, 3);
-    }
-    return controller.add_text_file(utf8_path(path), text, std::move(submission));
+    if (!text) return std::nullopt;
+    return controller.add_text_file(utf8_path(path), *text, std::move(submission));
 }
 
 std::optional<std::int64_t> parse_note_reference(std::string_view input) {
@@ -263,7 +245,7 @@ CommandResult handle_text_input(
         result.clear_input = result.session.input_consumed;
         return result;
     }
-    const Command command = parse_command(input);
+    Command command = parse_command(input);
     std::string_view trimmed = trim_view(input);
     if (trimmed.size() >= 2 && trimmed.front() == '"' && trimmed.back() == '"') {
         // Windows "Copy as path" puts quotes around the path.
@@ -282,6 +264,7 @@ CommandResult handle_text_input(
                 result.clear_input = result.session.input_consumed;
                 return result;
             }
+            command.kind = CommandKind::text;
         }
     }
     if (command.kind == CommandKind::text) {

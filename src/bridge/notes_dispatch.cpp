@@ -3,6 +3,8 @@
 #include "app/application.h"
 #include "bridge/request_params.h"
 #include "storage/note_storage.h"
+#include "util/path_name.h"
+#include "util/text_file.h"
 
 #include <stdexcept>
 
@@ -88,6 +90,19 @@ std::optional<nlohmann::json> dispatch_notes_operation(
     case Method::notes_get:
         require_only_keys(params, {"id"});
         return nlohmann::json(application.get_note(require_note_id(params), epoch));
+    case Method::notes_read_text_file: {
+        require_only_keys(params, {"path"});
+        const auto name = require_string(params, "path");
+        const auto path = path_from_utf8(name);
+        if (name.find_first_of("\r\n") != std::string::npos || name.find('\0') != std::string::npos
+            || !path.is_absolute()) {
+            throw std::invalid_argument("Use a full file path.");
+        }
+        const auto text = read_text_file(path);
+        if (!text) return nlohmann::json(nullptr);
+        validate_text_file(*text, "This file is too large to load into a note. The limit is 256 KiB of text.");
+        return nlohmann::json{{"name", name}, {"text", *text}};
+    }
     case Method::notes_save:
         require_only_keys(params, {"id", "document"});
         application.save_note(

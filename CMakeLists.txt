@@ -342,6 +342,7 @@ add_library(cha_lib STATIC
     src/runtime/live_session.cpp
     src/runtime/live_session_manager.cpp
     src/runtime/text_input.cpp
+    src/util/text_file.cpp
     src/bridge/bridge_protocol.cpp
     src/bridge/bridge_router.cpp
     src/bridge/settings_dispatch.cpp

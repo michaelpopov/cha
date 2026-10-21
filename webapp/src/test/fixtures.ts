@@ -385,6 +385,7 @@ export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}):
     getNote: unavailable('notes.get'),
     readNotePicture: async () => new Uint8Array(),
     readNotePage: unavailable('notes.readPage'),
+    readNoteTextFile: unavailable('notes.readTextFile'),
     saveNote: unavailable('notes.save'),
     renameNoteItem: unavailable('notes.rename'),
     deleteNoteItem: unavailable('notes.delete'),
