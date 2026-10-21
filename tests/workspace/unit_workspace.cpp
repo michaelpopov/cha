@@ -214,7 +214,7 @@ TEST(Workspace, PersonaTemplatesExpandNestedAndSharedFilesWithVariables) {
     test::TestWorkspace fixture;
     const auto personas = fixture.root() / "personas";
     const auto reader = personas / "reader";
-    std::ofstream(reader / "persona.toml")
+    std::ofstream(reader / "persona.toml", std::ios::binary)
         << "display_name = 'Reader'\n"
            "[prompt]\n"
            "greeting = 'Hello'\n"
@@ -223,15 +223,15 @@ TEST(Workspace, PersonaTemplatesExpandNestedAndSharedFilesWithVariables) {
     const std::string prompt_template =
         "$${greeting}, I am $${persona.display_name} ($${persona.id}).\n"
         "$$(profile/BIO.md)$$(../shared.md)\n$${greeting}\n";
-    std::ofstream(reader / "PERSONA.md") << prompt_template;
+    std::ofstream(reader / "PERSONA.md", std::ios::binary) << prompt_template;
     std::filesystem::create_directories(reader / "profile");
-    std::ofstream(reader / "profile" / "config.toml")
+    std::ofstream(reader / "profile" / "config.toml", std::ios::binary)
         << "[prompt]\ngreeting = 'Welcome'\n";
-    std::ofstream(reader / "profile" / "BIO.md") << "$$(DETAILS.md)";
-    std::ofstream(reader / "profile" / "DETAILS.md")
+    std::ofstream(reader / "profile" / "BIO.md", std::ios::binary) << "$$(DETAILS.md)";
+    std::ofstream(reader / "profile" / "DETAILS.md", std::ios::binary)
         << "$${greeting}, $${persona.display_name}.\n";
-    std::ofstream(personas / "shared.md") << "Shared background.";
-    std::ofstream(reader / "NOTES.md") << "$$(unused.md)";
+    std::ofstream(personas / "shared.md", std::ios::binary) << "Shared background.";
+    std::ofstream(reader / "NOTES.md", std::ios::binary) << "$$(unused.md)";
 
     const Workspace workspace = Workspace::load(fixture.root());
     const auto* persona = workspace.find_persona("reader");
@@ -244,10 +244,10 @@ TEST(Workspace, PersonaTemplatesExpandNestedAndSharedFilesWithVariables) {
 TEST(Workspace, PersonaPromptsRemainOptionalAndSupportPlainTextAndEscapes) {
     test::TestWorkspace fixture;
     const auto path = fixture.root() / "personas" / "reader" / "PERSONA.md";
-    std::ofstream(path) << "Plain text with $5 and $$math.\n";
+    std::ofstream(path, std::ios::binary) << "Plain text with $5 and $$math.\n";
     EXPECT_EQ(Workspace::load(fixture.root()).find_persona("reader")->prompt,
         "Plain text with $5 and $$math.\n");
-    std::ofstream(path) << "$$${literal} $$$(file.md)\n";
+    std::ofstream(path, std::ios::binary) << "$$${literal} $$$(file.md)\n";
     EXPECT_EQ(Workspace::load(fixture.root()).find_persona("reader")->prompt,
         "$${literal} $$(file.md)\n");
     std::filesystem::remove(path);
@@ -630,7 +630,7 @@ TEST(Workspace, ProviderlessDraftIgnoresWebSearchOverride) {
     fixture.add_character("draft", "Draft");
     const auto path = fixture.root() / "characters/draft/character.toml";
     const std::string source = "display_name = \"Draft\"\nweb_search = \"off\"\n";
-    std::ofstream(path) << source;
+    std::ofstream(path, std::ios::binary) << source;
     LoadWarningCollector warnings;
     const auto workspace = Workspace::load(fixture.root(), &warnings);
     EXPECT_FALSE(workspace.find_character("draft")->web_search);
@@ -808,7 +808,7 @@ TEST(Workspace, LoadsLegacyMinimalReasoningAsLowAndNamesAffectedFiles) {
     const auto warnings = file_bytes(log_file);
     for (const auto* name : {"system/providers/test/config.toml", "characters/guide/character.toml"}) {
         EXPECT_NE(warnings.find("Using low instead of obsolete minimal reasoning effort in "
-            + utf8_path(fixture.root() / name)), std::string::npos);
+            + utf8_path((fixture.root() / name).make_preferred())), std::string::npos);
     }
 }
 
@@ -930,18 +930,18 @@ TEST(Workspace, AddsForumMemberPromptAndResolvesVariableOverridesAndDefaultPerso
     test::TestWorkspace fixture;
     fixture.add_persona("author", "Author", "AUTHOR_ONLY_BODY");
     fixture.add_persona("reader", "Reader", "READER_ONLY_BODY");
-    std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
+    std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml", std::ios::binary)
         << "display_name = \"The Lobby\"\n"
            "default_persona = \"reader\"\n";
     fixture.write_character_config(
         "display_name = \"Guide\"\nprovider = \"test\"\n"
         "[prompt]\nvoice = \"definition\"\n");
-    std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
+    std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md", std::ios::binary)
         << "Base prompt: $${voice}\n";
     fixture.write_character_defaults("[prompt]\nvoice = \"default\"\n");
     std::ofstream(
         fixture.root() / "forums" / "lobby" / "members" / "guide"
-            / "character.toml")
+            / "character.toml", std::ios::binary)
         << "[prompt]\nvoice = \"member\"\n";
     std::ofstream(
         fixture.root() / "forums" / "lobby" / "members" / "guide"
@@ -1003,7 +1003,7 @@ TEST(Workspace, EscapesParticipantNamesAndPreservesProfileText) {
     const auto prompt = Workspace::load(fixture.root())
         .character_definition("lobby", "guide").system_prompt;
     EXPECT_NE(prompt.find(
-        R"(The current human participant is "Миша \"M\" & <reader>'s".)"),
+        "The current human participant is \"Миша \\\"M\\\" & <reader>'s\"."),
         std::string::npos);
     EXPECT_NE(prompt.find(
         "<participant_profile name=\"Миша &quot;M&quot; &amp; &lt;reader&gt;&apos;s\">\n"
@@ -1040,7 +1040,7 @@ TEST(Workspace, DescribesOtherForumMembersAndSharedReplies) {
         .character_definition("lobby", "guide").system_prompt;
     EXPECT_NE(prompt.find(
         "Other characters currently participating in this forum (JSON): "
-        R"([{"name":"Аналитик","description":"Independent \"analyst\" & observer."},{"name":"Observer"}].)"),
+        "[{\"name\":\"Аналитик\",\"description\":\"Independent \\\"analyst\\\" & observer.\"},{\"name\":\"Observer\"}]."),
         std::string::npos);
     EXPECT_NE(prompt.find(
         "Your completed replies are included in the shared chat history "
@@ -1049,10 +1049,10 @@ TEST(Workspace, DescribesOtherForumMembersAndSharedReplies) {
 
 TEST(Workspace, BuildsCharacterDefinitionWithVariantsBeforeSystemPromptAssembly) {
     test::TestWorkspace fixture;
-    std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
+    std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md", std::ios::binary)
         << "Voice.\n<character_profile>Base.</character_profile>\nTail.";
     std::ofstream(fixture.root() / "forums" / "lobby" / "members" / "guide"
-        / "CHARACTER.md") << "Forum trait.";
+        / "CHARACTER.md", std::ios::binary) << "Forum trait.";
     const Workspace workspace = Workspace::load(fixture.root());
     const auto original = workspace.character_definition("lobby", "guide");
     const auto definition = workspace.character_definition("lobby", "guide", "\nVariant.\n");
@@ -1096,8 +1096,8 @@ TEST(Workspace, BuildsEntranceCharacterDefinitionWithVariants) {
 TEST(Workspace, InsertsCharacterVariantsBeforeLastProfileClosingTag) {
     test::TestWorkspace fixture;
     const auto directory = fixture.root() / "characters" / "guide";
-    std::ofstream(directory.parent_path() / "character-voice.md") << "Character voice.";
-    std::ofstream(directory / "PROFILE.md") << "Base profile.";
+    std::ofstream(directory.parent_path() / "character-voice.md", std::ios::binary) << "Character voice.";
+    std::ofstream(directory / "PROFILE.md", std::ios::binary) << "Base profile.";
     const std::vector<std::pair<std::string, std::string>> cases{
         {
             "$$(../character-voice.md)\n\n<character_profile>\n"
@@ -1115,7 +1115,7 @@ TEST(Workspace, InsertsCharacterVariantsBeforeLastProfileClosingTag) {
         },
     };
     for (const auto& [prompt, expected] : cases) {
-        std::ofstream(directory / "CHARACTER.md") << prompt;
+        std::ofstream(directory / "CHARACTER.md", std::ios::binary) << prompt;
         const Workspace workspace = Workspace::load(fixture.root());
         const auto definition = workspace.character_definition("lobby", "guide", "Variant trait.");
         EXPECT_EQ(definition.character_prompt, expected);
@@ -1133,12 +1133,12 @@ TEST(Workspace, CombinesBaseForumAndVariantDescriptionsInsideProfile) {
     test::TestWorkspace fixture;
     const auto character = fixture.root() / "characters" / "guide";
     const auto member = fixture.root() / "forums" / "lobby" / "members" / "guide";
-    std::ofstream(character / "CHARACTER.md")
+    std::ofstream(character / "CHARACTER.md", std::ios::binary)
         << "Character voice.\n<character_profile>$$(PROFILE.md)</character_profile>\n";
-    std::ofstream(character / "PROFILE.md") << "Base profile.\n\n";
-    std::ofstream(member / "CHARACTER.md")
+    std::ofstream(character / "PROFILE.md", std::ios::binary) << "Base profile.\n\n";
+    std::ofstream(member / "CHARACTER.md", std::ios::binary)
         << "<character_profile>$$(PROFILE.md)</character_profile>";
-    std::ofstream(member / "PROFILE.md") << "\nForum trait for $${forum.display_name}.\n\n";
+    std::ofstream(member / "PROFILE.md", std::ios::binary) << "\nForum trait for $${forum.display_name}.\n\n";
     const Workspace workspace = Workspace::load(fixture.root());
     const auto definition = workspace.character_definition("lobby", "guide", "\n\nVariant trait.\n\n");
     const std::string expected =
@@ -2287,7 +2287,7 @@ TEST(Workspace, IgnoresOpenAiSubscriptionWebSearchOverrides) {
             : "characters/guide/character.toml";
         const std::string source = "display_name = \"" + std::string(assistant ? "Assistant" : "Guide")
             + "\"\nprovider = \"chatgpt\"\nweb_search = \"required\"\n";
-        std::ofstream(fixture.root() / path) << source;
+        std::ofstream(fixture.root() / path, std::ios::binary) << source;
         LoadWarningCollector warnings;
         const auto workspace = Workspace::load(fixture.root(), &warnings);
         const auto id = assistant ? workspace_assistant_id : "guide";

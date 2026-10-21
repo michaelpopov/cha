@@ -673,7 +673,7 @@ void validate_configuration(
         while ((position = message.find(virtual_root, position))
             != std::string::npos) {
             const std::size_t end = position + virtual_root.size();
-            if (end < message.size() && message[end] == '/') {
+            if (end < message.size() && (message[end] == '/' || message[end] == '\\')) {
                 message.erase(position, virtual_root.size() + 1);
             } else {
                 message.replace(position, virtual_root.size(), "workspace");

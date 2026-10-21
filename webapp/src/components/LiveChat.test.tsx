@@ -1065,8 +1065,7 @@ describe('live chat', () => {
   });
 
   it.each(['toggle', 'navigation'] as const)('stops automatic playback and discards queued replies on %s', async (action) => {
-    const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
-    const stop = vi.spyOn(TextToSpeechSession.prototype, 'stop');
+    const audios = mockAudioPlayback();
     const events = drivableEvents();
     const client = fixtureClient({ getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture });
     const resolveAudioSource = vi.spyOn(client, 'resolveAudioSource');
@@ -1080,14 +1079,15 @@ describe('live chat', () => {
     act(() => events.handlers[0].onSnapshot({ ...snapshotFixture,
       transcript: [entry, { ...entry, id: 2, text: 'Second reply' }] }));
     await screen.findByRole('button', { name: "Stop reading Assistant's response" });
+    await waitFor(() => expect(audios).toHaveLength(1));
     if (action === 'toggle') fireEvent.click(toggle);
     else fireEvent.click(screen.getByRole('button', { name: /^Planning/ }));
-    await waitFor(() => expect(stop).toHaveBeenCalledOnce());
-    expect(play).toHaveBeenCalledOnce();
+    await waitFor(() => expect(audios[0].pause).toHaveBeenCalledOnce());
+    expect(audios).toHaveLength(1);
     expect(resolveAudioSource.mock.calls.map((call) => call[2])).toEqual([1]);
     if (action === 'toggle') {
       fireEvent.click(toggle);
-      expect(play).toHaveBeenCalledOnce();
+      expect(audios).toHaveLength(1);
     }
   });
 

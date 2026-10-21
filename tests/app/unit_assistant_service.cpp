@@ -46,6 +46,9 @@ std::string reference_from_sources(bool chaweb_host) {
     text += file_text(root / "docs" / "MaintainerGuide.md");
     text.push_back('\n');
     text += file_text(root / "packaging" / "linux" / "README.md");
+    for (std::size_t position = 0; (position = text.find("\r\n", position)) != std::string::npos;) {
+        text.erase(position, 1);
+    }
     return text;
 }
 

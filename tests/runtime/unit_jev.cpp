@@ -166,9 +166,10 @@ TEST(JevConfiguration, UnknownFieldsAreIgnoredAndTargetMarkersAreNotSavedDefault
     auto store = WorkspaceConfigStore::open(test::import_test_database(fixture.root()));
     for (const auto* marker : {"*", "-"}) {
         EXPECT_THROW(store->apply_forum_default_character("lobby", marker), std::invalid_argument);
-        test::TestWorkspace invalid;
-        invalid.add_character(marker, "Invalid");
-        EXPECT_THROW((void)Workspace::load(invalid.root()), std::runtime_error);
+        auto files = store->snapshot()->source_files();
+        files[std::string("characters/") + marker + "/character.toml"] =
+            "display_name = 'Invalid'\nprovider = 'test'\n";
+        EXPECT_THROW((void)Workspace::load(fixture.root(), files), std::runtime_error);
     }
 }
 

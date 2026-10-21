@@ -105,7 +105,7 @@ TEST(Application, PictureReadsNeedNoSessionAndUseApplicationErrors) {
 
 TEST(Application, CharacterTextAndPictureFilesUseTheirOwnReadAndEditPaths) {
     test::TestWorkspace workspace;
-    std::ofstream(workspace.root() / "characters/guide/NOTES.txt") << "# Plain text\n<not-markdown>";
+    std::ofstream(workspace.root() / "characters/guide/NOTES.txt", std::ios::binary) << "# Plain text\n<not-markdown>";
     std::ofstream(workspace.root() / "characters/guide/PICTURE.png") << "png";
     std::ofstream(workspace.root() / "characters/guide/PICTURE.jpg") << "jpg";
     auto application = Application::open(make_command(
@@ -654,7 +654,7 @@ TEST(Application, StartupLoadsHarmlessFieldsAndKeepsKnownSettings) {
 TEST(Application, SharedCharacterInstructionsPersistAndRebuildPrompts) {
     test::TestWorkspace workspace;
     std::ofstream(workspace.root() / "characters/character-voice.md") << "Original voice.";
-    std::ofstream(workspace.root() / "characters/guide/CHARACTER.md")
+    std::ofstream(workspace.root() / "characters/guide/CHARACTER.md", std::ios::binary)
         << "$$(../character-voice.md)\nGuide profile.";
     const auto database = test::import_test_database(workspace.root());
     auto application = Application::open(make_command(workspace, database));

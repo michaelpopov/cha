@@ -3035,6 +3035,7 @@ it('allows repeated vault switches without reloading the native document', async
   const vault = await screen.findByLabelText('Vault');
   window.history.replaceState(null, '', '/#/s/entrance/welcome/');
   for (const [index, name] of ['Projects', 'Personal'].entries()) {
+      await waitFor(() => expect(vault).toBeEnabled());
     await userEvent.selectOptions(vault, name);
     await waitFor(() => expect(requests.filter(({ method }) => method === 'vault.switch'))
       .toHaveLength(index + 1));

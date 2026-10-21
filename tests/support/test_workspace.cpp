@@ -25,7 +25,7 @@ std::string quoted(std::string_view value) {
 void write_provider_config(
     const std::filesystem::path& path,
     const ModelBackendConfig& config) {
-    std::ofstream file(path);
+    std::ofstream file(path, std::ios::binary);
     file << "host = " << quoted(config.host) << '\n'
          << "port = " << config.port << '\n'
          << "base_path = " << quoted(config.base_path) << '\n'
@@ -66,7 +66,7 @@ void write_provider_config(
 void write_style_config(
     const std::filesystem::path& path,
     const CharacterAppearance& appearance) {
-    std::ofstream(path)
+    std::ofstream(path, std::ios::binary)
         << "font = " << quoted(to_string(appearance.font)) << '\n'
         << "style = " << quoted(to_string(appearance.style)) << '\n'
         << "weight = " << quoted(to_string(appearance.weight)) << '\n'
@@ -87,25 +87,25 @@ TestWorkspace::TestWorkspace()
     const auto member = root_ / "forums" / "lobby" / "members" / "guide";
     std::filesystem::create_directories(definition);
     std::filesystem::create_directories(member);
-    std::ofstream(member / "character.toml") << "# forum membership\n";
+    std::ofstream(member / "character.toml", std::ios::binary) << "# forum membership\n";
     std::filesystem::create_directories(root_ / "personas");
     write_provider("test", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
     std::filesystem::create_directories(root_ / "system" / "assistant");
-    std::ofstream(root_ / "system" / "assistant" / "character.toml")
+    std::ofstream(root_ / "system" / "assistant" / "character.toml", std::ios::binary)
         << "display_name = \"Assistant\"\nprovider = \"test\"\n";
     std::filesystem::create_directories(root_ / "web" / "assets");
-    std::ofstream(root_ / "web" / "index.html")
+    std::ofstream(root_ / "web" / "index.html", std::ios::binary)
         << "<!doctype html><html><head><title>cha</title></head>"
            "<body>test shell</body></html>\n";
-    std::ofstream(root_ / "web" / "assets" / "app.js")
+    std::ofstream(root_ / "web" / "assets" / "app.js", std::ios::binary)
         << "console.log('test asset');\n";
-    std::ofstream(root_ / "forums" / "lobby" / "config.toml")
+    std::ofstream(root_ / "forums" / "lobby" / "config.toml", std::ios::binary)
         << "display_name = \"The Lobby\"\n";
-    std::ofstream(root_ / "forums" / "lobby" / "FORUM.md")
+    std::ofstream(root_ / "forums" / "lobby" / "FORUM.md", std::ios::binary)
         << "Forum instructions\n";
     write_character_defaults("# Provider selection is per character.\n");
     write_character_config("display_name = \"Guide\"\nprovider = \"test\"\n");
-    std::ofstream(definition / "CHARACTER.md") << "Character instructions\n";
+    std::ofstream(definition / "CHARACTER.md", std::ios::binary) << "Character instructions\n";
     add_persona("reader", "Reader");
 }
 
@@ -120,7 +120,7 @@ void TestWorkspace::write_provider(
     const std::filesystem::path directory =
         root_ / "system" / "providers" / std::string(name);
     std::filesystem::create_directories(directory);
-    std::ofstream(directory / "config.toml") << contents;
+    std::ofstream(directory / "config.toml", std::ios::binary) << contents;
 }
 
 void TestWorkspace::write_style(
@@ -129,7 +129,7 @@ void TestWorkspace::write_style(
     const std::filesystem::path directory =
         root_ / "system" / "styles" / std::string(name);
     std::filesystem::create_directories(directory);
-    std::ofstream(directory / "config.toml") << contents;
+    std::ofstream(directory / "config.toml", std::ios::binary) << contents;
 }
 
 void TestWorkspace::write_voice(
@@ -143,13 +143,13 @@ void TestWorkspace::write_voice(
 
 void TestWorkspace::write_character_config(std::string_view contents) const {
     std::ofstream(
-        root_ / "characters" / "guide" / "character.toml")
+        root_ / "characters" / "guide" / "character.toml", std::ios::binary)
         << contents;
 }
 
 void TestWorkspace::write_character_defaults(std::string_view contents) const {
     std::ofstream(
-        root_ / "forums" / "lobby" / "members" / "character_defaults.toml")
+        root_ / "forums" / "lobby" / "members" / "character_defaults.toml", std::ios::binary)
         << contents;
 }
 
@@ -159,9 +159,9 @@ void TestWorkspace::add_persona(
     std::string_view prompt) const {
     const std::filesystem::path directory = root_ / "personas" / std::string(id);
     std::filesystem::create_directories(directory);
-    std::ofstream(directory / "persona.toml")
+    std::ofstream(directory / "persona.toml", std::ios::binary)
         << "display_name = \"" << display_name << "\"\n";
-    if (!prompt.empty()) std::ofstream(directory / "PERSONA.md") << prompt;
+    if (!prompt.empty()) std::ofstream(directory / "PERSONA.md", std::ios::binary) << prompt;
 }
 
 void TestWorkspace::add_character(
@@ -169,10 +169,10 @@ void TestWorkspace::add_character(
     std::string_view display_name) const {
     const std::filesystem::path directory = root_ / "characters" / std::string(id);
     std::filesystem::create_directories(directory);
-    std::ofstream(directory / "character.toml")
+    std::ofstream(directory / "character.toml", std::ios::binary)
         << "display_name = \"" << display_name << "\"\n"
            "provider = \"test\"\n";
-    std::ofstream(directory / "CHARACTER.md") << display_name << " instructions\n";
+    std::ofstream(directory / "CHARACTER.md", std::ios::binary) << display_name << " instructions\n";
 }
 
 void TestWorkspace::add_forum(
@@ -182,12 +182,12 @@ void TestWorkspace::add_forum(
     const std::filesystem::path directory = root_ / "forums" / std::string(id);
     std::filesystem::create_directories(directory / "members" / std::string(member));
     std::ofstream(
-        directory / "members" / std::string(member) / "character.toml")
+        directory / "members" / std::string(member) / "character.toml", std::ios::binary)
         << "# forum membership\n";
-    std::ofstream(directory / "config.toml")
+    std::ofstream(directory / "config.toml", std::ios::binary)
         << "display_name = \"" << display_name << "\"\n";
-    std::ofstream(directory / "FORUM.md") << display_name << " forum instructions\n";
-    std::ofstream(directory / "members" / "character_defaults.toml")
+    std::ofstream(directory / "FORUM.md", std::ios::binary) << display_name << " forum instructions\n";
+    std::ofstream(directory / "members" / "character_defaults.toml", std::ios::binary)
         << "# Provider selection is per character.\n";
 }
 

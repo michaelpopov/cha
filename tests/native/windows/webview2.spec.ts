@@ -430,7 +430,7 @@ test.describe('WebView2 native host', () => {
     await waitForApplication(page);
   });
 
-  test('Notes imports supported slices atomically and keeps empty paste and file drops unchanged', async () => {
+  test('Notes imports supported text, skips invalid pictures and keeps empty paste and file drops unchanged', async () => {
     await newNote(page, 'Windows imports');
     await pasteNote(page, '<html xmlns:o="urn:schemas-microsoft-com:office:office"><p><span style="color:red;background-color:yellow">Word</span></p><table><tr><td>one</td><td><b>two</b></td></tr></table></html>');
     await expect(page.locator('.tiptap mark')).toHaveText('Word');
@@ -445,6 +445,9 @@ test.describe('WebView2 native host', () => {
     await pasteNote(page, '<iframe src="https://example.com"></iframe>');
     expect(await noteJSON(page)).toEqual(before);
     await pasteNote(page, '<p>must not insert<img src="data:image/png;base64,%%%"></p>');
+    await expect(page.locator('.tiptap')).toHaveText('must not insert');
+    await expect(page.locator('.tiptap img')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Undo', exact: true }).click();
     expect(await noteJSON(page)).toEqual(before);
     await page.locator('.tiptap').evaluate((element) => {
       const data = new DataTransfer();
@@ -464,7 +467,7 @@ test.describe('WebView2 native host', () => {
     const original = await noteJSON(page);
     await page.locator('.tiptap').click();
     await page.keyboard.press('Control+f');
-    await page.getByLabel('Find', { exact: true }).fill('cat');
+    await page.getByRole('textbox', { name: 'Find', exact: true }).fill('cat');
     await page.getByLabel('Whole word', { exact: true }).check();
     await expect(page.locator('.cha-notes-find')).toContainText('/ 3');
     await page.getByLabel('Replace', { exact: true }).fill('$1');
@@ -480,9 +483,9 @@ test.describe('WebView2 native host', () => {
     await page.getByLabel('Regular expression', { exact: true }).check();
     await expect(page.getByLabel('Whole word', { exact: true })).not.toBeChecked();
     await expect(page.getByLabel('Whole word', { exact: true })).toBeDisabled();
-    await page.getByLabel('Find', { exact: true }).fill('(?<=c)at');
+    await page.getByRole('textbox', { name: 'Find', exact: true }).fill('(?<=c)at');
     await expect(page.locator('.cha-notes-find')).toContainText('No matches');
-    await page.getByLabel('Find', { exact: true }).fill('cat');
+    await page.getByRole('textbox', { name: 'Find', exact: true }).fill('cat');
     await page.getByLabel('Match case', { exact: true }).check();
     await expect(page.locator('.cha-notes-find')).toContainText('/ 3');
     await page.getByRole('button', { name: 'Close', exact: true }).click();
@@ -492,7 +495,7 @@ test.describe('WebView2 native host', () => {
     await waitForApplication(page);
   });
 
-  test('Notes pictures preserve four formats, enforce the raw limit and reopen offline', async () => {
+  test('Notes pictures preserve four formats, skip oversized pictures and reopen offline', async () => {
     test.setTimeout(60_000);
     await newNote(page, 'Windows pictures');
     const sources = await page.evaluate(() => {
@@ -522,13 +525,21 @@ test.describe('WebView2 native host', () => {
       element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
     });
     await expect(page.locator('.tiptap img')).toHaveCount(5);
+    await page.locator('.tiptap').evaluate((element) => {
+      const editor = (element as any).chaEditor;
+      editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph' });
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    });
     const before = await noteJSON(page);
     const oversized = 'data:image/png;base64,' + Buffer.concat([
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
       Buffer.alloc(1_048_576 - 7),
     ]).toString('base64');
-    await pasteNote(page, `<p>reject together<img src="${oversized}"></p>`);
-    await expect(page.getByRole('alert')).toContainText('Picture exceeds 1 MiB');
+    await pasteNote(page, `<p>keep text<img src="${oversized}"></p>`);
+    await expect(page.locator('.tiptap')).toContainText('keep text');
+    await expect(page.locator('.tiptap img')).toHaveCount(5);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Undo', exact: true }).click();
     expect(await noteJSON(page)).toEqual(before);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.locator('.tiptap')).toHaveCount(0);
@@ -575,7 +586,7 @@ test.describe('WebView2 native host', () => {
   test('Notes deletion waits for an admitted save and blocks navigation until completion', async () => {
     await newNote(page, 'Windows deletion');
     await holdReply(page, 'notes.save');
-    await pasteNote(page, '<p>admitted save</p>');
+    await pasteNote(page, '<p>admitted save for deletion</p>');
     await page.waitForFunction(() => (window as any).__CHA_TEST_HELD_REPLIES__.length === 1);
     await page.getByRole('textbox', { name: 'Prompt', exact: true }).fill('retained draft');
     await page.getByRole('button', { name: 'Actions for Windows deletion', exact: true }).click();
@@ -630,7 +641,7 @@ test.describe('WebView2 native host', () => {
     expect(measured.rejectedBytes).toBe(12_582_912);
     await expect(page.getByRole('alert')).toContainText('Note exceeds 12 MiB');
     await page.getByRole('button', { name: 'Find', exact: true }).click();
-    await page.getByLabel('Find', { exact: true }).fill('cat');
+    await page.getByRole('textbox', { name: 'Find', exact: true }).fill('cat');
     await page.getByLabel('Replace', { exact: true }).fill('longer');
     await page.getByRole('button', { name: 'Replace all', exact: true }).click();
     const finalSize = await page.locator('.tiptap').evaluate((element) => new TextEncoder()
@@ -695,6 +706,7 @@ test.describe('WebView2 native host', () => {
     await expect.poll(() => nativeWindow(host!, 'inspect').dialog).toBe(false);
     await page.evaluate(() => (window as any).__CHA_TEST_RELEASE_REPLIES__());
     await expect(page.locator('.tiptap')).toHaveCount(0);
+    const settingsTitle = nativeWindow(host!, 'inspect').title;
     await page.evaluate(() => {
       const nativeWindow = window as any;
       nativeWindow.__CHA_NATIVE_POST__(JSON.stringify({
@@ -704,7 +716,7 @@ test.describe('WebView2 native host', () => {
     });
     await page.waitForTimeout(300);
     expect(host!.exitCode).toBeNull();
-    expect(nativeWindow(host!, 'inspect').title).toBe(title);
+    expect(nativeWindow(host!, 'inspect').title).toBe(settingsTitle);
   });
 
   test('Notes native Close anyway shuts down a connected page that withholds its reply', async () => {

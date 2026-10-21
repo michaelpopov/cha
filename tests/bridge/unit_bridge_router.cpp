@@ -1673,7 +1673,9 @@ TEST_F(BridgeRouterTest, ImportShowsSafeFileValidationReason) {
     const auto failed = call("vault.import");
     ASSERT_FALSE(failed["ok"]);
     EXPECT_EQ(failed["error"]["code"], "invalid_argument");
-    const std::string message = failed["error"]["message"];
+    std::string message = failed["error"]["message"];
+    std::replace(message.begin(), message.end(), '\\', '/');
+    SCOPED_TRACE(message);
     EXPECT_NE(message.find("system/providers/test/config.toml"), std::string::npos);
     EXPECT_EQ(message.find("workspace/system"), std::string::npos);
     EXPECT_NE(message.find("host"), std::string::npos);
