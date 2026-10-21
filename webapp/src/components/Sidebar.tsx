@@ -409,6 +409,10 @@ export function Sidebar({
             {recents.map((session) => {
               const current = state.activeConversation?.forumId === session.forum_id
                 && state.activeConversation.sessionId === session.session_id;
+              const activity = state.sessionActivity.find((item) => item.forumId === session.forum_id
+                && item.sessionId === session.session_id);
+              const activityLabel = activity?.status === 'generating' ? 'Generating'
+                : activity?.status === 'finished' ? 'New response' : undefined;
               const mutable = session.forum_id !== state.bootstrap?.entrance_forum_id;
               const selected = {
                 kind: 'session' as const,
@@ -429,6 +433,13 @@ export function Sidebar({
                     type="button"
                   >
                     <span className="cha-primary-line">{session.session_label}</span>
+                    {activity && (
+                      <span
+                        aria-label={activityLabel}
+                        className={`cha-session-activity is-${activity.status}`}
+                        role="img"
+                      />
+                    )}
                     <span className="cha-secondary-line">
                       {forums.get(session.forum_id)?.display_name ?? session.forum_id}
                     </span>

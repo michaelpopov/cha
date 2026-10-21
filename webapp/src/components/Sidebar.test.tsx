@@ -45,6 +45,30 @@ describe('Sidebar navigation', () => {
     },
   );
 
+  it('shows generation and unseen completion on session rows', () => {
+    renderSidebar({
+      ...readyState(),
+      sessionActivity: [
+        { forumId: 'entrance', sessionId: 'welcome', status: 'generating' },
+        { forumId: 'lobby', sessionId: 'planning', status: 'finished' },
+      ],
+    });
+    const recents = within(screen.getByLabelText('Recent sessions'));
+    expect(within(recents.getByRole('button', { name: /Welcome/ }))
+      .getByRole('img', { name: 'Generating' })).toHaveClass('is-generating');
+    expect(within(recents.getByRole('button', { name: /^Planning/ }))
+      .getByRole('img', { name: 'New response' })).toHaveClass('is-finished');
+  });
+
+  it('keeps the Notes sidebar unchanged when sessions have activity', () => {
+    renderSidebar({
+      ...readyState(), sidebarTab: 'notes', mainView: 'notes',
+      sessionActivity: [{ forumId: 'entrance', sessionId: 'welcome', status: 'generating' }],
+    });
+    expect(screen.queryByRole('img', { name: 'Generating' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tabpanel', { name: 'Notes' }).querySelector('.cha-session-activity')).toBeNull();
+  });
+
   it('reports an empty list after bootstrap loads with no recent sessions', () => {
     renderSidebar({
       ...readyState(),

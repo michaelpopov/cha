@@ -188,8 +188,9 @@ export function useLiveSession(
     connection.current?.events.close();
     connection.current = null;
     liveGeneration.current += 1;
+    dispatch({ type: 'stream-state', status: 'idle' });
     return liveGeneration.current;
-  }, [cancelRetryTimer]);
+  }, [cancelRetryTimer, dispatch]);
 
   const unusedSession = useRef<{ forumId: string; sessionId: string } | null>(null);
   const vaultContext = useRef(0);

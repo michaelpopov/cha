@@ -39,6 +39,7 @@ import { useNoteLeave } from '../notes/useNoteLeave';
 import type { NoteSaveHandle } from '../notes/useNoteSave';
 import { reloadApplication, writeAppRoute } from '../state/route';
 import { useLiveSession, type SessionEventsConnector } from '../useLiveSession';
+import { useSessionActivity } from '../useSessionActivity';
 import {
   appReducer,
   initialAppState,
@@ -506,6 +507,7 @@ export function App({
   reload = defaultReload,
 }: AppProps) {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
+  useSessionActivity(client, state, dispatch);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [detailEpoch, setDetailEpoch] = useState(0);
@@ -1029,6 +1031,7 @@ export function App({
     await runMutation({ forumId, sessionId }, 'catalog', () => (
       client.deleteSession(forumId, sessionId)
     ));
+    dispatch({ type: 'session-deleted', forumId, sessionId });
     await refreshBootstrap();
     const active = state.activeConversation?.forumId === forumId
       && state.activeConversation.sessionId === sessionId;

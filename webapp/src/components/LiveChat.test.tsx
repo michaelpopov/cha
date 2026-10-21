@@ -3604,7 +3604,7 @@ describe('chat pictures', () => {
     act(() => events.handlers[0].onSnapshot({ ...members,
       generation: { ...members.generation, active: true, character_id: 'assistant', request_id: 7 } }));
     await waitFor(() => expect(getCharacterPicture).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Assistant' })).not.toBeInTheDocument();
     await act(async () => next.resolve({ ...portrait, content_base64: 'valid' }));
     expect(screen.getByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,valid');
     expect(screen.queryByText('Picture unavailable')).not.toBeInTheDocument();
@@ -4012,5 +4012,37 @@ describe('spoken send while the session closes', () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1200)); });
     expect(onSubmitInput).not.toHaveBeenCalled();
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Question over to you');
+  });
+});
+
+describe('sidebar session activity', () => {
+  it('shows two generating sessions, then keeps an unseen completion until reopening it', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    let background: Promise<SessionSnapshot> | undefined;
+    let finishBackground!: (snapshot: SessionSnapshot) => void;
+    let planning = { ...snapshotFixture, forum: bootstrapFixture.forums[1],
+      session_id: 'planning', session_label: 'Planning' };
+    const client = fixtureClient({ getSessionSnapshot: async (_forum, session) => (
+      session === 'planning' ? planning : background ?? snapshotFixture
+    ) });
+    render(<App client={client} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    const generation = { ...snapshotFixture.generation, active: true };
+    act(() => events.handlers[0].onGeneration(generation));
+    background = new Promise((resolve) => { finishBackground = resolve; });
+    await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Planning/ }));
+    await waitFor(() => expect(events.connections[1]?.key).toBe('lobby/planning'));
+    planning = { ...planning, generation };
+    act(() => events.handlers[1].onSnapshot(planning));
+    const recents = within(screen.getByLabelText('Recent sessions'));
+    expect(recents.getAllByRole('img', { name: 'Generating' })).toHaveLength(2);
+    await act(async () => { finishBackground(snapshotFixture); });
+    expect(recents.getAllByRole('img', { name: 'Generating' })).toHaveLength(1);
+    expect(within(recents.getByRole('button', { name: /^Welcome/ })).getByRole('img', { name: 'New response' })).toBeInTheDocument();
+    await user.click(recents.getByRole('button', { name: /^Welcome/ }));
+    await waitFor(() => expect(events.connections[2]?.key).toBe('entrance/welcome'));
+    expect(recents.queryByRole('img', { name: 'New response' })).not.toBeInTheDocument();
+    expect(within(recents.getByRole('button', { name: /^Planning/ })).getByRole('img', { name: 'Generating' })).toBeInTheDocument();
   });
 });

@@ -612,3 +612,65 @@ describe('character picture selection', () => {
     expect(state.activeConversation).toBeNull();
   });
 });
+
+describe('session activity', () => {
+  const generating = { ...snapshotFixture, generation: { ...snapshotFixture.generation, active: true } };
+  const planning = { ...snapshotFixture, forum: bootstrapFixture.forums[1], session_id: 'planning' };
+  const welcome = { forumId: 'entrance', sessionId: 'welcome' };
+
+  it('keeps generation in two sessions and clears a finished marker only on opening its conversation', () => {
+    let state = appReducer(readyState(), { type: 'conversation-opened', snapshot: generating });
+    state = appReducer(state, { type: 'conversation-opened', snapshot: {
+      ...planning, generation: generating.generation,
+    } });
+    expect(state.sessionActivity).toEqual([
+      { ...welcome, status: 'generating' },
+      { forumId: 'lobby', sessionId: 'planning', status: 'generating' },
+    ]);
+    state = appReducer(state, { type: 'session-activity-ended', ...welcome });
+    expect(state.sessionActivity[0].status).toBe('finished');
+    state = appReducer(state, { type: 'show-sessions' });
+    expect(state.sessionActivity[0].status).toBe('finished');
+    state = appReducer(state, { type: 'conversation-opened', snapshot: snapshotFixture });
+    expect(state.sessionActivity).toEqual([{ forumId: 'lobby', sessionId: 'planning', status: 'generating' }]);
+  });
+
+  it.each(['open-note', 'show-settings'] as const)('keeps an unseen completion after %s', (type) => {
+    let state = appReducer(readyState(), { type: 'conversation-opened', snapshot: generating });
+    state = appReducer(state, type === 'open-note' ? { type, noteId: 4 } : { type });
+    state = appReducer(state, { type: 'session-generation', ...welcome, generation: snapshotFixture.generation });
+    expect(state.sessionActivity).toEqual([{ ...welcome, status: 'finished' }]);
+    state = appReducer(state, { type: 'show-chat-tab' });
+    expect(state.sessionActivity[0].status).toBe('finished');
+    state = appReducer(state, { type: 'show-chat' });
+    expect(state.sessionActivity).toEqual([]);
+  });
+
+  it('does not mark a response unseen while its conversation is visible', () => {
+    let state = appReducer(readyState(), { type: 'conversation-opened', snapshot: generating });
+    state = appReducer(state, { type: 'session-snapshot', snapshot: snapshotFixture });
+    expect(state.sessionActivity).toEqual([]);
+  });
+
+  it('clears a completion found by a background check while its conversation is visible', () => {
+    let state = appReducer(readyState(), { type: 'conversation-opened', snapshot: generating });
+    state = appReducer(state, { type: 'stream-state', status: 'retry' });
+    state = appReducer(state, { type: 'session-activity-ended', ...welcome });
+    expect(state.sessionActivity).toEqual([]);
+  });
+
+  it('keeps activity unchanged by text updates and resets it on vault replacement', () => {
+    let state = appReducer(readyState(), { type: 'conversation-opened', snapshot: generating });
+    const activity = state.sessionActivity;
+    state = appReducer(state, { type: 'session-snapshot', snapshot: { ...generating, session_label: 'Renamed' } });
+    expect(state.sessionActivity).toBe(activity);
+    state = appReducer(state, { type: 'vault-context-reset' });
+    expect(state.sessionActivity).toEqual([]);
+  });
+
+  it('removes deleted sessions and forums from activity', () => {
+    const state = appReducer(readyState(), { type: 'conversation-opened', snapshot: generating });
+    expect(appReducer(state, { type: 'session-deleted', ...welcome }).sessionActivity).toEqual([]);
+    expect(appReducer(state, { type: 'forum-deleted', forumId: 'entrance' }).sessionActivity).toEqual([]);
+  });
+});

@@ -81,7 +81,14 @@ interface EditableInspection {
   writable: boolean;
 }
 
+export interface SessionActivity {
+  forumId: string;
+  sessionId: string;
+  status: 'generating' | 'finished';
+}
+
 export interface AppState {
+  sessionActivity: readonly SessionActivity[];
   sidebarOpen: boolean;
   pictureOpen: boolean;
   pictureWidth: number;
@@ -122,6 +129,7 @@ export interface AppState {
 }
 
 export const initialAppState: AppState = {
+  sessionActivity: [],
   sidebarOpen: true,
   pictureOpen: false,
   pictureWidth: 280,
@@ -254,6 +262,8 @@ export type AppAction =
   | { type: 'show-initial-conversation' }
   // The initial session becomes the active conversation. The main panel stays.
   | { type: 'reset-active-conversation' }
+  | { type: 'session-activity-ended'; forumId: string; sessionId: string }
+  | { type: 'session-deleted'; forumId: string; sessionId: string }
   | { type: 'stream-state'; status: StreamStatus; message?: string };
 
 // Navigation intents start a new navigation epoch and discard an unused
@@ -1048,6 +1058,9 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return state.bootstrap
         ? { ...showInitialConversation(state, state.bootstrap), mainView: state.mainView }
         : state;
+    case 'session-activity-ended':
+    case 'session-deleted':
+      return state;
     case 'stream-state':
       return {
         ...state,
@@ -1057,8 +1070,60 @@ function reduceApp(state: AppState, action: AppAction): AppState {
   }
 }
 
+function sameSession(session: SessionActivity, forumId: string, sessionId: string) {
+  return session.forumId === forumId && session.sessionId === sessionId;
+}
+
+// Sidebar activity of every session this page has followed. Reading an open
+// conversation acknowledges its finished response. Notes and Settings keep it.
+function reduceSessionActivity(state: AppState, action: AppAction): readonly SessionActivity[] {
+  let activity = state.sessionActivity;
+  switch (action.type) {
+    case 'vault-context-reset':
+      return [];
+    case 'forum-deleted':
+      activity = activity.filter((session) => session.forumId !== action.forumId);
+      break;
+    case 'session-discarded':
+    case 'session-deleted':
+      activity = activity.filter((session) => !sameSession(session, action.forumId, action.sessionId));
+      break;
+    case 'session-activity-ended':
+      activity = activity.map((session) => (
+        sameSession(session, action.forumId, action.sessionId) && session.status === 'generating'
+          ? { ...session, status: 'finished' } : session
+      ));
+      break;
+    case 'conversation-opened':
+    case 'session-snapshot':
+    case 'session-generation': {
+      const forumId = action.type === 'session-generation' ? action.forumId : action.snapshot.forum.id;
+      const sessionId = action.type === 'session-generation' ? action.sessionId : action.snapshot.session_id;
+      const generating = action.type === 'session-generation'
+        ? action.generation.active : action.snapshot.generation.active;
+      const existing = activity.find((session) => sameSession(session, forumId, sessionId));
+      const status = generating ? 'generating' : existing && 'finished';
+      if (!status || status === existing?.status) break;
+      activity = existing
+        ? activity.map((session) => (session === existing ? { ...session, status } : session))
+        : [...activity, { forumId, sessionId, status }];
+      break;
+    }
+  }
+  const active = state.activeConversation;
+  if (!active || state.mainView !== 'chat' || state.sessionOperation !== 'idle') return activity;
+  return activity.filter((session) => (
+    session.status !== 'finished' || !sameSession(session, active.forumId, active.sessionId)
+  ));
+}
+
 export function appReducer(state: AppState, action: AppAction): AppState {
-  return releaseClosedNote(reduceApp(state, action));
+  const next = releaseClosedNote(reduceApp(state, action));
+  const activity = reduceSessionActivity(next, action);
+  // Keep the same array when nothing changed. Background checks restart on a new one.
+  if (activity.length === next.sessionActivity.length
+      && activity.every((session, index) => session === next.sessionActivity[index])) return next;
+  return { ...next, sessionActivity: activity };
 }
 
 export function navigationTitle(state: AppState): string | null {

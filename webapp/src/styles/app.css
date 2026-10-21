@@ -328,10 +328,39 @@ select:disabled {
    the gap between them and lead tighter than body text. */
 .cha-recent-open {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
   padding: 0.28rem 0.55rem;
   line-height: 1.3;
   text-align: left;
+}
+
+.cha-recent-open > .cha-secondary-line {
+  grid-column: 1;
+}
+
+.cha-session-activity {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  margin-left: 0.6rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.cha-session-activity.is-generating {
+  width: 0.9rem;
+  height: 0.9rem;
+  background: transparent;
+  border: 2px solid var(--input);
+  border-top-color: var(--foreground);
+  animation: cha-session-spin 1s linear infinite;
+}
+
+@keyframes cha-session-spin {
+  to { transform: rotate(360deg); }
 }
 
 .cha-recent-more {
@@ -2106,7 +2135,8 @@ select.cha-form-control {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cha-generation-indicator {
+  .cha-generation-indicator,
+  .cha-session-activity.is-generating {
     animation: none;
   }
 
