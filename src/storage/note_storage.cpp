@@ -339,6 +339,13 @@ CREATE TABLE IF NOT EXISTS session_notes (
     text TEXT NOT NULL,
     PRIMARY KEY (session_key, note_id)
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS session_files (
+    session_key INTEGER NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    text TEXT NOT NULL,
+    PRIMARY KEY (session_key, name)
+) STRICT;
 )sql");
     bool has_compressed_column = false;
     {

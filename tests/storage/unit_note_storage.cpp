@@ -642,6 +642,7 @@ TEST(NoteStorage, OlderVaultAndMaintenanceKeepIdentityWithoutConfigChanges) {
     {
         Database database(path, Database::Mode::read_write);
         database.execute("DROP TABLE session_notes");
+        database.execute("DROP TABLE session_files");
         database.execute("DROP TABLE note_items");
         application_id = database.pragma_integer("application_id");
         EXPECT_EQ(
@@ -681,6 +682,7 @@ TEST(NoteStorage, OlderVaultAndMaintenanceKeepIdentityWithoutConfigChanges) {
             workspace_session_database_version);
         EXPECT_TRUE(has_schema_object(database, "table", "note_items"));
         EXPECT_TRUE(has_schema_object(database, "table", "session_notes"));
+        EXPECT_TRUE(has_schema_object(database, "table", "session_files"));
         EXPECT_NO_THROW(validate_workspace_session_contents(database));
     }
 }

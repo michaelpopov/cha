@@ -88,6 +88,9 @@ public:
     void record_entry(const TranscriptEntry& entry);
     // Stores the note copy and its notice in one transaction.
     [[nodiscard]] TranscriptEntry add_note(const NoteText& note, EntryId entry_id);
+    [[nodiscard]] TranscriptEntry add_text_file(
+        std::string_view name, std::string_view text, EntryId entry_id);
+    // Returns the note copies and the file copies for the system prompt.
     [[nodiscard]] std::string notes_prompt() const;
     void complete_turn(RequestId request_id, const TranscriptEntry& response);
     void cancel_turn(RequestId request_id, std::optional<TranscriptEntry> response);

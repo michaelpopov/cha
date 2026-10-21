@@ -1445,6 +1445,14 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     command = std::move(input);
                     break;
                 }
+                case Method::session_attach_text_file: {
+                    require_only_keys(params, {"forum_id", "session_id", "name", "text"});
+                    outstanding.forum_id = require_identifier(params, "forum_id");
+                    outstanding.session_id = require_identifier(params, "session_id");
+                    command = AttachTextFileCommand{
+                        require_string(params, "name"), require_string(params, "text")};
+                    break;
+                }
                 case Method::session_stop: {
                     const auto identity = parse_session_identity(params);
                     outstanding.forum_id = identity.forum_id;
@@ -1566,6 +1574,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
 
     bool is_session_method(Method method) const {
         return method == Method::session_submit
+            || method == Method::session_attach_text_file
             || method == Method::session_stop
             || method == Method::session_snapshot
             || method == Method::session_cover

@@ -19,6 +19,16 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it('attaches file text to the selected session through the native bridge', async () => {
+    const attach = vi.fn(() => ({ clear_input: false, notice: '' }));
+    const client = createNativeChaClient(createFakeNativeBridge({ 'session.attachTextFile': attach }));
+    await expect(client.attachTextFile('lobby', 'planning', { name: 'plan.md', text: '# Plan' }))
+      .resolves.toEqual({ clear_input: false, notice: '' });
+    expect(attach).toHaveBeenCalledWith({
+      forum_id: 'lobby', session_id: 'planning', name: 'plan.md', text: '# Plan',
+    });
+  });
+
   it('reads and saves notes settings through the native bridge', async () => {
     const settings = { compression_provider: 'provider_7', compression_reasoning_effort: 'medium' as const };
     const save = vi.fn(() => settings);

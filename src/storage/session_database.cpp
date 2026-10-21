@@ -677,6 +677,28 @@ TranscriptEntry SessionJournal::add_note(const NoteText& note, EntryId entry_id)
     return entry;
 }
 
+TranscriptEntry SessionJournal::add_text_file(
+    std::string_view name, std::string_view text, EntryId entry_id) {
+    Transaction transaction(impl_->database);
+    Statement existing = impl_->database.prepare(
+        "SELECT 1 FROM session_files WHERE session_key = ?1 AND name = ?2",
+        impl_->session_key, name);
+    const bool refresh = existing.step();
+    Statement copy = impl_->database.prepare(
+        "INSERT INTO session_files (session_key, name, text) VALUES (?1, ?2, ?3) "
+        "ON CONFLICT (session_key, name) DO UPDATE SET text = excluded.text",
+        impl_->session_key, name, text);
+    copy.run();
+    TranscriptEntry entry = make_notice_entry(entry_id, refresh
+        ? "Updated this chat’s copy of file “" + std::string(name) + "”."
+        : "Added file “" + std::string(name) + "” to this chat.");
+    insert_entry(impl_->database, impl_->session_key,
+        current_epoch(impl_->database, impl_->session_key), entry);
+    touch_session(impl_->database, impl_->session_key);
+    transaction.commit();
+    return entry;
+}
+
 std::string SessionJournal::notes_prompt() const {
     Statement notes = impl_->database.prepare(
         "SELECT name, text FROM session_notes WHERE session_key = ?1 ORDER BY note_id",
@@ -685,6 +707,13 @@ std::string SessionJournal::notes_prompt() const {
     while (notes.step()) {
         if (!prompt.empty()) prompt += "\n\n";
         prompt += "# Note: " + notes.text(0) + "\n\n" + notes.text(1);
+    }
+    Statement files = impl_->database.prepare(
+        "SELECT name, text FROM session_files WHERE session_key = ?1 ORDER BY name",
+        impl_->session_key);
+    while (files.step()) {
+        if (!prompt.empty()) prompt += "\n\n";
+        prompt += "# File: " + files.text(0) + "\n\n" + files.text(1);
     }
     return prompt;
 }
@@ -770,6 +799,9 @@ void SessionJournal::clear_history() {
     Statement notes = impl_->database.prepare(
         "DELETE FROM session_notes WHERE session_key = ?1", impl_->session_key);
     notes.run();
+    Statement files = impl_->database.prepare(
+        "DELETE FROM session_files WHERE session_key = ?1", impl_->session_key);
+    files.run();
     touch_session(impl_->database, impl_->session_key);
     transaction.commit();
 }

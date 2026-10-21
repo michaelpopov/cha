@@ -36,6 +36,7 @@ export type OpenSessionResult = components['schemas']['OpenSessionResult'];
 export type SessionSnapshot = components['schemas']['SessionSnapshot'];
 export type CommandResult = components['schemas']['CommandResult'];
 export type InputRequest = components['schemas']['InputRequest'];
+export type TextFileRequest = components['schemas']['TextFileRequest'];
 export type CoverRequest = components['schemas']['CoverRequest'];
 export type DeleteTurnRequest = components['schemas']['DeleteTurnRequest'];
 export type OpenAiAuth = components['schemas']['OpenAiAuth'];
@@ -181,6 +182,7 @@ export interface ChaClient {
   openSession(forumId: string, sessionId: string): Promise<OpenSessionResult>;
   getSessionSnapshot(forumId: string, sessionId: string): Promise<SessionSnapshot>;
   submitInput(forumId: string, sessionId: string, input: InputRequest): Promise<CommandResult>;
+  attachTextFile(forumId: string, sessionId: string, file: TextFileRequest): Promise<CommandResult>;
   coverConversation(
     forumId: string,
     sessionId: string,

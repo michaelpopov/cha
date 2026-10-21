@@ -275,6 +275,7 @@ export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}):
     openSession: async (forumId, sessionId) => ({ forum_id: forumId, session_id: sessionId }),
     getSessionSnapshot: async () => snapshotFixture,
     submitInput: async () => ({ clear_input: true }),
+    attachTextFile: async () => ({ clear_input: false }),
     coverConversation: async () => ({ clear_input: false }),
     uncoverConversation: async () => ({ clear_input: false }),
     deleteTurn: async () => ({ clear_input: false }),

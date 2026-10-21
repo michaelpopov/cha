@@ -456,6 +456,44 @@ ControllerUpdate SessionController::add_note(
     return update;
 }
 
+ControllerUpdate SessionController::add_text_file(
+    std::string_view name, std::string_view text,
+    std::shared_ptr<SubmissionState> submission) {
+    if (submission && submission->expired()) return {.notice = "Submission expired"};
+    if (shutdown_) return {.notice = "Request could not be dispatched"};
+    if (is_generating()) return busy_notice();
+    if (name.empty() || name.find_first_of("\r\n") != std::string_view::npos
+        || name.find('\0') != std::string_view::npos) {
+        return {.notice = "The file name is not valid."};
+    }
+    if (text.size() > 256 * 1024) {
+        return {.notice = "This file is too large to add to a chat. The limit is 256 KiB of text."};
+    }
+    if (trim_view(text).empty()) return {.notice = "The file is empty."};
+    if (std::any_of(text.begin(), text.end(), [](unsigned char c) {
+            return c < 32 && c != '\n' && c != '\r' && c != '\t' && c != '\f';
+        })) {
+        return {.notice = "Choose a UTF-8 text file."};
+    }
+    TranscriptEntry entry;
+    try {
+        retain();
+        entry = journal_.add_text_file(name, text, next_entry_id_);
+    } catch (const std::exception& error) {
+        log_warn("Could not add text file to chat: " + std::string(error.what()));
+        return {.notice = "The file could not be added to this chat. Try again."};
+    }
+    ++next_entry_id_;
+    transcript_.add_entry(std::move(entry));
+    ControllerUpdate update{
+        .state = SnapshotRequired{},
+        .input_consumed = true,
+        .notice = "",
+    };
+    publish_recent(update);
+    return update;
+}
+
 ControllerUpdate SessionController::submit_prompt(
     std::string_view author_id,
     std::string text,

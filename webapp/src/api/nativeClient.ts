@@ -271,6 +271,11 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       { forum_id: forumId, session_id: sessionId, input },
       isCommandResult,
     ),
+    attachTextFile: (forumId, sessionId, file) => call(
+      'session.attachTextFile',
+      { forum_id: forumId, session_id: sessionId, ...file },
+      isCommandResult,
+    ),
     stopGeneration: (forumId, sessionId) => call(
       'session.stop',
       { forum_id: forumId, session_id: sessionId },

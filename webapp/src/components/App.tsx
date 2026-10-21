@@ -18,6 +18,7 @@ import {
   type ChaClient,
   type NoteItem,
   type NotesClient,
+  type TextFileRequest,
 } from '../api/client';
 import type { NativeBridge } from '../api/nativeBridge';
 import { installAppCloseHost } from '../api/nativeClose';
@@ -152,6 +153,7 @@ function Screen({
   onSetDefaultCharacter,
   onStopGeneration,
   onSubmitInput,
+  onAttachTextFile,
   onUncoverConversation,
   catalogRevision,
 }: ScreenProps) {
@@ -172,6 +174,7 @@ function Screen({
         onSetDefaultCharacter={onSetDefaultCharacter}
         onStopGeneration={onStopGeneration}
         onSubmitInput={onSubmitInput}
+        onAttachTextFile={onAttachTextFile}
         onUncoverConversation={onUncoverConversation}
         state={state}
       />
@@ -934,6 +937,14 @@ export function App({
     }
   }, [client, noteWelcomeSubmission, retainSession, runMutation, state.activeConversation, state.activeConversationLabel, state.sessionSnapshot, state.bootstrap]);
 
+  const attachTextFile = useCallback((file: TextFileRequest) => {
+    const active = state.activeConversation;
+    if (!active) return Promise.reject(new Error('No live conversation is selected.'));
+    retainSession(active.forumId, active.sessionId);
+    return runMutation(active, 'upload', () => client.attachTextFile(
+      active.forumId, active.sessionId, file));
+  }, [client, retainSession, runMutation, state.activeConversation]);
+
   const coverConversation = useCallback((throughEntryId: number) => {
     const active = state.activeConversation;
     if (!active) return Promise.reject(new Error('No live conversation is selected.'));
@@ -1177,6 +1188,7 @@ export function App({
                 onSetDefaultCharacter={setDefaultCharacter}
                 onStopGeneration={stopGeneration}
                 onSubmitInput={submitInput}
+                onAttachTextFile={attachTextFile}
                 onUncoverConversation={uncoverConversation}
                 state={state}
               />

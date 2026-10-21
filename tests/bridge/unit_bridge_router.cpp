@@ -398,6 +398,35 @@ TEST_F(BridgeRouterTest, PictureUploadsAcceptLargeFilesAndValidateParamsAndConte
     EXPECT_TRUE(call("character.picture.get", {{"character_id", "guide"}, {"filename", "PICTURE.jpeg"}})["result"].is_null());
 }
 
+TEST_F(BridgeRouterTest, AttachesTextFilesWithoutCreatingNotesOrClearingThePrompt) {
+    bootstrap_epoch();
+    const auto created = call("session.create", {{"forum_id", "lobby"}, {"label", "Files"}});
+    ASSERT_TRUE(created["ok"]) << created;
+    const std::string session_id = created["result"]["id"];
+    ASSERT_TRUE(call("session.open", {{"forum_id", "lobby"}, {"session_id", session_id}})["ok"]);
+    const nlohmann::json file{{"forum_id", "lobby"}, {"session_id", session_id},
+        {"name", "plan.md"}, {"text", "# Plan\n\nFile context"}};
+    const auto attached = call("session.attachTextFile", file);
+    ASSERT_TRUE(attached["ok"]) << attached;
+    EXPECT_FALSE(attached["result"]["clear_input"]);
+    const auto snapshot = call("session.snapshot", {{"forum_id", "lobby"}, {"session_id", session_id}});
+    ASSERT_TRUE(snapshot["ok"]) << snapshot;
+    EXPECT_FALSE(snapshot["result"]["generation"]["active"]);
+    EXPECT_EQ(snapshot["result"]["transcript"].back()["text"], "Added file “plan.md” to this chat.");
+    EXPECT_TRUE(call("notes.list")["result"]["items"].empty());
+    auto malformed = file;
+    malformed["text"] = 42;
+    EXPECT_EQ(call("session.attachTextFile", malformed)["error"]["code"], "invalid_argument");
+    auto oversized = file;
+    oversized["text"] = std::string(256 * 1024 + 1, 'x');
+    const auto rejected = call("session.attachTextFile", oversized);
+    ASSERT_TRUE(rejected["ok"]) << rejected;
+    EXPECT_EQ(rejected["result"]["notice"],
+        "This file is too large to add to a chat. The limit is 256 KiB of text.");
+    ++epoch_;
+    EXPECT_EQ(call("session.attachTextFile", file)["error"]["code"], "vault_changed");
+}
+
 TEST_F(BridgeRouterTest, InfoBootstrapCreateOpenSubmitStopSnapshotAndClose) {
     router_->handle_request(
         connection_,

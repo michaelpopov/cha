@@ -208,6 +208,31 @@ TEST_F(SessionRepositoryTest, DeletingEntriesAndSessionsAlsoDeletesTheirAudio) {
     EXPECT_EQ(scalar(database_path(), "SELECT COUNT(*) FROM entry_audio"), 0);
 }
 
+TEST_F(SessionRepositoryTest, TextFileCopiesAreSessionLocalAndFollowSessionCleanup) {
+    const SessionRepository repository = make_repository();
+    const auto first = repository.prepare(repository.create("lobby", "First").identity);
+    const auto second = repository.prepare(repository.create("lobby", "Second").identity);
+    {
+        SessionJournal journal(first.database_path, first.session_key);
+        (void)journal.add_text_file("plan.md", "Original", 1);
+        EXPECT_EQ(journal.notes_prompt(), "# File: plan.md\n\nOriginal");
+    }
+    {
+        SessionJournal journal(second.database_path, second.session_key);
+        EXPECT_TRUE(journal.notes_prompt().empty());
+        (void)journal.add_text_file("plan.md", "Other session", 1);
+    }
+    SessionJournal reopened(first.database_path, first.session_key);
+    EXPECT_EQ(reopened.notes_prompt(), "# File: plan.md\n\nOriginal");
+    (void)reopened.add_text_file("plan.md", "Revised", 2);
+    EXPECT_EQ(reopened.notes_prompt(), "# File: plan.md\n\nRevised");
+    reopened.clear_history();
+    EXPECT_TRUE(reopened.notes_prompt().empty());
+    EXPECT_EQ(scalar(database_path(), "SELECT COUNT(*) FROM session_files"), 1);
+    repository.delete_session(second.identity);
+    EXPECT_EQ(scalar(database_path(), "SELECT COUNT(*) FROM session_files"), 0);
+}
+
 TEST_F(SessionRepositoryTest, ClearingHistoryRemovesOnlyTheSelectedSessionsEntriesTurnsAndAudio) {
     const SessionRepository repository = make_repository();
     const auto first = repository.prepare(repository.create("lobby", "First").identity);

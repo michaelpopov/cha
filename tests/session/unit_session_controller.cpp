@@ -507,12 +507,14 @@ TEST(SessionController, SendsSavedNoteCopiesToEveryCharacterAndRefreshesOnlyOnRe
             EXPECT_EQ(prompt.find(expected, position + expected.size()), std::string::npos);
             EXPECT_EQ(prompt.find(absent), std::string::npos);
             EXPECT_NE(prompt.find("### Second note content"), std::string::npos);
+            EXPECT_NE(prompt.find("# File: plan.md\n\nFile context"), std::string::npos);
             EXPECT_NE(prompt.find("- A list item\n\n```python\nprint(1)\n```"), std::string::npos);
         }
     };
     auto controller = open(journal.path);
     ASSERT_TRUE(controller->add_note(note.id).input_consumed);
     ASSERT_TRUE(controller->add_note(second.id).input_consumed);
+    ASSERT_TRUE(controller->add_text_file("plan.md", "File context").input_consumed);
     check_prompts(*controller, "Original note content", "Revised note content");
     note_save(database, note.id, document("Revised note content"));
     (void)note_rename(database, note.id, "Renamed reference");
@@ -541,6 +543,44 @@ TEST(SessionController, SendsSavedNoteCopiesToEveryCharacterAndRefreshesOnlyOnRe
     (void)receive_until_idle(*controller);
     ASSERT_EQ(definitions.size(), 1U);
     EXPECT_EQ(definitions.front()->system_prompt.find("note content"), std::string::npos);
+}
+
+TEST(SessionController, ValidatesTextFilesAndRollsBackAnAttachmentWhoseNoticeCannotBeSaved) {
+    TemporaryJournal journal;
+    auto controller = test::from_test_workspace(
+        std::vector<CharacterDefinition>{{
+            .character = {.id = "guide-id", .display_name = "Guide"},
+            .provider = {.id = "test", .config = {.host = "127.0.0.1", .port = 1, .model = "fake"}},
+        }}, journal.path, notifier());
+    for (const auto& [name, text] : std::vector<std::pair<std::string, std::string>>{
+            {"", "text"}, {"bad\nname.txt", "text"}, {"empty.txt", " \n\t"},
+            {"binary.txt", std::string("a\0b", 3)},
+            {"large.txt", std::string(256 * 1024 + 1, 'x')}}) {
+        const auto result = controller->add_text_file(name, text);
+        EXPECT_FALSE(result.input_consumed);
+        EXPECT_TRUE(result.notice.has_value());
+    }
+    EXPECT_TRUE(controller->view().transcript.empty());
+    storage::SqliteDatabase database(journal.path, storage::SqliteDatabase::Mode::read_write);
+    database.execute(
+        "CREATE TRIGGER reject_file_notice BEFORE INSERT ON entries "
+        "BEGIN SELECT RAISE(ABORT, 'test save failure'); END");
+    EXPECT_FALSE(controller->add_text_file("plan.md", "Original").input_consumed);
+    SessionJournal saved(journal.path);
+    EXPECT_TRUE(saved.notes_prompt().empty());
+    EXPECT_TRUE(load_session_state(journal.path).entries.empty());
+    database.execute("DROP TRIGGER reject_file_notice");
+    ASSERT_TRUE(controller->add_text_file("plan.md", "Original").input_consumed);
+    EXPECT_FALSE(controller->is_generating());
+    EXPECT_FALSE(controller->is_naming());
+    EXPECT_EQ(controller->view().transcript.entries.front().id, 1U);
+    EXPECT_EQ(controller->view().transcript.entries.front().text,
+        "Added file “plan.md” to this chat.");
+    ASSERT_TRUE(controller->add_text_file("plan.md", "Revised").input_consumed);
+    EXPECT_EQ(saved.notes_prompt(), "# File: plan.md\n\nRevised");
+    EXPECT_EQ(controller->view().transcript.entries.back().text,
+        "Updated this chat’s copy of file “plan.md”.");
+    ASSERT_TRUE(controller->add_text_file("limit.txt", std::string(256 * 1024, 'x')).input_consumed);
 }
 
 TEST(SessionController, SelectsRandomNumberOfCharacterVariantCategoriesForEachSession) {

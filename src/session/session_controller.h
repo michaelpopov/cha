@@ -95,6 +95,9 @@ public:
         std::shared_ptr<SubmissionState> submission = {});
     [[nodiscard]] ControllerUpdate add_note(
         std::int64_t note_id, std::shared_ptr<SubmissionState> submission = {});
+    [[nodiscard]] ControllerUpdate add_text_file(
+        std::string_view name, std::string_view text,
+        std::shared_ptr<SubmissionState> submission = {});
     [[nodiscard]] ControllerUpdate cover_conversation(
         std::optional<EntryId> through_entry_id = std::nullopt);
     [[nodiscard]] ControllerUpdate uncover_conversation();

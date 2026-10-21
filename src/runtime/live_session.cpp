@@ -71,7 +71,7 @@ std::string_view generation_terminal_status(
     return "unknown";
 }
 
-static_assert(std::variant_size_v<WebCommand> == 10);
+static_assert(std::variant_size_v<WebCommand> == 11);
 
 } // namespace
 
@@ -276,6 +276,9 @@ void LiveSession::execute(OwnerCommand command) {
         if constexpr (std::is_same_v<T, RawCommand>) {
             return handle_text_input(
                 controller, controller.view().default_persona_id, std::move(value.text), command.reply->submission());
+        } else if constexpr (std::is_same_v<T, AttachTextFileCommand>) {
+            return {.session = controller.add_text_file(
+                value.name, value.text, command.reply->submission())};
         } else if constexpr (std::is_same_v<T, StopCommand>) {
             return {.session = controller.request_stop()};
         } else if constexpr (std::is_same_v<T, CoverCommand>) {

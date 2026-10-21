@@ -22,6 +22,7 @@ import {
   TextToSpeechSession,
 } from '../textToSpeech';
 import { VoiceInputSession, type VoiceInputTransport } from '../voiceInput';
+import * as textFiles from '../textFile';
 import { App } from './App';
 import { ChatScreen, formatEntryTime } from './ChatScreen';
 
@@ -106,6 +107,54 @@ function placeReadingPosition(
 }
 
 describe('live chat', () => {
+  it('does not attach a pending file read after switching conversations', async () => {
+    let finishRead!: (text: string) => void;
+    vi.spyOn(textFiles, 'readTextFile').mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
+    const events = drivableEvents();
+    const attachTextFile = vi.fn(async () => ({ clear_input: false }));
+    render(<App client={fixtureClient({
+      attachTextFile,
+      getSessionSnapshot: async (forumId) => forumId === 'lobby' ? {
+        ...snapshotFixture, forum: bootstrapFixture.forums[1], session_id: 'planning',
+      } : snapshotFixture,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    fireEvent.change(screen.getByLabelText('Text file'), {
+      target: { files: [new File(['File text'], 'plan.md')] },
+    });
+    expect(textFiles.readTextFile).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'PlanningThe Lobby' }));
+    await waitFor(() => expect(events.connections.some(({ key }) => key === 'lobby/planning')).toBe(true));
+    await act(async () => finishRead('File text'));
+    expect(attachTextFile).not.toHaveBeenCalled();
+  });
+
+  it('uploads text with the standard icon before the speaker and keeps the draft', async () => {
+    const events = drivableEvents();
+    const attachTextFile = vi.fn(async () => ({ clear_input: false }));
+    const submitInput = vi.fn(async () => ({ clear_input: true }));
+    render(<App client={fixtureClient({
+      attachTextFile, submitInput, getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    const upload = screen.getByRole('button', { name: 'Attach text file' });
+    const speaker = await screen.findByRole('button', { name: 'Auto audio response' });
+    expect(upload.nextElementSibling?.nextElementSibling).toBe(speaker);
+    const draft = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(draft, { target: { value: 'Keep my question' } });
+    const input = screen.getByLabelText('Text file');
+    fireEvent.change(input, { target: { files: [new File(['# Plan\n\nПривет'], 'plan.md')] } });
+    await waitFor(() => expect(attachTextFile).toHaveBeenCalledWith(
+      'entrance', 'welcome', { name: 'plan.md', text: '# Plan\n\nПривет' },
+    ));
+    expect(draft).toHaveValue('Keep my question');
+    expect(submitInput).not.toHaveBeenCalled();
+    await waitFor(() => expect(upload).toBeEnabled());
+    fireEvent.change(input, { target: { files: [new File(['a\0b'], 'binary.txt')] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Choose a UTF-8 text file.');
+    expect(attachTextFile).toHaveBeenCalledTimes(1);
+  });
+
   it('opens and attaches the initial conversation on plain startup and Return to start', async () => {
     const events = drivableEvents();
     const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
@@ -2569,6 +2618,7 @@ describe('live chat', () => {
         onSetDefaultCharacter={vi.fn()}
         onStopGeneration={vi.fn()}
         onSubmitInput={vi.fn(async () => ({ clear_input: true }))}
+        onAttachTextFile={vi.fn()}
         onUncoverConversation={vi.fn()}
         playbackPositions={new Map()}
         state={{
@@ -2711,6 +2761,7 @@ describe('live chat', () => {
           onSetDefaultCharacter={vi.fn()}
           onStopGeneration={vi.fn()}
           onSubmitInput={onSubmitInput}
+          onAttachTextFile={vi.fn()}
           onUncoverConversation={vi.fn()}
           playbackPositions={new Map()}
           state={{
@@ -3732,6 +3783,7 @@ it('clears a picture immediately on a vault change and ignores the old vault res
     onCoverConversation={vi.fn()} onDeleteTurn={vi.fn()} onRetryStream={vi.fn()}
     onReturnToStart={vi.fn()} onSetDefaultCharacter={vi.fn()} onStopGeneration={vi.fn()}
     onSubmitInput={vi.fn()} onUncoverConversation={vi.fn()}
+    onAttachTextFile={vi.fn()}
     state={{ ...initialAppState, bootstrap: { ...bootstrapFixture, vault_name: vaultName },
       activeConversation: { forumId: 'entrance', sessionId: 'welcome' },
       sessionSnapshot: snapshotFixture, pictureOpen: true, pictureCharacterId: 'assistant' }}
@@ -3923,6 +3975,7 @@ describe('spoken send while the session closes', () => {
           onSetDefaultCharacter={vi.fn()}
           onStopGeneration={vi.fn()}
           onSubmitInput={onSubmitInput}
+          onAttachTextFile={vi.fn()}
           onUncoverConversation={vi.fn()}
           playbackPositions={new Map()}
           state={{

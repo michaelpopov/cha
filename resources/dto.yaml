@@ -1319,6 +1319,17 @@ components:
           type: string
           description: Input text, limited by the server's configured prompt byte limit.
 
+    TextFileRequest:
+      type: object
+      additionalProperties: false
+      required: [name, text]
+      properties:
+        name:
+          type: string
+        text:
+          type: string
+          description: UTF-8 file text, limited to 256 KiB.
+
     CoverRequest:
       type: object
       additionalProperties: false

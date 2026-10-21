@@ -31,6 +31,7 @@ enum class Method {
     session_delete,
     session_open,
     session_submit,
+    session_attach_text_file,
     session_stop,
     session_close,
     session_snapshot,

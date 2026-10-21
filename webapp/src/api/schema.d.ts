@@ -573,6 +573,11 @@ export interface components {
             /** @description Input text, limited by the server's configured prompt byte limit. */
             text: string;
         };
+        TextFileRequest: {
+            name: string;
+            /** @description UTF-8 file text, limited to 256 KiB. */
+            text: string;
+        };
         CoverRequest: {
             through_entry_id: number;
         };

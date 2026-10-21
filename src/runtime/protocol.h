@@ -127,6 +127,11 @@ struct RawCommand {
     std::string text;
 };
 
+struct AttachTextFileCommand {
+    std::string name;
+    std::string text;
+};
+
 struct StopCommand {};
 
 struct CoverCommand {
@@ -175,6 +180,7 @@ struct SubscribeResult {
 
 using WebCommand = std::variant<
     RawCommand,
+    AttachTextFileCommand,
     StopCommand,
     CoverCommand,
     UncoverCommand,

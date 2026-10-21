@@ -17,8 +17,10 @@ import {
   type CharacterAppearance,
   type CommandResult,
   type SessionSnapshot,
+  type TextFileRequest,
 } from '../api/client';
 import { useAudioDownloads } from '../audioDownloads';
+import { readTextFile } from '../textFile';
 import { ChatPictureLayout } from './ChatPicture';
 import { SidebarToggle } from './TopBar';
 import type { AppState, DataAction, NavigationAction } from '../state/view';
@@ -36,6 +38,7 @@ import {
   CopyIcon,
   EyeIcon,
   EyeOffIcon,
+  FileUpIcon,
   GlobeIcon,
   PictureIcon,
   SpeakerIcon,
@@ -49,6 +52,7 @@ import { voiceClasses } from './characterAppearance';
 // The chat controls App owns, declared once so the screen and the router that
 // feeds it cannot drift apart.
 export interface ChatActions {
+  onAttachTextFile(file: TextFileRequest): Promise<CommandResult>;
   onCoverConversation(throughEntryId: number): Promise<CommandResult>;
   onDeleteTurn(responseEntryId: number): Promise<CommandResult>;
   onRetryStream(): void;
@@ -327,15 +331,17 @@ export function ChatScreen({
   onStopGeneration,
   onSubmitInput,
   onUncoverConversation,
+  onAttachTextFile,
 }: ChatScreenProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<
-    'target' | 'cover' | 'delete' | null
+    'target' | 'cover' | 'delete' | 'upload' | null
   >(null);
   const [sendPending, setSendPending] = useState(false);
   const [stopPending, setStopPending] = useState(false);
   const stopping = useRef(false);
   const composerEpoch = useRef(0);
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const actionPending = pendingAction !== null || sendPending || stopPending;
   const transcriptArea = useRef<HTMLDivElement | null>(null);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
@@ -652,6 +658,29 @@ export function ChatScreen({
     }
   });
 
+  async function attachTextFile(file: File) {
+    if (!connected || generationActive || actionPending) return;
+    const epoch = composerEpoch.current;
+    setPendingAction('upload');
+    setActionError(null);
+    try {
+      let text: string;
+      try {
+        text = await readTextFile(file);
+      } catch (failure: unknown) {
+        // Read failures carry text for the user.
+        if (composerEpoch.current === epoch) setActionError((failure as Error).message);
+        return;
+      }
+      if (composerEpoch.current !== epoch) return;
+      await onAttachTextFile({ name: file.name, text });
+    } catch (failure: unknown) {
+      if (composerEpoch.current === epoch) setActionError(actionMessage(failure));
+    } finally {
+      if (composerEpoch.current === epoch) setPendingAction(null);
+    }
+  }
+
   async function changeCover(throughEntryId?: number) {
     if (!connected || generationActive || actionPending) return;
     setPendingAction('cover');
@@ -901,6 +930,29 @@ export function ChatScreen({
               : recordingTarget
                 ? 'Self-notes'
                 : (character?.display_name ?? 'Unknown character')}</span>
+            <button
+              aria-label="Attach text file"
+              aria-busy={pendingAction === 'upload'}
+              className="cha-speech-cache-toggle"
+              disabled={!connected || generationActive || actionPending}
+              onClick={() => fileInput.current?.click()}
+              title="Attach text file"
+              type="button"
+            >
+              <FileUpIcon />
+            </button>
+            <input
+              accept="text/*,.txt,.md,.csv,.tsv,.json,.yaml,.yml,.toml,.xml,.log,.py,.js,.ts,.tsx,.jsx,.cpp,.h,.c,.rs,.go,.sh,.css,.html,.sql"
+              aria-label="Text file"
+              className="cha-file-input"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void attachTextFile(file);
+              }}
+              ref={fileInput}
+              type="file"
+            />
             {textToSpeechConfiguration && (
               <button
                 aria-label="Auto audio response"

@@ -17,6 +17,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::session_delete, "session.delete"},
     {Method::session_open, "session.open"},
     {Method::session_submit, "session.submit"},
+    {Method::session_attach_text_file, "session.attachTextFile"},
     {Method::session_stop, "session.stop"},
     {Method::session_close, "session.close"},
     {Method::session_snapshot, "session.snapshot"},
