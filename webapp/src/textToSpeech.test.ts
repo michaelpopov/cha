@@ -90,7 +90,10 @@ describe('text to speech', () => {
       await playing;
       expect(changes).toEqual([false, true]);
       if (ending === 'stop') session.stop();
-      else audios[0].dispatchEvent(new Event(ending));
+      else {
+        if (ending === 'pause') audios[0].paused = true;
+        audios[0].dispatchEvent(new Event(ending));
+      }
       expect(changes).toEqual([false, true]);
       await vi.advanceTimersByTimeAsync(400);
       expect(changes).toEqual([false, true, false]);
@@ -724,6 +727,39 @@ describe('streaming playback', () => {
       audios[0].dispatchEvent(new Event('ended'));
       await vi.advanceTimersByTimeAsync(400);
       expect(changes).toEqual([false, true, false]);
+    } finally {
+      session.stop();
+      unsubscribe();
+    }
+  });
+
+  it.each(['queued pause', 'resumed stream'])('keeps input blocked during playback after a %s', async (sequence) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response('audio', true));
+    let blocked = false;
+    const unsubscribe = onSpeechPlaybackChange((playing) => { blocked = playing; });
+    const { session } = start();
+    try {
+      await session.play();
+      await vi.waitFor(() => expect(source.endOfStream).toHaveBeenCalledOnce());
+      const audio = audios[0];
+      if (sequence === 'resumed stream') {
+        audio.paused = true;
+        audio.dispatchEvent(new Event('pause'));
+        await vi.advanceTimersByTimeAsync(400);
+        expect(blocked).toBe(false);
+        audio.paused = false;
+        // A stream can become playable again without another play event.
+        audio.dispatchEvent(new Event('playing'));
+      } else {
+        // A queued event must not override the player's current running state.
+        audio.paused = false;
+        audio.dispatchEvent(new Event('pause'));
+      }
+      await vi.advanceTimersByTimeAsync(400);
+      expect(blocked).toBe(true);
+      audio.dispatchEvent(new Event('ended'));
+      await vi.advanceTimersByTimeAsync(400);
+      expect(blocked).toBe(false);
     } finally {
       session.stop();
       unsubscribe();

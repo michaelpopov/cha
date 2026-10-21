@@ -25,6 +25,7 @@ import {
   type VoiceInputTransport,
   type VoiceInputXaiBridge,
 } from '../voiceInput';
+import { isSpeechPlaybackActive } from '../speechPlayback';
 import { MicrophoneIcon, SendIcon } from './Icons';
 import { TransliterationToggle, useTransliteration } from './TransliterationMode';
 
@@ -453,6 +454,15 @@ export function PromptInput({
               ? transcript.slice(openAiTranscript.length) : '';
             openAiTranscript = provisional ? transcript : '';
             provisional = false;
+          }
+          // Consume cumulative results above, but discard text during speech and its echo delay.
+          // Also remove an earlier preview, because its clear event is discarded too.
+          if (isSpeechPlaybackActive()) {
+            const current = draftRef.current;
+            const at = voicePreview ? current.lastIndexOf(voicePreview) : -1;
+            if (at >= 0) updateDraft(current.slice(0, at) + current.slice(at + voicePreview.length));
+            voicePreview = '';
+            return;
           }
           if (provisional) {
             const current = draftRef.current;

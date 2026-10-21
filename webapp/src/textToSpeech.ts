@@ -259,6 +259,7 @@ export class TextToSpeechSession {
     }, { signal });
     audio.addEventListener('pause', () => {
       if (audio.ended) { this.finish(true); return; }
+      if (!audio.paused) return;
       // Media controls can pause the clip without ending it or advancing the queue.
       this.clearPlaybackWait();
       this.releaseInput();
@@ -266,7 +267,10 @@ export class TextToSpeechSession {
     audio.addEventListener('play', () => {
       if (!this.stopped) this.endPlayback ??= beginSpeechPlayback();
     }, { signal });
-    audio.addEventListener('playing', () => this.clearPlaybackWait(), { signal });
+    audio.addEventListener('playing', () => {
+      if (!this.stopped) this.endPlayback ??= beginSpeechPlayback();
+      this.clearPlaybackWait();
+    }, { signal });
     audio.addEventListener('waiting', () => {
       if (this.stopped || audio.paused || this.playbackWaitTimer !== undefined) return;
       this.playbackWaitTimer = setTimeout(() => {

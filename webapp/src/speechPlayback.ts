@@ -9,10 +9,14 @@ function notify(playing: boolean): void {
   for (const listener of listeners) listener(playing);
 }
 
+export function isSpeechPlaybackActive(): boolean {
+  return activePlayers > 0 || resumeTimer !== undefined;
+}
+
 // Subscribe before connecting the microphone, including during existing playback.
 export function onSpeechPlaybackChange(listener: (playing: boolean) => void): () => void {
   listeners.add(listener);
-  listener(activePlayers > 0 || resumeTimer !== undefined);
+  listener(isSpeechPlaybackActive());
   return () => { listeners.delete(listener); };
 }
 

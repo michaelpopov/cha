@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fixtureClient } from '../test/fixtures';
 import { VoiceInputSession, type VoiceInputTransport } from '../voiceInput';
+import { beginSpeechPlayback } from '../speechPlayback';
 import { PromptInput, type PromptInputProps } from './PromptInput';
 
 const voiceRuntime = {
@@ -47,6 +48,92 @@ function Harness({
 }
 
 describe('PromptInput', () => {
+  it.each(['openai', 'xai'] as const)('discards delayed %s recognition during playback and its echo delay', async (provider) => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let appendVoice: (text: string, provisional?: boolean) => void = () => {};
+    vi.spyOn(VoiceInputSession, 'start').mockImplementation(async (_configuration, onTranscription) => {
+      appendVoice = onTranscription;
+      return { stop: vi.fn(async () => {}), cancel: vi.fn() };
+    });
+    const onSubmit = vi.fn(async () => ({ clear_input: true }));
+    const client = fixtureClient({ getVoiceInputRuntime: async () => ({ ...voiceRuntime, provider }) });
+    const view = render(<Harness client={client} initial="Draft." onSubmit={onSubmit} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    vi.useFakeTimers();
+    const endPlayback = beginSpeechPlayback();
+    try {
+      act(() => {
+        appendVoice('Background', true);
+        appendVoice('', true);
+        appendVoice('Background over to you');
+      });
+      expect(input).toHaveValue('Draft.');
+      fireEvent.change(input, { target: { value: 'Typed during playback.' } });
+      endPlayback();
+      await act(async () => { await vi.advanceTimersByTimeAsync(399); });
+      act(() => appendVoice('Late echo', true));
+      expect(input).toHaveValue('Typed during playback.');
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      // OpenAI repeats the cumulative preview in its final result after resume.
+      if (provider === 'openai') act(() => {
+        appendVoice('', true);
+        appendVoice('Late echo');
+      });
+      expect(input).toHaveValue('Typed during playback.');
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(onSubmit).not.toHaveBeenCalled();
+      act(() => {
+        appendVoice('New speech', true);
+        appendVoice('', true);
+        appendVoice('New speech');
+      });
+      expect(input).toHaveValue('Typed during playback. New speech');
+    } finally {
+      view.unmount();
+      endPlayback();
+      await vi.advanceTimersByTimeAsync(400);
+    }
+  });
+
+  it('removes an xAI preview shown before playback', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let appendVoice: (text: string, provisional?: boolean) => void = () => {};
+    vi.spyOn(VoiceInputSession, 'start').mockImplementation(async (_configuration, onTranscription) => {
+      appendVoice = onTranscription;
+      return { stop: vi.fn(async () => {}), cancel: vi.fn() };
+    });
+    const client = fixtureClient({ getVoiceInputRuntime: async () => ({ ...voiceRuntime, provider: 'xai' as const }) });
+    const view = render(<Harness client={client} initial="Draft." />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    act(() => appendVoice('Hello', true));
+    expect(input).toHaveValue('Draft. Hello');
+    vi.useFakeTimers();
+    const endPlayback = beginSpeechPlayback();
+    try {
+      act(() => {
+        appendVoice('', true);
+        appendVoice('Hello world.');
+      });
+      expect(input).toHaveValue('Draft.');
+      endPlayback();
+      await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+      act(() => {
+        appendVoice('Next', true);
+        appendVoice('', true);
+        appendVoice('Next.');
+      });
+      expect(input).toHaveValue('Draft. Next.');
+    } finally {
+      view.unmount();
+      endPlayback();
+      await vi.advanceTimersByTimeAsync(400);
+    }
+  });
+
   it('types and submits without a voice runtime', async () => {
     const onSubmit = vi.fn(async () => ({ clear_input: true }));
     render(<Harness onSubmit={onSubmit} />);

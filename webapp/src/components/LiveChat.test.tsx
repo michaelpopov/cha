@@ -1342,11 +1342,20 @@ describe('live chat', () => {
       addressed_to: '', addressed_to_name: '', text: 'New reply', status: 'complete', created_at: 1,
     }] }));
     await screen.findByRole('button', { name: "Stop reading Assistant's response" });
-    act(() => appendVoice('Next question'));
-    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Next question');
-    act(() => audios[0].dispatchEvent(new Event('ended')));
-    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
-    expect(stop).not.toHaveBeenCalled();
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    act(() => appendVoice('Reply echo'));
+    expect(input).toHaveValue('');
+    vi.useFakeTimers();
+    try {
+      act(() => audios[0].dispatchEvent(new Event('ended')));
+      await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+      act(() => appendVoice('Next question'));
+      expect(input).toHaveValue('Next question');
+      expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+      expect(stop).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each(['download', 'playback', 'cancelled'] as const)('continues with the next reply after a %s failure', async (failure) => {

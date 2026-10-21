@@ -157,6 +157,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
 
   private sendNext(): void {
     // These batches were accepted before playback; finish sending the user's speech.
+    // Prompt input keeps their results only when they arrive after the echo delay.
     if (this.sending || this.pending.length === 0 || this.cancelled || this.failed) return;
     const samples = this.pending.shift();
     if (!samples) return;
