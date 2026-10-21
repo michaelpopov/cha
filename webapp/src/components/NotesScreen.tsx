@@ -70,8 +70,22 @@ function saveDetail(message: string): string {
   return message === noteSaveFailedMessage ? 'Check the vault and try again.' : message;
 }
 
+function preserveNoteScroll(editor: Editor, run: () => void) {
+  const host = editor.view.dom.closest('.cha-notes-document');
+  const top = host?.scrollTop ?? 0;
+  const left = host?.scrollLeft ?? 0;
+  run();
+  if (host) {
+    host.scrollTop = top;
+    host.scrollLeft = left;
+  }
+}
+
 function focusNotesEditor(editor: Editor | null) {
-  if (editor && !editor.isDestroyed && editor.isEditable) editor.view.focus();
+  if (!editor || editor.isDestroyed || !editor.isEditable) return;
+  // Restoring the DOM selection can scroll to an offscreen caret even when
+  // focus itself uses preventScroll.
+  preserveNoteScroll(editor, () => editor.view.focus());
 }
 
 function runMark(editor: Editor, command: () => boolean) {
@@ -108,9 +122,35 @@ function FormatBar({
   const headingsRoot = useRef<HTMLDivElement | null>(null);
   const headingsMenu = useRef<HTMLDivElement | null>(null);
   const pictureInput = useRef<HTMLInputElement | null>(null);
+  const fontAnchor = useRef<{ block: Element; share: number } | null>(null);
   const editable = editor.isEditable && !editor.isDestroyed;
   const headings = noteHeadings(editor.state.doc);
   const showHeadings = headingsOpen && editable && headings.length > 0;
+
+  function format(command: () => boolean) {
+    preserveNoteScroll(editor, () => runMark(editor, command));
+  }
+
+  // A font size change keeps the text at the top of the note in place. The
+  // same pixel offset would show other text.
+  function changeFontSize(size: number) {
+    const host = editor.view.dom.closest('.cha-notes-document');
+    const top = host?.getBoundingClientRect().top ?? 0;
+    const block = Array.from(editor.view.dom.children)
+      .find((node) => node.getBoundingClientRect().bottom > top);
+    const box = block?.getBoundingClientRect();
+    if (block && box && box.height > 0) fontAnchor.current = { block, share: (top - box.top) / box.height };
+    onFontSizeChange(size);
+  }
+
+  useLayoutEffect(() => {
+    const anchor = fontAnchor.current;
+    fontAnchor.current = null;
+    const host = editor.view.dom.closest('.cha-notes-document');
+    if (!anchor || !host || !anchor.block.isConnected) return;
+    const box = anchor.block.getBoundingClientRect();
+    host.scrollTop += box.top + anchor.share * box.height - host.getBoundingClientRect().top;
+  }, [editor, fontSize]);
 
   useEffect(() => {
     const bump = () => setTick((value) => value + 1);
@@ -165,7 +205,7 @@ function FormatBar({
 
   function chooseList(list: 'bullet' | 'ordered') {
     setListOpen(false);
-    runMark(editor, () => (
+    format(() => (
       list === 'bullet' ? editor.chain().toggleBulletList().run() : editor.chain().toggleOrderedList().run()
     ));
   }
@@ -203,7 +243,7 @@ function FormatBar({
           aria-pressed={editor.isActive('bold')}
           className="cha-button"
           disabled={!editable}
-          onClick={() => runMark(editor, () => editor.chain().toggleBold().run())}
+          onClick={() => format(() => editor.chain().toggleBold().run())}
           type="button"
         >
           B
@@ -214,7 +254,7 @@ function FormatBar({
           aria-pressed={editor.isActive('italic')}
           className="cha-button"
           disabled={!editable}
-          onClick={() => runMark(editor, () => editor.chain().toggleItalic().run())}
+          onClick={() => format(() => editor.chain().toggleItalic().run())}
           type="button"
         >
           I
@@ -225,7 +265,7 @@ function FormatBar({
           aria-pressed={editor.isActive('underline')}
           className="cha-button"
           disabled={!editable}
-          onClick={() => runMark(editor, () => editor.chain().toggleUnderline().run())}
+          onClick={() => format(() => editor.chain().toggleUnderline().run())}
           type="button"
         >
           U
@@ -236,7 +276,7 @@ function FormatBar({
           aria-pressed={editor.isActive('highlight')}
           className="cha-button"
           disabled={!editable}
-          onClick={() => runMark(editor, () => editor.chain().toggleHighlight().run())}
+          onClick={() => format(() => editor.chain().toggleHighlight().run())}
           type="button"
         >
           <HighlighterIcon />
@@ -248,7 +288,7 @@ function FormatBar({
           title="Decrease font size"
           className="cha-button"
           disabled={fontSize <= 10}
-          onClick={() => onFontSizeChange(Math.max(10, fontSize - 2))}
+          onClick={() => changeFontSize(Math.max(10, fontSize - 2))}
           type="button"
         >
           A−
@@ -258,7 +298,7 @@ function FormatBar({
           title="Increase font size"
           className="cha-button"
           disabled={fontSize >= 30}
-          onClick={() => onFontSizeChange(Math.min(30, fontSize + 2))}
+          onClick={() => changeFontSize(Math.min(30, fontSize + 2))}
           type="button"
         >
           A+
@@ -272,7 +312,7 @@ function FormatBar({
             className="cha-button cha-notes-heading"
             disabled={!editable}
             key={level}
-            onClick={() => runMark(editor, () => editor.chain().toggleHeading({ level }).run())}
+            onClick={() => format(() => editor.chain().toggleHeading({ level }).run())}
             title={`Heading ${level}`}
             type="button"
           >
@@ -339,7 +379,7 @@ function FormatBar({
           aria-pressed={editor.isActive('code')}
           className="cha-button cha-notes-code"
           disabled={!editable}
-          onClick={() => runMark(editor, () => editor.chain().toggleCode().run())}
+          onClick={() => format(() => editor.chain().toggleCode().run())}
           type="button"
         >
           <CodeIcon />

@@ -106,6 +106,64 @@ async function nativeParity() {
     ));
     completed.push('Notes creation, prompt insertion and layout');
 
+    step = 'Notes toolbar scroll position';
+    const editor = note.querySelector('.ProseMirror').chaEditor;
+    const original = editor.getJSON();
+    editor.commands.setContent(Array.from({ length: 80 }, (_, index) => (
+      `<p>Paragraph ${index + 1}: keep this reading position.</p>`
+    )).join(''));
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    const documentHost = note.querySelector('.cha-notes-document');
+    const settle = () => wait(75);
+    const topText = () => {
+      const box = documentHost.getBoundingClientRect();
+      const found = editor.view.posAtCoords({ left: box.left + box.width / 2, top: box.top + 1 });
+      return found && editor.state.doc.resolve(found.pos).parent.textContent;
+    };
+    await settle();
+    check(documentHost.scrollHeight > documentHost.clientHeight + 800, 'Test note is not scrollable');
+    // macOS mouse clicks keep editor focus; keyboard activation focuses the
+    // toolbar control. Cover both with a caret and an offscreen text selection.
+    for (const selectText of [false, true]) {
+      const end = editor.state.doc.content.size - 1;
+      editor.commands.setTextSelection(selectText ? { from: end - 7, to: end } : end);
+      for (const focusControl of [false, true]) {
+        for (const name of [
+          'Increase editor font size', 'Decrease editor font size',
+          'Bold', 'Italic', 'Underline', 'Highlight', 'Code',
+          'Heading 1', 'Heading 2', 'Heading 3',
+        ]) {
+          editor.view.focus();
+          documentHost.scrollTop = 400;
+          await settle();
+          const top = topText();
+          const selection = editor.state.selection.toJSON();
+          const control = button(name, note);
+          if (focusControl) control.focus({ preventScroll: true });
+          control.click();
+          await settle();
+          // A font size change moves the pixels; the text at the top stays.
+          if (name.endsWith('font size')) {
+            check(topText() === top, `${name} moved the note from ${top} to ${topText()}`);
+          } else {
+            check(Math.abs(documentHost.scrollTop - 400) <= 1,
+              `${name} moved the note to ${documentHost.scrollTop}`);
+          }
+          check(JSON.stringify(editor.state.selection.toJSON()) === JSON.stringify(selection),
+            `${name} changed the selection`);
+          check(document.activeElement === editor.view.dom, `${name} did not return focus`);
+        }
+      }
+    }
+    await click('Jump to heading', note);
+    await settle();
+    check(Math.abs(documentHost.scrollTop - 400) <= 1, 'Opening headings moved the note');
+    note.querySelector('[role="menu"] button').click();
+    await settle();
+    check(documentHost.scrollTop > 400, 'Heading navigation did not scroll to the heading');
+    editor.commands.setContent(original);
+    completed.push('Notes toolbar preserves scroll position and selection');
+
     step = 'settings navigation';
     await click('Settings', document.querySelector('aside'));
     for (const [name, label, ready] of [

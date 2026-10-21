@@ -230,7 +230,7 @@ private final class NativeTestHost: NSObject, NSApplicationDelegate, WKNavigatio
     }
 
     func start() {
-        if options.devOrigin != nil || options.expectation == .audio || options.expectation == .media || options.expectation == .streaming {
+        if options.devOrigin != nil || options.expectation == .audio || options.expectation == .media || options.expectation == .streaming || options.expectation == .parity {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: testWidth(1040), height: 760),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
