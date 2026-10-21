@@ -458,6 +458,23 @@ describe('notes native client', () => {
     return createNativeChaClient(createFakeNativeBridge(handlers));
   }
 
+  it('keeps single-note compression unchanged and reports folder skips', async () => {
+    const compress = vi.fn().mockReturnValueOnce({}).mockReturnValueOnce({ skipped: 'already_compressed' })
+      .mockReturnValueOnce({ skipped: 'too_small' }).mockReturnValueOnce({});
+    const client = clientFor({ 'notes.compress': compress });
+    const signal = new AbortController().signal;
+    expect(await client.compressNote(4, signal)).toBeUndefined();
+    expect(compress).toHaveBeenLastCalledWith({ id: 4 });
+    expect(await client.compressNote(4, signal, true)).toBe('already_compressed');
+    expect(compress).toHaveBeenLastCalledWith({ id: 4, skip_ineligible: true });
+    expect(await client.compressNote(4, signal, true)).toBe('too_small');
+    expect(await client.compressNote(4, signal, true)).toBeUndefined();
+    for (const invalid of [{ skipped: 'unknown' }, { skipped: true }, { skipped: 'too_small', extra: true }]) {
+      await expect(clientFor({ 'notes.compress': () => invalid }).compressNote(4, signal, true))
+        .rejects.toBeInstanceOf(ChaProtocolError);
+    }
+  });
+
   it('reads a page using the notes bridge and validates its reply', async () => {
     const page = { url: 'https://example.org/final', title: 'Title', markdown: '**Text**' };
     const read = vi.fn(() => page);

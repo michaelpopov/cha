@@ -34,7 +34,7 @@ ErrorCode note_error_code(NoteFailure failure) {
 
 std::shared_ptr<OperationReply> Application::compress_note(
     std::string_view connection_id, std::uint64_t request_id,
-    std::int64_t id, std::uint64_t epoch) {
+    std::int64_t id, std::uint64_t epoch, bool skip_ineligible) {
     auto reply = std::make_shared<OperationReply>();
     NoteText note;
     SharedCharacterDefinition definition;
@@ -42,9 +42,18 @@ std::shared_ptr<OperationReply> Application::compress_note(
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
-        try { note = impl_->store->get_note_text(id); }
-        catch (const NoteError& error) { rethrow_note(error); }
+        try {
+            if (skip_ineligible && impl_->store->get_note(id).compressed_text) {
+                reply->complete({{"skipped", "already_compressed"}});
+                return reply;
+            }
+            note = impl_->store->get_note_text(id);
+        } catch (const NoteError& error) { rethrow_note(error); }
         if (note.text.size() < note_compression_min_bytes) {
+            if (skip_ineligible) {
+                reply->complete({{"skipped", "too_small"}});
+                return reply;
+            }
             throw ApplicationError(ErrorCode::invalid_argument,
                 "This note is under 4 KiB and does not need compression.");
         }

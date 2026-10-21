@@ -1304,9 +1304,14 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 break;
             }
             case Method::notes_compress:
-                require_only_keys(params, {"id"});
+                if (params.contains("skip_ineligible")) require_only_keys(params, {"id", "skip_ineligible"});
+                else require_only_keys(params, {"id"});
+                if (params.contains("skip_ineligible") && !params["skip_ineligible"].is_boolean()) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
                 start_background(connection_id, id, application.compress_note(
-                    connection_id, id, static_cast<std::int64_t>(require_safe_id(params, "id")), epoch));
+                    connection_id, id, static_cast<std::int64_t>(require_safe_id(params, "id")), epoch,
+                    params.value("skip_ineligible", false)));
                 return;
             case Method::notes_compress_cancel:
                 require_only_keys(params, {"request_id"});

@@ -2422,6 +2422,44 @@ TEST_F(BridgeRouterTest, CompressionSkipsShortMarkdownBeforeProviderValidation) 
     EXPECT_EQ(stored_compression(database_, note.id), "Compressed text");
 }
 
+TEST_F(BridgeRouterTest, FolderCompressionSkipsStoredAndShortNotesBeforeProviderValidation) {
+    bootstrap_epoch();
+    const auto note = application_->create_note_item({}, NoteItemKind::note, "Source", epoch_);
+    const auto compress = [&] { return call("notes.compress", {{"id", note.id}, {"skip_ineligible", true}}); };
+    auto reply = compress();
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"], nlohmann::json({{"skipped", "too_small"}}));
+    application_->save_note(note.id, text_document(std::string(4095, 'a')), epoch_);
+    reply = compress();
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"]["skipped"], "too_small");
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        note_save_compressed(database, note.id, "Existing compression");
+    }
+    reply = compress();
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"]["skipped"], "already_compressed");
+    application_->save_note(note.id, text_document(std::string(4096, 'a')), epoch_);
+    reply = compress();
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"]["skipped"], "already_compressed");
+    EXPECT_EQ(stored_compression(database_, note.id), "Existing compression");
+
+    const auto eligible = application_->create_note_item({}, NoteItemKind::note, "Eligible", epoch_);
+    application_->save_note(eligible.id, text_document(std::string(4096, 'a')), epoch_);
+    MockHttpServer server({compression_response("chat_completions", false, "New compression")});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    reply = call("notes.compress", {{"id", eligible.id}, {"skip_ineligible", true}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"], nlohmann::json::object());
+    EXPECT_EQ(stored_compression(database_, eligible.id), "New compression");
+    server.join();
+    EXPECT_EQ(server.requests().size(), 1U);
+    EXPECT_FALSE(call("notes.compress", {{"id", eligible.id}, {"skip_ineligible", "true"}})["ok"]);
+}
+
 TEST_F(BridgeRouterTest, CompressionReportsProviderSettingsAndEmptyNotes) {
     bootstrap_epoch();
     const auto note = compression_source(*application_, epoch_);

@@ -61,6 +61,46 @@ function typeInNote(text: string) {
 }
 
 describe('Notes in the application', () => {
+  it.each([false, true])('saves an edited subfolder note before compression or stops when cancelled (cancel=%s)', async (cancel) => {
+    const nested = { ...study, id: 2, parent_id: study.id, name: 'Nested' };
+    const child = { ...plan, parent_id: nested.id };
+    let finishSave!: () => void;
+    const saveNote = vi.fn((_id: number, _document: Record<string, unknown>) => new Promise<void>((resolve) => { finishSave = resolve; }));
+    const compressNote = vi.fn(async () => 'too_small' as const);
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [study, nested, child],
+      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      saveNote, compressNote,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Nested' }));
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    act(() => typeInNote(' edited'));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByRole('listitem')).toHaveTextContent('PlanSaving…');
+    expect(compressNote).not.toHaveBeenCalled();
+    expect(noteEditor().isEditable).toBe(false);
+    if (cancel) fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await act(async () => finishSave());
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Close' })).toBeInTheDocument());
+    if (cancel) {
+      expect(compressNote).not.toHaveBeenCalled();
+      expect(within(dialog).getByRole('listitem')).toHaveTextContent('PlanCancelled');
+      expect(within(dialog).getByRole('status')).toHaveTextContent('Cancelled · 0 / 1 processed');
+    } else {
+      expect(compressNote).toHaveBeenCalledExactlyOnceWith(plan.id, expect.any(AbortSignal), true);
+      expect(within(dialog).getByRole('listitem')).toHaveTextContent('PlanToo small');
+      expect(within(dialog).getByRole('status')).toHaveTextContent('1 / 1 processed');
+    }
+    expect(saveNote.mock.calls[0][1]).toEqual(noteEditor().getJSON());
+    expect(noteEditor().isEditable).toBe(true);
+  });
+
   it('saves pending edits before compression and cancels during saving without sending', async () => {
     let finishSave!: () => void;
     const compressNote = vi.fn();

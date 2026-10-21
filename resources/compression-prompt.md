@@ -35,6 +35,11 @@ otherwise preserve that information in compressed form:
 - Rhetorical commentary and unnecessary qualifications
   that do not affect meaning.
 
+Before you remove a sentence as a transition, preview, commentary, or
+rhetoric, check whether it states a claim, a cause, a ranking, the lesson
+of an example, or a link to another section. If it does, keep that
+proposition in plain words and remove only the style.
+
 Do not discard historical, biographical, or narrative material merely because
 it is nontechnical or peripheral. Preserve its distinct substantive content
 concisely, including context needed to understand the chapter's argument.
@@ -75,6 +80,10 @@ source's explanation of how they relate: category membership, axis meanings
 and directions, quadrant assignments, sequences, dependencies, and trade-offs.
 Do not replace a definition or rule with a slogan that loses its conditions.
 
+When the author ties a recommendation, technique, or example to a named
+framework or one of its parts, keep that link explicitly. Use the source's
+names for the parts. Do not invent new labels for list items.
+
 3. REWRITE FOR INFORMATION DENSITY
 
 - Compress the chapter as a whole, not just each paragraph independently.
@@ -100,6 +109,7 @@ Do not replace a definition or rule with a slogan that loses its conditions.
   with the same meaning, not to rename an author's term.
 - Use equations, pseudocode, type signatures, and standard
   technical notation when they improve density.
+- Use plain-text math such as R = N(N − 1)/2 unless the source uses LaTeX.
 - Remove redundant words without introducing ambiguity.
 - Preserve explicit causal and logical relationships.
 - Preserve conditions, exceptions, and scope limitations.
@@ -141,9 +151,15 @@ described a past seal problem, and the team agreed to inspect the seal."
 - Keep the source headings, their order, and their levels.
   The only additional heading allowed is the optional final
   "Chapter overview" described below.
+- If the source has no heading markup, infer the heading levels. Put the
+  chapter number and title in one top-level heading. Keep end-of-chapter
+  sections, such as key takeaways, as headings.
+- Give parallel sections the same format.
 - Preserve references to other chapters, sections, figures, and listings,
   including their identifiers when supplied. Replace layout-dependent wording
   such as "on this page" with a reference that remains meaningful in the output.
+- Preserve references between parts of the same chapter, including
+  forward references and examples or people reused from earlier sections.
 - Preserve substantive information available in figures, tables, captions,
   and their descriptions as concise text or tables. Include relevant labels,
   values, units, mappings, and relationships, not just the figure's title.
@@ -180,15 +196,21 @@ described a past seal problem, and the team agreed to inspect the seal."
   unresolved questions presented by the author.
 - If two sections contradict each other, preserve the
   distinction rather than inventing a reconciliation.
+- Keep the strength of each claim. Do not make it stronger or weaker.
+  Check hedges (perhaps, probably, may, can, I suspect), evidence verbs
+  (suggests, finds, shows), rankings and superlatives (the key, the most,
+  one of the most, the opposite of), and quantity words (many, some, often).
+- Keep the author's own restatement or interpretation of research
+  attributed to the author, not to the researchers.
+- Do not add conclusions that the source does not state, even when they
+  seem to follow by symmetry. Do not add categories to the source's lists.
 
 Illustrative fidelity example:
-Source: "In a study of managers, greater power was associated with less
-perspective-taking. The researchers suggested that this might reduce
-considerate behavior."
-Good compression: "Study of managers: greater power correlated with less
-perspective-taking; researchers proposed reduced considerate behavior as a
-possible consequence."
-Bad compression: "High-status people are less kind."
+Source: "A survey of nurses found that longer shifts were associated with
+more medication errors. Put simply, tired people make mistakes."
+Good compression: "Survey of nurses: longer shifts correlated with more
+medication errors. Author's gloss: tired people make mistakes."
+Bad compression: "Research shows that tired people make mistakes."
 
 7. COMPRESSION PRIORITY
 
@@ -239,6 +261,14 @@ Check whether the output supports the same substantive answers as the source:
 what terms mean, how frameworks and procedures work, why conclusions follow,
 what evidence supports them, and when claims apply or have exceptions.
 Matching terminology alone is not sufficient.
+
+Check these items one by one:
+- Each causal or logical link in the source (because, so, that is why,
+  driven by, as X increases Y increases) has the same link in the output.
+- Each hedge, evidence verb, ranking, and superlative has the same strength.
+- Each example or anecdote keeps the lesson that the author draws from it.
+- The output contains no inference, category, label, or attribution that
+  the source does not contain.
 
 Restore lost substantive information to the compressed body, repair altered
 meanings, and remove remaining redundancy before producing the result.

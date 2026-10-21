@@ -831,11 +831,14 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     saveNote: async (id, document) => {
       await call('notes.save', { id, document }, isEmptyResult);
     },
-    compressNote: async (id, signal) => {
-      const result = await bridge.invoke('notes.compress', { id }, {
+    compressNote: async (id, signal, skipIneligible = false) => {
+      const result = await bridge.invoke('notes.compress', { id, ...(skipIneligible ? { skip_ineligible: true } : {}) }, {
         signal, cancelMethod: 'notes.compressCancel',
       });
-      if (!isEmptyResult(result)) throw new ChaProtocolError();
+      if (isEmptyResult(result)) return;
+      if (skipIneligible && isRecord(result) && hasExactKeys(result, ['skipped'])
+        && (result.skipped === 'already_compressed' || result.skipped === 'too_small')) return result.skipped;
+      throw new ChaProtocolError();
     },
     renameNoteItem: (id, name) => call('notes.rename', { id, name }, isNoteItem),
     deleteNoteItem: async (id) => {

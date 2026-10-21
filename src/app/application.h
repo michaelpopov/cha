@@ -550,7 +550,7 @@ public:
     [[nodiscard]] std::vector<NoteItem> list_note_items(std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> compress_note(
         std::string_view connection_id, std::uint64_t request_id,
-        std::int64_t id, std::uint64_t epoch);
+        std::int64_t id, std::uint64_t epoch, bool skip_ineligible = false);
     void cancel_note_compression(
         std::string_view connection_id, std::uint64_t request_id, std::uint64_t epoch);
     [[nodiscard]] std::int64_t import_note_book(

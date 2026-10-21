@@ -111,6 +111,7 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
 }
 
 export type NotePage = { url: string; title: string; markdown: string };
+export type NoteCompressionSkip = 'already_compressed' | 'too_small';
 export type NoteBookImport = {
   parent_id: number | null;
   name: string;
@@ -129,7 +130,7 @@ export interface NotesClient {
   ) => Promise<NoteItem>;
   getNote: (id: number) => Promise<NoteContent>;
   saveNote: (id: number, document: Record<string, unknown>) => Promise<void>;
-  compressNote: (id: number, signal: AbortSignal) => Promise<void>;
+  compressNote: (id: number, signal: AbortSignal, skipIneligible?: boolean) => Promise<void | NoteCompressionSkip>;
   renameNoteItem: (id: number, name: string) => Promise<NoteItem>;
   deleteNoteItem: (id: number) => Promise<void>;
 }

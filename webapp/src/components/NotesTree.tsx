@@ -13,6 +13,7 @@ import { createPortal } from 'react-dom';
 import {
   ChaError,
   publicErrorMessage,
+  type NoteCompressionSkip,
   type NoteContent,
   type NoteItem,
   type NotesClient,
@@ -70,7 +71,26 @@ type CompressedDialogState = {
   name: string;
 };
 
-type DialogState = CreateDialogState | RenameDialogState | DeleteDialogState | CompressDialogState | CompressedDialogState;
+type FolderCompressionRow = {
+  id: number;
+  name: string;
+  status: 'Saving…' | 'Compressing…' | 'Compressed' | 'Already compressed' | 'Too small' | 'Cancelled' | 'Failed';
+  error?: string;
+};
+
+type FolderCompressDialogState = {
+  action: 'compress-folder';
+  sourceId: number;
+  name: string;
+  controller: AbortController;
+  pending: boolean;
+  total: number;
+  rows: FolderCompressionRow[];
+  error: string | null;
+};
+
+type DialogState = CreateDialogState | RenameDialogState | DeleteDialogState | CompressDialogState
+  | FolderCompressDialogState | CompressedDialogState;
 
 type MenuState = {
   sourceId: string;
@@ -91,10 +111,10 @@ export type NoteActions = {
   renamed(note: NoteItem): void;
 };
 
-// True when a new compressed version was saved; false when cancelled.
+// True when saved, false when cancelled, or the reason a folder note was skipped.
 export type CompressNote = (
-  id: number, signal: AbortSignal, ready: () => void,
-) => Promise<boolean>;
+  id: number, signal: AbortSignal, ready: () => void, skipIneligible?: boolean,
+) => Promise<boolean | NoteCompressionSkip>;
 
 type RefreshResult = 'applied' | 'ignored' | 'failed';
 
@@ -222,7 +242,9 @@ export function NotesTree({
     return () => {
       alive.current = false;
       const current = dialogRef.current;
-      if (current?.action === 'compress' && current.pending) current.controller.abort();
+      if ((current?.action === 'compress' || current?.action === 'compress-folder') && current.pending) {
+        current.controller.abort();
+      }
     };
   }, []);
 
@@ -480,7 +502,11 @@ export function NotesTree({
 
   async function startCompress() {
     const source = takeMenuSource();
-    if (!source || source.kind !== 'note' || !canMutateNow()) return;
+    if (!source || !canMutateNow()) return;
+    if (source.kind === 'folder') {
+      await compressFolder(source);
+      return;
+    }
     const captured: CompressDialogState = {
       action: 'compress', sourceId: source.id, name: source.name,
       phase: 'saving', controller: new AbortController(), pending: true, error: null,
@@ -507,6 +533,68 @@ export function NotesTree({
       if (alive.current) setDialog({ ...captured, pending: false,
         error: failure instanceof ChaError && failure.code === 'invalid_argument'
           ? reason : `Could not compress “${source.name}”.\n${reason}` });
+    } finally {
+      busy.current = false;
+    }
+  }
+
+  async function compressFolder(source: NoteItem) {
+    const notes: NoteTreeRow[] = [];
+    const collect = (key: string) => {
+      for (const child of index.children[key] ?? []) {
+        const row = index.rows[child];
+        if (row.kind === 'folder') collect(child);
+        else notes.push(row);
+      }
+    };
+    collect(String(source.id));
+    const controller = new AbortController();
+    const captured: FolderCompressDialogState = {
+      action: 'compress-folder', sourceId: source.id, name: source.name,
+      controller, pending: true, total: notes.length, rows: [], error: null,
+    };
+    const update = (change: (current: FolderCompressDialogState) => FolderCompressDialogState) => {
+      if (alive.current) setDialog((current) => current?.action === 'compress-folder'
+        && current.controller === controller ? change(current) : current);
+    };
+    busy.current = true;
+    setDialog(captured);
+    try {
+      for (const note of notes) {
+        if (!alive.current || controller.signal.aborted) break;
+        const id = note.noteId!;
+        const updateRow = (patch: Partial<FolderCompressionRow>) => update((current) => ({
+          ...current, rows: current.rows.map((row) => row.id === id ? { ...row, ...patch } : row),
+        }));
+        update((current) => ({ ...current, rows: [...current.rows, { id, name: note.name, status: 'Saving…' }] }));
+        try {
+          const result = await onCompressRef.current(id, controller.signal,
+            () => updateRow({ status: 'Compressing…' }), true);
+          updateRow({ status: result === 'already_compressed' ? 'Already compressed'
+            : result === 'too_small' ? 'Too small' : result ? 'Compressed' : 'Cancelled' });
+          if (result === false) {
+            controller.abort();
+            break;
+          }
+        } catch (failure: unknown) {
+          if (!alive.current) break;
+          if (controller.signal.aborted || (failure instanceof ChaError && failure.code === 'operation_cancelled')) {
+            updateRow({ status: 'Cancelled' });
+            controller.abort();
+            break;
+          }
+          updateRow({ status: 'Failed', error: publicErrorMessage(failure, 'Try again.') });
+          // Settings errors would repeat for every remaining note.
+          if (failure instanceof ChaError
+            && (failure.code === 'vault_changed' || failure.code === 'invalid_argument')) break;
+        }
+      }
+      update((current) => ({ ...current, pending: false }));
+      if (!alive.current) return;
+      const refreshed = await refreshListing(source.id);
+      if (refreshed === 'failed') update((current) => ({
+        ...current, error: 'The notes list could not be refreshed.',
+      }));
     } finally {
       busy.current = false;
     }
@@ -701,7 +789,7 @@ export function NotesTree({
           role="menu"
           style={{
             left: Math.max(8, Math.min(menu.x, window.innerWidth - 168)),
-            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menuIsNote ? 220 : menu.sourceId === 'vault' ? 140 : 220))),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menuIsNote ? 220 : menu.sourceId === 'vault' ? 140 : 250))),
           }}
         >
           {!menuIsNote && (
@@ -720,12 +808,10 @@ export function NotesTree({
           {menu.sourceId !== 'vault' && (
             <>
               <button onClick={() => startRename()} role="menuitem" type="button">Rename</button>
+              <button onClick={() => void startCompress()} role="menuitem" type="button">Compress</button>
               {menuIsNote && (
-                <>
-                  <button onClick={() => void startCompress()} role="menuitem" type="button">Compress</button>
-                  <button disabled={!index.rows[menu.sourceId]?.hasCompressed}
-                    onClick={showCompressed} role="menuitem" type="button">Show compressed</button>
-                </>
+                <button disabled={!index.rows[menu.sourceId]?.hasCompressed}
+                  onClick={showCompressed} role="menuitem" type="button">Show compressed</button>
               )}
               <button onClick={() => startDelete()} role="menuitem" type="button">Delete</button>
             </>
@@ -768,7 +854,7 @@ export function NotesTree({
           onSubmit={() => void submitDelete()}
         />
       )}
-      {dialog?.action === 'compress' && (
+      {(dialog?.action === 'compress' || dialog?.action === 'compress-folder') && (
         <CompressDialog dialog={dialog} onClose={() => setDialog(null)} />
       )}
       {dialog?.action === 'show-compressed' && (
@@ -842,13 +928,18 @@ function CompressedDialog({ client, sourceId, name, onClose }: {
 }
 
 function CompressDialog({ dialog, onClose }: {
-  dialog: CompressDialogState;
+  dialog: CompressDialogState | FolderCompressDialogState;
   onClose(): void;
 }) {
   const button = useRef<HTMLButtonElement | null>(null);
   const element = useDialogElement(() => button.current?.focus());
   const [startedAt] = useState(() => performance.now());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const rows = dialog.action === 'compress-folder' ? dialog.rows : null;
+  const lastRow = useRef<HTMLLIElement | null>(null);
+  useEffect(() => {
+    lastRow.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [rows?.length]);
   useEffect(() => {
     const update = () => setElapsedSeconds(Math.floor((performance.now() - startedAt) / 1000));
     update();
@@ -857,14 +948,31 @@ function CompressDialog({ dialog, onClose }: {
     return () => window.clearInterval(timer);
   }, [dialog.pending, startedAt]);
   return createPortal(
-    <dialog className="cha-dialog cha-compress-dialog" ref={element}
+    <dialog className={`cha-dialog cha-compress-dialog${rows ? ' cha-folder-compress-dialog' : ''}`} ref={element}
       aria-label={`Compress “${dialog.name}”`}
       onCancel={(event) => {
         event.preventDefault();
         if (!dialog.pending) onClose();
       }}
       onKeyDown={(event) => { if (event.key === 'Escape' && dialog.pending) event.preventDefault(); }}>
-      {dialog.error ? (
+      {dialog.action === 'compress-folder' ? (
+        <>
+          <ul className="cha-folder-compress-list" aria-label="Note compression progress" aria-live="polite">
+            {dialog.rows.map((row, position) => {
+              const active = row.status === 'Saving…' || row.status === 'Compressing…';
+              return <li key={row.id} ref={position === dialog.rows.length - 1 ? lastRow : undefined}>
+                <span className={active ? 'cha-compress-spinner' : undefined} aria-hidden="true">
+                  {active ? null : row.status === 'Compressed' ? '✓' : row.status === 'Failed' ? '!'
+                    : row.status === 'Cancelled' ? '×' : '–'}
+                </span>
+                <span>{row.name}</span><span>{row.status}</span>
+                {row.error && <span className="cha-folder-compress-error">{row.error}</span>}
+              </li>;
+            })}
+          </ul>
+          {dialog.error && <p role="alert">{dialog.error}</p>}
+        </>
+      ) : dialog.error ? (
         <p role="alert">{dialog.error}</p>
       ) : (
         <p className="cha-compress-status" role="status">
@@ -874,14 +982,21 @@ function CompressDialog({ dialog, onClose }: {
             : `Compressed “${dialog.name}”.`}</span>
         </p>
       )}
-      <p role="timer" aria-label="Elapsed time">
-        {String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:{String(elapsedSeconds % 60).padStart(2, '0')}
-      </p>
-      <div className="cha-dialog-actions">
-        <button className="cha-button" type="button" ref={button}
-          onClick={() => { if (dialog.pending) dialog.controller.abort(); else onClose(); }}>
-          {dialog.pending ? 'Cancel' : 'Close'}
-        </button>
+      <div className={rows ? 'cha-folder-compress-footer' : undefined}>
+        {dialog.action === 'compress-folder' && <span role="status">
+          {!dialog.pending && dialog.controller.signal.aborted ? 'Cancelled · ' : ''}
+          {dialog.rows.filter((row) => ['Compressed', 'Already compressed', 'Too small', 'Failed'].includes(row.status)).length}
+          {' / '}{dialog.total} processed
+        </span>}
+        <p role="timer" aria-label="Elapsed time">
+          {String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:{String(elapsedSeconds % 60).padStart(2, '0')}
+        </p>
+        <div className="cha-dialog-actions">
+          <button className="cha-button" type="button" ref={button}
+            onClick={() => { if (dialog.pending) dialog.controller.abort(); else onClose(); }}>
+            {dialog.pending ? 'Cancel' : 'Close'}
+          </button>
+        </div>
       </div>
     </dialog>, document.body,
   );

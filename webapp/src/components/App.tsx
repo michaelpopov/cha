@@ -733,7 +733,7 @@ export function App({
     return [...text].length;
   }, [client]);
 
-  const compressNote = useCallback<CompressNote>(async (sourceId, signal, ready) => {
+  const compressNote = useCallback<CompressNote>(async (sourceId, signal, ready, skipIneligible) => {
     if (!noteLeave.beginNoteAction()) {
       throw new ChaError('invalid_argument', 'A notes action is already in progress.');
     }
@@ -762,8 +762,8 @@ export function App({
       holdsSlot = false;
       noteLeave.endNoteAction();
       ready();
-      await client.compressNote(sourceId, signal);
-      return true;
+      const skipped = await client.compressNote(sourceId, signal, skipIneligible);
+      return skipped ?? true;
     } catch (failure) {
       if (failure instanceof ChaError && failure.code === 'operation_cancelled') return false;
       throw failure;
