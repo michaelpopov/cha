@@ -148,7 +148,7 @@ export function useNoteSave({
   const noteAccepted = useCallback(() => {
     if (frozenRef.current) return;
     const current = editorRef.current;
-    if (!current || current.isDestroyed || !current.isEditable) return;
+    if (!current || current.isDestroyed) return;
     editSerial.current += 1;
     startDeadline();
   }, [startDeadline]);

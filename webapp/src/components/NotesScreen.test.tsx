@@ -1157,70 +1157,101 @@ describe('Notes screen', () => {
     expect(saveNote).toHaveBeenCalled();
   });
 
-  it('edits and removes a link from the context menu', async () => {
-    const openWindow = vi.spyOn(window, 'open').mockReturnValue(null);
+  it.each([false, true])('shows only the six context actions, including on links (read-only: %s)', async (readOnly) => {
+    render(<Harness items={[{ ...plan, read_only: readOnly }]} getNote={async (id) => ({
+      id, document: { type: 'doc', content: [{ type: 'paragraph', content: [
+        { type: 'text', text: 'Alpha' },
+        { type: 'text', text: ' link', marks: [{ type: 'link', attrs: { href: 'https://example.com/' } }] },
+      ] }] },
+    })} />);
+    const editor = await openedEditor();
+    act(() => { editor.commands.setTextSelection({ from: 1, to: 6 }); });
+    for (const target of [editor.view.dom.querySelector('p')!, editor.view.dom.querySelector('a')!]) {
+      expect(fireEvent.contextMenu(target, { clientX: 25, clientY: 30 })).toBe(false);
+      const items = screen.getAllByRole('menuitem');
+      expect(items.map((item) => item.textContent)).toEqual(['Cut', 'Copy', 'Paste', 'Bold', 'Italic', 'Highlight']);
+      for (const item of items) {
+        if (readOnly && !['Copy', 'Highlight'].includes(item.textContent!)) expect(item).toBeDisabled();
+        else expect(item).toBeEnabled();
+      }
+      expect(screen.getByRole('menuitem', { name: readOnly ? 'Copy' : 'Cut' })).toHaveFocus();
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' });
+      expect(screen.getByRole('menuitem', { name: readOnly ? 'Highlight' : 'Copy' })).toHaveFocus();
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      expect(editor.view.dom).toHaveFocus();
+      expect(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)).toBe('Alpha');
+    }
+  });
+
+  it('formats the selected text through the menu and keeps each action undoable', async () => {
     render(<Harness />);
     const editor = await openedEditor();
-    const openLinkMenu = () => {
-      const anchor = editor.view.dom.querySelector('a');
-      if (!anchor) throw new Error('Link is missing.');
-      fireEvent.contextMenu(anchor);
-    };
-    act(() => {
-      editor.commands.setContent({
-        type: 'doc',
-        content: [{
-          type: 'paragraph',
-          content: [{
-            type: 'text',
-            text: 'docs',
-            marks: [
-              { type: 'bold' },
-              { type: 'link', attrs: { href: 'https://example.com/a' } },
-            ],
-          }],
-        }],
-      });
-      editor.commands.setTextSelection(2);
-    });
-    openLinkMenu();
-    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
-    expect(screen.queryByRole('menuitem', { name: 'Edit link' })).not.toBeInTheDocument();
-    openLinkMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit link' }));
-    await screen.findByRole('dialog', { name: 'Edit link' });
-    const url = screen.getByRole('textbox', { name: 'URL' });
-    fireEvent.change(url, { target: { value: 'mailto:user@example.com' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('Enter an HTTP or HTTPS address.');
-    expect(JSON.stringify(editor.getJSON())).toContain('https://example.com/a');
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    act(() => { editor.commands.setTextSelection({ from: 2, to: 5 }); });
+    for (const command of ['Bold', 'Italic', 'Highlight']) {
+      fireEvent.contextMenu(editor.view.dom);
+      fireEvent.click(screen.getByRole('menuitem', { name: command }));
+    }
+    expect(editor.view.dom.querySelector('strong em mark')?.textContent).toBe('lph');
+    expect(editor.getText()).toBe('Alpha');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(editor.view.dom).toHaveFocus();
-    expect(JSON.stringify(editor.getJSON())).toContain('https://example.com/a');
-
-    openLinkMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit link' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'URL' }), { target: { value: 'http://example.org/b' } });
-    fireEvent.submit(screen.getByRole('textbox', { name: 'URL' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(editor.view.dom).toHaveFocus();
-    expect(editor.getText()).toBe('docs');
-    expect(JSON.stringify(editor.getJSON())).toContain('http://example.org/b');
-    expect(JSON.stringify(editor.getJSON())).toContain('"type":"bold"');
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(JSON.stringify(editor.getJSON())).toContain('https://example.com/a');
+    expect(editor.view.dom.querySelector('mark')).toBeNull();
+    expect(editor.view.dom.querySelector('strong em')?.textContent).toBe('lph');
+  });
 
-    const anchor = editor.view.dom.querySelector('a');
-    if (!anchor) throw new Error('Link is missing.');
-    fireEvent.contextMenu(anchor);
-    expect(openWindow).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove link' }));
-    expect(editor.view.dom).toHaveFocus();
-    expect(editor.getText()).toBe('docs');
-    expect(editor.view.dom.querySelector('a')).toBeNull();
-    expect(JSON.stringify(editor.getJSON())).toContain('"type":"bold"');
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(editor.view.dom.querySelector('a')?.getAttribute('href')).toBe('https://example.com/a');
+  it('copies the selected text in read-only mode', async () => {
+    const exec = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: exec });
+    try {
+      render(<Harness items={[{ ...plan, read_only: true }]} />);
+      const editor = await openedEditor();
+      act(() => { editor.commands.setTextSelection({ from: 2, to: 5 }); });
+      fireEvent.contextMenu(editor.view.dom);
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Copy' }));
+      expect(exec).toHaveBeenCalledWith('copy');
+      expect(window.getSelection()?.toString()).toBe('lph');
+      expect(editor.getText()).toBe('Alpha');
+    } finally {
+      Reflect.deleteProperty(document, 'execCommand');
+    }
+  });
+
+  it.each(['toolbar', 'context menu'])('saves read-only highlights from the %s, restores them on reopen, and saves their removal', async (source) => {
+    function highlight(editor: Editor) {
+      if (source === 'context menu') {
+        fireEvent.contextMenu(editor.view.dom);
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Highlight' }));
+      } else {
+        const button = screen.getByRole('button', { name: 'Highlight' });
+        expect(button).toBeEnabled();
+        fireEvent.click(button);
+      }
+    }
+    let saved: Record<string, unknown> = documentWith('Alpha');
+    const saveNote = vi.fn(async (_id: number, document: Record<string, unknown>) => { saved = document; });
+    const props = { items: [{ ...plan, read_only: true }], saveNote,
+      getNote: async (id: number) => ({ id, document: saved }) };
+    const first = render(<Harness {...props} />);
+    const editor = await openedEditor();
+    vi.useFakeTimers();
+    act(() => { editor.commands.setTextSelection({ from: 2, to: 5 }); });
+    highlight(editor);
+    expect(editor.isEditable).toBe(false);
+    expect(editor.view.dom.querySelector('mark')?.textContent).toBe('lph');
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    expect(saveNote).toHaveBeenCalledOnce();
+    first.unmount();
+    render(<Harness {...props} />);
+    const reopened = await openedEditor();
+    expect(reopened.isEditable).toBe(false);
+    expect(reopened.view.dom.querySelector('mark')?.textContent).toBe('lph');
+    act(() => { reopened.commands.setTextSelection({ from: 2, to: 5 }); });
+    highlight(reopened);
+    expect(reopened.view.dom.querySelector('mark')).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    expect(saveNote).toHaveBeenCalledTimes(2);
+    expect(reopened.getText()).toBe('Alpha');
   });
 });

@@ -172,6 +172,41 @@ nlohmann::json parse_document(std::string_view text, std::int64_t id) {
     return parsed;
 }
 
+// Highlighting can split a text node. Merge matching neighbours after removing
+// highlights so the comparison still protects text and all other formatting.
+nlohmann::json without_highlights(nlohmann::json node) {
+    if (!node.is_object()) return node;
+    if (auto marks = node.find("marks"); marks != node.end() && marks->is_array()) {
+        std::erase_if(marks->get_ref<nlohmann::json::array_t&>(), [](const auto& mark) {
+            return mark.is_object() && mark.contains("type") && mark["type"] == "highlight";
+        });
+        if (marks->empty()) node.erase("marks");
+    }
+    if (auto content = node.find("content"); content != node.end() && content->is_array()) {
+        auto merged = nlohmann::json::array();
+        for (const auto& child : *content) {
+            auto next = without_highlights(child);
+            if (!merged.empty() && next.is_object() && next.contains("type")
+                && next["type"] == "text" && next.contains("text") && next["text"].is_string()) {
+                auto previous = merged.back();
+                auto shape = next;
+                shape.erase("text");
+                if (previous.is_object() && previous.contains("text") && previous["text"].is_string()) {
+                    const auto text = previous["text"].get<std::string>();
+                    previous.erase("text");
+                    if (previous == shape) {
+                        merged.back()["text"] = text + next["text"].get<std::string>();
+                        continue;
+                    }
+                }
+            }
+            merged.push_back(std::move(next));
+        }
+        *content = std::move(merged);
+    }
+    return node;
+}
+
 std::string backtick_fence(std::string_view text, std::size_t minimum = 3) {
     std::size_t length = minimum;
     std::size_t run = 0;
@@ -508,7 +543,13 @@ void note_save(
         const auto item = find_item(database, id);
         if (!item) fail(NoteFailure::not_found, missing_note_message);
         if (item->kind != NoteItemKind::note) fail(NoteFailure::invalid, not_note_message);
-        if (item->read_only) fail(NoteFailure::invalid, "This note is read-only. Make it editable first.");
+        if (item->read_only) {
+            auto stored = database.prepare("SELECT content_json FROM note_items WHERE id = ?1", id);
+            if (!stored.step()) fail(NoteFailure::not_found, missing_note_message);
+            if (without_highlights(parse_document(stored.text(0), id)) != without_highlights(document)) {
+                fail(NoteFailure::invalid, "This note is read-only. Make it editable first.");
+            }
+        }
         storage::SqliteStatement update = database.prepare(
             "UPDATE note_items SET content_json = ?1 "
             "WHERE id = ?2 AND kind = 'note'");

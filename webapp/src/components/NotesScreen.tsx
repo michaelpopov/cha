@@ -23,18 +23,14 @@ import {
   createNotesEditor,
   importPictureFile,
   insertPromptParagraph,
-  linkRangeAtTarget,
   noteHeadings,
-  removeNoteLink,
-  replaceLinkDestination,
   replaceNoteHtml,
   selectNoteEnd,
   selectNoteHeading,
   withIsolatedHistory,
-  type LinkEditResult,
-  type NoteLinkRange,
+  toggleNoteHighlight,
 } from '../notes/editor';
-import { noteTooLargeMessage } from '../notes/pictures';
+import { noteClipboardCommand } from '../notes/clipboard';
 import { notePageHtml, notePageName, promptPageUrl } from '../notes/pageImport';
 import { noteFileHtml, noteFileTooLarge, promptFilePath } from '../notes/fileImport';
 import { availableNoteName, noteItemPath } from '../notes/tree';
@@ -85,7 +81,17 @@ function focusNotesEditor(editor: Editor | null) {
   if (!editor || editor.isDestroyed) return;
   // Restoring the DOM selection can scroll to an offscreen caret even when
   // focus itself uses preventScroll.
-  preserveNoteScroll(editor, () => editor.view.focus());
+  preserveNoteScroll(editor, () => {
+    if (!editor.isEditable) {
+      // ProseMirror's focus() restores DOM selections only in editable views.
+      editor.view.dom.focus({ preventScroll: true });
+      const { anchor, head } = editor.state.selection;
+      const start = editor.view.domAtPos(anchor);
+      const end = editor.view.domAtPos(head);
+      window.getSelection()?.setBaseAndExtent(start.node, start.offset, end.node, end.offset);
+    }
+    editor.view.focus();
+  });
 }
 
 function runMark(editor: Editor, command: () => boolean) {
@@ -277,8 +283,8 @@ function FormatBar({
           title="Highlight"
           aria-pressed={editor.isActive('highlight')}
           className="cha-button"
-          disabled={!editable}
-          onClick={() => format(() => editor.chain().toggleHighlight().run())}
+          disabled={frozen || editor.isDestroyed}
+          onClick={() => preserveNoteScroll(editor, () => { toggleNoteHighlight(editor); })}
           type="button"
         >
           <HighlighterIcon />
@@ -596,79 +602,8 @@ function FindBar({
   );
 }
 
-const linkEditErrors: Record<Exclude<LinkEditResult, 'applied' | 'unavailable'>, string> = {
-  invalid: 'Enter an HTTP or HTTPS address.',
-  missing: 'That link is no longer in the note.',
-  rejected: noteTooLargeMessage,
-};
-
-function LinkEditDialog({
-  initial,
-  onApply,
-  onCancel,
-  onClosed,
-}: {
-  initial: string;
-  onApply(value: string): string | null;
-  onCancel(): void;
-  onClosed(): void;
-}) {
-  const dialog = useRef<HTMLDialogElement | null>(null);
-  const input = useRef<HTMLInputElement | null>(null);
-  const closedRef = useRef(onClosed);
-  closedRef.current = onClosed;
-  const [value, setValue] = useState(initial);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const element = dialog.current;
-    if (!element) return;
-    if (typeof element.showModal === 'function') element.showModal();
-    else element.setAttribute('open', '');
-    input.current?.focus();
-    return () => {
-      if (typeof element.close === 'function') element.close();
-      // The menu that opened this dialog is gone, so focus returns to the editor.
-      closedRef.current();
-    };
-  }, []);
-
-  return createPortal(
-    <dialog
-      aria-label="Edit link"
-      className="cha-dialog"
-      onCancel={(event) => {
-        event.preventDefault();
-        onCancel();
-      }}
-      ref={dialog}
-    >
-      <form onSubmit={(event) => {
-        event.preventDefault();
-        setError(onApply(value));
-      }}>
-        <label>
-          URL
-          <input
-            className="cha-form-control"
-            onChange={(event) => {
-              setValue(event.target.value);
-              setError(null);
-            }}
-            ref={input}
-            value={value}
-          />
-        </label>
-        {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-dialog-actions">
-          <button className="cha-button" onClick={onCancel} type="button">Cancel</button>
-          <button className="cha-button cha-button-primary" type="submit">Apply</button>
-        </div>
-      </form>
-    </dialog>,
-    document.body,
-  );
-}
+const contextCommands = ['Cut', 'Copy', 'Paste', 'Bold', 'Italic', 'Highlight'] as const;
+type ContextCommand = typeof contextCommands[number];
 
 export function NotesScreen({
   client,
@@ -738,12 +673,11 @@ export function NotesScreen({
   const [wholeWord, setWholeWord] = useState(false);
   const [useRegex, setUseRegex] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
-  const [linkEdit, setLinkEdit] = useState<NoteLinkRange | null>(null);
-  const [linkMenu, setLinkMenu] = useState<{ x: number; y: number; range: NoteLinkRange } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const findRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
-  const linkContextRef = useRef<HTMLDivElement | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const findControls = useRef({
     term: '',
     replacement: '',
@@ -915,8 +849,7 @@ export function NotesScreen({
     setCommandError(null);
     setPromptError(null);
     setPromptPending(false);
-    setLinkEdit(null);
-    setLinkMenu(null);
+    setContextMenu(null);
   }, [activeNoteId]);
 
   useEffect(() => {
@@ -962,28 +895,56 @@ export function NotesScreen({
   useEffect(() => {
     if (!editor || editor.isDestroyed || phase !== 'ready') return;
     const dom = editor.view.dom;
-    const onContext = (event: Event) => {
-      if (!(event instanceof MouseEvent) || !editor.isEditable || editor.isDestroyed) return;
-      const range = linkRangeAtTarget(editor.view, event.target);
-      if (!range) return;
+    const onContext = (event: MouseEvent) => {
       event.preventDefault();
-      setLinkMenu({ x: event.clientX, y: event.clientY, range });
+      setContextMenu({ x: event.clientX, y: event.clientY });
     };
     dom.addEventListener('contextmenu', onContext);
     return () => dom.removeEventListener('contextmenu', onContext);
   }, [editor, phase]);
 
-  useEffect(() => {
-    if (!linkMenu) return;
-    linkContextRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+  useLayoutEffect(() => {
+    const menu = contextMenuRef.current;
+    if (!contextMenu || !menu) return;
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(0, Math.min(contextMenu.x, window.innerWidth - rect.width))}px`;
+    menu.style.top = `${Math.max(0, Math.min(contextMenu.y, window.innerHeight - rect.height))}px`;
+    menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
     const dismiss = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && linkContextRef.current?.contains(target)) return;
-      setLinkMenu(null);
+      if (event.target instanceof Node && menu.contains(event.target)) return;
+      setContextMenu(null);
     };
     window.addEventListener('pointerdown', dismiss);
     return () => window.removeEventListener('pointerdown', dismiss);
-  }, [linkMenu]);
+  }, [contextMenu]);
+
+  async function runContextCommand(command: ContextCommand) {
+    setContextMenu(null);
+    const current = editorRef.current;
+    if (!current || current.isDestroyed) return;
+    if (command !== 'Copy' && (save.frozen || (!current.isEditable && command !== 'Highlight'))) return;
+    const noteId = noteIdRef.current;
+    const epoch = epochRef.current;
+    const available = () => editorRef.current === current && !current.isDestroyed
+      && noteIdRef.current === noteId && epochRef.current === epoch
+      && (command === 'Copy' || current.isEditable);
+    focusNotesEditor(current);
+    setCommandError(null);
+    if (command === 'Highlight') {
+      preserveNoteScroll(current, () => { toggleNoteHighlight(current); });
+    } else if (command === 'Bold' || command === 'Italic') {
+      preserveNoteScroll(current, () => runMark(current, () => command === 'Bold'
+        ? current.chain().toggleBold().run() : current.chain().toggleItalic().run()));
+    } else {
+      try {
+        await noteClipboardCommand(current, command, available);
+      } catch {
+        if (editorRef.current === current && !current.isDestroyed) {
+          setCommandError(`${command} failed. Try the keyboard shortcut.`);
+        }
+      }
+    }
+  }
 
   function openFind() {
     const current = editorRef.current;
@@ -1319,60 +1280,30 @@ export function NotesScreen({
         submitTitle={sendLabel}
         value={draft}
       />
-      {linkMenu && createPortal(
+      {contextMenu && createPortal(
         <div
           className="cha-notes-list-menu"
-          onKeyDown={(event) => menuKeys(event, () => setLinkMenu(null))}
-          ref={linkContextRef}
+          onKeyDown={(event) => menuKeys(event, () => {
+            setContextMenu(null);
+            focusNotesEditor(editorRef.current);
+          })}
+          ref={contextMenuRef}
           role="menu"
-          style={{ position: 'fixed', top: linkMenu.y, left: linkMenu.x }}
+          style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
         >
-          <button
-            onClick={() => {
-              const range = linkMenu.range;
-              setLinkMenu(null);
-              setLinkEdit(range);
-            }}
-            role="menuitem"
-            type="button"
-          >
-            Edit link
-          </button>
-          <button
-            onClick={() => {
-              const range = linkMenu.range;
-              setLinkMenu(null);
-              const current = editorRef.current;
-              if (current) {
-                removeNoteLink(current, range);
-                focusNotesEditor(current);
-              }
-            }}
-            role="menuitem"
-            type="button"
-          >
-            Remove link
-          </button>
+          {contextCommands.map((command) => (
+            <button
+              disabled={command !== 'Copy' && (save.frozen || (readOnly && command !== 'Highlight'))}
+              key={command}
+              onClick={() => { void runContextCommand(command); }}
+              role="menuitem"
+              type="button"
+            >
+              {command}
+            </button>
+          ))}
         </div>,
         document.body,
-      )}
-      {linkEdit && (
-        <LinkEditDialog
-          initial={linkEdit.href}
-          onApply={(value) => {
-            const current = editorRef.current;
-            if (!current) return null;
-            const result = replaceLinkDestination(current, linkEdit, value);
-            if (result === 'applied') setLinkEdit(null);
-            if (result === 'applied' || result === 'unavailable') return null;
-            return linkEditErrors[result];
-          }}
-          onCancel={() => setLinkEdit(null)}
-          onClosed={() => {
-            const current = editorRef.current;
-            focusNotesEditor(current);
-          }}
-        />
       )}
       {leave.decisionOpen && (
         <LeaveDialog

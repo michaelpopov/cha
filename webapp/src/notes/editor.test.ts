@@ -12,16 +12,14 @@ import {
   insertPromptParagraph,
   insertTrackedPicture,
   isAllowedNoteLink,
-  linkRangeAt,
   noteHeadings,
-  removeNoteLink,
-  replaceLinkDestination,
   selectNoteEnd,
   selectNoteHeading,
   storedWebDestination,
   trackSelectionBookmark,
   transformClipboardHTML,
   withIsolatedHistory,
+  toggleNoteHighlight,
   type NotesEditorOptions,
 } from './editor';
 import {
@@ -1886,7 +1884,7 @@ describe('pictures and clipboard', () => {
   });
 });
 
-describe('link activation and edits', () => {
+describe('link activation', () => {
   it('opens the stored http destination and blocks a damaged link', () => {
     const openWindow = vi.spyOn(window, 'open').mockReturnValue(null);
     const created = editor({
@@ -1966,73 +1964,24 @@ describe('link activation and edits', () => {
     expect(JSON.stringify(created.getJSON())).not.toContain('"type":"link"');
   });
 
-  it('removes a link without recreating it on reopen or an unrelated edit', () => {
-    const created = editor();
-    insertText(created, 'example.com ');
-    const range = linkRangeAt(created.state.doc, 1);
-    expect(range?.href).toBe('http://example.com');
-    expect(removeNoteLink(created, range!)).toBe(true);
-    expect(JSON.stringify(created.getJSON())).not.toContain('"type":"link"');
-    created.commands.setTextSelection(created.state.doc.content.size - 1);
-    insertText(created, 'x ');
-    expect(JSON.stringify(created.getJSON())).not.toContain('"type":"link"');
-    const reopened = editor({ content: created.getJSON() });
-    expect(JSON.stringify(reopened.getJSON())).not.toContain('"type":"link"');
-    expect(undoDepth(created.state)).toBeGreaterThan(0);
-    created.commands.undo();
-    created.commands.undo();
-    expect(JSON.stringify(created.getJSON())).toContain('"type":"link"');
-  });
+});
 
-  it('changes only the destination and keeps the other marks', () => {
-    const created = editor({
-      content: {
-        type: 'doc',
-        content: [{
-          type: 'paragraph',
-          content: [{
-            type: 'text',
-            text: 'docs',
-            marks: [
-              { type: 'bold' },
-              { type: 'link', attrs: { href: 'https://example.com/a' } },
-            ],
-          }],
-        }],
-      },
-    });
-    const range = linkRangeAt(created.state.doc, 1)!;
-    const depth = undoDepth(created.state);
-    expect(replaceLinkDestination(created, range, 'mailto:user@example.com')).toBe('invalid');
-    expect(undoDepth(created.state)).toBe(depth);
-    expect(replaceLinkDestination(created, range, 'http://example.org/b')).toBe('applied');
-    expect(created.getText()).toBe('docs');
-    expect(JSON.stringify(created.getJSON())).toContain('http://example.org/b');
-    expect(JSON.stringify(created.getJSON())).toContain('"type":"bold"');
-    expect(JSON.stringify(created.getJSON())).not.toContain('https://example.com/a');
-    created.commands.undo();
-    expect(JSON.stringify(created.getJSON())).toContain('https://example.com/a');
-  });
-
-  it('changes nothing when the captured link moved before Apply', () => {
-    const created = editor({
-      content: {
-        type: 'doc',
-        content: [{
-          type: 'paragraph',
-          content: [
-            { type: 'text', text: 'ab ' },
-            { type: 'text', text: 'docs', marks: [{ type: 'link', attrs: { href: 'https://example.com/a' } }] },
-          ],
-        }],
-      },
-    });
-    const range = linkRangeAt(created.state.doc, 4)!;
-    created.view.dispatch(created.state.tr.insertText('X', 1));
-    const before = created.getJSON();
-    const depth = undoDepth(created.state);
-    expect(replaceLinkDestination(created, range, 'http://example.org/b')).toBe('missing');
-    expect(created.getJSON()).toEqual(before);
-    expect(undoDepth(created.state)).toBe(depth);
+describe('read-only highlights', () => {
+  it('allows only highlight changes and still rejects text and other formatting', () => {
+    const created = editor({ content: '<p><strong>Alpha beta</strong></p>' });
+    created.setEditable(false, false);
+    created.commands.setTextSelection({ from: 2, to: 5 });
+    toggleNoteHighlight(created);
+    expect(created.view.dom.querySelector('strong mark')?.textContent).toBe('lph');
+    const highlighted = created.getJSON();
+    created.commands.insertContent('Changed');
+    created.commands.toggleBold();
+    created.commands.toggleItalic();
+    created.chain().setMeta('notesHighlight', true).insertContent('Changed').toggleHighlight().run();
+    expect(created.getJSON()).toEqual(highlighted);
+    expect(created.isEditable).toBe(false);
+    toggleNoteHighlight(created);
+    expect(created.view.dom.querySelector('mark')).toBeNull();
+    expect(created.getHTML()).toBe('<p><strong>Alpha beta</strong></p>');
   });
 });

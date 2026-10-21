@@ -45,6 +45,7 @@ const notesIsolatedMeta = 'notesIsolated';
 const notesIsolatedCloseMeta = 'notesIsolatedClose';
 const notesPictureFallbackMeta = 'notesPictureFallback';
 const notesPasteSelectionMeta = 'notesPasteSelection';
+const notesHighlightMeta = 'notesHighlight';
 // Overlapping imports share the four picture download slots.
 let noteImportTail = Promise.resolve();
 
@@ -135,6 +136,21 @@ export function withIsolatedHistory(editor: Editor, run: () => boolean): boolean
   }
 }
 
+export function toggleNoteHighlight(editor: Editor): boolean {
+  if (editor.isDestroyed) return false;
+  return withIsolatedHistory(editor, () => editor.chain()
+    .setMeta(notesHighlightMeta, true)
+    .toggleHighlight()
+    .run());
+}
+
+function withoutHighlight(node: PmNode): PmNode {
+  const content: PmNode[] = [];
+  node.forEach((child) => content.push(withoutHighlight(child)));
+  return (node.isLeaf ? node : node.copy(Fragment.fromArray(content)))
+    .mark(node.marks.filter((mark) => mark.type.name !== 'highlight'));
+}
+
 export function createNotesEditor(options: NotesEditorOptions): Editor {
   const byteLimit = options.byteLimit ?? noteDocumentByteLimit;
   const gate: Gate = { blocked: false };
@@ -148,9 +164,9 @@ export function createNotesEditor(options: NotesEditorOptions): Editor {
     },
     handleClick(view: EditorView, _pos: number, event: MouseEvent) {
       if (event.button !== 0) return false;
-      const range = linkRangeAtTarget(view, event.target);
-      if (!range) return false;
-      const destination = storedWebDestination(range.href);
+      const href = linkHrefAtTarget(view, event.target);
+      if (href === null) return false;
+      const destination = storedWebDestination(href);
       if (destination) window.open(destination, '_blank', 'noopener,noreferrer');
       return true;
     },
@@ -604,7 +620,10 @@ function acceptNotesTransaction(
       return;
     }
     const changed = transactions.some((item) => item.docChanged) && !prevState.doc.eq(state.doc);
-    if (changed && !editor.isEditable) return;
+    if (changed && !editor.isEditable && !(
+      transaction.getMeta(notesHighlightMeta) === true
+      && withoutHighlight(prevState.doc).eq(withoutHighlight(state.doc))
+    )) return;
     if (changed && noteDocumentByteLength(state.doc) > byteLimit) {
       const withoutPicture = transaction.getMeta(notesPictureFallbackMeta) as (() => Transaction | null) | undefined;
       const retry = withoutPicture?.();
@@ -652,83 +671,14 @@ function dropHasFiles(event: DragEvent): boolean {
   return Array.from(transfer.types).includes('Files');
 }
 
-export type NoteLinkRange = { from: number; to: number; href: string };
-
-export function linkRangeAt(doc: PmNode, pos: number): NoteLinkRange | null {
-  const safe = Math.max(0, Math.min(pos, doc.content.size));
-  const $pos = doc.resolve(safe);
-  if (!$pos.parent.isTextblock) return null;
-  const parentPos = $pos.start();
-  const spans: NoteLinkRange[] = [];
-  $pos.parent.forEach((child, offset) => {
-    if (!child.isText) return;
-    const mark = child.marks.find((item) => item.type.name === 'link');
-    const href = mark?.attrs.href;
-    if (!mark || typeof href !== 'string') return;
-    const from = parentPos + offset;
-    const to = from + child.nodeSize;
-    const previous = spans[spans.length - 1];
-    if (previous && previous.to === from && previous.href === href) {
-      previous.to = to;
-      return;
-    }
-    spans.push({ from, to, href });
-  });
-  return spans.find((span) => safe >= span.from && safe < span.to)
-    ?? spans.find((span) => safe === span.to)
-    ?? null;
-}
-
 // A pointer acts on a link only when the event target is inside its <a> element.
 // A click next to a link, such as after a link at a line end, is not on it.
-export function linkRangeAtTarget(view: EditorView, target: EventTarget | null): NoteLinkRange | null {
+function linkHrefAtTarget(view: EditorView, target: EventTarget | null): string | null {
   const anchor = target instanceof Element ? target.closest('a') : null;
   if (!anchor || !view.dom.contains(anchor)) return null;
-  return linkRangeAt(view.state.doc, view.posAtDOM(anchor, 0));
-}
-
-export type LinkEditResult = 'applied' | 'invalid' | 'missing' | 'rejected' | 'unavailable';
-
-// The range is captured when the dialog opens. A picture import or a spoken
-// submission can change the note before Apply, so the link must still match.
-export function replaceLinkDestination(
-  editor: Editor,
-  range: NoteLinkRange,
-  input: string,
-): LinkEditResult {
-  const href = canonicalNoteLink(input);
-  if (!href) return 'invalid';
-  if (editor.isDestroyed || !editor.isEditable) return 'unavailable';
-  const existing = rangeFits(editor, range) ? linkRangeAt(editor.state.doc, range.from) : null;
-  if (existing?.from !== range.from || existing.to !== range.to || existing.href !== range.href) {
-    return 'missing';
-  }
-  if (existing.href === href) return 'applied';
-  const link = editor.schema.marks.link;
-  const tr = editor.state.tr;
-  tr.removeMark(range.from, range.to, link);
-  tr.addMark(range.from, range.to, link.create({ href }));
-  tr.setMeta('preventAutolink', true);
-  closeHistory(tr);
-  tr.setMeta(notesIsolatedMeta, true);
-  editor.view.dispatch(tr);
-  return linkRangeAt(editor.state.doc, range.from)?.href === href ? 'applied' : 'rejected';
-}
-
-export function removeNoteLink(editor: Editor, range: NoteLinkRange): boolean {
-  if (editor.isDestroyed || !editor.isEditable || !rangeFits(editor, range)) return false;
-  const tr = editor.state.tr;
-  tr.removeMark(range.from, range.to, editor.schema.marks.link);
-  tr.setMeta('preventAutolink', true);
-  closeHistory(tr);
-  tr.setMeta(notesIsolatedMeta, true);
-  const before = editor.state.doc;
-  editor.view.dispatch(tr);
-  return !editor.state.doc.eq(before);
-}
-
-function rangeFits(editor: Editor, range: NoteLinkRange): boolean {
-  return range.from >= 0 && range.to <= editor.state.doc.content.size && range.from < range.to;
+  const mark = view.state.doc.nodeAt(view.posAtDOM(anchor, 0))?.marks
+    .find((item) => item.type.name === 'link');
+  return typeof mark?.attrs.href === 'string' ? mark.attrs.href : null;
 }
 
 export function trackSelectionBookmark(

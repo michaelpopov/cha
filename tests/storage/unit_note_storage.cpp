@@ -190,6 +190,51 @@ TEST_F(NoteStorageTest, AddsReadOnlyColumnToExistingNotesOnceAndKeepsThemEditabl
     EXPECT_TRUE(note_set_read_only(*database_, note.id, true).read_only);
 }
 
+TEST_F(NoteStorageTest, ReadOnlyNotesSaveHighlightsButRejectOtherChanges) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Reading");
+    const auto original = nlohmann::json::parse(R"({"type":"doc","content":[
+        {"type":"paragraph","content":[
+            {"type":"text","text":"Alpha beta","marks":[{"type":"bold"}]},
+            {"type":"text","text":" link","marks":[{"type":"link","attrs":{"href":"https://example.com"}}]}
+        ]},
+        {"type":"image","attrs":{"src":"data:image/png;base64,aaaa"}}
+    ]})");
+    note_save(*database_, note.id, original);
+    (void)note_set_read_only(*database_, note.id, true);
+    auto highlighted = original;
+    highlighted["content"][0]["content"] = nlohmann::json::parse(R"([
+        {"type":"text","text":"A","marks":[{"type":"bold"}]},
+        {"type":"text","text":"lph","marks":[{"type":"bold"},{"type":"highlight"}]},
+        {"type":"text","text":"a beta","marks":[{"type":"bold"}]},
+        {"type":"text","text":" link","marks":[{"type":"link","attrs":{"href":"https://example.com"}},{"type":"highlight"}]}
+    ])");
+    note_save(*database_, note.id, highlighted);
+    database_.reset();
+    database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+    EXPECT_EQ(note_get(*database_, note.id).document, highlighted);
+    EXPECT_TRUE(note_list(*database_).front().read_only);
+
+    auto changed = highlighted;
+    changed["content"][0]["content"][1]["text"] = "Changed";
+    EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
+    changed = highlighted;
+    changed["content"][0]["content"][1]["marks"][0]["type"] = "italic";
+    EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
+    changed = highlighted;
+    changed["content"][0]["content"][3]["marks"][0]["attrs"]["href"] = "https://other.example.com";
+    EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
+    changed = highlighted;
+    changed["content"][1]["attrs"]["src"] = "data:image/png;base64,bbbb";
+    EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
+    changed = highlighted;
+    changed["content"][0]["type"] = "heading";
+    EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
+    EXPECT_EQ(note_get(*database_, note.id).document, highlighted);
+
+    note_save(*database_, note.id, original);
+    EXPECT_EQ(note_get(*database_, note.id).document, original);
+}
+
 TEST_F(NoteStorageTest, ScrollPositionsArePerNoteAndSurviveReadOnlyAndReopen) {
     const auto first = note_create(*database_, {}, NoteItemKind::note, "First");
     const auto second = note_create(*database_, {}, NoteItemKind::note, "Second");
