@@ -8,6 +8,8 @@ import { installNativeRecoveryHandlers } from './api/nativeRecovery';
 import { App } from './components/App';
 import './styles/app.css';
 
+document.documentElement.classList.toggle('cha-windows', navigator.platform.startsWith('Win'));
+
 const root = document.getElementById('root');
 
 if (!root) {

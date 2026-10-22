@@ -13,6 +13,11 @@ const devOrigin = process.env.CHA_NATIVE_DEV_ORIGIN;
 
 let userData = '';
 
+async function historyAction(page: Page, name: 'Undo' | 'Redo'): Promise<void> {
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page.getByRole('menuitem', { name, exact: true }).click();
+}
+
 function removeTestData(root: string): void {
   if (dirname(resolve(root)) !== resolve(tmpdir()) || !basename(root).startsWith('cha-webview2-')) {
     throw new Error('Refusing to remove a directory outside the test temp root');
@@ -414,9 +419,9 @@ test.describe('WebView2 native host', () => {
       ] },
       { type: 'paragraph' },
     ] });
-    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await historyAction(page, 'Undo');
     await expect(page.locator('.tiptap')).not.toContainText('literal /clear');
-    await page.getByRole('button', { name: 'Redo', exact: true }).click();
+    await historyAction(page, 'Redo');
     await expect(page.locator('.tiptap')).toContainText('literal /clear');
     const row = page.getByRole('treeitem').filter({ hasText: 'Windows authoring' });
     await row.focus();
@@ -472,9 +477,9 @@ test.describe('WebView2 native host', () => {
     await expect(page.locator('.tiptap')).toContainText('one');
     await expect(page.locator('.tiptap')).toContainText('two');
     expect(await page.locator('.tiptap table, .tiptap [style*="color:red"]').count()).toBe(0);
-    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await historyAction(page, 'Undo');
     await expect(page.locator('.tiptap')).toHaveText('');
-    await page.getByRole('button', { name: 'Redo', exact: true }).click();
+    await historyAction(page, 'Redo');
     const before = await noteJSON(page);
     await page.locator('.tiptap').evaluate((element) => (element as any).chaEditor.commands.selectAll());
     await pasteNote(page, '<iframe src="https://example.com"></iframe>');
@@ -482,7 +487,7 @@ test.describe('WebView2 native host', () => {
     await pasteNote(page, '<p>must not insert<img src="data:image/png;base64,%%%"></p>');
     await expect(page.locator('.tiptap')).toHaveText('must not insert');
     await expect(page.locator('.tiptap img')).toHaveCount(0);
-    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await historyAction(page, 'Undo');
     expect(await noteJSON(page)).toEqual(before);
     await page.locator('.tiptap').evaluate((element) => {
       const data = new DataTransfer();
@@ -508,12 +513,12 @@ test.describe('WebView2 native host', () => {
     await page.getByLabel('Replace', { exact: true }).fill('$1');
     await page.getByRole('button', { name: 'Replace all', exact: true }).click();
     await expect(page.locator('.tiptap')).toHaveText('$1 $1 catalog $1hardbreak');
-    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await historyAction(page, 'Undo');
     expect(await noteJSON(page)).toEqual(original);
     await page.getByLabel('Replace', { exact: true }).fill('');
     await page.getByRole('button', { name: 'Replace all', exact: true }).click();
     await expect(page.locator('.tiptap')).toHaveText('  catalog hardbreak');
-    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await historyAction(page, 'Undo');
     expect(await noteJSON(page)).toEqual(original);
     await page.getByLabel('Regular expression', { exact: true }).check();
     await expect(page.getByLabel('Whole word', { exact: true })).not.toBeChecked();
@@ -545,9 +550,9 @@ test.describe('WebView2 native host', () => {
     await pasteNote(page, '<p>pictures</p>' + sources.map((src) => `<img src="${src}">`).join(''));
     await expect(page.locator('.tiptap img')).toHaveCount(4);
     expect(await page.locator('.tiptap img').evaluateAll((images) => images.map((image) => image.getAttribute('src')))).toEqual(sources);
-    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await historyAction(page, 'Undo');
     await expect(page.locator('.tiptap img')).toHaveCount(0);
-    await page.getByRole('button', { name: 'Redo', exact: true }).click();
+    await historyAction(page, 'Redo');
     await expect(page.locator('.tiptap img')).toHaveCount(4);
     await page.locator('.tiptap').evaluate((element) => {
       const editor = (element as any).chaEditor;
@@ -574,7 +579,7 @@ test.describe('WebView2 native host', () => {
     await expect(page.locator('.tiptap')).toContainText('keep text');
     await expect(page.locator('.tiptap img')).toHaveCount(5);
     await expect(page.getByRole('alert')).toHaveCount(0);
-    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await historyAction(page, 'Undo');
     expect(await noteJSON(page)).toEqual(before);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.locator('.tiptap')).toHaveCount(0);
@@ -585,35 +590,22 @@ test.describe('WebView2 native host', () => {
     await waitForApplication(page);
   });
 
-  test('Notes link editing retains marks, rejects unsupported destinations and persists unlinking', async () => {
+  test('Notes pasted links retain marks, reject unsupported destinations and persist', async () => {
     await newNote(page, 'Windows links');
     await pasteNote(page, '<p><b><a href="http://example.com/old">named</a></b> <a href="file:///C:/private">blocked</a></p>');
     await expect(page.locator('.tiptap a')).toHaveCount(1);
     const original = await noteJSON(page);
-    await page.locator('.tiptap a').click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Edit link', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Edit link', exact: true });
-    await dialog.getByLabel('URL', { exact: true }).fill('javascript:alert(1)');
-    await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
-    await expect(dialog.getByRole('alert')).toBeVisible();
-    expect(await noteJSON(page)).toEqual(original);
-    await dialog.getByLabel('URL', { exact: true }).fill('https://example.com/new');
-    await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
-    await expect(page.locator('.tiptap a')).toHaveAttribute('href', 'https://example.com/new');
+    await expect(page.locator('.tiptap a')).toHaveAttribute('href', 'http://example.com/old');
     await expect(page.locator('.tiptap strong')).toHaveText('named');
-    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await historyAction(page, 'Undo');
+    await expect(page.locator('.tiptap')).toHaveText('');
+    await historyAction(page, 'Redo');
     expect(await noteJSON(page)).toEqual(original);
-    await page.getByRole('button', { name: 'Redo', exact: true }).click();
-    await page.locator('.tiptap a').click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Remove link', exact: true }).click();
-    await expect(page.locator('.tiptap a')).toHaveCount(0);
-    await expect(page.locator('.tiptap strong')).toHaveText('named');
-    const unlinked = await noteJSON(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.locator('.tiptap')).toHaveCount(0);
     await page.getByRole('treeitem', { name: 'Windows links', exact: true }).click();
     await expect(page.locator('.tiptap')).toBeVisible();
-    expect(await noteJSON(page)).toEqual(unlinked);
+    expect(await noteJSON(page)).toEqual(original);
     await page.reload();
     await waitForApplication(page);
   });

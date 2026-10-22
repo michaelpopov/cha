@@ -2407,14 +2407,32 @@ select.cha-form-control {
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
+  width: var(--cha-notes-toolbar-button-size, 2rem);
+  height: var(--cha-notes-toolbar-button-size, 2rem);
+  min-height: var(--cha-notes-toolbar-button-size, 2rem);
   padding: 0;
+  border-radius: var(--cha-notes-toolbar-button-radius, 0.75rem);
 }
 
 .cha-notes-toolbar .cha-button > svg {
-  width: 1.125rem;
-  height: 1.125rem;
+  width: var(--cha-notes-toolbar-icon-size, 1.125rem);
+  height: var(--cha-notes-toolbar-icon-size, 1.125rem);
+}
+
+:root.cha-windows .cha-notes-toolbar {
+  --cha-notes-toolbar-button-size: 1.5rem;
+  --cha-notes-toolbar-button-radius: 0.3125rem;
+  --cha-notes-toolbar-icon-size: 0.875rem;
+  gap: 0.5rem;
+}
+
+:root.cha-windows .cha-notes-toolbar-group {
+  gap: 0.25rem;
+}
+
+:root.cha-windows .cha-notes-toolbar-group:not(:last-child)::after {
+  height: 0.875rem;
+  margin-left: 0.25rem;
 }
 
 .cha-notes-find {
