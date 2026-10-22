@@ -19,6 +19,7 @@ import {
 } from '../api/client';
 import { readTextFile, textFileAccept } from '../textFile';
 import {
+  addNoteComment,
   appendNoteHtml,
   createNotesEditor,
   importPictureFile,
@@ -619,7 +620,7 @@ function FindBar({
   );
 }
 
-const contextCommands = ['Cut', 'Copy', 'Paste', 'Bold', 'Italic', 'Highlight'] as const;
+const contextCommands = ['Cut', 'Copy', 'Paste', 'Bold', 'Italic', 'Highlight', 'Add comment'] as const;
 type ContextCommand = typeof contextCommands[number];
 
 export function NotesScreen({
@@ -690,7 +691,7 @@ export function NotesScreen({
   const [wholeWord, setWholeWord] = useState(false);
   const [useRegex, setUseRegex] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; position: number } | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const findRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
@@ -914,7 +915,11 @@ export function NotesScreen({
     const dom = editor.view.dom;
     const onContext = (event: MouseEvent) => {
       event.preventDefault();
-      setContextMenu({ x: event.clientX, y: event.clientY });
+      // Paragraph margins and the editor padding belong to the editor root.
+      const position = event.target === dom
+        ? editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? 0
+        : editor.view.posAtDOM(event.target as Node, 0);
+      setContextMenu({ x: event.clientX, y: event.clientY, position });
     };
     dom.addEventListener('contextmenu', onContext);
     return () => dom.removeEventListener('contextmenu', onContext);
@@ -939,7 +944,8 @@ export function NotesScreen({
     setContextMenu(null);
     const current = editorRef.current;
     if (!current || current.isDestroyed) return;
-    if (command !== 'Copy' && (save.frozen || (!current.isEditable && command !== 'Highlight'))) return;
+    if (command !== 'Copy' && (save.frozen
+      || (!current.isEditable && command !== 'Highlight' && command !== 'Add comment'))) return;
     const noteId = noteIdRef.current;
     const epoch = epochRef.current;
     const available = () => editorRef.current === current && !current.isDestroyed
@@ -947,7 +953,11 @@ export function NotesScreen({
       && (command === 'Copy' || current.isEditable);
     focusNotesEditor(current);
     setCommandError(null);
-    if (command === 'Highlight') {
+    if (command === 'Add comment') {
+      preserveNoteScroll(current, () => {
+        if (contextMenu && addNoteComment(current, contextMenu.position, draft)) onDraftChange('');
+      });
+    } else if (command === 'Highlight') {
       preserveNoteScroll(current, () => { toggleNoteHighlight(current); });
     } else if (command === 'Bold' || command === 'Italic') {
       preserveNoteScroll(current, () => runMark(current, () => command === 'Bold'
@@ -1214,7 +1224,7 @@ export function NotesScreen({
       <PromptInput
         key={activeNoteId}
         client={client}
-        enabled={!readOnly}
+        enabled
         inputLabel="Prompt"
         microphoneEnabled
         onChange={onDraftChange}
@@ -1322,7 +1332,8 @@ export function NotesScreen({
         >
           {contextCommands.map((command) => (
             <button
-              disabled={command !== 'Copy' && (save.frozen || (readOnly && command !== 'Highlight'))}
+              disabled={command !== 'Copy' && (save.frozen
+                || (readOnly && command !== 'Highlight' && command !== 'Add comment'))}
               key={command}
               onClick={() => { void runContextCommand(command); }}
               role="menuitem"

@@ -207,6 +207,54 @@ nlohmann::json without_highlights(nlohmann::json node) {
     return node;
 }
 
+bool is_note_comment(const nlohmann::json& node) {
+    if (!node.is_object() || !node.contains("type") || node["type"] != "paragraph"
+        || !node.contains("content") || !node["content"].is_array() || node["content"].empty()) return false;
+    bool has_text = false;
+    for (const auto& child : node["content"]) {
+        if (!child.is_object() || !child.contains("type")) return false;
+        if (child["type"] == "hardBreak") continue;
+        if (child["type"] != "text" || !child.contains("text") || !child["text"].is_string()
+            || !child.contains("marks") || !child["marks"].is_array()) return false;
+        has_text = has_text || !child["text"].get_ref<const std::string&>().empty();
+        const bool blue = std::any_of(child["marks"].begin(), child["marks"].end(), [](const auto& mark) {
+            return mark.is_object() && mark.contains("type") && mark["type"] == "highlight"
+                && mark.contains("attrs") && mark["attrs"].is_object()
+                && mark["attrs"].contains("color") && mark["attrs"]["color"] == "#b3d9ff";
+        });
+        if (!blue) return false;
+    }
+    return has_text;
+}
+
+// Every existing block must remain in order. Only new blue comment paragraphs
+// and highlight changes are allowed, including inside list items.
+bool read_only_note_change(const nlohmann::json& before, const nlohmann::json& after) {
+    if (without_highlights(before) == without_highlights(after)) return true;
+    if (!before.is_object() || !after.is_object()
+        || !before.contains("content") || !before["content"].is_array()
+        || !after.contains("content") || !after["content"].is_array()) return false;
+    auto before_shape = before;
+    auto after_shape = after;
+    before_shape.erase("content");
+    after_shape.erase("content");
+    if (before_shape != after_shape) return false;
+    const auto& original = before["content"];
+    // A comment may repeat an existing paragraph's text. Keep both possible
+    // matches until the next block distinguishes the insertion from the original.
+    std::vector<bool> matched(original.size() + 1, false);
+    matched[0] = true;
+    for (const auto& child : after["content"]) {
+        const bool comment = is_note_comment(child);
+        for (std::size_t count = original.size(); count > 0; --count) {
+            matched[count] = (comment && matched[count])
+                || (matched[count - 1] && read_only_note_change(original[count - 1], child));
+        }
+        matched[0] = comment && matched[0];
+    }
+    return matched.back();
+}
+
 std::string backtick_fence(std::string_view text, std::size_t minimum = 3) {
     std::size_t length = minimum;
     std::size_t run = 0;
@@ -546,7 +594,7 @@ void note_save(
         if (item->read_only) {
             auto stored = database.prepare("SELECT content_json FROM note_items WHERE id = ?1", id);
             if (!stored.step()) fail(NoteFailure::not_found, missing_note_message);
-            if (without_highlights(parse_document(stored.text(0), id)) != without_highlights(document)) {
+            if (!read_only_note_change(parse_document(stored.text(0), id), document)) {
                 fail(NoteFailure::invalid, "This note is read-only. Make it editable first.");
             }
         }

@@ -30,10 +30,10 @@ async function nativeParity() {
     const menu = await until('context menu', () => document.querySelector('[role="menu"]'));
     check(event.defaultPrevented, 'default menu was not suppressed');
     const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
-    check(items.map((item) => item.textContent).join(',') === 'Cut,Copy,Paste,Bold,Italic,Highlight',
+    check(items.map((item) => item.textContent).join(',') === 'Cut,Copy,Paste,Bold,Italic,Highlight,Add comment',
       'unexpected context menu items');
     for (const item of items) {
-      check(item.disabled === (readOnly && !['Copy', 'Highlight'].includes(item.textContent)),
+      check(item.disabled === (readOnly && !['Copy', 'Highlight', 'Add comment'].includes(item.textContent)),
         'wrong disabled state for ' + item.textContent);
     }
     const box = menu.getBoundingClientRect();
@@ -90,8 +90,38 @@ async function nativeParity() {
     check(editor().view.dom.querySelector('mark')?.textContent === 'lph', 'read-only highlight was not saved');
     check(editor().getText() === 'Alpha beta gamma', 'note text changed');
     check(editor().view.dom.querySelector('a')?.getAttribute('href') === destination, 'link changed');
+    for (const readOnly of [true, false]) {
+      if (!readOnly) {
+        await click('Actions for Menu note');
+        await click('Make editable');
+        await until('editable', () => editor()?.isEditable);
+      }
+      step = `${readOnly ? 'read-only' : 'writable'} comment insertion and save`;
+      const prompt = document.querySelector('textarea[aria-label="Prompt"]');
+      check(!prompt.disabled, 'prompt is disabled');
+      const before = editor().getText();
+      await click('Add comment', await openMenu(readOnly));
+      check(editor().getText() === before, 'empty prompt added a comment');
+      const text = readOnly ? 'Read-only comment' : 'Writable comment';
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(prompt, text);
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+      await click('Add comment', await openMenu(readOnly));
+      check(prompt.value === '', 'comment did not clear the prompt');
+      const paragraphs = Array.from(editor().view.dom.querySelectorAll('p'));
+      check(paragraphs.at(-2)?.textContent === text, 'comment was not before the clicked paragraph');
+      check(paragraphs.at(-2)?.querySelector('mark')?.style.backgroundColor === 'rgb(179, 217, 255)',
+        'comment was not highlighted blue');
+      check(editor().isEditable === !readOnly, 'comment changed read-only state');
+      await click('Settings');
+      await until('Settings', () => document.querySelector('section[aria-label="Settings"]'));
+      await openNote();
+      check(editor().view.dom.querySelectorAll('p')[readOnly ? 0 : 1]?.textContent === text,
+        'comment was not saved');
+      check(editor().isEditable === !readOnly, 'saved comment changed read-only state');
+    }
     return { ok: true, completed: ['exact menu in both states', 'menu stays within window',
-      'formatting preserves selection', 'read-only highlight addition/removal survives reopen'] };
+      'formatting preserves selection', 'read-only highlight addition/removal survives reopen',
+      'blue comments before clicked paragraphs survive reopen in both states', 'empty prompt does nothing'] };
   } catch (error) {
     return { ok: false, step, error: String(error) };
   }

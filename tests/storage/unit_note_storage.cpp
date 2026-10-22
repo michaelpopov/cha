@@ -235,6 +235,66 @@ TEST_F(NoteStorageTest, ReadOnlyNotesSaveHighlightsButRejectOtherChanges) {
     EXPECT_EQ(note_get(*database_, note.id).document, original);
 }
 
+TEST_F(NoteStorageTest, ReadOnlyNotesSaveNewBlueCommentsButKeepExistingContent) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Reading");
+    const auto original = nlohmann::json::parse(R"({"type":"doc","content":[
+        {"type":"paragraph","content":[{"type":"text","text":"Alpha"}]},
+        {"type":"bulletList","content":[{"type":"listItem","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"Nested"}]}
+        ]}]},
+        {"type":"paragraph","content":[{"type":"text","text":"Original blue text",
+            "marks":[{"type":"highlight","attrs":{"color":"#b3d9ff"}}]}]}
+    ]})");
+    const auto comment = nlohmann::json::parse(R"({"type":"paragraph","content":[
+        {"type":"text","text":"My comment","marks":[{"type":"highlight","attrs":{"color":"#b3d9ff"}}]},
+        {"type":"hardBreak"},
+        {"type":"text","text":"Second line","marks":[{"type":"highlight","attrs":{"color":"#b3d9ff"}}]}
+    ]})");
+    note_save(*database_, note.id, original);
+    (void)note_set_read_only(*database_, note.id, true);
+    auto commented = original;
+    auto& blocks = commented["content"].get_ref<nlohmann::json::array_t&>();
+    blocks.insert(blocks.begin(), comment);
+    auto& nested = commented["content"][2]["content"][0]["content"].get_ref<nlohmann::json::array_t&>();
+    nested.insert(nested.begin(), comment);
+    note_save(*database_, note.id, commented);
+    database_.reset();
+    database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+    EXPECT_EQ(note_get(*database_, note.id).document, commented);
+    EXPECT_TRUE(note_list(*database_).front().read_only);
+
+    auto changed = commented;
+    changed["content"][1]["content"][0]["text"] = "Changed original";
+    EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
+    changed = commented;
+    changed["content"].erase(3); // Original blue text is protected too.
+    EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
+    changed = commented;
+    changed["content"][0]["content"][0]["text"] = "Changed comment";
+    EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
+    changed = commented;
+    auto unhighlighted = comment;
+    unhighlighted["content"][0]["marks"][0]["attrs"]["color"] = "yellow";
+    unhighlighted["content"][0]["text"] = "Different unhighlighted text";
+    auto& changed_blocks = changed["content"].get_ref<nlohmann::json::array_t&>();
+    changed_blocks.insert(changed_blocks.begin(), unhighlighted);
+    EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
+    EXPECT_EQ(note_get(*database_, note.id).document, commented);
+
+    auto repeated = original;
+    auto duplicate = comment;
+    duplicate["content"] = nlohmann::json::array({duplicate["content"][0]});
+    duplicate["content"][0]["text"] = "Alpha";
+    auto& repeated_blocks = repeated["content"].get_ref<nlohmann::json::array_t&>();
+    repeated_blocks.insert(repeated_blocks.begin() + 1, duplicate);
+    repeated_blocks.insert(repeated_blocks.begin(), duplicate);
+    const auto second = note_create(*database_, {}, NoteItemKind::note, "Repeated text");
+    note_save(*database_, second.id, original);
+    (void)note_set_read_only(*database_, second.id, true);
+    note_save(*database_, second.id, repeated);
+    EXPECT_EQ(note_get(*database_, second.id).document, repeated);
+}
+
 TEST_F(NoteStorageTest, ScrollPositionsArePerNoteAndSurviveReadOnlyAndReopen) {
     const auto first = note_create(*database_, {}, NoteItemKind::note, "First");
     const auto second = note_create(*database_, {}, NoteItemKind::note, "Second");

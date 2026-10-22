@@ -6,6 +6,7 @@ import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 import {
+  addNoteComment,
   canonicalNoteLink,
   createNotesEditor,
   importPictureFile,
@@ -1792,6 +1793,7 @@ describe('pictures and clipboard', () => {
     expect(JSON.stringify(links.getJSON())).toContain('http://example.com/');
     expect(JSON.stringify(links.getJSON())).not.toContain('javascript');
     expect(transformClipboardHTML('<p><font color="red">Hi</font><script>bad()</script></p>')).not.toContain('color');
+    expect(transformClipboardHTML('<p><mark data-color="#b3d9ff">Hi</mark></p>')).toBe('<p><mark>Hi</mark></p>');
     expect(transformClipboardHTML('<p>Hi</p><iframe src="https://example.com"></iframe>')).not.toContain('iframe');
   });
 
@@ -1983,5 +1985,57 @@ describe('read-only highlights', () => {
     toggleNoteHighlight(created);
     expect(created.view.dom.querySelector('mark')).toBeNull();
     expect(created.getHTML()).toBe('<p><strong>Alpha beta</strong></p>');
+  });
+});
+
+describe('note comments', () => {
+  it('inserts one blue paragraph inside a list item, preserving prompt text and line breaks', () => {
+    const created = editor({ content: '<ul><li><p>First</p><p>Clicked</p></li></ul>' });
+    created.setEditable(false, false);
+    const target = created.view.dom.querySelectorAll('p')[1];
+    expect(addNoteComment(created, created.view.posAtDOM(target, 0), ' <b>Comment</b>\r\nwww.example.com ')).toBe(true);
+    const paragraphs = created.view.dom.querySelectorAll('li > p');
+    expect(Array.from(paragraphs).map((p) => p.textContent)).toEqual(['First', ' <b>Comment</b>www.example.com ', 'Clicked']);
+    expect(paragraphs[1].querySelector('br')).not.toBeNull();
+    expect(paragraphs[1].querySelector('b')).toBeNull();
+    expect(paragraphs[1].querySelector('a')?.getAttribute('href')).toBe('http://www.example.com/');
+    for (const mark of paragraphs[1].querySelectorAll('mark')) {
+      expect(mark.style.backgroundColor).toBe('rgb(179, 217, 255)');
+    }
+    expect(created.isEditable).toBe(false);
+    const commented = created.getJSON();
+    insertText(created, 'Changed');
+    expect(created.getJSON()).toEqual(commented);
+  });
+
+  it('inserts before a picture in a list item without splitting the list', () => {
+    const created = editor({ content: { type: 'doc', content: [{ type: 'bulletList', content: [{ type: 'listItem', content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'Item' }] },
+      { type: 'image', attrs: { src: 'data:image/png;base64,aaaa' } },
+    ] }] }] } });
+    created.setEditable(false, false);
+    const picture = created.view.dom.querySelector('img')!;
+    expect(addNoteComment(created, created.view.posAtDOM(picture, 0), 'Comment')).toBe(true);
+    expect(created.view.dom.querySelectorAll('ul, li')).toHaveLength(2);
+    expect(Array.from(created.view.dom.querySelectorAll('li > *')).map((node) => node.textContent || node.tagName))
+      .toEqual(['Item', 'Comment', 'IMG']);
+  });
+
+  it('keeps comment insertion undoable as one step in a writable note', () => {
+    const created = editor({ content: '<p>Original</p>' });
+    expect(addNoteComment(created, 4, 'Comment')).toBe(true);
+    created.commands.undo();
+    expect(created.getText()).toBe('Original');
+    created.commands.redo();
+    expect(created.view.dom.querySelector('mark')?.textContent).toBe('Comment');
+  });
+
+  it('rejects an oversized comment without changing a read-only note', () => {
+    const onCommandError = vi.fn();
+    const created = editor({ content: '<p>Original</p>', byteLimit: 200, onCommandError });
+    created.setEditable(false, false);
+    expect(addNoteComment(created, 1, 'x'.repeat(300))).toBe(false);
+    expect(created.getText()).toBe('Original');
+    expect(onCommandError).toHaveBeenCalledWith(noteTooLargeMessage);
   });
 });

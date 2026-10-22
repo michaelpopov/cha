@@ -4,17 +4,19 @@ import { TextSelection } from '@tiptap/pm/state';
 
 export type NoteHighlight = { from: number; to: number; text: string };
 
-// Formatting can split a highlighted passage into several adjacent text nodes.
+// Formatting and line breaks can split a highlighted passage into several
+// adjacent inline nodes.
 export function noteHighlights(doc: PmNode): NoteHighlight[] {
   const highlights: NoteHighlight[] = [];
   doc.descendants((node, position) => {
-    if (!node.isText || !node.marks.some((mark) => mark.type.name === 'highlight')) return;
+    if (!node.isInline || !node.marks.some((mark) => mark.type.name === 'highlight')) return;
+    const text = node.isText ? node.text! : '\n';
     const previous = highlights.at(-1);
     if (previous?.to === position) {
       previous.to += node.nodeSize;
-      previous.text += node.text;
+      previous.text += text;
     } else {
-      highlights.push({ from: position, to: position + node.nodeSize, text: node.text! });
+      highlights.push({ from: position, to: position + node.nodeSize, text });
     }
   });
   return highlights.filter(({ text }) => text.trim());

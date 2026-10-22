@@ -129,7 +129,6 @@ export function PromptInput({
     'idle' | 'starting' | 'recording' | 'finishing'
   >('idle');
   const [voiceSendPending, setVoiceSendPending] = useState(false);
-  const voiceSendPendingRef = useRef(false);
   const [voiceConfiguration, setVoiceConfiguration] =
     useState<VoiceInputConfiguration | null>(null);
   const voiceInputSession = useRef<VoiceInputTransport | null>(null);
@@ -157,11 +156,6 @@ export function PromptInput({
     && voiceInputState !== 'finishing'
     && (value.trim().length > 0 || voiceInputState === 'recording');
 
-  function changeVoiceSendPending(next: boolean) {
-    voiceSendPendingRef.current = next;
-    setVoiceSendPending(next);
-  }
-
   function stopVoiceWork() {
     const session = voiceInputSession.current;
     voiceInputSession.current = null;
@@ -175,7 +169,7 @@ export function PromptInput({
       clearTimeout(voiceSendTimer.current);
       voiceSendTimer.current = null;
     }
-    changeVoiceSendPending(false);
+    setVoiceSendPending(false);
     setVoiceInputState('idle');
   }
 
@@ -309,7 +303,7 @@ export function PromptInput({
     const epoch = composerEpoch.current;
     sending.current = true;
     const wasRecording = voiceInputSession.current !== null;
-    changeVoiceSendPending(false);
+    setVoiceSendPending(false);
     setSubmitting(true);
     onSubmittingChangeRef.current?.(true);
     onErrorRef.current(null);
@@ -336,11 +330,11 @@ export function PromptInput({
         updateDraft(current.startsWith(submitted)
           ? current.slice(submitted.length).replace(/^[ \t]+/, '') : current);
       } else {
-        changeVoiceSendPending(false);
+        setVoiceSendPending(false);
       }
     } catch (failure: unknown) {
       if (composerEpoch.current !== epoch) return;
-      changeVoiceSendPending(false);
+      setVoiceSendPending(false);
       onErrorRef.current(actionMessage(failure));
     } finally {
       if (composerEpoch.current === epoch) {
@@ -358,9 +352,9 @@ export function PromptInput({
   }
 
   useEffect(() => {
-    if (!voiceSendPendingRef.current) return;
+    if (!voiceSendPending) return;
     if (withoutVoiceSendPhrase(value, voiceSendPhrase.current) === null) {
-      changeVoiceSendPending(false);
+      setVoiceSendPending(false);
       return;
     }
     // Wait until Stop is gone and the prompt can be sent.
@@ -411,7 +405,7 @@ export function PromptInput({
     let receivedVoiceDelta = false;
     let voicePreview = '';
     let openAiTranscript = '';
-    changeVoiceSendPending(false);
+    setVoiceSendPending(false);
     setVoiceInputState('starting');
     onErrorRef.current(null);
     let runtime: NativeVoiceInputRuntime | null;
@@ -475,7 +469,7 @@ export function PromptInput({
               voicePreview = next.slice(base.length);
               updateDraft(next);
               if (!text && withoutVoiceSendPhrase(next, voiceSendPhrase.current) !== null) {
-                changeVoiceSendPending(true);
+                setVoiceSendPending(true);
               }
             }
             return;
@@ -487,14 +481,14 @@ export function PromptInput({
               ? appendPreparedTranscription(current, text)
               : appendTranscription(current, text));
           if (withoutVoiceSendPhrase(draftRef.current, voiceSendPhrase.current) !== null) {
-            changeVoiceSendPending(true);
+            setVoiceSendPending(true);
           }
           receivedVoiceDelta = true;
         },
         (failure) => {
           if (voiceInputAttempt.current !== attempt) return;
           voiceInputSession.current = null;
-          changeVoiceSendPending(false);
+          setVoiceSendPending(false);
           setVoiceInputState('idle');
           onErrorRef.current(voiceInputMessage(failure));
         },

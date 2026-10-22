@@ -1241,7 +1241,7 @@ describe('Notes screen', () => {
     expect(saveNote).toHaveBeenCalled();
   });
 
-  it.each([false, true])('shows only the six context actions, including on links (read-only: %s)', async (readOnly) => {
+  it.each([false, true])('shows the context actions, including on links (read-only: %s)', async (readOnly) => {
     render(<Harness items={[{ ...plan, read_only: readOnly }]} getNote={async (id) => ({
       id, document: { type: 'doc', content: [{ type: 'paragraph', content: [
         { type: 'text', text: 'Alpha' },
@@ -1253,9 +1253,9 @@ describe('Notes screen', () => {
     for (const target of [editor.view.dom.querySelector('p')!, editor.view.dom.querySelector('a')!]) {
       expect(fireEvent.contextMenu(target, { clientX: 25, clientY: 30 })).toBe(false);
       const items = screen.getAllByRole('menuitem');
-      expect(items.map((item) => item.textContent)).toEqual(['Cut', 'Copy', 'Paste', 'Bold', 'Italic', 'Highlight']);
+      expect(items.map((item) => item.textContent)).toEqual(['Cut', 'Copy', 'Paste', 'Bold', 'Italic', 'Highlight', 'Add comment']);
       for (const item of items) {
-        if (readOnly && !['Copy', 'Highlight'].includes(item.textContent!)) expect(item).toBeDisabled();
+        if (readOnly && !['Copy', 'Highlight', 'Add comment'].includes(item.textContent!)) expect(item).toBeDisabled();
         else expect(item).toBeEnabled();
       }
       expect(screen.getByRole('menuitem', { name: readOnly ? 'Copy' : 'Cut' })).toHaveFocus();
@@ -1268,12 +1268,79 @@ describe('Notes screen', () => {
     }
   });
 
+  it.each([false, true])('adds a blue comment before the clicked paragraph and saves it (read-only: %s)', async (readOnly) => {
+    let saved: Record<string, unknown> = { type: 'doc', content: [
+      ...documentWith('First paragraph').content,
+      { type: 'paragraph', content: [
+        { type: 'text', text: 'Clicked paragraph', marks: [{ type: 'link', attrs: { href: 'https://example.com/' } }] },
+      ] },
+    ] };
+    const saveNote = vi.fn(async (_id: number, document: Record<string, unknown>) => { saved = document; });
+    const props = { items: [{ ...plan, read_only: readOnly }], saveNote,
+      getNote: async (id: number) => ({ id, document: saved }) };
+    const first = render(<Harness {...props} draft="My comment" />);
+    const editor = await openedEditor();
+    vi.useFakeTimers();
+    act(() => { editor.commands.setTextSelection({ from: 1, to: 6 }); });
+    fireEvent.contextMenu(editor.view.dom.querySelector('a')!);
+    expect(screen.getByRole('menuitem', { name: 'Add comment' })).toBeEnabled();
+    const host = editor.view.dom.closest('.cha-notes-document') as HTMLElement;
+    host.scrollTop = 120;
+    const jump = () => { host.scrollTop = 900; };
+    editor.on('update', jump);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add comment' }));
+    editor.off('update', jump);
+    expect(host.scrollTop).toBe(120);
+    expect(Array.from(editor.view.dom.querySelectorAll('p')).map((p) => p.textContent))
+      .toEqual(['First paragraph', 'My comment', 'Clicked paragraph']);
+    expect(editor.view.dom.querySelector('mark')?.style.backgroundColor).toBe('rgb(179, 217, 255)');
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(editor.isEditable).toBe(!readOnly);
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    expect(saveNote).toHaveBeenCalledOnce();
+    first.unmount();
+    render(<Harness {...props} />);
+    const reopened = await openedEditor();
+    expect(reopened.getJSON()).toEqual(saved);
+    expect(reopened.view.dom.querySelector('mark')?.style.backgroundColor).toBe('rgb(179, 217, 255)');
+    expect(reopened.isEditable).toBe(!readOnly);
+  });
+
+  it('adds a comment before the paragraph nearest to a click between paragraphs', async () => {
+    render(<Harness items={[{ ...plan, read_only: true }]} draft="Gap comment" getNote={async (id) => ({
+      id, document: { type: 'doc', content: [...documentWith('First').content, ...documentWith('Second').content] },
+    })} />);
+    const editor = await openedEditor();
+    const posAtCoords = vi.spyOn(editor.view, 'posAtCoords').mockReturnValue({ pos: 8, inside: -1 });
+    fireEvent.contextMenu(editor.view.dom, { clientX: 25, clientY: 40 });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add comment' }));
+    expect(posAtCoords).toHaveBeenCalledWith({ left: 25, top: 40 });
+    expect(Array.from(editor.view.dom.querySelectorAll('p')).map((p) => p.textContent))
+      .toEqual(['First', 'Gap comment', 'Second']);
+  });
+
+  it.each(['', ' \n '])('does nothing when Add comment is used with an empty prompt (%j)', async (draft) => {
+    const saveNote = vi.fn();
+    render(<Harness items={[{ ...plan, read_only: true }]} draft={draft} saveNote={saveNote} />);
+    const editor = await openedEditor();
+    const before = editor.getJSON();
+    vi.useFakeTimers();
+    fireEvent.contextMenu(editor.view.dom.querySelector('p')!);
+    expect(screen.getByRole('menuitem', { name: 'Add comment' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add comment' }));
+    expect(editor.getJSON()).toEqual(before);
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(draft);
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    expect(saveNote).not.toHaveBeenCalled();
+  });
+
   it('formats the selected text through the menu and keeps each action undoable', async () => {
     render(<Harness />);
     const editor = await openedEditor();
     act(() => { editor.commands.setTextSelection({ from: 2, to: 5 }); });
     for (const command of ['Bold', 'Italic', 'Highlight']) {
-      fireEvent.contextMenu(editor.view.dom);
+      fireEvent.contextMenu(editor.view.dom.querySelector('p')!);
       fireEvent.click(screen.getByRole('menuitem', { name: command }));
     }
     expect(editor.view.dom.querySelector('strong em mark')?.textContent).toBe('lph');
@@ -1292,7 +1359,7 @@ describe('Notes screen', () => {
       render(<Harness items={[{ ...plan, read_only: true }]} />);
       const editor = await openedEditor();
       act(() => { editor.commands.setTextSelection({ from: 2, to: 5 }); });
-      fireEvent.contextMenu(editor.view.dom);
+      fireEvent.contextMenu(editor.view.dom.querySelector('p')!);
       fireEvent.click(screen.getByRole('menuitem', { name: 'Copy' }));
       expect(exec).toHaveBeenCalledWith('copy');
       expect(window.getSelection()?.toString()).toBe('lph');
@@ -1305,7 +1372,7 @@ describe('Notes screen', () => {
   it.each(['toolbar', 'context menu'])('saves read-only highlights from the %s, restores them on reopen, and saves their removal', async (source) => {
     function highlight(editor: Editor) {
       if (source === 'context menu') {
-        fireEvent.contextMenu(editor.view.dom);
+        fireEvent.contextMenu(editor.view.dom.querySelector('p')!);
         fireEvent.click(screen.getByRole('menuitem', { name: 'Highlight' }));
       } else {
         const button = screen.getByRole('button', { name: 'Highlight' });

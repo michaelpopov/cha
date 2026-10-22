@@ -46,6 +46,8 @@ const notesIsolatedCloseMeta = 'notesIsolatedClose';
 const notesPictureFallbackMeta = 'notesPictureFallback';
 const notesPasteSelectionMeta = 'notesPasteSelection';
 const notesHighlightMeta = 'notesHighlight';
+const notesCommentMeta = 'notesComment';
+const noteCommentColor = '#b3d9ff';
 // Overlapping imports share the four picture download slots.
 let noteImportTail = Promise.resolve();
 
@@ -149,6 +151,41 @@ function withoutHighlight(node: PmNode): PmNode {
   node.forEach((child) => content.push(withoutHighlight(child)));
   return (node.isLeaf ? node : node.copy(Fragment.fromArray(content)))
     .mark(node.marks.filter((mark) => mark.type.name !== 'highlight'));
+}
+
+export function addNoteComment(editor: Editor, position: number, text: string): boolean {
+  if (editor.isDestroyed || !text.trim()) return false;
+  const $position = editor.state.doc.resolve(position);
+  const before = $position.parent.isTextblock ? $position.before() : position;
+  const highlight = editor.schema.marks.highlight.create({ color: noteCommentColor });
+  const content: PmNode[] = [];
+  buildParagraph(editor.schema, text.replace(/\r\n?/g, '\n')).forEach((node) => {
+    content.push(node.mark(highlight.addToSet(node.marks)));
+  });
+  const paragraph = editor.schema.nodes.paragraph.create(null, content);
+  const tr = closeHistory(editor.state.tr.insert(before, paragraph))
+    .setMeta(notesCommentMeta, before)
+    .setMeta(notesIsolatedMeta, true)
+    .setMeta('preventAutolink', true)
+    .setStoredMarks([]);
+  const previous = editor.state.doc;
+  editor.view.dispatch(tr);
+  return !editor.state.doc.eq(previous);
+}
+
+function onlyCommentAdded(before: PmNode, after: PmNode, position: unknown): boolean {
+  if (typeof position !== 'number' || !Number.isInteger(position)
+    || position < 0 || position >= after.content.size) return false;
+  const comment = after.nodeAt(position);
+  if (comment?.type.name !== 'paragraph' || !comment.textContent.trim()) return false;
+  let blue = true;
+  comment.forEach((node) => {
+    if (!node.isInline || !node.marks.some((mark) => mark.type.name === 'highlight'
+      && mark.attrs.color === noteCommentColor)) blue = false;
+  });
+  return blue && withoutHighlight(before).eq(withoutHighlight(
+    after.replace(position, position + comment.nodeSize, Slice.empty),
+  ));
 }
 
 export function createNotesEditor(options: NotesEditorOptions): Editor {
@@ -574,7 +611,7 @@ export function notesExtensions() {
       },
     }),
     Image.configure({ allowBase64: true, inline: false, resize: false }),
-    Highlight.configure({ multicolor: false }),
+    Highlight.configure({ multicolor: true }),
     FindAndReplace.configure({ injectCSS: false, searchDebounceMs: 0 }),
     Extension.create({
       name: 'notesInactiveSelection',
@@ -621,8 +658,9 @@ function acceptNotesTransaction(
     }
     const changed = transactions.some((item) => item.docChanged) && !prevState.doc.eq(state.doc);
     if (changed && !editor.isEditable && !(
-      transaction.getMeta(notesHighlightMeta) === true
-      && withoutHighlight(prevState.doc).eq(withoutHighlight(state.doc))
+      (transaction.getMeta(notesHighlightMeta) === true
+        && withoutHighlight(prevState.doc).eq(withoutHighlight(state.doc)))
+      || onlyCommentAdded(prevState.doc, state.doc, transaction.getMeta(notesCommentMeta))
     )) return;
     if (changed && noteDocumentByteLength(state.doc) > byteLimit) {
       const withoutPicture = transaction.getMeta(notesPictureFallbackMeta) as (() => Transaction | null) | undefined;
@@ -871,6 +909,7 @@ function appendClipboardCell(target: HTMLElement, cell: HTMLElement): void {
 
 function stripClipboardPresentation(element: HTMLElement): void {
   if (element.tagName === 'FONT') element.removeAttribute('color');
+  if (element.tagName === 'MARK') element.removeAttribute('data-color');
   const style = element.getAttribute('style');
   if (!style) return;
   const kept = style.split(';').map((part) => part.trim()).filter((part) => {

@@ -29,6 +29,13 @@ describe('note highlights', () => {
     expect(editor.can().undo()).toBe(false);
   });
 
+  it('joins a highlighted passage across line breaks', () => {
+    editor = createNotesEditor({ readPicture: async () => new Uint8Array(), content: '<p><mark>one<br>two</mark> plain</p>' });
+    const entries = noteHighlights(editor.state.doc);
+    expect(entries.map(({ text }) => text)).toEqual(['one\ntwo']);
+    expect(editor.state.doc.textBetween(entries[0].from, entries[0].to, undefined, '\n')).toBe('one\ntwo');
+  });
+
   it('does not select a stale passage after its text or highlight changes', () => {
     editor = createNotesEditor({ readPicture: async () => new Uint8Array(), content: '<p><mark>Alpha</mark></p>' });
     const [entry] = noteHighlights(editor.state.doc);

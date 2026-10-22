@@ -82,7 +82,7 @@ describe('Notes in the application', () => {
     await act(async () => finishSave());
     await waitFor(() => expect(setNoteReadOnly).toHaveBeenCalledWith(plan.id, true));
     expect(saveNote.mock.calls[0]).toEqual([plan.id, noteEditor().getJSON()]);
-    expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Bold' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Make editable' }));
@@ -187,7 +187,7 @@ describe('Notes in the application', () => {
     expect(saveNote.mock.invocationCallOrder[0]).toBeLessThan(setNoteReadOnly.mock.invocationCallOrder[0]);
     expect(noteEditor().getText()).toContain('Imported');
     expect(noteEditor().isEditable).toBe(false);
-    expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeEnabled();
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('');
     fireEvent.click(screen.getByRole('treeitem', { name: 'Other' }));
     await waitFor(() => expect(noteEditor().isEditable).toBe(true));
@@ -397,7 +397,7 @@ describe('Notes in the application', () => {
     expect(screen.getByRole('button', { name: `Send to ${expected}` })).toBeInTheDocument();
     await waitFor(() => expect(document.title).toBe(`CHA: Personal — ${expected}`));
     await waitFor(() => expect(prompt).toHaveValue(''));
-    expect(prompt).toBeDisabled();
+    expect(prompt).toBeEnabled();
     expect(noteEditor().isEditable).toBe(false);
     expect(renameNoteItem).toHaveBeenCalledWith(plan.id, expected);
     expect(noteEditor().getText({ blockSeparator: '\n' })).toBe('Article title\nArticle text');
