@@ -241,6 +241,15 @@ export function PlusIcon(props: IconProps) {
   );
 }
 
+export function BlocksIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2" {...stroke} />
+      <rect x="14" y="2" width="8" height="8" rx="1" {...stroke} />
+    </Icon>
+  );
+}
+
 export function MoreIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -285,6 +294,14 @@ export function FileUpIcon(props: IconProps) {
   );
 }
 
+export function ContentIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9ZM14 3v6h6M8 13h8M8 17h8" {...stroke} />
+    </Icon>
+  );
+}
+
 export function FileDownIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -306,6 +323,22 @@ export function TextLinesIcon(props: IconProps) {
   return (
     <Icon {...props}>
       <path d="M5 6h14M5 10h14M5 14h10M5 18h12" {...stroke} />
+    </Icon>
+  );
+}
+
+export function TextFormatIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m3 12 4-7 4 7M5 10h4M15 5h6M15 12h6M3 19h18" {...stroke} />
+    </Icon>
+  );
+}
+
+export function FontSizeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m3 16 5-12 5 12M5 10h6m4 10 4-8 4 8M17 16h4" {...stroke} />
     </Icon>
   );
 }
@@ -348,37 +381,10 @@ export function HighlighterIcon(props: IconProps) {
   );
 }
 
-export function ListIcon(props: IconProps) {
+export function HistoryIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M8 6h13M8 12h13M8 18h13" {...stroke} />
-      <circle cx="3" cy="6" r="1" fill="currentColor" />
-      <circle cx="3" cy="12" r="1" fill="currentColor" />
-      <circle cx="3" cy="18" r="1" fill="currentColor" />
-    </Icon>
-  );
-}
-
-export function CodeIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16" {...stroke} />
-    </Icon>
-  );
-}
-
-export function UndoIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-2" {...stroke} />
-    </Icon>
-  );
-}
-
-export function RedoIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="m15 14 5-5-5-5M20 9H10a6 6 0 0 0 0 12h2" {...stroke} />
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5" {...stroke} />
     </Icon>
   );
 }

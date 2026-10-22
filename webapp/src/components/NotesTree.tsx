@@ -892,7 +892,9 @@ export function NotesTree({
 }
 
 export function menuKeys(event: ReactKeyboardEvent<HTMLDivElement>, close: () => void) {
-  const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')];
+  const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+    '[role="menuitem"]:not(:disabled), [role="menuitemcheckbox"]:not(:disabled)',
+  )].filter((item) => item.closest('[role="menu"]') === event.currentTarget);
   const current = items.indexOf(document.activeElement as HTMLButtonElement);
   let next = current;
   if (event.key === 'ArrowDown') next = (current + 1) % items.length;

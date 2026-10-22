@@ -60,6 +60,11 @@ function typeInNote(text: string) {
   editor.view.dispatch(editor.state.tr.insertText(text));
 }
 
+function historyAction(name: 'Undo' | 'Redo') {
+  fireEvent.click(screen.getByRole('button', { name: 'History' }));
+  return screen.getByRole('menuitem', { name });
+}
+
 describe('Notes in the application', () => {
   it('saves pending edits before locking, then unlocks and locks again', async () => {
     let finishSave!: () => void;
@@ -83,7 +88,10 @@ describe('Notes in the application', () => {
     await waitFor(() => expect(setNoteReadOnly).toHaveBeenCalledWith(plan.id, true));
     expect(saveNote.mock.calls[0]).toEqual([plan.id, noteEditor().getJSON()]);
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Bold' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Headings' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Insert' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'History' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Make editable' }));
     await waitFor(() => expect(noteEditor().isEditable).toBe(true));
@@ -753,9 +761,9 @@ describe('Notes in the application', () => {
     expect(editor.isEditable).toBe(true);
     expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep draft');
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    fireEvent.click(historyAction('Undo'));
     expect(editor.getText()).toBe('Saved plan');
-    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    fireEvent.click(historyAction('Redo'));
     expect(editor.getText()).toBe('Saved plan more');
 
     failOpen = false;
@@ -811,7 +819,7 @@ describe('Notes in the application', () => {
     } else {
       expect(noteEditor()).toBe(editor);
       expect(editor.isEditable).toBe(true);
-      fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+      fireEvent.click(historyAction('Undo'));
       expect(editor.getText()).toBe('Saved plan');
     }
   });

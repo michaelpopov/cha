@@ -44,6 +44,11 @@ function insertText(editor: Editor, text: string) {
   editor.view.dispatch(editor.state.tr.insertText(text));
 }
 
+function historyAction(name: 'Undo' | 'Redo') {
+  fireEvent.click(screen.getByRole('button', { name: 'History' }));
+  return screen.getByRole('menuitem', { name });
+}
+
 let liveEditor: { current: Editor | null } | null = null;
 
 function Harness({
@@ -146,6 +151,113 @@ async function openedEditor(): Promise<Editor> {
 }
 
 describe('Notes screen', () => {
+  it.each([false, true])('copies the whole note from Content and keeps the selection, prompt, and scroll (read-only: %s)', async (readOnly) => {
+    const user = userEvent.setup();
+    const saveNote = vi.fn();
+    render(<Harness items={[{ ...plan, read_only: readOnly }]} draft="Keep this draft" saveNote={saveNote} />);
+    const editor = await openedEditor();
+    act(() => editor.commands.setTextSelection({ from: 2, to: 4 }));
+    const before = editor.getJSON();
+    const host = editor.view.dom.closest('.cha-notes-document')!;
+    host.scrollTop = 640;
+    const original = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const exec = vi.fn(() => {
+      expect(window.getSelection()?.toString()).toBe('Alpha');
+      return true;
+    });
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: exec });
+    try {
+      const content = screen.getByRole('button', { name: 'Content' });
+      expect(document.querySelector('.cha-notes-toolbar button')).toBe(content);
+      await user.click(content);
+      expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Upload', 'Copy All']);
+      expect(screen.getByRole('menuitem', { name: 'Upload' }).hasAttribute('disabled')).toBe(readOnly);
+      await user.click(screen.getByRole('menuitem', { name: 'Copy All' }));
+      expect(exec).toHaveBeenCalledExactlyOnceWith('copy');
+      expect(content).toHaveAttribute('aria-expanded', 'false');
+      expect(editor.view.dom).toHaveFocus();
+      expect(editor.state.selection.from).toBe(2);
+      expect(editor.state.selection.to).toBe(4);
+      expect(host.scrollTop).toBe(640);
+      expect(editor.getJSON()).toEqual(before);
+      expect(editor.can().undo()).toBe(false);
+      expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this draft');
+      expect(saveNote).not.toHaveBeenCalled();
+    } finally {
+      if (original) Object.defineProperty(document, 'execCommand', original);
+      else Reflect.deleteProperty(document, 'execCommand');
+    }
+  });
+
+  it('navigates Content by keyboard and reports Copy All failures without changing the note', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const editor = await openedEditor();
+    act(() => editor.commands.setTextSelection({ from: 2, to: 4 }));
+    const original = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const exec = vi.fn(() => { throw new Error('Denied'); });
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: exec });
+    try {
+      const content = screen.getByRole('button', { name: 'Content' });
+      await user.click(content);
+      expect(screen.getByRole('menuitem', { name: 'Upload' })).toHaveFocus();
+      await user.keyboard('{ArrowDown}');
+      expect(screen.getByRole('menuitem', { name: 'Copy All' })).toHaveFocus();
+      await user.keyboard('{Escape}');
+      expect(content).toHaveAttribute('aria-expanded', 'false');
+      expect(editor.view.dom).toHaveFocus();
+      expect(exec).not.toHaveBeenCalled();
+      await user.click(content);
+      await user.keyboard('{End}{Enter}');
+      expect(await screen.findByRole('alert')).toHaveTextContent('Could not copy the note. Try again.');
+      expect(editor.view.dom).toHaveFocus();
+      expect(editor.getText()).toBe('Alpha');
+      expect(editor.state.selection.from).toBe(2);
+      expect(editor.state.selection.to).toBe(4);
+    } finally {
+      if (original) Object.defineProperty(document, 'execCommand', original);
+      else Reflect.deleteProperty(document, 'execCommand');
+    }
+  });
+
+  it('runs History actions by keyboard, skips unavailable actions, and dismisses the menu', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const editor = await openedEditor();
+    const history = screen.getByRole('button', { name: 'History' });
+    expect(history).toBeDisabled();
+    act(() => insertText(editor, '!'));
+    expect(history).toBeEnabled();
+    await user.click(history);
+    expect(screen.getByRole('menuitem', { name: 'Undo' })).toHaveFocus();
+    expect(screen.getByRole('menuitem', { name: 'Redo' })).toBeDisabled();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitem', { name: 'Undo' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(history).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom).toHaveFocus();
+    await user.click(history);
+    await user.keyboard('{Enter}');
+    expect(editor.getText()).toBe('Alpha');
+    expect(history).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom).toHaveFocus();
+    await user.click(history);
+    expect(screen.getByRole('menuitem', { name: 'Undo' })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: 'Redo' })).toHaveFocus();
+    await user.keyboard('{ArrowUp}{Enter}');
+    expect(editor.getText()).toBe('Alpha!');
+    expect(history).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom).toHaveFocus();
+    await user.click(history);
+    await user.click(screen.getByRole('button', { name: 'Font size' }));
+    expect(screen.queryByRole('menu', { name: 'History' })).not.toBeInTheDocument();
+    await user.click(history);
+    expect(screen.queryByRole('menu', { name: 'Font size' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
+    expect(history).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.getText()).toBe('Alpha!');
+  });
+
   it('restores a note position and opens a note without one at the top', async () => {
     render(<Harness getNote={async (id) => ({
       id, document: documentWith('Reading'), ...(id === 4 ? { scroll_top: 680 } : {}),
@@ -198,41 +310,89 @@ describe('Notes screen', () => {
     render(<Harness getNote={async (id) => ({ id, document: documentWith('Alpha beta') })} />);
     const editor = await openedEditor();
     act(() => { editor.commands.setTextSelection({ from: 7, to: 11 }); });
-    const code = screen.getByRole('button', { name: 'Code' });
+    const insert = screen.getByRole('button', { name: 'Insert' });
+    await user.click(insert);
+    const code = screen.getByRole('menuitemcheckbox', { name: 'Code' });
+    expect(code).toHaveAttribute('aria-checked', 'false');
     expect(screen.queryByRole('button', { name: 'Link' })).not.toBeInTheDocument();
     await user.click(code);
-    expect(code).toHaveAttribute('aria-pressed', 'true');
+    expect(insert).toHaveAttribute('aria-expanded', 'false');
     expect(editor.view.dom.querySelector('code')?.textContent).toBe('beta');
     expect(editor.getText()).toBe('Alpha beta');
     expect(editor.view.dom).toHaveFocus();
-    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    await user.click(historyAction('Undo'));
     expect(editor.view.dom.querySelector('code')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Redo' }));
+    await user.click(historyAction('Redo'));
     expect(editor.view.dom.querySelector('code')?.textContent).toBe('beta');
-    await user.click(code);
-    expect(code).toHaveAttribute('aria-pressed', 'false');
+    await user.click(insert);
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Code' })).toHaveAttribute('aria-checked', 'true');
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Code' }));
     expect(editor.view.dom.querySelector('code')).toBeNull();
     expect(editor.getText()).toBe('Alpha beta');
   });
 
-  it('resizes the whole document without formatting the selected text or saving a change', async () => {
+  it.each([false, true])('resizes the whole document without changing or saving its content (read-only: %s)', async (readOnly) => {
     const user = userEvent.setup();
     const saveNote = vi.fn();
-    render(<Harness saveNote={saveNote} />);
+    render(<Harness saveNote={saveNote} items={[{ ...plan, read_only: readOnly }]} />);
     const editor = await openedEditor();
     const document = editor.getJSON();
     act(() => { editor.commands.setTextSelection({ from: 2, to: 4 }); });
     const host = editor.view.dom.closest('.cha-notes-document');
 
-    await user.click(screen.getByRole('button', { name: 'Increase editor font size' }));
+    const fontSize = screen.getByRole('button', { name: 'Font size' });
+    await user.click(fontSize);
+    await user.click(screen.getByRole('menuitem', { name: 'Increase font size' }));
     expect(host).toHaveStyle({ fontSize: '16px' });
+    expect(fontSize).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom).toHaveFocus();
     expect(editor.state.selection.from).toBe(2);
     expect(editor.state.selection.to).toBe(4);
-    await user.click(screen.getByRole('button', { name: 'Decrease editor font size' }));
+    await user.click(fontSize);
+    await user.click(screen.getByRole('menuitem', { name: 'Decrease font size' }));
     expect(host).toHaveStyle({ fontSize: '14px' });
     expect(editor.getJSON()).toEqual(document);
     expect(editor.can().undo()).toBe(false);
     expect(saveNote).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Decrease font size', 'Increase font size', 10, 2],
+    ['Increase font size', 'Decrease font size', 30, 8],
+  ] as const)('disables %s at the size limit and focuses the available action', async (action, opposite, limit, steps) => {
+    render(<Harness />);
+    const editor = await openedEditor();
+    const fontSize = screen.getByRole('button', { name: 'Font size' });
+    for (let step = 0; step < steps; step += 1) {
+      fireEvent.click(fontSize);
+      fireEvent.click(screen.getByRole('menuitem', { name: action }));
+    }
+    expect(editor.view.dom.closest('.cha-notes-document')).toHaveStyle({ fontSize: `${limit}px` });
+    fireEvent.click(fontSize);
+    expect(screen.getByRole('menuitem', { name: action })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: opposite })).toHaveFocus();
+  });
+
+  it('navigates and dismisses the Font size menu without changing the size', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const editor = await openedEditor();
+    const fontSize = screen.getByRole('button', { name: 'Font size' });
+    await user.click(fontSize);
+    expect(screen.getByRole('menuitem', { name: 'Decrease font size' })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitem', { name: 'Increase font size' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(fontSize).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom).toHaveFocus();
+    await user.click(fontSize);
+    await user.click(screen.getByRole('button', { name: 'Headings' }));
+    expect(screen.queryByRole('menu', { name: 'Font size' })).not.toBeInTheDocument();
+    await user.click(fontSize);
+    expect(screen.queryByRole('menu', { name: 'Headings' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
+    expect(fontSize).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom.closest('.cha-notes-document')).toHaveStyle({ fontSize: '14px' });
   });
 
   it('keeps note actions out of the editor toolbar', async () => {
@@ -250,18 +410,20 @@ describe('Notes screen', () => {
     const editor = await openedEditor();
     const input = screen.getByLabelText('Text file');
     const click = vi.spyOn(input, 'click');
-    fireEvent.click(screen.getByRole('button', { name: 'Load text file' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Content' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Upload' }));
     expect(click).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menu', { name: 'Content' })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { files: [new File(['# Imported\n\n**Body**'], 'plan.md')] } });
     await waitFor(() => expect(editor.getText({ blockSeparator: '\n' })).toBe('Imported\nBody'));
     expect(editor.view.dom.querySelector('strong')?.textContent).toBe('Body');
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this draft');
     expect(renameNoteItem).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(editor.can().undo()).toBe(true));
+    fireEvent.click(historyAction('Undo'));
     expect(editor.getText()).toBe('Alpha');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Redo' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    await waitFor(() => expect(editor.can().redo()).toBe(true));
+    fireEvent.click(historyAction('Redo'));
     expect(editor.getText({ blockSeparator: '\n' })).toBe('Imported\nBody');
     const document = editor.getJSON();
     fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
@@ -400,7 +562,8 @@ describe('Notes screen', () => {
     expect(editor.getText()).toBe('Essay text');
     expect(renameNoteItem).not.toHaveBeenCalled();
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('/tmp/plan.md');
-    expect(screen.getByRole('button', { name: 'Load text file' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Content' }));
+    expect(screen.getByRole('menuitem', { name: 'Upload' })).toBeEnabled();
   });
 
   it.each([
@@ -714,13 +877,16 @@ describe('Notes screen', () => {
     fireEvent.change(prompt, { target: { value: 'Keep' } });
     editor.commands.setTextSelection({ from: 1, to: 4 });
     function clickAction(name: string) {
-      const control = screen.getByRole('button', { name });
+      if (name === 'Bold') fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+      if (name === 'Chapter') fireEvent.click(screen.getByRole('button', { name: 'Headings' }));
+      if (name === 'Undo' || name === 'Redo') fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      const control = screen.getByRole(name === 'Bold' || name === 'Chapter' ? 'menuitemcheckbox' : 'menuitem', { name });
       act(() => control.focus());
       fireEvent.click(control);
       expect(editor.view.dom).toHaveFocus();
     }
     expect(editor.can().undo()).toBe(false);
-    clickAction('Heading 2');
+    clickAction('Chapter');
     expect(editor.isActive('heading', { level: 2 })).toBe(true);
     expect(editor.can().undo()).toBe(true);
     clickAction('Bold');
@@ -736,11 +902,13 @@ describe('Notes screen', () => {
     clickAction('Redo');
     expect(editor.isActive('heading', { level: 2 })).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'List' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Bullet list' }));
     expect(editor.view.dom).toHaveFocus();
     expect(editor.isActive('bulletList')).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'List' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Numbered list' }));
     expect(editor.view.dom).toHaveFocus();
     expect(editor.isActive('orderedList')).toBe(true);
@@ -966,34 +1134,67 @@ describe('Notes screen', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
-  it.each([1, 2, 3])('toggles heading %s, preserves the selection, and returns focus', async (level) => {
+  it.each([
+    ['Title', 1], ['Chapter', 2], ['Section', 3],
+  ] as const)('toggles %s, preserves the selection, and returns focus', async (name, level) => {
+    const user = userEvent.setup();
     render(<Harness />);
     const editor = await openedEditor();
     act(() => editor.commands.setTextSelection({ from: 1, to: 4 }));
-    expect(screen.queryByRole('combobox', { name: 'Paragraph style' })).not.toBeInTheDocument();
-    const heading = screen.getByRole('button', { name: `Heading ${level}` });
-    act(() => heading.focus());
-    fireEvent.click(heading);
+    const headings = screen.getByRole('button', { name: 'Headings' });
+    expect(headings).toHaveTextContent('H');
+    await user.click(headings);
+    expect(screen.getByRole('menuitemcheckbox', { name })).toHaveAttribute('aria-checked', 'false');
+    await user.click(screen.getByRole('menuitemcheckbox', { name }));
     expect(editor.isActive('heading', { level })).toBe(true);
-    expect(heading).toHaveAttribute('aria-pressed', 'true');
+    expect(headings).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('menu', { name: 'Headings' })).not.toBeInTheDocument();
     expect(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)).toBe('Alp');
     expect(editor.view.dom).toHaveFocus();
-    act(() => heading.focus());
-    fireEvent.click(heading);
+    await user.click(headings);
+    expect(screen.getByRole('menuitemcheckbox', { name })).toHaveAttribute('aria-checked', 'true');
+    await user.click(screen.getByRole('menuitemcheckbox', { name }));
     expect(editor.isActive('paragraph')).toBe(true);
-    expect(heading).toHaveAttribute('aria-pressed', 'false');
     expect(editor.view.dom).toHaveFocus();
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    fireEvent.click(historyAction('Undo'));
     expect(editor.isActive('heading', { level })).toBe(true);
-    expect(heading).toHaveAttribute('aria-pressed', 'true');
-    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    fireEvent.click(historyAction('Redo'));
     expect(editor.isActive('paragraph')).toBe(true);
   });
 
-  it.each(['Bold', 'Italic', 'Underline', 'Highlight'])('returns focus after %s and keeps formatting for typing', async (name) => {
+  it('navigates and dismisses the Headings menu without changing the note', async () => {
+    const user = userEvent.setup();
     render(<Harness />);
     const editor = await openedEditor();
-    const control = screen.getByRole('button', { name });
+    const before = editor.getJSON();
+    const headings = screen.getByRole('button', { name: 'Headings' });
+    await user.click(headings);
+    expect(screen.getAllByRole('menuitemcheckbox').map((item) => item.textContent)).toEqual(['Title', 'Chapter', 'Section']);
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Title' })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Chapter' })).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Section' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(headings).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom).toHaveFocus();
+    await user.click(headings);
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(headings).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('menu', { name: 'Headings' })).not.toBeInTheDocument();
+    expect(screen.getByRole('menu', { name: 'Edit' })).toBeInTheDocument();
+    await user.click(headings);
+    expect(screen.queryByRole('menu', { name: 'Edit' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
+    expect(headings).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.getJSON()).toEqual(before);
+  });
+
+  it.each(['Bold', 'Italic', 'Underline', 'Highlight', 'Code'])('returns focus after %s and keeps formatting for typing', async (name) => {
+    render(<Harness />);
+    const editor = await openedEditor();
+    if (name !== 'Highlight') fireEvent.click(screen.getByRole('button', { name: name === 'Code' ? 'Insert' : 'Edit' }));
+    const control = screen.getByRole(name === 'Highlight' ? 'button' : 'menuitemcheckbox', { name });
     act(() => control.focus());
     fireEvent.click(control);
     expect(editor.view.dom).toHaveFocus();
@@ -1002,14 +1203,117 @@ describe('Notes screen', () => {
     expect(editor.getJSON().content?.[0]?.content?.at(-1)?.marks?.[0]?.type).toBe(name.toLowerCase());
   });
 
-  it('returns focus after the picture picker is canceled', async () => {
+  it.each(['Bold', 'Italic', 'Underline'])('toggles %s on the selected text through the Edit menu', async (name) => {
+    const user = userEvent.setup();
     render(<Harness />);
     const editor = await openedEditor();
-    const picture = screen.getByRole('button', { name: 'Picture' });
-    act(() => picture.focus());
-    fireEvent.click(picture);
+    act(() => editor.commands.setTextSelection({ from: 2, to: 4 }));
+    const edit = screen.getByRole('button', { name: 'Edit' });
+    await user.click(edit);
+    const item = screen.getByRole('menuitemcheckbox', { name });
+    expect(item).toHaveAttribute('aria-checked', 'false');
+    await user.click(item);
+    expect(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)).toBe('lp');
+    expect(editor.isActive(name.toLowerCase())).toBe(true);
+    expect(editor.view.dom).toHaveFocus();
+    expect(edit).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('menu', { name: 'Edit' })).not.toBeInTheDocument();
+    await user.click(edit);
+    expect(screen.getByRole('menuitemcheckbox', { name })).toHaveAttribute('aria-checked', 'true');
+    await user.click(screen.getByRole('menuitemcheckbox', { name }));
+    expect(editor.isActive(name.toLowerCase())).toBe(false);
+    expect(editor.view.dom).toHaveFocus();
+  });
+
+  it('navigates the Edit menu with the keyboard and dismisses it without changing the note', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const editor = await openedEditor();
+    const before = editor.getJSON();
+    const edit = screen.getByRole('button', { name: 'Edit' });
+    await user.click(edit);
+    expect(screen.getAllByRole('menuitemcheckbox').map((item) => item.textContent)).toEqual(['Bold', 'Italic', 'Underline']);
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Bold' })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Italic' })).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Underline' })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Bold' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(edit).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom).toHaveFocus();
+    await user.click(edit);
+    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
+    expect(edit).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.getJSON()).toEqual(before);
+  });
+
+  it('navigates the Insert menu and List submenu with the keyboard', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const editor = await openedEditor();
+    const insert = screen.getByRole('button', { name: 'Insert' });
+    await user.click(insert);
+    expect(screen.getByRole('menuitem', { name: 'List' })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitem', { name: 'Picture' })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Code' })).toHaveFocus();
+    await user.keyboard('{Home}{ArrowRight}');
+    expect(screen.getByRole('menuitem', { name: 'Bullet list' })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitem', { name: 'Numbered list' })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitem', { name: 'Bullet list' })).toHaveFocus();
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.queryByRole('menu', { name: 'List' })).not.toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'List' })).toHaveFocus();
+    await user.keyboard('{ArrowRight}{Escape}');
+    expect(screen.getByRole('menuitem', { name: 'List' })).toHaveFocus();
+    await user.keyboard('{ArrowRight}{ArrowDown}{Enter}');
+    expect(editor.isActive('orderedList')).toBe(true);
+    expect(insert).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom).toHaveFocus();
+    await user.click(insert);
+    await user.keyboard('{Escape}');
+    expect(insert).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom).toHaveFocus();
+  });
+
+  it('dismisses Insert and its List submenu when switching menus or clicking outside', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const editor = await openedEditor();
+    const before = editor.getJSON();
+    const insert = screen.getByRole('button', { name: 'Insert' });
+    await user.click(insert);
+    await user.click(screen.getByRole('menuitem', { name: 'List' }));
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(insert).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('menu', { name: 'List' })).not.toBeInTheDocument();
+    await user.click(insert);
+    expect(screen.queryByRole('menu', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menu', { name: 'List' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: 'List' }));
+    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
+    expect(insert).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('menu', { name: 'List' })).not.toBeInTheDocument();
+    expect(editor.getJSON()).toEqual(before);
+  });
+
+  it('opens the picture picker from Insert and returns focus when it is canceled', async () => {
+    render(<Harness />);
+    const editor = await openedEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    const picture = screen.getByRole('menuitem', { name: 'Picture' });
     const input = document.querySelector<HTMLInputElement>('input[type="file"]');
     if (!input) throw new Error('Picture input is missing.');
+    const click = vi.spyOn(input, 'click');
+    act(() => picture.focus());
+    fireEvent.click(picture);
+    expect(click).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menu', { name: 'Insert' })).not.toBeInTheDocument();
     fireEvent(input, new Event('cancel'));
     expect(editor.view.dom).toHaveFocus();
     expect(editor.getText()).toBe('Alpha');
@@ -1114,7 +1418,8 @@ describe('Notes screen', () => {
     const input = document.querySelector<HTMLInputElement>('input[type="file"]');
     if (!input) throw new Error('Picture input is missing.');
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    act(() => screen.getByRole('button', { name: 'Picture' }).focus());
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Picture' }));
     fireEvent.change(input, {
       target: { files: [new File([png], 'dot.png', { type: 'image/png' })] },
     });
@@ -1123,7 +1428,8 @@ describe('Notes screen', () => {
     expect(screen.getByText(/Could not save “Plan”/)).toBeInTheDocument();
     expect(screen.queryByText(pictureTypeMessage)).not.toBeInTheDocument();
 
-    act(() => screen.getByRole('button', { name: 'Picture' }).focus());
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Picture' }));
     fireEvent.change(input, {
       target: { files: [new File([Uint8Array.from([1, 2, 3, 4])], 'bad.png', { type: 'image/png' })] },
     });
@@ -1164,7 +1470,7 @@ describe('Notes screen', () => {
     fireEvent.keyDown(replace, { key: 'Enter' });
     expect(editor.view.dom).toHaveFocus();
     expect(editor.getText()).toBe('$1lpha');
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    fireEvent.click(historyAction('Undo'));
     expect(editor.getText()).toBe('Alpha');
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Find' }), { target: { value: 'a' } });
@@ -1173,7 +1479,7 @@ describe('Notes screen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Replace all' }));
     expect(editor.view.dom).toHaveFocus();
     expect(editor.getText()).toBe('lph');
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    fireEvent.click(historyAction('Undo'));
     expect(editor.getText()).toBe('Alpha');
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Find' }), { target: { value: 'zzzz' } });
@@ -1402,7 +1708,7 @@ describe('Notes screen', () => {
     expect(editor.getText()).toBe('Alpha');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(editor.view.dom).toHaveFocus();
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    fireEvent.click(historyAction('Undo'));
     expect(editor.view.dom.querySelector('mark')).toBeNull();
     expect(editor.view.dom.querySelector('strong em')?.textContent).toBe('lph');
   });

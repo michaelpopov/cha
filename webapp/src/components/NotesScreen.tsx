@@ -42,16 +42,17 @@ import type { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveFailedMessage, useNoteSave, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { DataAction, NavigationAction } from '../state/view';
 import {
+  BlocksIcon,
+  CheckIcon,
+  ChevronRightIcon,
   CloseIcon,
-  CodeIcon,
-  FileUpIcon,
+  ContentIcon,
+  FontSizeIcon,
   HighlighterIcon,
-  ListIcon,
-  PictureIcon,
-  RedoIcon,
+  HistoryIcon,
   SearchIcon,
+  TextFormatIcon,
   TextLinesIcon,
-  UndoIcon,
 } from './Icons';
 import { menuKeys, type NoteActions, type SetNoteReadOnly } from './NotesTree';
 import { NoteHighlights } from './NoteHighlights';
@@ -71,14 +72,17 @@ function saveDetail(message: string): string {
   return message === noteSaveFailedMessage ? 'Check the vault and try again.' : message;
 }
 
-function preserveNoteScroll(editor: Editor, run: () => void) {
+function preserveNoteScroll<T>(editor: Editor, run: () => T): T {
   const host = editor.view.dom.closest('.cha-notes-document');
   const top = host?.scrollTop ?? 0;
   const left = host?.scrollLeft ?? 0;
-  run();
-  if (host) {
-    host.scrollTop = top;
-    host.scrollLeft = left;
+  try {
+    return run();
+  } finally {
+    if (host) {
+      host.scrollTop = top;
+      host.scrollLeft = left;
+    }
   }
 }
 
@@ -117,6 +121,80 @@ function runHistory(editor: Editor, command: 'undo' | 'redo') {
   else editor.chain().redo().run();
 }
 
+// A toolbar button with a menu below it. The menu focuses its first enabled
+// item only when it opens. It closes on Escape, on a press outside it, or when
+// its button becomes disabled, so it cannot reappear later and take focus.
+function ToolbarMenu({
+  editor,
+  label,
+  icon,
+  open,
+  disabled = false,
+  menuClassName,
+  onOpenChange,
+  children,
+}: {
+  editor: Editor;
+  label: string;
+  icon: ReactNode;
+  open: boolean;
+  disabled?: boolean;
+  menuClassName?: string;
+  onOpenChange(open: boolean): void;
+  children: ReactNode;
+}) {
+  const root = useRef<HTMLDivElement | null>(null);
+  const menu = useRef<HTMLDivElement | null>(null);
+  const visible = open && !disabled;
+
+  useEffect(() => {
+    if (!open) return;
+    if (disabled) {
+      onOpenChange(false);
+      return;
+    }
+    menu.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && root.current?.contains(target)) return;
+      onOpenChange(false);
+    };
+    window.addEventListener('pointerdown', dismiss);
+    return () => window.removeEventListener('pointerdown', dismiss);
+  }, [open, disabled]);
+
+  return (
+    <div className="cha-notes-toolbar-menu" ref={root}>
+      <button
+        aria-label={label}
+        title={label}
+        aria-expanded={visible}
+        aria-haspopup="menu"
+        className="cha-button"
+        disabled={disabled}
+        onClick={() => onOpenChange(!visible)}
+        type="button"
+      >
+        {icon}
+      </button>
+      {visible && (
+        <div
+          aria-label={label}
+          className={`cha-notes-list-menu cha-notes-format-menu${menuClassName ? ` ${menuClassName}` : ''}`}
+          onKeyDown={(event) => menuKeys(event, () => {
+            onOpenChange(false);
+            focusNotesEditor(editor);
+          })}
+          ref={menu}
+          role="menu"
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FormatBar({
   editor,
   onHighlight,
@@ -126,6 +204,9 @@ function FormatBar({
   toolbarRef,
   onFind,
   onPicture,
+  onUpload,
+  onCopyAll,
+  uploadEnabled,
 }: {
   editor: Editor;
   onHighlight(highlight: NoteHighlight): void;
@@ -135,17 +216,24 @@ function FormatBar({
   toolbarRef: { current: HTMLDivElement | null };
   onFind(): void;
   onPicture(file: File): void;
+  onUpload(): void;
+  onCopyAll(): void;
+  uploadEnabled: boolean;
 }) {
   const [, setTick] = useState(0);
-  const [listOpen, setListOpen] = useState(false);
+  const [formatMenu, setFormatMenu] = useState<'content' | 'history' | 'edit' | 'font' | 'heading' | 'insert' | 'list' | null>(null);
   const [headingsOpen, setHeadingsOpen] = useState(false);
-  const listRoot = useRef<HTMLDivElement | null>(null);
+  const listButton = useRef<HTMLButtonElement | null>(null);
   const listMenu = useRef<HTMLDivElement | null>(null);
   const headingsRoot = useRef<HTMLDivElement | null>(null);
   const headingsMenu = useRef<HTMLDivElement | null>(null);
   const pictureInput = useRef<HTMLInputElement | null>(null);
   const fontAnchor = useRef<{ block: Element; share: number } | null>(null);
   const editable = editor.isEditable && !editor.isDestroyed;
+  const canUndo = editable && editor.can().undo();
+  const canRedo = editable && editor.can().redo();
+  const historyAvailable = canUndo || canRedo;
+  const listOpen = formatMenu === 'list';
   const headings = noteHeadings(editor.state.doc);
   const showHeadings = headingsOpen && !frozen && !editor.isDestroyed && headings.length > 0;
 
@@ -188,16 +276,11 @@ function FormatBar({
     };
   }, [editor]);
 
+  // The List submenu focuses its first item when it opens. When it closes and
+  // the Insert menu stays open, focus returns to the List item.
   useEffect(() => {
-    if (!listOpen) return;
-    listMenu.current?.querySelector<HTMLButtonElement>('button')?.focus();
-    const dismiss = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && listRoot.current?.contains(target)) return;
-      setListOpen(false);
-    };
-    window.addEventListener('pointerdown', dismiss);
-    return () => window.removeEventListener('pointerdown', dismiss);
+    if (listOpen) listMenu.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    else listButton.current?.focus();
   }, [listOpen]);
 
   // A menu that loses its entries or editor closes, so it cannot reappear later
@@ -226,7 +309,7 @@ function FormatBar({
   }
 
   function chooseList(list: 'bullet' | 'ordered') {
-    setListOpen(false);
+    setFormatMenu(null);
     format(() => (
       list === 'bullet' ? editor.chain().toggleBulletList().run() : editor.chain().toggleOrderedList().run()
     ));
@@ -237,61 +320,98 @@ function FormatBar({
   return (
     <div className="cha-notes-toolbar" onClick={() => focusNotesEditor(editor)} ref={toolbarRef}>
       <div className="cha-notes-toolbar-group">
-        <button
-          aria-label="Undo"
-          title="Undo"
-          className="cha-button"
-          disabled={!editable || !editor.can().undo()}
-          onClick={() => runHistory(editor, 'undo')}
-          type="button"
+        <ToolbarMenu
+          editor={editor}
+          icon={<ContentIcon />}
+          label="Content"
+          onOpenChange={(open) => setFormatMenu(open ? 'content' : null)}
+          open={formatMenu === 'content'}
         >
-          <UndoIcon />
-        </button>
-        <button
-          aria-label="Redo"
-          title="Redo"
-          className="cha-button"
-          disabled={!editable || !editor.can().redo()}
-          onClick={() => runHistory(editor, 'redo')}
-          type="button"
-        >
-          <RedoIcon />
-        </button>
+          <button
+            disabled={!uploadEnabled}
+            onClick={() => {
+              setFormatMenu(null);
+              onUpload();
+            }}
+            role="menuitem"
+            type="button"
+          >
+            Upload
+          </button>
+          <button
+            onClick={() => {
+              setFormatMenu(null);
+              onCopyAll();
+            }}
+            role="menuitem"
+            type="button"
+          >
+            Copy All
+          </button>
+        </ToolbarMenu>
       </div>
       <div className="cha-notes-toolbar-group">
-        <button
-          aria-label="Bold"
-          title="Bold"
-          aria-pressed={editor.isActive('bold')}
-          className="cha-button"
-          disabled={!editable}
-          onClick={() => format(() => editor.chain().toggleBold().run())}
-          type="button"
+        <ToolbarMenu
+          disabled={!historyAvailable}
+          editor={editor}
+          icon={<HistoryIcon />}
+          label="History"
+          onOpenChange={(open) => setFormatMenu(open ? 'history' : null)}
+          open={formatMenu === 'history'}
         >
-          B
-        </button>
-        <button
-          aria-label="Italic"
-          title="Italic"
-          aria-pressed={editor.isActive('italic')}
-          className="cha-button"
+          <button
+            disabled={!canUndo}
+            onClick={() => {
+              setFormatMenu(null);
+              runHistory(editor, 'undo');
+            }}
+            role="menuitem"
+            type="button"
+          >
+            Undo
+          </button>
+          <button
+            disabled={!canRedo}
+            onClick={() => {
+              setFormatMenu(null);
+              runHistory(editor, 'redo');
+            }}
+            role="menuitem"
+            type="button"
+          >
+            Redo
+          </button>
+        </ToolbarMenu>
+      </div>
+      <div className="cha-notes-toolbar-group">
+        <ToolbarMenu
           disabled={!editable}
-          onClick={() => format(() => editor.chain().toggleItalic().run())}
-          type="button"
+          editor={editor}
+          icon={<TextFormatIcon />}
+          label="Edit"
+          onOpenChange={(open) => setFormatMenu(open ? 'edit' : null)}
+          open={formatMenu === 'edit'}
         >
-          I
-        </button>
-        <button
-          aria-label="Underline"
-          title="Underline"
-          aria-pressed={editor.isActive('underline')}
-          className="cha-button"
-          disabled={!editable}
-          onClick={() => format(() => editor.chain().toggleUnderline().run())}
-          type="button"
-        >
-          U
-        </button>
+          {[
+            { name: 'Bold', mark: 'bold', command: () => editor.chain().toggleBold().run() },
+            { name: 'Italic', mark: 'italic', command: () => editor.chain().toggleItalic().run() },
+            { name: 'Underline', mark: 'underline', command: () => editor.chain().toggleUnderline().run() },
+          ].map(({ name, mark, command }) => (
+            <button
+              aria-checked={editor.isActive(mark)}
+              key={mark}
+              onClick={() => {
+                setFormatMenu(null);
+                format(command);
+              }}
+              role="menuitemcheckbox"
+              type="button"
+            >
+              <span className={`cha-notes-edit-${mark}`}>{name}</span>
+              {editor.isActive(mark) && <CheckIcon />}
+            </button>
+          ))}
+        </ToolbarMenu>
         <button
           aria-label="Highlight"
           title="Highlight"
@@ -305,73 +425,137 @@ function FormatBar({
         </button>
       </div>
       <div className="cha-notes-toolbar-group">
-        <button
-          aria-label="Decrease editor font size"
-          title="Decrease font size"
-          className="cha-button"
-          disabled={fontSize <= 10}
-          onClick={() => changeFontSize(Math.max(10, fontSize - 2))}
-          type="button"
+        <ToolbarMenu
+          editor={editor}
+          icon={<FontSizeIcon />}
+          label="Font size"
+          menuClassName="cha-notes-font-menu"
+          onOpenChange={(open) => setFormatMenu(open ? 'font' : null)}
+          open={formatMenu === 'font'}
         >
-          A−
-        </button>
-        <button
-          aria-label="Increase editor font size"
-          title="Increase font size"
-          className="cha-button"
-          disabled={fontSize >= 30}
-          onClick={() => changeFontSize(Math.min(30, fontSize + 2))}
-          type="button"
-        >
-          A+
-        </button>
-      </div>
-      <div className="cha-notes-toolbar-group">
-        {([1, 2, 3] as const).map((level) => (
           <button
-            aria-label={`Heading ${level}`}
-            aria-pressed={editor.isActive('heading', { level })}
-            className="cha-button cha-notes-heading"
-            disabled={!editable}
-            key={level}
-            onClick={() => format(() => editor.chain().toggleHeading({ level }).run())}
-            title={`Heading ${level}`}
+            disabled={fontSize <= 10}
+            onClick={() => {
+              setFormatMenu(null);
+              changeFontSize(Math.max(10, fontSize - 2));
+            }}
+            role="menuitem"
             type="button"
           >
-            H<sub>{level}</sub>
+            Decrease font size
           </button>
-        ))}
-      </div>
-      <div className="cha-notes-toolbar-group">
-        <div className="cha-notes-list" ref={listRoot}>
           <button
-            aria-label="List"
-            title="List"
-            aria-expanded={listOpen}
-            aria-haspopup="menu"
-            aria-pressed={editor.isActive('bulletList') || editor.isActive('orderedList')}
-            className="cha-button"
-            disabled={!editable}
-            onClick={() => setListOpen((open) => !open)}
+            disabled={fontSize >= 30}
+            onClick={() => {
+              setFormatMenu(null);
+              changeFontSize(Math.min(30, fontSize + 2));
+            }}
+            role="menuitem"
             type="button"
           >
-            <ListIcon />
+            Increase font size
           </button>
-          {listOpen && (
-            <div
-              className="cha-notes-list-menu"
-              onKeyDown={(event) => menuKeys(event, () => {
-                setListOpen(false);
-                focusNotesEditor(editor);
-              })}
-              ref={listMenu}
-              role="menu"
+        </ToolbarMenu>
+      </div>
+      <div className="cha-notes-toolbar-group">
+        <ToolbarMenu
+          disabled={!editable}
+          editor={editor}
+          icon="H"
+          label="Headings"
+          onOpenChange={(open) => setFormatMenu(open ? 'heading' : null)}
+          open={formatMenu === 'heading'}
+        >
+          {([
+            { name: 'Title', level: 1 },
+            { name: 'Chapter', level: 2 },
+            { name: 'Section', level: 3 },
+          ] as const).map(({ name, level }) => (
+            <button
+              aria-checked={editor.isActive('heading', { level })}
+              key={level}
+              onClick={() => {
+                setFormatMenu(null);
+                format(() => editor.chain().toggleHeading({ level }).run());
+              }}
+              role="menuitemcheckbox"
+              type="button"
             >
-              <button onClick={() => chooseList('bullet')} role="menuitem" type="button">Bullet list</button>
-              <button onClick={() => chooseList('ordered')} role="menuitem" type="button">Numbered list</button>
-            </div>
-          )}
-        </div>
+              <span>{name}</span>
+              {editor.isActive('heading', { level }) && <CheckIcon />}
+            </button>
+          ))}
+        </ToolbarMenu>
+      </div>
+      <div className="cha-notes-toolbar-group">
+        <ToolbarMenu
+          disabled={!editable}
+          editor={editor}
+          icon={<BlocksIcon />}
+          label="Insert"
+          onOpenChange={(open) => setFormatMenu(open ? 'insert' : null)}
+          open={formatMenu === 'insert' || listOpen}
+        >
+          <div className="cha-notes-list">
+            <button
+              aria-expanded={listOpen}
+              aria-haspopup="menu"
+              onClick={() => setFormatMenu(listOpen ? 'insert' : 'list')}
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowRight') return;
+                event.preventDefault();
+                event.stopPropagation();
+                setFormatMenu('list');
+              }}
+              ref={listButton}
+              role="menuitem"
+              type="button"
+            >
+              <span>List</span>
+              <ChevronRightIcon />
+            </button>
+            {listOpen && (
+              <div
+                aria-label="List"
+                className="cha-notes-list-menu cha-notes-list-submenu"
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (event.key === 'ArrowLeft' || event.key === 'Escape') {
+                    event.preventDefault();
+                    setFormatMenu('insert');
+                  } else menuKeys(event, () => setFormatMenu('insert'));
+                }}
+                ref={listMenu}
+                role="menu"
+              >
+                <button onClick={() => chooseList('bullet')} role="menuitem" type="button">Bullet list</button>
+                <button onClick={() => chooseList('ordered')} role="menuitem" type="button">Numbered list</button>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => {
+              setFormatMenu(null);
+              pictureInput.current?.click();
+            }}
+            role="menuitem"
+            type="button"
+          >
+            Picture
+          </button>
+          <button
+            aria-checked={editor.isActive('code')}
+            onClick={() => {
+              setFormatMenu(null);
+              format(() => editor.chain().toggleCode().run());
+            }}
+            role="menuitemcheckbox"
+            type="button"
+          >
+            <span>Code</span>
+            {editor.isActive('code') && <CheckIcon />}
+          </button>
+        </ToolbarMenu>
         <input
           accept=".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif"
           aria-hidden="true"
@@ -385,27 +569,6 @@ function FormatBar({
           tabIndex={-1}
           type="file"
         />
-        <button
-          aria-label="Picture"
-          title="Picture"
-          className="cha-button"
-          disabled={!editable}
-          onClick={() => pictureInput.current?.click()}
-          type="button"
-        >
-          <PictureIcon />
-        </button>
-        <button
-          aria-label="Code"
-          title="Code"
-          aria-pressed={editor.isActive('code')}
-          className="cha-button cha-notes-code"
-          disabled={!editable}
-          onClick={() => format(() => editor.chain().toggleCode().run())}
-          type="button"
-        >
-          <CodeIcon />
-        </button>
       </div>
       <div className="cha-notes-toolbar-group">
         <button aria-label="Find" className="cha-button" onClick={onFind} title="Find" type="button">
@@ -942,18 +1105,19 @@ export function NotesScreen({
     return () => window.removeEventListener('pointerdown', dismiss);
   }, [contextMenu]);
 
-  async function runContextCommand(command: ContextCommand) {
+  async function runContextCommand(command: ContextCommand | 'Copy All') {
     setContextMenu(null);
     const current = editorRef.current;
     if (!current || current.isDestroyed) return;
-    if (command !== 'Copy' && (save.frozen
+    const copying = command === 'Copy' || command === 'Copy All';
+    if (!copying && (save.frozen
       || (!current.isEditable && command !== 'Highlight'
         && command !== 'Add comment' && command !== 'Delete comment'))) return;
     const noteId = noteIdRef.current;
     const epoch = epochRef.current;
     const available = () => editorRef.current === current && !current.isDestroyed
       && noteIdRef.current === noteId && epochRef.current === epoch
-      && (command === 'Copy' || current.isEditable);
+      && (copying || current.isEditable);
     focusNotesEditor(current);
     setCommandError(null);
     if (command === 'Add comment') {
@@ -971,10 +1135,13 @@ export function NotesScreen({
         ? current.chain().toggleBold().run() : current.chain().toggleItalic().run()));
     } else {
       try {
-        await noteClipboardCommand(current, command, available);
+        const runClipboard = () => noteClipboardCommand(current, command, available);
+        await (command === 'Copy All' ? preserveNoteScroll(current, runClipboard) : runClipboard());
       } catch {
         if (editorRef.current === current && !current.isDestroyed) {
-          setCommandError(`${command} failed. Try the keyboard shortcut.`);
+          setCommandError(command === 'Copy All'
+            ? 'Could not copy the note. Try again.'
+            : `${command} failed. Try the keyboard shortcut.`);
         }
       }
     }
@@ -1169,9 +1336,24 @@ export function NotesScreen({
           onFontSizeChange={setFontSize}
           onFind={openFind}
           onPicture={onPicture}
+          onUpload={() => fileInput.current?.click()}
+          onCopyAll={() => void runContextCommand('Copy All')}
+          uploadEnabled={submitEnabled && !promptPending}
           toolbarRef={toolbarRef}
         />
       )}
+      <input
+        accept={textFileAccept}
+        aria-label="Text file"
+        className="cha-file-input"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) void loadNoteFile(file);
+        }}
+        ref={fileInput}
+        type="file"
+      />
       {phase === 'ready' && editor && findOpen && (
         <FindBar
           editor={editor}
@@ -1296,29 +1478,6 @@ export function NotesScreen({
               className="cha-sidebar-toggle"
               dispatch={dispatch}
               sidebarOpen={sidebarOpen}
-            />
-            <button
-              aria-label="Load text file"
-              aria-busy={importingFile}
-              className="cha-speech-cache-toggle"
-              disabled={!submitEnabled || promptPending}
-              onClick={() => fileInput.current?.click()}
-              title="Load text file"
-              type="button"
-            >
-              <FileUpIcon />
-            </button>
-            <input
-              accept={textFileAccept}
-              aria-label="Text file"
-              className="cha-file-input"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = '';
-                if (file) void loadNoteFile(file);
-              }}
-              ref={fileInput}
-              type="file"
             />
             {transliteration}
           </div>

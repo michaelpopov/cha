@@ -3,9 +3,23 @@ import { trackSelectionBookmark, withIsolatedHistory } from './editor';
 
 export async function noteClipboardCommand(
   editor: Editor,
-  command: 'Cut' | 'Copy' | 'Paste',
+  command: 'Cut' | 'Copy' | 'Copy All' | 'Paste',
   available: () => boolean,
 ): Promise<void> {
+  if (command === 'Copy All') {
+    const { selection, storedMarks } = editor.state;
+    try {
+      editor.commands.selectAll();
+      // Copy captures its content before waiting for clipboard access. Restore
+      // the selection now so the user can keep reading or typing while it waits.
+      return noteClipboardCommand(editor, 'Copy', available);
+    } finally {
+      if (!editor.isDestroyed) {
+        editor.view.dispatch(editor.state.tr.setSelection(selection).setStoredMarks(storedMarks));
+      }
+    }
+  }
+
   // Native clipboard commands keep the editor's rich-text copy/paste handlers.
   // Some hosts allow only the asynchronous Clipboard API for Paste.
   if (withIsolatedHistory(editor, () => document.execCommand?.(command.toLowerCase()) ?? false)) return;
