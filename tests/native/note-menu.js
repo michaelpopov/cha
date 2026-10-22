@@ -23,17 +23,23 @@ async function nativeParity() {
     return found && !found.disabled && found;
   })).click();
   const editor = () => document.querySelector('.ProseMirror')?.chaEditor;
-  const openMenu = async (readOnly) => {
+  const setPrompt = (text) => {
+    const prompt = document.querySelector('textarea[aria-label="Prompt"]');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(prompt, text);
+    prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    return prompt;
+  };
+  const openMenu = async (readOnly, target = editor().view.dom.querySelector('a'), commentAction = 'Add comment') => {
     const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true,
       clientX: innerWidth - 5, clientY: innerHeight - 5 });
-    editor().view.dom.querySelector('a').dispatchEvent(event);
+    target.dispatchEvent(event);
     const menu = await until('context menu', () => document.querySelector('[role="menu"]'));
     check(event.defaultPrevented, 'default menu was not suppressed');
     const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
-    check(items.map((item) => item.textContent).join(',') === 'Cut,Copy,Paste,Bold,Italic,Highlight,Add comment',
+    check(items.map((item) => item.textContent).join(',') === 'Cut,Copy,Paste,Bold,Italic,Highlight,' + commentAction,
       'unexpected context menu items');
     for (const item of items) {
-      check(item.disabled === (readOnly && !['Copy', 'Highlight', 'Add comment'].includes(item.textContent)),
+      check(item.disabled === (readOnly && !['Copy', 'Highlight', commentAction].includes(item.textContent)),
         'wrong disabled state for ' + item.textContent);
     }
     const box = menu.getBoundingClientRect();
@@ -97,31 +103,46 @@ async function nativeParity() {
         await until('editable', () => editor()?.isEditable);
       }
       step = `${readOnly ? 'read-only' : 'writable'} comment insertion and save`;
-      const prompt = document.querySelector('textarea[aria-label="Prompt"]');
+      const prompt = setPrompt('');
       check(!prompt.disabled, 'prompt is disabled');
       const before = editor().getText();
       await click('Add comment', await openMenu(readOnly));
       check(editor().getText() === before, 'empty prompt added a comment');
       const text = readOnly ? 'Read-only comment' : 'Writable comment';
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(prompt, text);
-      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+      setPrompt(text);
       await click('Add comment', await openMenu(readOnly));
       check(prompt.value === '', 'comment did not clear the prompt');
       const paragraphs = Array.from(editor().view.dom.querySelectorAll('p'));
       check(paragraphs.at(-2)?.textContent === text, 'comment was not before the clicked paragraph');
-      check(paragraphs.at(-2)?.querySelector('mark')?.style.backgroundColor === 'rgb(179, 217, 255)',
-        'comment was not highlighted blue');
+      const comment = paragraphs.at(-2)?.querySelector('mark');
+      const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+      check(comment && getComputedStyle(comment).backgroundColor === (dark ? 'rgb(59, 83, 110)' : 'rgb(211, 227, 245)'),
+        'comment highlight does not match the OS appearance');
       check(editor().isEditable === !readOnly, 'comment changed read-only state');
       await click('Settings');
       await until('Settings', () => document.querySelector('section[aria-label="Settings"]'));
       await openNote();
-      check(editor().view.dom.querySelectorAll('p')[readOnly ? 0 : 1]?.textContent === text,
+      check(Array.from(editor().view.dom.querySelectorAll('p')).at(-2)?.textContent === text,
         'comment was not saved');
       check(editor().isEditable === !readOnly, 'saved comment changed read-only state');
+
+      step = `${readOnly ? 'read-only' : 'writable'} comment deletion and save`;
+      const retainedPrompt = setPrompt('Keep this draft');
+      const savedComment = editor().view.dom.querySelector('mark[data-color="#b3d9ff"]');
+      await click('Delete comment', await openMenu(readOnly, savedComment, 'Delete comment'));
+      check(editor().getText() === before, 'deletion changed another paragraph');
+      check(retainedPrompt.value === 'Keep this draft', 'deletion changed the prompt');
+      check(editor().isEditable === !readOnly, 'deletion changed read-only state');
+      await click('Settings');
+      await until('Settings', () => document.querySelector('section[aria-label="Settings"]'));
+      await openNote();
+      check(editor().getText() === before, 'comment deletion was not saved');
+      check(!editor().view.dom.querySelector('mark[data-color="#b3d9ff"]'), 'deleted comment reappeared');
     }
     return { ok: true, completed: ['exact menu in both states', 'menu stays within window',
       'formatting preserves selection', 'read-only highlight addition/removal survives reopen',
-      'blue comments before clicked paragraphs survive reopen in both states', 'empty prompt does nothing'] };
+      'blue comments before clicked paragraphs survive reopen in both states', 'empty prompt does nothing',
+      'comment deletion survives reopen in both states and keeps the prompt'] };
   } catch (error) {
     return { ok: false, step, error: String(error) };
   }

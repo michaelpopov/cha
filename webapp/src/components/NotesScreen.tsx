@@ -22,9 +22,11 @@ import {
   addNoteComment,
   appendNoteHtml,
   createNotesEditor,
+  deleteNoteComment,
   importPictureFile,
   insertPromptParagraph,
   noteHeadings,
+  noteCommentRange,
   replaceNoteHtml,
   selectNoteEnd,
   selectNoteHeading,
@@ -620,8 +622,8 @@ function FindBar({
   );
 }
 
-const contextCommands = ['Cut', 'Copy', 'Paste', 'Bold', 'Italic', 'Highlight', 'Add comment'] as const;
-type ContextCommand = typeof contextCommands[number];
+const contextCommands = ['Cut', 'Copy', 'Paste', 'Bold', 'Italic', 'Highlight'] as const;
+type ContextCommand = typeof contextCommands[number] | 'Add comment' | 'Delete comment';
 
 export function NotesScreen({
   client,
@@ -945,7 +947,8 @@ export function NotesScreen({
     const current = editorRef.current;
     if (!current || current.isDestroyed) return;
     if (command !== 'Copy' && (save.frozen
-      || (!current.isEditable && command !== 'Highlight' && command !== 'Add comment'))) return;
+      || (!current.isEditable && command !== 'Highlight'
+        && command !== 'Add comment' && command !== 'Delete comment'))) return;
     const noteId = noteIdRef.current;
     const epoch = epochRef.current;
     const available = () => editorRef.current === current && !current.isDestroyed
@@ -956,6 +959,10 @@ export function NotesScreen({
     if (command === 'Add comment') {
       preserveNoteScroll(current, () => {
         if (contextMenu && addNoteComment(current, contextMenu.position, draft)) onDraftChange('');
+      });
+    } else if (command === 'Delete comment') {
+      preserveNoteScroll(current, () => {
+        if (contextMenu) deleteNoteComment(current, contextMenu.position);
       });
     } else if (command === 'Highlight') {
       preserveNoteScroll(current, () => { toggleNoteHighlight(current); });
@@ -1141,6 +1148,8 @@ export function NotesScreen({
   const path = activeNoteId === null ? '' : noteItemPath(noteItems, activeNoteId);
   const sendLabel = path ? `Send to ${path}` : 'Send';
   const failure = save.saveError ? saveDetail(save.saveError.message) : null;
+  const menuCommands: ContextCommand[] = [...contextCommands,
+    editor && contextMenu && noteCommentRange(editor, contextMenu.position) ? 'Delete comment' : 'Add comment'];
   const submitEnabled = phase === 'ready'
     && editing
     && editor !== null
@@ -1330,10 +1339,11 @@ export function NotesScreen({
           role="menu"
           style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
         >
-          {contextCommands.map((command) => (
+          {menuCommands.map((command) => (
             <button
               disabled={command !== 'Copy' && (save.frozen
-                || (readOnly && command !== 'Highlight' && command !== 'Add comment'))}
+                || (readOnly && command !== 'Highlight'
+                  && command !== 'Add comment' && command !== 'Delete comment'))}
               key={command}
               onClick={() => { void runContextCommand(command); }}
               role="menuitem"

@@ -235,15 +235,15 @@ TEST_F(NoteStorageTest, ReadOnlyNotesSaveHighlightsButRejectOtherChanges) {
     EXPECT_EQ(note_get(*database_, note.id).document, original);
 }
 
-TEST_F(NoteStorageTest, ReadOnlyNotesSaveNewBlueCommentsButKeepExistingContent) {
+TEST_F(NoteStorageTest, ReadOnlyNotesSaveCommentAdditionsAndDeletionsButKeepNoteContent) {
     const auto note = note_create(*database_, {}, NoteItemKind::note, "Reading");
     const auto original = nlohmann::json::parse(R"({"type":"doc","content":[
         {"type":"paragraph","content":[{"type":"text","text":"Alpha"}]},
         {"type":"bulletList","content":[{"type":"listItem","content":[
             {"type":"paragraph","content":[{"type":"text","text":"Nested"}]}
         ]}]},
-        {"type":"paragraph","content":[{"type":"text","text":"Original blue text",
-            "marks":[{"type":"highlight","attrs":{"color":"#b3d9ff"}}]}]}
+        {"type":"paragraph","content":[{"type":"text","text":"Original highlighted text",
+            "marks":[{"type":"highlight","attrs":{"color":"yellow"}}]}]}
     ]})");
     const auto comment = nlohmann::json::parse(R"({"type":"paragraph","content":[
         {"type":"text","text":"My comment","marks":[{"type":"highlight","attrs":{"color":"#b3d9ff"}}]},
@@ -267,10 +267,7 @@ TEST_F(NoteStorageTest, ReadOnlyNotesSaveNewBlueCommentsButKeepExistingContent) 
     changed["content"][1]["content"][0]["text"] = "Changed original";
     EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
     changed = commented;
-    changed["content"].erase(3); // Original blue text is protected too.
-    EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
-    changed = commented;
-    changed["content"][0]["content"][0]["text"] = "Changed comment";
+    changed["content"].erase(3); // Ordinary highlighted paragraphs are protected too.
     EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
     changed = commented;
     auto unhighlighted = comment;
@@ -280,6 +277,11 @@ TEST_F(NoteStorageTest, ReadOnlyNotesSaveNewBlueCommentsButKeepExistingContent) 
     changed_blocks.insert(changed_blocks.begin(), unhighlighted);
     EXPECT_THROW(note_save(*database_, note.id, changed), NoteError);
     EXPECT_EQ(note_get(*database_, note.id).document, commented);
+    note_save(*database_, note.id, original); // Delete both the top-level and nested comments.
+    database_.reset();
+    database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+    EXPECT_EQ(note_get(*database_, note.id).document, original);
+    EXPECT_TRUE(note_list(*database_).front().read_only);
 
     auto repeated = original;
     auto duplicate = comment;
@@ -293,6 +295,15 @@ TEST_F(NoteStorageTest, ReadOnlyNotesSaveNewBlueCommentsButKeepExistingContent) 
     (void)note_set_read_only(*database_, second.id, true);
     note_save(*database_, second.id, repeated);
     EXPECT_EQ(note_get(*database_, second.id).document, repeated);
+    note_save(*database_, second.id, original);
+    EXPECT_EQ(note_get(*database_, second.id).document, original);
+
+    const auto third = note_create(*database_, {}, NoteItemKind::note, "Only comment");
+    note_save(*database_, third.id, {{"type", "doc"}, {"content", nlohmann::json::array({comment})}});
+    (void)note_set_read_only(*database_, third.id, true);
+    const nlohmann::json empty = {{"type", "doc"}, {"content", nlohmann::json::array({{{"type", "paragraph"}}})}};
+    note_save(*database_, third.id, empty);
+    EXPECT_EQ(note_get(*database_, third.id).document, empty);
 }
 
 TEST_F(NoteStorageTest, ScrollPositionsArePerNoteAndSurviveReadOnlyAndReopen) {

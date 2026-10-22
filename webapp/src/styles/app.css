@@ -4,6 +4,7 @@
   color-scheme: light dark;
   --background: light-dark(rgb(255 255 255), rgb(24 24 24));
   --foreground: light-dark(rgb(26 28 31), rgb(245 245 245));
+  --note-comment-background: light-dark(rgb(211 227 245), rgb(59 83 110));
   --surface: light-dark(rgb(247 247 248), rgb(31 31 31));
   --covered-surface: light-dark(rgb(235 235 238), rgb(43 43 43));
   --secondary: light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%));

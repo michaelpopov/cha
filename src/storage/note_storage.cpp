@@ -227,10 +227,12 @@ bool is_note_comment(const nlohmann::json& node) {
     return has_text;
 }
 
-// Every existing block must remain in order. Only new blue comment paragraphs
-// and highlight changes are allowed, including inside list items.
+// Non-comment blocks must remain in order. Allow comment additions/deletions
+// and highlight changes, including inside list items.
 bool read_only_note_change(const nlohmann::json& before, const nlohmann::json& after) {
     if (without_highlights(before) == without_highlights(after)) return true;
+    // ProseMirror keeps an empty paragraph when a required paragraph is deleted.
+    if (is_note_comment(before) && after == nlohmann::json{{"type", "paragraph"}}) return true;
     if (!before.is_object() || !after.is_object()
         || !before.contains("content") || !before["content"].is_array()
         || !after.contains("content") || !after["content"].is_array()) return false;
@@ -244,6 +246,9 @@ bool read_only_note_change(const nlohmann::json& before, const nlohmann::json& a
     // matches until the next block distinguishes the insertion from the original.
     std::vector<bool> matched(original.size() + 1, false);
     matched[0] = true;
+    for (std::size_t count = 1; count <= original.size(); ++count) {
+        matched[count] = matched[count - 1] && is_note_comment(original[count - 1]);
+    }
     for (const auto& child : after["content"]) {
         const bool comment = is_note_comment(child);
         for (std::size_t count = original.size(); count > 0; --count) {
@@ -251,6 +256,9 @@ bool read_only_note_change(const nlohmann::json& before, const nlohmann::json& a
                 || (matched[count - 1] && read_only_note_change(original[count - 1], child));
         }
         matched[0] = comment && matched[0];
+        for (std::size_t count = 1; count <= original.size(); ++count) {
+            if (matched[count - 1] && is_note_comment(original[count - 1])) matched[count] = true;
+        }
     }
     return matched.back();
 }

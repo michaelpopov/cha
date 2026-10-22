@@ -24,6 +24,7 @@ import {
   type Transaction,
 } from '@tiptap/pm/state';
 import { Decoration, DecorationSet, type EditorProps, type EditorView } from '@tiptap/pm/view';
+import { Transform } from '@tiptap/pm/transform';
 import StarterKit from '@tiptap/starter-kit';
 import { find } from 'linkifyjs';
 import { ChaError } from '../api/client';
@@ -47,6 +48,7 @@ const notesPictureFallbackMeta = 'notesPictureFallback';
 const notesPasteSelectionMeta = 'notesPasteSelection';
 const notesHighlightMeta = 'notesHighlight';
 const notesCommentMeta = 'notesComment';
+const notesDeleteCommentMeta = 'notesDeleteComment';
 const noteCommentColor = '#b3d9ff';
 // Overlapping imports share the four picture download slots.
 let noteImportTail = Promise.resolve();
@@ -173,18 +175,43 @@ export function addNoteComment(editor: Editor, position: number, text: string): 
   return !editor.state.doc.eq(previous);
 }
 
-function onlyCommentAdded(before: PmNode, after: PmNode, position: unknown): boolean {
+function isNoteComment(node: PmNode | null): node is PmNode {
+  if (node?.type.name !== 'paragraph' || !node.textContent.trim()) return false;
+  let comment = true;
+  node.forEach((child) => {
+    if (child.type.name !== 'hardBreak' && (!child.isText
+      || !child.marks.some((mark) => mark.type.name === 'highlight'
+        && mark.attrs.color === noteCommentColor))) comment = false;
+  });
+  return comment;
+}
+
+export function noteCommentRange(editor: Editor, position: number): { from: number; to: number } | null {
+  if (editor.isDestroyed || position < 0 || position > editor.state.doc.content.size) return null;
+  const $position = editor.state.doc.resolve(position);
+  const from = $position.parent.isTextblock ? $position.before() : position;
+  const node = editor.state.doc.nodeAt(from);
+  return isNoteComment(node) ? { from, to: from + node.nodeSize } : null;
+}
+
+export function deleteNoteComment(editor: Editor, position: number): boolean {
+  const range = noteCommentRange(editor, position);
+  if (!range) return false;
+  const previous = editor.state.doc;
+  editor.view.dispatch(closeHistory(editor.state.tr.delete(range.from, range.to))
+    .setMeta(notesDeleteCommentMeta, range.from)
+    .setMeta(notesIsolatedMeta, true)
+    .setStoredMarks([]));
+  return !editor.state.doc.eq(previous);
+}
+
+function onlyCommentDiffers(before: PmNode, after: PmNode, position: unknown): boolean {
   if (typeof position !== 'number' || !Number.isInteger(position)
     || position < 0 || position >= after.content.size) return false;
   const comment = after.nodeAt(position);
-  if (comment?.type.name !== 'paragraph' || !comment.textContent.trim()) return false;
-  let blue = true;
-  comment.forEach((node) => {
-    if (!node.isInline || !node.marks.some((mark) => mark.type.name === 'highlight'
-      && mark.attrs.color === noteCommentColor)) blue = false;
-  });
-  return blue && withoutHighlight(before).eq(withoutHighlight(
-    after.replace(position, position + comment.nodeSize, Slice.empty),
+  if (!isNoteComment(comment)) return false;
+  return withoutHighlight(before).eq(withoutHighlight(
+    new Transform(after).delete(position, position + comment.nodeSize).doc,
   ));
 }
 
@@ -660,7 +687,8 @@ function acceptNotesTransaction(
     if (changed && !editor.isEditable && !(
       (transaction.getMeta(notesHighlightMeta) === true
         && withoutHighlight(prevState.doc).eq(withoutHighlight(state.doc)))
-      || onlyCommentAdded(prevState.doc, state.doc, transaction.getMeta(notesCommentMeta))
+      || onlyCommentDiffers(prevState.doc, state.doc, transaction.getMeta(notesCommentMeta))
+      || onlyCommentDiffers(state.doc, prevState.doc, transaction.getMeta(notesDeleteCommentMeta))
     )) return;
     if (changed && noteDocumentByteLength(state.doc) > byteLimit) {
       const withoutPicture = transaction.getMeta(notesPictureFallbackMeta) as (() => Transaction | null) | undefined;

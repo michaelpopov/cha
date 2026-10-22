@@ -9,11 +9,13 @@ import {
   addNoteComment,
   canonicalNoteLink,
   createNotesEditor,
+  deleteNoteComment,
   importPictureFile,
   insertPromptParagraph,
   insertTrackedPicture,
   isAllowedNoteLink,
   noteHeadings,
+  noteCommentRange,
   selectNoteEnd,
   selectNoteHeading,
   storedWebDestination,
@@ -1989,6 +1991,52 @@ describe('read-only highlights', () => {
 });
 
 describe('note comments', () => {
+  it('deletes a clicked multiline comment inside a read-only list and keeps its other paragraphs', () => {
+    const created = editor({ content: '<ul><li><p>First</p><p>Last</p></li></ul>' });
+    created.setEditable(false, false);
+    const original = created.getJSON();
+    const target = created.view.dom.querySelectorAll('p')[1];
+    expect(addNoteComment(created, created.view.posAtDOM(target, 0), 'Comment\nwww.example.com')).toBe(true);
+    const link = created.view.dom.querySelector('a')!;
+    const position = created.view.posAtDOM(link, 0);
+    expect(noteCommentRange(created, position)).not.toBeNull();
+    expect(deleteNoteComment(created, position)).toBe(true);
+    expect(created.getJSON()).toEqual(original);
+    expect(created.isEditable).toBe(false);
+  });
+
+  it('does not delete ordinary paragraphs, yellow highlights, or partly marked paragraphs', () => {
+    const created = editor({ content: '<p>Ordinary</p><p><mark>Yellow</mark></p>'
+      + '<p><mark data-color="#b3d9ff">Partly</mark> marked</p>' });
+    const original = created.getJSON();
+    for (const paragraph of created.view.dom.querySelectorAll('p')) {
+      const position = created.view.posAtDOM(paragraph, 0);
+      expect(noteCommentRange(created, position)).toBeNull();
+      expect(deleteNoteComment(created, position)).toBe(false);
+    }
+    expect(created.getJSON()).toEqual(original);
+  });
+
+  it('keeps deletion undoable as one step in a writable note', () => {
+    const created = editor({ content: '<p>Original</p>' });
+    addNoteComment(created, 1, 'Comment');
+    const commented = created.getJSON();
+    expect(deleteNoteComment(created, 1)).toBe(true);
+    expect(created.getText()).toBe('Original');
+    created.commands.undo();
+    expect(created.getJSON()).toEqual(commented);
+    created.commands.redo();
+    expect(created.getText()).toBe('Original');
+  });
+
+  it('leaves a valid empty note when deleting its only comment in read-only mode', () => {
+    const created = editor({ content: '<p><mark data-color="#b3d9ff">Only comment</mark></p>' });
+    created.setEditable(false, false);
+    expect(deleteNoteComment(created, 1)).toBe(true);
+    expect(created.getJSON()).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] });
+    expect(created.isEditable).toBe(false);
+  });
+
   it('inserts one blue paragraph inside a list item, preserving prompt text and line breaks', () => {
     const created = editor({ content: '<ul><li><p>First</p><p>Clicked</p></li></ul>' });
     created.setEditable(false, false);

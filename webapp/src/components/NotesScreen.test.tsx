@@ -1307,6 +1307,61 @@ describe('Notes screen', () => {
     expect(reopened.isEditable).toBe(!readOnly);
   });
 
+  it.each([false, true])('deletes the clicked saved comment, keeps the prompt, and persists deletion (read-only: %s)', async (readOnly) => {
+    const comment = (text: string) => ({ type: 'paragraph', content: [{ type: 'text', text, marks: [
+      { type: 'highlight', attrs: { color: '#b3d9ff' } },
+      { type: 'link', attrs: { href: 'https://example.com/' } },
+    ] }] });
+    let saved: Record<string, unknown> = { type: 'doc', content: [
+      comment('Keep this comment'), comment('Delete this comment'), ...documentWith('Original paragraph').content,
+    ] };
+    const saveNote = vi.fn(async (_id: number, document: Record<string, unknown>) => { saved = document; });
+    const props = { items: [{ ...plan, read_only: readOnly }], saveNote,
+      getNote: async (id: number) => ({ id, document: saved }), draft: 'Keep this prompt' };
+    const first = render(<Harness {...props} />);
+    const editor = await openedEditor();
+    vi.useFakeTimers();
+    act(() => { editor.commands.setTextSelection(1); });
+    const host = editor.view.dom.closest('.cha-notes-document') as HTMLElement;
+    host.scrollTop = 120;
+    fireEvent.contextMenu(editor.view.dom.querySelectorAll('a')[1]);
+    expect(screen.getAllByRole('menuitem').at(-1)).toHaveTextContent('Delete comment');
+    expect(screen.queryByRole('menuitem', { name: 'Add comment' })).not.toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Delete comment' })).toBeEnabled();
+    const jump = () => { host.scrollTop = 900; };
+    editor.on('update', jump);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete comment' }));
+    editor.off('update', jump);
+    expect(host.scrollTop).toBe(120);
+    expect(Array.from(editor.view.dom.querySelectorAll('p')).map((p) => p.textContent))
+      .toEqual(['Keep this comment', 'Original paragraph']);
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this prompt');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(editor.isEditable).toBe(!readOnly);
+    fireEvent.contextMenu(editor.view.dom.querySelectorAll('p')[1]);
+    expect(screen.getAllByRole('menuitem').at(-1)).toHaveTextContent('Add comment');
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    expect(saveNote).toHaveBeenCalledOnce();
+    first.unmount();
+    render(<Harness {...props} />);
+    const reopened = await openedEditor();
+    expect(reopened.getText()).toBe('Keep this comment\n\nOriginal paragraph');
+    expect(reopened.isEditable).toBe(!readOnly);
+  });
+
+  it('keeps Add comment on an ordinary highlighted paragraph', async () => {
+    render(<Harness items={[{ ...plan, read_only: true }]} getNote={async (id) => ({ id,
+      document: { type: 'doc', content: [{ type: 'paragraph', content: [
+        { type: 'text', text: 'Highlighted note', marks: [{ type: 'highlight' }] },
+      ] }] },
+    })} />);
+    const editor = await openedEditor();
+    fireEvent.contextMenu(editor.view.dom.querySelector('mark')!);
+    expect(screen.getByRole('menuitem', { name: 'Add comment' })).toBeEnabled();
+    expect(screen.queryByRole('menuitem', { name: 'Delete comment' })).not.toBeInTheDocument();
+  });
+
   it('adds a comment before the paragraph nearest to a click between paragraphs', async () => {
     render(<Harness items={[{ ...plan, read_only: true }]} draft="Gap comment" getNote={async (id) => ({
       id, document: { type: 'doc', content: [...documentWith('First').content, ...documentWith('Second').content] },

@@ -72,6 +72,12 @@ img.ProseMirror-separator {
   background-color: rgb(255 230 120);
 }
 
+.ProseMirror mark[data-color="#b3d9ff"] {
+  /* Keep saved comments compatible; override Tiptap's fixed inline colors. */
+  background-color: var(--note-comment-background) !important;
+  color: var(--foreground) !important;
+}
+
 .find-and-replace-result {
   background-color: rgb(255 225 0 / 0.4);
 }

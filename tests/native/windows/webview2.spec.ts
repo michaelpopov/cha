@@ -430,6 +430,41 @@ test.describe('WebView2 native host', () => {
     await waitForApplication(page);
   });
 
+  test('Notes comment highlighting follows runtime appearance changes', async () => {
+    test.skip(!!devOrigin, 'Requires the bundled styles.');
+    const preference = spawnSync('powershell.exe', ['-NoProfile', '-Command',
+      '$value = (Get-ItemProperty -Path HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize -ErrorAction SilentlyContinue).AppsUseLightTheme; '
+      + 'if ($null -eq $value -or $value -ne 0) { "light" } else { "dark" }',
+    ], { encoding: 'utf8' });
+    expect(preference.status).toBe(0);
+    const osScheme = preference.stdout.trim();
+    expect(['light', 'dark']).toContain(osScheme);
+    expect(await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(osScheme === 'dark');
+    await newNote(page, 'Adaptive comments');
+    await page.locator('.tiptap').evaluate((element) => {
+      (element as any).chaEditor.commands.setContent({ type: 'doc', content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'Existing comment',
+          marks: [{ type: 'highlight', attrs: { color: '#b3d9ff' } }] }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'Ordinary highlight',
+          marks: [{ type: 'highlight' }] }] },
+      ] });
+    });
+    const before = await noteJSON(page);
+    const comment = page.locator('.tiptap mark[data-color="#b3d9ff"]');
+    await comment.evaluate((element) => { (window as any).__commentAppearanceNode = element; });
+    for (const colorScheme of ['light', 'dark', 'light'] as const) {
+      await page.emulateMedia({ colorScheme });
+      expect(await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(colorScheme === 'dark');
+      await expect(comment).toHaveCSS('background-color', colorScheme === 'dark' ? 'rgb(59, 83, 110)' : 'rgb(211, 227, 245)');
+      await expect(comment).toHaveCSS('color', colorScheme === 'dark' ? 'rgb(245, 245, 245)' : 'rgb(26, 28, 31)');
+      await expect(page.locator('.tiptap mark:not([data-color])')).toHaveCSS('background-color', 'rgb(255, 230, 120)');
+      expect(await comment.evaluate((element) => element === (window as any).__commentAppearanceNode)).toBe(true);
+      expect(await noteJSON(page)).toEqual(before);
+    }
+    await page.emulateMedia({ colorScheme: null });
+    expect(await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(osScheme === 'dark');
+  });
+
   test('Notes imports supported text, skips invalid pictures and keeps empty paste and file drops unchanged', async () => {
     await newNote(page, 'Windows imports');
     await pasteNote(page, '<html xmlns:o="urn:schemas-microsoft-com:office:office"><p><span style="color:red;background-color:yellow">Word</span></p><table><tr><td>one</td><td><b>two</b></td></tr></table></html>');
