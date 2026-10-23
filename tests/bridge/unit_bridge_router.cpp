@@ -3267,6 +3267,32 @@ TEST_F(BridgeRouterTest, BookImportUsesSelectedFolderAndRejectsInvalidParents) {
     EXPECT_EQ(call("notes.list")["result"]["items"], items);
 }
 
+
+TEST_F(BridgeRouterTest, AnnotationWireContractGuardsAndChatText) {
+    bootstrap_epoch();
+    const auto source = call("notes.create", {{"parent_id", nullptr}, {"kind", "note"}, {"name", "Source"}})["result"]["id"];
+    const auto doc = nlohmann::json::parse(R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Passage","marks":[{"type":"highlight"}]}]}]})");
+    const auto saved = call("notes.save", {{"id", source}, {"document", doc}});
+    ASSERT_TRUE(saved["ok"]);
+    EXPECT_EQ(saved["result"], nlohmann::json({{"annotation_created", true}}));
+    EXPECT_EQ(call("notes.save", {{"id", source}, {"document", doc}})["result"], nlohmann::json({{"annotation_created", false}}));
+    const auto items = call("notes.list")["result"]["items"];
+    ASSERT_EQ(items.size(), 2u);
+    const auto id = items[1]["id"];
+    EXPECT_EQ(items[1]["kind"], "annotation");
+    EXPECT_TRUE(call("notes.get", {{"id", id}})["ok"]);
+    EXPECT_TRUE(call("notes.saveScrollPosition", {{"id", id}, {"scroll_top", 17}})["ok"]);
+    for (const auto& method : {"notes.compress", "notes.save", "notes.rename", "notes.delete", "notes.setReadOnly"}) {
+        auto params = nlohmann::json{{"id", id}};
+        if (std::string_view(method) == "notes.save") params["document"] = doc;
+        if (std::string_view(method) == "notes.rename") params["name"] = "Other";
+        if (std::string_view(method) == "notes.setReadOnly") params["read_only"] = false;
+        expect_note_error(call(method, params), "invalid_argument", "That item is not a note.");
+    }
+    expect_note_error(call("notes.compress", {{"id", id}, {"skip_ineligible", true}}), "invalid_argument", "That item is not a note.");
+    EXPECT_FALSE(call("notes.create", {{"parent_id", nullptr}, {"kind", "annotation"}, {"name", "Other"}})["ok"]);
+}
+
 TEST_F(BridgeRouterTest, NotesRejectStaleVaultContext) {
     const auto old_epoch = bootstrap_epoch();
     const auto created_note = call("notes.create", {

@@ -45,11 +45,13 @@ std::string_view kind_name(NoteItemKind kind) {
     switch (kind) {
     case NoteItemKind::folder: return "folder";
     case NoteItemKind::note: return "note";
+    case NoteItemKind::annotation: return "annotation";
     }
     fail(NoteFailure::invalid, kind_message);
 }
 
 void require_name(std::string_view name) {
+    if (name == "ANNOTATIONS") fail(NoteFailure::invalid, "The name ANNOTATIONS is reserved.");
     try {
         validate_display_label(name, "Name");
     } catch (const std::invalid_argument& error) {
@@ -85,6 +87,7 @@ NoteItem read_item(storage::SqliteStatement& statement) {
     const std::string kind = statement.text(2);
     if (kind == "folder") item.kind = NoteItemKind::folder;
     else if (kind == "note") item.kind = NoteItemKind::note;
+    else if (kind == "annotation") item.kind = NoteItemKind::annotation;
     else throw std::runtime_error(
         "Note item " + std::to_string(item.id) + " has an invalid kind");
     item.name = statement.text(3);
@@ -225,6 +228,193 @@ bool is_note_comment(const nlohmann::json& node) {
         if (!blue) return false;
     }
     return has_text;
+}
+
+
+using Json = nlohmann::json;
+bool annotation_space(char32_t c) {
+    return (c >= 9 && c <= 13) || c == 32 || c == 0xa0 || c == 0x1680
+        || (c >= 0x2000 && c <= 0x200a) || c == 0x2028 || c == 0x2029
+        || c == 0x202f || c == 0x205f || c == 0x3000 || c == 0xfeff;
+}
+// Stored JSON has already passed UTF-8 serialization validation.
+std::string_view annotation_character(std::string_view text, std::size_t& offset) {
+    const auto c = static_cast<unsigned char>(text[offset]);
+    const std::size_t size = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
+    const auto result = text.substr(offset, size);
+    offset += size;
+    return result;
+}
+bool annotation_space(std::string_view text) {
+    char32_t c = static_cast<unsigned char>(text[0]);
+    if (text.size() > 1) {
+        c &= text.size() == 2 ? 0x1f : text.size() == 3 ? 0x0f : 0x07;
+        for (std::size_t i = 1; i < text.size(); ++i) c = (c << 6) | (static_cast<unsigned char>(text[i]) & 0x3f);
+    }
+    return annotation_space(c);
+}
+bool annotation_blank(std::string_view text) {
+    for (std::size_t offset = 0; offset < text.size();)
+        if (!annotation_space(annotation_character(text, offset))) return false;
+    return true;
+}
+std::string annotation_type(const Json& node) {
+    const auto type = node.find("type");
+    return type != node.end() && type->is_string() ? type->get<std::string>() : "";
+}
+std::string annotation_text(const Json& node) {
+    if (!node.is_object()) return {};
+    if (annotation_type(node) == "hardBreak") return "\n";
+    if (annotation_type(node) == "text") {
+        const auto text = node.find("text");
+        return text != node.end() && text->is_string() ? text->get<std::string>() : "";
+    }
+    std::string text;
+    const auto content = node.find("content");
+    if (content != node.end() && content->is_array()) for (const auto& child : *content) text += annotation_text(child);
+    return text;
+}
+// Like noteHeadings: each whitespace run becomes one space, then trim.
+std::string annotation_label_text(std::string_view text) {
+    std::string result;
+    bool space = false;
+    for (std::size_t offset = 0; offset < text.size();) {
+        const auto c = annotation_character(text, offset);
+        if (annotation_space(c)) { space = !result.empty(); continue; }
+        if (space) result += ' ';
+        result += c;
+        space = false;
+    }
+    return result;
+}
+std::string annotation_heading(const Json& node) {
+    if (!node.is_object() || annotation_type(node) != "heading") return {};
+    return annotation_label_text(annotation_text(node));
+}
+struct AnnotationEntry {
+    std::string type, text;
+    int ordinal{}, chapter_id{};
+};
+struct ExtractedAnnotations {
+    std::vector<AnnotationEntry> entries;
+    // Index zero means that no chapter precedes the entry.
+    std::vector<std::string> chapters{ "" };
+};
+ExtractedAnnotations extract_annotations(const Json& doc) {
+    ExtractedAnnotations result;
+    int comments = 0, highlights = 0, chapter_id = 0;
+    const auto emit = [&](std::string type, std::string text, int label_id) {
+        if (annotation_blank(text)) return;
+        const int ordinal = type == "comment" ? ++comments : ++highlights;
+        result.entries.push_back({std::move(type), std::move(text), ordinal, label_id});
+    };
+    const auto walk = [&](auto&& self, const Json& node) -> void {
+        if (!node.is_object()) return;
+        const auto heading = annotation_heading(node);
+        if (!heading.empty()) {
+            chapter_id = static_cast<int>(result.chapters.size());
+            result.chapters.push_back(heading);
+        }
+        const auto children = node.find("content");
+        if (children == node.end() || !children->is_array()) return;
+        const auto type = annotation_type(node);
+        // Comments never get here: the container loop below emits them.
+        if (type == "paragraph" || type == "heading" || type == "codeBlock") {
+            std::string passage;
+            for (const auto& child : *children) {
+                bool marked = false;
+                if (child.is_object()) {
+                    const auto marks = child.find("marks");
+                    if (marks != child.end() && marks->is_array()) {
+                        for (const auto& mark : *marks)
+                            if (mark.is_object() && annotation_type(mark) == "highlight") marked = true;
+                    }
+                }
+                const auto child_type = child.is_object() ? annotation_type(child) : "";
+                if (marked && (child_type == "text" || child_type == "hardBreak")) passage += annotation_text(child);
+                else { emit("highlight", std::move(passage), chapter_id); passage.clear(); }
+            }
+            emit("highlight", std::move(passage), chapter_id);
+            return;
+        }
+        for (std::size_t i = 0; i < children->size(); ++i) {
+            const auto& child = (*children)[i];
+            if (!is_note_comment(child)) { self(self, child); continue; }
+            std::size_t next = i + 1;
+            while (next < children->size() && is_note_comment((*children)[next])) ++next;
+            const bool before_heading = next < children->size() && !annotation_heading((*children)[next]).empty();
+            const auto label_id = before_heading ? static_cast<int>(result.chapters.size()) : chapter_id;
+            // Resolve a whole run once. The following heading gets this index when visited.
+            for (; i < next; ++i) emit("comment", annotation_text((*children)[i]), label_id);
+            --i;
+        }
+    };
+    walk(walk, doc);
+    return result;
+}
+Json annotation_label(std::string_view text, int level) {
+    return {{"type", "heading"}, {"attrs", {{"level", level}}}, {"content", Json::array({{{"type", "text"}, {"text", text}}})}};
+}
+// A save may create the row only from its own document; imports may use any imported note.
+bool rebuild_folder_annotations(storage::SqliteDatabase& database, std::optional<std::int64_t> parent_id,
+    bool allow_creation, const Json* creation_document = nullptr) {
+    auto existing = database.prepare("SELECT id FROM note_items WHERE IFNULL(parent_id, 0) = ?1 AND kind = 'annotation'", parent_key(parent_id));
+    const auto id = existing.step() ? existing.integer(0) : 0;
+    if (!id) {
+        if (!allow_creation) return false;
+        if (creation_document && extract_annotations(*creation_document).entries.empty()) return false;
+    }
+    Json doc = {{"type", "doc"}, {"content", Json::array()}};
+    std::size_t bytes = doc.dump().size();
+    bool eligible = false, limited = false;
+    auto sources = database.prepare("SELECT id, name, content_json FROM note_items WHERE IFNULL(parent_id, 0) = ?1 AND kind = 'note' ORDER BY id", parent_key(parent_id));
+    while (!limited && sources.step()) {
+        const auto source_id = sources.integer(0);
+        const auto name = sources.text(1);
+        const auto entries = extract_annotations(parse_document(sources.text(2), source_id));
+        bool first = true;
+        int previous_chapter = 0;
+        for (const auto& entry : entries.entries) {
+            const auto& chapter = entries.chapters[entry.chapter_id];
+            eligible = true;
+            Json candidate = Json::array();
+            if (first) candidate.push_back(annotation_label(name, 1));
+            // A chapter label that repeats the note name or the entry text adds nothing.
+            if (entry.chapter_id != previous_chapter && !chapter.empty() && chapter != name
+                && annotation_label_text(entry.text) != chapter) candidate.push_back(annotation_label(chapter, 2));
+            Json content = Json::array({{{"type", "annotationSource"}, {"attrs", {{"sourceId", source_id}, {"entryType", entry.type}, {"ordinal", entry.ordinal}}}}});
+            std::string segment;
+            const auto flush = [&] { if (!segment.empty()) { content.push_back({{"type", "text"}, {"text", segment}}); segment.clear(); } };
+            for (std::size_t i = 0, offset = 0; i < 4000 && offset < entry.text.size(); ++i) {
+                const auto c = annotation_character(entry.text, offset);
+                if (c == "\n") { flush(); content.push_back({{"type", "hardBreak"}}); }
+                else segment += c;
+            }
+            flush();
+            candidate.push_back({{"type", "paragraph"}, {"content", std::move(content)}});
+            std::size_t added = 0;
+            for (const auto& node : candidate) added += node.dump().size() + 1;
+            if (doc["content"].empty()) --added;
+            if (bytes + added > 10000000) { limited = true; break; }
+            bytes += added;
+            for (auto& node : candidate) doc["content"].push_back(std::move(node));
+            first = false;
+            previous_chapter = entry.chapter_id;
+        }
+    }
+    if (!id && !eligible) return false;
+    if (limited) log_warn("ANNOTATIONS reached the 10 MB limit; remaining entries were omitted.");
+    if (doc["content"].empty()) {
+        if (eligible) doc = Json::parse(empty_note_document);
+        else doc["content"].push_back({{"type", "paragraph"}, {"content", Json::array({{{"type", "text"}, {"text", "No comments or highlights."}}})}});
+    }
+    if (id) database.prepare("UPDATE note_items SET content_json = ?1 WHERE id = ?2", doc.dump(), id).run();
+    else {
+        auto insert = database.prepare("INSERT INTO note_items(parent_id, kind, name, content_json, read_only) VALUES (?1, 'annotation', 'ANNOTATIONS', ?2, 1)");
+        if (parent_id) insert.bind(1, *parent_id); else insert.bind_null(1);
+        insert.bind(2, doc.dump()); insert.run();
+    }
+    return !id;
 }
 
 // Non-comment blocks must remain in order. Allow comment additions/deletions
@@ -411,7 +601,7 @@ CREATE TABLE IF NOT EXISTS note_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT
         CHECK (id > 0 AND id <= 9007199254740991),
     parent_id INTEGER REFERENCES note_items(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK (kind IN ('folder', 'note')),
+    kind TEXT NOT NULL CHECK (kind IN ('folder', 'note', 'annotation')),
     name TEXT NOT NULL COLLATE BINARY,
     content_json TEXT,
     compressed_text TEXT,
@@ -419,9 +609,13 @@ CREATE TABLE IF NOT EXISTS note_items (
     scroll_top INTEGER NOT NULL DEFAULT 0 CHECK (scroll_top >= 0 AND scroll_top <= 9007199254740991),
     CHECK (
         (kind = 'folder' AND content_json IS NULL)
-        OR (kind = 'note' AND content_json IS NOT NULL)
-    )
+        OR (kind IN ('note', 'annotation') AND content_json IS NOT NULL)
+    ),
+    CHECK ((kind = 'annotation' AND name = 'ANNOTATIONS' AND read_only = 1 AND compressed_text IS NULL)
+        OR (kind IN ('folder', 'note') AND name <> 'ANNOTATIONS'))
 ) STRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS note_items_annotation_parent
+    ON note_items(IFNULL(parent_id, 0)) WHERE kind = 'annotation';
 CREATE UNIQUE INDEX IF NOT EXISTS note_items_sibling_name
     ON note_items(IFNULL(parent_id, 0), name);
 CREATE INDEX IF NOT EXISTS note_items_parent
@@ -486,6 +680,7 @@ NoteItem note_create(
     NoteItemKind kind,
     std::string_view name) {
     require_name(name);
+    if (kind == NoteItemKind::annotation) fail(NoteFailure::invalid, kind_message);
     const std::string kind_text(kind_name(kind));
     try {
         storage::SqliteTransaction transaction(database);
@@ -504,6 +699,7 @@ NoteItem note_create(
         else statement.bind(4, empty_note_document);
         statement.run();
         const std::int64_t id = database.last_insert_rowid();
+        if (kind == NoteItemKind::note) rebuild_folder_annotations(database, parent_id, false);
         transaction.commit();
         return NoteItem{id, parent_id, kind, std::string(name)};
     } catch (const std::runtime_error& error) {
@@ -542,6 +738,7 @@ std::int64_t note_import_book(
             insert.bind(3, compact);
             insert.run();
         }
+        rebuild_folder_annotations(database, id, true);
         transaction.commit();
         return id;
     } catch (const std::runtime_error& error) {
@@ -556,7 +753,7 @@ NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id) {
             "SELECT kind, content_json, compressed_text, scroll_top FROM note_items WHERE id = ?1");
         statement.bind(1, id);
         if (!statement.step()) fail(NoteFailure::not_found, missing_note_message);
-        if (statement.text(0) != "note") {
+        if ((statement.text(0) != "note" && statement.text(0) != "annotation")) {
             fail(NoteFailure::invalid, not_note_message);
         }
         if (statement.is_null(1)) fail(NoteFailure::opening, opening_message);
@@ -576,7 +773,7 @@ NoteText note_get_text(
     try {
         auto statement = database.prepare(
             "SELECT name, content_json, compressed_text FROM note_items "
-            "WHERE id = ?1 AND kind = 'note'", id);
+            "WHERE id = ?1 AND kind IN ('note', 'annotation')", id);
         if (!statement.step()) fail(NoteFailure::not_found, missing_note_message);
         return {id, statement.text(0),
             prefer_compressed && !statement.is_null(2)
@@ -589,7 +786,7 @@ NoteText note_get_text(
     }
 }
 
-void note_save(
+bool note_save(
     storage::SqliteDatabase& database,
     std::int64_t id,
     const nlohmann::json& document) {
@@ -612,7 +809,9 @@ void note_save(
         update.bind(1, compact);
         update.bind(2, id);
         update.run();
+        const bool created = rebuild_folder_annotations(database, item->parent_id, true, &document);
         transaction.commit();
+        return created;
     } catch (const std::runtime_error& error) {
         throw sql_failure(error, NoteFailure::saving, saving_message);
     }
@@ -627,7 +826,7 @@ void note_save_scroll_position(
         storage::SqliteTransaction transaction(database);
         const auto item = find_item(database, id);
         if (!item) fail(NoteFailure::not_found, missing_note_message);
-        if (item->kind != NoteItemKind::note) fail(NoteFailure::invalid, not_note_message);
+        if (item->kind == NoteItemKind::folder) fail(NoteFailure::invalid, not_note_message);
         auto update = database.prepare(
             "UPDATE note_items SET scroll_top = ?1 WHERE id = ?2", scroll_top, id);
         update.run();
@@ -663,6 +862,8 @@ void note_save_compressed(
     }
     try {
         storage::SqliteTransaction transaction(database);
+        const auto item = find_item(database, id);
+        if (item && item->kind == NoteItemKind::annotation) fail(NoteFailure::invalid, not_note_message);
         auto update = database.prepare(
             "UPDATE note_items SET compressed_text = ?1 WHERE id = ?2 AND kind = 'note'");
         update.bind(1, text);
@@ -685,6 +886,7 @@ NoteItem note_rename(
         const std::optional<NoteItem> current = find_item(database, id);
         if (!current) fail(NoteFailure::not_found, missing_item_message);
         NoteItem item = *current;
+        if (item.kind == NoteItemKind::annotation) fail(NoteFailure::invalid, not_note_message);
         if (item.name != name) {
             if (name_taken(database, item.parent_id, name, id)) {
                 fail(NoteFailure::invalid, duplicate_name_message);
@@ -696,6 +898,7 @@ NoteItem note_rename(
             update.run();
             item.name = std::string(name);
         }
+        if (item.kind == NoteItemKind::note) rebuild_folder_annotations(database, item.parent_id, false);
         transaction.commit();
         return item;
     } catch (const std::runtime_error& error) {
@@ -706,6 +909,8 @@ NoteItem note_rename(
 void note_delete(storage::SqliteDatabase& database, std::int64_t id) {
     try {
         storage::SqliteTransaction transaction(database);
+        const auto item = find_item(database, id);
+        if (item && item->kind == NoteItemKind::annotation) fail(NoteFailure::invalid, not_note_message);
         storage::SqliteStatement statement = database.prepare(
             "DELETE FROM note_items WHERE id = ?1");
         statement.bind(1, id);
@@ -713,6 +918,7 @@ void note_delete(storage::SqliteDatabase& database, std::int64_t id) {
         if (database.changes() != 1) {
             fail(NoteFailure::not_found, missing_item_message);
         }
+        if (item && item->kind == NoteItemKind::note) rebuild_folder_annotations(database, item->parent_id, false);
         transaction.commit();
     } catch (const std::runtime_error& error) {
         throw sql_failure(error, NoteFailure::saving, change_message);

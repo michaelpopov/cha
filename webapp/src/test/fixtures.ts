@@ -179,7 +179,7 @@ export const snapshotFixture: SessionSnapshot = {
   lifecycle: 'running',
 };
 
-export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}): ChaClient & NotesClient {
+export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, 'saveNote'>> & { saveNote?: (id: number, document: Record<string, unknown>) => Promise<unknown> } = {}): ChaClient & NotesClient {
   const audioCache = new Map<string, Set<number>>();
   const unavailable = (method: string) => async () => {
     throw new Error(`${method} is not available in this test`);
@@ -386,13 +386,16 @@ export function fixtureClient(overrides: Partial<ChaClient & NotesClient> = {}):
     readNotePicture: async () => new Uint8Array(),
     readNotePage: unavailable('notes.readPage'),
     readNoteTextFile: unavailable('notes.readTextFile'),
-    saveNote: unavailable('notes.save'),
     saveNoteScrollPosition: async () => undefined,
     renameNoteItem: unavailable('notes.rename'),
     setNoteReadOnly: unavailable('notes.setReadOnly'),
     deleteNoteItem: unavailable('notes.delete'),
     compressNote: unavailable('notes.compress'),
     ...overrides,
+    saveNote: async (id, document) => {
+      const result = await (overrides.saveNote ?? unavailable('notes.save'))(id, document);
+      return (result ?? { annotation_created: false }) as { annotation_created: boolean };
+    },
   };
   return client;
 }

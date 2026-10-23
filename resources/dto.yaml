@@ -1662,7 +1662,7 @@ components:
 
     NoteItemKind:
       type: string
-      enum: [folder, note]
+      enum: [folder, note, annotation]
 
     NoteItem:
       type: object
@@ -1691,6 +1691,14 @@ components:
         items:
           type: array
           items: {$ref: "#/components/schemas/NoteItem"}
+
+    NoteSaveResult:
+      type: object
+      additionalProperties: false
+      required: [annotation_created]
+      properties:
+        annotation_created:
+          type: boolean
 
     NoteDocument:
       type: object

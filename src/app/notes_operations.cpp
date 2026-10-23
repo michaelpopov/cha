@@ -164,6 +164,10 @@ std::shared_ptr<OperationReply> Application::compress_note(
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
         try {
+            for (const auto& item : impl_->store->list_note_items()) {
+                if (item.id == id && item.kind == NoteItemKind::annotation)
+                    throw NoteError(NoteFailure::invalid, "That item is not a note.");
+            }
             if (skip_ineligible && impl_->store->get_note(id).compressed_text) {
                 reply->complete({{"skipped", "already_compressed"}});
                 return reply;
@@ -392,14 +396,14 @@ std::shared_ptr<OperationReply> Application::read_note_picture(
     return reply;
 }
 
-void Application::save_note(
+bool Application::save_note(
     std::int64_t id,
     const nlohmann::json& document,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     try {
-        impl_->store->save_note(id, document);
+        return impl_->store->save_note(id, document);
     } catch (const NoteError& error) {
         rethrow_note(error);
     }

@@ -720,7 +720,7 @@ export interface components {
         NativeSafeInteger: number;
         NoteId: number;
         /** @enum {string} */
-        NoteItemKind: "folder" | "note";
+        NoteItemKind: "folder" | "note" | "annotation";
         NoteItem: {
             id: components["schemas"]["NoteId"];
             parent_id: number | null;
@@ -731,6 +731,9 @@ export interface components {
         };
         NoteItemList: {
             items: components["schemas"]["NoteItem"][];
+        };
+        NoteSaveResult: {
+            annotation_created: boolean;
         };
         NoteDocument: {
             [key: string]: unknown;

@@ -115,3 +115,32 @@ span.cha-notes-inactive-caret {
   outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent);
   outline-offset: 1px;
 }
+
+/* Annotation notes: note and chapter labels stay quiet beside the entries. */
+.cha-notes-annotations .ProseMirror h1,
+.cha-notes-annotations .ProseMirror h2 {
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.cha-notes-annotations .ProseMirror h1 {
+  margin: 1.2em 0 0.4em;
+  font-size: 1em;
+  font-weight: 500;
+}
+
+.cha-notes-annotations .ProseMirror h2 {
+  margin: 0.9em 0 0.25em;
+  font-size: 0.9em;
+  font-weight: 400;
+}
+
+.cha-annotation-source {
+  display: inline-flex;
+  vertical-align: middle;
+  padding: 0 0.25em 0 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}

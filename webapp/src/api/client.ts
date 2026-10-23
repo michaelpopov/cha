@@ -127,11 +127,11 @@ export interface NotesClient {
   listNoteItems: () => Promise<NoteItem[]>;
   createNoteItem: (
     parentId: number | null,
-    kind: NoteItem['kind'],
+    kind: 'folder' | 'note',
     name: string,
   ) => Promise<NoteItem>;
   getNote: (id: number) => Promise<NoteContent>;
-  saveNote: (id: number, document: Record<string, unknown>) => Promise<void>;
+  saveNote: (id: number, document: Record<string, unknown>) => Promise<components['schemas']['NoteSaveResult']>;
   saveNoteScrollPosition: (id: number, scrollTop: number) => Promise<void>;
   setNoteReadOnly: (id: number, readOnly: boolean) => Promise<NoteItem>;
   compressNote: (id: number, signal: AbortSignal, skipIneligible?: boolean) => Promise<void | NoteCompressionSkip>;

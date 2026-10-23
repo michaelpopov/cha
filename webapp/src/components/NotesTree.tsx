@@ -109,6 +109,7 @@ export type DeleteNoteItem = (
 
 export type NoteActions = {
   updated(note: NoteItem): void;
+  refresh(): void;
 };
 
 export type SetNoteReadOnly = (id: number, readOnly: boolean) => Promise<NoteItem>;
@@ -133,7 +134,9 @@ export function NotesTree({
   onNoteItems,
   vaultName,
   onRegisterNoteActions,
+  onSourceChanged,
 }: {
+  onSourceChanged?(parentId: number | null): void;
   client: NotesClient;
   getNoteLength(id: number): Promise<number>;
   browsing: boolean;
@@ -228,7 +231,7 @@ export function NotesTree({
     },
     onPrimaryAction: (item) => {
       const data = item.getItemData();
-      if (data.kind !== 'note' || data.noteId === null) return;
+      if (data.kind === 'folder' || data.noteId === null) return;
       openRef.current(data.noteId);
     },
   });
@@ -263,6 +266,18 @@ export function NotesTree({
     window.addEventListener('pointerdown', dismiss);
     return () => window.removeEventListener('pointerdown', dismiss);
   }, [menu?.sourceId, menu?.x, menu?.y]);
+
+  // Reveal a newly active note. A visible row does not move.
+  useEffect(() => {
+    if (activeNoteId === null || !dataRef.current.rows[String(activeNoteId)]) return;
+    const current = treeRef.current;
+    let parent = dataRef.current.rows[String(activeNoteId)].parentKey;
+    while (parent && parent !== 'root') {
+      current.getItemInstance(parent).expand();
+      parent = dataRef.current.rows[parent]?.parentKey ?? null;
+    }
+    void current.getItemInstance(String(activeNoteId)).scrollTo({ block: 'nearest' }).catch(() => undefined);
+  }, [activeNoteId]);
 
   async function runList(gen: number) {
     setListing(true);
@@ -402,7 +417,10 @@ export function NotesTree({
       }
       if (!alive.current) return;
       const created = await clientRef.current.createNoteItem(captured.parentId, captured.kind, captured.name);
-      await finishMutation(created.id, captured.kind === 'note' ? created.id : null);
+      if (!alive.current) return;
+      const refreshed = await finishMutation(created.id, captured.kind === 'note' ? created.id : null);
+      // A successful creation opens the new note. Refresh the old view only if it stays open.
+      if (alive.current && captured.kind === 'note' && refreshed !== 'applied') onSourceChanged?.(captured.parentId);
     } catch (failure: unknown) {
       keepDialogError(failure, 'The item could not be created.');
     } finally {
@@ -429,13 +447,14 @@ export function NotesTree({
 
   async function finishMutation(reveal: number | null, openNote: number | null) {
     const refreshed = await refreshListing(reveal);
-    if (!alive.current) return;
+    if (!alive.current) return refreshed;
     if (refreshed === 'ignored') {
       setDialog((current) => (current ? { ...current, pending: false } : current));
-      return;
+      return refreshed;
     }
     setDialog(null);
     if (refreshed === 'applied' && openNote !== null) openRef.current(openNote);
+    return refreshed;
   }
 
   function openMenu(sourceId: string, anchor: HTMLElement) {
@@ -500,7 +519,7 @@ export function NotesTree({
 
   async function startDelete() {
     const source = takeMenuSource();
-    if (!source || !canMutateNow()) return;
+    if (!source || source.kind === 'annotation' || !canMutateNow()) return;
     const captured: DeleteDialogState = {
       action: 'delete',
       sourceId: source.id,
@@ -570,7 +589,7 @@ export function NotesTree({
       for (const child of index.children[key] ?? []) {
         const row = index.rows[child];
         if (row.kind === 'folder') collect(child);
-        else notes.push(row);
+        else if (row.kind === 'note') notes.push(row);
       }
     };
     collect(String(source.id));
@@ -634,7 +653,7 @@ export function NotesTree({
 
   async function copyReference() {
     const source = takeMenuSource();
-    if (!source || source.kind !== 'note') return;
+    if (!source || source.kind === 'folder') return;
     setError(null);
     try {
       await navigator.clipboard.writeText(noteReference(source.id));
@@ -657,7 +676,11 @@ export function NotesTree({
       return;
     }
     try {
+      if (!alive.current) return;
+      const source = itemsRef.current.find((item) => item.id === captured.sourceId);
       await finishMutation(captured.sourceId, null);
+      // ANNOTATIONS sorts its groups by note name, so it reloads after the new list.
+      if (alive.current && source?.kind === 'note') onSourceChanged?.(source.parent_id);
     } finally {
       if (alive.current) busy.current = false;
     }
@@ -678,6 +701,8 @@ export function NotesTree({
       const outcome = await onDeleteRef.current(captured.sourceId, listing, refresh);
       if (!alive.current) return;
       if (outcome === 'deleted' || outcome === 'refresh-failed') {
+        const source = listing.find((item) => item.id === captured.sourceId);
+        if (source?.kind === 'note') onSourceChanged?.(source.parent_id);
         setDialog(null);
         return;
       }
@@ -710,9 +735,9 @@ export function NotesTree({
   }
 
   const canMutate = loaded && !stale && !listing && dialog === null && !busy.current;
-  const activeNoteAvailable = items.some((item) => item.id === activeNoteId && item.kind === 'note');
+  const activeNoteAvailable = items.some((item) => item.id === activeNoteId && item.kind !== 'folder');
   const rows = tree.getItems();
-  const menuIsNote = menu !== null && index.rows[menu.sourceId]?.kind === 'note';
+  const menuIsNote = menu !== null && index.rows[menu.sourceId]?.kind !== 'folder';
   const menuParentId = menu?.sourceId === 'vault' ? null : Number(menu?.sourceId);
   const containerProps = tree.getContainerProps('Notes');
 
@@ -721,6 +746,7 @@ export function NotesTree({
     if (!activeNoteAvailable) return;
     onRegisterNoteActions?.({
       updated: updateItem,
+      refresh: retryList,
     });
     return () => onRegisterNoteActions?.(null);
   }, [activeNoteAvailable, onRegisterNoteActions]);
@@ -827,19 +853,19 @@ export function NotesTree({
           )}
           {menu.sourceId !== 'vault' && (
             <>
-              <button onClick={() => startRename()} role="menuitem" type="button">Rename</button>
-              {menuIsNote && (
+              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button onClick={() => startRename()} role="menuitem" type="button">Rename</button>}
+              {menuIsNote && index.rows[menu.sourceId]?.kind === 'note' && (
                 <button onClick={() => void toggleReadOnly()} role="menuitem" type="button">
                   {items.find((item) => String(item.id) === menu.sourceId)?.read_only
                     ? 'Make editable' : 'Make read-only'}
                 </button>
               )}
-              <button onClick={() => void startCompress()} role="menuitem" type="button">Compress</button>
+              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button onClick={() => void startCompress()} role="menuitem" type="button">Compress</button>}
               {menuIsNote && (
                 <button disabled={!index.rows[menu.sourceId]?.hasCompressed}
                   onClick={showCompressed} role="menuitem" type="button">Show compressed</button>
               )}
-              <button onClick={() => startDelete()} role="menuitem" type="button">Delete</button>
+              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button onClick={() => startDelete()} role="menuitem" type="button">Delete</button>}
             </>
           )}
           {menuIsNote && (

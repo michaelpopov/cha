@@ -2604,11 +2604,11 @@ NoteText WorkspaceConfigStore::get_note_text(std::int64_t id, bool prefer_compre
     return note_get_text(*impl_->database, id, prefer_compressed);
 }
 
-void WorkspaceConfigStore::save_note(
+bool WorkspaceConfigStore::save_note(
     std::int64_t id,
     const nlohmann::json& document) {
     const std::lock_guard lock(impl_->mutex);
-    note_save(*impl_->database, id, document);
+    return note_save(*impl_->database, id, document);
 }
 
 void WorkspaceConfigStore::save_note_scroll_position(std::int64_t id, std::int64_t scroll_top) {

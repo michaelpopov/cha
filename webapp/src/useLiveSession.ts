@@ -241,7 +241,9 @@ export function useLiveSession(
       dispatch(action);
       return;
     }
+    const context = vaultContext.current;
     void leaveRef.current(() => {
+      if (vaultContext.current !== context) return false;
       beginNavigation();
       dispatch(action);
     });

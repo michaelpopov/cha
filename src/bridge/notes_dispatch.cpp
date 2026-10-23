@@ -105,9 +105,8 @@ std::optional<nlohmann::json> dispatch_notes_operation(
     }
     case Method::notes_save:
         require_only_keys(params, {"id", "document"});
-        application.save_note(
-            require_note_id(params), require_document(params), epoch);
-        return nlohmann::json::object();
+        return nlohmann::json{{"annotation_created", application.save_note(
+            require_note_id(params), require_document(params), epoch)}};
     case Method::notes_save_scroll_position: {
         require_only_keys(params, {"id", "scroll_top"});
         const auto top = params.contains("scroll_top") ? as_safe_uint(params.at("scroll_top")) : std::nullopt;

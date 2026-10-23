@@ -124,20 +124,21 @@ describe('Notes tree', () => {
     expect(screen.queryByRole('menuitem', { name: 'Make editable' })).not.toBeInTheDocument();
   });
 
-  it('compresses descendants in tree order, reports skips and failures, and continues without prompts', async () => {
+  it('compresses ordinary descendants, skips annotations, and continues after skips and failures', async () => {
     const first = deferred<void>();
     const second = deferred<void>();
     const saved = { ...plan, id: 5, name: 'Saved', read_only: false, has_compressed: true };
     const small = { ...plan, id: 6, name: 'Small' };
     const failed = { ...aardvark, id: 7, parent_id: study.id, name: 'Failed' };
     const last = { ...failed, id: 8, name: 'Last' };
+    const annotation: NoteItem = { ...plan, id: 9, kind: 'annotation', name: 'ANNOTATIONS', read_only: true };
     const compressNote = vi.fn<NotesClient['compressNote']>()
       .mockReturnValueOnce(first.promise)
       .mockResolvedValueOnce('already_compressed')
       .mockResolvedValueOnce('too_small')
       .mockRejectedValueOnce(new ChaError('internal_error', 'The provider request timed out.'))
       .mockReturnValueOnce(second.promise);
-    const listNoteItems = vi.fn(async () => [last, small, saved, failed, aardvark, plan, philosophy, study]);
+    const listNoteItems = vi.fn(async () => [last, small, saved, failed, aardvark, plan, philosophy, study, annotation]);
     renderTree({ notes: client({ listNoteItems, compressNote }) });
     await screen.findByRole('treeitem', { name: 'Study' });
     await chooseAction('Study', 'Compress');

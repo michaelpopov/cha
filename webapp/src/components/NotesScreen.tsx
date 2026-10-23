@@ -1,3 +1,6 @@
+import { ChaError } from '../api/client';
+import { sortAnnotationGroups, type AnnotationDestination } from '../notes/annotationSource';
+import { selectNoteAnnotation } from '../notes/highlights';
 import type { Editor } from '@tiptap/core';
 import type { Content } from '@tiptap/core';
 import {
@@ -67,6 +70,8 @@ type LeaveHandle = Pick<
 type Phase = 'empty' | 'loading' | 'ready' | 'error';
 
 const defaultNoteName = /^New note(?: [1-9]\d*)?$/u;
+// A source note that was deleted cannot open again, so this error has no Retry.
+const missingSourceMessage = 'This note is no longer available.';
 
 function saveDetail(message: string): string {
   return message === noteSaveFailedMessage ? 'Check the vault and try again.' : message;
@@ -199,6 +204,7 @@ function FormatBar({
   editor,
   onHighlight,
   frozen,
+  immutable,
   fontSize,
   onFontSizeChange,
   toolbarRef,
@@ -211,6 +217,7 @@ function FormatBar({
   editor: Editor;
   onHighlight(highlight: NoteHighlight): void;
   frozen: boolean;
+  immutable: boolean;
   fontSize: number;
   onFontSizeChange(size: number): void;
   toolbarRef: { current: HTMLDivElement | null };
@@ -417,7 +424,7 @@ function FormatBar({
           title="Highlight"
           aria-pressed={editor.isActive('highlight')}
           className="cha-button"
-          disabled={frozen || editor.isDestroyed}
+          disabled={frozen || immutable || editor.isDestroyed}
           onClick={() => preserveNoteScroll(editor, () => { toggleNoteHighlight(editor); })}
           type="button"
         >
@@ -792,6 +799,7 @@ export function NotesScreen({
   client,
   notesEpoch,
   noteRequest,
+  destination,
   activeNoteId,
   noteItems,
   noteActions = null,
@@ -810,6 +818,7 @@ export function NotesScreen({
   client: ChaClient & NotesClient;
   notesEpoch: number;
   noteRequest: number;
+  destination?: AnnotationDestination;
   activeNoteId: number | null;
   noteItems: readonly NoteItem[];
   noteActions?: NoteActions | null;
@@ -841,6 +850,7 @@ export function NotesScreen({
   const name = activeItem?.name ?? 'note';
   // The note stays read-only until the tree list confirms its state.
   const readOnly = activeItem?.read_only ?? true;
+  const immutable = activeItem?.kind !== 'note';
   const noteIdRef = useRef(activeNoteId);
   const itemsRef = useRef(noteItems);
   const clientRef = useRef(client);
@@ -886,7 +896,9 @@ export function NotesScreen({
     save: async (document) => {
       const id = noteIdRef.current;
       if (id === null) return;
-      await client.saveNote(id, document);
+      const epoch = epochRef.current;
+      const result = await client.saveNote(id, document);
+      if (epoch === epochRef.current && result.annotation_created) noteActions?.refresh();
     },
     saveScrollPosition: async () => {
       const host = hostRef.current;
@@ -901,6 +913,7 @@ export function NotesScreen({
   });
 
   useEffect(() => {
+    setCommandError(null);
     if (activeNoteId === null) {
       setPhase('empty');
       setOpenError(null);
@@ -915,11 +928,18 @@ export function NotesScreen({
       try {
         const content = await clientRef.current.getNote(noteId);
         if (cancelled) return;
+        const items = itemsRef.current;
+        const shownDocument = items.find((item) => item.id === noteId)?.kind === 'annotation'
+          ? sortAnnotationGroups(content.document, items) : content.document;
         let rejected = false;
         let created: Editor;
         try {
           created = createNotesEditor({
-            content: content.document as Content,
+            content: shownDocument as Content,
+            immutable: () => itemsRef.current.find((item) => item.id === noteId)?.kind !== 'note',
+            onOpenAnnotation: (sourceId, target) => {
+              if (!cancelled) navigate({ type: 'open-note', noteId: sourceId, destination: target });
+            },
             readPicture: (url) => clientRef.current.readNotePicture(url),
             onRejectedContent: () => { rejected = true; },
             onCommandError: (message) => {
@@ -955,8 +975,12 @@ export function NotesScreen({
         setPhase('ready');
       } catch (failure: unknown) {
         if (cancelled) return;
-        const detail = publicErrorMessage(failure, 'Could not open the note.');
         setPhase('error');
+        if (destination && failure instanceof ChaError && failure.code === 'not_found') {
+          setOpenError(missingSourceMessage);
+          return;
+        }
+        const detail = publicErrorMessage(failure, 'Could not open the note.');
         setOpenError(detail === 'Could not open the note.'
           ? `Could not open “${noteName}”.`
           : `Could not open “${noteName}”. ${detail}`);
@@ -979,7 +1003,14 @@ export function NotesScreen({
     host.appendChild(element);
     const screen = host.parentElement ?? host;
     const pictures = Array.from(element.querySelectorAll('img'));
-    const restore = () => { host.scrollTop = scrollTopRef.current; };
+    const restore = () => {
+      if (destination && selectNoteAnnotation(editor, destination)) {
+        scrollToHighlight(editor);
+        return true;
+      }
+      host.scrollTop = scrollTopRef.current;
+      return false;
+    };
     // Embedded pictures can change the document height after it is attached.
     // Stop restoring as soon as the user starts to interact with the note.
     const stopRestoring = () => {
@@ -993,7 +1024,8 @@ export function NotesScreen({
       restore();
       if (pictures.every((picture) => picture.complete)) stopRestoring();
     };
-    restore();
+    focusNotesEditor(editor);
+    if (!restore() && destination) setCommandError('This entry has changed or was removed.');
     if (pictures.some((picture) => !picture.complete)) {
       element.addEventListener('load', pictureLoaded, true);
       element.addEventListener('error', pictureLoaded, true);
@@ -1029,7 +1061,6 @@ export function NotesScreen({
     setMatchCase(false);
     setWholeWord(false);
     setUseRegex(false);
-    setCommandError(null);
     setPromptError(null);
     setPromptPending(false);
     setContextMenu(null);
@@ -1110,7 +1141,7 @@ export function NotesScreen({
     const current = editorRef.current;
     if (!current || current.isDestroyed) return;
     const copying = command === 'Copy' || command === 'Copy All';
-    if (!copying && (save.frozen
+    if (!copying && (save.frozen || (immutable && ['Highlight', 'Add comment', 'Delete comment'].includes(command))
       || (!current.isEditable && command !== 'Highlight'
         && command !== 'Add comment' && command !== 'Delete comment'))) return;
     const noteId = noteIdRef.current;
@@ -1332,6 +1363,7 @@ export function NotesScreen({
           editor={editor}
           onHighlight={chooseHighlight}
           frozen={save.frozen}
+          immutable={immutable}
           fontSize={fontSize}
           onFontSizeChange={setFontSize}
           onFind={openFind}
@@ -1372,21 +1404,27 @@ export function NotesScreen({
           wholeWord={wholeWord}
         />
       )}
-      <div className="cha-notes-document" ref={hostRef} style={{ fontSize }}>
+      <div
+        className={activeItem?.kind === 'annotation' ? 'cha-notes-document cha-notes-annotations' : 'cha-notes-document'}
+        ref={hostRef}
+        style={{ fontSize }}
+      >
         {phase === 'loading' && <p role="status">Opening…</p>}
         {phase === 'error' && (
           <div role="alert">
             <p>{openError}</p>
-            <button
-              className="cha-button"
-              onClick={() => {
-                if (activeNoteId === null) return;
-                navigate({ type: 'open-note', noteId: activeNoteId });
-              }}
-              type="button"
-            >
-              Retry
-            </button>
+            {openError !== missingSourceMessage && (
+              <button
+                className="cha-button"
+                onClick={() => {
+                  if (activeNoteId === null) return;
+                  navigate({ type: 'open-note', noteId: activeNoteId, destination });
+                }}
+                type="button"
+              >
+                Retry
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -1500,7 +1538,7 @@ export function NotesScreen({
         >
           {menuCommands.map((command) => (
             <button
-              disabled={command !== 'Copy' && (save.frozen
+              disabled={command !== 'Copy' && (save.frozen || (immutable && ['Highlight', 'Add comment', 'Delete comment'].includes(command))
                 || (readOnly && command !== 'Highlight'
                   && command !== 'Add comment' && command !== 'Delete comment'))}
               key={command}

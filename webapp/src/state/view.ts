@@ -1,3 +1,4 @@
+import type { AnnotationDestination } from '../notes/annotationSource';
 import type {
   Bootstrap,
   CharacterDetail,
@@ -98,6 +99,7 @@ export interface AppState {
   activeNoteId: number | null;
   notesEpoch: number;
   noteRequest: number;
+  noteDestination?: AnnotationDestination;
   bootstrapStatus: BootstrapStatus;
   bootstrap: Bootstrap | null;
   bootstrapMessage: string | null;
@@ -136,7 +138,7 @@ export const initialAppState: AppState = {
   pictureCharacterId: null,
   mainView: 'chat',
   sidebarTab: 'chat',
-  activeNoteId: null,
+  activeNoteId: null, noteDestination: undefined,
   notesEpoch: 0,
   noteRequest: 0,
   bootstrapStatus: 'loading',
@@ -173,7 +175,7 @@ export type AppAction =
   | { type: 'toggle-sidebar' }
   | { type: 'show-chat-tab' }
   | { type: 'show-notes-tab' }
-  | { type: 'open-note'; noteId: number }
+  | { type: 'open-note'; noteId: number; destination?: AnnotationDestination }
   | { type: 'close-note' }
   | { type: 'toggle-picture' }
   | { type: 'resize-picture'; width: number }
@@ -407,7 +409,7 @@ function selectPictureCharacter(state: AppState, snapshot: SessionSnapshot, open
 
 function releaseClosedNote(state: AppState): AppState {
   if (state.mainView === 'notes' || state.activeNoteId === null) return state;
-  return { ...state, activeNoteId: null };
+  return { ...state, activeNoteId: null, noteDestination: undefined };
 }
 
 function reduceApp(state: AppState, action: AppAction): AppState {
@@ -444,7 +446,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         pictureCharacterId: null,
         streamStatus: 'idle',
         streamMessage: null,
-        activeNoteId: null,
+        activeNoteId: null, noteDestination: undefined,
         notesEpoch: state.notesEpoch + 1,
         ...idleSessionOperation(),
       };
@@ -481,11 +483,12 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'notes',
         activeNoteId: action.noteId,
+        noteDestination: action.destination,
         noteRequest: state.noteRequest + 1,
         ...idleSessionOperation(),
       };
     case 'close-note':
-      return { ...state, activeNoteId: null };
+      return { ...state, activeNoteId: null, noteDestination: undefined };
     case 'show-personas':
       return {
         ...state,

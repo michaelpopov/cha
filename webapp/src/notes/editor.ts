@@ -1,3 +1,4 @@
+import { AnnotationSource, withoutAnnotationSources, type AnnotationDestination } from './annotationSource';
 import { Editor, Extension, type Content } from '@tiptap/core';
 import FindAndReplace from '@tiptap/extension-find-and-replace';
 import Highlight from '@tiptap/extension-highlight';
@@ -70,6 +71,8 @@ type Gate = {
 
 export type NotesEditorOptions = {
   content?: Content;
+  immutable?: () => boolean;
+  onOpenAnnotation?: (sourceId: number, destination: AnnotationDestination) => void;
   byteLimit?: number;
   readPicture: NotePictureReader;
   onAcceptedDocument?: () => void;
@@ -175,7 +178,7 @@ export function addNoteComment(editor: Editor, position: number, text: string): 
   return !editor.state.doc.eq(previous);
 }
 
-function isNoteComment(node: PmNode | null): node is PmNode {
+export function isNoteComment(node: PmNode | null): node is PmNode {
   if (node?.type.name !== 'paragraph' || !node.textContent.trim()) return false;
   let comment = true;
   node.forEach((child) => {
@@ -221,8 +224,9 @@ export function createNotesEditor(options: NotesEditorOptions): Editor {
   let editor!: Editor;
   const editorProps = {
     dispatchTransaction(transaction: Transaction) {
-      acceptNotesTransaction(editor, transaction, byteLimit, gate, options.onCommandError);
+      acceptNotesTransaction(editor, transaction, byteLimit, gate, options.onCommandError, options.immutable);
     },
+    transformCopied: withoutAnnotationSources,
     transformPastedHTML(html: string) {
       return transformClipboardHTML(html);
     },
@@ -288,7 +292,7 @@ export function createNotesEditor(options: NotesEditorOptions): Editor {
   editor = new Editor({
     element: options.element === undefined ? document.createElement('div') : options.element,
     content: options.content ?? '',
-    extensions: notesExtensions(),
+    extensions: notesExtensions(options.onOpenAnnotation),
     coreExtensionOptions: { tabindex: { value: '0' } },
     injectCSS: false,
     enableInputRules: false,
@@ -619,8 +623,9 @@ export async function replaceNoteHtml(
   return importNoteSlice(editor, new Slice(content, 0, 0), readPicture, stillCurrent, 'replace', noteDocumentByteLimit);
 }
 
-export function notesExtensions() {
+export function notesExtensions(open?: (sourceId: number, destination: AnnotationDestination) => void) {
   return [
+    AnnotationSource.configure({ open }),
     StarterKit.configure({
       blockquote: false,
       strike: false,
@@ -660,6 +665,7 @@ function acceptNotesTransaction(
   byteLimit: number,
   gate: Gate,
   onCommandError?: (message: string) => void,
+  immutable?: () => boolean,
 ): void {
   const capturing = captureState(editor);
   if (editor.isDestroyed) return;
@@ -684,6 +690,7 @@ function acceptNotesTransaction(
       return;
     }
     const changed = transactions.some((item) => item.docChanged) && !prevState.doc.eq(state.doc);
+    if (changed && immutable?.()) return;
     if (changed && !editor.isEditable && !(
       (transaction.getMeta(notesHighlightMeta) === true
         && withoutHighlight(prevState.doc).eq(withoutHighlight(state.doc)))

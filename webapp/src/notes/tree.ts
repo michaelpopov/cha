@@ -1,12 +1,12 @@
 export type NoteSibling = {
   name: string;
-  kind: 'folder' | 'note';
+  kind: 'folder' | 'note' | 'annotation';
 };
 
 export type NoteTreeItem = {
   id: number;
   parent_id: number | null;
-  kind: 'folder' | 'note';
+  kind: 'folder' | 'note' | 'annotation';
   name: string;
   has_compressed?: boolean;
 };
@@ -20,6 +20,7 @@ export function availableNoteName(
   const names = new Set(items
     .filter((item) => item.parent_id === parentId && item.id !== excludeId)
     .map((item) => item.name));
+  names.add('ANNOTATIONS');
   let name = base;
   for (let suffix = 1; names.has(name); suffix++) name = `${base} ${suffix}`;
   return name;
@@ -35,7 +36,11 @@ export type NoteTreeRow = NoteSibling & {
 
 // Display order only. Equal names stay distinct; this is not an identity check.
 export function compareNoteSiblings(left: NoteSibling, right: NoteSibling): number {
-  if (left.kind !== right.kind) return left.kind === 'folder' ? -1 : 1;
+  if (left.kind !== right.kind) {
+    if (left.kind === 'annotation') return 1;
+    if (right.kind === 'annotation') return -1;
+    return left.kind === 'folder' ? -1 : 1;
+  }
   const byLocale = left.name.localeCompare(right.name);
   if (byLocale !== 0) return byLocale;
   if (left.name < right.name) return -1;

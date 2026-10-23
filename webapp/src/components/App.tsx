@@ -408,6 +408,7 @@ function Screen({
         noteActions={noteActions}
         onSetNoteReadOnly={onSetNoteReadOnly}
         noteRequest={state.noteRequest}
+        destination={state.noteDestination}
         notesEpoch={state.notesEpoch}
         onDraftChange={onNotesDraftChange}
         onRegisterDispose={onRegisterDispose}
@@ -718,6 +719,13 @@ export function App({
     }
     navigate({ type: 'open-note', noteId: id });
   }, [navigate, state.activeNoteId, state.mainView]);
+
+  const sourceChanged = useCallback((parentId: number | null) => {
+    const active = noteItems.find((item) => item.id === activeNoteIdRef.current);
+    if (active?.kind === 'annotation' && active.parent_id === parentId) {
+      navigate({ type: 'open-note', noteId: active.id });
+    }
+  }, [navigate, noteItems]);
 
   const beforeCreateNote = useCallback(async () => {
     const result = await noteLeave.leaveNoteThen(() => true);
@@ -1138,6 +1146,7 @@ export function App({
                 onCompressNote={compressNote}
                 onSetNoteReadOnly={setNoteReadOnly}
                 onNoteItems={setNoteItems}
+                onSourceChanged={sourceChanged}
                 onOpenNote={requestOpenNote}
                 vaultName={state.bootstrap?.vault_name ?? ''}
                 onRegisterNoteActions={setNoteActions}

@@ -18,7 +18,7 @@ inline constexpr std::size_t note_document_byte_limit = 12582912;
 inline constexpr std::string_view empty_note_document =
     R"({"type":"doc","content":[{"type":"paragraph"}]})";
 
-enum class NoteItemKind { folder, note };
+enum class NoteItemKind { folder, note, annotation };
 
 enum class NoteFailure {
     invalid,
@@ -90,7 +90,7 @@ void create_note_items_schema(storage::SqliteDatabase& database);
 [[nodiscard]] NoteContent note_get(
     storage::SqliteDatabase& database,
     std::int64_t id);
-void note_save(
+bool note_save(
     storage::SqliteDatabase& database,
     std::int64_t id,
     const nlohmann::json& document);

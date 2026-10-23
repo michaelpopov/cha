@@ -157,7 +157,7 @@ function isNoteItem(value: unknown): value is NoteItem {
     && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'read_only'])
     && isNoteId(value.id)
     && isNoteParent(value.parent_id)
-    && (value.kind === 'folder' || value.kind === 'note')
+    && (value.kind === 'folder' || value.kind === 'note' || value.kind === 'annotation')
     && typeof value.name === 'string'
     && typeof value.has_compressed === 'boolean'
     && typeof value.read_only === 'boolean';
@@ -844,7 +844,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       && typeof value.markdown === 'string'
     )),
     saveNote: async (id, document) => {
-      await call('notes.save', { id, document }, isEmptyResult);
+      return call('notes.save', { id, document }, (value): value is { annotation_created: boolean } => (
+        isRecord(value) && Object.keys(value).length === 1 && typeof value.annotation_created === 'boolean'
+      ));
     },
     saveNoteScrollPosition: async (id, scrollTop) => {
       await call('notes.saveScrollPosition', { id, scroll_top: scrollTop }, isEmptyResult);

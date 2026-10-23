@@ -1,3 +1,4 @@
+import type { AnnotationDestination } from '../notes/annotationSource';
 import type { Editor } from '@tiptap/core';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -53,6 +54,7 @@ let liveEditor: { current: Editor | null } | null = null;
 
 function Harness({
   initialId = 4 as number | null,
+  destination,
   items = [plan],
   getNote = async (id: number) => ({ id, document: documentWith(id === 5 ? 'Essay text' : 'Alpha') }),
   saveNote = async () => undefined,
@@ -66,6 +68,7 @@ function Harness({
   sendPhrase = '',
 }: {
   initialId?: number | null;
+  destination?: AnnotationDestination;
   items?: NoteItem[];
   getNote?: (id: number) => Promise<NoteContent>;
   saveNote?: (id: number, document: Record<string, unknown>) => Promise<void>;
@@ -116,6 +119,7 @@ function Harness({
       {left && <p>Left the note</p>}
       <NotesScreen
         activeNoteId={noteId}
+        destination={destination}
         client={client}
         dispatch={dispatch} navigate={dispatch}
         draft={text}
@@ -1766,4 +1770,43 @@ describe('Notes screen', () => {
     expect(saveNote).toHaveBeenCalledTimes(2);
     expect(reopened.getText()).toBe('Alpha');
   });
+});
+
+it('applies a source destination once and preserves later selection when read-only metadata changes', async () => {
+  const destination: AnnotationDestination = { entryType: 'highlight', ordinal: 1, prefix: 'Target' };
+  const getNote = async (id: number) => ({ id, document: { type: 'doc', content: [
+    { type: 'paragraph', content: [{ type: 'text', text: 'Target', marks: [{ type: 'highlight' }] }] },
+    { type: 'paragraph', content: [{ type: 'text', text: 'Other' }] },
+  ] } });
+  const view = render(<Harness getNote={getNote} destination={destination} />);
+  const editor = await openedEditor();
+  expect(editor.state.selection.from).toBe(1);
+  expect(editor.state.selection.to).toBe(7);
+  act(() => { editor.commands.setTextSelection(10); });
+  view.rerender(<Harness getNote={getNote} destination={destination} items={[{ ...plan, read_only: true }]} />);
+  expect(editor.state.selection.from).toBe(10);
+  expect(editor.state.selection.empty).toBe(true);
+});
+
+it.each([false, true])('keeps the source target visible as pictures load until the reader interacts (moved: %s)', async (moved) => {
+  vi.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(false);
+  const destination: AnnotationDestination = { entryType: 'highlight', ordinal: 1, prefix: 'Target' };
+  render(<Harness destination={destination} getNote={async (id) => ({
+    id, scroll_top: 680, document: { type: 'doc', content: [
+      { type: 'image', attrs: { src: 'data:image/png;base64,iVBORw0KGgo=' } },
+      { type: 'paragraph', content: [{ type: 'text', text: 'Target', marks: [{ type: 'highlight' }] }] },
+      ...documentWith('Other').content,
+    ] },
+  })} />);
+  const editor = await openedEditor();
+  const host = document.querySelector('.cha-notes-document')!;
+  expect(host.scrollTop).not.toBe(680);
+  expect(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)).toBe('Target');
+  const position = vi.spyOn(editor.view, 'coordsAtPos').mockReturnValue({ top: 200, bottom: 220, left: 0, right: 1 });
+  host.scrollTop = 100;
+  if (moved) fireEvent.wheel(host);
+  fireEvent.load(editor.view.dom.querySelector('img')!);
+  expect(position).toHaveBeenCalledTimes(moved ? 0 : 1);
+  expect(host.scrollTop).toBe(moved ? 100 : 300);
+  expect(editor.can().undo()).toBe(false);
 });

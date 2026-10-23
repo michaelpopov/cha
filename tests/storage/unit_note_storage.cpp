@@ -3,6 +3,7 @@
 #include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
 #include "support/test_workspace.h"
+#include "util/logging.h"
 #include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
@@ -11,6 +12,9 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <chrono>
+#include <iostream>
 #include <optional>
 #include <string>
 #include <utility>
@@ -113,6 +117,245 @@ protected:
     std::unique_ptr<Database> database_;
 };
 
+
+nlohmann::json annotation_fixture() {
+    std::ifstream input(std::filesystem::path(CHA_SOURCE_DIRECTORY) / "tests/fixtures/notes/annotations.json");
+    return nlohmann::json::parse(input);
+}
+TEST_F(NoteStorageTest, AnnotationsLifecycleAndSharedRecognition) {
+    const auto fixture = annotation_fixture();
+    const auto source = note_create(*database_, {}, NoteItemKind::note, "Source");
+    EXPECT_TRUE(note_save(*database_, source.id, fixture["document"]));
+    const auto items = note_list(*database_);
+    ASSERT_EQ(items.size(), 2u);
+    const auto annotation = items.back();
+    EXPECT_EQ(annotation.kind, NoteItemKind::annotation);
+    EXPECT_EQ(annotation.name, "ANNOTATIONS");
+    EXPECT_TRUE(annotation.read_only);
+    const auto generated = note_get(*database_, annotation.id).document;
+    EXPECT_EQ(generated, fixture["generated_document"]);
+    nlohmann::json entries = nlohmann::json::array();
+    for (const auto& block : generated["content"]) {
+        if (block["type"] != "paragraph") continue;
+        auto attrs = block["content"][0]["attrs"];
+        attrs.erase("sourceId");
+        std::string text;
+        for (const auto& node : block["content"]) {
+            if (node["type"] == "text") text += node["text"].get<std::string>();
+            if (node["type"] == "hardBreak") text += '\n';
+        }
+        attrs["text"] = text;
+        entries.push_back(attrs);
+    }
+    EXPECT_EQ(entries, fixture["entries"]);
+    EXPECT_EQ(generated["content"][2]["content"][0]["text"], "Chapter");
+    note_save_scroll_position(*database_, annotation.id, 123);
+    EXPECT_FALSE(note_save(*database_, source.id, fixture["document"]));
+    EXPECT_EQ(note_get(*database_, annotation.id).scroll_top, 123);
+    (void)note_rename(*database_, source.id, "Renamed");
+    EXPECT_EQ(note_get(*database_, annotation.id).document["content"][0]["content"][0]["text"], "Renamed");
+    for (const auto& operation : std::vector<std::function<void()>>{
+        [&] { note_save(*database_, annotation.id, fixture["document"]); },
+        [&] { (void)note_rename(*database_, annotation.id, "Other"); },
+        [&] { note_delete(*database_, annotation.id); },
+        [&] { (void)note_set_read_only(*database_, annotation.id, false); },
+        [&] { note_save_compressed(*database_, annotation.id, "text"); }
+    }) expect_note_error(NoteFailure::invalid, "That item is not a note.", operation);
+    EXPECT_NE(note_get_text(*database_, annotation.id).text.find("Comment"), std::string::npos);
+    note_delete(*database_, source.id);
+    EXPECT_EQ(note_get(*database_, annotation.id).document["content"][0]["content"][0]["text"], "No comments or highlights.");
+    database_.reset();
+    database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+    EXPECT_EQ(note_list(*database_).front().id, annotation.id);
+}
+TEST_F(NoteStorageTest, AnnotationReservedNamesScopeImportAndRollback) {
+    for (const auto kind : {NoteItemKind::folder, NoteItemKind::note, NoteItemKind::annotation}) {
+        EXPECT_THROW((void)note_create(*database_, {}, kind, "ANNOTATIONS"), NoteError);
+    }
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Annotations");
+    const auto source = note_create(*database_, folder.id, NoteItemKind::note, "Source");
+    const auto doc = annotation_fixture()["document"];
+    EXPECT_FALSE(note_save(*database_, source.id, nlohmann::json::parse(empty_note_document)));
+    EXPECT_TRUE(note_save(*database_, source.id, doc));
+    EXPECT_EQ(note_list(*database_).size(), 3u);
+    database_->execute("CREATE TRIGGER fail_annotation BEFORE UPDATE ON note_items WHEN NEW.kind = 'annotation' BEGIN SELECT RAISE(ABORT, 'failed rebuild'); END");
+    EXPECT_THROW((void)note_rename(*database_, source.id, "Rolled back"), NoteError);
+    EXPECT_EQ(note_list(*database_)[1].name, "Source");
+    EXPECT_THROW(note_delete(*database_, source.id), NoteError);
+    EXPECT_THROW(note_save(*database_, source.id, nlohmann::json::parse(empty_note_document)), NoteError);
+    EXPECT_EQ(note_get(*database_, source.id).document, doc);
+    EXPECT_NO_THROW((void)note_get(*database_, source.id));
+    database_->execute("DROP TRIGGER fail_annotation");
+    note_delete(*database_, folder.id);
+    EXPECT_TRUE(note_list(*database_).empty());
+    const auto book = note_import_book(*database_, {}, "Book", {{"Chapter", doc}, {"Other", doc}});
+    EXPECT_EQ(note_list(*database_).size(), 4u);
+    EXPECT_EQ(note_list(*database_).back().parent_id, book);
+}
+
+
+TEST_F(NoteStorageTest, AnnotationExactByteLimitAndFreshBoundedReplacement) {
+    using Json = nlohmann::json;
+    const auto source = note_create(*database_, {}, NoteItemKind::note, "Source");
+    Json document = {{"type", "doc"}, {"content", Json::array()}};
+    Json expected = {{"type", "doc"}, {"content", Json::array({
+        {{"type", "heading"}, {"attrs", {{"level", 1}}}, {"content", Json::array({{{"type", "text"}, {"text", "Source"}}})}}
+    })}};
+    std::size_t size = expected.dump().size();
+    for (int ordinal = 1;; ++ordinal) {
+        Json entry = {{"type", "paragraph"}, {"content", Json::array({
+            {{"type", "annotationSource"}, {"attrs", {{"sourceId", source.id}, {"entryType", "highlight"}, {"ordinal", ordinal}}}},
+            {{"type", "text"}, {"text", ""}}
+        })}};
+        const auto overhead = entry.dump().size() + 1;
+        const auto count = std::min<std::size_t>(4000, 10000000 - size - overhead);
+        entry["content"][1]["text"] = std::string(count, 'x');
+        expected["content"].push_back(entry);
+        size += overhead + count;
+        document["content"].push_back({{"type", "paragraph"}, {"content", Json::array({
+            {{"type", "text"}, {"text", std::string(count, 'x')}, {"marks", Json::array({{{"type", "highlight"}}})}}
+        })}});
+        if (size == 10000000) break;
+    }
+    document["content"].push_back(document["content"][0]);
+    EXPECT_TRUE(note_save(*database_, source.id, document));
+    const auto annotation = note_list(*database_).back();
+    const auto generated = note_get(*database_, annotation.id).document;
+    EXPECT_EQ(generated, expected);
+    EXPECT_EQ(raw_content(*database_, annotation.id).size(), 10000000u);
+    EXPECT_FALSE(note_save(*database_, source.id, annotation_fixture()["document"]));
+    EXPECT_LT(raw_content(*database_, annotation.id).size(), 10000u);
+}
+
+
+
+
+TEST_F(NoteStorageTest, AnnotationCommentRunsShareLongChapterContext) {
+    using Json = nlohmann::json;
+    const auto source = note_create(*database_, {}, NoteItemKind::note, "Source");
+    const std::string chapter(50000, 'c');
+    Json document = {{"type", "doc"}, {"content", Json::array()}};
+    for (int i = 0; i < 2000; ++i) document["content"].push_back({{"type", "paragraph"}, {"content", Json::array({
+        {{"type", "text"}, {"text", "Comment"}, {"marks", Json::array({{{"type", "highlight"}, {"attrs", {{"color", "#b3d9ff"}}}}})}}
+    })}});
+    document["content"].push_back({{"type", "heading"}, {"attrs", {{"level", 1}}}, {"content", Json::array({{{"type", "text"}, {"text", chapter}}})}});
+    EXPECT_TRUE(note_save(*database_, source.id, document));
+    const auto generated = note_get(*database_, note_list(*database_).back().id).document;
+    ASSERT_EQ(generated["content"].size(), 2002u);
+    EXPECT_EQ(generated["content"][1]["content"][0]["text"], chapter);
+    EXPECT_EQ(generated["content"].back()["content"][0]["attrs"]["ordinal"], 2000);
+}
+
+TEST_F(NoteStorageTest, AnnotationTruncationCountsUnicodeCharacters) {
+    const auto source = note_create(*database_, {}, NoteItemKind::note, "Source");
+    const auto text = repeated_code_point(4001);
+    const auto doc = nlohmann::json::parse(R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"placeholder","marks":[{"type":"highlight"}]}]}]})");
+    auto document = doc;
+    document["content"][0]["content"][0]["text"] = text;
+    EXPECT_TRUE(note_save(*database_, source.id, document));
+    const auto generated = note_get(*database_, note_list(*database_).back().id).document;
+    EXPECT_EQ(generated["content"][1]["content"][1]["text"], repeated_code_point(4000));
+}
+
+TEST_F(NoteStorageTest, AnnotationFirstCandidateTooLargeStoresEmptyDocumentAndWarns) {
+    const auto log_path = workspace_.root() / "annotations.log";
+    initialize_diagnostic_logging(log_path, "warn");
+    struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop_logging;
+    const auto source = note_create(*database_, {}, NoteItemKind::note, "Source");
+    auto document = nlohmann::json::parse(R"({"type":"doc","content":[
+        {"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Chapter"}]},
+        {"type":"paragraph","content":[{"type":"text","text":"Entry","marks":[{"type":"highlight"}]}]},
+        {"type":"paragraph","content":[{"type":"text","text":"Later","marks":[{"type":"highlight"}]}]}
+    ]})");
+    document["content"][0]["content"][0]["text"] = std::string(10000000, 'c');
+    EXPECT_TRUE(note_save(*database_, source.id, document));
+    const auto annotation = note_list(*database_).back();
+    EXPECT_EQ(note_get(*database_, annotation.id).document, nlohmann::json::parse(empty_note_document));
+    EXPECT_EQ(note_get(*database_, source.id).document, document);
+
+    // A bounded update must replace existing entries, too.
+    EXPECT_FALSE(note_save(*database_, source.id, annotation_fixture()["document"]));
+    EXPECT_FALSE(note_save(*database_, source.id, document));
+    EXPECT_EQ(note_get(*database_, annotation.id).document, nlohmann::json::parse(empty_note_document));
+    shutdown_diagnostic_logging();
+    std::ifstream input(log_path);
+    const std::string log((std::istreambuf_iterator<char>(input)), {});
+    const std::string warning = "ANNOTATIONS reached the 10 MB limit";
+    const auto first = log.find(warning);
+    ASSERT_NE(first, std::string::npos);
+    const auto second = log.find(warning, first + warning.size());
+    ASSERT_NE(second, std::string::npos);
+    EXPECT_EQ(log.find(warning, second + warning.size()), std::string::npos);
+}
+
+TEST_F(NoteStorageTest, AnnotationExtractionToleratesUnusedFieldsAndNodeTypes) {
+    const auto source = note_create(*database_, {}, NoteItemKind::note, "Source");
+    const auto document = nlohmann::json::parse(R"({"type":"doc","content":[
+        null, 7, {"type":7,"content":false}, {"type":"unknown","attrs":4},
+        {"type":"paragraph","content":[{"type":"text","text":false,"marks":[null,{"type":5}]}]},
+        {"type":"heading","attrs":false,"content":[{"type":"text","text":"Chapter"}]},
+        {"type":"paragraph","content":[{"type":"text","text":"Entry","marks":[false,{"type":"highlight","attrs":7}]}]}
+    ]})");
+    EXPECT_TRUE(note_save(*database_, source.id, document));
+    EXPECT_EQ(note_get(*database_, source.id).document, document);
+    const auto generated = note_get(*database_, note_list(*database_).back().id).document;
+    ASSERT_EQ(generated["content"].size(), 3u);
+    EXPECT_EQ(generated["content"][2]["content"][1]["text"], "Entry");
+}
+
+TEST_F(NoteStorageTest, AnnotationNamesAndKindsAreReservedAtEveryWriteBoundary) {
+    const auto source = note_create(*database_, {}, NoteItemKind::note, "Annotations");
+    for (const auto kind : {NoteItemKind::note, NoteItemKind::folder}) {
+        expect_note_error(NoteFailure::invalid, "The name ANNOTATIONS is reserved.", [&] {
+            (void)note_create(*database_, {}, kind, "ANNOTATIONS");
+        });
+    }
+    expect_note_error(NoteFailure::invalid, "Kind must be folder or note.", [&] {
+        (void)note_create(*database_, {}, NoteItemKind::annotation, "Other");
+    });
+    expect_note_error(NoteFailure::invalid, "The name ANNOTATIONS is reserved.", [&] {
+        (void)note_rename(*database_, source.id, "ANNOTATIONS");
+    });
+    const auto document = nlohmann::json::parse(empty_note_document);
+    expect_note_error(NoteFailure::invalid, "The name ANNOTATIONS is reserved.", [&] {
+        (void)note_import_book(*database_, {}, "ANNOTATIONS", {{"Chapter", document}});
+    });
+    expect_note_error(NoteFailure::invalid, "The name ANNOTATIONS is reserved.", [&] {
+        (void)note_import_book(*database_, {}, "Book", {{"Chapter", document}, {"ANNOTATIONS", document}});
+    });
+    EXPECT_EQ(note_list(*database_).size(), 1u);
+}
+
+TEST_F(NoteStorageTest, AnnotationRebuildLargeBookAndIllustratedFolder) {
+    using Json = nlohmann::json;
+    const auto millis = [](auto started) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+    };
+    for (const bool illustrated : {false, true}) {
+        Json document = {{"type", "doc"}, {"content", Json::array()}};
+        for (int i = 0; i < (illustrated ? 1 : 200); ++i) document["content"].push_back({
+            {"type", "paragraph"}, {"content", Json::array({{{"type", "text"}, {"text", std::string(4000, 'x')}, {"marks", Json::array({{{"type", "highlight"}}})}}})}
+        });
+        if (illustrated) document["content"].push_back({{"type", "image"}, {"attrs", {{"src", "data:image/png;base64," + std::string(12000000, 'A')}}}});
+        std::vector<NoteImportEntry> notes;
+        for (int i = 0; i < (illustrated ? 10 : 15); ++i) notes.push_back({"Chapter " + std::to_string(i), document});
+        auto started = std::chrono::steady_clock::now();
+        const auto folder = note_import_book(*database_, {}, illustrated ? "Illustrated" : "Book", notes);
+        std::cout << (illustrated ? "Illustrated folder" : "Large book") << " import/rebuild: " << millis(started) << " ms\n";
+        const auto listing = note_list(*database_);
+        const auto source = std::find_if(listing.begin(), listing.end(), [&](const auto& item) { return item.parent_id == folder && item.kind == NoteItemKind::note; });
+        (void)note_set_read_only(*database_, source->id, false);
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            document["content"].push_back({{"type", "paragraph"}, {"content", Json::array({{{"type", "text"}, {"text", "ordinary text"}}})}});
+            started = std::chrono::steady_clock::now();
+            EXPECT_FALSE(note_save(*database_, source->id, document));
+            std::cout << "  save/rebuild " << repeat + 1 << ": " << millis(started) << " ms\n";
+            const auto generated = note_list(*database_).back();
+            EXPECT_LE(raw_content(*database_, generated.id).size(), 10000000u);
+        }
+    }
+}
+
 TEST_F(NoteStorageTest, CompressionPreservesOriginalAndSurvivesEditsAndReopen) {
     const auto note = note_create(*database_, {}, NoteItemKind::note, "Source");
     EXPECT_FALSE(note.has_compressed);
@@ -138,6 +381,7 @@ TEST_F(NoteStorageTest, CompressionPreservesOriginalAndSurvivesEditsAndReopen) {
 
 TEST_F(NoteStorageTest, AddsCompressionColumnToExistingNotesOnce) {
     const auto note = note_create(*database_, {}, NoteItemKind::note, "Old note");
+    database_->execute("CREATE TABLE legacy AS SELECT * FROM note_items; DROP TABLE note_items; ALTER TABLE legacy RENAME TO note_items");
     database_->execute("ALTER TABLE note_items DROP COLUMN compressed_text");
     for (int count = 0; count < 2; ++count) {
         storage::SqliteTransaction transaction(*database_);
@@ -179,6 +423,7 @@ TEST_F(NoteStorageTest, ReadOnlyStateSurvivesReopenAndProtectsOnlyContent) {
 
 TEST_F(NoteStorageTest, AddsReadOnlyColumnToExistingNotesOnceAndKeepsThemEditable) {
     const auto note = note_create(*database_, {}, NoteItemKind::note, "Existing");
+    database_->execute("CREATE TABLE legacy AS SELECT * FROM note_items; DROP TABLE note_items; ALTER TABLE legacy RENAME TO note_items");
     database_->execute("ALTER TABLE note_items DROP COLUMN read_only");
     for (int count = 0; count < 2; ++count) {
         storage::SqliteTransaction transaction(*database_);

@@ -19,6 +19,16 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it('accepts annotation metadata and the creation flag', async () => {
+    const annotation = { id: 9, parent_id: null, kind: 'annotation', name: 'ANNOTATIONS', read_only: true, has_compressed: false };
+    const client = createNativeChaClient(createFakeNativeBridge({
+      'notes.list': () => ({ items: [annotation] }),
+      'notes.save': () => ({ annotation_created: true }),
+    }));
+    expect(await client.listNoteItems()).toEqual([annotation]);
+    expect(await client.saveNote(4, { type: 'doc' })).toEqual({ annotation_created: true });
+  });
+
   it('attaches file text to the selected session through the native bridge', async () => {
     const attach = vi.fn(() => ({ clear_input: false, notice: '' }));
     const client = createNativeChaClient(createFakeNativeBridge({ 'session.attachTextFile': attach }));
@@ -598,7 +608,7 @@ describe('notes native client', () => {
       },
       'notes.save': (params) => {
         calls.push(['save', params]);
-        return {};
+        return { annotation_created: false };
       },
       'notes.saveScrollPosition': (params) => {
         calls.push(['saveScrollPosition', params]);

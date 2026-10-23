@@ -1,0 +1,673 @@
+{
+  "document": {
+    "type": "doc",
+    "content": [
+      {
+        "type": "heading",
+        "attrs": {
+          "level": 2
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "Source"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "Before",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "hardBreak"
+          },
+          {
+            "type": "text",
+            "text": "Comment",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": "#b3d9ff"
+                }
+              }
+            ]
+          },
+          {
+            "type": "hardBreak"
+          },
+          {
+            "type": "hardBreak"
+          }
+        ]
+      },
+      {
+        "type": "heading",
+        "attrs": {
+          "level": 2
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "Chapter"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "Same",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "text": " 😀",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": "red"
+                }
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "text": " gap "
+          },
+          {
+            "type": "text",
+            "text": "Same",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": " ",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": "#b3d9ff"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "bulletList",
+        "content": [
+          {
+            "type": "listItem",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Nested",
+                    "marks": [
+                      {
+                        "type": "highlight",
+                        "attrs": {
+                          "color": null
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "heading",
+        "attrs": {
+          "level": 2
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "Chapter"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "Again",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "heading",
+        "attrs": {
+          "level": 3
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "Marked",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": " ",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "Left",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          },
+          {
+            "type": "hardBreak"
+          },
+          {
+            "type": "text",
+            "text": "Right",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "Left of control",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          },
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 42,
+              "entryType": "highlight",
+              "ordinal": 1
+            },
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "text": "Right of control",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "\t\n\u000b\f\r                  　﻿",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "\t\n\u000b\f\r                  　﻿",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": "#b3d9ff"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "After whitespace",
+            "marks": [
+              {
+                "type": "highlight",
+                "attrs": {
+                  "color": null
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "entries": [
+    {
+      "entryType": "highlight",
+      "ordinal": 1,
+      "text": "Before"
+    },
+    {
+      "entryType": "comment",
+      "ordinal": 1,
+      "text": "\nComment\n\n"
+    },
+    {
+      "entryType": "highlight",
+      "ordinal": 2,
+      "text": "Same 😀"
+    },
+    {
+      "entryType": "highlight",
+      "ordinal": 3,
+      "text": "Same"
+    },
+    {
+      "entryType": "highlight",
+      "ordinal": 4,
+      "text": "Nested"
+    },
+    {
+      "entryType": "highlight",
+      "ordinal": 5,
+      "text": "Again"
+    },
+    {
+      "entryType": "highlight",
+      "ordinal": 6,
+      "text": "Marked"
+    },
+    {
+      "entryType": "highlight",
+      "ordinal": 7,
+      "text": "Left"
+    },
+    {
+      "entryType": "highlight",
+      "ordinal": 8,
+      "text": "Right"
+    },
+    {
+      "entryType": "highlight",
+      "ordinal": 9,
+      "text": "Left of control"
+    },
+    {
+      "entryType": "highlight",
+      "ordinal": 10,
+      "text": "Right of control"
+    },
+    {
+      "entryType": "highlight",
+      "ordinal": 11,
+      "text": "After whitespace"
+    }
+  ],
+  "generated_document": {
+    "type": "doc",
+    "content": [
+      {
+        "type": "heading",
+        "attrs": {
+          "level": 1
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "Source"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "highlight",
+              "ordinal": 1
+            }
+          },
+          {
+            "type": "text",
+            "text": "Before"
+          }
+        ]
+      },
+      {
+        "type": "heading",
+        "attrs": {
+          "level": 2
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "Chapter"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "comment",
+              "ordinal": 1
+            }
+          },
+          {
+            "type": "hardBreak"
+          },
+          {
+            "type": "text",
+            "text": "Comment"
+          },
+          {
+            "type": "hardBreak"
+          },
+          {
+            "type": "hardBreak"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "highlight",
+              "ordinal": 2
+            }
+          },
+          {
+            "type": "text",
+            "text": "Same 😀"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "highlight",
+              "ordinal": 3
+            }
+          },
+          {
+            "type": "text",
+            "text": "Same"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "highlight",
+              "ordinal": 4
+            }
+          },
+          {
+            "type": "text",
+            "text": "Nested"
+          }
+        ]
+      },
+      {
+        "type": "heading",
+        "attrs": {
+          "level": 2
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "Chapter"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "highlight",
+              "ordinal": 5
+            }
+          },
+          {
+            "type": "text",
+            "text": "Again"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "highlight",
+              "ordinal": 6
+            }
+          },
+          {
+            "type": "text",
+            "text": "Marked"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "highlight",
+              "ordinal": 7
+            }
+          },
+          {
+            "type": "text",
+            "text": "Left"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "highlight",
+              "ordinal": 8
+            }
+          },
+          {
+            "type": "text",
+            "text": "Right"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "highlight",
+              "ordinal": 9
+            }
+          },
+          {
+            "type": "text",
+            "text": "Left of control"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "highlight",
+              "ordinal": 10
+            }
+          },
+          {
+            "type": "text",
+            "text": "Right of control"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "annotationSource",
+            "attrs": {
+              "sourceId": 1,
+              "entryType": "highlight",
+              "ordinal": 11
+            }
+          },
+          {
+            "type": "text",
+            "text": "After whitespace"
+          }
+        ]
+      }
+    ]
+  }
+}

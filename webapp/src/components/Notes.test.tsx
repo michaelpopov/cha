@@ -1140,3 +1140,252 @@ describe('Notes in the application', () => {
     expect(screen.getByText('Gamma note contents')).toBeInTheDocument();
   });
 });
+
+it('opens annotation sources, protects generated content and reports stale entries', async () => {
+  const annotation: NoteItem = { ...plan, id: 9, kind: 'annotation', name: 'ANNOTATIONS', read_only: true };
+  const source = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Target', marks: [{ type: 'highlight' }] }] }] };
+  const generated = { type: 'doc', content: [{ type: 'paragraph', content: [
+    { type: 'annotationSource', attrs: { sourceId: 4, entryType: 'highlight', ordinal: 1 } }, { type: 'text', text: 'Target' },
+  ] }] };
+  let stale = false;
+  let missing = false;
+  const saveNote = vi.fn();
+  render(<App client={fixtureClient({
+    listNoteItems: async () => [plan, annotation],
+    getNote: async (id) => {
+      if (missing && id !== 9) throw new ChaError('not_found', 'That note was not found.');
+      return { id, scroll_top: 500, document: id === 9 ? generated : stale ? noteDocument('Changed') : source };
+    },
+    saveNote,
+  })} />);
+  await openNotes();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'ANNOTATIONS' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Go to highlight' }));
+  await waitFor(() => expect(noteEditor().state.doc.textBetween(noteEditor().state.selection.from, noteEditor().state.selection.to)).toBe('Target'));
+  expect(saveNote).not.toHaveBeenCalled();
+  expect(document.querySelector('.cha-notes-document')).not.toHaveClass('cha-notes-annotations');
+  fireEvent.click(screen.getByRole('treeitem', { name: 'ANNOTATIONS' }));
+  await screen.findByRole('button', { name: 'Go to highlight' });
+  expect(document.querySelector('.cha-notes-document')).toHaveClass('cha-notes-annotations');
+  expect(screen.getByRole('button', { name: 'Highlight' })).toBeDisabled();
+  const before = noteEditor().getJSON();
+  act(() => typeInNote('mutation'));
+  expect(noteEditor().getJSON()).toEqual(before);
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for ANNOTATIONS' }));
+  expect(screen.queryByRole('menuitem', { name: 'Rename' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
+  expect(screen.getByRole('menuitem', { name: 'Show compressed' })).toBeDisabled();
+  expect(screen.getByRole('menuitem', { name: 'Copy Ref ID' })).toBeEnabled();
+  fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Copy Ref ID' }), { key: 'Escape' });
+  stale = true;
+  fireEvent.click(screen.getByRole('button', { name: 'Go to highlight' }));
+  expect(await screen.findByText('This entry has changed or was removed.')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('treeitem', { name: 'ANNOTATIONS' }));
+  missing = true;
+  fireEvent.click(await screen.findByRole('button', { name: 'Go to highlight' }));
+  expect(await screen.findByText('This note is no longer available.')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  expect(screen.queryByText('This entry has changed or was removed.')).not.toBeInTheDocument();
+});
+
+it('clears a source navigation error when the source note closes', async () => {
+  const annotation: NoteItem = { ...plan, id: 9, kind: 'annotation', name: 'ANNOTATIONS', read_only: true };
+  const generated = { type: 'doc', content: [{ type: 'paragraph', content: [
+    { type: 'annotationSource', attrs: { sourceId: 4, entryType: 'highlight', ordinal: 1 } }, { type: 'text', text: 'Target' },
+  ] }] };
+  let items = [plan, annotation];
+  render(<App client={fixtureClient({
+    listNoteItems: async () => items,
+    getNote: async (id) => ({ id, document: id === 9 ? generated : noteDocument('Changed') }),
+    deleteNoteItem: async (id) => { items = items.filter((item) => item.id !== id); },
+  })} />);
+  await openNotes();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'ANNOTATIONS' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Go to highlight' }));
+  expect(await screen.findByText('This entry has changed or was removed.')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+  await waitFor(() => expect(screen.queryByRole('treeitem', { name: 'Plan' })).not.toBeInTheDocument());
+  expect(screen.queryByText('This entry has changed or was removed.')).not.toBeInTheDocument();
+});
+
+it('refreshes a visible annotation note after source rename and deletion', async () => {
+  const annotation: NoteItem = { ...plan, id: 9, kind: 'annotation', name: 'ANNOTATIONS', read_only: true };
+  let items = [plan, annotation];
+  let text = 'Old annotations';
+  render(<App client={fixtureClient({
+    listNoteItems: async () => items,
+    getNote: async (id) => ({ id, document: noteDocument(text) }),
+    renameNoteItem: async (id, name) => { text = 'Renamed annotations'; items = items.map((item) => item.id === id ? { ...item, name } : item); return items[0]; },
+    deleteNoteItem: async (id) => { text = 'No comments or highlights.'; items = items.filter((item) => item.id !== id); },
+  })} />);
+  await openNotes();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'ANNOTATIONS' }));
+  await screen.findByText('Old annotations');
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Renamed' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+  await screen.findByText('Renamed annotations');
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Renamed' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Delete note' }));
+  await screen.findByText('No comments or highlights.');
+});
+
+it.each(['rename', 'delete'])('refreshes visible annotations after %s even when the tree reload fails', async (operation) => {
+  const annotation: NoteItem = { ...plan, id: 9, kind: 'annotation', name: 'ANNOTATIONS', read_only: true };
+  let changed = false;
+  const saveNote = vi.fn();
+  const saveNoteScrollPosition = vi.fn(async () => undefined);
+  render(<App client={fixtureClient({
+    listNoteItems: async () => {
+      if (changed) throw new Error('List unavailable');
+      return [plan, annotation];
+    },
+    getNote: async (id) => ({ id, document: noteDocument(changed ? 'Fresh annotations' : 'Old annotations'), scroll_top: 240 }),
+    renameNoteItem: async (id, name) => { changed = true; return { ...plan, id, name }; },
+    deleteNoteItem: async () => { changed = true; },
+    saveNote,
+    saveNoteScrollPosition,
+  })} />);
+  await openNotes();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'ANNOTATIONS' }));
+  await screen.findByText('Old annotations');
+  document.querySelector('.cha-notes-document')!.scrollTop = 640;
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: operation === 'rename' ? 'Rename' : 'Delete' }));
+  if (operation === 'rename') {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Renamed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+  }
+  await screen.findByText('Fresh annotations');
+  expect(saveNoteScrollPosition).toHaveBeenCalledWith(9, 640);
+  expect(saveNote).not.toHaveBeenCalled();
+});
+
+it('refreshes the tree after automatic creation and keeps typing focus in the source', async () => {
+  const annotation: NoteItem = { ...plan, id: 9, kind: 'annotation', name: 'ANNOTATIONS', read_only: true };
+  let created = false;
+  const listNoteItems = vi.fn(async () => created ? [plan, annotation] : [plan]);
+  render(<App client={fixtureClient({
+    listNoteItems,
+    getNote: async (id) => ({ id, document: noteDocument('Source') }),
+    saveNote: async () => { const first = !created; created = true; return { annotation_created: first }; },
+  })} />);
+  await openNotes();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+  await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+  vi.useFakeTimers();
+  try {
+    act(() => typeInNote(' added'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.getByRole('treeitem', { name: 'ANNOTATIONS' })).toBeInTheDocument();
+    expect(noteEditor().view.dom).toHaveFocus();
+    expect(noteEditor().getText()).toContain('added');
+    expect(listNoteItems).toHaveBeenCalledTimes(2);
+    act(() => typeInNote(' more'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(listNoteItems).toHaveBeenCalledTimes(2);
+  } finally { vi.useRealTimers(); }
+});
+
+it('keeps a committed source save successful when the annotation tree refresh fails', async () => {
+  const annotation: NoteItem = { ...plan, id: 9, kind: 'annotation', name: 'ANNOTATIONS', read_only: true };
+  const listNoteItems = vi.fn().mockResolvedValueOnce([plan]).mockRejectedValueOnce(new Error('List unavailable'))
+    .mockResolvedValue([plan, annotation]);
+  const saveNote = vi.fn(async () => ({ annotation_created: true }));
+  render(<App client={fixtureClient({ listNoteItems, saveNote, getNote: async (id) => ({ id, document: noteDocument('Source') }) })} />);
+  await openNotes();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+  await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+  vi.useFakeTimers();
+  try {
+    act(() => typeInNote(' saved'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(saveNote).toHaveBeenCalledOnce();
+    expect(noteEditor().view.dom).toHaveFocus();
+    expect(screen.queryByText('The note could not be saved.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await act(async () => {});
+    expect(screen.getByRole('treeitem', { name: 'ANNOTATIONS' })).toBeInTheDocument();
+    expect(saveNote).toHaveBeenCalledOnce();
+  } finally { vi.useRealTimers(); }
+});
+
+it('discards a pending source navigation when the vault changes during scroll save', async () => {
+  const annotation: NoteItem = { ...plan, id: 9, kind: 'annotation', name: 'ANNOTATIONS', read_only: true };
+  const document = { type: 'doc', content: [{ type: 'paragraph', content: [
+    { type: 'annotationSource', attrs: { sourceId: 4, entryType: 'highlight', ordinal: 1 } }, { type: 'text', text: 'Target' },
+  ] }] };
+  let finishScroll!: () => void;
+  const events = contextBus();
+  const getNote = vi.fn(async (id: number) => ({ id, document }));
+  const saveNoteScrollPosition = vi.fn(() => new Promise<void>((resolve) => { finishScroll = resolve; }));
+  render(<App client={fixtureClient({ listNoteItems: async () => [plan, annotation], getNote, saveNoteScrollPosition })} contextEvents={events} />);
+  await openNotes();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'ANNOTATIONS' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Go to highlight' }));
+  await waitFor(() => expect(saveNoteScrollPosition).toHaveBeenCalledOnce());
+  events.emit();
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Go to highlight' })).not.toBeInTheDocument());
+  await act(async () => { finishScroll(); });
+  expect(getNote).toHaveBeenCalledTimes(1);
+});
+
+it('opens a newly created note while ANNOTATIONS is visible, even with a slow scroll save', async () => {
+  const annotation: NoteItem = { ...plan, id: 9, kind: 'annotation', name: 'ANNOTATIONS', read_only: true };
+  const created: NoteItem = { ...plan, id: 10, name: 'New note' };
+  let items = [plan, annotation];
+  let finishScroll: (() => void) | undefined;
+  const saveScroll = vi.fn(async () => {
+    if (saveScroll.mock.calls.length > 1) await new Promise<void>((resolve) => { finishScroll = resolve; });
+  });
+  render(<App client={fixtureClient({
+    listNoteItems: async () => items,
+    getNote: async (id) => ({ id, document: noteDocument(id === 10 ? 'Newly created contents' : 'Generated contents') }),
+    saveNoteScrollPosition: saveScroll,
+    createNoteItem: async () => { items = [...items, created]; return created; },
+  })} />);
+  await openNotes();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'ANNOTATIONS' }));
+  await screen.findByText('Generated contents');
+  fireEvent.click(screen.getByRole('button', { name: `Actions for ${bootstrapFixture.vault_name}` }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'New note' }));
+  fireEvent.click(within(await screen.findByRole('dialog', { name: 'New note' })).getByRole('button', { name: 'Create' }));
+  await screen.findByRole('treeitem', { name: 'New note' });
+  await waitFor(() => expect(saveScroll).toHaveBeenCalledTimes(2));
+  await act(async () => { finishScroll?.(); });
+  expect(await screen.findByText('Newly created contents')).toBeInTheDocument();
+});
+
+it('shows annotation groups in folder tree order, also after a source rename', async () => {
+  const annotation: NoteItem = { ...plan, id: 9, kind: 'annotation', name: 'ANNOTATIONS', read_only: true };
+  let items: NoteItem[] = [{ ...plan, name: 'Zebra' }, { ...plan, id: 5, name: 'Apple' }, annotation];
+  const group = (item: NoteItem) => [
+    { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: item.name }] },
+    { type: 'paragraph', content: [
+      { type: 'annotationSource', attrs: { sourceId: item.id, entryType: 'highlight', ordinal: 1 } },
+      { type: 'text', text: `Entry ${item.id}` },
+    ] },
+  ];
+  // The stored order is not the tree order.
+  const stored = () => ({ type: 'doc', content: items.filter((item) => item.kind === 'note')
+    .sort((left, right) => right.name.localeCompare(left.name)).flatMap(group) });
+  render(<App client={fixtureClient({
+    listNoteItems: async () => items,
+    getNote: async (id) => ({ id, document: id === 9 ? stored() : noteDocument('Source') }),
+    renameNoteItem: async (id, name) => {
+      items = items.map((item) => item.id === id ? { ...item, name } : item);
+      return items.find((item) => item.id === id)!;
+    },
+  })} />);
+  await openNotes();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'ANNOTATIONS' }));
+  await waitFor(() => expect(noteEditor().getText()).toMatch(/Apple[\s\S]*Zebra/u));
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Apple' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Zulu' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+  await waitFor(() => expect(noteEditor().getText()).toMatch(/Zebra[\s\S]*Zulu/u));
+});

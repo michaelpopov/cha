@@ -364,7 +364,7 @@ public:
         std::string_view name);
     [[nodiscard]] NoteContent get_note(std::int64_t id) const;
     [[nodiscard]] NoteText get_note_text(std::int64_t id, bool prefer_compressed = false) const;
-    void save_note(std::int64_t id, const nlohmann::json& document);
+    bool save_note(std::int64_t id, const nlohmann::json& document);
     void save_note_scroll_position(std::int64_t id, std::int64_t scroll_top);
     [[nodiscard]] NoteItem set_note_read_only(std::int64_t id, bool read_only);
     void save_compressed_note(std::int64_t id, std::string_view text);
