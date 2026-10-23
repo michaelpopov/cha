@@ -2257,11 +2257,7 @@ std::string stored_note_content(
     const std::filesystem::path& path,
     std::int64_t id) {
     storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
-    auto statement = database.prepare(
-        "SELECT content_json FROM note_items WHERE id = ?1");
-    statement.bind(1, id);
-    EXPECT_TRUE(statement.step());
-    return statement.text(0);
+    return note_get(database, id).document.dump();
 }
 
 nlohmann::json note_byte_fixture() {
@@ -3113,7 +3109,7 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
             database_, storage::SqliteDatabase::Mode::read_write);
         auto statement = database.prepare(
             "UPDATE note_items SET content_json = ?1 WHERE id = ?2");
-        statement.bind(1, std::string_view{"{"});
+        statement.bind_blob(1, "{");
         statement.bind(2, kept_id);
         statement.run();
     }
@@ -3126,7 +3122,7 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
             database_, storage::SqliteDatabase::Mode::read_write);
         auto statement = database.prepare(
             "UPDATE note_items SET content_json = ?1 WHERE id = ?2");
-        statement.bind(1, std::string_view{"[]"});
+        statement.bind_blob(1, "[]");
         statement.bind(2, kept_id);
         statement.run();
     }

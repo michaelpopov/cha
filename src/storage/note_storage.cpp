@@ -3,6 +3,8 @@
 #include "storage/session_label.h"
 #include "util/logging.h"
 
+#include <zlib.h>
+
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
@@ -157,10 +159,31 @@ std::string compact_document(
     }
 }
 
-nlohmann::json parse_document(std::string_view text, std::int64_t id) {
+std::string compress_document(std::string_view text) {
+    uLongf size = compressBound(static_cast<uLong>(text.size()));
+    std::string bytes(size, '\0');
+    if (compress(reinterpret_cast<Bytef*>(bytes.data()), &size,
+            reinterpret_cast<const Bytef*>(text.data()), static_cast<uLong>(text.size())) != Z_OK) {
+        throw std::runtime_error("Note compression failed");
+    }
+    bytes.resize(size);
+    return bytes;
+}
+
+nlohmann::json parse_document(std::string_view bytes, std::int64_t id) {
+    uLongf size = note_document_byte_limit;
+    std::string text(size, '\0');
+    const int result = uncompress(reinterpret_cast<Bytef*>(text.data()), &size,
+        reinterpret_cast<const Bytef*>(bytes.data()), static_cast<uLong>(bytes.size()));
+    if (result == Z_BUF_ERROR) fail(NoteFailure::too_large, too_large_message);
+    if (result != Z_OK) {
+        log_error("Note decompression failed for id " + std::to_string(id));
+        fail(NoteFailure::opening, opening_message);
+    }
+    text.resize(size);
     nlohmann::json parsed;
     try {
-        parsed = nlohmann::json::parse(std::string(text));
+        parsed = nlohmann::json::parse(text);
     } catch (const std::exception&) {
         log_error(
             "Note content is not valid JSON for id " + std::to_string(id));
@@ -371,7 +394,7 @@ bool rebuild_folder_annotations(storage::SqliteDatabase& database, std::optional
     while (!limited && sources.step()) {
         const auto source_id = sources.integer(0);
         const auto name = sources.text(1);
-        const auto entries = extract_annotations(parse_document(sources.text(2), source_id));
+        const auto entries = extract_annotations(parse_document(sources.blob(2), source_id));
         bool first = true;
         int previous_chapter = 0;
         for (const auto& entry : entries.entries) {
@@ -408,11 +431,17 @@ bool rebuild_folder_annotations(storage::SqliteDatabase& database, std::optional
         if (eligible) doc = Json::parse(empty_note_document);
         else doc["content"].push_back({{"type", "paragraph"}, {"content", Json::array({{{"type", "text"}, {"text", "No comments or highlights."}}})}});
     }
-    if (id) database.prepare("UPDATE note_items SET content_json = ?1 WHERE id = ?2", doc.dump(), id).run();
-    else {
+    const auto compressed = compress_document(doc.dump());
+    if (id) {
+        auto update = database.prepare("UPDATE note_items SET content_json = ?1 WHERE id = ?2");
+        update.bind_blob(1, compressed);
+        update.bind(2, id);
+        update.run();
+    } else {
         auto insert = database.prepare("INSERT INTO note_items(parent_id, kind, name, content_json, read_only) VALUES (?1, 'annotation', 'ANNOTATIONS', ?2, 1)");
-        if (parent_id) insert.bind(1, *parent_id); else insert.bind_null(1);
-        insert.bind(2, doc.dump()); insert.run();
+        insert.bind(1, parent_id);
+        insert.bind_blob(2, compressed);
+        insert.run();
     }
     return !id;
 }
@@ -596,6 +625,15 @@ std::string note_document_markdown(const nlohmann::json& document) {
 }
 
 void create_note_items_schema(storage::SqliteDatabase& database) {
+    bool legacy_notes = false;
+    {
+        auto columns = database.prepare("PRAGMA table_info(note_items)");
+        while (columns.step()) {
+            if (columns.text(1) == "content_json" && columns.text(2) == "TEXT") legacy_notes = true;
+        }
+    }
+    // Existing uncompressed notes are deliberately discarded during this transition.
+    if (legacy_notes) database.execute("DROP TABLE note_items");
     database.execute(R"sql(
 CREATE TABLE IF NOT EXISTS note_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT
@@ -603,7 +641,7 @@ CREATE TABLE IF NOT EXISTS note_items (
     parent_id INTEGER REFERENCES note_items(id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('folder', 'note', 'annotation')),
     name TEXT NOT NULL COLLATE BINARY,
-    content_json TEXT,
+    content_json BLOB,
     compressed_text TEXT,
     read_only INTEGER NOT NULL DEFAULT 0 CHECK (read_only IN (0, 1)),
     scroll_top INTEGER NOT NULL DEFAULT 0 CHECK (scroll_top >= 0 AND scroll_top <= 9007199254740991),
@@ -637,26 +675,6 @@ CREATE TABLE IF NOT EXISTS session_files (
     PRIMARY KEY (session_key, name)
 ) STRICT;
 )sql");
-    bool has_compressed_column = false;
-    bool has_read_only_column = false;
-    bool has_scroll_top_column = false;
-    {
-        auto columns = database.prepare("PRAGMA table_info(note_items)");
-        while (columns.step()) {
-            if (columns.text(1) == "compressed_text") has_compressed_column = true;
-            if (columns.text(1) == "read_only") has_read_only_column = true;
-            if (columns.text(1) == "scroll_top") has_scroll_top_column = true;
-        }
-    }
-    if (!has_compressed_column) {
-        database.execute("ALTER TABLE note_items ADD COLUMN compressed_text TEXT");
-    }
-    if (!has_read_only_column) {
-        database.execute("ALTER TABLE note_items ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0 CHECK (read_only IN (0, 1))");
-    }
-    if (!has_scroll_top_column) {
-        database.execute("ALTER TABLE note_items ADD COLUMN scroll_top INTEGER NOT NULL DEFAULT 0 CHECK (scroll_top >= 0 AND scroll_top <= 9007199254740991)");
-    }
 }
 
 std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {
@@ -696,7 +714,7 @@ NoteItem note_create(
         statement.bind(2, kind_text);
         statement.bind(3, name);
         if (kind == NoteItemKind::folder) statement.bind_null(4);
-        else statement.bind(4, empty_note_document);
+        else statement.bind_blob(4, compress_document(empty_note_document));
         statement.run();
         const std::int64_t id = database.last_insert_rowid();
         if (kind == NoteItemKind::note) rebuild_folder_annotations(database, parent_id, false);
@@ -735,7 +753,7 @@ std::int64_t note_import_book(
                 "VALUES (?1, 'note', ?2, ?3, 1)");
             insert.bind(1, id);
             insert.bind(2, note.name);
-            insert.bind(3, compact);
+            insert.bind_blob(3, compress_document(compact));
             insert.run();
         }
         rebuild_folder_annotations(database, id, true);
@@ -757,7 +775,7 @@ NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id) {
             fail(NoteFailure::invalid, not_note_message);
         }
         if (statement.is_null(1)) fail(NoteFailure::opening, opening_message);
-        nlohmann::json document = parse_document(statement.text(1), id);
+        nlohmann::json document = parse_document(statement.blob(1), id);
         NoteContent content{id, std::move(document), std::nullopt};
         if (!statement.is_null(2)) content.compressed_text = statement.text(2);
         content.scroll_top = statement.integer(3);
@@ -778,7 +796,7 @@ NoteText note_get_text(
         return {id, statement.text(0),
             prefer_compressed && !statement.is_null(2)
                 ? statement.text(2)
-                : note_document_markdown(parse_document(statement.text(1), id))};
+                : note_document_markdown(parse_document(statement.blob(1), id))};
     } catch (const nlohmann::json::exception&) {
         fail(NoteFailure::opening, opening_message);
     } catch (const std::runtime_error& error) {
@@ -799,14 +817,14 @@ bool note_save(
         if (item->read_only) {
             auto stored = database.prepare("SELECT content_json FROM note_items WHERE id = ?1", id);
             if (!stored.step()) fail(NoteFailure::not_found, missing_note_message);
-            if (!read_only_note_change(parse_document(stored.text(0), id), document)) {
+            if (!read_only_note_change(parse_document(stored.blob(0), id), document)) {
                 fail(NoteFailure::invalid, "This note is read-only. Make it editable first.");
             }
         }
         storage::SqliteStatement update = database.prepare(
             "UPDATE note_items SET content_json = ?1 "
             "WHERE id = ?2 AND kind = 'note'");
-        update.bind(1, compact);
+        update.bind_blob(1, compress_document(compact));
         update.bind(2, id);
         update.run();
         const bool created = rebuild_folder_annotations(database, item->parent_id, true, &document);

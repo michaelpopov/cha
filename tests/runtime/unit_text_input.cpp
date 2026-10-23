@@ -474,12 +474,12 @@ TEST(TextInput, UsesCompressedNoteTextForAttachmentsAndTheChatSizeLimit) {
 TEST(TextInput, DecodesCaseSensitiveBase62ReferencesAndPreservesMissingNoteDrafts) {
     TemporaryTextSession temporary;
     storage::SqliteDatabase database(temporary.path, storage::SqliteDatabase::Mode::read_write);
-    database.execute(
-        "INSERT INTO note_items (id, kind, name, content_json) VALUES "
-        "(10, 'note', 'Uppercase', '{\"type\":\"doc\"}'), "
-        "(36, 'note', 'Lowercase', '{\"type\":\"doc\"}'), "
-        "(56800235583, 'note', 'Maximum', '{\"type\":\"doc\"}'), "
-        "(2, 'folder', 'Folder', NULL)");
+    for (const auto& [id, name] : std::vector<std::pair<std::int64_t, std::string>>{
+             {10, "Uppercase"}, {36, "Lowercase"}, {56800235583, "Maximum"}}) {
+        const auto note = note_create(database, {}, NoteItemKind::note, name);
+        database.prepare("UPDATE note_items SET id = ?1 WHERE id = ?2", id, note.id).run();
+    }
+    database.execute("INSERT INTO note_items (id, kind, name) VALUES (2, 'folder', 'Folder')");
     auto controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
     for (const auto reference : {"##00000A", "##00000a", "##zzzzzz"}) {
@@ -525,7 +525,7 @@ TEST(TextInput, RejectsADamagedDocumentWithoutReplacingTheSavedCopy) {
     auto controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
     ASSERT_TRUE(handle_text_input(*controller, "operator", "##000001").clear_input);
-    database.execute("UPDATE note_items SET content_json = '[]'");
+    database.execute("UPDATE note_items SET content_json = X'5b5d'");
     const auto failed = handle_text_input(*controller, "operator", "##000001");
     EXPECT_FALSE(failed.clear_input);
     EXPECT_EQ(failed.session.notice, "The note could not be opened.");

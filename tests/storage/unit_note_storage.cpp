@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <zlib.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -63,13 +64,28 @@ int item_count(Database& database) {
     return static_cast<int>(statement.integer(0));
 }
 
+std::string compressed_content(std::string_view text) {
+    uLongf size = compressBound(static_cast<uLong>(text.size()));
+    std::string bytes(size, '\0');
+    EXPECT_EQ(compress(reinterpret_cast<Bytef*>(bytes.data()), &size,
+        reinterpret_cast<const Bytef*>(text.data()), static_cast<uLong>(text.size())), Z_OK);
+    bytes.resize(size);
+    return bytes;
+}
+
 std::string raw_content(Database& database, std::int64_t id) {
     Statement statement = database.prepare(
         "SELECT content_json FROM note_items WHERE id = ?1");
     statement.bind(1, id);
     EXPECT_TRUE(statement.step());
     EXPECT_FALSE(statement.is_null(0));
-    return statement.text(0);
+    const auto bytes = statement.blob(0);
+    uLongf size = note_document_byte_limit;
+    std::string text(size, '\0');
+    EXPECT_EQ(uncompress(reinterpret_cast<Bytef*>(text.data()), &size,
+        reinterpret_cast<const Bytef*>(bytes.data()), static_cast<uLong>(bytes.size())), Z_OK);
+    text.resize(size);
+    return text;
 }
 
 std::int64_t note_sequence(Database& database) {
@@ -379,20 +395,6 @@ TEST_F(NoteStorageTest, CompressionPreservesOriginalAndSurvivesEditsAndReopen) {
     EXPECT_THROW(note_save_compressed(*database_, note.id, " \n\t"), NoteError);
 }
 
-TEST_F(NoteStorageTest, AddsCompressionColumnToExistingNotesOnce) {
-    const auto note = note_create(*database_, {}, NoteItemKind::note, "Old note");
-    database_->execute("CREATE TABLE legacy AS SELECT * FROM note_items; DROP TABLE note_items; ALTER TABLE legacy RENAME TO note_items");
-    database_->execute("ALTER TABLE note_items DROP COLUMN compressed_text");
-    for (int count = 0; count < 2; ++count) {
-        storage::SqliteTransaction transaction(*database_);
-        create_note_items_schema(*database_);
-        transaction.commit();
-    }
-    EXPECT_FALSE(note_list(*database_).front().has_compressed);
-    EXPECT_EQ(note_get(*database_, note.id).document, nlohmann::json::parse(empty_note_document));
-    note_save_compressed(*database_, note.id, "Compressed after upgrade");
-}
-
 TEST_F(NoteStorageTest, ReadOnlyStateSurvivesReopenAndProtectsOnlyContent) {
     const auto note = note_create(*database_, {}, NoteItemKind::note, "Source");
     EXPECT_FALSE(note.read_only);
@@ -419,20 +421,6 @@ TEST_F(NoteStorageTest, ReadOnlyStateSurvivesReopenAndProtectsOnlyContent) {
     EXPECT_THROW((void)note_set_read_only(*database_, note.id, false), NoteError);
     const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Folder");
     EXPECT_THROW((void)note_set_read_only(*database_, folder.id, true), NoteError);
-}
-
-TEST_F(NoteStorageTest, AddsReadOnlyColumnToExistingNotesOnceAndKeepsThemEditable) {
-    const auto note = note_create(*database_, {}, NoteItemKind::note, "Existing");
-    database_->execute("CREATE TABLE legacy AS SELECT * FROM note_items; DROP TABLE note_items; ALTER TABLE legacy RENAME TO note_items");
-    database_->execute("ALTER TABLE note_items DROP COLUMN read_only");
-    for (int count = 0; count < 2; ++count) {
-        storage::SqliteTransaction transaction(*database_);
-        create_note_items_schema(*database_);
-        transaction.commit();
-    }
-    EXPECT_FALSE(note_list(*database_).front().read_only);
-    note_save(*database_, note.id, {{"changed", true}});
-    EXPECT_TRUE(note_set_read_only(*database_, note.id, true).read_only);
 }
 
 TEST_F(NoteStorageTest, ReadOnlyNotesSaveHighlightsButRejectOtherChanges) {
@@ -579,21 +567,6 @@ TEST_F(NoteStorageTest, ScrollPositionsArePerNoteAndSurviveReadOnlyAndReopen) {
     });
 }
 
-TEST_F(NoteStorageTest, AddsScrollColumnToExistingNotesOnceAndPreservesContent) {
-    const auto note = note_create(*database_, {}, NoteItemKind::note, "Existing");
-    const auto original = raw_content(*database_, note.id);
-    database_->execute("ALTER TABLE note_items DROP COLUMN scroll_top");
-    for (int count = 0; count < 2; ++count) {
-        storage::SqliteTransaction transaction(*database_);
-        create_note_items_schema(*database_);
-        transaction.commit();
-    }
-    EXPECT_EQ(note_get(*database_, note.id).scroll_top, 0);
-    EXPECT_EQ(raw_content(*database_, note.id), original);
-    note_save_scroll_position(*database_, note.id, 640);
-    EXPECT_EQ(note_get(*database_, note.id).scroll_top, 640);
-}
-
 TEST_F(NoteStorageTest, NewDatabaseKeepsSchema2IdentityAndNoteSchema) {
     EXPECT_EQ(
         database_->pragma_integer("user_version"),
@@ -640,6 +613,57 @@ TEST_F(NoteStorageTest, NewDatabaseKeepsSchema2IdentityAndNoteSchema) {
             "INSERT INTO note_items (kind, name, content_json) "
             "VALUES ('note', 'Plan', '{}')"),
         std::runtime_error);
+}
+
+TEST_F(NoteStorageTest, StoresCompressedBlobAndReadsItAfterReopen) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Chapter");
+    const nlohmann::json document = {{"type", "doc"}, {"content", {
+        {{"type", "paragraph"}, {"content", {{{"type", "text"}, {"text", std::string(100000, 'a')}}}}}
+    }}};
+    note_save(*database_, note.id, document);
+    {
+        auto stored = database_->prepare("SELECT typeof(content_json), length(content_json) FROM note_items WHERE id = ?1", note.id);
+        ASSERT_TRUE(stored.step());
+        EXPECT_EQ(stored.text(0), "blob");
+        EXPECT_LT(stored.integer(1), 10000);
+    }
+    database_.reset();
+    database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+    EXPECT_EQ(note_get(*database_, note.id).document, document);
+    EXPECT_EQ(note_get_text(*database_, note.id).text, std::string(100000, 'a'));
+    auto damaged = database_->prepare("UPDATE note_items SET content_json = ?1 WHERE id = ?2");
+    damaged.bind_blob(1, "broken");
+    damaged.bind(2, note.id);
+    damaged.run();
+    expect_note_error(NoteFailure::opening, "The note could not be opened.", [&] {
+        (void)note_get(*database_, note.id);
+    });
+}
+
+TEST_F(NoteStorageTest, ReplacesLegacyTextNotesOnce) {
+    database_->execute(R"sql(
+        DROP TABLE note_items;
+        CREATE TABLE note_items (
+            id INTEGER PRIMARY KEY,
+            parent_id INTEGER REFERENCES note_items(id) ON DELETE CASCADE,
+            content_json TEXT
+        ) STRICT;
+        INSERT INTO note_items VALUES (1, NULL, NULL), (2, 1, NULL), (3, 2, '{}');
+    )sql");
+    {
+        storage::SqliteTransaction transaction(*database_);
+        create_note_items_schema(*database_);
+        transaction.commit();
+    }
+    EXPECT_TRUE(note_list(*database_).empty());
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "New note");
+    {
+        storage::SqliteTransaction transaction(*database_);
+        create_note_items_schema(*database_);
+        transaction.commit();
+    }
+    ASSERT_EQ(note_list(*database_).size(), 1U);
+    EXPECT_EQ(note_get(*database_, note.id).document, nlohmann::json::parse(empty_note_document));
 }
 
 TEST(NoteStorage, ConvertsNoteBlocksLinksAndImageDescriptionsToMarkdown) {
@@ -818,7 +842,7 @@ TEST_F(NoteStorageTest, NamesParentsAndSiblingNamespace) {
     Statement spaced = database_->prepare(
         "UPDATE note_items SET content_json = ?1 WHERE id = ?2");
     const std::string spaced_json = "{ \"type\" : \"doc\" }";
-    spaced.bind(1, spaced_json);
+    spaced.bind_blob(1, compressed_content(spaced_json));
     spaced.bind(2, slash.id);
     spaced.run();
     const auto next_name = note_rename(*database_, slash.id, "Renamed");
@@ -1010,7 +1034,7 @@ TEST_F(NoteStorageTest, DocumentsAndByteLimit) {
     auto write_content = [&](std::string content) {
         Statement update = database_->prepare(
             "UPDATE note_items SET content_json = ?1 WHERE id = ?2");
-        update.bind(1, content);
+        update.bind_blob(1, compressed_content(content));
         update.bind(2, note.id);
         update.run();
     };

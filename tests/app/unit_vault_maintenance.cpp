@@ -182,7 +182,7 @@ std::int64_t seed_notes(const std::filesystem::path& path, std::string_view name
     ]})"));
     note_save(database, note.id, document);
     const auto corrupt = note_create(database, folder.id, NoteItemKind::note, "Damaged");
-    auto damage = database.prepare("UPDATE note_items SET content_json = 'invalid JSON' WHERE id = ?1");
+    auto damage = database.prepare("UPDATE note_items SET content_json = X'00' WHERE id = ?1");
     damage.bind(1, corrupt.id);
     (void)damage.step();
     const auto deleted = note_create(database, {}, NoteItemKind::note, "Deleted");
@@ -196,9 +196,11 @@ nlohmann::json stored_notes(const std::filesystem::path& path, std::string_view 
         "SELECT id, parent_id, kind, name, content_json FROM note_items ORDER BY id");
     auto items = nlohmann::json::array();
     while (rows.step()) {
+        const auto bytes = rows.is_null(4) ? std::string{} : rows.blob(4);
         items.push_back({rows.integer(0), rows.is_null(1) ? nlohmann::json(nullptr)
             : nlohmann::json(rows.integer(1)), rows.text(2), rows.text(3),
-            rows.is_null(4) ? nlohmann::json(nullptr) : nlohmann::json(rows.text(4))});
+            rows.is_null(4) ? nlohmann::json(nullptr) : nlohmann::json::binary(
+                std::vector<std::uint8_t>(bytes.begin(), bytes.end()))});
     }
     auto sequence = database.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'note_items'");
     return {{"items", items}, {"sequence", sequence.step() ? sequence.integer(0) : 0}};

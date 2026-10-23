@@ -64,6 +64,17 @@ include(FetchContent)
 # Windows builds must not require a separately copied libcurl DLL.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
+set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZLIB_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    zlib
+    URL https://zlib.net/fossils/zlib-1.3.2.tar.gz
+    URL_HASH SHA256=bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
+)
+FetchContent_MakeAvailable(zlib)
+
 if(APPLE OR NOT CURL_FOUND)
     set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
     set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -431,7 +442,7 @@ target_link_libraries(
     PRIVATE
         spdlog::spdlog
 )
-target_link_libraries(cha_lib PRIVATE OpenSSL::Crypto)
+target_link_libraries(cha_lib PRIVATE OpenSSL::Crypto ZLIB::ZLIBSTATIC)
 cha_enable_warnings(cha_lib)
 
 target_compile_definitions(
@@ -559,6 +570,7 @@ if(BUILD_TESTING)
         PRIVATE
             cha_lib
             cha_sqlite3
+            ZLIB::ZLIBSTATIC
             GTest::gtest_main)
     target_include_directories(cha_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     target_compile_definitions(

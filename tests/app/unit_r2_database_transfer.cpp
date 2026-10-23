@@ -1,6 +1,7 @@
 #include "app/r2_database_transfer.h"
 
 #include "storage/session_lease.h"
+#include "storage/note_storage.h"
 #include "storage/workspace_session_database.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
@@ -69,6 +70,13 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
     const std::filesystem::path database =
         test::import_test_database(
             workspace.root(), workspace.root() / "workspace copy.sqlite3");
+    const nlohmann::json document = {{"type", "doc"}, {"text", std::string(100000, 'a')}};
+    std::int64_t note_id;
+    {
+        storage::SqliteDatabase source(database, storage::SqliteDatabase::Mode::read_write);
+        note_id = note_create(source, {}, NoteItemKind::note, "Chapter").id;
+        note_save(source, note_id, document);
+    }
     const std::filesystem::path vault = write_vault(database);
     std::ofstream(vault, std::ios::app) << "parent = \"Base\"\n";
 #ifndef _WIN32
@@ -148,6 +156,7 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
     storage::SqliteDatabase source(database, storage::SqliteDatabase::Mode::read_only);
     storage::SqliteDatabase copy(uploaded_database, storage::SqliteDatabase::Mode::read_only);
     EXPECT_EQ(read_workspace_config_files(source), read_workspace_config_files(copy));
+    EXPECT_EQ(note_get(copy, note_id).document, document);
 }
 
 TEST(R2DatabaseTransfer, RegisteredMachineCanUploadAgain) {
