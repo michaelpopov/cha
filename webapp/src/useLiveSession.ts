@@ -11,7 +11,7 @@ import {
   welcomeSessionId,
   writeAppRoute,
 } from './state/route';
-import type { AppAction, AppState, NavigationAction } from './state/view';
+import { workspaceVisibility, type AppAction, type AppState, type NavigationAction } from './state/view';
 import { welcomeSnapshot, welcomeSubmission, type WelcomeTurn } from './welcomeTurn';
 
 // Owns everything a navigation can invalidate: the address bar, the epoch
@@ -92,6 +92,11 @@ export function useLiveSession(
 ) {
   const leaveRef = useRef(leaveNoteThen);
   leaveRef.current = leaveNoteThen;
+  const { notesVisible, chatVisible } = workspaceVisibility(state);
+  const splitWorkspace = notesVisible && chatVisible;
+  const leaveForChat = useCallback<LeaveNoteThen>(async (action, options) => (
+    splitWorkspace ? await action() : await leaveRef.current(action, options)
+  ), [splitWorkspace]);
   // The epoch this render was built from. The ref below is what asynchronous
   // work compares against; this is what a render can compare against without
   // reading that ref while rendering.
@@ -242,12 +247,14 @@ export function useLiveSession(
       return;
     }
     const context = vaultContext.current;
-    void leaveRef.current(() => {
+    const commit = () => {
       if (vaultContext.current !== context) return false;
-      beginNavigation();
+      if (!(splitWorkspace && action.type === 'open-note')) beginNavigation();
       dispatch(action);
-    });
-  }, [beginNavigation, dispatch]);
+    };
+    if (splitWorkspace && (action.type === 'show-chat' || action.type === 'show-initial-conversation')) commit();
+    else void leaveRef.current(commit);
+  }, [beginNavigation, dispatch, splitWorkspace]);
 
   // Welcome and deletion also discard the last open target.
   const clearLiveSession = useCallback(() => {
@@ -434,6 +441,7 @@ export function useLiveSession(
     sessionId: string,
     updateHistory: boolean,
     refreshRecent: boolean,
+    navigate = true,
   ) => {
     // React StrictMode deliberately replays effect cleanup during development.
     // That cleanup advances the live generation while this asynchronous open
@@ -450,7 +458,7 @@ export function useLiveSession(
       if (navigation.current !== epoch) return false;
       if (liveGeneration.current !== generation) continue;
 
-      dispatch({ type: 'conversation-opened', snapshot });
+      dispatch({ type: 'conversation-opened', snapshot, navigate });
       if (isWelcome(forumId, sessionId)) {
         welcomeTurn.current = {
           key: `${forumId}/${sessionId}`,
@@ -478,14 +486,15 @@ export function useLiveSession(
     updateHistory = true,
     refreshRecent = true,
     adoptDraft = true,
-  ) => leaveRef.current(async () => {
+    navigate = true,
+  ) => leaveForChat(async () => {
     const target = `${forumId}/${sessionId}`;
     if (adoptDraft && draftAdoption.current && draftAdoption.current !== target) {
       draftAdoption.current = null;
     }
     retryTarget.current = { forumId, sessionId, updateHistory };
     if (connection.current?.key === target) {
-      dispatch({ type: 'show-chat' });
+      if (navigate) dispatch({ type: 'show-chat' });
       if (adoptDraft) {
         if (draftAdoption.current === target) draftAdoption.current = null;
         conversationOpened.current?.(forumId, sessionId);
@@ -499,7 +508,7 @@ export function useLiveSession(
     dispatch({ type: 'session-operation-started', message: 'Opening session…' });
     try {
       const opened = await performOpen(
-        epoch, forumId, sessionId, updateHistory, refreshRecent,
+        epoch, forumId, sessionId, updateHistory, refreshRecent, navigate,
       );
       if (opened && adoptDraft) conversationOpened.current?.(forumId, sessionId);
       if (!opened && navigation.current === epoch) {
@@ -527,9 +536,9 @@ export function useLiveSession(
       if (pendingTarget.current === pending) pendingTarget.current = null;
       if (draftAdoption.current === target) draftAdoption.current = null;
     }
-  }), [beginNavigation, dispatch, performOpen]);
+  }), [beginNavigation, dispatch, leaveForChat, performOpen]);
 
-  const createConversation = useCallback(async (forumId: string) => leaveRef.current(async () => {
+  const createConversation = useCallback(async (forumId: string) => leaveForChat(async () => {
     const target = `${forumId}/new`;
     draftAdoption.current = null;
     if (pendingTarget.current?.key === target) return false;
@@ -576,7 +585,7 @@ export function useLiveSession(
     } finally {
       if (pendingTarget.current === pending) pendingTarget.current = null;
     }
-  }), [beginNavigation, client, dispatch, onSessionDiscarded, performOpen]);
+  }), [beginNavigation, client, dispatch, leaveForChat, onSessionDiscarded, performOpen]);
 
   const retrySessionOpen = useCallback(() => {
     const target = retryTarget.current;
@@ -625,7 +634,7 @@ export function useLiveSession(
     // new navigation screen.
     if (navigation.current !== renderedEpoch) return;
     if (!initialRouteReady || state.bootstrapStatus !== 'ready' || !active) return;
-    if (state.mainView !== 'chat') return;
+    if (!workspaceVisibility(state).chatVisible) return;
     if (state.sessionOperation !== 'idle') return;
     if (pendingTarget.current || connection.current || recovery.current) return;
     const target = `${active.forumId}/${active.sessionId}`;
@@ -648,9 +657,9 @@ export function useLiveSession(
       );
       return;
     }
-    void openConversation(active.forumId, active.sessionId, false, false, adopt);
+    void openConversation(active.forumId, active.sessionId, false, false, adopt, false);
   }, [connectStream, initialRouteReady, openConversation, renderedEpoch,
-    state.activeConversation, state.bootstrapStatus, state.mainView,
+    state.activeConversation, state.bootstrapStatus, state.mainView, state.layoutMode,
     state.sessionOperation, state.sessionSnapshot, state.streamStatus]);
 
   useEffect(() => {
@@ -658,7 +667,7 @@ export function useLiveSession(
       const previousUrl = rememberedAppUrl();
       rememberAppUrl(window.location.href);
       if (previousUrl === rememberedAppUrl()) return;
-      void leaveRef.current(() => {
+      void leaveForChat(() => {
         const route = currentAppRoute();
         if (route.kind === 'root') {
           const initial = initialConversation.current;
@@ -683,7 +692,7 @@ export function useLiveSession(
       window.removeEventListener('popstate', visitHistoryRoute);
       window.removeEventListener('hashchange', visitHistoryRoute);
     };
-  }, [beginNavigation, clearLiveSession, dispatch, navigate, openConversation]);
+  }, [beginNavigation, clearLiveSession, dispatch, leaveForChat, navigate, openConversation]);
 
   useEffect(() => () => {
     resetLiveSession();

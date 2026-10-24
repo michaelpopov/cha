@@ -3525,7 +3525,7 @@ describe('chat pictures', () => {
       getCharacterPicture,
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     const image = () => screen.getByRole('img', { name: 'Assistant' });
     await waitFor(() => expect(image()).toHaveAttribute('src', 'data:image/png;base64,PICTURE.jpg'));
     const generation = { ...members.generation, active: true, character_id: 'assistant', request_id: 7 };
@@ -3560,7 +3560,7 @@ describe('chat pictures', () => {
       getCharacterPicture,
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await screen.findByRole('img');
     for (const [requestId, calls] of [[7, 2], [8, 3]] as const) {
       act(() => events.handlers[0].onSnapshot({ ...members,
@@ -3579,14 +3579,14 @@ describe('chat pictures', () => {
       getCharacterPicture,
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await screen.findByRole('img', { name: 'Assistant' });
     const image = () => screen.getByRole('img', { name: 'Assistant' });
     act(() => events.handlers[0].onSnapshot({ ...members,
       generation: { ...members.generation, active: true, character_id: 'assistant', request_id: 7, phase: 'answering' } }));
     await waitFor(() => expect(image()).toHaveAttribute('src', 'data:image/png;base64,PICTURE_1.png'));
-    fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await waitFor(() => expect(getCharacterPicture).toHaveBeenCalledTimes(3));
     expect(getCharacterPicture).toHaveBeenLastCalledWith('assistant', 'PICTURE_1.png');
     expect(await screen.findByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,PICTURE_1.png');
@@ -3598,7 +3598,7 @@ describe('chat pictures', () => {
     const getCharacterPicture = vi.fn().mockResolvedValueOnce(portrait).mockReturnValueOnce(next.promise);
     render(<App client={pictureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     fireEvent.error(await screen.findByRole('img', { name: 'Assistant' }));
     expect(await screen.findByText('Picture unavailable')).toBeInTheDocument();
     act(() => events.handlers[0].onSnapshot({ ...members,
@@ -3617,7 +3617,7 @@ describe('chat pictures', () => {
     const getCharacterPicture = vi.fn();
     render(<App client={pictureClient({ getCharacter, getCharacterPicture })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await act(async () => {});
     expect(getCharacter).toHaveBeenCalledWith('assistant');
     expect(getCharacterPicture).not.toHaveBeenCalled();
@@ -3630,20 +3630,20 @@ describe('chat pictures', () => {
     const getCharacterPicture = vi.fn().mockResolvedValue(portrait);
     render(<App client={pictureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    expect(screen.getByRole('button', { name: 'Show picture' })).toHaveAttribute('aria-expanded', 'false');
+    expect(document.querySelector('.cha-picture')).not.toBeInTheDocument();
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
     expect(getCharacterPicture).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     expect(await screen.findByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,original-bytes');
-    fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Hide sidebar' })).toHaveAttribute('aria-expanded', 'true');
+    expect(document.querySelector('.cha-app')).toHaveAttribute('data-sidebar', 'open');
     const calls = getCharacterPicture.mock.calls.length;
     act(() => events.handlers[0].onSnapshot({ ...members, generation: { ...members.generation, active: true, character_id: 'guide' } }));
     expect(getCharacterPicture).toHaveBeenCalledTimes(calls);
-    fireEvent.click(screen.getByRole('button', { name: 'Hide sidebar' }));
-    expect(screen.getByRole('button', { name: 'Show picture' })).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-sidebar'));
+    expect(document.querySelector('.cha-picture')).not.toBeInTheDocument();
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
   });
 
@@ -3664,16 +3664,16 @@ describe('chat pictures', () => {
     })}
       connectSessionEvents={events.connect} />);
     await attachInitial(events, snapshot);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     expect(await screen.findByRole('img', { name: 'Assistant' })).toBeInTheDocument();
-    if (!open) fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
+    if (!open) act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     fireEvent.click(await screen.findByRole('button', { name: "Play cached audio for Guide's response" }));
     await screen.findByRole('button', { name: "Stop reading Guide's response" });
     expect(play).toHaveBeenCalledOnce();
     expect(screen.getByRole('combobox', { name: 'Choose message target' })).toHaveValue('assistant');
     if (!open) {
       expect(screen.queryByRole('img')).not.toBeInTheDocument();
-      fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     }
     expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: "Stop reading Guide's response" }));
@@ -3698,7 +3698,7 @@ describe('chat pictures', () => {
         status: 'complete', created_at: 1_700_000_000, has_cached_audio: true,
       }],
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     expect(await screen.findByRole('img', { name: 'Assistant' })).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: "Play cached audio for Guide's response" }));
     await screen.findByText('This message could not be read aloud. Try again.');
@@ -3711,7 +3711,7 @@ describe('chat pictures', () => {
       ? Promise.reject(new Error('read failed')) : Promise.resolve(failure === 'missing' ? null : portrait));
     render(<App client={pictureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     if (failure === 'decode') fireEvent.error(await screen.findByRole('img', { name: 'Assistant' }));
     if (failure !== 'missing') expect(await screen.findByText('Picture unavailable')).toBeInTheDocument();
     else await waitFor(() => expect(getCharacterPicture).toHaveBeenCalled());
@@ -3727,7 +3727,7 @@ describe('chat pictures', () => {
     const getCharacterPicture = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise).mockResolvedValue(null);
     render(<App client={pictureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
     await attachInitial(events, members);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await waitFor(() => expect(getCharacterPicture).toHaveBeenCalledTimes(1));
     act(() => events.handlers[0].onSnapshot({ ...members, default_character_id: 'guide' }));
     await waitFor(() => expect(getCharacterPicture).toHaveBeenLastCalledWith('guide', 'PICTURE.png'));
@@ -3746,14 +3746,14 @@ describe('chat pictures', () => {
     const getCharacterPicture = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(portrait);
     render(<App client={pictureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await waitFor(() => expect(getCharacterPicture).toHaveBeenCalledTimes(1));
-    if (action === 'close') fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
+    if (action === 'close') act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     else fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
     await act(async () => pending.resolve(portrait));
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
     expect(getCharacterPicture).toHaveBeenCalledTimes(1);
-    if (action === 'close') fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    if (action === 'close') act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     else fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
     expect(await screen.findByRole('img', { name: 'Assistant' })).toBeInTheDocument();
     expect(getCharacterPicture).toHaveBeenCalledTimes(2);
@@ -3771,7 +3771,7 @@ describe('chat pictures', () => {
       } : snapshotFixture,
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await waitFor(() => expect(getCharacterPicture).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: 'PlanningThe Lobby' }));
     await waitFor(() => expect(getCharacterPicture).toHaveBeenLastCalledWith('guide', 'PICTURE.png'));
@@ -3839,7 +3839,7 @@ describe('prompt draft ownership', () => {
     const events = drivableEvents();
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Still here');
     await user.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
     await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /Welcome/ }));
@@ -3857,7 +3857,7 @@ describe('prompt draft ownership', () => {
       },
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Keep this');
     await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Planning/ }));
     expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
@@ -3881,7 +3881,7 @@ describe('prompt draft ownership', () => {
       contextEvents={maintenance.contextEvents}
     />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Planning/ }));
     await waitFor(() => expect(events.connections.at(-1)?.key).toBe('lobby/planning'));
     act(() => events.handlers.at(-1)?.onSnapshot(planningSnapshot));
@@ -3914,7 +3914,7 @@ describe('prompt draft ownership', () => {
       contextEvents={contextChangeSource().contextEvents}
     />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Personal draft');
     await user.selectOptions(screen.getByLabelText('Vault'), 'Projects');
     await waitFor(() => expect(switchVault).toHaveBeenCalledWith('Projects', undefined));
@@ -3934,7 +3934,7 @@ describe('prompt draft ownership', () => {
       connectSessionEvents={events.connect}
     />);
     await attachInitial(events);
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     const input = screen.getByRole('textbox', { name: 'Message' });
     await user.type(input, 'Personal draft');
     await user.selectOptions(screen.getByLabelText('Vault'), 'Projects');

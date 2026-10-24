@@ -48,6 +48,25 @@ function Harness({
 }
 
 describe('PromptInput', () => {
+  it('admits only one microphone startup and releases the other prompt on cancellation', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let resolveStart!: (transport: VoiceInputTransport) => void;
+    const start = vi.spyOn(VoiceInputSession, 'start').mockImplementation(() => new Promise((resolve) => { resolveStart = resolve; }));
+    const client = fixtureClient({ getVoiceInputRuntime: async () => voiceRuntime });
+    render(<><Harness client={client} /><Harness client={client} /></>);
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Start voice input' })).toHaveLength(2));
+    const [first, second] = screen.getAllByRole('button', { name: 'Start voice input' });
+    act(() => { first.click(); second.click(); });
+    await waitFor(() => expect(start).toHaveBeenCalledOnce());
+    expect(second).toBeDisabled();
+    expect(screen.getAllByRole('textbox').every((input) => !input.hasAttribute('disabled'))).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel voice input setup' }));
+    expect(second).toBeEnabled();
+    const cancel = vi.fn();
+    await act(async () => resolveStart({ stop: vi.fn(async () => {}), cancel }));
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it.each(['openai', 'xai'] as const)('discards delayed %s recognition during playback and its echo delay', async (provider) => {
     vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
     let appendVoice: (text: string, provisional?: boolean) => void = () => {};

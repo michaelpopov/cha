@@ -34,7 +34,7 @@ async function nativeParity() {
   const toggle = (name) => document.querySelector(`button[aria-label="${name}"]`);
   const bounds = (element) => element.getBoundingClientRect();
   try {
-    await until(() => toggle('Show picture') && document.querySelector('textarea:not(:disabled)'));
+    await until(() => typeof window.__CHA_NATIVE_SET_LAYOUT__ === 'function' && document.querySelector('textarea:not(:disabled)'));
     await wait(300);
     for (const fixture of pictureFixtures) {
       const image = new Image();
@@ -60,26 +60,23 @@ async function nativeParity() {
         check(Math.abs(bounds(document.querySelector('[aria-label="Sidebar"]')).width - 192) < 1, 'narrow sidebar width failed');
         check(displayed === 0, 'narrow picture did not reach zero');
       }
-      for (const name of [sidebarOpen ? 'Hide sidebar' : 'Show sidebar', pictureOpen ? 'Hide picture' : 'Show picture']) {
-        const button = toggle(name);
-        const rect = bounds(button);
-        check(rect.width >= 20 && rect.left >= bounds(chat).left && rect.right <= bounds(chat).right + 1,
-          `${name} clipped or shrunk at ${innerWidth}`);
-        check(button.getAttribute('aria-expanded') === String(name.startsWith('Hide')), `${name} state failed`);
-      }
+      check(document.querySelector('.cha-app').dataset.sidebar === (sidebarOpen ? 'open' : 'closed'), 'sidebar state failed');
+      check(Boolean(panel) === pictureOpen, 'picture state failed');
+      check(!toggle('Show sidebar') && !toggle('Hide sidebar') && !toggle('Show picture') && !toggle('Hide picture'),
+        'obsolete Chat panel buttons remain');
       check(bounds(chat).right <= innerWidth + 1, 'chat overflows viewport');
       check(Boolean(document.querySelector('[aria-label="Resize picture"]')) === (pictureOpen && displayed > 0), 'divider visibility failed');
     };
     await assertLayout(true, false);
-    toggle('Show picture').click();
+    window.__CHA_NATIVE_SET_LAYOUT__('toggle-pictures');
     await assertLayout(true, true);
-    toggle('Hide picture').click();
+    window.__CHA_NATIVE_SET_LAYOUT__('toggle-pictures');
     await assertLayout(true, false);
-    toggle('Hide sidebar').click();
+    window.__CHA_NATIVE_SET_LAYOUT__('toggle-sidebar');
     await assertLayout(false, false);
-    toggle('Show picture').click();
+    window.__CHA_NATIVE_SET_LAYOUT__('toggle-pictures');
     await assertLayout(false, true);
-    toggle('Show sidebar').click();
+    window.__CHA_NATIVE_SET_LAYOUT__('toggle-sidebar');
     await assertLayout(true, true);
     if (innerWidth >= 1000) {
       const input = document.querySelector('textarea[aria-label="Message"]');
@@ -99,19 +96,19 @@ async function nativeParity() {
       };
       const gap = () => transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop;
       const latestVisible = () => bounds(transcript.lastElementChild).bottom <= bounds(transcript).bottom + 1;
-      toggle('Hide picture').click();
+      window.__CHA_NATIVE_SET_LAYOUT__('toggle-pictures');
       await wait(300);
       setValue(input, 'A moderately long draft should expand automatically when its available width changes. '.repeat(8));
       await wait(100);
       const wideHeight = input.clientHeight;
-      toggle('Show picture').click();
+      window.__CHA_NATIVE_SET_LAYOUT__('toggle-pictures');
       await wait(100);
       check(input.clientHeight > wideHeight && input.scrollHeight <= input.clientHeight + 1,
         'draft did not reflow after opening the picture');
       await resizePicture('ArrowLeft', 8);
       check(input.scrollHeight <= input.clientHeight + 1, 'draft did not reflow after resizing the picture');
       await resizePicture('ArrowRight', 8);
-      toggle('Hide picture').click();
+      window.__CHA_NATIVE_SET_LAYOUT__('toggle-pictures');
       await wait(100);
       check(Math.abs(input.clientHeight - wideHeight) <= 1, 'draft did not shrink after closing the picture');
 
@@ -126,7 +123,7 @@ async function nativeParity() {
       transcript.scrollTop = transcript.scrollHeight;
       await wait(100);
       check(transcript.scrollHeight > transcript.clientHeight, 'transcript fixture does not scroll');
-      toggle('Show picture').click();
+      window.__CHA_NATIVE_SET_LAYOUT__('toggle-pictures');
       await wait(100);
       check(latestVisible(), 'opening the picture lost the latest transcript text');
       await resizePicture('ArrowLeft', 8);

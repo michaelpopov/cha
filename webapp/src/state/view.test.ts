@@ -6,6 +6,7 @@ import {
   appReducer,
   initialAppState,
   navigationTitle,
+  workspaceVisibility,
   type AppAction,
   type AppState,
 } from './view';
@@ -15,6 +16,45 @@ function readyState(): AppState {
 }
 
 describe('application navigation reducer', () => {
+  it('retains a hidden note across unrelated actions but clears it on leaving the workspace', () => {
+    let state = appReducer(readyState(), { type: 'set-layout', mode: 'split' });
+    state = appReducer(state, { type: 'open-note', noteId: 42 });
+    state = appReducer(state, { type: 'show-chat' });
+    expect(workspaceVisibility(state)).toEqual({ notesVisible: true, chatVisible: true });
+    expect(state.activeNoteId).toBe(42);
+    state = appReducer(state, { type: 'set-layout', mode: 'single' });
+    state = appReducer(state, { type: 'show-chat-tab' });
+    state = appReducer(state, { type: 'stream-state', status: 'connected' });
+    expect(state.activeNoteId).toBe(42);
+    state = appReducer(state, { type: 'set-layout', mode: 'split' });
+    expect(state.activeNoteId).toBe(42);
+    state = appReducer(state, { type: 'set-layout', mode: 'single' });
+    state = appReducer(state, { type: 'show-settings' });
+    expect(state.activeNoteId).toBeNull();
+    expect(workspaceVisibility(state)).toEqual({ notesVisible: false, chatVisible: false });
+    expect(state.layoutMode).toBe('single');
+  });
+
+  it('clears discarded notes and preserves the existing Single View close behavior', () => {
+    let state = appReducer(readyState(), { type: 'open-note', noteId: 42 });
+    state = appReducer(state, { type: 'show-chat' });
+    expect(state.activeNoteId).toBeNull();
+    state = appReducer(state, { type: 'set-layout', mode: 'split' });
+    state = appReducer(state, { type: 'open-note', noteId: 42 });
+    state = appReducer(state, { type: 'close-note' });
+    state = appReducer(state, { type: 'set-layout', mode: 'single' });
+    state = appReducer(state, { type: 'set-layout', mode: 'split' });
+    expect(state.activeNoteId).toBeNull();
+  });
+
+  it('keeps a pending chat operation when opening a note in Split View', () => {
+    let state = appReducer(readyState(), { type: 'set-layout', mode: 'split' });
+    state = appReducer(state, { type: 'session-operation-started', message: 'Opening session…' });
+    state = appReducer(state, { type: 'open-note', noteId: 42 });
+    expect(state.sessionOperation).toBe('pending');
+    expect(state.sessionOperationMessage).toBe('Opening session…');
+  });
+
   it.each([
     { name: 'empty', recent: [] },
     { name: 'populated', recent: [...bootstrapFixture.recent_sessions].reverse() },

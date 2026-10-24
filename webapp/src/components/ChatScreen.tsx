@@ -22,7 +22,6 @@ import {
 import { useAudioDownloads } from '../audioDownloads';
 import { readTextFile, textFileAccept } from '../textFile';
 import { ChatPictureLayout } from './ChatPicture';
-import { SidebarToggle } from './TopBar';
 import type { AppState, DataAction, NavigationAction } from '../state/view';
 import {
   nativeSpeechFromClient,
@@ -40,7 +39,6 @@ import {
   EyeOffIcon,
   FileUpIcon,
   GlobeIcon,
-  PictureIcon,
   SpeakerIcon,
   StopIcon,
   TargetIcon,
@@ -922,7 +920,6 @@ export function ChatScreen({
             : `Message ${character?.display_name ?? 'character'}`}
         statusRow={({ transliteration, voice }) => (
           <div className="cha-chat-status" aria-label="Current chat context">
-            <SidebarToggle className="cha-sidebar-toggle" dispatch={dispatch} sidebarOpen={state.sidebarOpen} />
             <span>{forum?.display_name ?? 'Unknown forum'}</span>
             <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
             <span>To: {sendToAll
@@ -967,14 +964,6 @@ export function ChatScreen({
               </button>
             )}
             {transliteration}
-            <button
-              aria-expanded={state.pictureOpen}
-              aria-label={state.pictureOpen ? 'Hide picture' : 'Show picture'}
-              className="cha-sidebar-toggle"
-              onClick={() => dispatch({ type: 'toggle-picture' })}
-              title={state.pictureOpen ? 'Hide picture' : 'Show picture'}
-              type="button"
-            ><PictureIcon /></button>
           </div>
         )}
         stopAction={generationActive ? (

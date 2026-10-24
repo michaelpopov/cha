@@ -137,6 +137,7 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
     var saveSession: ((String, String, UInt64, String, String, String) -> Void)?
     var onCloseReply: ((String, Int, String) -> Void)?
     var onPageClose: (() -> Void)?
+    var onLayoutChanged: ((Bool, Bool, Bool) -> Void)?
 
     init(runtime: OpaquePointer) {
         self.runtime = runtime
@@ -275,6 +276,17 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
         if let data = body.data(using: .utf8),
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let action = object["native_action"] as? String {
+            if action == "view_state" {
+                guard object["connection_id"] as? String == connectionId,
+                      let split = object["split"] as? NSNumber,
+                      CFGetTypeID(split) == CFBooleanGetTypeID(),
+                      let sidebar = object["sidebar"] as? NSNumber,
+                      CFGetTypeID(sidebar) == CFBooleanGetTypeID(),
+                      let pictures = object["pictures"] as? NSNumber,
+                      CFGetTypeID(pictures) == CFBooleanGetTypeID() else { return }
+                onLayoutChanged?(split.boolValue, sidebar.boolValue, pictures.boolValue)
+                return
+            }
             if action == "close_reply" {
                 guard let attempt = nativeAttemptId(object["attempt_id"]),
                       let result = object["result"] as? String,
@@ -337,6 +349,21 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
             }
             """,
             arguments: ["id": id, "ok": ok, "message": message],
+            in: nil,
+            in: .page,
+            completionHandler: { _ in })
+    }
+
+    func setLayout(_ mode: String) {
+        guard let connectionId, let webView else { return }
+        webView.callAsyncJavaScript(
+            """
+            if (window.__CHA_NATIVE_CONNECTION_ID__ === connectionId
+                && typeof window.__CHA_NATIVE_SET_LAYOUT__ === "function") {
+              window.__CHA_NATIVE_SET_LAYOUT__(mode);
+            }
+            """,
+            arguments: ["connectionId": connectionId, "mode": mode],
             in: nil,
             in: .page,
             completionHandler: { _ in })

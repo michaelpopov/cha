@@ -34,6 +34,7 @@ function contextBus() {
     emit() {
       handler?.({ causing_request_id: 1, state: 'running' });
     },
+    layout(mode: string) { window.__CHA_NATIVE_SET_LAYOUT__?.(mode); },
     on<T>(_event: string, next: (payload: T) => void) {
       handler = next as Handler;
       return () => {
@@ -66,6 +67,144 @@ function historyAction(name: 'Undo' | 'Redo') {
 }
 
 describe('Notes in the application', () => {
+  it('reports the applied toggle state and keeps the menu checked when a note cannot be saved', async () => {
+    const post = vi.fn();
+    window.__CHA_NATIVE_CONNECTION_ID__ = 'layout-test';
+    window.__CHA_NATIVE_POST__ = post;
+    const bus = contextBus();
+    let failSave = true;
+    const reportedStates = () => post.mock.calls
+      .map(([message]) => JSON.parse(message as string) as { native_action: string; split: boolean })
+      .filter((message) => message.native_action === 'view_state')
+      .map((message) => message.split);
+    try {
+      render(<App client={fixtureClient({
+        listNoteItems: async () => [plan],
+        getNote: async (id) => ({ id, document: noteDocument('Saved plan') }),
+        saveNote: async () => { if (failSave) throw new ChaError('internal_error', 'Save failed.'); },
+      })} contextEvents={bus} />);
+      await openNotes();
+      expect(reportedStates()).toEqual([false]);
+      fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+      await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+      act(() => bus.layout('toggle'));
+      await screen.findByRole('textbox', { name: 'Message' });
+      expect(reportedStates()).toEqual([false, true]);
+      fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+      fireEvent.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Welcome/ }));
+      act(() => typeInNote(' unsaved'));
+      act(() => bus.layout('toggle'));
+      const decision = await screen.findByRole('dialog');
+      expect(reportedStates()).toEqual([false, true]);
+      await act(async () => { fireEvent.click(within(decision).getByRole('button', { name: 'Stay' })); });
+      expect(screen.getByRole('separator', { name: 'Resize notes and chat' })).toBeInTheDocument();
+      expect(reportedStates()).toEqual([false, true]);
+      failSave = false;
+      act(() => bus.layout('toggle'));
+      await waitFor(() => expect(reportedStates()).toEqual([false, true, false]));
+      expect(screen.queryByRole('separator', { name: 'Resize notes and chat' })).toBeNull();
+    } finally {
+      delete window.__CHA_NATIVE_POST__;
+      delete window.__CHA_NATIVE_CONNECTION_ID__;
+    }
+  });
+
+  it('ignores startup and invalid layout commands and applies a preference set in Settings on return', async () => {
+    const bus = contextBus();
+    render(<App client={notesClient()} contextEvents={bus} />);
+    act(() => bus.layout('split'));
+    await openNotes();
+    expect(screen.queryByRole('separator', { name: 'Resize notes and chat' })).toBeNull();
+    act(() => bus.layout('invalid'));
+    expect(screen.queryByRole('separator', { name: 'Resize notes and chat' })).toBeNull();
+    fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
+    await screen.findByRole('region', { name: 'Settings' });
+    act(() => bus.layout('split'));
+    expect(screen.getByRole('region', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.queryByRole('separator', { name: 'Resize notes and chat' })).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    fireEvent.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Welcome/ }));
+    await screen.findByRole('separator', { name: 'Resize notes and chat' });
+    expect(document.querySelector('.cha-workspace-panel.is-notes')).toBeInTheDocument();
+    expect(document.querySelector('.ProseMirror')).toBeNull();
+  });
+
+  it('saves and restores a note hidden by layout while keeping chat mounted', async () => {
+    const bus = contextBus();
+    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
+    const saveNote = vi.fn(async () => undefined);
+    render(<App client={fixtureClient({ listNoteItems: async () => [plan], getNote, saveNote })} contextEvents={bus} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    act(() => bus.layout('split'));
+    const chat = await screen.findByRole('textbox', { name: 'Message' });
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    fireEvent.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Welcome/ }));
+    act(() => typeInNote(' pending'));
+    act(() => bus.layout('single'));
+    await waitFor(() => expect(document.querySelector('.ProseMirror')).toBeNull());
+    expect(saveNote).toHaveBeenCalledOnce();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(chat);
+    fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+    act(() => bus.layout('split'));
+    await waitFor(() => expect(getNote).toHaveBeenCalledTimes(2));
+    expect(getNote.mock.calls[1]).toEqual([plan.id]);
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(chat);
+  });
+
+  it('ignores a layout command while a chat open started in Split View is pending', async () => {
+    const bus = contextBus();
+    let finishOpen!: () => void;
+    const planningOpen = new Promise<void>((resolve) => { finishOpen = resolve; });
+    const saveNote = vi.fn(async () => undefined);
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote: async (id: number) => ({ id, document: noteDocument('Saved plan') }),
+      saveNote,
+      openSession: async (forumId, sessionId) => {
+        if (sessionId === 'planning') await planningOpen;
+        return { forum_id: forumId, session_id: sessionId };
+      },
+    })} contextEvents={bus} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    act(() => bus.layout('split'));
+    await screen.findByRole('textbox', { name: 'Message' });
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    fireEvent.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Planning/ }));
+    await screen.findByText('Opening session…');
+    act(() => bus.layout('single'));
+    await act(async () => finishOpen());
+    await screen.findByRole('textbox', { name: 'Message' });
+    expect(screen.getByRole('separator', { name: 'Resize notes and chat' })).toBeInTheDocument();
+    expect(noteEditor().isEditable).toBe(true);
+    expect(saveNote).not.toHaveBeenCalled();
+  });
+
+  it('keeps the visible editor and chat composer mounted across layout and navigation changes', async () => {
+    const bus = contextBus();
+    const client = notesClient();
+    render(<App client={client} contextEvents={bus} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    const editor = noteEditor();
+    act(() => bus.layout('split'));
+    expect(noteEditor()).toBe(editor);
+    const chat = await screen.findByRole('textbox', { name: 'Message' });
+    fireEvent.change(chat, { target: { value: 'Unsent chat' } });
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(chat);
+    act(() => bus.layout('single'));
+    expect(noteEditor()).toBe(editor);
+    expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+    act(() => bus.layout('split'));
+    expect(noteEditor()).toBe(editor);
+    expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('Unsent chat');
+  });
+
   it('saves pending edits before locking, then unlocks and locks again', async () => {
     let finishSave!: () => void;
     const saveNote = vi.fn(() => new Promise<void>((resolve) => { finishSave = resolve; }));

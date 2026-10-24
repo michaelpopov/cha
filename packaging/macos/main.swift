@@ -39,6 +39,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private var window: NSWindow!
     private var webView: WKWebView!
     private var nativeBridge: ChaNativeBridgeReceiver?
+    private var splitViewMenuItem: NSMenuItem?
+    private var sidebarMenuItem: NSMenuItem?
+    private var picturesMenuItem: NSMenuItem?
     private var webViewTitleObservation: NSKeyValueObservation?
     private var runtime: OpaquePointer?
     private var runtimeURL: URL?
@@ -150,6 +153,25 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
+        let layoutItem = NSMenuItem()
+        let layoutMenu = NSMenu(title: "View")
+        layoutMenu.autoenablesItems = false
+        let splitView = layoutMenu.addItem(
+            withTitle: "Split view", action: #selector(toggleSplitView(_:)), keyEquivalent: "")
+        splitView.target = self
+        splitViewMenuItem = splitView
+        let sidebar = layoutMenu.addItem(
+            withTitle: "Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "")
+        sidebar.target = self
+        sidebar.state = .on
+        sidebarMenuItem = sidebar
+        let pictures = layoutMenu.addItem(
+            withTitle: "Pictures", action: #selector(togglePictures(_:)), keyEquivalent: "")
+        pictures.target = self
+        picturesMenuItem = pictures
+        layoutItem.submenu = layoutMenu
+        mainMenu.addItem(layoutItem)
+
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
         let newInstance = windowMenu.addItem(
@@ -171,6 +193,18 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         NSApp.windowsMenu = windowMenu
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func toggleSplitView(_ sender: Any?) {
+        nativeBridge?.setLayout("toggle")
+    }
+
+    @objc private func toggleSidebar(_ sender: Any?) {
+        nativeBridge?.setLayout("toggle-sidebar")
+    }
+
+    @objc private func togglePictures(_ sender: Any?) {
+        nativeBridge?.setLayout("toggle-pictures")
     }
 
     @objc private func startNewInstance(_ sender: Any?) {
@@ -327,6 +361,11 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             }
             receiver.onPageClose = { [weak self] in
                 self?.pageRequestedClose()
+            }
+            receiver.onLayoutChanged = { [weak self] split, sidebar, pictures in
+                self?.splitViewMenuItem?.state = split ? .on : .off
+                self?.sidebarMenuItem?.state = sidebar ? .on : .off
+                self?.picturesMenuItem?.state = pictures ? .on : .off
             }
             receiver.attach(to: view, mediaHandler: built.1)
             nativeBridge = receiver

@@ -29,6 +29,12 @@ import { isSpeechPlaybackActive } from '../speechPlayback';
 import { MicrophoneIcon, SendIcon } from './Icons';
 import { TransliterationToggle, useTransliteration } from './TransliterationMode';
 
+let microphoneOwner: object | null = null;
+const microphoneListeners = new Set<() => void>();
+function notifyMicrophoneOwner() {
+  for (const listener of microphoneListeners) listener();
+}
+
 export interface PromptVoiceControls {
   available: boolean;
   state: 'idle' | 'starting' | 'recording' | 'finishing';
@@ -131,6 +137,19 @@ export function PromptInput({
   const [voiceSendPending, setVoiceSendPending] = useState(false);
   const [voiceConfiguration, setVoiceConfiguration] =
     useState<VoiceInputConfiguration | null>(null);
+  const microphoneIdentity = useRef({});
+  const [otherMicrophoneActive, setOtherMicrophoneActive] = useState(false);
+  useEffect(() => {
+    const update = () => setOtherMicrophoneActive(microphoneOwner !== null && microphoneOwner !== microphoneIdentity.current);
+    microphoneListeners.add(update);
+    update();
+    return () => { microphoneListeners.delete(update); };
+  }, []);
+  function releaseMicrophone() {
+    if (microphoneOwner !== microphoneIdentity.current) return;
+    microphoneOwner = null;
+    notifyMicrophoneOwner();
+  }
   const voiceInputSession = useRef<VoiceInputTransport | null>(null);
   const voiceSendPhrase = useRef('over to you');
   const voiceInputStartup = useRef<AbortController | null>(null);
@@ -171,6 +190,7 @@ export function PromptInput({
     }
     setVoiceSendPending(false);
     setVoiceInputState('idle');
+    releaseMicrophone();
   }
 
   useEffect(() => {
@@ -282,15 +302,18 @@ export function PromptInput({
     const session = voiceInputSession.current;
     if (!session) return true;
     const epoch = composerEpoch.current;
+    const attempt = voiceInputAttempt.current;
     setVoiceInputState('finishing');
     try {
       await session.stop();
       if (composerEpoch.current !== epoch) return false;
+      if (voiceInputAttempt.current === attempt) releaseMicrophone();
       if (voiceInputSession.current === session) voiceInputSession.current = null;
       setVoiceInputState('idle');
       return true;
     } catch (failure: unknown) {
       if (composerEpoch.current !== epoch) return false;
+      if (voiceInputAttempt.current === attempt) releaseMicrophone();
       if (voiceInputSession.current === session) voiceInputSession.current = null;
       setVoiceInputState('idle');
       onErrorRef.current(voiceInputMessage(failure));
@@ -391,6 +414,7 @@ export function PromptInput({
       voiceInputStartup.current?.abort();
       voiceInputStartup.current = null;
       setVoiceInputState('idle');
+      releaseMicrophone();
       return;
     }
     if (voiceInputSession.current) {
@@ -399,6 +423,9 @@ export function PromptInput({
     }
     if (!voiceConfiguration || !voiceInputAvailable || !enabled || !microphoneEnabled) return;
 
+    if (microphoneOwner !== null) return;
+    microphoneOwner = microphoneIdentity.current;
+    notifyMicrophoneOwner();
     const attempt = ++voiceInputAttempt.current;
     const startup = new AbortController();
     voiceInputStartup.current = startup;
@@ -415,6 +442,7 @@ export function PromptInput({
       if (voiceInputAttempt.current !== attempt) return;
       voiceInputStartup.current = null;
       setVoiceInputState('idle');
+      releaseMicrophone();
       onErrorRef.current(voiceInputMessage(failure));
       return;
     }
@@ -422,6 +450,7 @@ export function PromptInput({
     if (!runtime) {
       voiceInputStartup.current = null;
       setVoiceInputState('idle');
+      releaseMicrophone();
       onErrorRef.current('Voice input is unavailable.');
       return;
     }
@@ -490,13 +519,14 @@ export function PromptInput({
           voiceInputSession.current = null;
           setVoiceSendPending(false);
           setVoiceInputState('idle');
+          releaseMicrophone();
           onErrorRef.current(voiceInputMessage(failure));
         },
         client.connectVoiceInput,
         xaiBridgeFromClient(client),
         startup.signal,
       );
-      if (voiceInputAttempt.current !== attempt) {
+      if (voiceInputAttempt.current !== attempt || microphoneOwner !== microphoneIdentity.current) {
         session.cancel();
         return;
       }
@@ -507,6 +537,7 @@ export function PromptInput({
       if (voiceInputAttempt.current !== attempt) return;
       voiceInputStartup.current = null;
       setVoiceInputState('idle');
+      releaseMicrophone();
       onErrorRef.current(voiceInputMessage(failure));
     }
   }
@@ -559,6 +590,7 @@ export function PromptInput({
                 aria-pressed={voiceInputActive}
                 className={`cha-composer-action cha-voice-input${voiceInputState === 'starting' ? ' is-starting' : voiceInputActive ? ' is-active' : ''}`}
                 disabled={!enabled
+                  || otherMicrophoneActive
                   || !microphoneEnabled
                   || submitting
                   || voiceInputState === 'finishing'}

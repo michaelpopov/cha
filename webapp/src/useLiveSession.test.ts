@@ -36,14 +36,16 @@ function drivableSessionEvents() {
 // aside and each test drives the ladder through the calls it names.
 function harness(
   overrides: Partial<ChaClient> = {},
-  options: { onWelcomeRefresh?: () => void; leaveNoteThen?: LeaveNoteThen } = {},
+  options: { onWelcomeRefresh?: () => void; leaveNoteThen?: LeaveNoteThen; split?: boolean } = {},
 ) {
   const events = drivableSessionEvents();
   const client = fixtureClient(overrides);
   const reducer = vi.fn(appReducer);
   const refreshBootstrap = vi.fn(async () => undefined);
   const view = renderHook(() => {
-    const [state, dispatch] = useReducer(reducer, initialAppState);
+    const [state, dispatch] = useReducer(reducer, {
+      ...initialAppState, layoutMode: options.split ? 'split' : 'single',
+    });
     return {
       state,
       live: useLiveSession(client, state, dispatch, {
@@ -93,6 +95,38 @@ function haltedOpen() {
     release: () => release({ forum_id: 'entrance', session_id: 'welcome' }),
   };
 }
+
+it('keeps a pending chat open and its stream when opening a note in Split View', async () => {
+  const pending = deferred<OpenSessionResult>();
+  const discardUnusedSession = vi.fn(async () => undefined);
+  const { view, events } = harness({
+    openSession: () => pending.promise,
+    discardUnusedSession,
+  }, { split: true });
+  let opening: Promise<boolean | false> | undefined;
+  act(() => { opening = view.result.current.live.openConversation('entrance', 'welcome'); });
+  act(() => view.result.current.live.navigate({ type: 'open-note', noteId: 42 }));
+  expect(view.result.current.state.sessionOperation).toBe('pending');
+  await act(async () => {
+    pending.resolve({ forum_id: 'entrance', session_id: 'welcome' });
+    await opening;
+  });
+  expect(view.result.current.state.activeNoteId).toBe(42);
+  expect(view.result.current.state.activeConversation?.sessionId).toBe('welcome');
+  expect(events.handlers).toHaveLength(1);
+  expect(discardUnusedSession).not.toHaveBeenCalled();
+});
+
+it('does not leave the visible note when replacing chat in Split View', async () => {
+  const left = vi.fn();
+  const leaveNoteThen: LeaveNoteThen = async (action) => { left(); return await action(); };
+  const { view } = harness({}, { split: true, leaveNoteThen });
+  act(() => view.result.current.live.navigate({ type: 'open-note', noteId: 42 }));
+  left.mockClear();
+  await act(async () => { await view.result.current.live.openConversation('entrance', 'welcome'); });
+  expect(left).not.toHaveBeenCalled();
+  expect(view.result.current.state.activeNoteId).toBe(42);
+});
 
 it('discards an unused session when leaving for Settings', async () => {
   const discardUnusedSession = vi.fn(async () => undefined);

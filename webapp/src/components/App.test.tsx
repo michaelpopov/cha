@@ -2062,6 +2062,7 @@ it.each(['session_stopping', 'session_open_timeout'] as const)(
 
     expect(await screen.findByRole('alert')).toHaveTextContent(`Retryable ${code}`);
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(document.title).toBe(`CHA: ${bootstrapFixture.vault_name}`);
   },
 );
 
@@ -2682,6 +2683,7 @@ it('names an unavailable API, hides arbitrary exception details, and retries sta
   expect(alert).toHaveTextContent('Application API unavailable');
   expect(alert).not.toHaveTextContent('/private/customer');
   expect(alert).not.toHaveTextContent('secret');
+  expect(screen.getByRole('button', { name: 'Hide sidebar' })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByLabelText('Current chat context')).toHaveTextContent('Entrance');
@@ -3300,7 +3302,8 @@ describe('picture sizing', () => {
     await waitFor(() => expect(window.location.hash).toBe('#/s/lobby/unused/'));
     const index = events.connections.findIndex(({ key }) => key === 'lobby/unused');
     act(() => events.handlers[index].onSnapshot(unused));
-    await user.click(await screen.findByRole('button', { name: 'Show picture' }));
+    await screen.findByRole('textbox', { name: 'Message' });
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
     const input = screen.getByRole('textbox', { name: 'Message' });
     await user.type(input, 'Unsent draft');
@@ -3317,8 +3320,8 @@ describe('picture sizing', () => {
       fireEvent.pointerUp(divider, { pointerId: 1 });
       expect(divider).toHaveAttribute('aria-valuenow', '330');
     } else {
-      await user.click(screen.getByRole('button', { name: 'Hide picture' }));
-      await user.click(screen.getByRole('button', { name: 'Show picture' }));
+      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
+      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     }
     expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
     expect(input).toHaveValue('Unsent draft');
@@ -3333,7 +3336,8 @@ describe('picture sizing', () => {
   it('clamps keyboard sizing, preserves the preferred width after shrinking and navigation, and keeps toggles independent', async () => {
     const measure = geometry();
     render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Show picture' }));
+    await screen.findByRole('textbox', { name: 'Message' });
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     const divider = await screen.findByRole('separator', { name: 'Resize picture' });
     expect(divider).toHaveAttribute('aria-valuenow', '280');
     fireEvent.keyDown(divider, { key: 'ArrowLeft' });
@@ -3346,10 +3350,10 @@ describe('picture sizing', () => {
     expect(divider).toHaveAttribute('aria-valuenow', '580');
     for (let i = 0; i < 40; i++) fireEvent.keyDown(divider, { key: 'ArrowRight' });
     expect(divider).toHaveAttribute('aria-valuenow', '128');
-    fireEvent.click(screen.getByRole('button', { name: 'Hide picture' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     expect(screen.queryByRole('separator', { name: 'Resize picture' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Hide sidebar' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Show picture' }));
+    expect(document.querySelector('.cha-app')).toHaveAttribute('data-sidebar', 'open');
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     expect(screen.getByRole('separator', { name: 'Resize picture' })).toHaveAttribute('aria-valuenow', '128');
     await openSettingsNavigation();
     fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
@@ -3363,7 +3367,8 @@ describe('picture sizing', () => {
       constructor(type: string, init: PointerEventInit) { super(type, init); this.pointerId = init.pointerId ?? 0; }
     });
     render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Show picture' }));
+    await screen.findByRole('textbox', { name: 'Message' });
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     const divider = await screen.findByRole('separator', { name: 'Resize picture' });
     const sidebarWidth = screen.getByRole('separator', { name: 'Resize sidebar' }).getAttribute('aria-valuenow');
     divider.setPointerCapture = vi.fn();
@@ -3390,14 +3395,15 @@ describe('picture sizing', () => {
   it('disables resizing at 128 available pixels, hides it at zero, and restores the preference', async () => {
     const measure = geometry(448);
     render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Show picture' }));
+    await screen.findByRole('textbox', { name: 'Message' });
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     const divider = await screen.findByRole('separator', { name: 'Resize picture' });
     expect(divider).toHaveAttribute('aria-disabled', 'true');
     fireEvent.keyDown(divider, { key: 'ArrowRight' });
     expect(divider).toHaveAttribute('aria-valuenow', '128');
     measure(320);
     expect(screen.queryByRole('separator', { name: 'Resize picture' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Hide picture' })).toHaveAttribute('aria-expanded', 'true');
+    expect(document.querySelector('.cha-picture')).toBeInTheDocument();
     measure(900);
     expect(screen.getByRole('separator', { name: 'Resize picture' })).toHaveAttribute('aria-valuenow', '280');
   });

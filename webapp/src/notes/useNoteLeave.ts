@@ -425,6 +425,7 @@ export function useNoteLeave(
     closeAborted,
     decisionOpen,
     pendingKind,
+    isPending: () => pendingKindRef.current !== null,
     holdsLeave: pendingKind === 'leave',
   };
 }

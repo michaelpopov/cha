@@ -47,6 +47,9 @@ constexpr wchar_t kApplicationId[] = L"com.michaelpopov.cha";
 constexpr int kApplicationIcon = 101;
 
 constexpr UINT kFileExit = 1001;
+constexpr UINT kLayoutSplit = 1003;
+constexpr UINT kViewSidebar = 1004;
+constexpr UINT kViewPictures = 1005;
 constexpr UINT kFatalError = WM_APP + 2;
 constexpr UINT kDeliveryReady = WM_APP + 3;
 constexpr UINT kShutdownDone = WM_APP + 4;
@@ -583,11 +586,16 @@ private:
 
         HMENU main_menu = ::CreateMenu();
         HMENU file_menu = ::CreatePopupMenu();
-        if (main_menu == nullptr || file_menu == nullptr) {
+        HMENU layout_menu = ::CreatePopupMenu();
+        if (main_menu == nullptr || file_menu == nullptr || layout_menu == nullptr) {
             throw std::runtime_error("Failed to create the CHA menus");
         }
         ::AppendMenuW(file_menu, MF_STRING, kFileExit, L"E&xit");
         ::AppendMenuW(main_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(file_menu), L"&File");
+        ::AppendMenuW(layout_menu, MF_STRING, kLayoutSplit, L"Split view");
+        ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewSidebar, L"Sidebar");
+        ::AppendMenuW(layout_menu, MF_STRING, kViewPictures, L"Pictures");
+        ::AppendMenuW(main_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layout_menu), L"&View");
 
         RECT rectangle{0, 0, 1040, 760};
         ::AdjustWindowRectEx(&rectangle, WS_OVERLAPPEDWINDOW, TRUE, 0);
@@ -1254,6 +1262,23 @@ private:
         }
         const auto action = json.find("native_action");
         if (action == json.end()) return false;
+        if (action->is_string() && *action == "view_state") {
+            if (json.contains("connection_id") && json["connection_id"].is_string()
+                && json["connection_id"].get<std::string>() == connection_id_
+                && json.contains("split") && json["split"].is_boolean()
+                && json.contains("sidebar") && json["sidebar"].is_boolean()
+                && json.contains("pictures") && json["pictures"].is_boolean()) {
+                // View follows File in the native menu bar.
+                const auto view_menu = ::GetSubMenu(::GetMenu(window_), 1);
+                ::CheckMenuItem(view_menu, kLayoutSplit,
+                    MF_BYCOMMAND | (json["split"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
+                ::CheckMenuItem(view_menu, kViewSidebar,
+                    MF_BYCOMMAND | (json["sidebar"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
+                ::CheckMenuItem(view_menu, kViewPictures,
+                    MF_BYCOMMAND | (json["pictures"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
+            }
+            return true;
+        }
         if (action->is_string()
             && (*action == "close" || *action == "close_reply")) {
             if (!json.contains("connection_id") || !json["connection_id"].is_string()
@@ -1585,9 +1610,29 @@ private:
         case kFileExit:
             request_close();
             break;
+        case kLayoutSplit:
+            set_layout("toggle");
+            break;
+        case kViewSidebar:
+            set_layout("toggle-sidebar");
+            break;
+        case kViewPictures:
+            set_layout("toggle-pictures");
+            break;
         default:
             break;
         }
+    }
+
+    void set_layout(const char* mode) {
+        if (closing_ || !webview_ || connection_id_.empty()) return;
+        const std::wstring script = wide_from_utf8(
+            "if(window.__CHA_NATIVE_CONNECTION_ID__==="
+            + nlohmann::json(connection_id_).dump()
+            + "&&typeof window.__CHA_NATIVE_SET_LAYOUT__==='function'){"
+              "window.__CHA_NATIVE_SET_LAYOUT__("
+            + nlohmann::json(mode).dump() + ");}");
+        webview_->ExecuteScript(script.c_str(), nullptr);
     }
 
     void resize_contents() {

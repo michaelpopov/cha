@@ -66,7 +66,7 @@ async function nativeParity() {
     ));
     // Layout checks cover the settled state, not animation timing.
     document.querySelector('main').style.transition = 'none';
-    await until('picture closed', () => button('Show picture'));
+    check(!document.querySelector('.cha-picture'), 'picture starts closed');
     const chat = composerLayout();
     setValue(message, 'UI smoke draft\nSecond line');
     await until('Chat draft ready', () => button('Send message')?.disabled === false);

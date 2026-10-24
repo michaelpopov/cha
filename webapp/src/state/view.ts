@@ -64,6 +64,15 @@ export type MainView =
   | 'settings-r2-storage';
 
 export type BootstrapStatus = 'loading' | 'ready' | 'failed' | 'incompatible';
+export type LayoutMode = 'single' | 'split';
+
+export function workspaceVisibility(state: Pick<AppState, 'mainView' | 'layoutMode'>) {
+  const workspace = state.mainView === 'notes' || state.mainView === 'chat';
+  return {
+    notesVisible: workspace && (state.layoutMode === 'split' || state.mainView === 'notes'),
+    chatVisible: workspace && (state.layoutMode === 'split' || state.mainView === 'chat'),
+  };
+}
 export type StreamStatus =
   | 'idle'
   | 'connecting'
@@ -95,6 +104,7 @@ export interface AppState {
   pictureWidth: number;
   pictureCharacterId: string | null;
   mainView: MainView;
+  layoutMode: LayoutMode;
   sidebarTab: 'chat' | 'notes';
   activeNoteId: number | null;
   notesEpoch: number;
@@ -137,6 +147,7 @@ export const initialAppState: AppState = {
   pictureWidth: 280,
   pictureCharacterId: null,
   mainView: 'chat',
+  layoutMode: 'single',
   sidebarTab: 'chat',
   activeNoteId: null, noteDestination: undefined,
   notesEpoch: 0,
@@ -166,6 +177,7 @@ export const initialAppState: AppState = {
 };
 
 export type AppAction =
+  | { type: 'set-layout'; mode: LayoutMode }
   | { type: 'bootstrap-started' }
   | { type: 'bootstrap-loaded'; bootstrap: Bootstrap }
   | { type: 'bootstrap-failed'; message: string; incompatible: boolean }
@@ -250,7 +262,7 @@ export type AppAction =
   | { type: 'show-chat' }
   | { type: 'session-operation-started'; message: string }
   | { type: 'session-operation-failed'; message: string; retryable?: boolean }
-  | { type: 'conversation-opened'; snapshot: SessionSnapshot }
+  | { type: 'conversation-opened'; snapshot: SessionSnapshot; navigate?: boolean }
   | { type: 'session-snapshot'; snapshot: SessionSnapshot }
   | { type: 'session-discarded'; forumId: string; sessionId: string }
   | { type: 'session-audio-cache'; forumId: string; sessionId: string; entryId?: number; cached: boolean }
@@ -407,13 +419,19 @@ function selectPictureCharacter(state: AppState, snapshot: SessionSnapshot, open
   return snapshot.characters.some(({ id }) => id === selected) ? selected : null;
 }
 
-function releaseClosedNote(state: AppState): AppState {
-  if (state.mainView === 'notes' || state.activeNoteId === null) return state;
+function releaseClosedNote(previous: AppState, state: AppState, action: AppAction): AppState {
+  const { notesVisible, chatVisible } = workspaceVisibility(state);
+  if (state.activeNoteId === null || notesVisible) return state;
+  const leftVisibleNote = workspaceVisibility(previous).notesVisible
+    && action.type !== 'set-layout';
+  if (chatVisible && !leftVisibleNote) return state;
   return { ...state, activeNoteId: null, noteDestination: undefined };
 }
 
 function reduceApp(state: AppState, action: AppAction): AppState {
   switch (action.type) {
+    case 'set-layout':
+      return state.layoutMode === action.mode ? state : { ...state, layoutMode: action.mode };
     case 'bootstrap-started':
       return {
         ...state,
@@ -478,15 +496,18 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, sidebarTab: 'chat' };
     case 'show-notes-tab':
       return { ...state, sidebarTab: 'notes' };
-    case 'open-note':
+    case 'open-note': {
+      // The visible chat panel keeps its pending operation.
+      const { notesVisible, chatVisible } = workspaceVisibility(state);
       return {
         ...state,
         mainView: 'notes',
         activeNoteId: action.noteId,
         noteDestination: action.destination,
         noteRequest: state.noteRequest + 1,
-        ...idleSessionOperation(),
+        ...(notesVisible && chatVisible ? {} : idleSessionOperation()),
       };
+    }
     case 'close-note':
       return { ...state, activeNoteId: null, noteDestination: undefined };
     case 'show-personas':
@@ -981,7 +1002,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
     case 'conversation-opened':
       return {
         ...state,
-        mainView: 'chat',
+        mainView: action.navigate === false ? state.mainView : 'chat',
         currentForumId: action.snapshot.forum.id,
         inspectedForum: { ...state.inspectedForum, file: null },
         activeConversation: {
@@ -1114,14 +1135,14 @@ function reduceSessionActivity(state: AppState, action: AppAction): readonly Ses
     }
   }
   const active = state.activeConversation;
-  if (!active || state.mainView !== 'chat' || state.sessionOperation !== 'idle') return activity;
+  if (!active || !workspaceVisibility(state).chatVisible || state.sessionOperation !== 'idle') return activity;
   return activity.filter((session) => (
     session.status !== 'finished' || !sameSession(session, active.forumId, active.sessionId)
   ));
 }
 
 export function appReducer(state: AppState, action: AppAction): AppState {
-  const next = releaseClosedNote(reduceApp(state, action));
+  const next = releaseClosedNote(state, reduceApp(state, action), action);
   const activity = reduceSessionActivity(next, action);
   // Keep the same array when nothing changed. Background checks restart on a new one.
   if (activity.length === next.sessionActivity.length

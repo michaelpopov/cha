@@ -22,6 +22,7 @@ import {
 } from '../api/client';
 import type { NativeBridge } from '../api/nativeBridge';
 import { installAppCloseHost } from '../api/nativeClose';
+import { installNativeLayoutHandler, reportNativeLayout } from '../api/nativeLayout';
 import { DetailRefreshProvider } from '../detailRefresh';
 import { validateBootstrap } from '../state/bootstrap';
 import {
@@ -44,6 +45,7 @@ import {
   appReducer,
   initialAppState,
   navigationTitle,
+  workspaceVisibility,
   type DataAction,
   type NavigationAction,
   type AppState,
@@ -125,10 +127,63 @@ interface ScreenProps extends ChatActions {
   onCreateSession(forumId: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
   onRetrySessionOpen(): void;
+  onBrowseSessions(): void;
   catalogRevision: number;
 }
 
-function Screen({
+function Screen(props: ScreenProps) {
+  const { state } = props;
+  const { notesVisible, chatVisible } = workspaceVisibility(state);
+  const [ratio, setRatio] = useState(0.5);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const split = notesVisible && chatVisible;
+  if (!notesVisible && !chatVisible) return <ScreenContent {...props} view={state.mainView} />;
+  function resize(clientX: number) {
+    const bounds = workspaceRef.current?.getBoundingClientRect();
+    if (!bounds || bounds.width <= 6) return;
+    const available = bounds.width - 6;
+    const minimum = Math.min(240, available / 3);
+    setRatio(Math.max(minimum / available, Math.min(1 - minimum / available,
+      (clientX - bounds.left - 3) / available)));
+  }
+  return (
+    <div className={`cha-workspace${split ? ' is-split' : ''}`} ref={workspaceRef}
+      style={split ? { gridTemplateColumns: `minmax(0, ${ratio}fr) 6px minmax(0, ${1 - ratio}fr)` } : undefined}>
+      {notesVisible && <div key="notes" className="cha-workspace-panel is-notes">
+        <ScreenContent {...props} view="notes" />
+      </div>}
+      {split && <div key="divider" className="cha-workspace-divider" role="separator"
+        aria-label="Resize notes and chat" aria-orientation="vertical" tabIndex={0}
+        aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(ratio * 100)}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) resize(event.clientX);
+        }}
+        onPointerUp={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          const bounds = workspaceRef.current?.getBoundingClientRect();
+          if (bounds) resize(bounds.left + (bounds.width - 6) * ratio + 3 + (event.key === 'ArrowLeft' ? -24 : 24));
+        }} />}
+      {chatVisible && <div key="chat" className="cha-workspace-panel is-chat">
+        {state.sessionOperation !== 'idle' ? <>
+          {state.layoutMode === 'single' && <TopBar dispatch={props.dispatch} state={state} title={navigationTitle(state)} />}
+          <SessionOperationState state={state} onRetry={props.onRetrySessionOpen}
+            onBrowseSessions={props.onBrowseSessions} />
+        </> : <ScreenContent {...props} view="chat" />}
+      </div>}
+    </div>
+  );
+}
+
+function ScreenContent({
   playbackPositions,
   state,
   dispatch,
@@ -159,8 +214,9 @@ function Screen({
   onAttachTextFile,
   onUncoverConversation,
   catalogRevision,
-}: ScreenProps) {
-  switch (state.mainView) {
+  view,
+}: ScreenProps & { view: AppState['mainView'] }) {
+  switch (view) {
     case 'chat': return (
       <ChatScreen
         key={`${state.bootstrap?.vault_name}/${state.activeConversation?.forumId}/${state.activeConversation?.sessionId}`}
@@ -413,7 +469,7 @@ function Screen({
         onDraftChange={onNotesDraftChange}
         onRegisterDispose={onRegisterDispose}
         onRegisterSave={onRegisterSave}
-        sessionStatus={state.sessionOperation !== 'idle' && (
+        sessionStatus={!workspaceVisibility(state).chatVisible && state.sessionOperation !== 'idle' && (
           <div className="cha-notes-status" role={state.sessionOperation === 'failed' ? 'alert' : 'status'}>
             <p>{state.sessionOperationMessage}</p>
             {state.sessionOperation === 'failed' && state.sessionOperationRetryable && (
@@ -541,7 +597,9 @@ export function App({
   const [drafts, setDrafts] = useState(emptyPromptDrafts);
   const [submissionErrors, setSubmissionErrors] = useState<{ id: number; message: string }[]>([]);
   const nextSubmissionError = useRef(0);
-  const composerKey = `${state.bootstrap?.vault_name}/${state.activeConversation?.forumId}/${state.activeConversation?.sessionId}/${state.mainView}`;
+  const { chatVisible: chatSlotVisible } = workspaceVisibility(state);
+  const composerPresent = chatSlotVisible && state.bootstrapStatus === 'ready' && state.sessionOperation === 'idle';
+  const composerKey = `${state.bootstrap?.vault_name}/${state.activeConversation?.forumId}/${state.activeConversation?.sessionId}/${composerPresent}`;
   const composerVisit = useRef(0);
   useLayoutEffect(() => {
     composerVisit.current += 1;
@@ -650,6 +708,33 @@ export function App({
     closeInstalled.current = true;
     installAppCloseHost(() => closeHost.current);
   }
+  useEffect(() => {
+    reportNativeLayout(state.layoutMode === 'split', state.sidebarOpen, state.pictureOpen);
+  }, [state.layoutMode, state.sidebarOpen, state.pictureOpen]);
+  useEffect(() => installNativeLayoutHandler((requested) => {
+    if (requested === 'toggle-pictures') {
+      dispatch({ type: 'toggle-picture' });
+      return;
+    }
+    if (requested === 'toggle-sidebar') {
+      dispatch({ type: 'toggle-sidebar' });
+      return;
+    }
+    const mode = requested === 'toggle' ? (state.layoutMode === 'split' ? 'single' : 'split') : requested;
+    if (mode !== 'single' && mode !== 'split') return;
+    // A chat open started in Split View did not leave the note. If it
+    // completed in Single View, it would replace the note without saving it.
+    if (state.bootstrapStatus !== 'ready' || state.sessionOperation === 'pending'
+      || closeHost.current.isPending() || mode === state.layoutMode) return;
+    const commit = () => { dispatch({ type: 'set-layout', mode }); };
+    if (workspaceVisibility(state).notesVisible && !workspaceVisibility({ ...state, layoutMode: mode }).notesVisible) {
+      const context = vaultContext.current;
+      void noteLeave.leaveNoteThen(() => {
+        if (vaultContext.current !== context) return false;
+        commit();
+      });
+    } else commit();
+  }), [state.bootstrapStatus, state.layoutMode, state.mainView, state.sessionOperation, noteLeave.leaveNoteThen]);
   const registerSave = useCallback((save: NoteSaveHandle | null) => {
     noteSaveRef.current = save;
   }, []);
@@ -708,7 +793,7 @@ export function App({
   const requestOpenNote = useCallback((id: number) => {
     const live = editorLiveRef.current;
     if (
-      state.mainView === 'notes'
+      workspaceVisibility(state).notesVisible
       && state.activeNoteId === id
       && live
       && !live.isDestroyed
@@ -718,7 +803,7 @@ export function App({
       return;
     }
     navigate({ type: 'open-note', noteId: id });
-  }, [navigate, state.activeNoteId, state.mainView]);
+  }, [navigate, state.activeNoteId, state.mainView, state.layoutMode]);
 
   const sourceChanged = useCallback((parentId: number | null) => {
     const active = noteItems.find((item) => item.id === activeNoteIdRef.current);
@@ -905,14 +990,17 @@ export function App({
   }, [clearVaultContext, client, contextEvents, navigate]);
 
   const returnToStart = useCallback(() => {
-    void noteLeave.leaveNoteThen(() => {
+    const action = () => {
       const bootstrap = state.bootstrap;
       if (bootstrap) noteDraftAdoption(bootstrap.initial_forum_id, bootstrap.initial_session_id);
       clearLiveSession();
       navigate({ type: 'show-initial-conversation' });
       writeAppRoute('/');
-    });
-  }, [clearLiveSession, navigate, noteDraftAdoption, noteLeave.leaveNoteThen, state.bootstrap]);
+    };
+    const { notesVisible, chatVisible } = workspaceVisibility(state);
+    if (notesVisible && chatVisible) action();
+    else void noteLeave.leaveNoteThen(action);
+  }, [clearLiveSession, navigate, noteDraftAdoption, noteLeave.leaveNoteThen, state.bootstrap, state.layoutMode, state.mainView]);
 
   const browseSessions = useCallback(() => {
     void noteLeave.leaveNoteThen(() => {
@@ -1074,13 +1162,13 @@ export function App({
     if (active) {
       clearLiveSession();
       // A deleted background conversation does not close the open note.
-      if (state.mainView === 'notes') dispatch({ type: 'reset-active-conversation' });
+      if (workspaceVisibility(state).notesVisible) dispatch({ type: 'reset-active-conversation' });
       else navigate({ type: 'show-initial-conversation' });
       writeAppRoute('/', 'replace');
     }
     setCatalogRevision((revision) => revision + 1);
   }, [clearLiveSession, client, navigate, refreshBootstrap, runMutation,
-    state.activeConversation, state.mainView]);
+    state.activeConversation, state.mainView, state.layoutMode]);
 
   const deleteForum = useCallback(async (forumId: string) => {
     await client.deleteForum(forumId);
@@ -1094,12 +1182,14 @@ export function App({
 
   const title = navigationTitle(state);
   const ready = state.bootstrapStatus === 'ready';
-  const wholeApplication = state.sessionOperation !== 'idle' && state.mainView === 'chat';
-  const chatVisible = ready && !wholeApplication && state.mainView === 'chat';
-  const notesVisible = ready && !wholeApplication && state.mainView === 'notes';
-  const windowItemName = notesVisible
+  // Bootstrap states keep the application-wide top bar.
+  const visibility = workspaceVisibility(state);
+  const chatVisible = ready && visibility.chatVisible;
+  const notesVisible = ready && visibility.notesVisible;
+  const windowItemName = ready && state.mainView === 'notes'
     ? noteItems.find(({ id }) => id === state.activeNoteId)?.name
-    : chatVisible ? state.activeConversationLabel : null;
+    : ready && state.mainView === 'chat' && state.sessionOperation === 'idle'
+      ? state.activeConversationLabel : null;
 
   useEffect(() => {
     const vaultName = state.bootstrap?.vault_name;
@@ -1194,14 +1284,7 @@ export function App({
               <button type="button" aria-label="Dismiss message error" onClick={() => setSubmissionErrors((errors) => errors.filter(({ id }) => id !== error.id))}>Dismiss</button>
             </div>)}
             {!ready && <BootstrapState onRetry={retryBootstrap} state={state} />}
-            {ready && wholeApplication && (
-              <SessionOperationState
-                onBrowseSessions={browseSessions}
-                onRetry={retrySessionOpen}
-                state={state}
-              />
-            )}
-            {ready && !wholeApplication && (
+            {ready && (
               <Screen
                 playbackPositions={playbackPositions.current}
                 catalogRevision={catalogRevision}
@@ -1225,6 +1308,7 @@ export function App({
                 onCreateSession={createConversation}
                 onOpenSession={openConversation}
                 onRetrySessionOpen={retrySessionOpen}
+                onBrowseSessions={browseSessions}
                 onRetryStream={retryStream}
                 onReturnToStart={returnToStart}
                 onSetDefaultCharacter={setDefaultCharacter}
