@@ -27,11 +27,19 @@ export function noteFileHtml(file: TextFileRequest): { html: string; title: stri
       preserveWhitespace: false,
     };
   }
-  const paragraph = document.createElement('p');
-  for (const [index, line] of file.text.replace(/\r\n?/gu, '\n').split('\n').entries()) {
-    if (index > 0) paragraph.append(document.createElement('br'));
+  let paragraph: HTMLParagraphElement | null = null;
+  for (const line of file.text.replace(/\r\n?/gu, '\n').split('\n')) {
+    if (!line.trim()) {
+      paragraph = null;
+      continue;
+    }
+    if (!paragraph) {
+      paragraph = document.createElement('p');
+      body.append(paragraph);
+    } else {
+      paragraph.append(document.createElement('br'));
+    }
     paragraph.append(document.createTextNode(line));
   }
-  body.append(paragraph);
   return { html: body.innerHTML, title: '', preserveWhitespace: true };
 }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { noteFileHtml, promptFilePath } from './fileImport';
+import { createNotesEditor, replaceNoteHtml } from './editor';
+import { noteAudioBlocks } from './useNoteAudio';
 
 describe('note file import', () => {
   it.each([
@@ -34,5 +36,25 @@ describe('note file import', () => {
     const html = noteFileHtml({ name: 'plan.html', text: '<h1>Title</h1>\n**Text**' });
     expect(html.title).toBe('');
     expect(html.html).toBe('<p>&lt;h1&gt;Title&lt;/h1&gt;<br>**Text**</p>');
+  });
+
+  it.each(['\n', '\r\n', '\r'])('preserves plain text paragraphs with %j line endings', (newline) => {
+    const text = ['', '  <b>Literal</b>', '**Text**  ', '', ' \t ', '    indented\tline', '', ''].join(newline);
+    expect(noteFileHtml({ name: 'input.txt', text }).html)
+      .toBe('<p>  &lt;b&gt;Literal&lt;/b&gt;<br>**Text**  </p><p>    indented\tline</p>');
+  });
+
+  it('imports a long plain text file as separate paragraphs and audio blocks', async () => {
+    const paragraphs = ['  ' + 'a'.repeat(3000), 'b'.repeat(1500) + '\n\t' + 'b'.repeat(1500)];
+    const imported = noteFileHtml({ name: 'long.txt', text: paragraphs.join('\n\n') });
+    const readPicture = async () => new Uint8Array();
+    const editor = createNotesEditor({ content: '<p></p>', readPicture });
+    try {
+      expect(await replaceNoteHtml(editor, imported.html, readPicture, () => true, imported.preserveWhitespace)).toBe(true);
+      expect(editor.state.doc.childCount).toBe(2);
+      expect(noteAudioBlocks(editor.state.doc).map(block => block.text)).toEqual(paragraphs);
+    } finally {
+      editor.destroy();
+    }
   });
 });
