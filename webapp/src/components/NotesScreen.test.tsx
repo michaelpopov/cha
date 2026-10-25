@@ -1562,19 +1562,52 @@ describe('Notes screen', () => {
     for (const target of [editor.view.dom.querySelector('p')!, editor.view.dom.querySelector('a')!]) {
       expect(fireEvent.contextMenu(target, { clientX: 25, clientY: 30 })).toBe(false);
       const items = screen.getAllByRole('menuitem');
-      expect(items.map((item) => item.textContent)).toEqual(['Cut', 'Copy', 'Paste', 'Bold', 'Italic', 'Highlight', 'Add comment']);
+      expect(items.map((item) => item.textContent)).toEqual(['Cut', 'Copy', 'Copy JSON', 'Paste', 'Bold', 'Italic', 'Highlight', 'Add comment']);
       for (const item of items) {
-        if (readOnly && !['Copy', 'Highlight', 'Add comment'].includes(item.textContent!)) expect(item).toBeDisabled();
+        if (readOnly && !['Copy', 'Copy JSON', 'Highlight', 'Add comment'].includes(item.textContent!)) expect(item).toBeDisabled();
         else expect(item).toBeEnabled();
       }
       expect(screen.getByRole('menuitem', { name: readOnly ? 'Copy' : 'Cut' })).toHaveFocus();
       fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' });
-      expect(screen.getByRole('menuitem', { name: readOnly ? 'Highlight' : 'Copy' })).toHaveFocus();
+      expect(screen.getByRole('menuitem', { name: readOnly ? 'Copy JSON' : 'Copy' })).toHaveFocus();
       fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
       expect(screen.queryByRole('menu')).not.toBeInTheDocument();
       expect(editor.view.dom).toHaveFocus();
       expect(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)).toBe('Alpha');
     }
+  });
+
+  it.each([false, true])('copies the current whole note as formatted JSON (read-only: %s)', async (readOnly) => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+    render(<Harness items={[{ ...plan, read_only: readOnly }]} />);
+    const editor = await openedEditor();
+    act(() => {
+      if (!readOnly) insertText(editor, 'Unsaved ');
+      editor.commands.setTextSelection({ from: 2, to: 4 });
+    });
+    const before = editor.getJSON();
+    const selection = editor.state.selection;
+    fireEvent.contextMenu(editor.view.dom.querySelector('p')!);
+    await user.click(screen.getByRole('menuitem', { name: 'Copy JSON' }));
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(JSON.stringify(before, null, 2));
+    expect(JSON.parse(writeText.mock.calls[0][0])).toEqual(before);
+    expect(editor.getJSON()).toEqual(before);
+    expect(editor.state.selection.eq(selection)).toBe(true);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(editor.view.dom).toHaveFocus();
+  });
+
+  it('reports a Copy JSON clipboard failure without changing the note', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('Denied'));
+    render(<Harness />);
+    const editor = await openedEditor();
+    const before = editor.getJSON();
+    fireEvent.contextMenu(editor.view.dom.querySelector('p')!);
+    await user.click(screen.getByRole('menuitem', { name: 'Copy JSON' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not copy the note. Try again.');
+    expect(editor.getJSON()).toEqual(before);
   });
 
   it.each([false, true])('adds a blue comment before the clicked paragraph and saves it (read-only: %s)', async (readOnly) => {

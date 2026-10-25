@@ -3,9 +3,14 @@ import { trackSelectionBookmark, withIsolatedHistory } from './editor';
 
 export async function noteClipboardCommand(
   editor: Editor,
-  command: 'Cut' | 'Copy' | 'Copy All' | 'Paste',
+  command: 'Cut' | 'Copy' | 'Copy All' | 'Copy JSON' | 'Paste',
   available: () => boolean,
 ): Promise<void> {
+  if (command === 'Copy JSON') {
+    await navigator.clipboard.writeText(JSON.stringify(editor.getJSON(), null, 2));
+    return;
+  }
+
   if (command === 'Copy All') {
     const { selection, storedMarks } = editor.state;
     try {

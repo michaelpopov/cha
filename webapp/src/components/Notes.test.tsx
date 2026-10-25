@@ -67,6 +67,32 @@ function historyAction(name: 'Undo' | 'Redo') {
 }
 
 describe('Notes in the application', () => {
+  it.each([false, true])('opens another read-only book note after earlier deletion: %s', async (deleteEarlier) => {
+    const first = { ...plan, read_only: true };
+    const second = { ...first, id: 5, name: 'Next chapter' };
+    let items = [{ ...first, id: 3, name: 'Earlier chapter' }, first, second];
+    const info = vi.fn(async () => ({ count: 0 }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => items,
+      deleteNoteItem: async id => { items = items.filter(item => item.id !== id); },
+      getNote: async id => ({ id, document: noteDocument(`Chapter ${id}`) }),
+      noteAudio: { info, start: vi.fn(), status: vi.fn(), source: vi.fn(), release: vi.fn() },
+    })} />);
+    await openNotes();
+    if (deleteEarlier) {
+      fireEvent.click(await screen.findByRole('treeitem', { name: 'Earlier chapter' }));
+      await waitFor(() => expect(noteEditor().isEditable).toBe(false));
+      await deleteItem('Earlier chapter', 'note', false);
+      await waitFor(() => expect(screen.queryByRole('treeitem', { name: 'Earlier chapter' })).not.toBeInTheDocument());
+    }
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(false));
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Next chapter' }));
+    await screen.findByText('Chapter 5');
+    await waitFor(() => expect(info).toHaveBeenCalledWith(second.id));
+    expect(screen.queryByText('Something went wrong while showing CHA.')).not.toBeInTheDocument();
+  });
+
   it('generates from the selected saved document and stops playback when its dialog opens', async () => {
     const changed = vi.fn();
     window.addEventListener('cha-note-audio-changed', changed);

@@ -10,6 +10,7 @@
 namespace cha {
 std::string_view embedded_compression_prompt();
 std::string_view embedded_youtube_transcript_prompt();
+std::string_view embedded_page_formatting_prompt();
 }
 
 namespace cha::app {
@@ -85,15 +86,74 @@ std::string transcript_title(std::string_view text) {
     return first_line.starts_with("# ") ? std::string(trim_view(first_line.substr(2))) : std::string{};
 }
 
-std::string format_youtube_transcript(const Workspace& workspace, std::string text, std::string& title,
-    OpenAiOAuth* oauth, ApiKeyStore* api_keys, const std::atomic_bool& cancel) {
+// A lightweight Markdown heuristic: soft line breaks belong to the same paragraph.
+// Leave headings, list blocks, and fenced/indented code out of the length check.
+bool has_long_page_paragraph(std::string_view markdown) {
+    constexpr std::size_t limit = 2000;
+    std::size_t characters = 0, fence_size = 0;
+    char fence = 0;
+    bool list = false;
+    while (!markdown.empty()) {
+        const auto end = markdown.find('\n');
+        const auto raw = markdown.substr(0, end);
+        markdown = end == std::string_view::npos ? std::string_view{} : markdown.substr(end + 1);
+        const auto line = trim_view(raw);
+        if (fence) {
+            const auto end_fence = line.find_first_not_of(fence);
+            const auto count = end_fence == std::string_view::npos ? line.size() : end_fence;
+            if (count >= fence_size && trim_view(line.substr(count)).empty()) fence = 0;
+            continue;
+        }
+        if (line.starts_with("```") || line.starts_with("~~~")) {
+            if (characters > limit) return true;
+            fence = line.front();
+            fence_size = line.find_first_not_of(fence);
+            if (fence_size == std::string_view::npos) fence_size = line.size();
+            characters = 0;
+            continue;
+        }
+        if (line.empty()) {
+            if (characters > limit) return true;
+            characters = 0;
+            list = false;
+            continue;
+        }
+        // A setext underline makes the preceding text a heading.
+        if (line.find_first_not_of('=') == std::string_view::npos
+            || line.find_first_not_of('-') == std::string_view::npos) {
+            characters = 0;
+            continue;
+        }
+        const auto hashes = line.find_first_not_of('#');
+        const bool heading = line.front() == '#' && hashes <= 6
+            && hashes < line.size() && is_space(line[hashes]);
+        const auto digits = line.find_first_not_of("0123456789");
+        const bool ordered = digits >= 1 && digits <= 9 && digits + 1 < line.size()
+            && (line[digits] == '.' || line[digits] == ')') && is_space(line[digits + 1]);
+        const bool bullet = line.size() > 1 && (line.front() == '-' || line.front() == '+' || line.front() == '*')
+            && is_space(line[1]);
+        list = list || ordered || bullet;
+        if (heading || list || raw.starts_with("    ") || raw.starts_with('\t')) {
+            if (characters > limit) return true;
+            characters = 0;
+            continue;
+        }
+        if (characters) ++characters; // The space represented by a soft line break.
+        for (const unsigned char c : line) if ((c & 0xc0) != 0x80) ++characters;
+    }
+    return characters > limit;
+}
+
+std::string format_note_page(const Workspace& workspace, std::string text, std::string& title,
+    bool youtube, OpenAiOAuth* oauth, ApiKeyStore* api_keys, const std::atomic_bool& cancel) {
     title = trim_view(title);
     if (title.empty()) title = transcript_title(text);
     if (!title.empty() && transcript_title(text) != title) text = "# " + title + "\n\n" + text;
     const auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
-        .character = {"youtube-transcript", "YouTube transcript"},
+        .character = {youtube ? "youtube-transcript" : "page-formatting",
+                      youtube ? "YouTube transcript" : "Page formatting"},
         .provider = note_editing_provider(workspace),
-        .system_prompt = std::string(embedded_youtube_transcript_prompt()),
+        .system_prompt = std::string(youtube ? embedded_youtube_transcript_prompt() : embedded_page_formatting_prompt()),
     });
     auto answer = run_note_prompt(definition, std::move(text), oauth, api_keys, cancel);
     const auto& result = answer.result;
@@ -102,22 +162,23 @@ std::string format_youtube_transcript(const Workspace& workspace, std::string te
     }
     if (result.refused) {
         throw ApplicationError(ErrorCode::internal_error,
-            "The provider refused to format this transcript.");
+            youtube ? "The provider refused to format this transcript." : "The provider refused to format this page.");
     }
     if (result.outcome != GenerationOutcome::completed) {
         throw ApplicationError(ErrorCode::internal_error, result.message.empty()
             ? "The compression provider returned an error." : result.message);
     }
     if (result.finish_reason == "length") {
-        throw ApplicationError(ErrorCode::internal_error, "The transcript is too long to format.");
+        throw ApplicationError(ErrorCode::internal_error, youtube
+            ? "The transcript is too long to format." : "The page is too long to format.");
     }
     if (result.finish_reason == "content_filter") {
         throw ApplicationError(ErrorCode::internal_error,
-            "The provider returned an incomplete transcript.");
+            youtube ? "The provider returned an incomplete transcript." : "The provider returned an incomplete page.");
     }
     if (answer.text.find_first_not_of(" \t\r\n") == std::string::npos) {
         throw ApplicationError(ErrorCode::internal_error,
-            "Could not format the YouTube transcript. Try again.");
+            youtube ? "Could not format the YouTube transcript. Try again." : "Could not format the page. Try again.");
     }
     const auto formatted_title = transcript_title(answer.text);
     if (title.empty()) title = formatted_title;
@@ -130,7 +191,8 @@ std::string format_youtube_transcript(const Workspace& workspace, std::string te
         answer.text = "# " + title + "\n\n" + std::string(body);
     }
     if (answer.text.size() > note_document_byte_limit) {
-        throw ApplicationError(ErrorCode::body_too_large, "The transcript is too large to import.");
+        throw ApplicationError(ErrorCode::body_too_large, youtube
+            ? "The transcript is too large to import." : "The page is too large to import.");
     }
     return std::move(answer.text);
 }
@@ -340,15 +402,16 @@ std::shared_ptr<OperationReply> Application::read_note_page(
                         reply->fail(ErrorCode::body_too_large, "The web page is too large to import.");
                         return;
                     }
-                    if (is_youtube_url(url) || is_youtube_url(page.at("url").get<std::string>())) {
+                    const bool youtube = is_youtube_url(url) || is_youtube_url(page.at("url").get<std::string>());
+                    if (youtube || has_long_page_paragraph(page.at("markdown").get_ref<const std::string&>())) {
                         {
                             // The provider call uses vault credentials; do not start it after a vault change.
                             const std::lock_guard lifecycle(owner->lifecycle_mutex);
                             owner->require_admitted(epoch);
                         }
                         auto title = page.at("title").get<std::string>();
-                        page["markdown"] = format_youtube_transcript(*workspace,
-                            page.at("markdown").get<std::string>(), title, owner->openai_auth.get(),
+                        page["markdown"] = format_note_page(*workspace,
+                            page.at("markdown").get<std::string>(), title, youtube, owner->openai_auth.get(),
                             owner->api_keys.get(), cancel);
                         page["title"] = std::move(title);
                     }

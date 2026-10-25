@@ -215,7 +215,8 @@ TEST_F(BridgeRouterTest, NoteTextFileReadingUsesFullPathsAndValidatesTextWithout
 
 TEST_F(BridgeRouterTest, NotePageReadingUsesConfiguredReaderAndKeepsLongArticles) {
     bootstrap_epoch();
-    const std::string article = "A **formatted** article.\n\n" + std::string(80000, 'x');
+    std::string article = "A **formatted** article.";
+    for (int i = 0; i < 80; ++i) article += "\n\n" + std::string(1000, 'x');
     const nlohmann::json page{{"url", "https://example.org/final"}, {"title", "Article title"},
         {"markdown", article + "\n\n![Photo](https://example.org/photo.png)"}};
     MockHttpServer server({http_response("application/json", page.dump())});
@@ -2508,7 +2509,7 @@ TEST_F(BridgeRouterTest, YoutubeNoteImportsKeepTitlesThroughFormatting) {
     }
 }
 
-TEST_F(BridgeRouterTest, NoteImportsDoNotFormatOtherSitesOrYoutubeLookalikes) {
+TEST_F(BridgeRouterTest, NoteImportsDoNotFormatShortArticlesOrYoutubeLookalikes) {
     bootstrap_epoch();
     for (const auto url : {"https://example.org/youtube.com", "https://youtube.com.example.org/watch",
             "https://notyoutube.com/watch", "https://example.org/?url=https://youtu.be/video"}) {
@@ -2521,6 +2522,69 @@ TEST_F(BridgeRouterTest, NoteImportsDoNotFormatOtherSitesOrYoutubeLookalikes) {
         settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
         ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
         const auto reply = call("notes.readPage", {{"url", url}});
+        reader.join();
+        ASSERT_TRUE(reply["ok"]) << reply;
+        EXPECT_EQ(reply["result"], page);
+    }
+}
+
+TEST_F(BridgeRouterTest, LongPageParagraphsUseConservativeFormattingAndKeepTheirTitle) {
+    bootstrap_epoch();
+    std::ifstream prompt_file(std::filesystem::path(CHA_SOURCE_DIRECTORY) / "resources/page-formatting.md");
+    const std::string prompt{std::istreambuf_iterator<char>(prompt_file), std::istreambuf_iterator<char>()};
+    ASSERT_FALSE(prompt.empty());
+    std::string unicode;
+    for (int i = 0; i < 2001; ++i) unicode += "é";
+    for (const auto& markdown : {std::string(2001, 'a'), std::string(1000, 'a') + "\n" + std::string(1000, 'b'), unicode}) {
+        const nlohmann::json page{{"url", "https://example.org/article"}, {"title", "Original title"},
+            {"markdown", markdown}};
+        const std::string formatted = std::string(1000, 'a') + ".\n\n[More](https://example.org/details).";
+        MockHttpServer reader({http_response("application/json", page.dump())});
+        MockHttpServer provider({compression_response("chat_completions", false, "# Changed title\n\n" + formatted)});
+        reader.start();
+        provider.start();
+        configure_compression(*application_, provider.port(), "chat_completions", false, epoch_);
+        auto settings = call("webSearch.get")["result"];
+        settings["web_reader_enabled"] = true;
+        settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+        ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+
+        const auto reply = call("notes.readPage", {{"url", page["url"]}});
+        reader.join();
+        provider.join();
+        ASSERT_TRUE(reply["ok"]) << reply;
+        EXPECT_EQ(reply["result"]["title"], "Original title");
+        EXPECT_EQ(reply["result"]["markdown"], "# Original title\n\n" + formatted);
+        ASSERT_EQ(provider.requests().size(), 1U);
+        const auto body = nlohmann::json::parse(request_body(provider.requests().front()));
+        EXPECT_EQ(body["messages"][0]["content"], prompt);
+        EXPECT_EQ(body["messages"][1]["content"], "from User:\n# Original title\n\n" + markdown);
+        EXPECT_FALSE(body.contains("tools"));
+    }
+}
+
+TEST_F(BridgeRouterTest, PageFormattingIgnoresShortParagraphsHeadingsListsAndCode) {
+    bootstrap_epoch();
+    const std::string long_text(2001, 'a');
+    std::string unicode;
+    for (int i = 0; i < 2000; ++i) unicode += "é";
+    for (const auto& markdown : {std::string(2000, 'a'), unicode,
+            std::string(1500, 'a') + "\r\n \t\r\n" + std::string(1500, 'b'),
+            "# " + long_text + "\n\nShort body.", long_text + "\n===\n\nShort body.",
+            "- " + long_text + "\n  continued list text", "1. " + long_text,
+            "    " + long_text, "\t" + long_text,
+            "```text\n\n" + long_text + "\n```\n\nShort body.",
+            "~~~~\n```\n\n" + long_text + "\n~~~~"}) {
+        SCOPED_TRACE(markdown.substr(0, 40));
+        const nlohmann::json page{{"url", "https://example.org/article"}, {"title", "Article"}, {"markdown", markdown}};
+        MockHttpServer reader({http_response("application/json", page.dump())});
+        reader.start();
+        auto settings = call("webSearch.get")["result"];
+        settings["web_reader_enabled"] = true;
+        settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+        ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+        // No LLM provider is configured: these imports must succeed without one.
+        const auto reply = call("notes.readPage", {{"url", page["url"]}});
         reader.join();
         ASSERT_TRUE(reply["ok"]) << reply;
         EXPECT_EQ(reply["result"], page);

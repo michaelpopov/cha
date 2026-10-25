@@ -9,6 +9,7 @@ import { createFakeNativeBridge } from '../api/nativeBridge';
 import { appendNoteHtml as appendPictures, createNotesEditor } from './editor';
 import { pictureFromBytes } from './pictures';
 import { notePageHtml, notePageName, promptPageUrl } from './pageImport';
+import { noteAudioBlocks } from './useNoteAudio';
 
 let editor: Editor | undefined;
 afterEach(() => { editor?.destroy(); });
@@ -88,6 +89,19 @@ describe('URL imports', () => {
     expect(editor.getJSON()).toEqual(before);
     expect(editor.commands.redo()).toBe(true);
     expect(editor.getText({ blockSeparator: '\n' })).toBe('Title\nArticle');
+  });
+
+  it('keeps formatted page paragraphs as separate narration blocks', async () => {
+    editor = createNotesEditor({ readPicture });
+    const first = 'First sentence. '.repeat(80).trim();
+    const second = 'Second sentence. '.repeat(80).trim();
+    const html = notePageHtml({ url: 'https://example.org/article', title: 'Article',
+      markdown: `# Article\n\n${first}\n\n${second} [Details](./details)` });
+    expect(await appendNoteHtml(editor, html)).toBe(true);
+    expect(editor.getJSON().content?.map(node => node.type)).toEqual(['heading', 'paragraph', 'paragraph']);
+    expect(noteAudioBlocks(editor.state.doc).map(block => block.text))
+      .toEqual(['Article', first, `${second} Details`]);
+    expect(editor.view.dom.querySelector('a')).toHaveAttribute('href', 'https://example.org/details');
   });
 
   it('imports fenced code as an editable code block with its whitespace intact', async () => {

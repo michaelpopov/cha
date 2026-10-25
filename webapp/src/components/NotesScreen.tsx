@@ -792,7 +792,7 @@ function FindBar({
   );
 }
 
-const contextCommands = ['Cut', 'Copy', 'Paste', 'Bold', 'Italic', 'Highlight'] as const;
+const contextCommands = ['Cut', 'Copy', 'Copy JSON', 'Paste', 'Bold', 'Italic', 'Highlight'] as const;
 type ContextCommand = typeof contextCommands[number] | 'Add comment' | 'Delete comment';
 
 export function NotesScreen({
@@ -1143,7 +1143,7 @@ export function NotesScreen({
     setContextMenu(null);
     const current = editorRef.current;
     if (!current || current.isDestroyed) return;
-    const copying = command === 'Copy' || command === 'Copy All';
+    const copying = command === 'Copy' || command === 'Copy All' || command === 'Copy JSON';
     if (!copying && (save.frozen || (immutable && ['Highlight', 'Add comment', 'Delete comment'].includes(command))
       || (!current.isEditable && command !== 'Highlight'
         && command !== 'Add comment' && command !== 'Delete comment'))) return;
@@ -1173,7 +1173,7 @@ export function NotesScreen({
         await (command === 'Copy All' ? preserveNoteScroll(current, runClipboard) : runClipboard());
       } catch {
         if (editorRef.current === current && !current.isDestroyed) {
-          setCommandError(command === 'Copy All'
+          setCommandError(command === 'Copy All' || command === 'Copy JSON'
             ? 'Could not copy the note. Try again.'
             : `${command} failed. Try the keyboard shortcut.`);
         }
@@ -1543,7 +1543,7 @@ export function NotesScreen({
           }}>Play from here</button>}
           {menuCommands.map((command) => (
             <button
-              disabled={command !== 'Copy' && (save.frozen || (immutable && ['Highlight', 'Add comment', 'Delete comment'].includes(command))
+              disabled={command !== 'Copy' && command !== 'Copy JSON' && (save.frozen || (immutable && ['Highlight', 'Add comment', 'Delete comment'].includes(command))
                 || (readOnly && command !== 'Highlight'
                   && command !== 'Add comment' && command !== 'Delete comment'))}
               key={command}

@@ -38,7 +38,7 @@ export function useNoteAudio({ client, id, editor, enabled, menuOpen, onError }:
 
   useEffect(() => {
     setCount(0); setState('stopped');
-    if (!client || id === null || !editor || !enabled) return;
+    if (!client || id === null || !editor || editor.isDestroyed || !enabled) return;
     let disposed = false;
     const reload = () => { void client.info(id).then(info => { if (!disposed) setCount(info.count); }, () => {}); };
     reload();

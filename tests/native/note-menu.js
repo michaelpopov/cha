@@ -36,10 +36,10 @@ async function nativeParity() {
     const menu = await until('context menu', () => document.querySelector('[role="menu"]'));
     check(event.defaultPrevented, 'default menu was not suppressed');
     const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
-    check(items.map((item) => item.textContent).join(',') === 'Cut,Copy,Paste,Bold,Italic,Highlight,' + commentAction,
+    check(items.map((item) => item.textContent).join(',') === 'Cut,Copy,Copy JSON,Paste,Bold,Italic,Highlight,' + commentAction,
       'unexpected context menu items');
     for (const item of items) {
-      check(item.disabled === (readOnly && !['Copy', 'Highlight', commentAction].includes(item.textContent)),
+      check(item.disabled === (readOnly && !['Copy', 'Copy JSON', 'Highlight', commentAction].includes(item.textContent)),
         'wrong disabled state for ' + item.textContent);
     }
     const box = menu.getBoundingClientRect();
