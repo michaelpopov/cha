@@ -6,11 +6,11 @@ export function installNativeLayoutHandler(handler: (mode: unknown) => void) {
   };
 }
 
-export function reportNativeLayout(split: boolean, sidebar: boolean, pictures: boolean) {
+export function reportNativeLayout(split: boolean, sidebar: boolean, pictures: boolean, toolbar: boolean, notesPrompt: boolean) {
   const connectionId = window.__CHA_NATIVE_CONNECTION_ID__;
   if (!connectionId) return;
   window.__CHA_NATIVE_POST__?.(JSON.stringify({
-    native_action: 'view_state', connection_id: connectionId, split, sidebar, pictures,
+    native_action: 'view_state', connection_id: connectionId, split, sidebar, pictures, toolbar, notes_prompt: notesPrompt,
   }));
 }
 

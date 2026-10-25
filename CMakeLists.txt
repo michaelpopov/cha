@@ -340,6 +340,9 @@ add_library(cha_lib STATIC
     src/media/audio_download.cpp
     src/app/media_operations.cpp
     src/app/notes_operations.cpp
+    src/app/note_audio_operations.cpp
+    src/media/note_audio.cpp
+    src/media/note_audio_codec.cpp
     src/media/media_resources.cpp
     src/media/pending_media_registry.cpp
     src/media/xai_transcript.cpp
@@ -608,6 +611,7 @@ if(BUILD_TESTING)
         tests/providers/unit_voice_output.cpp
         tests/providers/unit_voice_websocket.cpp
         tests/media/unit_audio_download.cpp
+        tests/media/unit_note_audio.cpp
         tests/media/unit_xai_transcript.cpp
         tests/media/unit_xai_voice.cpp
         tests/support/xai_fake_server.cpp
@@ -788,6 +792,7 @@ if(BUILD_TESTING)
 endif()
 
 if(APPLE)
+    target_link_libraries(cha_lib PUBLIC "-framework AudioToolbox" "-framework CoreFoundation")
     add_library(
         cha_macos_runtime SHARED
         packaging/host/runtime_bridge.cpp)

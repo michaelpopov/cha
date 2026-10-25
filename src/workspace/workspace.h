@@ -103,6 +103,8 @@ struct WorkspaceSessionNaming {
 struct WorkspaceNotes {
     std::string compression_provider_id;
     std::string compression_reasoning_effort{"high"};
+    std::string audio_url;
+    std::string audio_api_key_id;
 };
 
 void validate_jev_config(const WorkspaceJev& config);

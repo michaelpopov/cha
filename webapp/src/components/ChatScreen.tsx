@@ -24,7 +24,6 @@ import { readTextFile, textFileAccept } from '../textFile';
 import { ChatPictureLayout } from './ChatPicture';
 import type { AppState, DataAction, NavigationAction } from '../state/view';
 import {
-  nativeSpeechFromClient,
   TextToSpeechError,
   TextToSpeechSession,
   useTextToSpeechConfiguration,
@@ -536,7 +535,6 @@ export function ChatScreen({
   function playAudio(entry: SessionSnapshot['transcript'][number]) {
     if (!snapshot) return;
     setSpokenEntry({ id: entry.id, state: 'loading' });
-    const attempt = speechAttempt.current;
     const playbackKey = JSON.stringify([state.bootstrap?.vault_name, snapshot.forum.id, snapshot.session_id]);
     let positions = playbackPositions.get(playbackKey);
     if (!positions) {
@@ -559,76 +557,56 @@ export function ChatScreen({
         sessionId: snapshot.session_id, entryId: entry.id, cached: false });
       downloads.refresh(entry.id);
     };
-    const begin = (cachedUrl: string, resourceId?: string, streaming = false) => {
-      const session = new TextToSpeechSession({
-        voice: speechVoices.get(entry.participant_id),
-        text: visibleEntryText(entry.kind, entry.text),
-        onEnded: () => {
-          if (textToSpeechSession.current !== session) return;
-          stopSpeech();
-        },
-        playback: {
-          position: entryPositions.get(entry.id) ?? 0,
-          onPositionChange: (position) => {
-            if (position > 0) entryPositions.set(entry.id, position);
-            else entryPositions.delete(entry.id);
-          },
-        },
-        cachedUrl,
-        onCached: () => dispatch({
-          type: 'session-audio-cache', forumId: snapshot.forum.id,
-          sessionId: snapshot.session_id, entryId: entry.id, cached: true,
-        }),
-        onDispose: resourceId
-          ? () => { void client.releaseResource(resourceId); }
-          : undefined,
-        streaming,
-        leadingSilence: automaticSpeech.current,
-        onError: (failure) => {
-          if (textToSpeechSession.current === session) setActionError(failure.message);
-        },
-      });
-      textToSpeechSession.current = session;
-      setSpokenEntry({ id: entry.id, state: 'loading' });
-      void session.play().then(() => {
-        if (textToSpeechSession.current === session) {
-          setSpokenEntry({ id: entry.id, state: 'playing' });
-          if (entry.kind === 'character') {
-            dispatch({ type: 'select-picture-character', characterId: entry.participant_id });
-          }
-        }
-      }).catch((failure: unknown) => {
+    const session = new TextToSpeechSession({
+      voice: speechVoices.get(entry.participant_id),
+      text: visibleEntryText(entry.kind, entry.text),
+      onEnded: () => {
         if (textToSpeechSession.current !== session) return;
-        if (failure instanceof TextToSpeechError && failure.status === 404) {
-          cacheMissing();
-          return;
-        }
         stopSpeech();
-        if (!(failure instanceof DOMException && failure.name === 'AbortError')) {
-          setActionError(failure instanceof TextToSpeechError
-            ? failure.message
-            : 'This message could not be read aloud. Try again.');
+      },
+      playback: {
+        position: entryPositions.get(entry.id) ?? 0,
+        onPositionChange: (position) => {
+          if (position > 0) entryPositions.set(entry.id, position);
+          else entryPositions.delete(entry.id);
+        },
+      },
+      nativeSpeech: {
+        preview: () => client.resolveAudioSource(
+          snapshot.forum.id, snapshot.session_id, entry.id, state.bootstrap!.vault_name),
+        release: (resourceId) => client.releaseResource(resourceId),
+      },
+      onCached: () => dispatch({
+        type: 'session-audio-cache', forumId: snapshot.forum.id,
+        sessionId: snapshot.session_id, entryId: entry.id, cached: true,
+      }),
+      leadingSilence: automaticSpeech.current,
+      onError: (failure) => {
+        if (textToSpeechSession.current === session) setActionError(failure.message);
+      },
+    });
+    textToSpeechSession.current = session;
+    setSpokenEntry({ id: entry.id, state: 'loading' });
+    void session.play().then(() => {
+      if (textToSpeechSession.current === session) {
+        setSpokenEntry({ id: entry.id, state: 'playing' });
+        if (entry.kind === 'character') {
+          dispatch({ type: 'select-picture-character', characterId: entry.participant_id });
         }
-      });
-    };
-    void client.resolveAudioSource(
-      snapshot.forum.id, snapshot.session_id, entry.id, state.bootstrap!.vault_name,
-    ).then((resource) => {
-      if (speechAttempt.current !== attempt || speechSelection.current !== entry.id) {
-        void client.releaseResource(resource.resource_id);
-        return;
       }
-      begin(resource.url, resource.resource_id, resource.streaming);
     }).catch((failure: unknown) => {
-      if (speechAttempt.current !== attempt || speechSelection.current !== entry.id) return;
+      if (textToSpeechSession.current !== session) return;
       if ((failure instanceof TextToSpeechError && failure.status === 404)
           || (failure instanceof ChaError && failure.code === 'not_found')) {
         cacheMissing();
         return;
       }
       stopSpeech();
-      setActionError(publicErrorMessage(
-        failure, 'This message could not be read aloud. Try again.'));
+      if (!(failure instanceof DOMException && failure.name === 'AbortError')) {
+        setActionError(failure instanceof TextToSpeechError
+          ? failure.message
+          : publicErrorMessage(failure, 'This message could not be read aloud. Try again.'));
+      }
     });
   }
 

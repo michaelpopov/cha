@@ -42,6 +42,8 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private var splitViewMenuItem: NSMenuItem?
     private var sidebarMenuItem: NSMenuItem?
     private var picturesMenuItem: NSMenuItem?
+    private var toolbarMenuItem: NSMenuItem?
+    private var notesPromptMenuItem: NSMenuItem?
     private var webViewTitleObservation: NSKeyValueObservation?
     private var runtime: OpaquePointer?
     private var runtimeURL: URL?
@@ -169,6 +171,16 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             withTitle: "Pictures", action: #selector(togglePictures(_:)), keyEquivalent: "")
         pictures.target = self
         picturesMenuItem = pictures
+        let toolbar = layoutMenu.addItem(
+            withTitle: "Toolbar", action: #selector(toggleToolbar(_:)), keyEquivalent: "")
+        toolbar.target = self
+        toolbar.state = .on
+        toolbarMenuItem = toolbar
+        let notesPrompt = layoutMenu.addItem(
+            withTitle: "Notes prompt", action: #selector(toggleNotesPrompt(_:)), keyEquivalent: "")
+        notesPrompt.target = self
+        notesPrompt.state = .on
+        notesPromptMenuItem = notesPrompt
         layoutItem.submenu = layoutMenu
         mainMenu.addItem(layoutItem)
 
@@ -205,6 +217,14 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
 
     @objc private func togglePictures(_ sender: Any?) {
         nativeBridge?.setLayout("toggle-pictures")
+    }
+
+    @objc private func toggleToolbar(_ sender: Any?) {
+        nativeBridge?.setLayout("toggle-toolbar")
+    }
+
+    @objc private func toggleNotesPrompt(_ sender: Any?) {
+        nativeBridge?.setLayout("toggle-notes-prompt")
     }
 
     @objc private func startNewInstance(_ sender: Any?) {
@@ -362,10 +382,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             receiver.onPageClose = { [weak self] in
                 self?.pageRequestedClose()
             }
-            receiver.onLayoutChanged = { [weak self] split, sidebar, pictures in
+            receiver.onLayoutChanged = { [weak self] split, sidebar, pictures, toolbar, notesPrompt in
                 self?.splitViewMenuItem?.state = split ? .on : .off
                 self?.sidebarMenuItem?.state = sidebar ? .on : .off
                 self?.picturesMenuItem?.state = pictures ? .on : .off
+                self?.toolbarMenuItem?.state = toolbar ? .on : .off
+                self?.notesPromptMenuItem?.state = notesPrompt ? .on : .off
             }
             receiver.attach(to: view, mediaHandler: built.1)
             nativeBridge = receiver

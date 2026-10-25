@@ -3,6 +3,7 @@
 #include "storage/sqlite_storage.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <exception>
 #include <optional>
 #include <string>
@@ -105,5 +106,10 @@ void note_save_scroll_position(
     std::int64_t id,
     std::string_view name);
 void note_delete(storage::SqliteDatabase& database, std::int64_t id);
+struct NoteAudioClip { std::string mime_type, bytes; };
+nlohmann::json note_audio_info(storage::SqliteDatabase& database, std::int64_t id);
+NoteAudioClip note_audio_clip(storage::SqliteDatabase& database, std::int64_t id, std::int64_t ordinal);
+void note_save_audio(storage::SqliteDatabase& database, std::int64_t id,
+    const std::vector<std::filesystem::path>& clips);
 
 } // namespace cha

@@ -151,16 +151,13 @@ export function EditableTitle({ available, disabled = false, id, name, onSave, s
 interface DefinitionUploadProps {
   ariaLabel: string;
   failureMessage: string;
-  id: string;
   onUpload(markdown: string): Promise<void>;
 }
 
-function DefinitionUpload({ ariaLabel, failureMessage, id, onUpload }: DefinitionUploadProps) {
+function DefinitionUpload({ ariaLabel, failureMessage, onUpload }: DefinitionUploadProps) {
   const input = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => setError(null), [id]);
 
   async function replaceFromFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -293,9 +290,9 @@ export function DetailActions({ name, subject, deleteMessage, onDelete, editor }
           type="button"
         ><TextLinesIcon /></button>
         <DefinitionUpload
+          key={name}
           ariaLabel={editor.uploadLabel}
           failureMessage={`${subject} could not be replaced.`}
-          id={name}
           onUpload={editor.onSave}
         />
       </>}

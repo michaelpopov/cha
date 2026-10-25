@@ -134,6 +134,45 @@ protected:
 };
 
 
+TEST_F(NoteStorageTest, AudioReplacementIsAtomicPersistentAndCascadesWithNoteDeletion) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Narration");
+    (void)note_set_read_only(*database_, note.id, true);
+    const auto first = workspace_.root() / "first.m4a", second = workspace_.root() / "second.m4a";
+    { std::ofstream(first, std::ios::binary) << "first clip"; std::ofstream(second, std::ios::binary) << "second clip"; }
+    note_save_audio(*database_, note.id, {first, second});
+    EXPECT_EQ(note_audio_info(*database_, note.id), (nlohmann::json{{"count", 2}}));
+    EXPECT_EQ(note_audio_clip(*database_, note.id, 0).mime_type, "audio/mp4");
+    EXPECT_THROW(note_save_audio(*database_, note.id, {second, workspace_.root() / "missing.m4a"}), std::exception);
+    EXPECT_EQ(note_audio_clip(*database_, note.id, 0).bytes, "first clip");
+    EXPECT_EQ(note_audio_clip(*database_, note.id, 1).bytes, "second clip");
+    database_->execute("CREATE TRIGGER reject_audio BEFORE INSERT ON note_audio WHEN NEW.ordinal=1 BEGIN SELECT RAISE(ABORT, 'test insert failure'); END");
+    EXPECT_THROW(note_save_audio(*database_, note.id, {second, first}), std::exception);
+    EXPECT_EQ(note_audio_clip(*database_, note.id, 0).bytes, "first clip");
+    database_->execute("DROP TRIGGER reject_audio");
+    note_save_audio(*database_, note.id, {second});
+    database_.reset();
+    database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+    EXPECT_EQ(note_audio_info(*database_, note.id)["count"], 1);
+    EXPECT_EQ(note_audio_clip(*database_, note.id, 0).bytes, "second clip");
+    EXPECT_THROW(note_audio_clip(*database_, note.id, 1), NoteError);
+    note_delete(*database_, note.id);
+    EXPECT_EQ(note_audio_info(*database_, note.id)["count"], 0);
+    EXPECT_THROW(note_save_audio(*database_, note.id, {first}), NoteError);
+}
+
+TEST_F(NoteStorageTest, AudioSaveRequiresANormalReadOnlyNote) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Editable");
+    const auto clip = workspace_.root() / "clip.m4a";
+    std::ofstream(clip, std::ios::binary) << "clip";
+    EXPECT_THROW(note_save_audio(*database_, note.id, {clip}), NoteError);
+    (void)note_set_read_only(*database_, note.id, true);
+    note_save_audio(*database_, note.id, {clip});
+    (void)note_set_read_only(*database_, note.id, false);
+    EXPECT_THROW(note_save_audio(*database_, note.id, {clip}), NoteError);
+    EXPECT_EQ(note_audio_clip(*database_, note.id, 0).bytes, "clip");
+}
+
+
 nlohmann::json annotation_fixture() {
     std::ifstream input(std::filesystem::path(CHA_SOURCE_DIRECTORY) / "tests/fixtures/notes/annotations.json");
     return nlohmann::json::parse(input);

@@ -137,7 +137,7 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
     var saveSession: ((String, String, UInt64, String, String, String) -> Void)?
     var onCloseReply: ((String, Int, String) -> Void)?
     var onPageClose: (() -> Void)?
-    var onLayoutChanged: ((Bool, Bool, Bool) -> Void)?
+    var onLayoutChanged: ((Bool, Bool, Bool, Bool, Bool) -> Void)?
 
     init(runtime: OpaquePointer) {
         self.runtime = runtime
@@ -283,8 +283,12 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
                       let sidebar = object["sidebar"] as? NSNumber,
                       CFGetTypeID(sidebar) == CFBooleanGetTypeID(),
                       let pictures = object["pictures"] as? NSNumber,
-                      CFGetTypeID(pictures) == CFBooleanGetTypeID() else { return }
-                onLayoutChanged?(split.boolValue, sidebar.boolValue, pictures.boolValue)
+                      CFGetTypeID(pictures) == CFBooleanGetTypeID(),
+                      let toolbar = object["toolbar"] as? NSNumber,
+                      CFGetTypeID(toolbar) == CFBooleanGetTypeID(),
+                      let notesPrompt = object["notes_prompt"] as? NSNumber,
+                      CFGetTypeID(notesPrompt) == CFBooleanGetTypeID() else { return }
+                onLayoutChanged?(split.boolValue, sidebar.boolValue, pictures.boolValue, toolbar.boolValue, notesPrompt.boolValue)
                 return
             }
             if action == "close_reply" {

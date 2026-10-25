@@ -91,14 +91,15 @@ async function nativeParity() {
       'Notes composer does not align with Chat');
     const transliteration = bounds(note.querySelector('.cha-transliteration-toggle'));
     const status = bounds(note.querySelector('.cha-chat-status'));
-    const sidebar = bounds(note.querySelector('.cha-sidebar-toggle'));
-    check(Math.abs((status.right - transliteration.right) - (sidebar.left - status.left)) <= 1,
+    const statusPadding = parseFloat(getComputedStyle(note.querySelector('.cha-chat-status')).paddingRight);
+    check(Math.abs(status.right - transliteration.right - statusPadding) <= 1,
       'Notes transliteration is not right-aligned');
-    await click('Hide sidebar', note);
-    await until('sidebar closed', () => button('Show sidebar', note));
+    check(!button('Hide sidebar', note) && !button('Show sidebar', note), 'Notes sidebar toggle remains');
+    window.__CHA_NATIVE_SET_LAYOUT__('toggle-sidebar');
+    await until('sidebar closed', () => document.querySelector('.cha-app').dataset.sidebar === 'closed');
     composerLayout();
-    await click('Show sidebar', note);
-    await until('sidebar open', () => button('Hide sidebar', note));
+    window.__CHA_NATIVE_SET_LAYOUT__('toggle-sidebar');
+    await until('sidebar open', () => document.querySelector('.cha-app').dataset.sidebar === 'open');
     setValue(prompt, 'Saved by the UI smoke test.\nSecond line.');
     await click('Send to UI smoke note', note);
     await until('prompt inserted into note', () => (

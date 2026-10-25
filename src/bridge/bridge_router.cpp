@@ -1303,6 +1303,15 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = nlohmann::json::object();
                 break;
             }
+            case Method::note_audio_source: {
+                require_only_keys(params, {"id", "ordinal"});
+                const auto ordinal = params.contains("ordinal") ? as_safe_uint(params.at("ordinal")) : std::nullopt;
+                if (!ordinal) throw std::invalid_argument("Invalid audio clip ordinal.");
+                const auto resource = application.note_audio_source(connection_id,
+                    static_cast<std::int64_t>(require_safe_id(params, "id")), static_cast<std::int64_t>(*ordinal), epoch);
+                result = app::media_resource_json(resource.resource_id, resource.mime_type, resource.byte_length);
+                break;
+            }
             case Method::notes_compress:
                 if (params.contains("skip_ineligible")) require_only_keys(params, {"id", "skip_ineligible"});
                 else require_only_keys(params, {"id"});

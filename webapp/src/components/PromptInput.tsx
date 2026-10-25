@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent,
   type PointerEvent,
@@ -31,6 +32,13 @@ import { TransliterationToggle, useTransliteration } from './TransliterationMode
 
 let microphoneOwner: object | null = null;
 const microphoneListeners = new Set<() => void>();
+function subscribeMicrophone(listener: () => void) {
+  microphoneListeners.add(listener);
+  return () => { microphoneListeners.delete(listener); };
+}
+function readMicrophoneOwner() {
+  return microphoneOwner;
+}
 function notifyMicrophoneOwner() {
   for (const listener of microphoneListeners) listener();
 }
@@ -42,6 +50,7 @@ export interface PromptVoiceControls {
 }
 
 export interface PromptInputProps {
+  hidden?: boolean;
   value: string;
   onChange(next: string): void;
   enabled: boolean;
@@ -89,6 +98,7 @@ function xaiBridgeFromClient(client: ChaClient): VoiceInputXaiBridge {
 }
 
 export function PromptInput({
+  hidden = false,
   value,
   onChange,
   enabled,
@@ -138,13 +148,8 @@ export function PromptInput({
   const [voiceConfiguration, setVoiceConfiguration] =
     useState<VoiceInputConfiguration | null>(null);
   const microphoneIdentity = useRef({});
-  const [otherMicrophoneActive, setOtherMicrophoneActive] = useState(false);
-  useEffect(() => {
-    const update = () => setOtherMicrophoneActive(microphoneOwner !== null && microphoneOwner !== microphoneIdentity.current);
-    microphoneListeners.add(update);
-    update();
-    return () => { microphoneListeners.delete(update); };
-  }, []);
+  const activeMicrophone = useSyncExternalStore(subscribeMicrophone, readMicrophoneOwner);
+  const otherMicrophoneActive = activeMicrophone !== null && activeMicrophone !== microphoneIdentity.current;
   function releaseMicrophone() {
     if (microphoneOwner !== microphoneIdentity.current) return;
     microphoneOwner = null;
@@ -233,7 +238,7 @@ export function PromptInput({
     const maximum = maximumComposerHeight();
     input.style.height = `${Math.min(maximum, Math.max(input.scrollHeight, composerHeight ?? 0))}px`;
   }
-  useLayoutEffect(fitComposer, [composerHeight, value]);
+  useLayoutEffect(fitComposer, [composerHeight, value, hidden]);
 
   // Picture/sidebar resizing and window changes resize the column without a
   // draft change. fitComposer reads the draft from the element, so only the
@@ -551,7 +556,7 @@ export function PromptInput({
         : 'Finishing transcription';
 
   return (
-    <div className="cha-composer-area" ref={composerArea}>
+    <div className="cha-composer-area" hidden={hidden} ref={composerArea}>
       <div
         aria-label="Resize message editor"
         aria-orientation="horizontal"

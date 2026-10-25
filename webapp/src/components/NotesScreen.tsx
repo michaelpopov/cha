@@ -1,3 +1,4 @@
+import { useNoteAudio } from '../notes/useNoteAudio';
 import { ChaError } from '../api/client';
 import { sortAnnotationGroups, type AnnotationDestination } from '../notes/annotationSource';
 import { selectNoteAnnotation } from '../notes/highlights';
@@ -43,7 +44,7 @@ import { noteFileHtml, noteFileTooLarge, promptFilePath } from '../notes/fileImp
 import { availableNoteName, noteItemPath } from '../notes/tree';
 import type { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveFailedMessage, useNoteSave, type NoteSaveHandle } from '../notes/useNoteSave';
-import type { DataAction, NavigationAction } from '../state/view';
+import type { NavigationAction } from '../state/view';
 import {
   BlocksIcon,
   CheckIcon,
@@ -60,7 +61,6 @@ import {
 import { menuKeys, type NoteActions, type SetNoteReadOnly } from './NotesTree';
 import { NoteHighlights } from './NoteHighlights';
 import { PromptInput } from './PromptInput';
-import { SidebarToggle } from './TopBar';
 
 type LeaveHandle = Pick<
   ReturnType<typeof useNoteLeave>,
@@ -806,14 +806,14 @@ export function NotesScreen({
   onSetNoteReadOnly,
   draft,
   onDraftChange,
-  sidebarOpen,
-  dispatch,
   navigate,
   editorLiveRef,
   leave,
   onRegisterSave,
   onRegisterDispose,
   sessionStatus,
+  toolbarVisible = true,
+  promptVisible = true,
 }: {
   client: ChaClient & NotesClient;
   notesEpoch: number;
@@ -825,14 +825,14 @@ export function NotesScreen({
   onSetNoteReadOnly: SetNoteReadOnly;
   draft: string;
   onDraftChange(next: string): void;
-  sidebarOpen: boolean;
-  dispatch: Dispatch<DataAction>;
   navigate: Dispatch<NavigationAction>;
   editorLiveRef: MutableRefObject<Editor | null>;
   leave: LeaveHandle;
   onRegisterSave(save: NoteSaveHandle | null): void;
   onRegisterDispose(dispose: () => void): void;
   sessionStatus?: ReactNode;
+  toolbarVisible?: boolean;
+  promptVisible?: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>(activeNoteId === null ? 'empty' : 'loading');
   const [editing, setEditing] = useState(false);
@@ -867,6 +867,9 @@ export function NotesScreen({
   const [useRegex, setUseRegex] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; position: number } | null>(null);
+  const noteAudio = useNoteAudio({ client: client.noteAudio, id: activeNoteId, editor,
+    enabled: readOnly && !immutable && phase === 'ready', menuOpen: contextMenu !== null,
+    onError: setCommandError });
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const findRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
@@ -1358,7 +1361,7 @@ export function NotesScreen({
 
   return (
     <section className="cha-notes-screen" aria-label="Note">
-      {phase === 'ready' && editor && (
+      {phase === 'ready' && editor && toolbarVisible && (
         <FormatBar
           editor={editor}
           onHighlight={chooseHighlight}
@@ -1453,7 +1456,8 @@ export function NotesScreen({
       <PromptInput
         key={activeNoteId}
         client={client}
-        enabled
+        hidden={!promptVisible}
+        enabled={promptVisible}
         inputLabel="Prompt"
         microphoneEnabled
         onChange={onDraftChange}
@@ -1512,15 +1516,10 @@ export function NotesScreen({
         }}
         statusRow={({ transliteration }) => (
           <div className="cha-chat-status">
-            <SidebarToggle
-              className="cha-sidebar-toggle"
-              dispatch={dispatch}
-              sidebarOpen={sidebarOpen}
-            />
             {transliteration}
           </div>
         )}
-        submitEnabled={submitEnabled}
+        submitEnabled={submitEnabled && promptVisible}
         submitLabel={sendLabel}
         submitTitle={sendLabel}
         value={draft}
@@ -1536,6 +1535,12 @@ export function NotesScreen({
           role="menu"
           style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
         >
+          {noteAudio.state !== 'stopped' ? <button role="menuitem" type="button" onClick={() => {
+            noteAudio.stop(); setContextMenu(null); focusNotesEditor(editorRef.current);
+          }}>Stop playing</button> : noteAudio.canPlay(contextMenu.position) && <button role="menuitem" type="button" onClick={() => {
+            noteAudio.play(contextMenu.position); setContextMenu(null);
+            focusNotesEditor(editorRef.current);
+          }}>Play from here</button>}
           {menuCommands.map((command) => (
             <button
               disabled={command !== 'Copy' && (save.frozen || (immutable && ['Highlight', 'Add comment', 'Delete comment'].includes(command))

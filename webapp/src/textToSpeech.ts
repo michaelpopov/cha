@@ -3,7 +3,7 @@ import CodecParser, { type CodecFrame } from 'codec-parser';
 import MSEAudioWrapper from 'mse-audio-wrapper';
 
 import type { ChaClient, VoiceUpdate } from './api/client';
-import { beginSpeechPlayback } from './speechPlayback';
+import { beginSpeechPlayback, claimSpeechPlayback } from './speechPlayback';
 
 export function nativeSpeechFromClient(client: ChaClient): NativeSpeech {
   return {
@@ -173,6 +173,7 @@ export class TextToSpeechSession {
   private audio: HTMLAudioElement | null = null;
   private objectUrl: string | null = null;
   private stopped = false;
+  private releasePlaybackFocus: (() => void) | undefined;
   private nativeResourceId: string | null = null;
   private endPlayback: (() => void) | null = null;
   private playbackWaitTimer: ReturnType<typeof setTimeout> | undefined;
@@ -181,6 +182,7 @@ export class TextToSpeechSession {
   constructor(private readonly options: TextToSpeechSessionOptions) {}
 
   async play(): Promise<void> {
+    this.releasePlaybackFocus = claimSpeechPlayback(() => this.finish(true));
     let url = this.options.cachedUrl;
     let streaming = this.options.streaming ?? false;
     if (!url && this.options.nativeSpeech) {
@@ -199,7 +201,7 @@ export class TextToSpeechSession {
       this.releaseNative();
       return;
     }
-    if (this.options.cachedUrl) this.options.onCached?.();
+    this.options.onCached?.();
 
     const audio = await this.createBlobAudio(blob);
     if (audio) await this.startAudio(audio);
@@ -387,6 +389,7 @@ export class TextToSpeechSession {
   stop(resetPosition = false): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.releasePlaybackFocus?.(); this.releasePlaybackFocus = undefined;
     this.clearPlaybackWait();
     this.request.abort();
     this.audio?.pause();

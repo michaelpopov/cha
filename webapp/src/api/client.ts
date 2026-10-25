@@ -119,7 +119,18 @@ export type NoteBookImport = {
   notes: { name: string; document: Record<string, unknown> }[];
 };
 
+export type NoteAudioInfo = components['schemas']['NoteAudioInfo'];
+export type NoteAudioStatus = components['schemas']['NoteAudioStatus'];
+export interface NoteAudioClient {
+  info(id: number): Promise<NoteAudioInfo>;
+  start(id: number, voice: string, blocks: string[]): Promise<NoteAudioStatus>;
+  status(id: number): Promise<NoteAudioStatus>;
+  source(id: number, ordinal: number): Promise<MediaResource>;
+  release(resourceId: string): Promise<void>;
+}
+
 export interface NotesClient {
+  noteAudio?: NoteAudioClient;
   importEpub: (file: File, items: readonly NoteItem[], parentId: number | null) => Promise<number>;
   readNotePage: (url: string) => Promise<NotePage>;
   readNoteTextFile: (path: string) => Promise<TextFileRequest | null>;
@@ -140,6 +151,7 @@ export interface NotesClient {
 }
 
 export interface ChaClient {
+  noteAudio?: NoteAudioClient;
   getBootstrap(): Promise<Bootstrap>;
   getCharacterPicture(characterId: string, filename?: string): Promise<CharacterPicture | null>;
   updateCharacterPicture(characterId: string, file: File, previousFilename?: string): Promise<void>;
@@ -574,6 +586,8 @@ export function isSessionNamingSettings(value: unknown): value is SessionNamingS
 
 export function isNotesSettings(value: unknown): value is NotesSettings {
   return isRecord(value) && typeof value.compression_provider === 'string'
+    && (value.audio_url === undefined || typeof value.audio_url === 'string')
+    && (value.audio_api_key === undefined || typeof value.audio_api_key === 'string')
     && isOneOf(value.compression_reasoning_effort, ['none', 'low', 'medium', 'high', 'xhigh']);
 }
 

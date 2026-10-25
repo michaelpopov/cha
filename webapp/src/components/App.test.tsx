@@ -133,7 +133,7 @@ describe.each([
   ['desktop', 1280],
   ['iPhone', 390],
 ])('App shell at %s width', (_name, width) => {
-  it('lets only the two-line control change sidebar visibility', async () => {
+  it('preserves sidebar visibility until toggled through the View menu', async () => {
     const { container } = renderAt(width);
     const app = container.querySelector('.cha-app');
     expect(app).toHaveAttribute('data-sidebar', 'open');
@@ -143,7 +143,7 @@ describe.each([
     expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
     expect(app).toHaveAttribute('data-sidebar', 'open');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hide sidebar' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-sidebar'));
     expect(app).toHaveAttribute('data-sidebar', 'closed');
     expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
 
@@ -159,7 +159,7 @@ it.each(['Personas', 'Characters', 'Forums'])(
     const { container } = renderAt(390);
     await openSettingsNavigation();
     fireEvent.click(screen.getByRole('button', { name }));
-    fireEvent.click(screen.getByRole('button', { name: 'Hide sidebar' }));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-sidebar'));
 
     const navigation = screen.getByRole('region', { name: `${name} navigation` });
     const back = within(navigation).getByRole('button', { name: 'Settings' });
@@ -2683,7 +2683,7 @@ it('names an unavailable API, hides arbitrary exception details, and retries sta
   expect(alert).toHaveTextContent('Application API unavailable');
   expect(alert).not.toHaveTextContent('/private/customer');
   expect(alert).not.toHaveTextContent('secret');
-  expect(screen.getByRole('button', { name: 'Hide sidebar' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^(Show|Hide) sidebar$/ })).toBeNull();
 
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByLabelText('Current chat context')).toHaveTextContent('Entrance');

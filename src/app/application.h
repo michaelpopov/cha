@@ -350,6 +350,11 @@ public:
     [[nodiscard]] SessionNamingSettings get_session_naming_settings(std::uint64_t epoch);
     [[nodiscard]] SessionNamingSettings save_session_naming_settings(
         SessionNamingSettings settings, std::uint64_t epoch);
+    nlohmann::json start_note_audio(std::int64_t id, std::string voice, std::vector<std::string> blocks, std::uint64_t epoch);
+    nlohmann::json get_note_audio_status(std::int64_t id, std::uint64_t epoch);
+    nlohmann::json get_note_audio_info(std::int64_t id, std::uint64_t epoch);
+    MediaResource note_audio_source(std::string_view connection_id, std::int64_t id,
+        std::int64_t ordinal, std::uint64_t epoch);
     [[nodiscard]] NotesSettings get_notes_settings(std::uint64_t epoch);
     [[nodiscard]] NotesSettings save_notes_settings(NotesSettings settings, std::uint64_t epoch);
     [[nodiscard]] WebSearchSettings get_web_search_settings(std::uint64_t epoch);

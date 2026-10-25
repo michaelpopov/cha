@@ -372,6 +372,9 @@ public:
         std::int64_t id,
         std::string_view name);
     void delete_note_item(std::int64_t id);
+    nlohmann::json get_note_audio_info(std::int64_t id) const;
+    NoteAudioClip get_note_audio_clip(std::int64_t id, std::int64_t ordinal) const;
+    void save_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips);
 
     [[nodiscard]] std::optional<WorkspaceCharacterPicture> get_character_picture(
         std::string_view character_id, std::string_view filename = {}) const;

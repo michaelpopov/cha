@@ -3,7 +3,7 @@ import { Blob as NodeBlob } from 'node:buffer';
 import CodecParser from 'codec-parser';
 
 import { TextToSpeechSession } from './textToSpeech';
-import { onSpeechPlaybackChange } from './speechPlayback';
+import { claimSpeechPlayback, onSpeechPlaybackChange } from './speechPlayback';
 
 type TestAudio = EventTarget & {
   currentTime: number;
@@ -73,6 +73,45 @@ afterEach(async () => {
 });
 
 describe('text to speech', () => {
+  it('claims speech before source loading and releases a late source after takeover', async () => {
+    const stopNote = vi.fn();
+    const releaseNote = claimSpeechPlayback(stopNote);
+    let resolve!: (resource: { url: string; resource_id: string }) => void;
+    const release = vi.fn().mockResolvedValue(undefined);
+    const ended = vi.fn();
+    const session = new TextToSpeechSession({ text: 'Chat reply', onEnded: ended,
+      nativeSpeech: { preview: () => new Promise(done => { resolve = done; }), release } });
+    const playing = session.play();
+    expect(stopNote).toHaveBeenCalledOnce();
+    const stopNewNote = vi.fn();
+    const releaseNewNote = claimSpeechPlayback(stopNewNote);
+    expect(ended).toHaveBeenCalledOnce();
+    resolve({ url: '/media/late', resource_id: 'late' });
+    await playing;
+    expect(release).toHaveBeenCalledExactlyOnceWith('late');
+    expect(audios).toHaveLength(0);
+    releaseNote();
+    const releaseNext = claimSpeechPlayback(vi.fn());
+    expect(stopNewNote).toHaveBeenCalledOnce();
+    releaseNewNote(); releaseNext();
+  });
+
+  it('stops externally paused speech on takeover and clears its old position', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('audio'));
+    const position = vi.fn();
+    const ended = vi.fn();
+    const session = new TextToSpeechSession({ text: 'Chat reply', cachedUrl: '/audio', onEnded: ended,
+      playback: { position: 0, onPositionChange: position } });
+    await session.play();
+    audios[0].currentTime = 12; audios[0].paused = true;
+    audios[0].dispatchEvent(new Event('pause'));
+    expect(ended).not.toHaveBeenCalled();
+    const release = claimSpeechPlayback(vi.fn());
+    expect(ended).toHaveBeenCalledOnce();
+    expect(position).toHaveBeenLastCalledWith(0);
+    expect(audios[0].pause).toHaveBeenCalledOnce();
+    release();
+  });
   it.each(['stop', 'ended', 'error', 'pause'])('pauses input only at playback and releases it after %s', async (ending) => {
     let deliver!: (response: Response) => void;
     vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise((resolve) => { deliver = resolve; }));

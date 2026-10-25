@@ -448,7 +448,8 @@ void to_json(nlohmann::json& json, const SessionNamingSettings& value) {
 
 void to_json(nlohmann::json& json, const NotesSettings& value) {
     json = {{"compression_provider", value.compression_provider},
-        {"compression_reasoning_effort", value.compression_reasoning_effort}};
+        {"compression_reasoning_effort", value.compression_reasoning_effort},
+        {"audio_url", value.audio_url}, {"audio_api_key", value.audio_api_key}};
 }
 
 void to_json(nlohmann::json& json, const WebSearchSettings& value) {

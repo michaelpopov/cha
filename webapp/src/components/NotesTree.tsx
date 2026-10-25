@@ -1,6 +1,6 @@
 import { hotkeysCoreFeature, syncDataLoaderFeature } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
-import { generateText } from '@tiptap/core';
+import { generateText, getSchema } from '@tiptap/core';
 import {
   useEffect,
   useLayoutEffect,
@@ -24,8 +24,10 @@ import {
   focusAfterRemoval,
   type NoteTreeRow,
 } from '../notes/tree';
+import { NoteAudioDialog } from './NoteAudioDialog';
 import { noteReference } from '../notes/reference';
 import { notesExtensions } from '../notes/editor';
+import { noteAudioBlocks } from '../notes/useNoteAudio';
 
 type CreateKind = 'note' | 'folder';
 
@@ -150,6 +152,7 @@ export function NotesTree({
   vaultName: string;
   onRegisterNoteActions?(actions: NoteActions | null): void;
 }) {
+  const [audioNote, setAudioNote] = useState<number | null>(null);
   const [items, setItems] = useState<NoteItem[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [stale, setStale] = useState(false);
@@ -860,6 +863,13 @@ export function NotesTree({
                     ? 'Make editable' : 'Make read-only'}
                 </button>
               )}
+              {client.noteAudio && menuIsNote && index.rows[menu.sourceId]?.kind === 'note' && <button
+                disabled={!items.find(item => String(item.id) === menu.sourceId)?.read_only}
+                onClick={() => {
+                  const id = Number(menu.sourceId);
+                  window.dispatchEvent(new CustomEvent('cha-note-audio-changed', { detail: id }));
+                  setAudioNote(id); closeMenu(false);
+                }} role="menuitem" type="button">Generate audio</button>}
               {index.rows[menu.sourceId]?.kind !== 'annotation' && <button onClick={() => void startCompress()} role="menuitem" type="button">Compress</button>}
               {menuIsNote && (
                 <button disabled={!index.rows[menu.sourceId]?.hasCompressed}
@@ -874,6 +884,16 @@ export function NotesTree({
         </div>,
         document.body,
       )}
+      {audioNote !== null && client.noteAudio && <NoteAudioDialog client={client.noteAudio} id={audioNote}
+        prepare={async () => {
+          const note = await client.getNote(audioNote);
+          return noteAudioBlocks(getSchema(notesExtensions()).nodeFromJSON({ type: 'doc', ...note.document }))
+            .map(block => block.text);
+        }}
+        onClose={() => {
+          window.dispatchEvent(new CustomEvent('cha-note-audio-changed', { detail: audioNote }));
+          setAudioNote(null);
+        }} />}
       {dialog?.action === 'create' && (
         <NameDialog
           error={dialog.error}

@@ -153,6 +153,10 @@ enum class Method {
     notes_compress_cancel,
     notes_rename,
     notes_delete,
+    note_audio_start,
+    note_audio_status,
+    note_audio_info,
+    note_audio_source,
     count,
 };
 

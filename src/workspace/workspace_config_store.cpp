@@ -2574,6 +2574,19 @@ void WorkspaceConfigStore::apply_key_migration(
     });
 }
 
+nlohmann::json WorkspaceConfigStore::get_note_audio_info(std::int64_t id) const {
+    const std::lock_guard lock(impl_->mutex);
+    return note_audio_info(*impl_->database, id);
+}
+NoteAudioClip WorkspaceConfigStore::get_note_audio_clip(std::int64_t id, std::int64_t ordinal) const {
+    const std::lock_guard lock(impl_->mutex);
+    return note_audio_clip(*impl_->database, id, ordinal);
+}
+void WorkspaceConfigStore::save_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips) {
+    const std::lock_guard lock(impl_->mutex);
+    note_save_audio(*impl_->database, id, clips);
+}
+
 std::vector<NoteItem> WorkspaceConfigStore::list_note_items() const {
     const std::lock_guard lock(impl_->mutex);
     return note_list(*impl_->database);

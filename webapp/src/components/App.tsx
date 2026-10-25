@@ -147,7 +147,7 @@ function Screen(props: ScreenProps) {
       (clientX - bounds.left - 3) / available)));
   }
   return (
-    <div className={`cha-workspace${split ? ' is-split' : ''}`} ref={workspaceRef}
+    <div className="cha-workspace" ref={workspaceRef}
       style={split ? { gridTemplateColumns: `minmax(0, ${ratio}fr) 6px minmax(0, ${1 - ratio}fr)` } : undefined}>
       {notesVisible && <div key="notes" className="cha-workspace-panel is-notes">
         <ScreenContent {...props} view="notes" />
@@ -174,7 +174,7 @@ function Screen(props: ScreenProps) {
         }} />}
       {chatVisible && <div key="chat" className="cha-workspace-panel is-chat">
         {state.sessionOperation !== 'idle' ? <>
-          {state.layoutMode === 'single' && <TopBar dispatch={props.dispatch} state={state} title={navigationTitle(state)} />}
+          {state.layoutMode === 'single' && <TopBar title={navigationTitle(state)} />}
           <SessionOperationState state={state} onRetry={props.onRetrySessionOpen}
             onBrowseSessions={props.onBrowseSessions} />
         </> : <ScreenContent {...props} view="chat" />}
@@ -453,9 +453,10 @@ function ScreenContent({
     );
     case 'notes': return (
       <NotesScreen
+        toolbarVisible={state.notesToolbarVisible}
+        promptVisible={state.notesPromptVisible}
         activeNoteId={state.activeNoteId}
         client={client}
-        dispatch={dispatch}
         navigate={navigate}
         draft={notesDraft}
         editorLiveRef={editorLiveRef}
@@ -477,7 +478,6 @@ function ScreenContent({
             )}
           </div>
         )}
-        sidebarOpen={state.sidebarOpen}
       />
     );
   }
@@ -709,9 +709,18 @@ export function App({
     installAppCloseHost(() => closeHost.current);
   }
   useEffect(() => {
-    reportNativeLayout(state.layoutMode === 'split', state.sidebarOpen, state.pictureOpen);
-  }, [state.layoutMode, state.sidebarOpen, state.pictureOpen]);
+    reportNativeLayout(state.layoutMode === 'split', state.sidebarOpen, state.pictureOpen,
+      state.notesToolbarVisible, state.notesPromptVisible);
+  }, [state.layoutMode, state.sidebarOpen, state.pictureOpen, state.notesToolbarVisible, state.notesPromptVisible]);
   useEffect(() => installNativeLayoutHandler((requested) => {
+    if (requested === 'toggle-notes-prompt') {
+      dispatch({ type: 'toggle-notes-prompt' });
+      return;
+    }
+    if (requested === 'toggle-toolbar') {
+      dispatch({ type: 'toggle-notes-toolbar' });
+      return;
+    }
     if (requested === 'toggle-pictures') {
       dispatch({ type: 'toggle-picture' });
       return;
@@ -1278,7 +1287,7 @@ export function App({
             />
           )}
           <main className={`cha-main${chatVisible ? ' is-chat' : ''}${notesVisible ? ' is-notes' : ''}`} data-view={state.mainView}>
-            {!chatVisible && !notesVisible && <TopBar dispatch={dispatch} state={state} title={title} />}
+            {!chatVisible && !notesVisible && <TopBar title={title} />}
             {submissionErrors.map((error) => <div className="cha-submission-error" role="alert" key={error.id}>
               <span>{error.message}</span>
               <button type="button" aria-label="Dismiss message error" onClick={() => setSubmissionErrors((errors) => errors.filter(({ id }) => id !== error.id))}>Dismiss</button>

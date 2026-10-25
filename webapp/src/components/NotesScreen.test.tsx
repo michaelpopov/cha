@@ -121,7 +121,7 @@ function Harness({
         activeNoteId={noteId}
         destination={destination}
         client={client}
-        dispatch={dispatch} navigate={dispatch}
+        navigate={dispatch}
         draft={text}
         editorLiveRef={editorLiveRef}
         leave={leave}
@@ -132,7 +132,6 @@ function Harness({
         onSetNoteReadOnly={async (id, readOnly) => ({ ...plan, id, read_only: readOnly })}
         onRegisterDispose={(dispose) => { disposeRef.current = dispose; }}
         onRegisterSave={(save) => { saveRef.current = save; }}
-        sidebarOpen
       />
     </div>
   );

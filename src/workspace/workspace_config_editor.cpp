@@ -454,6 +454,8 @@ void WorkspaceConfigEditor::write_notes(const WorkspaceNotes& settings) {
     toml::table table;
     table.insert("compression_provider", settings.compression_provider_id);
     table.insert("compression_reasoning_effort", settings.compression_reasoning_effort);
+    table.insert("audio_url", settings.audio_url);
+    table.insert("audio_api_key", settings.audio_api_key_id);
     write_toml(workspace_.root_ / "system" / "notes" / "config.toml", table);
 }
 

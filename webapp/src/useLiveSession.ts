@@ -634,7 +634,7 @@ export function useLiveSession(
     // new navigation screen.
     if (navigation.current !== renderedEpoch) return;
     if (!initialRouteReady || state.bootstrapStatus !== 'ready' || !active) return;
-    if (!workspaceVisibility(state).chatVisible) return;
+    if (!chatVisible) return;
     if (state.sessionOperation !== 'idle') return;
     if (pendingTarget.current || connection.current || recovery.current) return;
     const target = `${active.forumId}/${active.sessionId}`;
@@ -659,7 +659,7 @@ export function useLiveSession(
     }
     void openConversation(active.forumId, active.sessionId, false, false, adopt, false);
   }, [connectStream, initialRouteReady, openConversation, renderedEpoch,
-    state.activeConversation, state.bootstrapStatus, state.mainView, state.layoutMode,
+    state.activeConversation, state.bootstrapStatus, chatVisible,
     state.sessionOperation, state.sessionSnapshot, state.streamStatus]);
 
   useEffect(() => {

@@ -700,12 +700,14 @@ SessionNamingSettings save_session_naming_settings(
 }
 
 NotesSettings get_notes_settings(const Workspace& workspace) {
-    return {workspace.notes().compression_provider_id, workspace.notes().compression_reasoning_effort};
+    return {workspace.notes().compression_provider_id, workspace.notes().compression_reasoning_effort,
+        workspace.notes().audio_url, workspace.notes().audio_api_key_id};
 }
 
 NotesSettings save_notes_settings(WorkspaceConfigStore& store, const NotesSettings& update) {
     return with_settings_edit([&] {
-        store.apply_notes_update({update.compression_provider, update.compression_reasoning_effort});
+        store.apply_notes_update({update.compression_provider, update.compression_reasoning_effort,
+            update.audio_url, update.audio_api_key});
         return get_notes_settings(*store.snapshot());
     });
 }

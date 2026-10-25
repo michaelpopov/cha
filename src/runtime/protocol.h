@@ -447,6 +447,8 @@ struct SessionNamingSettings {
 struct NotesSettings {
     std::string compression_provider;
     std::string compression_reasoning_effort{"high"};
+    std::string audio_url;
+    std::string audio_api_key;
 };
 
 struct WebSearchSettings {

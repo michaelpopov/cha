@@ -3,6 +3,8 @@
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "workspace/builtins.h"
+#include "workspace/workspace_config_store.h"
+#include "util/base64.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -77,6 +79,84 @@ std::optional<ResourceBytes> wait_resource(Application& application, const std::
     }
     return std::nullopt;
 }
+
+
+#ifdef __APPLE__
+TEST(ApplicationMedia, NoteAudioCommitHonorsContextAndNoteLifetime) {
+    using Json = nlohmann::json;
+    for (const auto& action : {"complete", "delete", "switch"}) {
+        SCOPED_TRACE(action);
+        test::TestWorkspace workspace;
+        const auto database = test::import_test_database(workspace.root());
+        auto store = WorkspaceConfigStore::open(database);
+        const auto note = store->create_note_item({}, NoteItemKind::note, "Read aloud");
+        (void)store->set_note_read_only(note.id, true);
+        const auto previous = workspace.root() / "old.m4a";
+        std::ofstream(previous, std::ios::binary) << "old clip";
+        store->save_note_audio(note.id, {previous, previous});
+        store.reset();
+        auto application = Application::open(make_command(workspace, database));
+        const auto epoch = application->context_epoch();
+        EXPECT_THROW(application->start_note_audio(note.id, "Kore", {}, epoch), ApplicationError);
+        const auto key = application->create_api_key({.display_name = "Audio", .value = "secret"}, epoch);
+        const std::string file = "files/" + std::string(32, 'a'), batch = "batches/" + std::string(32, 'b');
+        MockHttpServer upload({http_response("application/json", Json{{"file", {{"name", file}}}}.dump())});
+        std::string wav;
+        const auto number = [&](std::uint32_t n, int bytes) { for (int i = 0; i < bytes; ++i) wav += static_cast<char>((n >> (8 * i)) & 255); };
+        wav += "RIFF"; number(4836, 4); wav += "WAVEfmt "; number(16, 4); number(1, 2); number(1, 2);
+        number(24000, 4); number(48000, 4); number(2, 2); number(16, 2); wav += "data"; number(4800, 4); wav.append(4800, '\0');
+        const Json result{{"key", "0"}, {"response", {{"candidates", Json::array({{{"content", {{"parts", Json::array({
+            {{"inlineData", {{"mimeType", "audio/wav"}, {"data", encode_base64(wav)}}}}
+        })}}}}})}}}};
+        MockHttpServer server({"HTTP/1.1 200 OK\r\nX-Goog-Upload-Url: http://127.0.0.1:"
+            + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            http_response("application/json", Json{{"name", batch}, {"done", true}, {"response", {{"responsesFile", file}}}}.dump()),
+            http_response("application/jsonl", result.dump() + '\n')});
+        (void)application->save_notes_settings({.compression_reasoning_effort = "high",
+            .audio_url = "http://127.0.0.1:" + std::to_string(server.port()), .audio_api_key = key.id}, epoch);
+        server.pause_before_response(3);
+        upload.start(); server.start();
+        const auto initial = application->start_note_audio(note.id, "Kore", {"Hello"}, epoch);
+        EXPECT_EQ(initial["phase"], "uploading"); EXPECT_FALSE(initial["done"].get<bool>());
+        EXPECT_THROW(application->start_note_audio(note.id, "Kore", {"Hello"}, epoch), ApplicationError);
+        ASSERT_TRUE(server.wait_for_requests(3, 2s));
+        if (std::string_view(action) == "delete") application->delete_note_item(note.id, epoch);
+        if (std::string_view(action) == "switch") {
+            const auto other = application->create_vault({.display_name = "Other"}, epoch);
+            (void)application->switch_vault(other.name, {}, epoch);
+        }
+        server.resume_responses();
+        upload.join(); server.join();
+        if (std::string_view(action) == "switch") {
+            EXPECT_THROW(application->get_note_audio_status(note.id, epoch), ApplicationError);
+            application->request_shutdown(); ASSERT_TRUE(application->join_shutdown(2s));
+            auto original = WorkspaceConfigStore::open(database);
+            EXPECT_EQ(original->get_note_audio_info(note.id)["count"], 2);
+            EXPECT_EQ(original->get_note_audio_clip(note.id, 0).bytes, "old clip");
+            continue;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        auto status = application->get_note_audio_status(note.id, epoch);
+        while (!status["done"].get<bool>() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(2ms);
+            status = application->get_note_audio_status(note.id, epoch);
+        }
+        EXPECT_TRUE(status["done"].get<bool>()); EXPECT_TRUE(status.contains("finished_at_ms"));
+        if (std::string_view(action) == "complete") {
+            EXPECT_EQ(status["phase"], "complete"); EXPECT_EQ(status["error"], "");
+            EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 1);
+            auto resource = application->note_audio_source("view-1", note.id, 0, epoch);
+            EXPECT_EQ(resource.mime_type, "audio/mp4");
+            EXPECT_GT(resource.byte_length, 0u);
+            application->release_resource("view-1", resource.resource_id, epoch);
+        } else {
+            EXPECT_NE(status["error"], "");
+            EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
+        }
+        application->request_shutdown(); ASSERT_TRUE(application->join_shutdown(2s));
+    }
+}
+#endif
 
 TEST(ApplicationMedia, SynthesizesSpeechIntoARevocableResource) {
     MockHttpServer server({http_response("audio/mpeg", "AUDIO")});

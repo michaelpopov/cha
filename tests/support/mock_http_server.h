@@ -263,7 +263,7 @@ private:
             }
 
             const std::size_t length_start =
-                request.find("Content-Length:");
+                request.find("\r\nContent-Length:");
             if (length_start == std::string::npos) {
                 if (request.starts_with("GET ")
                     || request.starts_with("HEAD ")) {
@@ -274,7 +274,7 @@ private:
             }
             const std::size_t value_start =
                 length_start
-                + std::string_view("Content-Length:").size();
+                + std::string_view("\r\nContent-Length:").size();
             const std::size_t value_end =
                 request.find("\r\n", value_start);
             const std::size_t content_length = std::stoul(

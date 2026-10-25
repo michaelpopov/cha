@@ -11,7 +11,6 @@ import {
   bootstrapFixture,
   characterDetailFixture,
   fixtureClient,
-  monoLargeVoice,
   plainVoice,
   serifItalicVoice,
   snapshotFixture,
@@ -55,7 +54,7 @@ async function attachInitial(
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled());
 }
 
-function mockAudioPlayback() {
+function mockAudioPlayback(failFirst = false) {
   const audios: Array<EventTarget & { play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn> }> = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('audio'));
   vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
@@ -63,6 +62,7 @@ function mockAudioPlayback() {
     const audio = Object.assign(new EventTarget(), {
       play: vi.fn().mockResolvedValue(undefined), pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(),
     });
+    if (failFirst && audios.length === 0) audio.play.mockRejectedValueOnce(new Error('Playback failed'));
     audios.push(audio);
     return audio;
   }));
@@ -532,7 +532,7 @@ describe('live chat', () => {
   });
 
   it('generates with one click after a job disappears without cached audio or failure', async () => {
-    const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
+    const audios = mockAudioPlayback();
     const startAudioDownload = vi.fn(async () => ({ entry_id: 1, cached: false, state: 'queued' as const }));
     const events = drivableEvents();
     render(<App client={fixtureClient({
@@ -550,7 +550,7 @@ describe('live chat', () => {
     // The follow-up status read reports that maintenance canceled the job.
     fireEvent.click(await screen.findByRole('button', { name: "Generate audio for Other's response" }));
     await waitFor(() => expect(startAudioDownload).toHaveBeenCalledTimes(2));
-    expect(play).not.toHaveBeenCalled();
+    expect(audios).toHaveLength(0);
   });
 
   it('refreshes a native cached audio miss and offers generation without automatically starting it', async () => {
@@ -612,7 +612,7 @@ describe('live chat', () => {
   });
 
   it('discards audio resolution completed for the previous conversation', async () => {
-    const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
+    const audios = mockAudioPlayback();
     let resolvePrevious!: (resource: MediaResource) => void;
     let resolveCurrent!: (resource: MediaResource) => void;
     const previous = new Promise<MediaResource>((resolve) => { resolvePrevious = resolve; });
@@ -656,12 +656,12 @@ describe('live chat', () => {
       resource_id: 'old', url: '/media/old', mime_type: 'audio/mpeg', byte_length: 3,
     }));
     await waitFor(() => expect(releaseResource).toHaveBeenCalledWith('old'));
-    expect(play).not.toHaveBeenCalled();
+    expect(audios).toHaveLength(0);
 
     await act(async () => resolveCurrent({
       resource_id: 'current', url: '/media/current', mime_type: 'audio/mpeg', byte_length: 3,
     }));
-    await waitFor(() => expect(play).toHaveBeenCalledOnce());
+    await waitFor(() => expect(audios).toHaveLength(1));
   });
 
   it('plays committed audio when no synthesis configuration or key is available', async () => {
@@ -1141,7 +1141,7 @@ describe('live chat', () => {
   });
 
   it('ignores and releases an automatic audio source that arrives after playback is disabled', async () => {
-    const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
+    const audios = mockAudioPlayback();
     let resolveSource!: (resource: MediaResource) => void;
     const releaseResource = vi.fn(async () => {});
     const events = drivableEvents();
@@ -1164,7 +1164,7 @@ describe('live chat', () => {
     await act(async () => resolveSource({ resource_id: 'late-audio', url: '/media/late-audio',
       mime_type: 'audio/mpeg', byte_length: 5 }));
     expect(releaseResource).toHaveBeenCalledWith('late-audio');
-    expect(play).not.toHaveBeenCalled();
+    expect(audios).toHaveLength(0);
   });
 
   it.each(['ended', 'pause at end', 'timeupdate at end', 'stop', 'select reply'] as const)('preserves pending replies when manual playback finishes with %s', async (finish) => {
@@ -1359,8 +1359,7 @@ describe('live chat', () => {
   });
 
   it.each(['download', 'playback', 'cancelled'] as const)('continues with the next reply after a %s failure', async (failure) => {
-    const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
-    if (failure === 'playback') play.mockRejectedValueOnce(new Error('Playback failed'));
+    mockAudioPlayback(failure === 'playback');
     const events = drivableEvents();
     const client = fixtureClient({
       getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
@@ -1390,7 +1389,7 @@ describe('live chat', () => {
     const play = vi.spyOn(TextToSpeechSession.prototype, 'play');
     const cached = [1];
     let finish!: (value: AudioDownloadAcceptance) => void;
-    const startAudioDownload = vi.fn((_forum: string, _session: string, entry_id: number) =>
+    const startAudioDownload = vi.fn((_forum: string, _session: string, _entryId: number) =>
       new Promise<AudioDownloadAcceptance>((resolve) => { finish = resolve; }));
     const events = drivableEvents();
     render(<App client={fixtureClient({

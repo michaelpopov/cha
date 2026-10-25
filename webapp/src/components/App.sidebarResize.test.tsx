@@ -33,7 +33,7 @@ it('keeps the native Pictures checkmark in sync with the Chat picture sidebar', 
   expect(reportedStates()).toEqual([false, true, false, true, false]);
 });
 
-it('keeps the native Sidebar checkmark in sync with menu and in-app toggles', async () => {
+it('keeps the native Sidebar checkmark in sync across Chat and Settings', async () => {
   const post = vi.fn();
   vi.stubGlobal('__CHA_NATIVE_CONNECTION_ID__', 'sidebar-test');
   vi.stubGlobal('__CHA_NATIVE_POST__', post);
@@ -52,10 +52,12 @@ it('keeps the native Sidebar checkmark in sync with menu and in-app toggles', as
   act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-sidebar'));
   expect(reportedStates()).toEqual([true, false, true]);
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Hide sidebar' }));
+  expect(screen.queryByRole('button', { name: /^(Show|Hide) sidebar$/ })).toBeNull();
+  act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-sidebar'));
   expect(reportedStates()).toEqual([true, false, true, false]);
   act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-sidebar'));
-  expect(screen.getByRole('button', { name: 'Hide sidebar' })).toBeInTheDocument();
+  expect(document.querySelector('.cha-app')).toHaveAttribute('data-sidebar', 'open');
+  expect(screen.queryByRole('button', { name: /^(Show|Hide) sidebar$/ })).toBeNull();
   expect(reportedStates()).toEqual([true, false, true, false, true]);
 });
 

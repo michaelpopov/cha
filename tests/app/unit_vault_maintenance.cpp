@@ -181,6 +181,8 @@ std::int64_t seed_notes(const std::filesystem::path& path, std::string_view name
         {"type":"text","text":"Read the article","marks":[{"type":"link","attrs":{"href":"http://example.com/"}}]}
     ]})"));
     note_save(database, note.id, document);
+    // Whole-vault copies, R2 transfers, and their backups must carry opaque audio too.
+    database.prepare("INSERT INTO note_audio (note_id, ordinal, mime_type, audio) VALUES (?, 0, 'audio/mp4', X'00010203')", note.id).run();
     const auto corrupt = note_create(database, folder.id, NoteItemKind::note, "Damaged");
     auto damage = database.prepare("UPDATE note_items SET content_json = X'00' WHERE id = ?1");
     damage.bind(1, corrupt.id);
@@ -203,7 +205,14 @@ nlohmann::json stored_notes(const std::filesystem::path& path, std::string_view 
                 std::vector<std::uint8_t>(bytes.begin(), bytes.end()))});
     }
     auto sequence = database.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'note_items'");
-    return {{"items", items}, {"sequence", sequence.step() ? sequence.integer(0) : 0}};
+    auto audio = nlohmann::json::array();
+    // Some scenarios deliberately restore an older database without the notes tables.
+    auto table = database.prepare("SELECT 1 FROM sqlite_master WHERE name='note_audio'");
+    if (table.step()) {
+        auto rows = database.prepare("SELECT note_id, ordinal, mime_type, hex(audio) FROM note_audio ORDER BY note_id, ordinal");
+        while (rows.step()) audio.push_back({rows.integer(0), rows.integer(1), rows.text(2), rows.text(3)});
+    }
+    return {{"items", items}, {"audio", audio}, {"sequence", sequence.step() ? sequence.integer(0) : 0}};
 }
 
 TEST(ApplicationVault, NotesFollowWholeCopiesProtectionAndEmptyNewVaults) {

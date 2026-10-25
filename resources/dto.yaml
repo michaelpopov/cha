@@ -711,6 +711,10 @@ components:
       additionalProperties: false
       required: [compression_provider, compression_reasoning_effort]
       properties:
+        audio_url:
+          type: string
+        audio_api_key:
+          type: string
         compression_provider:
           type: string
         compression_reasoning_effort:
@@ -1717,6 +1721,30 @@ components:
           type: integer
           minimum: 0
           maximum: 9007199254740991
+
+    NoteAudioInfo:
+      type: object
+      additionalProperties: false
+      required: [count]
+      properties:
+        count: {$ref: "#/components/schemas/NativeSafeInteger"}
+
+    NoteAudioStatus:
+      type: object
+      additionalProperties: false
+      required: [id, phase, done, error]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+        phase:
+          type: string
+          enum: [uploading, queued, generating, downloading, saving, complete]
+        completed: {$ref: "#/components/schemas/NativeSafeInteger"}
+        total: {$ref: "#/components/schemas/NativeSafeInteger"}
+        done:
+          type: boolean
+        error:
+          type: string
+        finished_at_ms: {$ref: "#/components/schemas/NativeSafeInteger"}
 
     BridgeInfo:
       type: object

@@ -219,7 +219,6 @@ select:disabled {
 .cha-roster-row,
 .cha-header-row,
 .cha-detail-link,
-.cha-icon-action,
 .cha-compact-icon-action,
 .cha-persona-title-trigger,
 .cha-title-icon-action,
@@ -282,8 +281,7 @@ select:disabled {
 .cha-sidebar-settings.is-current,
 .cha-list-action:hover,
 .cha-list-action.is-current,
-.cha-roster-row:hover,
-.cha-icon-action:hover:not(:disabled) {
+.cha-roster-row:hover {
   color: var(--accent-foreground);
   background: var(--accent);
 }
@@ -421,21 +419,10 @@ select:disabled {
 .cha-topbar {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 0.5rem;
   padding: 0.8rem 1rem 0.55rem;
-}
-
-.cha-icon-action {
-  display: inline-grid;
-  width: 2.65rem;
-  height: 2.65rem;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  color: var(--secondary-foreground);
-  background: var(--secondary);
 }
 
 .cha-topbar-title {
@@ -539,15 +526,6 @@ select:disabled {
   font-size: 0.78rem;
   font-weight: 430;
   transform: translateX(-50%);
-}
-
-.cha-topbar-lead {
-  display: flex;
-  align-items: center;
-}
-
-.cha-topbar-balance {
-  width: 2.65rem;
 }
 
 .cha-detail-actions {
@@ -1615,8 +1593,7 @@ select:disabled {
   margin-right: auto;
 }
 
-.cha-speech-cache-toggle,
-.cha-sidebar-toggle {
+.cha-speech-cache-toggle {
   display: grid;
   width: 1.4rem;
   height: 1.4rem;
@@ -1627,8 +1604,7 @@ select:disabled {
   place-items: center;
 }
 
-.cha-speech-cache-toggle:hover,
-.cha-sidebar-toggle:hover {
+.cha-speech-cache-toggle:hover {
   color: var(--accent-foreground);
   background: var(--accent);
 }
@@ -2625,7 +2601,7 @@ select.cha-form-control {
 }
 
 .cha-notes-screen .cha-chat-status {
-  justify-content: space-between;
+  justify-content: flex-end;
 }
 
 .cha-notes-create {
@@ -2660,3 +2636,9 @@ select.cha-form-control {
   background: var(--muted-foreground);
   outline: none;
 }
+
+.cha-note-audio-dialog { width: min(390px, calc(100vw - 32px)); }
+.cha-note-audio-dialog > label { display: grid; gap: 0.5rem; }
+.cha-note-audio-dialog > p { margin: 1rem 0; }
+.cha-note-audio-time { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.cha-notes-document .cha-note-audio-current { background: color-mix(in srgb, #5684b7 18%, transparent); box-shadow: inset 3px 0 #5684b7; }

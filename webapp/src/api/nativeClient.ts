@@ -7,6 +7,8 @@ import {
   type NotePage,
   type TextFileRequest,
   type NotesClient,
+  type NoteAudioInfo,
+  type NoteAudioStatus,
   ChaError,
   ChaProtocolError,
   isApiKeyDetail,
@@ -43,9 +45,7 @@ import {
   type NotesSettings,
   type WebSearchSettings,
   type ApiKeyDetail,
-  type AudioDownloadAcceptance,
   type AudioDownloadBatchAcceptance,
-  type AudioDownloadStatus,
   type ChaClient,
   type ForumSystemPrompt,
   type CharacterPicture,
@@ -58,7 +58,6 @@ import {
   type DeleteTurnRequest,
   type InputRequest,
   type OpenSessionResult,
-  type ProviderDetail,
   type ProviderSummary,
   type ProviderUpdate,
   type R2StorageDetail,
@@ -71,8 +70,6 @@ import {
   type VoiceDetail,
   type NativeVoiceInputRuntime,
   type VoiceInputSettings,
-  type XaiVoicePieces,
-  type XaiVoiceStartResult,
   type VoiceOutputRuntime,
   type VoiceOutputSettings,
   type VoiceUpdate,
@@ -209,12 +206,23 @@ function isVaultUploadCheck(value: unknown): value is VaultUploadCheck {
     && (value.status !== 'match' || value.etag !== null);
 }
 
-export async function connectNativeBridge(bridge: NativeBridge): Promise<void> {
+export async function connectNativeBridge(bridge: NativeBridge) {
   const info = await bridge.invoke('bridge.info', {});
   if (!isBridgeInfo(info)) throw new ChaProtocolError();
+  return info;
+}
+
+function isNoteAudioStatus(value: unknown): value is NoteAudioStatus {
+  return isRecord(value) && isNoteId(value.id)
+    && ['uploading', 'queued', 'generating', 'downloading', 'saving', 'complete'].includes(value.phase as string)
+    && typeof value.done === 'boolean' && typeof value.error === 'string'
+    && ['completed', 'total', 'finished_at_ms'].every(key => value[key] === undefined
+      || (Number.isSafeInteger(value[key]) && (value[key] as number) >= 0))
+    && (!value.done || Number.isSafeInteger(value.finished_at_ms));
 }
 
 export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesClient {
+  let platform = '';
   const call = async <T>(
     method: string,
     params: unknown,
@@ -241,9 +249,18 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     return result[field] as number;
   };
 
+  const noteAudio = {
+    info: (id: number) => call('noteAudio.info', { id }, (value): value is NoteAudioInfo =>
+      isRecord(value) && Number.isSafeInteger(value.count) && (value.count as number) >= 0),
+    start: (id: number, voice: string, blocks: string[]) => call('noteAudio.start', { id, voice, blocks }, isNoteAudioStatus),
+    status: (id: number) => call('noteAudio.status', { id }, isNoteAudioStatus),
+    source: (id: number, ordinal: number) => call('noteAudio.source', { id, ordinal }, isMediaResource),
+    release: async (resourceId: string) => { await call('speech.release', { resource_id: resourceId }, isRecord); },
+  };
   return {
+    get noteAudio() { return platform === 'macos' ? noteAudio : undefined; },
     getBootstrap: async () => {
-      await connectNativeBridge(bridge);
+      platform = (await connectNativeBridge(bridge)).platform;
       const result = await bridge.invoke('app.bootstrap', {});
       if (!isBootstrapResult(result)) throw new ChaProtocolError();
       if (result.state !== 'running') {

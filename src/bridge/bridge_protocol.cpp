@@ -139,6 +139,10 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::notes_compress_cancel, "notes.compressCancel"},
     {Method::notes_rename, "notes.rename"},
     {Method::notes_delete, "notes.delete"},
+    {Method::note_audio_start, "noteAudio.start"},
+    {Method::note_audio_status, "noteAudio.status"},
+    {Method::note_audio_info, "noteAudio.info"},
+    {Method::note_audio_source, "noteAudio.source"},
 };
 static_assert(std::size(kMethods) == static_cast<std::size_t>(Method::count));
 

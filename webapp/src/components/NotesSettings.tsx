@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { publicErrorMessage, type NotesSettings, type ProviderSummary } from '../api/client';
+import { publicErrorMessage, type NotesSettings, type ApiKeyDetail, type ProviderSummary } from '../api/client';
 import { StaleNotice, useFormReload } from '../detailRefresh';
 import { BackToSettings, LoadFailure, type SettingsScreenProps } from './SettingsShared';
 
@@ -7,6 +7,7 @@ export function NotesSettingsScreen({ client, navigate }: SettingsScreenProps) {
   const [settings, setSettings] = useState<NotesSettings | null>(null);
   const [saved, setSaved] = useState<NotesSettings | null>(null);
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
+  const [keys, setKeys] = useState<ApiKeyDetail[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reload = useFormReload('notes-settings');
@@ -21,9 +22,10 @@ export function NotesSettingsScreen({ client, navigate }: SettingsScreenProps) {
     let current = true;
     const background = reload.start();
     if (!background) setError(null);
-    void Promise.all([client.getNotesSettings(), client.listProviders()]).then(
-      ([config, loadedProviders]) => {
+    void Promise.all([client.getNotesSettings(), client.listProviders(), client.listApiKeys()]).then(
+      ([config, loadedProviders, loadedKeys]) => {
         if (!current) return;
+        setKeys(loadedKeys);
         setError(null);
         reload.loaded({ config, providers: loadedProviders }, applySettings);
       },
@@ -38,7 +40,8 @@ export function NotesSettingsScreen({ client, navigate }: SettingsScreenProps) {
 
   const dirty = settings !== null && saved !== null
     && (settings.compression_provider !== saved.compression_provider
-      || settings.compression_reasoning_effort !== saved.compression_reasoning_effort);
+      || settings.compression_reasoning_effort !== saved.compression_reasoning_effort
+      || settings.audio_url !== saved.audio_url || settings.audio_api_key !== saved.audio_api_key);
   reload.markDirty(dirty);
 
   async function save(event: FormEvent) {
@@ -76,6 +79,16 @@ export function NotesSettingsScreen({ client, navigate }: SettingsScreenProps) {
         <option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option>
         <option value="high">High</option><option value="xhigh">Extra high</option>
       </select></label>
+      {client.noteAudio && <>
+        <hr />
+        <label>Audio service URL<input className="cha-form-control" type="url" disabled={pending}
+          value={settings.audio_url ?? ''} onChange={event => setSettings({ ...settings, audio_url: event.target.value })} /></label>
+        <label>Audio API key<select className="cha-form-control" disabled={pending}
+          value={settings.audio_api_key ?? ''} onChange={event => setSettings({ ...settings, audio_api_key: event.target.value })}>
+          <option value="">Select API key</option>
+          {keys.map(key => <option key={key.id} value={key.id}>{key.display_name}</option>)}
+        </select></label>
+      </>}
       <div className="cha-settings-form-actions">
         <button className="cha-button cha-button-primary" type="submit"
           disabled={!dirty || pending || reload.blocked}>Save</button>

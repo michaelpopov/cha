@@ -19,6 +19,27 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it('uses the macOS note audio block payload and validates terminal timestamps and optional counts', async () => {
+    const initial = { id: 4, phase: 'uploading', done: false, error: '' };
+    const start = vi.fn(() => initial);
+    let status: unknown = { ...initial, phase: 'complete', done: true, total: 2, finished_at_ms: 123456 };
+    const client = createNativeChaClient(createFakeNativeBridge({
+      'bridge.info': () => ({ protocol_version: 1, application_version: 'development', platform: 'macos' }),
+      'app.bootstrap': () => ({ state: 'running', context_epoch: 1, application_version: 'development', bootstrap: bootstrapFixture,
+        capabilities: { can_modify: true, can_transfer_r2: false } }),
+      'noteAudio.info': () => ({ count: 2 }), 'noteAudio.start': start, 'noteAudio.status': () => status,
+    }));
+    await client.getBootstrap();
+    expect(await client.noteAudio!.info(4)).toEqual({ count: 2 });
+    expect(await client.noteAudio!.start(4, 'Kore', ['First', 'Second'])).toEqual(initial);
+    expect(start).toHaveBeenCalledExactlyOnceWith({ id: 4, voice: 'Kore', blocks: ['First', 'Second'] });
+    expect(await client.noteAudio!.status(4)).toEqual(status);
+    status = { ...initial, done: true };
+    await expect(client.noteAudio!.status(4)).rejects.toBeInstanceOf(ChaProtocolError);
+    status = { ...initial, completed: '2' };
+    await expect(client.noteAudio!.status(4)).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it('accepts annotation metadata and the creation flag', async () => {
     const annotation = { id: 9, parent_id: null, kind: 'annotation', name: 'ANNOTATIONS', read_only: true, has_compressed: false };
     const client = createNativeChaClient(createFakeNativeBridge({

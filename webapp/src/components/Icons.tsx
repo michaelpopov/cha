@@ -24,15 +24,6 @@ const stroke = {
   strokeWidth: 1.7,
 };
 
-export function SidebarIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <rect height="18" rx="2" width="18" x="3" y="3" {...stroke} />
-      <path d="M9 3v18" {...stroke} />
-    </Icon>
-  );
-}
-
 export function PersonasIcon(props: IconProps) {
   return (
     <Icon {...props}>

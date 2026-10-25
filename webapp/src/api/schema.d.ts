@@ -319,6 +319,8 @@ export interface components {
             reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh";
         };
         NotesSettings: {
+            audio_url?: string;
+            audio_api_key?: string;
             compression_provider: string;
             /** @enum {string} */
             compression_reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh";
@@ -743,6 +745,19 @@ export interface components {
             document: components["schemas"]["NoteDocument"];
             compressed_text?: string;
             scroll_top?: number;
+        };
+        NoteAudioInfo: {
+            count: components["schemas"]["NativeSafeInteger"];
+        };
+        NoteAudioStatus: {
+            id: components["schemas"]["NoteId"];
+            /** @enum {string} */
+            phase: "uploading" | "queued" | "generating" | "downloading" | "saving" | "complete";
+            completed?: components["schemas"]["NativeSafeInteger"];
+            total?: components["schemas"]["NativeSafeInteger"];
+            done: boolean;
+            error: string;
+            finished_at_ms?: components["schemas"]["NativeSafeInteger"];
         };
         BridgeInfo: {
             /** @enum {integer} */

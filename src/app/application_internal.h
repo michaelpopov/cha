@@ -151,6 +151,9 @@ struct Application::Impl {
     std::optional<std::string> speech_url_override;
     PendingMediaRegistry pending_media{media_resources};
     BackgroundJobs background_jobs;
+    // One modal operation; guarded by lifecycle_mutex, replaced on the next run.
+    nlohmann::json note_audio_status;
+    std::uint64_t note_audio_epoch{};
     XaiVoiceSessions xai_voice{background_jobs};
     mutable std::timed_mutex lifecycle_mutex;
     std::atomic_bool stopping_flag{};

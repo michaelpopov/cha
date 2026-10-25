@@ -440,6 +440,28 @@ TEST_F(BridgeRouterTest, PictureUploadsAcceptLargeFilesAndValidateParamsAndConte
     EXPECT_TRUE(call("character.picture.get", {{"character_id", "guide"}, {"filename", "PICTURE.jpeg"}})["result"].is_null());
 }
 
+TEST_F(BridgeRouterTest, NoteAudioValidatesBlockPayloadAndKeepsOfflineLookupIndependentOfSettings) {
+    bootstrap_epoch();
+    const auto note = application_->create_note_item({}, NoteItemKind::note, "Narration", epoch_);
+    (void)application_->set_note_read_only(note.id, true, epoch_);
+    EXPECT_EQ(call("noteAudio.info", {{"id", note.id}})["result"], (nlohmann::json{{"count", 0}}));
+    for (const auto& params : std::vector<nlohmann::json>{
+        {{"id", note.id}, {"voice", "Kore"}},
+        {{"id", note.id}, {"voice", "Kore"}, {"blocks", "text"}},
+        {{"id", note.id}, {"voice", "Kore"}, {"blocks", nlohmann::json::array({42})}},
+        {{"id", note.id}, {"voice", "Kore"}, {"blocks", nlohmann::json::array()}, {"extra", true}}}) {
+        const auto reply = call("noteAudio.start", params);
+        EXPECT_FALSE(reply["ok"].get<bool>());
+        EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    }
+#ifdef __APPLE__
+    const auto empty = call("noteAudio.start", {{"id", note.id}, {"voice", "Kore"}, {"blocks", nlohmann::json::array()}});
+    EXPECT_EQ(empty["error"]["message"], "No text to narrate");
+#endif
+    EXPECT_EQ(call("noteAudio.source", {{"id", note.id}, {"ordinal", 0}})["error"]["code"], "not_found");
+    EXPECT_EQ(call("noteAudio.status", {{"id", note.id}})["error"]["code"], "not_found");
+}
+
 TEST_F(BridgeRouterTest, AttachesTextFilesWithoutCreatingNotesOrClearingThePrompt) {
     bootstrap_epoch();
     const auto created = call("session.create", {{"forum_id", "lobby"}, {"label", "Files"}});
@@ -604,8 +626,10 @@ TEST_F(BridgeRouterTest, SavesNotesSettingsAndIgnoresUnusedFields) {
     bootstrap_epoch();
     const auto initial = call("notesSettings.get");
     ASSERT_TRUE(initial["ok"]);
-    EXPECT_EQ(initial["result"], nlohmann::json({{"compression_provider", ""}, {"compression_reasoning_effort", "high"}}));
-    const nlohmann::json settings{{"compression_provider", "test"}, {"compression_reasoning_effort", "medium"}};
+    EXPECT_EQ(initial["result"], nlohmann::json({{"compression_provider", ""}, {"compression_reasoning_effort", "high"},
+        {"audio_url", ""}, {"audio_api_key", ""}}));
+    const nlohmann::json settings{{"compression_provider", "test"}, {"compression_reasoning_effort", "medium"},
+        {"audio_url", "http://192.168.1.10:18080"}, {"audio_api_key", ""}};
     auto obsolete = settings;
     obsolete["unused"] = true;
     ASSERT_TRUE(call("notesSettings.save", obsolete)["ok"]);

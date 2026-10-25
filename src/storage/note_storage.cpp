@@ -6,6 +6,7 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <fstream>
 #include <stdexcept>
 #include <utility>
 
@@ -659,6 +660,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS note_items_sibling_name
 CREATE INDEX IF NOT EXISTS note_items_parent
     ON note_items(parent_id);
 
+CREATE TABLE IF NOT EXISTS note_audio (
+    note_id INTEGER NOT NULL REFERENCES note_items(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    mime_type TEXT NOT NULL,
+    audio BLOB NOT NULL,
+    PRIMARY KEY (note_id, ordinal)
+) STRICT;
+
 -- Copies belong to the chat, so deleting the source note keeps them intact.
 CREATE TABLE IF NOT EXISTS session_notes (
     session_key INTEGER NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
@@ -941,6 +950,40 @@ void note_delete(storage::SqliteDatabase& database, std::int64_t id) {
     } catch (const std::runtime_error& error) {
         throw sql_failure(error, NoteFailure::saving, change_message);
     }
+}
+
+nlohmann::json note_audio_info(storage::SqliteDatabase& database, std::int64_t id) {
+    auto statement = database.prepare("SELECT COUNT(*) FROM note_audio WHERE note_id=?", id);
+    (void)statement.step();
+    return {{"count", statement.integer(0)}};
+}
+
+NoteAudioClip note_audio_clip(storage::SqliteDatabase& database, std::int64_t id, std::int64_t ordinal) {
+    auto statement = database.prepare("SELECT mime_type, audio FROM note_audio WHERE note_id=? AND ordinal=?", id, ordinal);
+    if (!statement.step()) throw NoteError(NoteFailure::not_found, "Note audio is not available.");
+    return {statement.text(0), statement.blob(1)};
+}
+
+void note_save_audio(storage::SqliteDatabase& database, std::int64_t id,
+    const std::vector<std::filesystem::path>& clips) {
+    storage::SqliteTransaction transaction(database);
+    auto note = database.prepare("SELECT 1 FROM note_items WHERE id=? AND kind='note' AND read_only=1", id);
+    if (!note.step()) throw NoteError(NoteFailure::not_found, "That note was not found.");
+    if (clips.empty()) throw NoteError(NoteFailure::invalid, "No audio clips to save.");
+    database.prepare("DELETE FROM note_audio WHERE note_id=?", id).run();
+    for (std::size_t i = 0; i < clips.size(); ++i) {
+        const auto size = std::filesystem::file_size(clips[i]);
+        if (size == 0 || size > 32 * 1024 * 1024) throw std::runtime_error("Invalid compressed audio size.");
+        std::string bytes(static_cast<std::size_t>(size), '\0');
+        std::ifstream input(clips[i], std::ios::binary);
+        if (!input.read(bytes.data(), static_cast<std::streamsize>(bytes.size())))
+            throw std::runtime_error("Could not read compressed audio.");
+        auto insert = database.prepare("INSERT INTO note_audio (note_id, ordinal, mime_type, audio) VALUES (?,?,?,?)",
+            id, static_cast<std::int64_t>(i), "audio/mp4");
+        insert.bind_blob(4, bytes);
+        insert.run();
+    }
+    transaction.commit();
 }
 
 } // namespace cha

@@ -64,6 +64,23 @@ std::optional<nlohmann::json> dispatch_notes_operation(
     const nlohmann::json& params,
     std::uint64_t epoch) {
     switch (method) {
+    case Method::note_audio_start: {
+        require_only_keys(params, {"id", "voice", "blocks"});
+        if (!params.contains("blocks") || !params.at("blocks").is_array())
+            throw std::invalid_argument("Block texts must be an array of strings.");
+        std::vector<std::string> blocks;
+        for (const auto& block : params.at("blocks")) {
+            if (!block.is_string()) throw std::invalid_argument("Block texts must be strings.");
+            blocks.push_back(block.get<std::string>());
+        }
+        return application.start_note_audio(require_note_id(params), require_string(params, "voice"), std::move(blocks), epoch);
+    }
+    case Method::note_audio_status:
+        require_only_keys(params, {"id"});
+        return application.get_note_audio_status(require_note_id(params), epoch);
+    case Method::note_audio_info:
+        require_only_keys(params, {"id"});
+        return application.get_note_audio_info(require_note_id(params), epoch);
     case Method::notes_list:
         require_only_keys(params, {});
         return nlohmann::json{{"items", application.list_note_items(epoch)}};

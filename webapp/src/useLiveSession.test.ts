@@ -8,7 +8,7 @@ import type { LeaveNoteThen } from './notes/useNoteLeave';
 import { useNoteLeave } from './notes/useNoteLeave';
 import type { NoteSaveHandle } from './notes/useNoteSave';
 import { appReducer, initialAppState } from './state/view';
-import { rememberAppUrl, rememberedAppUrl, welcomeSessionId, writeAppRoute } from './state/route';
+import { rememberedAppUrl, welcomeSessionId, writeAppRoute } from './state/route';
 import { fixtureClient, snapshotFixture } from './test/fixtures';
 import { useLiveSession } from './useLiveSession';
 

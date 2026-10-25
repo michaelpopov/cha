@@ -40,3 +40,11 @@ export function beginSpeechPlayback(): () => void {
     }, echoTailMs);
   };
 }
+
+let stopCurrentSpeech: (() => void) | undefined;
+// A note playlist and a chat reply share audio focus, including while paused.
+export function claimSpeechPlayback(stop: () => void): () => void {
+  stopCurrentSpeech?.();
+  stopCurrentSpeech = stop;
+  return () => { if (stopCurrentSpeech === stop) stopCurrentSpeech = undefined; };
+}
