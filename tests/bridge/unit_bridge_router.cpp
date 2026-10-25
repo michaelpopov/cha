@@ -446,6 +446,10 @@ TEST_F(BridgeRouterTest, NoteAudioValidatesBlockPayloadAndKeepsOfflineLookupInde
     const auto note = application_->create_note_item({}, NoteItemKind::note, "Narration", epoch_);
     (void)application_->set_note_read_only(note.id, true, epoch_);
     EXPECT_EQ(call("noteAudio.info", {{"id", note.id}})["result"], (nlohmann::json{{"count", 0}}));
+    EXPECT_EQ(call("noteAudio.cancel", {{"id", note.id}})["result"], nlohmann::json::object());
+    EXPECT_EQ(call("noteAudio.cancel", {{"id", note.id}})["result"], nlohmann::json::object());
+    EXPECT_EQ(call("noteAudio.cancel", {{"id", 0}})["error"]["code"], "invalid_argument");
+    EXPECT_EQ(call("noteAudio.cancel", {{"id", note.id}, {"extra", true}})["error"]["code"], "invalid_argument");
     for (const auto& params : std::vector<nlohmann::json>{
         {{"id", note.id}, {"voice", "Kore"}},
         {{"id", note.id}, {"voice", "Kore"}, {"blocks", "text"}},

@@ -154,6 +154,7 @@ struct Application::Impl {
     // One modal operation; guarded by lifecycle_mutex, replaced on the next run.
     nlohmann::json note_audio_status;
     std::uint64_t note_audio_epoch{};
+    std::shared_ptr<std::atomic_bool> note_audio_cancel;
     XaiVoiceSessions xai_voice{background_jobs};
     mutable std::timed_mutex lifecycle_mutex;
     std::atomic_bool stopping_flag{};

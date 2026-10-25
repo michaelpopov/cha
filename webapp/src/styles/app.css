@@ -2640,5 +2640,10 @@ select.cha-form-control {
 .cha-note-audio-dialog { width: min(390px, calc(100vw - 32px)); }
 .cha-note-audio-dialog > label { display: grid; gap: 0.5rem; }
 .cha-note-audio-dialog > p { margin: 1rem 0; }
+.cha-note-audio-progress { margin: 1rem 0; }
+.cha-note-audio-progress p, .cha-note-audio-skipped p { margin: 0.35rem 0; }
+.cha-note-audio-progress progress { width: 100%; accent-color: var(--primary); }
+.cha-note-audio-name { overflow-wrap: anywhere; }
+.cha-note-audio-skipped { margin: 1rem 0; }
 .cha-note-audio-time { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
 .cha-notes-document .cha-note-audio-current { background: color-mix(in srgb, #5684b7 18%, transparent); box-shadow: inset 3px 0 #5684b7; }

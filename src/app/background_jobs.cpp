@@ -5,8 +5,10 @@
 
 namespace cha::app {
 
-bool BackgroundJobs::launch(std::function<void(std::atomic_bool&)> work) {
+bool BackgroundJobs::launch(std::function<void(std::atomic_bool&)> work,
+    std::shared_ptr<std::atomic_bool> cancel) {
     auto control = std::make_shared<BackgroundControl>();
+    control->cancel = cancel ? std::move(cancel) : std::make_shared<std::atomic_bool>(false);
     std::lock_guard lock(mutex_);
     if (closed_) return false;
     reap_finished_locked();
@@ -14,7 +16,7 @@ bool BackgroundJobs::launch(std::function<void(std::atomic_bool&)> work) {
     try {
         jobs_.back().worker = std::thread(
             [work = std::move(work), control] {
-                work(control->cancel);
+                work(*control->cancel);
                 {
                     std::lock_guard lock(control->mutex);
                     control->finished.store(true);
@@ -38,7 +40,7 @@ void BackgroundJobs::join() {
         }
         if (jobs.empty()) return;
         for (auto& job : jobs) {
-            job.control->cancel.store(true);
+            job.control->cancel->store(true);
             if (job.worker.joinable()) job.worker.join();
         }
     }
@@ -52,7 +54,7 @@ bool BackgroundJobs::join_until(
         closed_ = true;
         controls.reserve(jobs_.size());
         for (const BackgroundJob& job : jobs_) {
-            job.control->cancel.store(true);
+            job.control->cancel->store(true);
             controls.push_back(job.control);
         }
     }

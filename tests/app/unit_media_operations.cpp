@@ -84,7 +84,7 @@ std::optional<ResourceBytes> wait_resource(Application& application, const std::
 #ifdef __APPLE__
 TEST(ApplicationMedia, NoteAudioCommitHonorsContextAndNoteLifetime) {
     using Json = nlohmann::json;
-    for (const auto& action : {"complete", "delete", "switch"}) {
+    for (const auto& action : {"complete", "delete", "switch", "cancel"}) {
         SCOPED_TRACE(action);
         test::TestWorkspace workspace;
         const auto database = test::import_test_database(workspace.root());
@@ -98,6 +98,10 @@ TEST(ApplicationMedia, NoteAudioCommitHonorsContextAndNoteLifetime) {
         auto application = Application::open(make_command(workspace, database));
         const auto epoch = application->context_epoch();
         EXPECT_THROW(application->start_note_audio(note.id, "Kore", {}, epoch), ApplicationError);
+        try {
+            (void)application->start_note_audio(note.id, "Kore", std::vector<std::string>(1001, "x"), epoch);
+            FAIL();
+        } catch (const ApplicationError& error) { EXPECT_EQ(error.code, ErrorCode::invalid_argument); }
         const auto key = application->create_api_key({.display_name = "Audio", .value = "secret"}, epoch);
         const std::string file = "files/" + std::string(32, 'a'), batch = "batches/" + std::string(32, 'b');
         MockHttpServer upload({http_response("application/json", Json{{"file", {{"name", file}}}}.dump())});
@@ -114,6 +118,12 @@ TEST(ApplicationMedia, NoteAudioCommitHonorsContextAndNoteLifetime) {
             http_response("application/jsonl", result.dump() + '\n')});
         (void)application->save_notes_settings({.compression_reasoning_effort = "high",
             .audio_url = "http://127.0.0.1:" + std::to_string(server.port()), .audio_api_key = key.id}, epoch);
+        for (const auto& blocks : std::vector<std::vector<std::string>>{
+            std::vector<std::string>(1001, "x"), {std::string(5001, 'x')},
+            std::vector<std::string>(1000, std::string(5000, '\1'))}) {
+            try { (void)application->start_note_audio(note.id, "Kore", blocks, epoch); FAIL(); }
+            catch (const ApplicationError& error) { EXPECT_EQ(error.code, ErrorCode::body_too_large); }
+        }
         server.pause_before_response(3);
         upload.start(); server.start();
         const auto initial = application->start_note_audio(note.id, "Kore", {"Hello"}, epoch);
@@ -125,6 +135,14 @@ TEST(ApplicationMedia, NoteAudioCommitHonorsContextAndNoteLifetime) {
             const auto other = application->create_vault({.display_name = "Other"}, epoch);
             (void)application->switch_vault(other.name, {}, epoch);
         }
+        if (std::string_view(action) == "cancel") {
+            EXPECT_EQ(application->cancel_note_audio(note.id, epoch), Json::object());
+            EXPECT_EQ(application->cancel_note_audio(note.id, epoch), Json::object());
+        }
+        if (std::string_view(action) == "complete")
+            EXPECT_EQ(application->cancel_note_audio(note.id + 1, epoch), Json::object());
+        if (std::string_view(action) == "switch")
+            EXPECT_THROW(application->cancel_note_audio(note.id, epoch), ApplicationError);
         server.resume_responses();
         upload.join(); server.join();
         if (std::string_view(action) == "switch") {
@@ -149,6 +167,24 @@ TEST(ApplicationMedia, NoteAudioCommitHonorsContextAndNoteLifetime) {
             EXPECT_EQ(resource.mime_type, "audio/mp4");
             EXPECT_GT(resource.byte_length, 0u);
             application->release_resource("view-1", resource.resource_id, epoch);
+            EXPECT_EQ(application->cancel_note_audio(note.id, epoch), Json::object());
+            EXPECT_EQ(application->get_note_audio_status(note.id, epoch), status);
+        } else if (std::string_view(action) == "cancel") {
+            EXPECT_EQ(status["error"], "Audio generation was interrupted.");
+            EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 2);
+            // A new attempt gets a fresh flag after cancellation.
+            upload.start(); server.start();
+            const auto next = application->start_note_audio(note.id, "Kore", {"Again"}, epoch);
+            EXPECT_FALSE(next["done"].get<bool>());
+            upload.join(); server.join();
+            const auto retry_deadline = std::chrono::steady_clock::now() + 2s;
+            do {
+                status = application->get_note_audio_status(note.id, epoch);
+                if (!status["done"].get<bool>()) std::this_thread::yield();
+            } while (!status["done"].get<bool>() && std::chrono::steady_clock::now() < retry_deadline);
+            EXPECT_TRUE(status["done"].get<bool>());
+            EXPECT_EQ(status["error"], "");
+            EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 1);
         } else {
             EXPECT_NE(status["error"], "");
             EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);

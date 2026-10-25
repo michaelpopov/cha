@@ -53,7 +53,7 @@ protected:
                     progress.push_back({{"phase", phase}});
                     if (completed) progress.back()["completed"] = *completed;
                     if (total) progress.back()["total"] = *total;
-                }, [&](int seconds) { waits.push_back(seconds); });
+                }, [&](int seconds) { waits.push_back(seconds); if (cancel_on_wait) cancel.store(true); });
         } catch (...) { error = std::current_exception(); }
         upload.join(); server.join();
         requests = server.requests(); upload_requests = upload.requests();
@@ -66,6 +66,7 @@ protected:
     }
     test::TestWorkspace workspace;
     std::atomic_bool cancel{};
+    bool cancel_on_wait{};
     std::vector<int> waits;
     std::vector<Json> progress;
     std::vector<std::string> requests, upload_requests;
@@ -83,12 +84,12 @@ TEST(NoteAudioInput, ValidatesLimitsAndSerializesExactVoiceAndUnicodeText) {
     EXPECT_EQ(std::count(data.begin(), data.end(), '\n'), 2);
     EXPECT_THROW(prepare_note_audio(service, {}), std::runtime_error);
     EXPECT_THROW(prepare_note_audio(service, {""}), std::runtime_error);
-    EXPECT_THROW(prepare_note_audio(service, std::vector<std::string>(1001, "x")), std::runtime_error);
+    EXPECT_THROW(prepare_note_audio(service, std::vector<std::string>(1001, "x")), NoteAudioSizeError);
     std::string unicode;
     for (int i = 0; i < 5000; ++i) unicode += "😀";
     EXPECT_NO_THROW(prepare_note_audio(service, {unicode}));
-    EXPECT_THROW(prepare_note_audio(service, {unicode + "x"}), std::runtime_error);
-    EXPECT_THROW(prepare_note_audio(service, std::vector<std::string>(1000, std::string(5000, '\1'))), std::runtime_error);
+    EXPECT_THROW(prepare_note_audio(service, {unicode + "x"}), NoteAudioSizeError);
+    EXPECT_THROW(prepare_note_audio(service, std::vector<std::string>(1000, std::string(5000, '\1'))), NoteAudioSizeError);
     // Escaped control characters increase JSONL bytes without increasing the
     // code-point count. Fill precisely to the byte boundary, then exceed it.
     std::vector<std::string> boundary(1000, std::string(4999, 'x'));
@@ -98,14 +99,53 @@ TEST(NoteAudioInput, ValidatesLimitsAndSerializesExactVoiceAndUnicodeText) {
     while (remaining) { boundary[index / 4999][index % 4999] = '\t'; ++index; --remaining; }
     EXPECT_EQ(prepare_note_audio(service, boundary).size(), 8388608u);
     boundary[index / 4999][index % 4999] = '\t';
-    EXPECT_THROW(prepare_note_audio(service, boundary), std::runtime_error);
+    EXPECT_THROW(prepare_note_audio(service, boundary), NoteAudioSizeError);
     service.voice = "obsolete";
     EXPECT_THROW(prepare_note_audio(service, {"x"}), std::runtime_error);
     service.voice = "Kore"; service.url = "https://example.com/v1beta";
     EXPECT_THROW(prepare_note_audio(service, {"x"}), std::runtime_error);
 }
 
+TEST(NoteAudioInput, SettingsErrorsPrecedeSizeErrors) {
+    for (const auto& service : std::vector<NoteAudioService>{
+        {"https://example.com/path", "secret", "Kore"},
+        {"https://example.com", "", "Kore"},
+        {"https://example.com", "secret", "obsolete"}}) {
+        auto settings = service;
+        try {
+            (void)prepare_note_audio(settings, std::vector<std::string>(1001, "x"));
+            FAIL() << "Invalid service settings must fail";
+        } catch (const NoteAudioSizeError&) { FAIL() << "Settings must be checked first"; }
+        catch (const std::runtime_error&) {}
+    }
+}
+
+TEST(NoteAudioService, PreCancelledAttemptMakesNoRequests) {
+    test::TestWorkspace workspace;
+    MockHttpServer server({});
+    NoteAudioService service{"http://127.0.0.1:" + std::to_string(server.port()), "secret", "Kore"};
+    std::atomic_bool cancel{true};
+    // The server never starts, so only the cancellation check can end the
+    // first request; a transfer failure would report a different message.
+    try {
+        (void)generate_note_audio(service, prepare_note_audio(service, {"Hello"}), 1,
+            workspace.root(), cancel, [](auto, auto, auto) {});
+        FAIL();
+    } catch (const std::runtime_error& error) { EXPECT_STREQ(error.what(), "Audio generation was interrupted."); }
+    EXPECT_FALSE(std::filesystem::exists(workspace.root() / "results.jsonl"));
+    EXPECT_FALSE(std::filesystem::exists(workspace.root() / "0.m4a"));
+}
+
 #ifdef __APPLE__
+TEST_F(NoteAudioServiceTest, CancellationInterruptsRemoteWaitBeforeAnotherRead) {
+    cancel_on_wait = true;
+    EXPECT_THROW(run({json_response(operation())}), std::runtime_error);
+    EXPECT_EQ(waits, (std::vector<int>{10}));
+    EXPECT_EQ(requests.size(), 2u);
+    EXPECT_FALSE(std::filesystem::exists(workspace.root() / "results.jsonl"));
+    EXPECT_FALSE(std::filesystem::exists(workspace.root() / "0.m4a"));
+}
+
 TEST_F(NoteAudioServiceTest, ReadRetriesResetAfterSuccessAndUseBatchState) {
     auto stats = Json{{"successfulRequestCount", "1"}, {"failedRequestCount", "1"}, {"requestCount", "3"}, {"pendingRequestCount", "1"}};
     const auto results = (item("0").dump() + '\n');

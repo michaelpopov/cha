@@ -9,6 +9,39 @@ namespace {
 
 using namespace std::chrono_literals;
 
+TEST(BackgroundJobs, SharedFlagIsUsedByWorkerAndShutdown) {
+    for (const bool bounded : {false, true}) {
+        BackgroundJobs jobs;
+        auto cancel = std::make_shared<std::atomic_bool>(false);
+        std::promise<void> started;
+        std::atomic_bool same_flag{};
+        ASSERT_TRUE(jobs.launch([&](std::atomic_bool& flag) {
+            same_flag = &flag == cancel.get();
+            started.set_value();
+            while (!flag.load()) std::this_thread::yield();
+        }, cancel));
+        started.get_future().wait();
+        if (bounded) EXPECT_TRUE(jobs.join_until(std::chrono::steady_clock::now() + 2s));
+        else jobs.join();
+        EXPECT_TRUE(same_flag.load());
+        EXPECT_TRUE(cancel->load());
+    }
+}
+
+TEST(BackgroundJobs, CallerCanCancelWithoutClosingAdmission) {
+    BackgroundJobs jobs;
+    auto cancel = std::make_shared<std::atomic_bool>(false);
+    std::promise<void> finished;
+    ASSERT_TRUE(jobs.launch([&](std::atomic_bool& flag) {
+        while (!flag.load()) std::this_thread::yield();
+        finished.set_value();
+    }, cancel));
+    cancel->store(true);
+    EXPECT_EQ(finished.get_future().wait_for(2s), std::future_status::ready);
+    EXPECT_TRUE(jobs.launch([](std::atomic_bool&) {}));
+    jobs.join();
+}
+
 TEST(BackgroundJobs, DeadlineLeavesUnfinishedWorkerOwnedAndClosesAdmission) {
     BackgroundJobs jobs;
     std::promise<void> started;

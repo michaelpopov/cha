@@ -75,6 +75,9 @@ std::optional<nlohmann::json> dispatch_notes_operation(
         }
         return application.start_note_audio(require_note_id(params), require_string(params, "voice"), std::move(blocks), epoch);
     }
+    case Method::note_audio_cancel:
+        require_only_keys(params, {"id"});
+        return application.cancel_note_audio(require_note_id(params), epoch);
     case Method::note_audio_status:
         require_only_keys(params, {"id"});
         return application.get_note_audio_status(require_note_id(params), epoch);

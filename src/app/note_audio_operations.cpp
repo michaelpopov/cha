@@ -43,7 +43,9 @@ nlohmann::json Application::start_note_audio(std::int64_t id, std::string voice,
     service.key = impl_->api_keys->value(workspace->notes().audio_api_key_id);
     std::string jsonl;
     try { jsonl = prepare_note_audio(service, blocks); }
+    catch (const NoteAudioSizeError& error) { throw ApplicationError(ErrorCode::body_too_large, error.what()); }
     catch (const std::exception& error) { throw ApplicationError(ErrorCode::invalid_argument, error.what()); }
+    impl_->note_audio_cancel = std::make_shared<std::atomic_bool>(false);
     impl_->note_audio_epoch = epoch;
     impl_->note_audio_status = {{"id", id}, {"phase", "uploading"}, {"done", false}, {"error", ""}};
     const auto initial = impl_->note_audio_status;
@@ -84,7 +86,7 @@ nlohmann::json Application::start_note_audio(std::int64_t id, std::string voice,
             const std::lock_guard lock(owner->lifecycle_mutex);
             try { owner->require_admitted(epoch); } catch (const ApplicationError&) { return; }
             owner->note_audio_status.update({{"error", error}, {"done", true}, {"finished_at_ms", finished_at}});
-        });
+        }, impl_->note_audio_cancel);
         if (!launched) throw ApplicationError(ErrorCode::operation_cancelled, "Audio generation was interrupted.");
     } catch (...) {
         impl_->note_audio_status.update({{"done", true}, {"error", "Audio generation could not start."}, {"finished_at_ms", now_ms()}});
@@ -92,6 +94,16 @@ nlohmann::json Application::start_note_audio(std::int64_t id, std::string voice,
     }
     return initial;
 #endif
+}
+
+nlohmann::json Application::cancel_note_audio(std::int64_t id, std::uint64_t epoch) {
+    const std::lock_guard lock(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    if (impl_->note_audio_epoch == epoch && impl_->note_audio_status.is_object()
+        && impl_->note_audio_status.value("id", std::int64_t{}) == id
+        && !impl_->note_audio_status.value("done", true) && impl_->note_audio_cancel)
+        impl_->note_audio_cancel->store(true);
+    return nlohmann::json::object();
 }
 
 nlohmann::json Application::get_note_audio_status(std::int64_t id, std::uint64_t epoch) {

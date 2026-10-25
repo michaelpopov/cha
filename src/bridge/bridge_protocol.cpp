@@ -141,6 +141,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::notes_delete, "notes.delete"},
     {Method::note_audio_start, "noteAudio.start"},
     {Method::note_audio_status, "noteAudio.status"},
+    {Method::note_audio_cancel, "noteAudio.cancel"},
     {Method::note_audio_info, "noteAudio.info"},
     {Method::note_audio_source, "noteAudio.source"},
 };

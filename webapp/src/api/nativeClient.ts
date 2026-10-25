@@ -254,6 +254,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       isRecord(value) && Number.isSafeInteger(value.count) && (value.count as number) >= 0),
     start: (id: number, voice: string, blocks: string[]) => call('noteAudio.start', { id, voice, blocks }, isNoteAudioStatus),
     status: (id: number) => call('noteAudio.status', { id }, isNoteAudioStatus),
+    cancel: async (id: number) => { await call('noteAudio.cancel', { id }, isRecord); },
     source: (id: number, ordinal: number) => call('noteAudio.source', { id, ordinal }, isMediaResource),
     release: async (resourceId: string) => { await call('speech.release', { resource_id: resourceId }, isRecord); },
   };

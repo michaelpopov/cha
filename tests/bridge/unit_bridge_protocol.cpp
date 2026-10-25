@@ -47,6 +47,8 @@ TEST(BridgeProtocol, ParsesSubmitEnvelopeAndRejectsMalformedRequests) {
     EXPECT_TRUE(is_control_method(Method::voice_input_xai_cancel));
     EXPECT_FALSE(is_control_method(Method::voice_input_xai_start));
     EXPECT_FALSE(is_control_method(Method::speech_start));
+    EXPECT_EQ(method_from_name("noteAudio.cancel"), Method::note_audio_cancel);
+    EXPECT_FALSE(is_control_method(Method::note_audio_cancel));
 
     const auto unknown_method = parse_request(
         nlohmann::json{

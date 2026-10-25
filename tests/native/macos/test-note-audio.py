@@ -26,6 +26,7 @@ REPOSITORY = Path(__file__).resolve().parents[3]
 def main():
     records = []
     requests = []
+    submitted = []
 
     class Service(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -40,7 +41,10 @@ def main():
             for name, value in (headers or {}).items():
                 self.send_header(name, value)
             self.end_headers()
-            self.wfile.write(data)
+            try:
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # Stop can close an in-flight local download.
 
         def do_POST(self):
             requests.append(self.path)
@@ -54,6 +58,11 @@ def main():
                 assert all(record["request"]["generationConfig"]["speechConfig"]["voiceConfig"]["voice"] == "Kore" for record in records)
                 self.respond({"file": {"name": "files/" + "a" * 32}})
             elif self.path.endswith(":batchGenerateContent"):
+                text = records[0]["request"]["contents"][0]["parts"][0]["text"]
+                submitted.append(text)
+                if text == "Fail audio":
+                    self.respond({"name": "batches/" + "b" * 32, "done": True, "error": {"message": "fake failure"}})
+                    return
                 self.respond({"name": "batches/" + "b" * 32, "done": True,
                               "response": {"responsesFile": "files/" + "c" * 32}})
             else:
@@ -62,9 +71,11 @@ def main():
         def do_GET(self):
             requests.append(self.path)
             # Keep work active long enough to check modality and UI repaint.
-            time.sleep(1.4)
+            current = list(records)
+            text = current[0]["request"]["contents"][0]["parts"][0]["text"]
+            time.sleep(4 if text == "Stop audio" else 1.4)
             lines = []
-            for index, record in enumerate(records):
+            for index, record in enumerate(current):
                 frames = int((0.6 if index == 0 else 2) * 24000)
                 data = io.BytesIO()
                 with wave.open(data, "wb") as audio:
@@ -92,6 +103,31 @@ def main():
             ]}
             database.execute("INSERT INTO note_items (kind,name,content_json,read_only) VALUES ('note','Audio check',?,1)",
                              (zlib.compress(json.dumps(document).encode()),))
+            def folder(name):
+                return database.execute("INSERT INTO note_items (kind,name) VALUES ('folder',?)", (name,)).lastrowid
+
+            def note(parent, name, text, read_only=True, kind="note"):
+                document = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}]}] if text else []}
+                return database.execute("INSERT INTO note_items (parent_id,kind,name,content_json,read_only) VALUES (?,?,?,?,?)",
+                    (parent, kind, name, zlib.compress(json.dumps(document).encode()), read_only)).lastrowid
+
+            success = folder("Folder success")
+            note(success, "A first", "Folder first")
+            note(success, "B empty", "")
+            note(success, "C oversized", "x" * 5001)
+            note(success, "D last", "Folder last")
+            note(success, "E editable", "Do not generate", False)
+            existing = note(success, "F existing", "Already generated")
+            note(success, "ANNOTATIONS", "Do not generate", kind="annotation")
+            nested = database.execute("INSERT INTO note_items (parent_id,kind,name) VALUES (?,'folder','Subfolder')", (success,)).lastrowid
+            note(nested, "Nested", "Do not generate")
+            stopped = folder("Folder stop")
+            note(stopped, "A stopping", "Stop audio")
+            note(stopped, "B remaining", "Do not generate")
+            failed = folder("Folder error")
+            note(failed, "A saved", "Before error")
+            note(failed, "B failing", "Fail audio")
+            note(failed, "C remaining", "Do not generate")
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         source = REPOSITORY / "tests/native/note-audio.js"
@@ -107,6 +143,16 @@ def main():
             assert len(requests) == 4, requests
             assert [record["request"]["contents"][0]["parts"][0]["text"] for record in records] == [
                 "Audio check", "First paragraph with audio.", "Second paragraph with audio."]
+            with sqlite3.connect(root / "test.sqlite3") as database:
+                database.execute("INSERT INTO note_audio SELECT ?,ordinal,mime_type,audio FROM note_audio WHERE note_id=(SELECT id FROM note_items WHERE name='Audio check')", (existing,))
+            folder_source = root / "folder.js"
+            folder_source.write_text(source.read_text() + "\nnativeParity = nativeFolderAudio;\n")
+            environment["CHA_NATIVE_PARITY_SCRIPT"] = str(folder_source)
+            run_host()
+            assert submitted == ["Audio check", "Folder first", "Folder last", "Stop audio", "Before error", "Fail audio"], submitted
+            with sqlite3.connect(root / "test.sqlite3") as database:
+                saved = database.execute("SELECT name,COUNT(*) FROM note_audio JOIN note_items ON note_id=id GROUP BY note_id ORDER BY name").fetchall()
+                assert saved == [("A first", 1), ("A saved", 1), ("Audio check", 3), ("D last", 1), ("F existing", 3)], saved
             server.shutdown()
             server.server_close()
             thread.join()
@@ -115,7 +161,7 @@ def main():
             offline_source.write_text(source.read_text() + "\nconst runAudioProbe = nativeParity;\nnativeParity = () => runAudioProbe({ offline: true });\n")
             environment["CHA_NATIVE_PARITY_SCRIPT"] = str(offline_source)
             run_host()
-            print("PASS note audio generation, native M4A playback, and offline playback after restart", flush=True)
+            print("PASS folder success/skip/Stop/error/focus, single-note generation, native M4A playback, and offline restart", flush=True)
         finally:
             server.shutdown()
             server.server_close()

@@ -125,6 +125,7 @@ export interface NoteAudioClient {
   info(id: number): Promise<NoteAudioInfo>;
   start(id: number, voice: string, blocks: string[]): Promise<NoteAudioStatus>;
   status(id: number): Promise<NoteAudioStatus>;
+  cancel(id: number): Promise<void>;
   source(id: number, ordinal: number): Promise<MediaResource>;
   release(resourceId: string): Promise<void>;
 }

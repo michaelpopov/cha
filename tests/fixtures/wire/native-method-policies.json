@@ -121,6 +121,7 @@
   "notes.get": {"requires_context_epoch": true, "changes_context": false},
   "noteAudio.info": {"requires_context_epoch": true, "changes_context": false},
   "noteAudio.start": {"requires_context_epoch": true, "changes_context": false},
+  "noteAudio.cancel": {"requires_context_epoch": true, "changes_context": false},
   "noteAudio.status": {"requires_context_epoch": true, "changes_context": false},
   "noteAudio.source": {"requires_context_epoch": true, "changes_context": false},
   "notes.readPage": {"requires_context_epoch": true, "changes_context": false},

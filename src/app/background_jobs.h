@@ -16,14 +16,15 @@ namespace cha::app {
 // Callers must complete join() or successfully join_until() before destruction.
 class BackgroundJobs {
 public:
-    bool launch(std::function<void(std::atomic_bool&)> work);
+    bool launch(std::function<void(std::atomic_bool&)> work,
+        std::shared_ptr<std::atomic_bool> cancel = {});
     void join();
     bool join_until(std::chrono::steady_clock::time_point deadline);
 
 private:
     void reap_finished_locked();
     struct BackgroundControl {
-        std::atomic_bool cancel{};
+        std::shared_ptr<std::atomic_bool> cancel;
         std::atomic_bool finished{};
         std::mutex mutex;
         std::condition_variable changed;

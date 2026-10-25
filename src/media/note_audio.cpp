@@ -128,23 +128,24 @@ std::optional<std::size_t> count(const Json& stats, const char* field) {
 }
 
 std::string prepare_note_audio(NoteAudioService& service, const std::vector<std::string>& blocks) {
-    if (blocks.empty()) throw std::runtime_error("No text to narrate");
-    if (blocks.size() > 1000) throw std::runtime_error("The note exceeds the 1,000-request batch limit.");
     service.url = origin(service.url);
     if (service.key.empty() || service.key.find_first_of("\r\n") != std::string::npos)
         throw std::runtime_error("Select an audio API key in Notes settings.");
     if (service.voice != "boroda" && service.voice != "grant" && service.voice != "dzig"
         && service.voice != "gerdt" && service.voice != "Kore") throw std::runtime_error("Select an audio voice.");
+    if (blocks.empty()) throw std::runtime_error("No text to narrate");
+    if (blocks.size() > 1000) throw NoteAudioSizeError("The note exceeds the 1,000-request batch limit.");
     std::string jsonl;
     for (std::size_t i = 0; i < blocks.size(); ++i) {
         const auto chars = std::count_if(blocks[i].begin(), blocks[i].end(), [](unsigned char c) { return (c & 0xc0) != 0x80; });
-        if (chars < 1 || chars > 5000) throw std::runtime_error("Text block " + std::to_string(i + 1) + " must contain 1–5,000 Unicode code points.");
+        if (chars < 1) throw std::runtime_error("Text block " + std::to_string(i + 1) + " must contain 1–5,000 Unicode code points.");
+        if (chars > 5000) throw NoteAudioSizeError("Text block " + std::to_string(i + 1) + " must contain 1–5,000 Unicode code points.");
         Json item = {{"key", std::to_string(i)}, {"request", {
             {"contents", Json::array({{{"role", "user"}, {"parts", Json::array({{{"text", blocks[i]}}})}}})},
             {"generationConfig", {{"responseModalities", Json::array({"AUDIO"})},
                 {"speechConfig", {{"voiceConfig", {{"voice", service.voice}}}}}}}}}};
         jsonl += item.dump() + '\n';
-        if (jsonl.size() > 8 * 1024 * 1024) throw std::runtime_error("The note exceeds the 8 MiB JSONL batch limit.");
+        if (jsonl.size() > 8 * 1024 * 1024) throw NoteAudioSizeError("The note exceeds the 8 MiB JSONL batch limit.");
     }
     return jsonl;
 }

@@ -67,6 +67,72 @@ function historyAction(name: 'Undo' | 'Redo') {
 }
 
 describe('Notes in the application', () => {
+  it('generates direct read-only folder notes in tree order and restores folder focus', async () => {
+    const info = vi.fn(async (id: number) => ({ count: id === 7 ? 2 : 0 }));
+    const start = vi.fn(async (id: number) => ({ id, phase: 'complete' as const, done: true,
+      error: '', total: 1, finished_at_ms: Date.now() }));
+    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument(`Text ${id}`) }));
+    const changed = vi.fn();
+    window.addEventListener('cha-note-audio-changed', changed);
+    const child = { ...plan, parent_id: study.id, read_only: true };
+    try {
+      render(<App client={fixtureClient({
+        listNoteItems: async () => [study,
+          { ...child, id: 4, name: 'Z chapter' },
+          { ...child, id: 5, name: 'A chapter' },
+          { ...child, id: 6, name: 'Editable', read_only: false },
+          { ...child, id: 7, name: 'B existing' },
+          { ...child, id: 8, name: 'ANNOTATIONS', kind: 'annotation' },
+          { ...study, id: 2, parent_id: study.id, name: 'Subfolder' },
+          { ...child, id: 3, parent_id: 2, name: 'Nested' }],
+        getNote, noteAudio: { info, start, status: vi.fn(), cancel: vi.fn(), source: vi.fn(), release: vi.fn() },
+      })} />);
+      await openNotes();
+      fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
+      const menuItems = screen.getAllByRole('menuitem').map(node => node.textContent);
+      expect(menuItems.indexOf('Generate audio') + 1).toBe(menuItems.indexOf('Compress'));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Generate audio' }));
+      await screen.findByText('2 notes to generate');
+      expect(info.mock.calls.map(([id]) => id)).toEqual([5, 7, 4]);
+      expect(getNote).not.toHaveBeenCalled();
+      fireEvent.change(screen.getByLabelText('Voice'), { target: { value: 'Kore' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+      await screen.findByText('2 of 2 notes complete');
+      expect(start.mock.calls).toEqual([[5, 'Kore', ['Text 5']], [4, 'Kore', ['Text 4']]]);
+      expect(getNote.mock.calls.map(([id]) => id)).toEqual([5, 4]);
+      expect(changed.mock.calls.map(([event]) => event.detail)).toEqual([study.id, 5, 4]);
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      expect(screen.getByRole('treeitem', { name: 'Study' })).toHaveFocus();
+      fireEvent.click(screen.getByRole('button', { name: `Actions for ${bootstrapFixture.vault_name}` }));
+      expect(screen.queryByRole('menuitem', { name: 'Generate audio' })).toBeNull();
+    } finally { window.removeEventListener('cha-note-audio-changed', changed); }
+  });
+
+  it('does not offer folder audio without native capability', async () => {
+    render(<App client={notesClient()} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
+    expect(screen.queryByRole('menuitem', { name: 'Generate audio' })).toBeNull();
+  });
+
+  it('sends the playback stop event when opening a folder without candidate notes', async () => {
+    const changed = vi.fn();
+    const info = vi.fn();
+    window.addEventListener('cha-note-audio-changed', changed);
+    try {
+      render(<App client={fixtureClient({
+        listNoteItems: async () => [study, { ...plan, parent_id: study.id }],
+        noteAudio: { info, start: vi.fn(), status: vi.fn(), cancel: vi.fn(), source: vi.fn(), release: vi.fn() },
+      })} />);
+      await openNotes();
+      fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Generate audio' }));
+      await screen.findByText('No notes need audio');
+      expect(changed.mock.calls.map(([event]) => event.detail)).toEqual([study.id]);
+      expect(info).not.toHaveBeenCalled();
+    } finally { window.removeEventListener('cha-note-audio-changed', changed); }
+  });
+
   it.each([false, true])('opens another read-only book note after earlier deletion: %s', async (deleteEarlier) => {
     const first = { ...plan, read_only: true };
     const second = { ...first, id: 5, name: 'Next chapter' };
@@ -76,7 +142,7 @@ describe('Notes in the application', () => {
       listNoteItems: async () => items,
       deleteNoteItem: async id => { items = items.filter(item => item.id !== id); },
       getNote: async id => ({ id, document: noteDocument(`Chapter ${id}`) }),
-      noteAudio: { info, start: vi.fn(), status: vi.fn(), source: vi.fn(), release: vi.fn() },
+      noteAudio: { info, start: vi.fn(), status: vi.fn(), cancel: vi.fn(), source: vi.fn(), release: vi.fn() },
     })} />);
     await openNotes();
     if (deleteEarlier) {
@@ -106,7 +172,7 @@ describe('Notes in the application', () => {
       render(<App client={fixtureClient({
         listNoteItems: async () => [{ ...plan, read_only: true }],
         getNote: async id => ({ id, document }),
-        noteAudio: { info: async () => ({ count: 0 }), start, status: vi.fn(), source: vi.fn(), release: vi.fn() },
+        noteAudio: { info: async () => ({ count: 0 }), start, status: vi.fn(), cancel: vi.fn(), source: vi.fn(), release: vi.fn() },
       })} />);
       await openNotes();
       fireEvent.click(await screen.findByRole('button', { name: 'Actions for Plan' }));

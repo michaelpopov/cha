@@ -5,11 +5,13 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <stdexcept>
 #include <vector>
 #include <nlohmann/json.hpp>
 
 namespace cha {
 inline constexpr int note_audio_poll_seconds = 10;
+struct NoteAudioSizeError : std::runtime_error { using std::runtime_error::runtime_error; };
 struct NoteAudioService { std::string url, key, voice; };
 using NoteAudioProgress = std::function<void(std::string, std::optional<std::size_t>, std::optional<std::size_t>)>;
 // Validates settings and limits before the worker or any service request starts.
