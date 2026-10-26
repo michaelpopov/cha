@@ -1,173 +1,180 @@
-# Note audio generation and playback PRD
+# Background audio generation for one note
 
-Status: Revised PRD draft  
-Date: October 24, 2026
+Status: Proposed PRD
 
-CHA will generate audio for a saved, read-only note and keep one compressed clip for each title and paragraph in the note's database. Users can start listening at any paragraph, pause and resume with Space, and see each paragraph when its audio starts.
+Date: October 26, 2026
 
-The first version is a small macOS feature intended to gather practical experience. Generation runs through a modal dialog that stays open until remote generation, downloading, native conversion, and database storage finish. Windows support, background job management, and handling edited notes are deferred.
+## Purpose
 
-## Confirmed scope
+A user selects a voice, starts audio generation for one saved note, and continues using CHA. The application submits the note's paragraphs as a service batch, remembers the batch, monitors it, and saves the completed clips. Starting a batch and saving its audio produce events in **Settings → Events**.
 
-- **Notes settings contains only the service URL and an API key reference for audio.** There is no global audio voice setting.
-- **Generate audio opens a modal dialog.** The user selects a voice for this note and explicitly starts generation.
-- The dialog shows available service progress, normally retrieved every 10 seconds, the current local phase, and elapsed time for the entire operation. Temporary read failures use the retry rule below.
-- When all work finishes, the timer stops and the user chooses **Close**. There is no batch Cancel action.
-- Playback is available only for read-only notes. **Right-click → Play from here** starts at the selected title or paragraph and continues through the rest of the note.
-- After playback starts, the menu action becomes **Stop playing**, including while paused. Stop before choosing another starting position.
-- Space pauses; Space again resumes at the same audio position. There are no new playback toolbar buttons.
-- Reveal each paragraph when its clip starts. Do not scroll progressively within a paragraph.
-- Native macOS APIs convert the service's 24 kHz WAV files to compressed audio. The intended output is AAC in an M4A container.
-- Changes to note content after generation are outside this version. Do not build invalidation, revision tracking, or automatic regeneration.
+A registered batch survives application restart. The user does not need to keep a note or dialog open, check the service, or download results manually.
 
-## Service setup
+This PRD replaces the earlier single-note modal-generation requirements in this file. The existing implementation is the baseline for playback, narration rules, service settings, and native conversion. The older [audio technical design](audio-design.md) describes the previous flow; its modal lifetime and lack of recovery do not apply to this change.
 
-The user opens **Settings → Notes**. Keep the existing text-compression settings and add these audio settings in the same form:
+## Scope and simple defaults
 
-| Control | Behavior |
-| --- | --- |
-| Audio service URL | The gem_audio origin, such as `http://127.0.0.1:18080`, without `/v1beta` or another path. Accept HTTP and HTTPS, including a private network host. |
-| Audio API key | Select an existing key reference from CHA's API key settings. Reuse existing credential storage. |
-| Save | Save settings without contacting the service or generating audio. |
+- Change generation started from **Generate audio** on a single note.
+- Keep the voice-selection dialog. Close it when the application accepts the start request locally. Uploading, remote generation, downloading, conversion, and saving then run without a modal dialog.
+- Keep the current requirement that the note is saved and read-only.
+- Keep one service request per narratable heading or paragraph, one batch per note, and one complete saved audio set per note.
+- Keep the existing limit of one active audio-generation run in the open vault. This includes single-note and folder runs. Do not add a waiting queue or concurrent runs in this version.
+- Keep folder conversion's current dialog, progress, sequencing, skipping, Stop behavior, and lack of restart recovery. Once admitted, a folder run works as it does today.
+- Use the existing native platforms that support note audio. Do not add a platform or change playback controls, voice choices, codecs, or settings.
 
-An audio configuration is not required to read notes or play saved clips. Missing configuration is reported when generation is requested. Unused or obsolete settings must not block an otherwise valid operation; log a warning instead.
+Here, “background” means work owned by the application while its vault is open. CHA does not install an operating-system service. The remote service may continue generating while CHA is closed; CHA resumes local work when the originating vault is opened again.
 
-Do not add model, codec, bitrate, seed, token budget, or voice controls to this settings screen. The implemented service uses the public model `gemini-3.8-flash-tts`.
+## User flow
 
-## Generate audio for one note
+1. The user chooses **Generate audio** for a saved, read-only note. As today, opening the dialog stops note playback and does not resume it automatically.
+2. The dialog offers the existing voices: `boroda`, `grant`, `dzig`, `gerdt`, and `Kore`. Require an explicit selection each time. Keep **Close** and **Generate**.
+3. If the note has audio, keep the existing replacement warning. The old audio remains available until a complete replacement is committed.
+4. On **Generate**, validate the note, selected voice, required settings, and existing size limits. A validation failure stays in this dialog as an actionable error and submits nothing.
+5. The application records the local attempt and accepts responsibility for it. The dialog closes as soon as that local acceptance succeeds, before waiting for any service request. Disable repeated submission while acceptance is pending.
+6. The user can navigate, use chat, read other notes, open Settings, or close CHA. No progress, completion, or failure modal opens for this run.
+7. The application uploads the requests and creates the batch. Once the returned batch ID is saved locally, it records the start event.
+8. When the service finishes, the application downloads and validates every result, converts the clips, and saves the full set. Only then does it record the completion event.
+9. Playback becomes available without restarting CHA. Refresh the currently displayed note's audio availability after commit. Do not start playback automatically.
 
-### Before starting
+Closing the setup dialog before Generate submits nothing. A definite local rejection leaves the dialog open with the voice selector and Generate available for correction and retry. Failures after acceptance appear in Events. A second start while a single-note attempt is active is rejected before upload with **Audio generation is already running for “Chapter 1” (note 42). Make that note editable to abandon the attempt.** Use the actual target name and ID. The unfinished record reserves the slot, including during startup recovery; both single-note and folder starts use the same admission check. A single-note start is also rejected while a folder run is active, with the existing folder-run rejection behavior.
 
-The user saves the note, makes it read-only, and chooses **Generate audio** in the existing note menu. Opening the dialog stops note playback, including paused playback or playback between clips. Closing the dialog does not resume it. The modal contains:
+A lost start reply does not prove rejection. Read native attempt status to resolve it; close the dialog if acceptance is confirmed. If status cannot be confirmed, keep the dialog dismissible, explain the uncertainty, and direct the user to Settings → Events. Do not automatically repeat the start request or report it as a definite failure.
 
-- A **Voice** selector: `boroda`, `grant`, `dzig`, `gerdt`, and `Kore`.
-- **Generate** and **Close** buttons.
+### Proposed visual flow
 
-Show only the voice IDs, without descriptions. The user selects one voice for all clips in this note. Different notes can use different voices.
+Use the existing dialog styling and spacing. There is no visible panel title, progress area, elapsed timer, or explanatory legend.
 
-Require an explicit voice selection each time the dialog opens, including when the note already has audio. Do not preselect or recall a previous voice. Selecting a voice does not start work or change other notes.
+```text
+┌───────────────────────────────────────────────┐
+│ Voice                                         │
+│ [ Select voice                            ▾ ] │
+│                                               │
+│                       [ Close ] [ Generate ]  │
+└───────────────────────────────────────────────┘
+                       │ local acceptance
+                       ▼
+              Dialog closes; work continues.
+```
 
-If audio already exists, show the actionable consequence **Existing audio will be replaced after successful generation.** A successful run replaces that note's audio set. A failed run preserves the previous complete set. There is only one saved audio set per note.
+When audio already exists, show **Existing audio will be replaced after successful generation.** between the selector and buttons. Validation errors use the existing inline error treatment. Preserve the dialog's accessible name, **Generate note audio**.
 
-No panel title or explanatory legend is added above the controls. The dialog has an accessible name, **Generate note audio**, without a redundant visible heading.
+Events use the existing timestamp, severity icon, and message rows. For example, with the newest event first:
 
-### While running
+```text
+✓  Oct 26, 2026, 10:08 AM
+   Audio ready for “Chapter 1” (note 42): 20 clips saved.
 
-Choosing **Generate** captures the saved note and selected voice and starts the elapsed timer at zero. The timer shows wall-clock time for the whole run, from **Generate** through the final database commit, as `mm:ss` or `h:mm:ss`. It does not restart between phases. It is a UI display, not a deadline or cancellation mechanism.
+ⓘ  Oct 26, 2026, 10:02 AM
+   Audio batch started for “Chapter 1” (note 42):
+   20 clips, voice Kore.
+```
 
-The dialog remains modal. The user cannot edit the voice, start a second run, navigate to another note, or dismiss the dialog with Escape, a background click, or Close while work is active. The application must continue to repaint and show progress; this must not block the UI thread. No Cancel button is provided.
+These sketches describe the proposed UI for review. UI implementation is outside this documentation task.
 
-| Phase | What the user sees |
-| --- | --- |
-| Uploading | **Uploading…** |
-| Waiting for the service | **Queued** when `metadata.state` is `BATCH_STATE_PENDING`. |
-| Generating | **Generating · 8 of 20 complete** when `metadata.state` is `BATCH_STATE_RUNNING`. Completed means `successfulRequestCount + failedRequestCount`; the total is `requestCount`. |
-| Downloading | **Downloading…** |
-| Converting and saving | **Saving…**, until the complete audio set is converted and committed to the database. |
+## Application-owned lifecycle
 
-Poll the service for batch status and progress every 10 seconds while waiting for completion, except during the retry delays below. Use the batch state, not `pendingRequestCount`, to choose Queued or Generating: the service counts the in-flight item as pending. Completed counts include failed items and do not imply successful audio. Download results only when `done` is `true`. If progress counts are unavailable, show the phase and running timer. Do not invent a percentage, remaining-time estimate, or simulated progress in the application.
+### Accept and register
 
-For a network or transport failure, or HTTP 500, while polling or downloading, retry the same read up to three times, after 10, 20, and 40 seconds. Keep the dialog active and the elapsed timer running during these retries. A successful read resets the retry count; successful polling returns to the normal 10-second interval. Keep the received batch name and result file name for this run. Do not create a replacement batch or upload as part of a read retry. If all three retries fail, end the run with a terminal error. Other HTTP errors, upload failures, and batch-creation failures are terminal without automatic retries. These client retries do not limit how long a healthy queued or running batch may take.
+Use the existing block extraction and validation. Headings and paragraphs retain their current ordinal keys and reading order. Do not narrate comments, empty blocks, code blocks, or the note's tree name. Keep the current limits of 5,000 Unicode code points per block, 1,000 requests per batch, and 8 MiB of serialized JSONL. Do not split or truncate oversized input. Ignore unused or obsolete configuration with a log warning; validate only settings needed for this run.
 
-### Completion and failure
+Persist a small attempt record in the originating vault database **before** accepting the local start request or sending service requests. It needs the attempt and note IDs, the note name captured at start, the expected clip count, the service origin, and the API key reference. The record's primary key is the attempt identity; no separate identity system is needed. The selected voice stays in the submission worker and is written to the start event; recovery does not need it. If the worker cannot start, remove the unsubmitted record and return a local rejection.
 
-On success, show **Audio ready · 20 clips**, the stopped total time, and **Close**. Keep the dialog open until the user closes it. Completion does not start playback. The clips are available after Close and can be played without the service or network.
+The remote batch ID is initially absent. Save it immediately after a successful creation response. Saving the batch ID and recording the start event must be one database transaction. This is the point at which the batch is **registered** and restart recovery is guaranteed.
 
-On a terminal error, stop the timer, show the failed phase and an actionable error, and enable **Close**. Do not present a partial set as complete audio. For this first version, any failed service item, missing or duplicate result, invalid WAV, conversion failure, or storage failure makes the run unsuccessful. Preserve an existing audio set. The user can close the dialog and start another run after correcting the problem. A client failure does not cancel a remote batch that was already accepted.
+If that transaction fails after the service returned a batch ID, retain the ID in the worker and retry the local registration write with the capped delay below. Keep the unfinished record and do not upload or create another batch. A process exit before the ID is saved still has the documented submission-uncertainty limit.
 
-Do not automatically repeat batch creation. A batch marked succeeded can contain item errors; inspect every result.
+Resolve the saved API key reference through existing credential storage before each service request so replacing that key's value takes effect without restart. Do not copy API key values into attempt records or events. Keep the original service origin and key reference for this attempt; changes to the default Notes settings apply to future attempts. Creating a new key does not restore a deleted key's ID.
 
-## Reading order and limits
+Do not persist a second copy of the note, request JSONL, remote progress counters, or downloaded clips for recovery. Before registration, the prepared request can remain in the worker's memory. After registration, the batch ID and expected result keys are enough to retrieve the results.
 
-Use the saved structured note document. Screen wrapping does not create paragraphs. Generate from the original note, not the compressed text used for chat context.
+### Monitor and recover
 
-| Content | First-version rule |
-| --- | --- |
-| In-document titles and headings | One clip per nonempty heading. |
-| Paragraphs | One clip per nonempty paragraph, in document order. |
-| Lists and quotations | Include their paragraph and heading blocks once, in reading order. Do not add spoken bullet symbols. |
-| Inline formatting and links | Read visible text without markup or appended link targets. |
-| Line breaks inside a paragraph | Keep them in that paragraph's request. |
-| Empty blocks, images, horizontal rules, code blocks, and CHA comments | Skip. |
-| Annotation-only views | Not a narration source. |
-| Note name in the tree | Not an extra spoken title. A title is read when it appears in the document. |
+The native application owns monitoring independently of the dialog and webapp component lifetime. Reuse the existing background-worker and service integration code.
 
-For the quickest first version, use **one service request per heading or paragraph and one batch per note**. Validate the service limits before upload: at most 5,000 Unicode code points per text block, 1,000 requests, and 8 MiB of serialized JSONL. If a note exceeds a limit, identify the offending block or note limit in the dialog without submitting work. Never truncate or omit text to make it fit.
+- Poll a healthy registered batch at the existing 10-second interval. There is no overall batch deadline.
+- Download results only after the service reports completion, and check both batch errors and individual results.
+- On startup or vault open, load unfinished records and resume each known batch by its saved ID. Do not upload or create another batch for it.
+- If the service finished while CHA was closed, download and save the results on reopening the vault.
+- If CHA stopped during download or conversion, fetch the same batch's results again and repeat local processing. Byte-range resume and persistent partial downloads are unnecessary.
+- On vault switch or shutdown, interrupt local work and retain unfinished records. Resume registered batches when that vault is opened again; handle records without a batch ID as described below. Never write clips or events into the newly selected vault on behalf of the old one.
+- Ordinary sleep, disconnection, and UI reload do not make a registered batch fail or create a replacement batch.
 
-At least one narratable block is required. If filtering leaves no blocks, show **No text to narrate**, stop the timer, and enable **Close** without uploading or creating a batch. Preserve any existing audio set.
+A local record without a batch ID on startup or vault open means submission was interrupted before registration. Record a warning that submission did not finish and that a remote batch may exist, then retire that attempt. Do not automatically submit it again. This small marker makes an interrupted start visible without building a resumable upload system.
 
-Automatic long-paragraph splitting, joining several WAVs into one clip, and dividing a large note into several batches are deferred. Long clips can have variable narration quality even within the accepted service limits; practical listening will guide the next version.
+### Save and finish
 
-Build the block list in one place: the webapp, from the same document it renders. **Generate** sends these block texts, and playback uses the same list. Each clip's key is its block's position in this list. Repeated paragraphs are separate blocks. Do not depend on result arrival order.
+Require exactly one valid result for every expected block key. Reject missing, duplicate, unexpected, failed, or invalid results. Keep the current native conversion and compressed audio storage.
 
-## Playback
+The complete audio replacement, removal of the unfinished record, and completion event must commit in **one vault database transaction**. The transaction must verify that this exact attempt still exists and the target is still a read-only note before writing audio. A crash before commit leaves the previous audio and unfinished record; recovery can try again. A crash after commit leaves the new audio and one completion event, with no record to replay.
 
-### Start and stop
+Do not expose a partial set as ready. If the user is playing this note's old audio when the replacement commits, stop that playback so clips from different generations cannot mix. Refresh availability without starting playback or interrupting another note's playback.
 
-Playback works only for read-only notes. When playback is stopped, the user right-clicks a title or paragraph with saved audio and selects **Play from here**. The clicked block is the starting point even if another passage is selected. Keep existing Copy, Highlight, and comment actions. Opening or dismissing the menu does not change playback.
+Deliver completion from the native application to the webapp for the affected note, reusing the existing note-audio refresh handling. It must work after the dialog unmounts. Stop and invalidate that note's outstanding playback loads before they can use replacement clips; a completion for another note must not stop the current playback. The technical design will define the notification and clip-response ordering.
 
-Start at the beginning of that block, then play all following clips in note order, without an added pause between clips. Stop at the end of the note; do not continue into another note.
+Completed and terminally failed attempts need no separate history table. Keep their outcome in the existing Events history. Temporary files retain the existing cleanup behavior; add no cache or expiry policy.
 
-After playback starts, replace **Play from here** with **Stop playing** in the note's context menu. Keep **Stop playing** while playback is paused or between clips. Choosing it ends playback and returns the action to **Play from here**. To start at another position, the user must stop first, then right-click the desired block and choose **Play from here**. Reaching the end or encountering a playback error also returns the action to **Play from here**.
+## Events and errors
 
-Temporarily highlight the current spoken block. Use a visual treatment distinct from saved annotations and selection. Pause retains the highlight; stopping or completion clears it. Playback never writes a highlight into the note.
+Events belong to the originating vault and are visible when the user opens **Settings → Events**, including after restart. Keep the existing list layout and retention limit of 200 events. Trimming an event must never remove an unfinished batch record. A live progress feed or new event-view controls are outside this change.
 
-Do not add Play, Pause, progress, or audio settings controls to the note toolbar.
+| Outcome | Severity | Message and timing |
+| --- | --- | --- |
+| Batch registered | Information | `Audio batch started for “Chapter 1” (note 42): 20 clips, voice Kore.` Record after the service accepts the batch and its ID is persisted. |
+| Audio committed | Success | `Audio ready for “Chapter 1” (note 42): 20 clips saved.` Record with the complete audio commit, not when remote generation merely finishes. |
+| Terminal failure | Error | Identify the note, failed step, and actionable reason, for example: `Could not generate audio for “Chapter 1” (note 42): the service returned an incomplete batch.` |
+| Submission uncertain | Warning | Identify the note and say that submission could not be confirmed and starting again may duplicate remote work. |
+| Target no longer eligible | Warning | Identify the note and say that generation was abandoned because the note was made editable or deleted. |
+| Recovery needs attention | Warning | Identify the note and the connection, credential, or local storage problem. Say that the attempt is retained and give the applicable recovery action below. This is not a final outcome. |
 
-### Pause and resume
+Use the note name captured at the start and its ID so events remain understandable after a rename or deletion. Do not include note text, credentials, secret upload URLs, or raw service responses in events. Detailed diagnostics belong in logs.
 
-After playback has started, pressing **Space** pauses at the current position. Pressing Space again resumes there, then continues through the remaining clips.
+Record one start and one final outcome for a registered attempt. Restarting, polling, or retrying a download must not repeat those lifecycle events. A monitoring session may also record one recovery warning; suppress repeated warnings for that attempt until the vault is reopened. This suppression can stay in memory. Do not create events for each paragraph, poll, or intermediate phase.
 
-Handle Space when focus is in the read-only note's reading area. While playback is active or paused, prevent Space from scrolling the page and ignore held-key repeats. Leave Space unchanged in inputs, dialogs, and menus. An idle note does not start speaking on Space. Pausing between clips prevents the next clip from starting until the user resumes; stopping prevents it from starting at all.
+### Failure rules
 
-Clicks keep their normal behavior and do not pause or resume playback. Scrolling alone does not pause audio.
+- **Validation or local acceptance fails:** show the error in the still-open setup dialog. No service work has started.
+- **Upload or batch creation fails:** record the error and retire the local attempt. Do not automatically repeat these writes. If acceptance by the service is uncertain, use the warning above.
+- **Polling or downloading encounters a network failure or HTTP 5xx:** keep the registered batch, including for HTTP 503. Reuse the existing read backoff of 10, 20, and 40 seconds, then continue at a capped 40-second interval. Successful reads return to the normal cadence. Do not discard a known batch just because three reads failed. Record the recovery warning if the initial retries are exhausted. This changes retry exhaustion only for single-note background runs; folder behavior stays unchanged.
+- **An existing saved key is rejected with HTTP 401:** retain the batch and retry on the same capped cadence. The warning directs the user to replace that key's value in Settings → API keys. Each request resolves its current value.
+- **A service request is still needed, but the saved key reference has been deleted:** record a terminal error and retire the attempt. Keep key deletion available. Explain that the remote batch may continue and that a new run requires a configured key. Do not wait for an ID the user cannot restore or silently use a different key. If complete results are already available locally, finish saving them without requiring a credential.
+- **The service returns another HTTP 4xx or an invalid response, the batch or result no longer exists, the service reports a terminal batch/item failure, or results cannot be validated or converted:** record a terminal error and retire the attempt. Preserve the previous complete audio. A new generation requires another explicit user action.
+- **Local storage is temporarily unavailable:** retain the unfinished record and previous audio, log the failure, and retry with the same capped delay. This includes disk full and temporary file failures during download or conversion; malformed audio and unsupported conversion remain terminal. A retry may reuse complete temporary files still owned by the worker; after interruption, download and convert the same batch again. Record one recovery warning if storage allows it. Do not report success or lose recovery information. If the database cannot accept an event, log that failure and keep the unfinished record.
 
-If a saved clip cannot be read or played, stop and show the error. Do not silently skip text or start generation.
+Retiring an attempt and writing its final error or warning must be atomic where the database is available. Every final event, including success and abandonment, requires finding and removing the exact attempt record in that transaction. If another path has already removed it, discard late work without another final event. This also covers a worker failure racing with Make editable or deletion. No automatic remote cancellation, deletion, or replacement batch is required.
 
-### Show the current paragraph
+## Note changes while work is pending
 
-When a clip starts and the beginning of its block is not visible, scroll the reading area to show it. Do not scroll during a clip.
+Reuse the note's existing read-only rule to protect narrated text. Reading, scrolling, highlighting, comments, renaming, and moving the note remain available and do not invalidate the run.
 
-Leaving the note, making it editable, switching vaults, or closing CHA stops playback. Reopening does not autoplay or restore a persistent listening bookmark. Starting note playback stops chat speech and starting chat speech stops note playback, including when the other source is paused or between clips. The stopped source cannot resume from its old position; it requires a new explicit start. Thus, Space in the note cannot resume stopped note playback over chat speech.
+Making the target note editable abandons its unfinished audio attempt, even if the user later makes it read-only again. Deleting the note, including through folder deletion, also abandons it. Record the warning and remove the unfinished record with the corresponding note change. A late service reply or worker result must not revive it or save audio for a new attempt. Remote work may continue because the service has no cancellation API.
 
-## Storage and native conversion
+Making the note editable is also the existing action for abandoning a permanently stalled attempt, such as one whose original service address is no longer available. Recovery warnings identify the target note and mention this option. Abandonment releases the local audio slot; it does not cancel the remote batch. No new cancellation control is added.
 
-Store compressed clip bytes, their format, and reading order in the existing vault database. Audio is persistent note content, not an expiring cache. Existing database backup and restore must carry it with the note. Deleting a note deletes its local clips.
+This permits normal note operations without introducing document snapshots, content fingerprints, revision tracking, or paragraph remapping. It does not add stale-audio handling for edits made after a completed run.
 
-Use native macOS APIs to read the returned mono PCM16 24 kHz WAV and encode AAC in an M4A container, with MIME type `audio/mp4`. Do not require FFmpeg, an encoder command-line tool, or a remote conversion service. Keep the 24 kHz sample rate if the native encoder accepts it. Release temporary WAV and conversion data after completion or failure; do not retain WAV copies in the database.
+## Implementation boundaries
 
-Use one internal encoding profile, without a user-facing codec or bitrate setting. Verify very short headings, normal paragraphs, and long paragraphs. Clips must decode completely, retain pitch and pace, and play with clean boundaries. Exact sample-continuous playback is not required, but loading and encoder padding must not clip words or create distracting extra pauses.
+Use a small vault-backed record and the existing background worker, service client, native converter, audio storage, and Events history. Adapt the existing storage operations to share the lifecycle transactions described above. A general event bus, general job framework, scheduler service, durable event queue, and second audio store are unnecessary; the note-specific completion notification is sufficient.
 
-Do not implement stale-audio detection, document fingerprints, remapping after edits, clip version history, or automatic regeneration. This version assumes a generated note remains unchanged. Behavior after changing its narrated content is deferred. The modal prevents changes through normal note navigation during a run; ordinary storage checks must still avoid writing to a deleted note or another vault.
+Keep folder orchestration on its current path. Shared helpers may be reused, but this feature must not make folder runs persistent, close their dialogs early, change their retry rules, or produce a new sequence of folder events.
 
-## Service integration boundaries
+The service currently has no creation idempotency token or lookup-by-client-key operation. If it accepts a batch and CHA loses the response, or stops before saving its ID, automatic recovery cannot identify that batch. Preserve this honest boundary: recovery is guaranteed for **registered** batches. A local database transaction cannot make a remote POST atomic. No service protocol changes are required for this version.
 
-Use the current gem_audio file workflow: upload JSONL, create a batch, poll, download results, and decode WAV. Authentication uses `x-goog-api-key`. The selected note voice is repeated in each item's `generationConfig.speechConfig.voiceConfig.voice`. Use the implemented [client manual](../../gem_audio/manual.md) and [protocol parser](../../gem_audio/src/gem_audio/protocol.py) as the contract.
+## Acceptance criteria
 
-Keep credentials and secret upload URLs out of logs and user-visible errors.
+1. A valid single-note start closes the dialog after durable local acceptance. Upload, generation, download, conversion, and commit proceed while the user uses the application. No later modal opens.
+2. Invalid settings, an empty note, an oversized block, or an oversized batch leave the setup dialog open with an error and send no service requests. Definite rejection permits correction and retry. Double clicks create at most one active attempt. Lose the start reply: the UI checks native status and never automatically submits again.
+3. A registered batch produces one start event with the correct note, voice, and clip count. Successful download, conversion, and commit produce one success event. Both are visible in Settings → Events.
+4. Restart after registration, during remote generation, during download, and during conversion. Each case resumes the same batch and finishes without a new upload or creation request. A batch completed while CHA was closed is handled on reopening.
+5. Restart immediately before and after the final database transaction. The visible result is either the previous complete audio with recoverable work, or the new complete audio with one success event. No partial audio or duplicate completion event appears. Fail the registration write after batch creation: the worker retains the returned ID and retries only that local write.
+6. Interrupt submission before a batch ID is saved. Restart records an uncertainty warning and does not resubmit. A lost creation response gives the same warning during normal operation.
+7. Keep the service offline beyond the old three-retry limit, then restore it. The registered batch remains and completes. Exercise HTTP 401 and 503 separately. Replacing the same saved key's value resumes monitoring without restart or regeneration. Deleting that key while further service access is needed ends the attempt with an error and releases the local slot.
+8. Simulate missing results, item errors, corrupt audio, conversion failure, and temporary local storage failure. No success event is recorded early; existing audio remains intact. Terminal failures produce an error event, while recoverable storage failure retains the batch.
+9. Switch vaults while work is running. The old vault's registration survives, no old result reaches the new vault, and reopening the old vault resumes processing. An interrupted submission without a saved batch ID is resolved on reopening. A UI reload does not stop native work.
+10. Highlight, comment on, rename, and move the target during generation; completion still succeeds. Make it editable or delete it; the attempt is abandoned with a warning and late results are ignored, including after restart or the start of a new attempt for the same note. Race a worker failure with abandonment: only one final event is written. The slot is released so another audio run can start, and a blocked start identifies the target and explains this exit.
+11. Completion refreshes playback availability for an already-open note without autoplay. Replacing audio stops playback of that note's old set and invalidates its pending clip loads. Another note's playback continues. Saved audio remains playable offline.
+12. Run existing folder conversion and playback checks. Folder dialogs, Stop, sequencing, skipping, retries, and recovery behavior remain unchanged. A pending or recovered single-note attempt rejects a folder start, and an active folder run rejects a single-note start. Event-history trimming cannot affect unfinished work. Recovery warnings do not repeat on each poll.
 
-## Acceptance scenarios
+## Deferred
 
-1. Notes settings saves a URL and existing key reference, with no voice control. Notes remain readable without service configuration.
-2. Generate two notes with different voices. Each batch uses its selected voice ID for every block. Reopening either dialog requires a fresh selection from the plain list of voice IDs.
-3. Generate opens the modal but sends no request until a voice is selected and Generate is pressed. Opening it stops active or paused note playback, including between clips; closing it does not resume playback. Starting twice cannot create duplicate work.
-4. During a run, show service progress when available and the correct local phase. A running batch with pending items shows Generating, not Queued. Count successful and failed items as complete, but do not treat completion counts as success. Download only when `done` is `true`. The UI stays responsive. Escape, background clicks, and Close cannot dismiss active work.
-5. Keep the timer running through upload, queueing, generation, download, conversion, and storage. Stop it only on success or terminal failure. Success shows Close and does not autoplay.
-6. Convert 24 kHz PCM16 WAVs with native macOS APIs. Decode the stored compressed clips and verify format, duration, short-clip integrity, and playback in CHA.
-7. In a read-only note, start at a middle paragraph, play the following headings and paragraphs once, and stop at the note's end. The menu shows **Stop playing** while active or paused. Stop before selecting a different starting position. Playback is unavailable in editable notes and stops when a note becomes editable.
-8. Press Space to pause and resume at the same position, including preventing advancement while paused between clips. Reveal each block when its clip starts; for a tall paragraph, reveal its beginning without progressive scrolling. Clicks, text selection, link clicks, and Space in inputs retain their normal behavior.
-9. Simulate a failed item, a corrupt download, a native conversion error, and a database error. Show the error and stopped timer, enable Close, and preserve a previous complete audio set.
-10. Reject oversized blocks or batches before upload, without truncating text. A note with no narratable blocks shows No text to narrate, stops the timer, enables Close, sends no upload or batch request, and preserves existing audio.
-11. Reopen CHA with the service offline and play previously saved clips. No remote service is required for playback.
-12. Simulate temporary network failures and HTTP 500 responses during polling and downloading. Retry the same read after 10, 20, and 40 seconds, with the timer running and no replacement batch. A successful read resets the retry count. Exhausted retries or a non-retryable error stop the timer, enable Close, and preserve existing audio. Upload and batch-creation failures are not automatically retried.
-13. Start chat speech while note playback is active, paused, or between clips; note playback stops and Space cannot resume it. Starting note playback likewise stops active or paused chat speech. Neither stopped source resumes automatically.
-
-## Notes
-
-- The service has no cancellation endpoint. It can remain queued or retry inference for a long time. The user is expected to leave CHA running until completion. Quitting or crashing can leave a remote batch running. This version does not persist a resumable job or recover it after restart, and it does not claim that quitting cancels the service. Saved complete audio remains durable; unfinished work is not shown as ready.
-- Remote uploaded text and results remain on the service until its operator clears them. Local replacement or note deletion does not remove remote resources.
-- Apple exposes native audio-file reading and writing through [AVAudioFile](https://developer.apple.com/documentation/avfaudio/avaudiofile). A local feasibility check on October 24 converted mono PCM16 WAVs of 0.1 and 2 seconds to AAC/M4A at 24 kHz and 64 kbit/s. Decoding returned exactly 2,400 and 48,000 frames respectively. No resampling was needed. This establishes a working native conversion path on the tested Mac; narration quality and in-app playback still need validation. Short M4A clips can exceed the size of their WAV input because of container overhead, so assess compression over a representative whole note. Windows and its sample-rate constraints do not affect this version.
-
-## Deferred work
-
-Windows and ChaWeb support; background generation; cancellation; restart recovery; per-clip retries; partial-result playback; paragraph splitting and multi-batch notes; edited-note handling; playback toolbar controls; an added pause between clips; speed adjustment; persistent listening bookmarks; scrolling within a paragraph; exact word highlighting; audio export; multiple stored voice versions; and folder generation.
+Concurrent audio runs, a local waiting queue, asynchronous folder conversion, folder recovery, a jobs screen, per-paragraph progress events, notifications outside Events, cancellation controls, automatic resubmission, partial-result playback, upload/download checkpointing, and new service APIs.

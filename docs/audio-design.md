@@ -1,230 +1,514 @@
-# Note audio technical design
+# Background note audio technical design
 
-Status: Implementation design draft
+Status: Technical design
 
-Date: October 24, 2026
+Date: October 26, 2026
 
 Requirements: [audio-prd.md](audio-prd.md)
 
-## Scope and approach
+## Scope and decisions
 
-Implement the PRD on macOS by completing the audio code already present in the working tree. Use the existing native bridge, application worker facility, vault database, credential store, and media-resource transport. One modal owns one generation attempt. One note has one complete saved audio set.
+Move single-note audio generation into the native application. The setup dialog
+closes after durable local acceptance. The application registers the remote batch,
+resumes it when its vault opens, and commits complete audio with an Events entry.
+Recovery is guaranteed only after the remote batch ID is stored.
 
-The PRD is authoritative where the current code differs. This document describes proposed changes; it does not establish that the current implementation meets the requirements. Windows and ChaWeb support, editable-note handling, resumable jobs, background generation UI, and the other deferred PRD features remain out of scope.
+Keep folder conversion on its existing path. Its dialog, target selection,
+sequencing, skipping, progress, elapsed time, Stop action, errors, read retries,
+and lack of restart recovery stay unchanged. The only folder integration is
+admission against the same one-run limit.
 
-The existing `background_jobs` facility runs blocking work off the UI thread. Using it does not introduce the deferred background-generation feature: the modal still remains open until the attempt finishes. Do not add a job queue, job database, separate audio cache, expiry policy, document fingerprint, or version history.
+Use the existing `BackgroundJobs`, vault database, credential store, service
+client, native codecs, media resources, and Events history. Add one small table
+for unfinished single-note attempts and one note-specific completion notification.
+Do not add a job framework, waiting queue, scheduler, document snapshot, content
+fingerprint, audio version store, persistent download cache, or remote API.
 
-Before implementing visible changes, present the affected screens and states for explicit visual approval as required by [AGENTS.md](../AGENTS.md). This technical design is not UI approval. Follow the PRD's controls and copy, without adding panel headings or explanatory legends.
+Keep support on macOS and Windows. Playback controls, narration rules, voices,
+settings, and compressed storage format stay unchanged. This document specifies
+implementation; this documentation task does not change the UI or application.
+The single-note dialog follows the visual flow in the PRD.
 
-## Existing code and intended changes
+## Existing code and changes
 
-| Area | Existing path | Intended change |
+| Area | Paths | Change |
 | --- | --- | --- |
-| Settings | `webapp/src/components/NotesSettings.tsx`, `src/app/settings_operations.cpp`, `src/workspace/workspace.cpp`, `src/workspace/workspace_config_editor.cpp` | Retain `audio_url` and the `audio_api_key` reference; retain compression settings and warning behavior for unused fields. |
-| Dialog and menu entry | `webapp/src/components/NoteAudioDialog.tsx`, `NotesTree.tsx` | Build blocks from the selected note's saved document, stop note playback on opening through the existing audio-change notification, require a fresh voice, and match the PRD's phase and timer behavior. |
-| Bridge | `webapp/src/api/client.ts`, `nativeClient.ts`, `src/bridge/notes_dispatch.cpp`, `bridge_router.cpp` | Extend `noteAudio.start` with block texts; adapt status and info responses. Reuse source and release methods. |
-| Native operation | `src/app/note_audio_operations.cpp`, `application.h`, `application_internal.h` | Keep one in-memory attempt and the existing worker; enforce lifecycle checks and publish terminal status after commit or failure. |
-| Service client | `src/media/note_audio.cpp`, `note_audio.h` | Keep the file workflow; send no API key to the upload URL and remove the current same-origin prefix check; add classified read retries, optional progress counts, and complete result validation. |
-| Native conversion | `src/media/note_audio_codec.cpp`, `CMakeLists.txt` | Retain AudioToolbox conversion and the Apple framework linkage; verify complete AAC/M4A output. |
-| Storage | `src/storage/note_storage.cpp`, `note_storage.h`, `src/workspace/workspace_config_store.cpp`, its header | Retain transactional replacement; replace the stored `voice` column with `mime_type`; remove the separate C++ document-to-block extractor. |
-| Playback | `webapp/src/notes/useNoteAudio.ts`, `speechPlayback.ts`, `textToSpeech.ts`, `NotesScreen.tsx` | Use Space, explicit Stop, block-start scrolling, and speech ownership that survives pauses and clip transitions. Remove click-to-pause and progressive scrolling. |
+| Single-note setup | `webapp/src/components/NoteAudioDialog.tsx`, `NotesTree.tsx` | Select a small single-note setup component when `folderMode` is false. Keep the existing folder component and loop. Reuse saved-document preparation. |
+| Client and bridge | `webapp/src/api/client.ts`, `nativeClient.ts`, `src/bridge/notes_dispatch.cpp`, `bridge_protocol.*`, `bridge_router.cpp`, `resources/dto.yaml` | Add background start/status and completion delivery; reuse `nativeBridge` without changing its invocation interface. Keep the folder start/status/cancel contract. Generate `webapp/src/api/schema.d.ts` from the DTO source. |
+| Application | `src/app/note_audio_operations.cpp`, `application.h`, `application_internal.h`, `application.cpp`, `vault_operations.cpp` | Own acceptance, recovery, retries, cancellation flags, and admission. |
+| Service | `src/media/note_audio.cpp`, `note_audio.h` | Extract the existing submit, read, and result-processing steps so the background worker can resume by batch ID. Keep `generate_note_audio` as the existing folder wrapper. |
+| Storage | `src/storage/note_storage.*`, `event_storage.*`, `src/workspace/workspace_config_store.*` | Add unfinished attempts and transaction-aware audio/event helpers. Include abandonment in existing note-change transactions. |
+| Note changes | `src/app/notes_operations.cpp` | Interrupt the matching background worker after Make editable or deletion commits. |
+| Playback | `webapp/src/notes/useNoteAudio.ts` | Handle affected-note completion independently of dialog lifetime; reuse existing stop, load invalidation, and availability refresh. |
+| Conversion | `src/media/note_audio_codec.cpp` | Keep codec behavior; preserve enough error information to distinguish temporary file/storage errors from invalid audio. |
 
-Use the repository's existing DTO conventions when changing shared shapes. Update `resources/dto.yaml` and regenerate `webapp/src/api/schema.d.ts` when a changed shape is defined there; do not maintain conflicting handwritten and generated definitions.
+These are extensions to existing modules. Do not introduce a general job module
+or restructure unrelated media code.
 
-## One block list
+## Preserve preparation and folder conversion
 
-Extend the existing `noteAudioBlocks` helper in the webapp to return ordered entries with `{ position, size, text }`. Generation and playback must call this same helper on a ProseMirror document constructed with the existing note schema. Do not introduce a second JSON traversal in the native layer.
+`NotesTree` continues to load the saved note with `client.getNote(id)` and use
+`noteAudioBlocks` on the existing ProseMirror schema. The helper is the single
+source of block order for submission and playback. Keep headings and paragraphs;
+skip comments, whitespace-only blocks, code, images, and the tree name. Preserve
+text, hard breaks, and canonical ordinal keys: `"0"` through `"count - 1"`.
 
-The traversal follows document order:
+Native acceptance validates the target as a saved, read-only normal note, the
+selected voice, and the settings actually used. Keep the existing limits:
 
-1. Skip code blocks, images, horizontal rules, and entire CHA comment blocks, using the existing comment predicate.
-2. For each heading or paragraph, collect inline text in order. Convert `hardBreak` nodes to `\n`; ignore marks and image content. Link text remains text, without appended targets.
-3. Omit a block if its extracted text is whitespace-only. Use trimming only to decide emptiness; preserve the original extracted text in the request.
-4. Emit the block once and do not traverse its inline children again as blocks. Traverse list and quotation containers normally.
+- 1–1,000 blocks, each with 1–5,000 Unicode code points.
+- At most 8 MiB of serialized UTF-8 JSONL, including newlines.
+- Voices `boroda`, `grant`, `dzig`, `gerdt`, and `Kore`, with an explicit choice.
+- An HTTP(S) service origin without a path, credentials, query, or fragment,
+  and an existing usable API key reference.
 
-The array index is the clip ordinal. Its canonical decimal string (`"0"`, `"1"`, ...) is the service request key. ProseMirror positions are used only to locate the clicked or spoken block; they are not service keys or database identities. Repeated text yields separate entries.
+Use `prepare_note_audio` for this validation and JSONL construction. Do not split
+or truncate input. Ignore obsolete or unused settings with the existing warning
+logger. Playback and saved-audio lookup need no service configuration.
 
-When Generate is pressed, capture the voice and load the selected note's saved document through the existing note client (`client.getNote(id)`). Use this one path for the active note and for a note that is not open. Construct a ProseMirror node with the schema from `notesExtensions()` and call `noteAudioBlocks`; `NotesTree` already reads saved documents this way for Compress. Generation requires a read-only note. In a read-only note only highlight marks and comment paragraphs can change, and the block list ignores both, so the saved document yields the same blocks as the open editor. Fail preparation if loading fails. Do not add save coordination, a hidden editor, or another document store.
+Folder calls continue to use `noteAudio.start`, `noteAudio.status`,
+`noteAudio.cancel`, and `generate_note_audio`. Extract shared service steps without
+moving the background retry loop into that wrapper. In particular, the folder
+wrapper keeps its current network/HTTP 500 read retries at 10, 20, and 40 seconds,
+then fails. Other HTTP errors, including 401 and 503, keep their current folder
+behavior. It creates no durable attempts or new lifecycle Events.
 
-`NotesTree` prepares the blocks itself; no callback passes through the Notes parent wiring. Stop note playback before showing the modal, even if generation targets another note: send the existing `cha-note-audio-changed` notification when the dialog opens. The playback hook stops on any such notification and reloads its stored clip count only when the notification names its own note. Send the same notification after Close to refresh saved clip availability after a successful run; do not add an event bus.
+### One-run admission
 
-Playback can recompute block positions with the same helper when it starts or locates a block. Comments and annotations remain excluded and do not create clip ordinals. Changes to narrated content remain outside scope; no content comparison, remapping, or invalidation is added. Known effect: if a note is made editable, changed, and made read-only again, Play from here plays the old clip for each ordinal while it highlights the new block at that ordinal, without a warning. Extra new blocks have no Play from here; extra old clips never play.
+Under `lifecycle_mutex`, both entry paths check for an unfinished attempt in the
+current vault and for active folder work. A stored attempt reserves the slot even
+before its recovery worker starts or while that worker waits after a failure.
 
-## Settings and credentials
+If the attempt exists, reject before upload with the PRD message, using its saved
+name and note ID:
 
-Keep the existing Notes settings fields and API key selector. Persist only the service origin and key reference for audio. Saving settings performs no network request. Resolve the key value in the native application when generation starts; never send it to the webapp.
+> Audio generation is already running for “Chapter 1” (note 42). Make that note editable to abandon the attempt.
 
-Validate required generation settings when starting an attempt. Accept HTTP or HTTPS origins, including loopback and private hosts; normalize a trailing slash. Reject paths, embedded credentials, queries, or fragments in the configured origin. Missing audio configuration does not affect note reading, saved clip lookup, or playback. Ignore unused or obsolete settings and use the existing warning logger.
+Preserve the existing rejection when folder work owns the slot. Do not queue the
+new request.
 
-The voice is a required argument for each run and must be exactly `boroda`, `grant`, `dzig`, `gerdt`, or `Kore`. The dialog starts with no selection every time. Remove the current assignment of `info.voice` to the selector and remove descriptions from the voice options.
+Use the existing `note_audio_status` active check for folder work. The native
+window has one current bridge connection, and the modal folder dialog prevents
+starting another run, including between notes. Recovery starts only when the
+native vault context opens, which ends the previous folder loop. No folder
+reservation, new folder bridge methods, or teardown rules are needed. The folder
+loop, including its existing start/status/cancel calls, stays unchanged.
 
-## Native bridge and attempt state
+## Durable attempt record
 
-Keep the existing method names and context-epoch mechanism:
-
-| Method | Input | Result |
-| --- | --- | --- |
-| `noteAudio.info` | `{ id }` | `{ count }`, derived from stored clips; no service call. The native client already offers `noteAudio` only on macOS. |
-| `noteAudio.start` | `{ id, voice, blocks: string[] }` | Initial attempt status after admission. |
-| `noteAudio.status` | `{ id }` | Current status for that note in the admitted vault epoch. |
-| `noteAudio.source` | `{ id, ordinal }` | Existing `MediaResource` shape, with stored MIME type and local URL. |
-| `speech.release` | `{ resource_id }` | Existing release response. |
-
-The native start method validates, once and before it launches the worker, that the note exists, is a normal read-only note, and belongs to the admitted context. It also checks the argument types, the voice, and the limits in [Validate before upload](#validate-before-upload), then serializes the JSONL and passes the ready string to the worker. Reject a second start while an attempt is active, in addition to the dialog's immediate double-click guard. Do not extract text again from the stored document.
-
-Keep one in-memory status record in `Application::Impl`, protected by the existing lifecycle mutex. Retain it until the next attempt or context teardown so the dialog can read the terminal result. No attempt ID, status history, or persistent job record is needed for this modal flow.
-
-Status contains:
-
-- `id`: note ID; the existing native state also retains the vault epoch.
-- `phase`: `uploading`, `queued`, `generating`, `downloading`, `saving`, or `complete`.
-- `completed` and `total`: optional progress counts. Omit unavailable service counts instead of substituting zero. On success these contain the committed clip count.
-- `done` and `error`: terminal state and a safe error message. On failure retain the phase that failed.
-- `finished_at_ms`: present only when `done` is true; the native completion time in Unix milliseconds, captured after the final commit or at terminal failure.
-
-Remove the separate `failed` display field; failures contribute to completed service work, and final result inspection determines whether the attempt succeeds. Map conversion and database work to the single `saving` phase. There is no `preparing` phase: start returns the initial status with phase `uploading`. Before the first status arrives, the dialog shows only the running timer.
-
-The dialog has ready, running, and terminal states. Ready allows voice selection and Close; Generate requires an explicit voice. Running starts immediately on the Generate action, disables voice changes and duplicate starts, and prevents Close, Escape, background dismissal, and navigation. Terminal success shows Audio ready with the committed clip count; terminal failure shows the failed phase and error. Both stop the timer and enable Close, leave the dialog open, and require closing and reopening for another attempt. There is no Cancel control or automatic playback.
-
-The dialog reads local status about once per second with one request at a time. This is separate from remote service polling every 10 seconds. A local status-read failure does not mean native generation failed: keep the dialog running and locked, keep its timer running, show the communication error, and retry the same status read on the existing one-second cadence. Clear the communication error after a successful read. Do not apply the remote service's three-retry limit to local status reads or declare generation finished because its status is temporarily unavailable.
-
-A preparation failure or an explicit start rejection that confirms no worker was launched can end the dialog's wait. A lost or timed-out start reply cannot: read the existing native status without resubmitting start. A retained terminal result whose `finished_at_ms` precedes this dialog's Generate action belongs to an earlier attempt and must not finish this one. Missing or earlier status alone does not prove that a pending start will not run; keep waiting until the native outcome is known or the context is torn down. No new attempt ID, retry timer, or recovery store is needed. An application/context teardown follows the existing teardown path and does not create recovery work.
-
-### Timing and lifecycle
-
-Capture `started_at_ms = Date.now()` in the dialog at the Generate action, before preparation and bridge dispatch. The dialog owns the running display timer and continues it through retries, conversion, commit, and temporary loss of local status. When it reads a terminal native status, stop that timer and set the final elapsed value to `max(0, finished_at_ms - started_at_ms)`. Both values use the same machine's wall clock. This includes preparation but excludes the delay in receiving completion, even when polling is delayed by several seconds. Replace the current native `elapsed_ms` with the single terminal `finished_at_ms` value; do not add a native ticking timer. For a preparation failure or a confirmed rejection before worker launch, stop the display using the dialog's current time. A communication error alone never freezes the timer.
-
-Use the existing worker for HTTP, waits, parsing, encoding, and database saving. Do not run these operations on the macOS UI thread. Capture configuration and the serialized JSONL once at start; release application locks during network and conversion work. Check the vault epoch before progress publication, before storing, and before terminal publication. An old worker must not overwrite a new context's status or write to its store.
-
-Keep the existing shutdown interruption flag and worker join behavior. It interrupts local transfers and waits during application teardown; it is not a user Cancel action and does not cancel the remote batch. There is no overall generation deadline. All ordinary terminal paths release temporary files; a process crash can leave operating-system temporary files, with no new startup recovery or cleanup service.
-
-## Service operation
-
-Follow the local [gem_audio manual](../../gem_audio/manual.md) and [protocol parser](../../gem_audio/src/gem_audio/protocol.py). Keep service access in C++ using the existing curl helpers.
-
-### Validate before upload
-
-Native start performs these checks once, before it launches the worker:
-
-- Require 1–1,000 block texts. Zero blocks produces `No text to narrate`, a stopped timer, and Close, with no upload or batch creation.
-- Require 1–5,000 code points per block. Count Unicode code points, not UTF-8 bytes or JavaScript UTF-16 code units. Do not normalize or truncate text. The bridge JSON parser already rejects invalid UTF-8 and lone surrogates, so add no separate encoding check.
-- Serialize the complete UTF-8 JSONL input and require at most 8,388,608 bytes, including separators and the final newline. Identify the offending one-based block or note limit in errors.
-
-Known effect: a note with a block above 5,000 code points or with more than 1,000 blocks cannot get audio in this version; the user splits it by hand.
-
-Use the existing JSON serializer, one compact object per physical line. Each record has exactly this structure, with its ordinal, text, and selected voice substituted:
-
-```json
-{"key":"0","request":{"contents":[{"role":"user","parts":[{"text":"Paragraph text"}]}],"generationConfig":{"responseModalities":["AUDIO"],"speechConfig":{"voiceConfig":{"voice":"Kore"}}}}}
-```
-
-### Upload, create, poll, and download
-
-1. Start the upload with `POST /upload/v1beta/files`, `x-goog-api-key`, `{}` metadata, and the manual's resumable-upload headers, including the exact JSONL byte length.
-2. POST the whole JSONL file once to the returned secret upload URL with offset zero and `upload, finalize`. Header names are case-insensitive. Use the returned URL as specified by the service; authenticate this transfer with the secret URL, without forwarding the API key to it. Remove the current check that the URL starts with the configured origin: the operator's public origin can differ, and no credential goes to this URL. Permit only HTTP(S), retain normal TLS verification, and do not follow redirects with credentials. Keep the URL out of logs and errors.
-3. Capture `file.name`, then POST `{"batch":{"inputConfig":{"fileName":"files/..."}}}` to `/v1beta/models/gemini-3.8-flash-tts:batchGenerateContent`. Keep the returned batch name for this attempt.
-4. Inspect the creation response, then poll `/v1beta/{batch-name}` every 10 seconds while `done` is false. `BATCH_STATE_PENDING` means Queued; `BATCH_STATE_RUNNING` means Generating. Parse decimal-string counts. Completed is successful plus failed; total is `requestCount`. If counts are absent or invalid, omit them. Never infer Queued from `pendingRequestCount`.
-5. When `done` is true, inspect any operation error and obtain `response.responsesFile`. Download `/download/v1beta/{file-name}:download?alt=media` into the attempt's temporary directory. Validate resource names before building paths. A succeeded batch still requires per-item inspection.
-
-Do not automatically retry upload start, upload finalization, or batch creation. A lost creation response is an ambiguous failure: report that another manual attempt may duplicate remote work. The remote batch may continue after any client failure. No remote delete or cancel request is available.
-
-### Read retries
-
-Add one small read-retry helper around polling and result downloads, not around the whole operation. Preserve error categories from the transfer function instead of reducing all failures to a generic string.
-
-| Failure | Action |
-| --- | --- |
-| Network/transport failure or HTTP 500 on a read | Retry the same read up to three times, waiting 10, 20, then 40 seconds after each failure. |
-| Other HTTP status | Terminal failure. |
-| Invalid JSON, invalid resource/result, item error, invalid audio | Terminal failure. |
-| Local file I/O, size-limit violation, conversion, or database failure | Terminal failure. |
-| Application shutdown interruption | End local work through existing teardown. |
-
-A successful read resets its retry count. Successful polling resumes the normal 10-second interval. Do not add a normal poll delay on top of a retry delay. Recreate/truncate the result file for each download attempt; a failed partial download must not be appended to the next response. A curl write failure caused by disk I/O or a size guard is a local failure, not a retryable network error.
-
-Keep the current phase and elapsed timer during retries. Keep ordinary per-request connection/inactivity limits to detect a stalled transfer; they are not a batch deadline. Reuse shutdown-aware waits. Do not introduce jitter, configurable retry policies, partial-download resume, or automatic resubmission.
-
-### Results and bounded memory
-
-Download to a temporary file, then parse JSONL one record at a time. The service allows WAVs up to 32 MiB per item, so a whole-note result must not be loaded into memory as one string. Keep a bounded result-line buffer, one decoded WAV, and the vector of converted file paths indexed by ordinal. The vector also records which keys have been received; no separate result cache is needed.
-
-Require exactly one successful result for every expected canonical key. Reject duplicates, unknown keys, missing keys, item errors, malformed Base64, wrong MIME type, and invalid WAVs. Use validated ordinals for local filenames, never arbitrary remote keys. Process records in any arrival order. Do not write a replacement database set until all expected clips have converted successfully.
-
-Keep service error bodies and raw transport URLs out of user-visible errors. Report a safe phase, block number when available, and a useful action. Never log API keys or secret upload URLs.
-
-## Native conversion and storage
-
-Retain the current AudioToolbox `ExtAudioFile` implementation rather than introducing a Swift bridge or external encoder. Verify mono signed PCM16 at 24 kHz, decode through the native reader, and write AAC in an M4A container. Use the existing internal profile of mono, 24 kHz, 64 kbit/s. No user codec controls are needed. If the encoder rejects the profile, fail the attempt with a conversion error; do not silently change pace or pitch.
-
-Read and write frames in bounded buffers. Reject empty or truncated input, and check output finalization errors before treating a clip as complete. Use native decoded-frame information to verify that the WAV was read fully. Close input/output handles before deleting or storing files. Remove each temporary WAV after conversion; retain compressed temporary files only until the atomic save completes or fails.
-
-Keep the `note_audio` table and primary key `(note_id, ordinal)`. The table exists only in the uncommitted working tree; no vault contains it. Define the final columns directly in `CREATE TABLE`:
+Create the table with the existing vault schema setup. Existing vaults start with
+an empty table; there is no audio migration.
 
 ```sql
-note_id INTEGER NOT NULL REFERENCES note_items(id) ON DELETE CASCADE,
-ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-mime_type TEXT NOT NULL,
-audio BLOB NOT NULL,
-PRIMARY KEY (note_id, ordinal)
+CREATE TABLE IF NOT EXISTS note_audio_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT
+        CHECK (id > 0 AND id <= 9007199254740991),
+    note_id INTEGER NOT NULL REFERENCES note_items(id) ON DELETE RESTRICT,
+    note_name TEXT NOT NULL,
+    clip_count INTEGER NOT NULL CHECK (clip_count BETWEEN 1 AND 1000),
+    service_origin TEXT NOT NULL,
+    api_key_id TEXT NOT NULL,
+    batch_id TEXT
+) STRICT;
 ```
 
-Preserve the table's STRICT declaration. Add no column check or upgrade step. Do not store the voice: nothing reads it, and the dialog never recalls a previous voice. Remove the `voice` column, the `voice` parameter of `note_save_audio` and `save_note_audio`, and `voice` from the info result. A test vault that ran the working-tree build keeps the old table; drop that table by hand once. Do not create a separate audio-set table.
+The primary key is the attempt identity. `AUTOINCREMENT` prevents an old worker
+from matching a later attempt after the table becomes empty. There is no second
+job ID. `batch_id IS NULL` means submission has not been registered; a non-null
+batch ID means it can be recovered. No phase column is needed.
 
-`note_save_audio` performs one transaction: verify the note exists and is a normal read-only note, delete its previous rows, insert all converted clips with contiguous ordinals and MIME type, then commit. Read each compressed file into memory only when inserting it. A failure at any point rolls back the deletion and inserts, preserving the previous set. The application must hold the correct admitted vault context for this store operation.
+The store checks that the table is empty inside the acceptance transaction.
+`SqliteTransaction` already uses `BEGIN IMMEDIATE`; together with the existing
+store and lifecycle mutexes, this serializes admission. There is at most one
+unfinished single-note attempt. Do not add an index or an additional slot table.
 
-Clip lookup returns bytes and stored MIME type through the existing `MediaResources` path. Do not require service configuration for `info` or `source`. Missing rows are playback errors. Deleting a note uses the existing foreign-key cascade. Because the clips reside in the vault database, use the existing database backup/restore path and verify it carries the rows; add no separate audio-file backup scheme.
+Store the note name captured at acceptance for event messages. Keep the origin
+and key reference fixed for this attempt. Do not store key values, voice, note
+text, request JSONL, progress counts, or temporary paths. Recovery derives all
+expected keys from `clip_count`. The worker keeps voice and prepared JSONL only
+until submission and registration are complete.
 
-## Playback
+The note foreign key deliberately does not cascade away the record: deletion
+must first write the abandonment event in the same transaction. Do not add a key
+foreign key that would prevent deleting credentials. Event-history trimming is
+independent of this table.
 
-Retain `useNoteAudio`, the existing local resource fetch, and `HTMLAudioElement`. Expose `play(position)`, `stop()`, `canPlay(position)`, and a reactive playback state to `NotesScreen`. Use three user states: stopped, playing, and paused. Playing and paused both own the playlist even when no clip is currently audible.
+## Accepting a single-note start
 
-| Event | Result |
+Add `noteAudio.startBackground({ id, voice, blocks })`, returning
+`{ attempt_id }` after acceptance. Keep the existing folder methods and DTOs.
+The native operation uses this sequence:
+
+1. Hold `lifecycle_mutex`, check the admitted epoch, native recovery ownership
+   described below, and shared slot, and validate and prepare the request. No
+   service request has occurred.
+2. Begin the store transaction, recheck note eligibility and the empty attempt
+   table, and insert the attempt.
+3. Launch its `BackgroundJobs` worker. Its first action must acquire the same
+   lifecycle mutex and check the attempt and interruption flag before any HTTP.
+4. Commit the attempt transaction, then release the lock and return the attempt
+   ID. The worker can now start service work.
+
+Use a narrow store acceptance method with a launch callback while its transaction
+is open. This makes a worker-launch failure roll back the unsubmitted row. If the
+commit fails after launch, set the worker's interruption flag before unlocking
+and roll back; the worker sends nothing. This uses the existing lifecycle lock
+as the launch barrier, without a second worker queue or handshake object.
+
+Only a confirmed pre-acceptance failure returns a definite rejection. Never
+return a definite rejection after the commit. Storage failure that prevents
+confirming the local outcome is reported as uncertain and resolved through status;
+it must not enable automatic resubmission.
+
+### Dialog and lost replies
+
+The single-note setup component contains Voice, Close, and Generate, the existing
+replacement warning when applicable, and inline actionable errors. Keep its
+accessible name, `Generate note audio`. Do not show a title, progress, elapsed
+time, Stop, or a terminal result. Opening it retains today's playback stop.
+
+Disable duplicate submission immediately during preparation and acceptance.
+Validation or confirmed local rejection restores the selector and Generate, even
+while an error is displayed. Close on acceptance, without waiting for upload.
+Unmounting or closing the dialog does not cancel an accepted attempt. No later
+modal opens.
+
+For a lost start reply, call `noteAudio.backgroundStatus({ id })` on the same
+ordered bridge connection. The host's ordinary worker executes this read after
+the start operation. Read the existing attempt table in the admitted epoch:
+
+- If an unfinished row exists for this note, return `{ pending: true, attempt_id }`
+  and close the dialog. The application has accepted responsibility for audio
+  generation for that note, whether it accepted this start or already had work.
+- If no row exists, return `{ pending: false }`. This does not prove rejection:
+  the attempt may already have finished. Keep the uncertainty state below and
+  direct the user to Events. A failed read or changed connection/epoch also
+  leaves the outcome unknown.
+
+Use no acceptance receipt, request-ID callback, or extra status history. A fast
+terminal outcome with a lost reply can leave the dialog uncertain; its result
+is in Events. An ordinary successful start reply still closes it immediately.
+
+In the unknown state keep Close and dismissal available, disable Generate for
+that unresolved invocation, and show: “Could not confirm whether audio generation
+started. Check Settings → Events before starting again.” Do not automatically
+repeat the start request or add a status polling timer. The durable attempt still
+prevents another start while work is unfinished. The same table supports status
+and recovery.
+
+## Native worker and recovery
+
+Keep one worker function with two entry points: a new attempt has prepared JSONL
+and voice; a recovered attempt has a saved batch ID. Both use the same registered
+batch processing path. Reuse cancellation-aware waits and `BackgroundJobs`.
+
+| Stored state | Action |
 | --- | --- |
-| Play from here while stopped | Resolve the clicked block's ordinal, claim speech ownership, and load that clip from its beginning. |
-| Space while playing | Set paused immediately and pause the current audio element if present. |
-| Space while paused | Resume the current element, or allow the pending next clip to start when ready. |
-| Clip ends | Load the next ordinal immediately; if paused, keep it ready without starting. At the last clip, stop. |
-| Stop, playback error, or lifecycle exit | Invalidate pending loads, stop audio, release resources and ownership, clear highlight, and become stopped. |
+| No row | No background single-note work. |
+| Row, no batch ID, worker still submitting | Complete this submission once, then register or retire it. |
+| Row, no batch ID, recovered on vault open | Atomically record submission uncertainty and remove the row. Never resubmit. |
+| Row with batch ID | Read that batch, retrieve its results, and save them. Never upload again. |
+| Row removed by another path | Discard late work. Do not save clips or write another final event. |
 
-Use the existing serial/token guard for asynchronous source fetches and `play()` completions. A late callback from a stopped playlist must not play a clip or clear a newer playlist. Stop remains valid during loading and between clips. Release any resource returned after its request became stale.
+### Recovery ownership
 
-While stopped, show Play from here only for a clicked heading or paragraph with saved audio. While playing or paused, show Stop playing in the note context menu, independent of the clicked block's eligibility. Preserve the other menu actions. Opening or closing the menu has no playback side effect. After choosing Play from here, return focus to the read-only reading area so Space works without another click.
+Only the native desktop process holding the vault's existing main lease may
+accept background starts or recover attempts. Use `store->require_main()` on
+start and `store->is_main()` before recovery; do not add another lease or process
+ID to the attempt. Map the secondary-process exception to `vault_in_use_message`
+for this operation instead of its settings-specific error. Use the existing text:
+“Close other CHA processes using this vault, then try again.” Its role is
+re-elected when the vault is reopened, as it is today.
 
-Handle non-repeating Space keydown only in the reading area while the playlist is playing or paused. Prevent default page scrolling there. Leave events in inputs, dialogs, and menus unchanged; account for the read-only editor's DOM structure rather than ignoring the entire editor as an input. Do not consume Space while stopped. Remove the existing pointer/click/double-click playback listeners and their click-delay state.
+Activate recovery when the native bridge installs the note-audio completion
+callback, then on the existing resource resume/vault-open hooks while that
+callback is installed. This occurs independently of webapp bootstrap, a live
+webview connection, or a dialog. A webapp reload does not disable it. The headless
+daemon, secondary processes, and unsupported platforms leave attempt rows intact;
+they neither submit nor monitor nor retire them on startup. Closing a main daemon
+and reopening the vault in the native application allows recovery there. Folder
+conversion keeps its existing process rules.
 
-At the first actual playback start of each clip, apply the temporary block highlight and reveal the block's beginning if it is outside the reading viewport. Track this once for that clip; resuming the same clip does not scroll again. Do not attach scrolling to `timeupdate`, a timer, or pause/resume. Pause keeps the highlight; stop, error, and completion clear it. Do not write editor marks or saved annotations.
+Load the row before allowing audio admission. The ownership check prevents a
+second process from mistaking a live submitter's null batch ID for interruption.
+This feature adds no cross-process UI notifications or distributed ownership for
+simultaneously opened vault copies.
 
-Start with sequential clip loading and no artificial transition delay. Keep the ownership claim across release of individual clip resources. Validate audible boundaries on the target Mac before adding buffering. Only if measured loading gaps fail the PRD, add one next-clip preload within this hook; do not build a playlist cache or preload the whole note.
+On pause, vault switch, or shutdown, signal the worker's interruption flag and
+interrupt waits/transfers. Retain its row. Do not turn interruption into a terminal
+error. Every database access, credential lookup, and completion publication checks
+the captured epoch under `lifecycle_mutex`. No network request or conversion holds
+that mutex. Copy a resolved key value for one request, then release the lock.
+Never access the newly selected vault through an old worker.
 
-### Shared speech ownership and cleanup
+Use the captured epoch and cancellation flag to prevent the old worker from
+accessing the reopened context, including maintenance that reopens the same
+vault. Launch recovery at most once for an attempt in the current epoch. Do not
+call the global `BackgroundJobs::join()` merely to switch vaults, because it
+permanently closes that worker facility. Old workers may finish unwinding while
+the current worker runs, but their epoch or removed attempt ID prevents further
+local writes. Any worker cleanup must check its own epoch and attempt ID before
+clearing application state.
 
-Reuse `claimSpeechPlayback(stop)` for the entire note playlist and for chat speech. Claim before asynchronous loading starts. Retain the claim while paused or between clips; release it only when that source stops or completes. Starting either source calls the other source's stop callback, including when the other is paused. A stopped source requires a new explicit start.
+An epoch change interrupts local work even when maintenance reopens the same
+vault. This includes forum deletion and vault transfer/update operations. A
+registered attempt resumes by batch ID. An interrupted submission without a saved
+ID follows the same uncertainty rule as a vault switch; do not automatically
+resubmit it. This is the limit of reusing the current context lifecycle. A local
+registration-write failure within the same epoch still retains the returned ID
+and retries only that write.
 
-Keep `beginSpeechPlayback()` for the existing audible-output/microphone coordination. Its end callback can run on pause or between clips, but must not release the playlist's ownership claim. These are separate existing responsibilities; do not add another ownership registry or modify the existing microphone echo-tail policy for this feature.
+Vault backup/transfer continues to copy the database as it does today, including
+unfinished attempts. Opening a copied vault follows the same registered/unknown
+recovery rules. Do not silently clear attempt rows during transfer or add a
+device identity or synchronization protocol.
 
-Call the same note `stop()` on dialog opening (through the audio-change notification), note departure, transition to editable mode, vault change, and unmount/application close. Release the native media resource, abort pending local fetches, revoke object URLs, detach element callbacks, and remove the transient highlight. Closing the generation dialog never resumes old playback. After a successful commit and Close, refresh the stored clip count; do not autoplay.
+### Submit and register
 
-## Implementation order
+Extract the current upload and creation sequence into a submit helper. Preserve
+its JSONL format, endpoints, validated resource names, HTTP(S) restriction, TLS
+checks, and no-redirect behavior. Do not forward the API key to the secret upload
+URL or expose that URL in events or logs. Do not automatically retry upload start,
+upload finalization, or batch creation.
 
-1. Add the shared webapp text extraction and extend the start bridge argument. Remove the C++ extraction function and its now-unused declarations/tests. Verify generation and playback use identical ordinals.
-2. Complete native read-error classification, retries, progress parsing, result validation, and terminal status. Keep the existing worker and lifecycle ownership.
-3. Replace the `voice` column with `mime_type` in `CREATE TABLE`; verify atomic replacement, conversion finalization, and media lookup.
-4. Present the required visual states for approval. Then align the dialog, menu, voice options, phase labels, highlight, keyboard behavior, and block-start scrolling with the PRD.
-5. Verify speech ownership across pauses and transitions, then perform the focused automated and macOS checks below. Remove obsolete click timers, progressive-scroll code, remembered-voice contracts, and tests that require those behaviors.
+Immediately after a valid creation response, keep its batch ID in the worker and
+call the registration transaction. It checks the exact attempt ID, stores the
+batch ID, and appends the Information start event with the captured voice and
+clip count. If the row already has that same batch ID, registration is a no-op;
+if the row has gone, discard the response. Register even if the creation response
+already says the batch is complete or failed; inspect that outcome afterward.
 
-## Verification
+On a storage failure, retry this local registration only, retaining the returned
+ID and voice in memory. Do not perform another upload or creation. A process exit
+before registration leaves the nullable marker and produces the uncertainty
+warning on reopen. A lost or unusable creation reply that could conceal an accepted
+batch produces the same warning during normal operation.
 
-Use existing Vitest, C++ unit-test, and native-test facilities. Add tests for failure-prone behavior, not snapshots that merely repeat the implementation. Use a local fake service or the existing HTTP test support for deterministic responses and injectable waits for retry tests; do not make tests sleep for real retry intervals.
+The service has no creation idempotency token or client-key lookup. A local
+transaction cannot remove this submission-uncertainty boundary.
+
+### Poll, download, and convert
+
+For a recovered row, first GET the saved batch immediately. For an unfinished
+healthy batch, poll every 10 seconds. There is no overall batch deadline. Read
+operation errors and item errors; remote completion alone is not success.
+
+Resolve `api_key_id` through the existing credential store before each service
+request. Replacing that key's value takes effect on the next request. Changes to
+the default Notes origin or key selection affect future attempts only. A deleted
+key is not replaced by a different key. The unauthenticated upload transfer keeps
+its current secret-URL authentication behavior.
+
+Download completed results to the worker's existing private temporary directory.
+Truncate the result file before a repeated download. Keep current streaming JSONL
+parsing, result-line and WAV size bounds, and conversion one clip at a time.
+Require exactly one valid, successful result for each expected canonical key;
+reject missing, duplicate, unexpected, failed, malformed, or invalid results.
+Use validated ordinals for local filenames.
+
+Keep native AAC/M4A conversion and `audio/mp4` storage. Do not add a second audio
+store or change conversion settings. If interrupted during download or conversion,
+recovery fetches the same batch's results again. A live worker may reuse a complete
+result file or converted clips it still owns after a temporary storage failure;
+it must not treat a partial file or partial clip set as complete. Keep current
+RAII temporary-file cleanup, without a cache or expiry policy.
+
+## Transactions and note changes
+
+`note_save_audio` and `event_append` currently start their own transactions, and
+`Application::record_event` is best effort. They cannot be called as independent
+operations for this lifecycle. Extract small helpers that use an already-open
+transaction. Keep the current public wrappers, including folder saves and other
+event callers, with their existing transaction behavior. Do not add nested
+transactions or a general transaction framework.
+
+Add these narrow store operations, all under the store mutex:
+
+| Operation | Work in one transaction |
+| --- | --- |
+| Accept | Check eligibility and an empty attempt table; insert the attempt; arrange launch as described above. |
+| Register | Find exact attempt; set its batch ID; append start event and trim event history. |
+| Finish | Find exact attempt; verify a normal read-only target and the expected complete clip count; replace all stored clips; append success event and trim history; remove attempt. |
+| Retire | Find exact attempt; append final error or warning and trim history; remove attempt. |
+| Make editable / delete | Find affected attempt, append abandonment warning and remove it, then perform the existing note change. |
+
+The finish operation reads clip files and uses the existing transactional audio
+replacement. Rollback restores the old complete set and unfinished record if any
+write fails. Publish success and the completion notification only after commit.
+
+Every final event must find and remove the exact attempt in its own transaction.
+If another path has removed it, return a no-op. This makes success, worker failure,
+and abandonment mutually exclusive and prevents an old result from completing a
+new attempt for the same note. If a final event cannot be written, retain the row
+and retry the final transaction; never remove it and then attempt a separate log.
+
+Extend `note_set_read_only(false)` and `note_delete` inside their existing
+transactions. Before deleting a folder, use the note tree's descendants to check
+whether it contains the pending target. Read the stored name before removing the
+attempt. After commit, signal only the matching worker's interruption flag and
+release the local slot. If the transaction fails, neither the note change nor
+abandonment takes effect.
+
+Making the note read-only again does not restore a removed attempt. Renaming,
+moving, highlighting, comments, reading, and scrolling leave the attempt intact.
+Do not introduce content revisions or stale-audio handling for edits after a
+completed run. Do not cancel or delete remote work.
+
+## Failures and Events
+
+Preserve typed failure information at the service, filesystem, codec, and storage
+boundaries. The current transfer boolean and generic conversion error combine
+conditions that need different background behavior. Add only the distinctions
+below; do not infer retryability by matching user-visible error strings. Folder
+wrappers continue to apply their old policy to these failures.
+
+| Failure in a background attempt | Action |
+| --- | --- |
+| Validation or definite local rejection | Inline dialog error; no HTTP and no accepted attempt. |
+| Upload/create failure | No automatic POST retry. Atomically retire with an error, or a submission-uncertainty warning if acceptance cannot be ruled out. |
+| Registered read: network failure or any HTTP 5xx, including 503 | Retain the batch and retry the same read. |
+| Registered read: HTTP 401 for an existing saved key | Retain and retry, resolving the same key reference again. Warn to replace its value in Settings → API keys. |
+| Saved key deleted, further service access needed | Retire with an error: the remote batch may continue; a new run needs a configured key. |
+| Other HTTP 4xx, missing batch/results, invalid service response, terminal batch/item error, invalid results/audio, unsupported conversion | Retire with an actionable error; preserve previous audio. |
+| Temporary local storage failure, including disk full or temporary-file I/O | Keep the row and old audio; retry the failed local step. If necessary, download the same batch again. |
+| Vault interruption or shutdown | Retain the row; no final event. |
+| Target made editable or deleted | Commit abandonment with the note change; ignore late work. |
+
+HTTP 401 retry applies to registered reads. A 401 during submission follows the
+no-retry POST rule. When complete results are already local, saving does not need
+an API key, so key deletion does not prevent completion.
+
+Use delays of 10, 20, and 40 seconds, then keep retrying at 40 seconds. A successful
+step resets its consecutive-failure count. Successful unfinished-batch reads
+return to the 10-second poll interval; do not add a poll delay to a retry delay.
+The same capped delay applies to local registration, processing, and final-write
+retries. Keep ordinary transfer connection/inactivity limits. No new timer service,
+jitter, timeout setting, or batch deadline is needed.
+
+Distinguish a result size limit from a disk write failure, and malformed audio or
+an unsupported codec from an OS file error. Size/format failures are terminal;
+local storage failures are retained. Do not hide either category in one generic
+“conversion failed” exception.
+
+Preserve the failed operation and native error code in converter errors. Explicit
+filesystem failures and documented disk-full or temporary I/O codes, including
+codes from native output creation, writing, and finalization, are recoverable.
+Unknown native converter errors are terminal. Do not classify every error at a
+write step as storage failure, or every native converter error as invalid audio.
+Keep the mapping small and based on known platform error codes. Tests must cover
+both recoverable output-file failures and terminal format/codec failures on each
+supported platform.
+
+Use the PRD's event messages and severities, with the saved note name and ID:
+
+- Information at registration: `Audio batch started for “Chapter 1” (note 42): 20 clips, voice Kore.`
+- Success with audio commit: `Audio ready for “Chapter 1” (note 42): 20 clips saved.`
+- Error for terminal failures, naming the failed step and a useful action.
+- Warning for submission uncertainty and abandonment.
+- One recovery warning per attempt per vault-open session for retained work.
+
+Keep warning suppression as one in-memory flag for the active attempt. Set it
+only after a warning is recorded; reset it when the vault is reopened. For network
+or storage failures, warn when the initial retries are exhausted. Credential
+rejection can warn on its first occurrence. Explain that work is retained, identify
+the target, and give the relevant repair action or Make editable to abandon it.
+If storage cannot record the warning, log that failure and keep the attempt.
+
+Registration and final transactions prevent duplicate lifecycle events. Do not
+create events per poll, paragraph, phase, or retry. Preserve the existing Events
+layout, newest-first ordering, and 200-event retention. Lifecycle events use the
+originating vault; they contain no note text, credentials, upload URLs, or raw
+service responses. Diagnostic logs must also exclude secrets.
+
+## Completion delivery and playback ordering
+
+Add a native `noteAudio.changed` event with `{ id, context_epoch }` in the existing
+connection envelope. Publish it after a successful background audio commit to
+live connections for that vault. This is a note-specific notification, not a new
+event bus or durable queue. No subscriber is required for the work to finish.
+
+Subscribe in the native client/application lifetime, not the dialog. Forward the
+event to the existing `cha-note-audio-changed` handling with an affected-note-only
+flag. Keep current numeric notifications from dialog opening and folder settling
+with their existing stop behavior. Background completion for another note must
+not stop current playback.
+
+For a matching background notification, synchronously call the existing `stop()`
+first: increment its load serial, abort the blob fetch, clear audio callbacks,
+pause playback, release the resource/object URL, and clear highlighting. Then
+refresh `noteAudio.info`. Keep its existing disposed-component guard; ordinary
+info requests and replies are ordered, so the post-notice refresh resolves last.
+Keep serial checks on source/blob replies and do not autoplay. The serial guard
+already releases a source resource that arrives after a stop; retain that behavior.
+
+The bridge must provide this ordering, without a stored audio generation number:
+
+1. Serialize commit and `noteAudio.source` database reads with `lifecycle_mutex`.
+   After commit and before releasing it, enqueue the affected-note notification
+   through an enqueue-only bridge callback. The callback must not acquire the
+   router's main mutex or call back into the application; use a small
+   note-specific ingress list with its own mutex to avoid reversing lock order.
+2. In `take_delivery`, while holding the router mutex, drain these notices into
+   per-connection pending affected-note IDs before collecting pending replies.
+   Put context changes first, then current-epoch audio notices, then replies.
+   Keep pending notices until delivered; the existing delivery acknowledgment
+   prevents a later batch from overtaking an in-flight batch. Discard notices
+   when their connection or epoch is invalidated.
+3. A source reply containing replacement audio cannot have been queued before
+   the commit's notice. If a delivery snapshot precedes the notice, a later
+   source reply cannot enter that snapshot. Thus the new-clip reply is delivered
+   with the notice before it, or in a later delivery.
+4. Dispatch the DOM notification synchronously in the native event handler.
+   `stop()` invalidates pending loads before any replacement-source promise
+   continuation can use the new clips. Older replies delivered after the notice
+   are discarded by the same serial guard.
+
+An already playing old clip can continue until the commit notice arrives, but
+cannot advance into replacement clips. A source request admitted before commit
+owns bytes copied from the old set; a request admitted afterward follows the
+notice. This prevents mixing sets without changing `note_audio` or media URLs.
+
+After a webapp reload or a missed connection, the playback hook's existing initial
+`info` read obtains current availability. There is no playback to preserve across
+that reload and no need to replay old completion events. The native runtime
+already calls `take_delivery` for each connection on its 50 ms pump interval, so
+draining notices there also delivers completion when no command is active. No
+new wake predicate or polling timer is needed.
+
+## Implementation order and verification
+
+1. Add attempt storage and composable event/audio transaction helpers. Verify
+   rollback, exact-attempt retirement, and abandonment before changing the UI.
+2. Extract service steps while retaining the folder wrapper and its tests. Add
+   the background worker, recovery hooks, error categories, and shared admission.
+3. Add background start/status, the setup component, and ordered completion
+   delivery. Keep the folder loop and controls on their existing path.
+4. Run focused native/storage/bridge tests, webapp checks, and native audio smoke
+   checks on the supported platforms. Do not change unrelated documentation.
+
+Use the existing mock HTTP server, temporary vaults, injected service waits, and
+bridge delivery tests. Assert behavior rather than adding a new test framework.
 
 | Coverage | Required checks |
 | --- | --- |
-| Block extraction | Nested lists/quotations, headings, repeated paragraphs, hard breaks, visible link text, comments, image/code-only notes, whitespace-only blocks, and Unicode code-point boundaries. |
-| Start and dialog | Saved-document preparation, exact block payload, fresh voice selection, no remote work before Generate, no duplicate starts, modal locking, empty-note rejection, and stop-on-open without resume-on-close. Local status failures keep the modal locked and timer running until a confirmed outcome; a lost start reply triggers status reads without another start, and an earlier terminal result is ignored. Delayed terminal reads use native completion time for final elapsed time, including preparation and excluding polling delay. |
-| Service | Exact JSONL limits, pending versus running state, absent/malformed counts, failed items counted as complete, out-of-order results, duplicates/missing/unknown keys, malformed audio, and succeeded batches containing item errors. |
-| Retries | Network and HTTP 500 failures followed by success; exactly three read retries on persistent failure; reset after successful polling; no retries on other HTTP/local errors or POSTs; download restart without partial-file concatenation. |
-| Storage/lifecycle | Previous set survives conversion and insertion failures; successful replacement removes old extra clips; note deletion cascades; wrong/departed epoch and deleted note cannot receive a commit or stale status. |
-| Playback | Middle-block start, ordered completion, Stop menu while paused/loading, Space repeat suppression, inputs/menus unaffected, pause/stop during pending loads, no click pause, one reveal per clip, highlight cleanup, and chat takeover of a paused playlist. |
-| Native macOS | Convert very short headings, normal and long paragraphs; fully decode stored M4A; check duration, pitch, pace, word boundaries, and transition delays in CHA. Verify UI repaint during conversion and commit. |
-| Persistence | Restart with service offline; play saved clips. Back up and restore a vault and verify audio bytes and playback. |
+| Preparation and acceptance | Empty/oversized input and invalid required settings send nothing; launch/commit failure sends nothing; double click accepts once; valid start returns before HTTP completes. |
+| Lost replies | A pending row for the target closes setup after a lost reply; an absent row, fast terminal completion, failed status read, or changed context leaves a dismissible uncertainty state; never resubmit automatically. |
+| Registration and restart | Fail registration after creation and retry only its database write; restart at each lifecycle boundary; saved IDs resume without any POST; unregistered rows warn and retire. |
+| Atomic outcomes | Fail any audio/event/delete write and retain the old complete set plus row; restart before/after commit; exactly one start and final event; event trimming leaves the row. |
+| Recovery failures | More than three network failures, 503, and 401 retain work; replacing the same key recovers; deleted key retires only when service access is needed; repeated failures emit at most one recovery warning per vault-open session; temporary storage failure, including native output write/finalization failure, recovers; corrupt/partial/failed results and unknown codec errors never replace audio. |
+| Recovery ownership | A secondary process cannot start or recover background work or retire the main submitter's null-ID row; a main daemon leaves rows intact; reopening in a main native process resumes the registered batch once. |
+| Note and vault changes | Rename/move/comments/highlights succeed; Make editable and direct/ancestor deletion abandon atomically; race failure or commit against abandonment and a new attempt; no old-epoch writes or key lookups after switching vaults; same-vault maintenance resumes registered work and reports uncertainty for interrupted unregistered submission, without a new POST. |
+| Playback ordering | Replace an open/playing note, including a source reply in flight and a completion with no other traffic; stop and invalidate before using new clips; refresh without autoplay; another note continues playing; offline playback works. |
+| Folder regression | Existing dialog, progress, timing, sequencing, skip rules, Stop, error policy, and no recovery/events remain; background work blocks folder admission and an active folder note rejects a background start. |
 
-Run the relevant frontend tests and type checks, bridge/schema checks where changed, and C++ storage/service tests. Finish with the PRD's acceptance scenarios on macOS. The PRD's native feasibility result is evidence for the encoding approach, not a substitute for in-app listening and backup/restore verification.
+Extend `tests/storage/unit_note_storage.cpp`, `unit_event_storage.cpp`,
+`tests/media/unit_note_audio.cpp`, the application/vault tests, and
+`tests/bridge/unit_bridge_router.cpp` for the native behavior. Extend the existing
+webapp dialog, native bridge, and `useNoteAudio` tests. Retain folder regression
+expectations instead of rewriting them to match background behavior. Run
+`npm run check` in `webapp` and the repository's existing native test targets
+appropriate to the changed modules during implementation.
+
+The known limit remains remote creation without a saved batch ID. Reopening the
+vault reports that uncertainty and requires an explicit new generation request;
+it cannot recover or cancel an unidentified remote batch.

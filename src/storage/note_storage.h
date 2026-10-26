@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <exception>
+#include <functional>
+#include "storage/event_storage.h"
 #include <optional>
 #include <string>
 #include <string_view>
@@ -106,6 +108,22 @@ void note_save_scroll_position(
     std::int64_t id,
     std::string_view name);
 void note_delete(storage::SqliteDatabase& database, std::int64_t id);
+struct NoteAudioAttempt {
+    std::int64_t id{}, note_id{}, clip_count{};
+    std::string note_name, service_origin, api_key_id;
+    std::optional<std::string> batch_id;
+};
+std::string note_audio_target(const NoteAudioAttempt& attempt);
+std::optional<NoteAudioAttempt> note_audio_attempt(storage::SqliteDatabase& database);
+NoteAudioAttempt note_audio_accept(storage::SqliteDatabase& database, std::int64_t note_id,
+    std::int64_t count, std::string_view origin, std::string_view key_id,
+    const std::function<void(const NoteAudioAttempt&)>& launch);
+bool note_audio_register(storage::SqliteDatabase& database, std::int64_t attempt_id,
+    std::string_view batch_id, std::string_view voice);
+bool note_audio_finish(storage::SqliteDatabase& database, std::int64_t attempt_id,
+    const std::vector<std::filesystem::path>& clips);
+bool note_audio_retire(storage::SqliteDatabase& database, std::int64_t attempt_id,
+    EventSeverity severity, std::string_view message);
 struct NoteAudioClip { std::string mime_type, bytes; };
 nlohmann::json note_audio_info(storage::SqliteDatabase& database, std::int64_t id);
 NoteAudioClip note_audio_clip(storage::SqliteDatabase& database, std::int64_t id, std::int64_t ordinal);

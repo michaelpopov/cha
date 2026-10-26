@@ -42,17 +42,31 @@ async function nativeParity({ offline = false } = {}) {
       check(!dialog.querySelector('h1,h2,h3'), 'redundant dialog heading');
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(voice, 'Kore'); voice.dispatchEvent(new Event('change', { bubbles: true }));
       await click('Generate', dialog);
-      await until('running modal', () => button('Close', dialog)?.disabled && voice.disabled);
-      dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
-      await wait(100);
-      check(dialog.open, 'running dialog closed');
-      await until('audio committed', () => dialog.textContent.includes('Audio ready · 3 clips') && !button('Close', dialog).disabled);
-      const elapsed = dialog.querySelector('[role="timer"]').textContent;
-      await wait(1100);
-      check(dialog.querySelector('[role="timer"]').textContent === elapsed, 'terminal timer kept running');
+      await until('accepted setup closed', () => !dialog.isConnected);
+      check(!document.querySelector('dialog[aria-label="Generate note audio"]'), 'setup remained open');
+      await click('Chat');
+      await click('Settings', document.querySelector('aside'));
+      await until('Settings during generation', () => document.querySelector('section[aria-label="Settings"]'));
+      await click('Notes');
+      (await until('audio note', noteRow)).click();
+      await until('saved note reopened', () => editor() && !editor().isEditable);
+      // Opening the menu is a visible availability probe; wait for the completion
+      // notification to make Play available without opening another modal.
+      await until('audio playback available', () => {
+        const block = editor().view.dom.querySelector('p');
+        if (!document.querySelector('[role="menu"]')) {
+          const bounds = block.getBoundingClientRect();
+          block.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: bounds.left + 8, clientY: bounds.top + 8 }));
+        }
+        const menu = document.querySelector('[role="menu"]');
+        if (button('Play from here', menu ?? document)) return true;
+        menu?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        return false;
+      });
+      document.querySelector('[role="menu"]')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await until('menu closed', () => !document.querySelector('[role="menu"]'));
       check(!document.querySelector('.cha-note-audio-current'), 'generation autoplayed');
-      await click('Close', dialog);
-      completed.push('modal generation and native commit');
+      completed.push('background acceptance, completion notice, and native commit');
   
     } else completed.push('saved audio available with service offline');
 

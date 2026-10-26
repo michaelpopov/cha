@@ -43,8 +43,10 @@ export function useNoteAudio({ client, id, editor, enabled, menuOpen, onError }:
     const reload = () => { void client.info(id).then(info => { if (!disposed) setCount(info.count); }, () => {}); };
     reload();
     const changed = (event: Event) => {
+      const detail = (event as CustomEvent<number | { id: number; affectedNoteOnly: true }>).detail;
+      if (typeof detail === 'object' && detail.affectedNoteOnly && detail.id !== id) return;
       stop();
-      if ((event as CustomEvent<number>).detail === id) reload();
+      if ((typeof detail === 'number' ? detail : detail.id) === id) reload();
     };
     const dom = editor.view.dom;
     const host = dom.closest<HTMLElement>('.cha-notes-document');

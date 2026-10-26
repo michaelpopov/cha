@@ -378,6 +378,13 @@ public:
     void delete_note_item(std::int64_t id);
     nlohmann::json get_note_audio_info(std::int64_t id) const;
     NoteAudioClip get_note_audio_clip(std::int64_t id, std::int64_t ordinal) const;
+    std::optional<NoteAudioAttempt> get_note_audio_attempt() const;
+    NoteAudioAttempt accept_note_audio(std::int64_t id, std::int64_t count,
+        std::string_view origin, std::string_view key_id,
+        const std::function<void(const NoteAudioAttempt&)>& launch);
+    bool register_note_audio(std::int64_t attempt_id, std::string_view batch_id, std::string_view voice);
+    bool finish_note_audio(std::int64_t attempt_id, const std::vector<std::filesystem::path>& clips);
+    bool retire_note_audio(std::int64_t attempt_id, EventSeverity severity, std::string_view message);
     void save_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips);
 
     [[nodiscard]] std::optional<WorkspaceCharacterPicture> get_character_picture(
@@ -417,6 +424,7 @@ enum class WorkspaceConfigFault {
     sqlite_begin,
     sqlite_write,
     sqlite_commit,
+    note_audio_read,
 };
 
 void force_next_workspace_config_fault(WorkspaceConfigFault fault);

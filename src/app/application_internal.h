@@ -155,6 +155,18 @@ struct Application::Impl {
     nlohmann::json note_audio_status;
     std::uint64_t note_audio_epoch{};
     std::shared_ptr<std::atomic_bool> note_audio_cancel;
+    // Durable facts live in note_audio_attempts. Each launch owns a distinct flag.
+    // Atomic shared_ptr access also permits interruption from nonblocking shutdown.
+    std::shared_ptr<std::atomic_bool> background_audio_cancel;
+    bool background_audio_warned{};
+    NoteAudioChanged note_audio_changed;
+    void require_audio_slot(std::uint64_t epoch); // Caller holds lifecycle_mutex.
+    void resume_note_audio(); // Schedule after maintenance releases its store guard.
+    void recover_note_audio(); // Caller holds lifecycle_mutex.
+    void launch_note_audio(NoteAudioAttempt attempt, std::string voice = {}, std::string jsonl = {});
+    void run_note_audio(NoteAudioAttempt attempt, std::uint64_t epoch,
+        std::shared_ptr<std::atomic_bool> cancel, std::string voice, std::string jsonl);
+    void interrupt_abandoned_audio();
     XaiVoiceSessions xai_voice{background_jobs};
     mutable std::timed_mutex lifecycle_mutex;
     std::atomic_bool stopping_flag{};

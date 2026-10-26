@@ -2,12 +2,15 @@ import { prepareEpubImport } from '../notes/epubImport';
 import { readFileBytes } from '../notes/pictures';
 
 import {
+  backgroundAudioStartRejected,
   type NoteItem,
   type NoteContent,
   type NotePage,
   type TextFileRequest,
   type NotesClient,
   type NoteAudioInfo,
+  type NoteAudioAccepted,
+  type NoteAudioBackgroundStatus,
   type NoteAudioStatus,
   ChaError,
   ChaProtocolError,
@@ -222,8 +225,24 @@ function isNoteAudioStatus(value: unknown): value is NoteAudioStatus {
     && (!value.done || Number.isSafeInteger(value.finished_at_ms));
 }
 
+function isAudioAccepted(value: unknown): value is NoteAudioAccepted {
+  return isRecord(value) && Object.keys(value).length === 1 && isNoteId(value.attempt_id);
+}
+function isAudioBackgroundStatus(value: unknown): value is NoteAudioBackgroundStatus {
+  return isRecord(value) && (value.pending === false ? Object.keys(value).length === 1
+    : value.pending === true && Object.keys(value).length === 2 && isNoteId(value.attempt_id));
+}
+
 export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesClient {
   let platform = '';
+  let connectionEnded = false;
+  bridge.on('app.connectionInvalidated', () => { connectionEnded = true; });
+  bridge.on<unknown>('noteAudio.changed', value => {
+    if (!isRecord(value) || value.event !== 'noteAudio.changed' || typeof value.connection_id !== 'string'
+      || Object.keys(value).length !== 4 || !isNoteId(value.id) || !isNoteId(value.context_epoch)
+      || value.context_epoch !== bridge.contextEpoch()) return;
+    window.dispatchEvent(new CustomEvent('cha-note-audio-changed', { detail: { id: value.id, affectedNoteOnly: true } }));
+  });
   const call = async <T>(
     method: string,
     params: unknown,
@@ -250,7 +269,24 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     return result[field] as number;
   };
 
+  const backgroundStatus = (id: number) => call('noteAudio.backgroundStatus', { id }, isAudioBackgroundStatus);
   const noteAudio = {
+    backgroundStatus,
+    startBackground: async (id: number, voice: string, blocks: string[]) => {
+      const epoch = bridge.contextEpoch();
+      try { return await call('noteAudio.startBackground', { id, voice, blocks }, isAudioAccepted); }
+      catch (failure) {
+        if (backgroundAudioStartRejected(failure)) throw failure;
+        const contextEnded = failure instanceof ChaError && ['vault_changed', 'application_unavailable', 'server_stopping'].includes(failure.code);
+        if (!contextEnded && !connectionEnded && bridge.contextEpoch() === epoch) {
+          try {
+            const status = await backgroundStatus(id);
+            if (!connectionEnded && bridge.contextEpoch() === epoch && status.pending) return { attempt_id: status.attempt_id };
+          } catch { /* Absence or a failed read cannot prove rejection. */ }
+        }
+        throw failure;
+      }
+    },
     info: (id: number) => call('noteAudio.info', { id }, (value): value is NoteAudioInfo =>
       isRecord(value) && Number.isSafeInteger(value.count) && (value.count as number) >= 0),
     start: (id: number, voice: string, blocks: string[]) => call('noteAudio.start', { id, voice, blocks }, isNoteAudioStatus),

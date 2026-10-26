@@ -17,6 +17,7 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <unordered_map>
@@ -223,6 +224,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         std::optional<ActiveSubscription> active;
         std::deque<PendingReply> pending_replies;
         std::optional<nlohmann::json> pending_context;
+        std::map<std::int64_t, std::uint64_t> pending_audio;
         std::optional<nlohmann::json> pending_invalidation;
         // At most one taken SessionOutput item. Merge, snapshot fallback,
         // byte threshold, and dirty replacement stay in SessionOutput.
@@ -253,6 +255,30 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             });
     }
 
+    void listen_for_note_audio() {
+        auto weak = std::weak_ptr<Impl>(shared_from_this());
+        application.set_note_audio_changed([weak](std::int64_t id, std::uint64_t epoch) {
+            if (auto impl = weak.lock()) {
+                const std::lock_guard lock(impl->audio_mutex);
+                impl->audio_notices.emplace_back(id, epoch);
+            }
+        });
+    }
+
+    // Called under the router mutex, before collecting any replies. The worker
+    // only takes audio_mutex, so commit never reverses router/lifecycle lock order.
+    void drain_audio_notices() {
+        std::vector<std::pair<std::int64_t, std::uint64_t>> notices;
+        { const std::lock_guard lock(audio_mutex); notices.swap(audio_notices); }
+        for (const auto& [id, epoch] : notices) {
+            if (application.check_context(epoch)) continue;
+            for (const auto& [connection_id, connection] : connections) {
+                (void)connection_id;
+                if (!connection->invalid) connection->pending_audio[id] = epoch;
+            }
+        }
+    }
+
     void publish_context_changed(
         std::uint64_t epoch,
         app::ApplicationState state) {
@@ -280,6 +306,8 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     Options options;
     std::mutex mutex;
     std::mutex ready_tasks_mutex;
+    std::mutex audio_mutex;
+    std::vector<std::pair<std::int64_t, std::uint64_t>> audio_notices;
     std::condition_variable work;
     std::uint64_t next_connection{1};
     bool stopping{};
@@ -397,6 +425,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         }
         connection->outstanding.clear();
         connection->pending_context.reset();
+        connection->pending_audio.clear();
         if (!drop_pending && first_invalidation) {
             connection->pending_invalidation =
                 connection_invalidated_event(connection->id);
@@ -1710,11 +1739,13 @@ BridgeRouter::BridgeRouter(app::Application& application)
 BridgeRouter::BridgeRouter(app::Application& application, Options options)
     : impl_(std::make_shared<Impl>(application, std::move(options))) {
     impl_->listen_for_context_changes();
+    impl_->listen_for_note_audio();
 }
 
 BridgeRouter::~BridgeRouter() {
     shutdown();
     impl_->application.set_context_changed({});
+    impl_->application.set_note_audio_changed({});
 }
 
 std::string BridgeRouter::open_connection() {
@@ -1875,6 +1906,7 @@ std::optional<nlohmann::json> BridgeRouter::take_delivery(
     expire_timeouts();
     pump_output();
     std::lock_guard lock(impl_->mutex);
+    impl_->drain_audio_notices();
     auto connection = impl_->find_connection(connection_id, false);
     if (!connection || connection->in_flight) return std::nullopt;
     if (connection->next_delivery_id > kMaxSafeInteger) {
@@ -1888,6 +1920,12 @@ std::optional<nlohmann::json> BridgeRouter::take_delivery(
         messages.push_back(std::move(*connection->pending_context));
         connection->pending_context.reset();
     }
+    for (const auto& [id, epoch] : connection->pending_audio) {
+        if (!impl_->application.check_context(epoch))
+            messages.push_back({{"connection_id", connection->id}, {"event", "noteAudio.changed"},
+                {"id", id}, {"context_epoch", epoch}});
+    }
+    connection->pending_audio.clear();
     while (!connection->pending_replies.empty()) {
         auto reply = std::move(connection->pending_replies.front());
         connection->pending_replies.pop_front();

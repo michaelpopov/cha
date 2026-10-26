@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { SingleNoteAudioSetup } from './SingleNoteAudioSetup';
 import { ChaError, publicErrorMessage, type NoteAudioClient, type NoteAudioStatus } from '../api/client';
 
 export type NoteAudioTarget = { id: number; name: string };
 
-export function noteAudioPhase(status: NoteAudioStatus, folderMode = false): string {
+export function noteAudioPhase(status: NoteAudioStatus): string {
   switch (status.phase) {
     case 'uploading': return 'Uploading…';
     case 'queued': return 'Queued';
     case 'generating': return status.completed !== undefined && status.total !== undefined
-      ? `Generating · ${status.completed} of ${status.total}${folderMode ? ' clips' : ''} complete` : 'Generating';
+      ? `Generating · ${status.completed} of ${status.total} clips complete` : 'Generating';
     case 'downloading': return 'Downloading…';
     case 'saving': return 'Saving…';
     case 'complete': return `Audio ready · ${status.total} clips`;
@@ -27,14 +28,20 @@ function contextEnded(failure: unknown): boolean {
   return failure instanceof ChaError && ['vault_changed', 'application_unavailable', 'server_stopping'].includes(failure.code);
 }
 
-export function NoteAudioDialog({ client, targets, folderMode, prepare, onSettled, onClose }: {
+type NoteAudioDialogProps = {
   client: NoteAudioClient; targets: NoteAudioTarget[]; folderMode: boolean;
   prepare(id: number): Promise<string[]>; onSettled(id: number): void; onClose(): void;
-}) {
+};
+
+export function NoteAudioDialog(props: NoteAudioDialogProps) {
+  return props.folderMode ? <FolderNoteAudioDialog {...props} />
+    : <SingleNoteAudioSetup client={props.client} id={props.targets[0].id} prepare={props.prepare} onClose={props.onClose} />;
+}
+
+function FolderNoteAudioDialog({ client, targets, prepare, onSettled, onClose }: Omit<NoteAudioDialogProps, 'folderMode'>) {
   const element = useRef<HTMLDialogElement>(null);
   const voiceSelect = useRef<HTMLSelectElement>(null);
   const [voice, setVoice] = useState('');
-  const [existing, setExisting] = useState(false);
   const [eligible, setEligible] = useState<NoteAudioTarget[]>([]);
   // A finished position retains the current note until the next note starts.
   const [position, setPosition] = useState({ index: 0, finished: false });
@@ -65,8 +72,7 @@ export function NoteAudioDialog({ client, targets, folderMode, prepare, onSettle
         for (const target of targets) {
           const info = await client.info(target.id);
           if (disposed) return;
-          if (!folderMode || info.count === 0) selected.push(target);
-          if (!folderMode) setExisting(info.count > 0);
+          if (info.count === 0) selected.push(target);
         }
         if (!disposed) setEligible(selected);
       } catch (failure) {
@@ -76,7 +82,7 @@ export function NoteAudioDialog({ client, targets, folderMode, prepare, onSettle
       }
     })();
     return () => { disposed = true; alive.current = false; node.close?.(); if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
-  }, [client, targets, folderMode]);
+  }, [client, targets]);
 
   // The selector is disabled until the stored audio counts load.
   useEffect(() => { if (!loading) voiceSelect.current?.focus(); }, [loading]);
@@ -148,12 +154,12 @@ export function NoteAudioDialog({ client, targets, folderMode, prepare, onSettle
         if (!alive.current) return;
         if (stop.current) { setElapsed(Math.max(0, Date.now() - start.current)); break; }
         let reason: string | undefined;
-        if (folderMode && !blocks.length) reason = 'No text to narrate';
+        if (!blocks.length) reason = 'No text to narrate';
         else {
           let result: NoteAudioStatus | undefined;
           try { result = await generateNote(target.id, blocks); }
           catch (failure) {
-            if (!folderMode || !(failure instanceof ChaError) || failure.code !== 'body_too_large') throw failure;
+            if (!(failure instanceof ChaError) || failure.code !== 'body_too_large') throw failure;
             reason = publicErrorMessage(failure, 'Could not generate note audio.');
           }
           if (!alive.current) return;
@@ -181,8 +187,8 @@ export function NoteAudioDialog({ client, targets, folderMode, prepare, onSettle
   const complete = progress - skipped.length;
   const allFinished = started.current && progress === eligible.length;
   const skipCount = skipped.length ? ` · ${skipped.length} skipped` : '';
-  let phase = status ? noteAudioPhase(status, folderMode) : null;
-  if (folderMode && started.current) {
+  let phase = status ? noteAudioPhase(status) : null;
+  if (started.current) {
     if (pending && stopRequested) phase = 'Stopping…';
     else if (!pending && allFinished) phase = complete > 0 ? 'Audio ready' : null;
     else if (!pending && (stopRequested || error || status?.error)) phase = 'Folder run stopped';
@@ -194,31 +200,30 @@ export function NoteAudioDialog({ client, targets, folderMode, prepare, onSettle
   return createPortal(<dialog ref={element} className="cha-dialog cha-note-audio-dialog" aria-label="Generate note audio"
     onCancel={event => { event.preventDefault(); if (!pending) onClose(); }}
     onKeyDown={event => { if (pending && event.key === 'Escape') event.preventDefault(); }}>
-    {(!folderMode || loading || eligible.length > 0) && <label>Voice<select ref={voiceSelect} className="cha-form-control" value={voice} disabled={loading || started.current}
+    {(loading || eligible.length > 0) && <label>Voice<select ref={voiceSelect} className="cha-form-control" value={voice} disabled={loading || started.current}
       onChange={event => setVoice(event.target.value)}>
       <option value="">Select voice</option>
       {['boroda', 'grant', 'dzig', 'gerdt', 'Kore'].map(value => <option key={value} value={value}>{value}</option>)}
     </select></label>}
-    {existing && !started.current && <p>Existing audio will be replaced after successful generation.</p>}
-    {folderMode && !started.current && <p role="status">{loading ? 'Checking notes…'
+    {!started.current && <p role="status">{loading ? 'Checking notes…'
       : eligible.length ? `${eligible.length} notes to generate` : !error ? 'No notes need audio' : null}</p>}
-    {folderMode && started.current && <div className="cha-note-audio-progress">
+    {started.current && <div className="cha-note-audio-progress">
       <p>{allFinished ? `${complete} of ${eligible.length} notes complete${skipCount}`
         : `Note ${position.index + 1} of ${eligible.length} · ${complete} complete${skipCount}`}</p>
       {!allFinished && <p className="cha-note-audio-name">{eligible[position.index]?.name}</p>}
       <progress aria-label="Folder audio progress" max={eligible.length} value={progress} />
     </div>}
     {phase && <p role="status">{phase}</p>}
-    {error && !(folderMode && stopRequested && !pending) && <p className="cha-error-message" role="alert">{error}</p>}
+    {error && !(stopRequested && !pending) && <p className="cha-error-message" role="alert">{error}</p>}
     {skipped.map((note, index) => <div key={index} className="cha-note-audio-skipped cha-error-message" role="alert">
       <p className="cha-note-audio-name">{note.name}</p><p>{note.reason}</p>
     </div>)}
     {started.current && <p className="cha-note-audio-time"><span>Elapsed</span><span role="timer" aria-label="Elapsed time">{time}</span></p>}
     <div className="cha-dialog-actions">
       <button className="cha-button" type="button" disabled={pending} onClick={() => { if (!pending) onClose(); }}>Close</button>
-      {!started.current && (!folderMode || loading || eligible.length > 0) && <button className="cha-button cha-button-primary" type="button" disabled={loading || !voice || !!error}
+      {!started.current && (loading || eligible.length > 0) && <button className="cha-button cha-button-primary" type="button" disabled={loading || !voice || !!error}
         onClick={() => void generate()}>Generate</button>}
-      {folderMode && pending && <button className="cha-button cha-button-primary" type="button" disabled={stopRequested}
+      {pending && <button className="cha-button cha-button-primary" type="button" disabled={stopRequested}
         onClick={() => { stop.current = true; setStopRequested(true); }}>Stop</button>}
     </div>
   </dialog>, document.body);

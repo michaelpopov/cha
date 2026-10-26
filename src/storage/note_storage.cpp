@@ -660,6 +660,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS note_items_sibling_name
 CREATE INDEX IF NOT EXISTS note_items_parent
     ON note_items(parent_id);
 
+CREATE TABLE IF NOT EXISTS note_audio_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id > 0 AND id <= 9007199254740991),
+    note_id INTEGER NOT NULL REFERENCES note_items(id) ON DELETE RESTRICT,
+    note_name TEXT NOT NULL,
+    clip_count INTEGER NOT NULL CHECK (clip_count BETWEEN 1 AND 1000),
+    service_origin TEXT NOT NULL,
+    api_key_id TEXT NOT NULL,
+    batch_id TEXT
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS note_audio (
     note_id INTEGER NOT NULL REFERENCES note_items(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
@@ -870,6 +880,14 @@ NoteItem note_set_read_only(
         auto item = find_item(database, id);
         if (!item) fail(NoteFailure::not_found, missing_note_message);
         if (item->kind != NoteItemKind::note) fail(NoteFailure::invalid, not_note_message);
+        if (!read_only) {
+            const auto attempt = note_audio_attempt(database);
+            if (attempt && attempt->note_id == id) {
+                event_append_in_transaction(database, EventSeverity::warning,
+                    "Audio generation abandoned for " + note_audio_target(*attempt) + ": note made editable.");
+                database.prepare("DELETE FROM note_audio_attempts WHERE id=?", attempt->id).run();
+            }
+        }
         auto update = database.prepare("UPDATE note_items SET read_only = ?1 WHERE id = ?2");
         update.bind(1, static_cast<std::int64_t>(read_only));
         update.bind(2, id);
@@ -938,6 +956,18 @@ void note_delete(storage::SqliteDatabase& database, std::int64_t id) {
         storage::SqliteTransaction transaction(database);
         const auto item = find_item(database, id);
         if (item && item->kind == NoteItemKind::annotation) fail(NoteFailure::invalid, not_note_message);
+        const auto attempt = note_audio_attempt(database);
+        if (attempt) {
+            auto descendant = database.prepare(
+                "WITH RECURSIVE tree(id) AS (SELECT id FROM note_items WHERE id=? "
+                "UNION ALL SELECT n.id FROM note_items n JOIN tree t ON n.parent_id=t.id) "
+                "SELECT 1 FROM tree WHERE id=?", id, attempt->note_id);
+            if (descendant.step()) {
+                event_append_in_transaction(database, EventSeverity::warning,
+                    "Audio generation abandoned for " + note_audio_target(*attempt) + ": note deleted.");
+                database.prepare("DELETE FROM note_audio_attempts WHERE id=?", attempt->id).run();
+            }
+        }
         storage::SqliteStatement statement = database.prepare(
             "DELETE FROM note_items WHERE id = ?1");
         statement.bind(1, id);
@@ -964,26 +994,105 @@ NoteAudioClip note_audio_clip(storage::SqliteDatabase& database, std::int64_t id
     return {statement.text(0), statement.blob(1)};
 }
 
-void note_save_audio(storage::SqliteDatabase& database, std::int64_t id,
+static void save_audio_in_transaction(storage::SqliteDatabase& database, std::int64_t id,
     const std::vector<std::filesystem::path>& clips) {
-    storage::SqliteTransaction transaction(database);
     auto note = database.prepare("SELECT 1 FROM note_items WHERE id=? AND kind='note' AND read_only=1", id);
     if (!note.step()) throw NoteError(NoteFailure::not_found, "That note was not found.");
     if (clips.empty()) throw NoteError(NoteFailure::invalid, "No audio clips to save.");
     database.prepare("DELETE FROM note_audio WHERE note_id=?", id).run();
     for (std::size_t i = 0; i < clips.size(); ++i) {
         const auto size = std::filesystem::file_size(clips[i]);
-        if (size == 0 || size > 32 * 1024 * 1024) throw std::runtime_error("Invalid compressed audio size.");
+        if (size == 0 || size > 32 * 1024 * 1024) throw NoteError(NoteFailure::invalid, "Invalid compressed audio size.");
         std::string bytes(static_cast<std::size_t>(size), '\0');
         std::ifstream input(clips[i], std::ios::binary);
         if (!input.read(bytes.data(), static_cast<std::streamsize>(bytes.size())))
-            throw std::runtime_error("Could not read compressed audio.");
+            throw std::filesystem::filesystem_error("Could not read compressed audio", clips[i], std::make_error_code(std::errc::io_error));
         auto insert = database.prepare("INSERT INTO note_audio (note_id, ordinal, mime_type, audio) VALUES (?,?,?,?)",
             id, static_cast<std::int64_t>(i), "audio/mp4");
         insert.bind_blob(4, bytes);
         insert.run();
     }
+}
+
+
+void note_save_audio(storage::SqliteDatabase& database, std::int64_t id,
+    const std::vector<std::filesystem::path>& clips) {
+    storage::SqliteTransaction transaction(database);
+    save_audio_in_transaction(database, id, clips);
     transaction.commit();
+}
+
+std::string note_audio_target(const NoteAudioAttempt& attempt) {
+    return "“" + attempt.note_name + "” (note " + std::to_string(attempt.note_id) + ")";
+}
+
+std::optional<NoteAudioAttempt> note_audio_attempt(storage::SqliteDatabase& database) {
+    auto row = database.prepare("SELECT id, note_id, clip_count, note_name, service_origin, api_key_id, batch_id "
+        "FROM note_audio_attempts LIMIT 1");
+    if (!row.step()) return {};
+    NoteAudioAttempt result{row.integer(0), row.integer(1), row.integer(2), row.text(3), row.text(4), row.text(5), {}};
+    if (!row.is_null(6)) result.batch_id = row.text(6);
+    return result;
+}
+
+NoteAudioAttempt note_audio_accept(storage::SqliteDatabase& database, std::int64_t note_id,
+    std::int64_t count, std::string_view origin, std::string_view key_id,
+    const std::function<void(const NoteAudioAttempt&)>& launch) {
+    storage::SqliteTransaction transaction(database);
+    if (const auto pending = note_audio_attempt(database))
+        throw NoteError(NoteFailure::invalid, "Audio generation is already running for " + note_audio_target(*pending)
+            + ". Make that note editable to abandon the attempt.");
+    const auto item = find_item(database, note_id);
+    if (!item || item->kind != NoteItemKind::note || !item->read_only)
+        throw NoteError(NoteFailure::invalid, "Make the note read-only to generate audio.");
+    database.prepare("INSERT INTO note_audio_attempts(note_id,note_name,clip_count,service_origin,api_key_id) "
+        "VALUES (?,?,?,?,?)", note_id, item->name, count, origin, key_id).run();
+    const auto attempt = *note_audio_attempt(database);
+    launch(attempt);
+    transaction.commit();
+    return attempt;
+}
+
+bool note_audio_register(storage::SqliteDatabase& database, std::int64_t attempt_id,
+    std::string_view batch_id, std::string_view voice) {
+    storage::SqliteTransaction transaction(database);
+    const auto attempt = note_audio_attempt(database);
+    if (!attempt || attempt->id != attempt_id) return false;
+    if (attempt->batch_id) {
+        if (*attempt->batch_id != batch_id) throw std::runtime_error("Audio batch ID changed.");
+        return true;
+    }
+    database.prepare("UPDATE note_audio_attempts SET batch_id=? WHERE id=?", batch_id, attempt_id).run();
+    event_append_in_transaction(database, EventSeverity::info, "Audio batch started for " + note_audio_target(*attempt)
+        + ": " + std::to_string(attempt->clip_count) + " clips, voice " + std::string(voice) + ".");
+    transaction.commit();
+    return true;
+}
+
+bool note_audio_finish(storage::SqliteDatabase& database, std::int64_t attempt_id,
+    const std::vector<std::filesystem::path>& clips) {
+    storage::SqliteTransaction transaction(database);
+    const auto attempt = note_audio_attempt(database);
+    if (!attempt || attempt->id != attempt_id) return false;
+    if (clips.size() != static_cast<std::size_t>(attempt->clip_count))
+        throw NoteError(NoteFailure::invalid, "Incomplete audio batch.");
+    save_audio_in_transaction(database, attempt->note_id, clips);
+    event_append_in_transaction(database, EventSeverity::success, "Audio ready for " + note_audio_target(*attempt)
+        + ": " + std::to_string(attempt->clip_count) + " clips saved.");
+    database.prepare("DELETE FROM note_audio_attempts WHERE id=?", attempt_id).run();
+    transaction.commit();
+    return true;
+}
+
+bool note_audio_retire(storage::SqliteDatabase& database, std::int64_t attempt_id,
+    EventSeverity severity, std::string_view message) {
+    storage::SqliteTransaction transaction(database);
+    const auto attempt = note_audio_attempt(database);
+    if (!attempt || attempt->id != attempt_id) return false;
+    event_append_in_transaction(database, severity, message);
+    database.prepare("DELETE FROM note_audio_attempts WHERE id=?", attempt_id).run();
+    transaction.commit();
+    return true;
 }
 
 } // namespace cha

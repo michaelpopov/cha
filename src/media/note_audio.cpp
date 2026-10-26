@@ -12,33 +12,29 @@
 namespace cha {
 namespace {
 using Json = nlohmann::json;
+constexpr auto submission_unknown = "Submission status unknown. Starting again may generate audio twice.";
 constexpr std::size_t max_wav = 32 * 1024 * 1024;
 constexpr std::size_t max_line = 4 * ((max_wav + 2) / 3) + 65536;
 
-class TransferError : public std::runtime_error {
-public:
-    TransferError(std::string message, bool retry) : std::runtime_error(std::move(message)), retryable(retry) {}
-    bool retryable;
-};
 struct Transfer {
     std::string body, upload_url;
     std::ofstream* file{};
     std::size_t size{}, limit{};
     const std::atomic_bool* cancel{};
-    bool local_failure{};
+    std::optional<NoteAudioFailure> local_failure;
 };
 std::size_t receive(char* data, std::size_t width, std::size_t count, void* opaque) noexcept {
     auto& t = *static_cast<Transfer*>(opaque);
     const auto bytes = width * count;
     try {
-        if (bytes > t.limit - t.size) throw std::runtime_error("limit");
+        if (bytes > t.limit - t.size) { t.local_failure = NoteAudioFailure::invalid; return 0; }
         if (t.file) {
             t.file->write(data, static_cast<std::streamsize>(bytes));
-            if (!*t.file) throw std::runtime_error("write");
+            if (!*t.file) { t.local_failure = NoteAudioFailure::storage; return 0; }
         } else t.body.append(data, bytes);
         t.size += bytes;
         return bytes;
-    } catch (...) { t.local_failure = true; return 0; }
+    } catch (...) { t.local_failure = NoteAudioFailure::storage; return 0; }
 }
 std::size_t header(char* data, std::size_t width, std::size_t count, void* opaque) noexcept {
     auto& t = *static_cast<Transfer*>(opaque);
@@ -48,7 +44,7 @@ std::size_t header(char* data, std::size_t width, std::size_t count, void* opaqu
         if (colon != std::string_view::npos && fold_ascii(line.substr(0, colon)) == "x-goog-upload-url")
             t.upload_url = trim_view(line.substr(colon + 1));
         return width * count;
-    } catch (...) { t.local_failure = true; return 0; }
+    } catch (...) { t.local_failure = NoteAudioFailure::storage; return 0; }
 }
 int cancelled(void* opaque, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
     return static_cast<Transfer*>(opaque)->cancel->load() ? 1 : 0;
@@ -83,15 +79,21 @@ Transfer request(const NoteAudioService& service, const std::string& url, const 
         curl_easy_setopt(c, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body->size()));
     }
     const auto result = curl_easy_perform(c);
-    if (cancel.load()) throw std::runtime_error("Audio generation was interrupted.");
-    if (t.local_failure) throw std::runtime_error("Could not receive audio results within the size limit. Check available disk space.");
-    if (result != CURLE_OK) throw TransferError(ambiguous
-        ? "Submission status unknown. Starting again may generate audio twice."
-        : "The audio service transfer failed. Check the service and try again.", true);
+    if (cancel.load()) throw NoteAudioError(NoteAudioFailure::interrupted, "Audio generation was interrupted.");
+    if (t.local_failure) throw NoteAudioError(*t.local_failure, *t.local_failure == NoteAudioFailure::storage
+        ? "Could not write audio results. Check available disk space."
+        : "Audio results exceed the size limit. Check the service.");
+    if (result != CURLE_OK) throw NoteAudioError(ambiguous ? NoteAudioFailure::uncertain : NoteAudioFailure::transport, ambiguous
+        ? submission_unknown
+        : "The audio service transfer failed. Check the service and try again.", static_cast<long>(result));
     long status = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &status);
-    if (status != 200) throw TransferError("Audio service returned HTTP " + std::to_string(status)
-        + ". Check the service and its API key.", status == 500);
+    if (status != 200) {
+        const bool uncertain = ambiguous && status >= 500;
+        throw NoteAudioError(uncertain ? NoteAudioFailure::uncertain : NoteAudioFailure::http,
+            "Audio service returned HTTP " + std::to_string(status) + ". "
+                + (uncertain ? submission_unknown : "Check the service and its API key."), status);
+    }
     return t;
 }
 std::string origin(std::string value) {
@@ -112,7 +114,7 @@ std::string resource(const Json& value, const char* field, std::string_view pref
     const auto name = value.at(field).get<std::string>();
     if (!name.starts_with(prefix) || name.size() != prefix.size() + 32
         || name.substr(prefix.size()).find_first_not_of("0123456789abcdef") != std::string::npos)
-        throw std::runtime_error("The audio service returned an invalid resource name. Check the service.");
+        throw NoteAudioError(NoteAudioFailure::invalid, "The audio service returned an invalid resource name. Check the service.");
     return name;
 }
 std::optional<std::size_t> count(const Json& stats, const char* field) {
@@ -150,42 +152,138 @@ std::string prepare_note_audio(NoteAudioService& service, const std::vector<std:
     return jsonl;
 }
 
-std::vector<std::filesystem::path> generate_note_audio(const NoteAudioService& service,
-    const std::string& jsonl, std::size_t block_count, const std::filesystem::path& temporary,
-    const std::atomic_bool& cancel, const NoteAudioProgress& progress, const std::function<void(int)>& wait) {
-    const auto pause = [&](int seconds) {
-        if (cancel.load()) throw std::runtime_error("Audio generation was interrupted.");
-        if (wait) wait(seconds);
-        else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (cancel.load()) throw std::runtime_error("Audio generation was interrupted.");
-    };
-    const auto read = [&](const auto& operation) {
-        for (int retry = 0;; ++retry) {
-            try { return operation(); }
-            catch (const TransferError& error) {
-                if (!error.retryable || retry == 3) throw;
-                pause(10 << retry);
-            }
-        }
-    };
-    progress("uploading", {}, {});
+void wait_note_audio(int seconds, const std::atomic_bool& cancel, const std::function<void(int)>& wait) {
+    if (cancel.load()) throw NoteAudioError(NoteAudioFailure::interrupted, "Audio generation was interrupted.");
+    if (wait) wait(seconds);
+    else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (cancel.load()) throw NoteAudioError(NoteAudioFailure::interrupted, "Audio generation was interrupted.");
+}
+
+std::string note_audio_batch_id(const Json& operation) {
+    return resource(operation, "name", "batches/");
+}
+
+Json submit_note_audio(const NoteAudioCredentials& credentials, const std::string& jsonl,
+    const std::atomic_bool& cancel) {
     const std::string metadata = "{}";
+    auto service = credentials();
     const auto upload = request(service, service.url + "/upload/v1beta/files", cancel,
         {"Content-Type: application/json", "X-Goog-Upload-Protocol: resumable", "X-Goog-Upload-Command: start",
          "X-Goog-Upload-Header-Content-Type: application/jsonl",
          "X-Goog-Upload-Header-Content-Length: " + std::to_string(jsonl.size())}, &metadata);
     // request() restricts the returned URL to HTTP(S), without origin matching.
     if (upload.upload_url.empty())
-        throw std::runtime_error("The service returned an invalid upload URL. Check its public URL setting.");
+        throw NoteAudioError(NoteAudioFailure::invalid, "The service returned an invalid upload URL. Check its public URL setting.");
+    service = credentials();
     const auto uploaded = Json::parse(request(service, upload.upload_url, cancel,
         {"Content-Type: application/jsonl", "X-Goog-Upload-Offset: 0", "X-Goog-Upload-Command: upload, finalize"},
         &jsonl, nullptr, 65536, false).body);
     const std::string input = resource(uploaded.at("file"), "name", "files/");
     const std::string body = Json({{"batch", {{"inputConfig", {{"fileName", input}}}}}}).dump();
-    auto operation = Json::parse(request(service, service.url + "/v1beta/models/gemini-3.8-flash-tts:batchGenerateContent",
-        cancel, {"Content-Type: application/json"}, &body, nullptr, 65536, true, true).body);
-    const auto name = resource(operation, "name", "batches/");
+    service = credentials();
+    try {
+        auto operation = Json::parse(request(service, service.url + "/v1beta/models/gemini-3.8-flash-tts:batchGenerateContent",
+            cancel, {"Content-Type: application/json"}, &body, nullptr, 65536, true, true).body);
+        (void)note_audio_batch_id(operation);
+        return operation;
+    } catch (const NoteAudioError& error) {
+        if (error.kind != NoteAudioFailure::invalid && error.kind != NoteAudioFailure::storage) throw;
+        throw NoteAudioError(NoteAudioFailure::uncertain, std::string(submission_unknown) + " " + error.what(), error.code);
+    } catch (const std::exception&) {
+        throw NoteAudioError(NoteAudioFailure::uncertain, submission_unknown);
+    }
+}
+
+Json read_note_audio_batch(const NoteAudioCredentials& credentials, const std::string& batch_id,
+    const std::atomic_bool& cancel) {
+    (void)note_audio_batch_id(Json{{"name", batch_id}});
+    const auto service = credentials();
+    auto operation = Json::parse(request(service, service.url + "/v1beta/" + batch_id, cancel).body);
+    if (note_audio_batch_id(operation) != batch_id) throw NoteAudioError(NoteAudioFailure::invalid, "The audio service returned a different batch.");
+    return operation;
+}
+
+void download_note_audio(const NoteAudioCredentials& credentials, const Json& operation,
+    std::size_t block_count, const std::filesystem::path& temporary, const std::atomic_bool& cancel) {
+    if (operation.contains("error")) throw NoteAudioError(NoteAudioFailure::invalid, "The audio batch failed. Check the service before trying again.");
+    const auto output = resource(operation.at("response"), "responsesFile", "files/");
+    const auto result_path = temporary / "results.jsonl";
+    std::ofstream file(result_path, std::ios::binary | std::ios::trunc);
+    if (!file) throw NoteAudioError(NoteAudioFailure::storage, "Could not create the audio download file. Check available disk space.");
+    const auto service = credentials();
+    request(service, service.url + "/download/v1beta/" + output + ":download?alt=media", cancel,
+        {}, nullptr, &file, block_count * max_line);
+    file.close();
+    if (!file) throw NoteAudioError(NoteAudioFailure::storage, "Could not save the audio download. Check available disk space.");
+}
+
+std::vector<std::filesystem::path> process_note_audio(std::size_t block_count,
+    const std::filesystem::path& temporary, const std::atomic_bool& cancel) {
+    std::ifstream input_file(temporary / "results.jsonl", std::ios::binary);
+    if (!input_file) throw NoteAudioError(NoteAudioFailure::storage, "Could not open the audio results. Check available disk space.");
+    std::vector<std::filesystem::path> clips(block_count);
+    std::size_t converted = 0;
+    for (;;) {
+        if (cancel.load()) throw NoteAudioError(NoteAudioFailure::interrupted, "Audio generation was interrupted.");
+        std::string line;
+        char c;
+        while (input_file.get(c) && c != '\n') {
+            if (line.size() == max_line) throw NoteAudioError(NoteAudioFailure::invalid, "An audio result exceeds the clip limit. Check the service.");
+            line += c;
+        }
+        if (input_file.bad()) throw NoteAudioError(NoteAudioFailure::storage, "Could not read the audio results. Check available disk space.");
+        if (line.empty() && input_file.eof()) break;
+        const auto item = Json::parse(line);
+        const auto key = item.at("key").get<std::string>();
+        std::size_t index{};
+        const auto [end, error] = std::from_chars(key.data(), key.data() + key.size(), index);
+        if (error != std::errc{} || end != key.data() + key.size() || index >= clips.size()
+            || key != std::to_string(index) || !clips[index].empty())
+            throw NoteAudioError(NoteAudioFailure::invalid, "The service returned duplicate or unexpected audio results. Check the service.");
+        const auto block = "text block " + std::to_string(index + 1);
+        if (item.contains("error")) throw NoteAudioError(NoteAudioFailure::invalid, "Audio generation failed for " + block + ". Check the service.");
+        const auto& data = item.at("response").at("candidates").at(0).at("content").at("parts").at(0).at("inlineData");
+        if (data.at("mimeType") != "audio/wav") throw NoteAudioError(NoteAudioFailure::invalid, "Expected WAV audio for " + block + ". Check the service.");
+        std::string wav;
+        try { wav = decode_base64(data.at("data").get_ref<const std::string&>()); }
+        catch (const std::runtime_error&) { throw NoteAudioError(NoteAudioFailure::invalid, "Invalid Base64 audio for " + block + ". Check the service."); }
+        if (wav.size() > max_wav || wav.size() < 44 || wav.substr(0, 4) != "RIFF" || wav.substr(8, 4) != "WAVE")
+            throw NoteAudioError(NoteAudioFailure::invalid, "Invalid WAV audio for " + block + ". Check the service.");
+        const auto source = temporary / "clip.wav";
+        { std::ofstream file(source, std::ios::binary); file.write(wav.data(), static_cast<std::streamsize>(wav.size()));
+          file.close(); if (!file) throw NoteAudioError(NoteAudioFailure::storage, "Could not save WAV audio. Check available disk space."); }
+        clips[index] = temporary / (key + ".m4a");
+        std::filesystem::remove(clips[index]); // A processing retry replaces partial output.
+        try { encode_note_audio(source, clips[index]); }
+        catch (const NoteAudioError& error) {
+            throw NoteAudioError(error.kind, "Could not convert audio for " + block + ". " + error.what(), error.code);
+        }
+        std::filesystem::remove(source);
+        ++converted;
+    }
+    if (converted != block_count) throw NoteAudioError(NoteAudioFailure::invalid, "The service returned an incomplete audio batch. Check the service.");
+    return clips;
+}
+
+std::vector<std::filesystem::path> generate_note_audio(const NoteAudioService& service,
+    const std::string& jsonl, std::size_t block_count, const std::filesystem::path& temporary,
+    const std::atomic_bool& cancel, const NoteAudioProgress& progress, const std::function<void(int)>& wait) {
+    const auto pause = [&](int seconds) { wait_note_audio(seconds, cancel, wait); };
+    const auto read = [&](const auto& operation) {
+        for (int retry = 0;; ++retry) {
+            try { return operation(); }
+            catch (const NoteAudioError& error) {
+                if ((error.kind != NoteAudioFailure::transport && !(error.kind == NoteAudioFailure::http && error.code == 500))
+                    || retry == 3) throw;
+                pause(10 << retry);
+            }
+        }
+    };
+    const NoteAudioCredentials credentials = [&] { return service; };
+    progress("uploading", {}, {});
+    auto operation = submit_note_audio(credentials, jsonl, cancel);
+    const auto name = note_audio_batch_id(operation);
     while (!operation.value("done", false)) {
         const auto& info = operation.at("metadata");
         const auto stats = info.value("batchStats", Json::object());
@@ -196,62 +294,11 @@ std::vector<std::filesystem::path> generate_note_audio(const NoteAudioService& s
         progress(info.value("state", "") == "BATCH_STATE_PENDING" ? "queued" : "generating",
             completed, count(stats, "requestCount"));
         pause(note_audio_poll_seconds);
-        operation = Json::parse(read([&] { return request(service, service.url + "/v1beta/" + name, cancel); }).body);
+        operation = read([&] { return read_note_audio_batch(credentials, name, cancel); });
     }
-    if (operation.contains("error")) throw std::runtime_error("The audio batch failed. Check the service before trying again.");
-    const auto output = resource(operation.at("response"), "responsesFile", "files/");
     progress("downloading", {}, {});
-    const auto result_path = temporary / "results.jsonl";
-    read([&] {
-        std::ofstream file(result_path, std::ios::binary | std::ios::trunc);
-        if (!file) throw std::runtime_error("Could not create the audio download file. Check available disk space.");
-        request(service, service.url + "/download/v1beta/" + output + ":download?alt=media", cancel,
-            {}, nullptr, &file, block_count * max_line);
-        file.close();
-        if (!file) throw std::runtime_error("Could not save the audio download. Check available disk space.");
-        return true;
-    });
-    std::ifstream input_file(result_path, std::ios::binary);
-    if (!input_file) throw std::runtime_error("Could not open the audio results. Check available disk space.");
-    std::vector<std::filesystem::path> clips(block_count);
-    std::size_t converted = 0;
+    read([&] { download_note_audio(credentials, operation, block_count, temporary, cancel); return true; });
     progress("saving", {}, {});
-    for (;;) {
-        if (cancel.load()) throw std::runtime_error("Audio generation was interrupted.");
-        std::string line;
-        char c;
-        while (input_file.get(c) && c != '\n') {
-            if (line.size() == max_line) throw std::runtime_error("An audio result exceeds the clip limit. Check the service.");
-            line += c;
-        }
-        if (input_file.bad()) throw std::runtime_error("Could not read the audio results. Check available disk space.");
-        if (line.empty() && input_file.eof()) break;
-        const auto item = Json::parse(line);
-        const auto key = item.at("key").get<std::string>();
-        std::size_t index{};
-        const auto [end, error] = std::from_chars(key.data(), key.data() + key.size(), index);
-        if (error != std::errc{} || end != key.data() + key.size() || index >= clips.size()
-            || key != std::to_string(index) || !clips[index].empty())
-            throw std::runtime_error("The service returned duplicate or unexpected audio results. Check the service.");
-        const auto block = "text block " + std::to_string(index + 1);
-        if (item.contains("error")) throw std::runtime_error("Audio generation failed for " + block + ". Check the service.");
-        const auto& data = item.at("response").at("candidates").at(0).at("content").at("parts").at(0).at("inlineData");
-        if (data.at("mimeType") != "audio/wav") throw std::runtime_error("Expected WAV audio for " + block + ". Check the service.");
-        std::string wav;
-        try { wav = decode_base64(data.at("data").get_ref<const std::string&>()); }
-        catch (const std::runtime_error&) { throw std::runtime_error("Invalid Base64 audio for " + block + ". Check the service."); }
-        if (wav.size() > max_wav || wav.size() < 44 || wav.substr(0, 4) != "RIFF" || wav.substr(8, 4) != "WAVE")
-            throw std::runtime_error("Invalid WAV audio for " + block + ". Check the service.");
-        const auto source = temporary / "clip.wav";
-        { std::ofstream file(source, std::ios::binary); file.write(wav.data(), static_cast<std::streamsize>(wav.size()));
-          file.close(); if (!file) throw std::runtime_error("Could not save WAV audio. Check available disk space."); }
-        clips[index] = temporary / (key + ".m4a");
-        try { encode_note_audio(source, clips[index]); }
-        catch (const std::exception&) { throw std::runtime_error("Could not convert audio for " + block + ". Check the service's WAV output and available disk space."); }
-        std::filesystem::remove(source);
-        ++converted;
-    }
-    if (converted != block_count) throw std::runtime_error("The service returned an incomplete audio batch. Check the service.");
-    return clips;
+    return process_note_audio(block_count, temporary, cancel);
 }
 }

@@ -351,6 +351,11 @@ public:
     [[nodiscard]] SessionNamingSettings get_session_naming_settings(std::uint64_t epoch);
     [[nodiscard]] SessionNamingSettings save_session_naming_settings(
         SessionNamingSettings settings, std::uint64_t epoch);
+    using NoteAudioChanged = std::function<void(std::int64_t, std::uint64_t)>;
+    void set_note_audio_changed(NoteAudioChanged callback);
+    nlohmann::json start_background_note_audio(std::int64_t id, std::string voice,
+        std::vector<std::string> blocks, std::uint64_t epoch);
+    nlohmann::json background_note_audio_status(std::int64_t id, std::uint64_t epoch);
     nlohmann::json start_note_audio(std::int64_t id, std::string voice, std::vector<std::string> blocks, std::uint64_t epoch);
     nlohmann::json cancel_note_audio(std::int64_t id, std::uint64_t epoch);
     nlohmann::json get_note_audio_status(std::int64_t id, std::uint64_t epoch);

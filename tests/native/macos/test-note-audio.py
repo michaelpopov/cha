@@ -44,6 +44,8 @@ def main():
     records = []
     requests = []
     submitted = []
+    batches = {}
+    outputs = {}
 
     class Service(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -77,18 +79,27 @@ def main():
             elif self.path.endswith(":batchGenerateContent"):
                 text = records[0]["request"]["contents"][0]["parts"][0]["text"]
                 submitted.append(text)
+                batch_id = "batches/" + f"{len(batches) + 1:032x}"
+                output_id = "files/" + f"{len(batches) + 1:032x}"
+                operation = {"name": batch_id, "done": True}
                 if text == "Fail audio":
-                    self.respond({"name": "batches/" + "b" * 32, "done": True, "error": {"message": "fake failure"}})
-                    return
-                self.respond({"name": "batches/" + "b" * 32, "done": True,
-                              "response": {"responsesFile": "files/" + "c" * 32}})
+                    operation["error"] = {"message": "fake failure"}
+                else:
+                    operation["response"] = {"responsesFile": output_id}
+                batches[batch_id] = operation
+                outputs[output_id] = list(records)
+                self.respond(operation)
             else:
                 self.send_error(404)
 
         def do_GET(self):
             requests.append(self.path)
-            # Keep work active long enough to check modality and UI repaint.
-            current = list(records)
+            if self.path.startswith("/v1beta/batches/"):
+                self.respond(batches[self.path.removeprefix("/v1beta/")])
+                return
+            # Keep work active long enough to check navigation and folder Stop.
+            output = self.path.removeprefix("/download/v1beta/").split(":download")[0]
+            current = outputs[output]
             text = current[0]["request"]["contents"][0]["parts"][0]["text"]
             time.sleep(4 if text == "Stop audio" else 1.4)
             lines = []
@@ -164,6 +175,28 @@ def main():
                 "Audio check", "First paragraph with audio.", "Second paragraph with audio."]
             with closing(sqlite3.connect(root / "test.sqlite3")) as database, database:
                 database.execute("INSERT INTO note_audio SELECT ?,ordinal,mime_type,audio FROM note_audio WHERE note_id=(SELECT id FROM note_items WHERE name='Audio check')", (existing,))
+            # Reopen a registered attempt against the same saved remote batch.
+            # Play another note while it completes to check affected-note delivery.
+            with closing(sqlite3.connect(root / "test.sqlite3")) as database, database:
+                original = database.execute("SELECT content_json FROM note_items WHERE name='Audio check'").fetchone()[0]
+                recovery_id = database.execute("INSERT INTO note_items(kind,name,content_json,read_only) VALUES ('note','Recovery check',?,1)", (original,)).lastrowid
+                database.execute("INSERT INTO note_audio_attempts(note_id,note_name,clip_count,service_origin,api_key_id,batch_id) VALUES (?,?,?,?,?,?)",
+                    (recovery_id, "Recovery check", 3, f"http://127.0.0.1:{server.server_port}", "api_key_1", next(iter(batches))))
+                assert database.execute("SELECT severity FROM event_history ORDER BY id").fetchall() == [("info",), ("success",)]
+                database.execute("INSERT INTO event_history(recorded_at,severity,message) VALUES (?,'info',?)",
+                    (int(time.time()), f'Audio batch started for “Recovery check” (note {recovery_id}): 3 clips, voice Kore.'))
+            recovery_source = root / "recovery.js"
+            recovery_source.write_text(source.read_text() + "\nconst playExisting = nativeParity;\nnativeParity = () => playExisting({ offline: true });\n")
+            environment["CHA_NATIVE_PARITY_SCRIPT"] = str(recovery_source)
+            post_count = sum(path.startswith(("/upload/", "/secret", "/v1beta/models/")) for path in requests)
+            run_host()
+            assert sum(path.startswith(("/upload/", "/secret", "/v1beta/models/")) for path in requests) == post_count, requests
+            assert any(path.startswith("/v1beta/batches/") for path in requests), requests
+            with closing(sqlite3.connect(root / "test.sqlite3")) as database:
+                assert database.execute("SELECT COUNT(*) FROM note_audio_attempts").fetchone()[0] == 0
+                assert database.execute("SELECT COUNT(*) FROM note_audio WHERE note_id=?", (recovery_id,)).fetchone()[0] == 3
+                assert database.execute("SELECT COUNT(*) FROM event_history WHERE severity='success'").fetchone()[0] == 2
+                assert database.execute("SELECT COUNT(*) FROM event_history WHERE severity='info'").fetchone()[0] == 2
             folder_source = root / "folder.js"
             folder_source.write_text(source.read_text() + "\nnativeParity = nativeFolderAudio;\n")
             environment["CHA_NATIVE_PARITY_SCRIPT"] = str(folder_source)
@@ -171,7 +204,9 @@ def main():
             assert submitted == ["Audio check", "Folder first", "Folder last", "Stop audio", "Before error", "Fail audio"], submitted
             with closing(sqlite3.connect(root / "test.sqlite3")) as database, database:
                 saved = database.execute("SELECT name,COUNT(*) FROM note_audio JOIN note_items ON note_id=id GROUP BY note_id ORDER BY name").fetchall()
-                assert saved == [("A first", 1), ("A saved", 1), ("Audio check", 3), ("D last", 1), ("F existing", 3)], saved
+                assert saved == [("A first", 1), ("A saved", 1), ("Audio check", 3), ("D last", 1), ("F existing", 3), ("Recovery check", 3)], saved
+                assert database.execute("SELECT COUNT(*) FROM event_history").fetchone()[0] == 4
+                assert database.execute("SELECT COUNT(*) FROM note_audio_attempts").fetchone()[0] == 0
             server.shutdown()
             server.server_close()
             thread.join()
@@ -180,7 +215,7 @@ def main():
             offline_source.write_text(source.read_text() + "\nconst runAudioProbe = nativeParity;\nnativeParity = () => runAudioProbe({ offline: true });\n")
             environment["CHA_NATIVE_PARITY_SCRIPT"] = str(offline_source)
             run_host()
-            print("PASS folder success/skip/Stop/error/focus, single-note generation, native M4A playback, and offline restart", flush=True)
+            print("PASS background acceptance, registered restart without POST, unrelated playback, folder success/skip/Stop/error/focus, and offline playback", flush=True)
         finally:
             server.shutdown()
             server.server_close()

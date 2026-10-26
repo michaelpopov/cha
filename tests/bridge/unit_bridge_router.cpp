@@ -463,6 +463,91 @@ TEST_F(BridgeRouterTest, PictureUploadsAcceptLargeFilesAndValidateParamsAndConte
     EXPECT_TRUE(call("character.picture.get", {{"character_id", "guide"}, {"filename", "PICTURE.jpeg"}})["result"].is_null());
 }
 
+TEST_F(BridgeRouterTest, BackgroundAudioCommandsValidateAndStatusReadsTheDurableRow) {
+    bootstrap_epoch();
+    const auto note = application_->create_note_item({}, NoteItemKind::note, "Chapter", epoch_);
+    (void)application_->set_note_read_only(note.id, true, epoch_);
+    EXPECT_EQ(call("noteAudio.backgroundStatus", {{"id", note.id}})["result"], (nlohmann::json{{"pending", false}}));
+    EXPECT_EQ(call("noteAudio.backgroundStatus", {{"id", 0}})["error"]["code"], "invalid_argument");
+    EXPECT_EQ(call("noteAudio.backgroundStatus", {{"id", note.id}, {"extra", true}})["error"]["code"], "invalid_argument");
+    const auto attempt = application_->store().accept_note_audio(note.id, 1, "http://localhost:1", "key-1", [](const auto&) {});
+    EXPECT_EQ(call("noteAudio.backgroundStatus", {{"id", note.id}})["result"],
+        (nlohmann::json{{"pending", true}, {"attempt_id", attempt.id}}));
+    const auto blocked = call("noteAudio.startBackground", {{"id", note.id}, {"voice", "Kore"}, {"blocks", {"Text"}}});
+    EXPECT_EQ(blocked["error"]["code"], "invalid_argument");
+#if defined(__APPLE__) || defined(_WIN32)
+    EXPECT_NE(blocked["error"]["message"].get<std::string>().find("Make that note editable"), std::string::npos);
+#endif
+    for (const auto& params : std::vector<nlohmann::json>{
+        {{"id", 0}, {"voice", "Kore"}, {"blocks", {"Text"}}},
+        {{"id", note.id}, {"voice", "Kore"}, {"blocks", 1}},
+        {{"id", note.id}, {"voice", "Kore"}, {"blocks", {1}}},
+        {{"id", note.id}, {"voice", "Kore"}, {"blocks", {"Text"}}, {"extra", true}}})
+        EXPECT_EQ(call("noteAudio.startBackground", params)["error"]["code"], "invalid_argument");
+}
+
+#if defined(__APPLE__) || defined(_WIN32)
+TEST_F(BridgeRouterTest, BackgroundCompletionPrecedesNewSourcesAndWaitsForDeliveryAcknowledgment) {
+    bootstrap_epoch();
+    const auto note = application_->create_note_item({}, NoteItemKind::note, "Chapter", epoch_);
+    (void)application_->set_note_read_only(note.id, true, epoch_);
+    const auto old = workspace_.root() / "old.m4a";
+    std::ofstream(old) << "old audio";
+    application_->store().save_note_audio(note.id, {old});
+    std::string wav;
+    const auto number = [&](unsigned value, int bytes) {
+        for (int i = 0; i < bytes; ++i) wav += static_cast<char>((value >> (8 * i)) & 255);
+    };
+    wav += "RIFF"; number(4836, 4); wav += "WAVEfmt "; number(16, 4);
+    number(1, 2); number(1, 2); number(24000, 4); number(48000, 4); number(2, 2); number(16, 2);
+    wav += "data"; number(4800, 4); wav.append(4800, '\0');
+    const auto result = nlohmann::json{{"key", "0"}, {"response", {{"candidates", nlohmann::json::array({
+        {{"content", {{"parts", nlohmann::json::array({{{"inlineData", {{"mimeType", "audio/wav"}, {"data", encode_base64(wav)}}}}})}}}}})}}}};
+    const auto batch_id = "batches/" + std::string(32, 'b');
+    MockHttpServer server({http_response("application/json", nlohmann::json{{"name", batch_id}, {"done", true},
+        {"response", {{"responsesFile", "files/" + std::string(32, 'a')}}}}.dump()),
+        http_response("application/jsonl", result.dump() + '\n')});
+    server.pause_before_response(2);
+    const auto key = application_->create_api_key({.display_name = "Audio", .value = "secret"}, epoch_);
+    const auto attempt = application_->store().accept_note_audio(note.id, 1,
+        "http://127.0.0.1:" + std::to_string(server.port()), key.id, [](const auto&) {});
+    ASSERT_TRUE(application_->store().register_note_audio(attempt.id, batch_id, "Kore"));
+    // Reinstalling the native router activates recovery without a webview command.
+    router_.reset();
+    server.start();
+    router_ = std::make_unique<BridgeRouter>(*application_);
+    connection_ = router_->open_connection(); next_id_ = 1;
+    bootstrap_epoch();
+    ASSERT_TRUE(server.wait_for_requests(2, 2s));
+    const auto old_request = next_id_++;
+    router_->handle_request(connection_, request_json(connection_, old_request, epoch_, "noteAudio.source",
+        {{"id", note.id}, {"ordinal", 0}}).dump());
+    const auto before = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(before);
+    EXPECT_EQ(reply_with_id(*before, old_request)["result"]["byte_length"], 9);
+    server.resume_responses(); server.join();
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (application_->store().get_note_audio_attempt() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(1ms);
+    ASSERT_FALSE(application_->store().get_note_audio_attempt());
+    // Completion cannot overtake the old source's unacknowledged delivery.
+    EXPECT_FALSE(router_->take_delivery(connection_));
+    const auto new_request = next_id_++;
+    router_->handle_request(connection_, request_json(connection_, new_request, epoch_, "noteAudio.source",
+        {{"id", note.id}, {"ordinal", 0}}).dump());
+    router_->run_tasks();
+    ack_delivery(*router_, connection_, *before);
+    const auto after = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(after);
+    const auto& notice = after->at("messages")[0];
+    EXPECT_EQ(notice, (nlohmann::json{{"connection_id", connection_}, {"event", "noteAudio.changed"},
+        {"id", note.id}, {"context_epoch", epoch_}}));
+    EXPECT_GT(reply_with_id(*after, new_request)["result"]["byte_length"].get<int>(), 9);
+    ack_delivery(*router_, connection_, *after);
+    EXPECT_FALSE(router_->take_delivery(connection_));
+}
+#endif
+
 TEST_F(BridgeRouterTest, NoteAudioValidatesBlockPayloadAndKeepsOfflineLookupIndependentOfSettings) {
     bootstrap_epoch();
     const auto note = application_->create_note_item({}, NoteItemKind::note, "Narration", epoch_);

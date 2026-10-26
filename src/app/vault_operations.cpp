@@ -223,6 +223,7 @@ std::chrono::milliseconds Application::Impl::VaultMaintenance::maintenance_grace
 std::uint64_t Application::Impl::VaultMaintenance::publish_epoch(
     PendingContextNotice& notice,
     ApplicationState next_state) {
+    if (const auto cancel = std::atomic_load(&app.background_audio_cancel)) cancel->store(true);
     const auto epoch = app.live_sessions->bump_context_epoch();
     app.published_epoch.store(epoch);
     ApplicationState expected = ApplicationState::maintenance;
@@ -258,6 +259,8 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         // Reservation may already have stopped one or more actors. Keep
         // old queued work from treating the recovered context as intact.
         publish_epoch(notice, ApplicationState::running);
+        // Resume after returning: an actor can still own the store lock.
+        app.resume_note_audio();
         // Welcome's maintenance requests carry the epoch from its opening. If
         // Welcome is still open, reopen it so that its requests are admitted.
         app.live_sessions->reload_session(
@@ -324,6 +327,7 @@ void Application::Impl::VaultMaintenance::reopen(
     const SessionRepository::MaintenanceGuard& repository) {
     try {
         database.reopen();
+        app.background_audio_warned = false;
         repository.synchronize_forums(*app.store->snapshot());
         repository.recover_sessions();
     } catch (...) {
@@ -930,6 +934,7 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge(
         bool merged = false;
         try {
             app.store->merge(selected.data, source_lease, password, prepare_source);
+            app.background_audio_warned = false;
             merged = true;
             {
                 SessionRepository::MaintenanceGuard repository =

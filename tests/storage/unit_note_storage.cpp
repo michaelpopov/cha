@@ -1148,6 +1148,61 @@ TEST_F(NoteStorageTest, FullCopyAndProtectionPreserveImageAndSequence) {
     EXPECT_NO_THROW(validate_workspace_session_contents(protected_original));
 }
 
+TEST_F(NoteStorageTest, AudioAttemptTransactionsAndExactIdentity) {
+    create_event_history_schema(*database_);
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Chapter 1");
+    (void)note_set_read_only(*database_, note.id, true);
+    EXPECT_THROW(note_audio_accept(*database_, note.id, 1, "https://audio.test", "key-1",
+        [](const auto&) { throw std::runtime_error("launch failed"); }), std::runtime_error);
+    EXPECT_FALSE(note_audio_attempt(*database_));
+    const auto attempt = note_audio_accept(*database_, note.id, 1, "https://audio.test", "key-1", [](const auto&) {});
+    EXPECT_FALSE(attempt.batch_id);
+    EXPECT_THROW(note_audio_accept(*database_, note.id, 1, "https://audio.test", "key-1", [](const auto&) {}), NoteError);
+    (void)note_rename(*database_, note.id, "New name");
+    EXPECT_TRUE(note_audio_register(*database_, attempt.id, "batches/example", "Kore"));
+    EXPECT_TRUE(note_audio_register(*database_, attempt.id, "batches/example", "Kore"));
+    ASSERT_EQ(event_list(*database_).size(), 1u);
+    EXPECT_NE(event_list(*database_)[0].message.find("Chapter 1"), std::string::npos);
+    const auto clip = workspace_.root() / "clip.m4a";
+    { std::ofstream output(clip); output << "audio"; }
+    note_save_audio(*database_, note.id, {clip});
+    { std::ofstream output(clip); output << "replacement"; }
+    database_->execute("CREATE TRIGGER fail_event BEFORE INSERT ON event_history BEGIN SELECT RAISE(ABORT,'disk'); END");
+    EXPECT_THROW(note_audio_finish(*database_, attempt.id, {clip}), std::runtime_error);
+    EXPECT_EQ(note_audio_clip(*database_, note.id, 0).bytes, "audio");
+    EXPECT_TRUE(note_audio_attempt(*database_));
+    EXPECT_THROW((void)note_set_read_only(*database_, note.id, false), NoteError);
+    EXPECT_TRUE(note_audio_attempt(*database_));
+    database_->execute("DROP TRIGGER fail_event");
+    EXPECT_TRUE(note_audio_finish(*database_, attempt.id, {clip}));
+    EXPECT_EQ(note_audio_clip(*database_, note.id, 0).bytes, "replacement");
+    EXPECT_FALSE(note_audio_attempt(*database_));
+    const auto next = note_audio_accept(*database_, note.id, 1, "https://audio.test", "key-1", [](const auto&) {});
+    EXPECT_GT(next.id, attempt.id);
+    EXPECT_FALSE(note_audio_retire(*database_, attempt.id, EventSeverity::error, "late"));
+    EXPECT_FALSE(note_audio_finish(*database_, attempt.id, {clip}));
+    (void)note_set_read_only(*database_, note.id, false);
+    EXPECT_FALSE(note_audio_attempt(*database_));
+    EXPECT_EQ(event_list(*database_)[0].severity, EventSeverity::warning);
+}
+
+TEST_F(NoteStorageTest, AudioAttemptDeletionAbandonsDescendantsAtomically) {
+    create_event_history_schema(*database_);
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Book");
+    const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Chapter");
+    (void)note_set_read_only(*database_, note.id, true);
+    const auto attempt = note_audio_accept(*database_, note.id, 1, "https://audio.test", "key-1", [](const auto&) {});
+    database_->execute("CREATE TRIGGER fail_delete BEFORE DELETE ON note_items BEGIN SELECT RAISE(ABORT,'disk'); END");
+    EXPECT_THROW(note_delete(*database_, folder.id), NoteError);
+    ASSERT_TRUE(note_audio_attempt(*database_));
+    EXPECT_EQ(note_audio_attempt(*database_)->id, attempt.id);
+    EXPECT_TRUE(event_list(*database_).empty());
+    database_->execute("DROP TRIGGER fail_delete");
+    note_delete(*database_, folder.id);
+    EXPECT_FALSE(note_audio_attempt(*database_));
+    EXPECT_EQ(event_list(*database_).size(), 1u);
+}
+
 TEST(NoteStorage, OlderVaultAndMaintenanceKeepIdentityWithoutConfigChanges) {
     test::TestWorkspace workspace;
     const auto path = test::import_test_database(workspace.root());

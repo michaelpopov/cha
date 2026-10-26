@@ -46,9 +46,15 @@ void create_event_history_schema(storage::SqliteDatabase& database) {
 
 void event_append(storage::SqliteDatabase& database,
     EventSeverity severity, std::string_view message) {
+    storage::SqliteTransaction transaction(database);
+    event_append_in_transaction(database, severity, message);
+    transaction.commit();
+}
+
+void event_append_in_transaction(storage::SqliteDatabase& database,
+    EventSeverity severity, std::string_view message) {
     const auto name = severity_name(severity);
     validate_message(message);
-    storage::SqliteTransaction transaction(database);
     database.prepare(
         "INSERT INTO event_history (recorded_at, severity, message) VALUES (?1, ?2, ?3)",
         session_timestamp(), name, message).run();
@@ -56,7 +62,6 @@ void event_append(storage::SqliteDatabase& database,
         "DELETE FROM event_history WHERE id NOT IN ("
         "SELECT id FROM event_history ORDER BY id DESC LIMIT ?1)",
         event_history_limit).run();
-    transaction.commit();
 }
 
 std::vector<ActivityEvent> event_list(storage::SqliteDatabase& database) {

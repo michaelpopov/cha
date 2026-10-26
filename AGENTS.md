@@ -36,6 +36,16 @@ maintainability and readability. Do not overcomplicate it.
 
 Do not update documentation in the docs/ directory unless this is explicitly requested by the user.
 
+## Claude reviews
+
+When the user requests a Claude CLI review, sharing the task-relevant files with
+Claude is authorized as part of that request. Do not ask for separate permission
+to send those files. This authorization applies to future requested reviews too.
+
+If a tool the user requests is not installed or available, report that fact.
+Do not substitute a bundled executable, another tool, or another workaround
+unless the user authorizes it.
+
 ## UI approval
 
 Before making any UI change, present a visual representation of the proposed

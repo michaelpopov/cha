@@ -1759,6 +1759,52 @@ components:
       properties:
         count: {$ref: "#/components/schemas/NativeSafeInteger"}
 
+    NoteAudioStartBackground:
+      type: object
+      additionalProperties: false
+      required: [id, voice, blocks]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+        voice:
+          type: string
+          enum: [boroda, grant, dzig, gerdt, Kore]
+        blocks:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: {type: string, minLength: 1, maxLength: 5000}
+
+    NoteAudioAccepted:
+      type: object
+      additionalProperties: false
+      required: [attempt_id]
+      properties:
+        attempt_id: {$ref: "#/components/schemas/NoteId"}
+
+    NoteAudioBackgroundStatus:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [pending, attempt_id]
+          properties:
+            pending: {type: boolean, enum: [true]}
+            attempt_id: {$ref: "#/components/schemas/NoteId"}
+        - type: object
+          additionalProperties: false
+          required: [pending]
+          properties:
+            pending: {type: boolean, enum: [false]}
+
+    NoteAudioChanged:
+      type: object
+      additionalProperties: false
+      required: [connection_id, event, id, context_epoch]
+      properties:
+        connection_id: {type: string}
+        event: {type: string, enum: [noteAudio.changed]}
+        id: {$ref: "#/components/schemas/NoteId"}
+        context_epoch: {$ref: "#/components/schemas/NoteId"}
+
     NoteAudioStatus:
       type: object
       additionalProperties: false

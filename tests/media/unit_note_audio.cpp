@@ -7,6 +7,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <mfapi.h>
+#include <mferror.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <wrl/client.h>
@@ -78,6 +79,37 @@ protected:
     std::vector<Json> progress;
     std::vector<std::string> requests, upload_requests;
 };
+
+#if defined(__APPLE__) || defined(_WIN32)
+TEST(NoteAudioCodec, DistinguishesKnownFileFailuresFromUnknownAndFormatErrorsAtEveryStep) {
+#ifdef __APPLE__
+    const std::vector<long> file_errors{-34, -36, -43, -47, -54, -120};
+    const long format_error = kAudioFileUnsupportedDataFormatError;
+#else
+    const std::vector<long> file_errors{HRESULT_FROM_WIN32(ERROR_DISK_FULL), HRESULT_FROM_WIN32(ERROR_WRITE_FAULT),
+        HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND), STG_E_MEDIUMFULL, STG_E_WRITEFAULT, STG_E_READFAULT};
+    const long format_error = MF_E_INVALIDMEDIATYPE;
+#endif
+    for (const auto* operation : {"output creation", "output write", "output finalization"}) {
+        for (const auto code : file_errors) {
+            const auto error = note_audio_codec_error(operation, code);
+            EXPECT_EQ(error.kind, NoteAudioFailure::storage);
+            EXPECT_EQ(error.code, code);
+            EXPECT_NE(std::string(error.what()).find(operation), std::string::npos);
+        }
+        EXPECT_EQ(note_audio_codec_error(operation, format_error).kind, NoteAudioFailure::invalid);
+        EXPECT_EQ(note_audio_codec_error(operation, -987654).kind, NoteAudioFailure::invalid);
+    }
+    test::TestWorkspace workspace;
+    try {
+        encode_note_audio(workspace.root() / "missing.wav", workspace.root() / "output.m4a");
+        FAIL() << "Missing input file must fail";
+    } catch (const NoteAudioError& error) {
+        EXPECT_EQ(error.kind, NoteAudioFailure::storage);
+        EXPECT_NE(error.code, 0);
+    }
+}
+#endif
 
 TEST(NoteAudioInput, ValidatesLimitsAndSerializesExactVoiceAndUnicodeText) {
     NoteAudioService service{"http://127.0.0.1:18080/", "secret", "gerdt"};
@@ -184,6 +216,35 @@ TEST_F(NoteAudioServiceTest, OtherHttpErrorsAndPostsAreNotRetried) {
     EXPECT_TRUE(waits.empty());
     EXPECT_EQ(requests.size(), 1u);
 }
+TEST_F(NoteAudioServiceTest, UnusableCreationRepliesKeepTheirCauseAndWarnWithoutAnEventsReference) {
+    for (const auto& response : std::vector<std::string>{
+        json_response({{"name", "batches/invalid"}}), http_response("application/json", "not JSON"),
+        http_response("application/json", std::string(65537, 'x')), failure_response(500)}) {
+        try {
+            (void)run({response});
+            FAIL() << "Invalid creation response must fail";
+        } catch (const NoteAudioError& error) {
+            EXPECT_EQ(error.kind, NoteAudioFailure::uncertain);
+            EXPECT_NE(std::string(error.what()).find("Starting again may generate audio twice"), std::string::npos);
+            EXPECT_EQ(std::string(error.what()).find("Check Events"), std::string::npos);
+        }
+        EXPECT_TRUE(waits.empty());
+        EXPECT_EQ(requests.size(), 2u);
+    }
+}
+#if defined(__APPLE__) || defined(_WIN32)
+TEST_F(NoteAudioServiceTest, CodecFailuresKeepTheBlockNumberAndFailureKind) {
+    auto bytes = wav(); bytes.pop_back();
+    try {
+        (void)run({json_response(operation(true)), http_response("application/jsonl", item("0", bytes).dump() + '\n')});
+        FAIL() << "Truncated WAV must fail";
+    } catch (const NoteAudioError& error) {
+        EXPECT_EQ(error.kind, NoteAudioFailure::invalid);
+        EXPECT_NE(std::string(error.what()).find("text block 1"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("truncated or invalid WAV"), std::string::npos);
+    }
+}
+#endif
 TEST_F(NoteAudioServiceTest, RestartsPartialDownloadsAndAcceptsOutOfOrderResults) {
     const auto results = item("1").dump() + '\n' + item("0").dump() + '\n';
     const auto partial = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(results.size())

@@ -33,6 +33,7 @@ function setup() {
   editor.setEditable(false);
   const client: NoteAudioClient = {
     cancel: vi.fn(),
+    startBackground: vi.fn(), backgroundStatus: vi.fn(),
     info: vi.fn().mockResolvedValue({ count: 3 }), start: vi.fn(), status: vi.fn(),
     source: vi.fn(async (_id, ordinal) => ({ resource_id: `r${ordinal}`, url: `/media/r${ordinal}`, mime_type: 'audio/mp4', byte_length: 10 })),
     release: vi.fn().mockResolvedValue(undefined),
@@ -142,6 +143,32 @@ describe('note playlist', () => {
     expect(client.release).toHaveBeenCalledWith('stale');
     expect(result.current.state).toBe('playing');
     expect(AudioClip.clips).toHaveLength(1);
+  });
+
+  it('ignores unrelated completion, but stops matching playback synchronously and refreshes without autoplay', async () => {
+    const { result, client } = setup(); await flush();
+    act(() => result.current.play(0)); await flush();
+    act(() => window.dispatchEvent(new CustomEvent('cha-note-audio-changed', { detail: { id: 5, affectedNoteOnly: true } })));
+    expect(result.current.state).toBe('playing');
+    expect(client.info).toHaveBeenCalledTimes(1);
+    act(() => window.dispatchEvent(new CustomEvent('cha-note-audio-changed', { detail: { id: 4, affectedNoteOnly: true } })));
+    expect(result.current.state).toBe('stopped');
+    expect(AudioClip.clips[0].pause).toHaveBeenCalled();
+    await flush();
+    expect(client.info).toHaveBeenCalledTimes(2);
+    expect(AudioClip.clips).toHaveLength(1);
+  });
+
+  it('discards a source pending across completion and releases its resource', async () => {
+    const { result, client } = setup(); await flush();
+    let resolve!: (value: Awaited<ReturnType<NoteAudioClient['source']>>) => void;
+    vi.mocked(client.source).mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    act(() => result.current.play(0));
+    act(() => window.dispatchEvent(new CustomEvent('cha-note-audio-changed', { detail: { id: 4, affectedNoteOnly: true } })));
+    await act(async () => resolve({ resource_id: 'late', url: '/media/late', mime_type: 'audio/mp4', byte_length: 10 }));
+    expect(client.release).toHaveBeenCalledWith('late');
+    expect(AudioClip.clips).toHaveLength(0);
+    expect(result.current.state).toBe('stopped');
   });
 
   it('stops on dialog opening for another note and on transition to editable mode', async () => {

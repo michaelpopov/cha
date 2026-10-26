@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { strToU8, zipSync } from 'fflate';
 
-import { ChaProtocolError, isCommandResult, type SessionSnapshot } from './client';
+import { ChaError, ChaProtocolError, isCommandResult, type SessionSnapshot } from './client';
 import { createFakeNativeBridge } from './nativeBridge';
 import { createNativeChaClient } from './nativeClient';
 import { bootstrapFixture } from '../test/fixtures';
@@ -64,6 +64,101 @@ describe('native CHA client', () => {
     await expect(client.noteAudio!.status(4)).rejects.toBeInstanceOf(ChaProtocolError);
     status = { ...initial, completed: '2' };
     await expect(client.noteAudio!.status(4)).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
+  async function audioClient(handlers: Parameters<typeof createFakeNativeBridge>[0] = {}) {
+    const bridge = createFakeNativeBridge({
+      'bridge.info': () => ({ protocol_version: 1, application_version: 'development', platform: 'macos' }),
+      'app.bootstrap': () => ({ state: 'running', context_epoch: 1, application_version: 'development', bootstrap: bootstrapFixture,
+        capabilities: { can_modify: true, can_transfer_r2: false } }), ...handlers,
+    });
+    const client = createNativeChaClient(bridge);
+    await client.getBootstrap();
+    return { bridge, audio: client.noteAudio! };
+  }
+
+  it('confirms a lost start once using the same context unfinished row', async () => {
+    const start = vi.fn(() => { throw new ChaError('command_timeout', 'lost'); });
+    const status = vi.fn(() => ({ pending: true, attempt_id: 7 }));
+    const { audio } = await audioClient({ 'noteAudio.startBackground': start, 'noteAudio.backgroundStatus': status });
+    await expect(audio.startBackground(4, 'Kore', ['Text'])).resolves.toEqual({ attempt_id: 7 });
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(status).toHaveBeenCalledExactlyOnceWith({ id: 4 });
+  });
+
+  it.each([false, 'failed'])('keeps a lost reply unresolved when status is %s', async result => {
+    const status = vi.fn(() => {
+      if (result === 'failed') throw new ChaError('internal_error', 'unavailable');
+      return { pending: false };
+    });
+    const { audio } = await audioClient({
+      'noteAudio.startBackground': () => { throw new ChaError('command_timeout', 'lost'); },
+      'noteAudio.backgroundStatus': status,
+    });
+    await expect(audio.startBackground(4, 'Kore', ['Text'])).rejects.toMatchObject({ code: 'command_timeout' });
+    expect(status).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['invalid_argument', 'vault_changed', 'application_unavailable', 'server_stopping'] as const)(
+    'does not reconcile %s against another context', async code => {
+      const status = vi.fn(() => ({ pending: true, attempt_id: 9 }));
+      const { audio } = await audioClient({
+        'noteAudio.startBackground': () => { throw new ChaError(code, 'failed'); },
+        'noteAudio.backgroundStatus': status,
+      });
+      await expect(audio.startBackground(4, 'Kore', ['Text'])).rejects.toMatchObject({ code });
+      expect(status).not.toHaveBeenCalled();
+    });
+
+  it('keeps accepted work unknown when its queued reply is invalidated by context change', async () => {
+    let accepted!: (value: { attempt_id: number }) => void;
+    const status = vi.fn(() => ({ pending: true, attempt_id: 1 }));
+    const { audio, bridge } = await audioClient({
+      'noteAudio.startBackground': () => new Promise(resolve => { accepted = resolve; }),
+      'noteAudio.backgroundStatus': status,
+    });
+    const pending = audio.startBackground(4, 'Kore', ['Text']);
+    const outcome = expect(pending).rejects.toMatchObject({ code: 'vault_changed' });
+    bridge.setContextEpoch(2);
+    accepted({ attempt_id: 1 });
+    await outcome;
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it('treats connection cancellation after acceptance as uncertain and never queries a replacement connection', async () => {
+    const status = vi.fn(() => ({ pending: true, attempt_id: 9 }));
+    const { audio, bridge } = await audioClient({ 'noteAudio.backgroundStatus': status });
+    const start = audio.startBackground(4, 'Kore', ['Text']);
+    const outcome = expect(start).rejects.toMatchObject({ code: 'operation_cancelled' });
+    const post = bridge.posts.at(-1) as { id: number };
+    bridge.receive({ connection_id: 'view-9', delivery_id: 200, messages: [
+      { connection_id: 'view-9', context_epoch: 1, id: post.id, ok: false,
+        error: { code: 'operation_cancelled', message: 'Cancelled' } },
+      { connection_id: 'view-9', event: 'app.connectionInvalidated' },
+    ] });
+    await outcome;
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it.each([{ pending: true }, { pending: false, attempt_id: 1 }, { pending: true, attempt_id: 0 },
+    { pending: true, attempt_id: 1, extra: true }, { pending: 1 }])('rejects malformed background status %j', async value => {
+    const { audio } = await audioClient({ 'noteAudio.backgroundStatus': () => value });
+    await expect(audio.backgroundStatus(4)).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
+  it('forwards valid completion synchronously and ignores invalid or stale notices', async () => {
+    const { bridge } = await audioClient();
+    const changed = vi.fn();
+    window.addEventListener('cha-note-audio-changed', changed);
+    const notice = { connection_id: 'view-9', context_epoch: 1, event: 'noteAudio.changed', id: 4 };
+    const deliver = (message: unknown) => bridge.receive({ connection_id: 'view-9', delivery_id: 100, messages: [message] });
+    try {
+      deliver({ ...notice, context_epoch: 0 }); deliver({ ...notice, id: 0 }); deliver({ ...notice, extra: true });
+      expect(changed).not.toHaveBeenCalled();
+      deliver(notice);
+      expect(changed).toHaveBeenCalledOnce();
+      expect(changed.mock.calls[0][0].detail).toEqual({ id: 4, affectedNoteOnly: true });
+    } finally { window.removeEventListener('cha-note-audio-changed', changed); }
   });
 
   it('accepts annotation metadata and the creation flag', async () => {

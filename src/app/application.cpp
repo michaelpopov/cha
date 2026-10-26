@@ -377,6 +377,7 @@ void Application::Impl::require_admitted(std::uint64_t epoch) const {
 }
 
 void Application::Impl::pause_resources(bool cancel) {
+    if (const auto cancel = std::atomic_load(&background_audio_cancel)) cancel->store(true);
     pending_media.cancel_all();
     xai_voice.cancel_all();
     media_resources.revoke_all();
@@ -388,6 +389,7 @@ void Application::Impl::resume_resources() {
     if (unusable) return;
     if (audio_downloads) audio_downloads->resume();
     if (resource_hooks.resume) resource_hooks.resume();
+    resume_note_audio();
 }
 
 void Application::Impl::take_context_notice(PendingContextNotice& notice) {

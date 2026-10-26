@@ -760,6 +760,30 @@ export interface components {
         NoteAudioInfo: {
             count: components["schemas"]["NativeSafeInteger"];
         };
+        NoteAudioStartBackground: {
+            id: components["schemas"]["NoteId"];
+            /** @enum {string} */
+            voice: "boroda" | "grant" | "dzig" | "gerdt" | "Kore";
+            blocks: string[];
+        };
+        NoteAudioAccepted: {
+            attempt_id: components["schemas"]["NoteId"];
+        };
+        NoteAudioBackgroundStatus: {
+            /** @enum {boolean} */
+            pending: true;
+            attempt_id: components["schemas"]["NoteId"];
+        } | {
+            /** @enum {boolean} */
+            pending: false;
+        };
+        NoteAudioChanged: {
+            connection_id: string;
+            /** @enum {string} */
+            event: "noteAudio.changed";
+            id: components["schemas"]["NoteId"];
+            context_epoch: components["schemas"]["NoteId"];
+        };
         NoteAudioStatus: {
             id: components["schemas"]["NoteId"];
             /** @enum {string} */

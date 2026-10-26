@@ -487,7 +487,9 @@ NoteItem Application::set_note_read_only(std::int64_t id, bool read_only, std::u
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     try {
-        return impl_->store->set_note_read_only(id, read_only);
+        auto item = impl_->store->set_note_read_only(id, read_only);
+        if (!read_only) impl_->interrupt_abandoned_audio();
+        return item;
     } catch (const NoteError& error) {
         rethrow_note(error);
     }
@@ -511,6 +513,7 @@ void Application::delete_note_item(std::int64_t id, std::uint64_t epoch) {
     impl_->require_admitted(epoch);
     try {
         impl_->store->delete_note_item(id);
+        impl_->interrupt_abandoned_audio();
     } catch (const NoteError& error) {
         rethrow_note(error);
     }

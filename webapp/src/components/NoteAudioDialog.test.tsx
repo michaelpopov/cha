@@ -7,6 +7,7 @@ import { NoteAudioDialog, noteAudioPhase } from './NoteAudioDialog';
 const initial: NoteAudioStatus = { id: 4, phase: 'uploading', done: false, error: '' };
 function client(): NoteAudioClient {
   return {
+    startBackground: vi.fn().mockResolvedValue({ attempt_id: 1 }), backgroundStatus: vi.fn(),
     info: vi.fn().mockResolvedValue({ count: 2 }), start: vi.fn().mockResolvedValue(initial),
     status: vi.fn().mockResolvedValue(initial), cancel: vi.fn().mockResolvedValue(undefined), source: vi.fn(), release: vi.fn(),
   };
@@ -28,121 +29,90 @@ async function generate() {
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(100000); });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
-describe('note audio generation dialog', () => {
-  it('requires a fresh voice, sends saved blocks once, and locks the active dialog', async () => {
-    const { audio, prepare, onClose } = await open();
+describe('single-note audio setup', () => {
+  it('requires a fresh voice and closes on durable acceptance without polling', async () => {
+    const { audio, onClose, onSettled } = await open();
     expect(screen.getByLabelText('Voice')).toHaveValue('');
     expect(screen.getByLabelText('Voice')).toHaveFocus();
     expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['Select voice', 'boroda', 'grant', 'dzig', 'gerdt', 'Kore']);
-    expect(audio.start).not.toHaveBeenCalled();
     expect(screen.getByText('Existing audio will be replaced after successful generation.')).toBeVisible();
     await generate();
-    expect(prepare).toHaveBeenCalledTimes(1);
-    expect(audio.start).toHaveBeenCalledExactlyOnceWith(4, 'Kore', ['First', 'Second']);
-    expect(screen.getByLabelText('Voice')).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
-    const cancel = new Event('cancel', { cancelable: true });
-    screen.getByRole('dialog').dispatchEvent(cancel);
-    expect(cancel.defaultPrevented).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it('keeps waiting through local read errors and freezes time at native completion', async () => {
-    const audio = client();
-    vi.mocked(audio.status).mockRejectedValueOnce(new Error('bridge lost'))
-      .mockResolvedValueOnce({ ...initial, phase: 'saving' })
-      .mockResolvedValueOnce({ ...initial, phase: 'complete', total: 2, completed: 2, done: true, finished_at_ms: 102900 });
-    await open(audio);
-    await generate();
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-    expect(screen.getByRole('alert')).toHaveTextContent('Could not read generation status');
-    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
-    expect(screen.getByRole('timer')).toHaveTextContent('00:01');
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByText('Saving…')).toBeVisible();
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-    expect(screen.getByText('Audio ready · 2 clips')).toBeVisible();
-    expect(screen.getByRole('timer')).toHaveTextContent('00:02');
-    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    expect(screen.getByRole('timer')).toHaveTextContent('00:02');
-    expect(audio.start).toHaveBeenCalledTimes(1);
-    expect(audio.status).toHaveBeenCalledTimes(3);
-  });
-
-  it.each(['not_found', 'older'])('ends an ambiguous start when status proves it never ran: %s', async outcome => {
-    const audio = client();
-    vi.mocked(audio.start).mockRejectedValue(new ChaError('command_timeout', 'Reply timed out.'));
-    if (outcome === 'not_found') vi.mocked(audio.status).mockRejectedValue(new ChaError('not_found', 'No generation.'));
-    else vi.mocked(audio.status).mockResolvedValue({ ...initial, done: true, finished_at_ms: 99999 });
-    await open(audio); await generate();
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
-    expect(screen.getByRole('alert')).toHaveTextContent('Reply timed out.');
-    expect(screen.queryByText(/Audio ready/)).toBeNull();
-    expect(audio.start).toHaveBeenCalledTimes(1);
-  });
-
-  it('recovers a lost start reply when status confirms an active attempt', async () => {
-    const audio = client();
-    vi.mocked(audio.start).mockRejectedValue(new ChaError('command_timeout', 'Reply timed out.'));
-    vi.mocked(audio.status).mockResolvedValueOnce(initial)
-      .mockResolvedValue({ ...initial, phase: 'complete', total: 2, done: true, finished_at_ms: 101500 });
-    await open(audio); await generate();
-    await tick();
-    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
-    expect(screen.queryByRole('alert')).toBeNull();
-    await tick();
-    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
-    expect(audio.start).toHaveBeenCalledTimes(1);
-  });
-
-  it('includes preparation time and terminates a confirmed rejection without polling', async () => {
-    const audio = client();
-    vi.mocked(audio.start).mockRejectedValue(new ChaError('invalid_argument', 'No text to narrate'));
-    const prepare = vi.fn(async () => { vi.setSystemTime(102400); return []; });
-    await open(audio, prepare); await generate();
-    expect(screen.getByRole('alert')).toHaveTextContent('No text to narrate');
-    expect(screen.getByRole('timer')).toHaveTextContent('00:02');
-    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+    expect(audio.startBackground).toHaveBeenCalledExactlyOnceWith(4, 'Kore', ['First', 'Second']);
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onSettled).not.toHaveBeenCalled();
     expect(audio.status).not.toHaveBeenCalled();
-  });
-
-  it('ends when native start replies with an internal error', async () => {
-    const audio = client();
-    vi.mocked(audio.start).mockRejectedValue(new ChaError('internal_error', 'The request could not be completed.'));
-    await open(audio); await generate();
-    expect(screen.getByRole('alert')).toHaveTextContent('The request could not be completed.');
-    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
-    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-    expect(audio.status).not.toHaveBeenCalled();
-  });
-
-  it('ends locally when preparation fails and does not call start', async () => {
-    const audio = client();
-    await open(audio, vi.fn().mockRejectedValue(new ChaError('not_found', 'Note no longer exists.')));
-    await generate();
-    expect(screen.getByRole('alert')).toHaveTextContent('Note no longer exists.');
-    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
-    expect(audio.start).not.toHaveBeenCalled();
-  });
-
-  it('keeps oversized single-note rejections as errors without folder controls', async () => {
-    const audio = client();
-    vi.mocked(audio.start).mockRejectedValue(new ChaError('body_too_large', 'Too large.'));
-    await open(audio); await generate();
-    expect(screen.getByRole('alert')).toHaveTextContent('Too large.');
+    expect(screen.queryByRole('timer')).toBeNull();
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
-    expect(screen.queryByText('Folder run stopped')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
   });
 
-  it('shows phases without fabricated counts', () => {
+  it('blocks double clicks during preparation and never cancels on unmount', async () => {
+    let resolve!: (blocks: string[]) => void;
+    const prepare = vi.fn(() => new Promise<string[]>(done => { resolve = done; }));
+    const { audio, unmount } = await open(undefined, prepare);
+    await generate();
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+    expect(screen.getByLabelText('Voice')).toBeDisabled();
+    await act(async () => resolve(['Saved text']));
+    expect(audio.startBackground).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(audio.cancel).not.toHaveBeenCalled();
+  });
+
+  it('closes before Generate without submitting', async () => {
+    const { audio, onClose, unmount } = await open();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledOnce();
+    unmount();
+    expect(audio.startBackground).not.toHaveBeenCalled();
+    expect(audio.cancel).not.toHaveBeenCalled();
+  });
+
+  it.each(['invalid_argument', 'body_too_large'] as const)('permits correction and retry after %s', async code => {
+    const audio = client();
+    vi.mocked(audio.startBackground).mockRejectedValueOnce(new ChaError(code, 'Correct this input.'));
+    const { onClose } = await open(audio);
+    await generate();
+    expect(screen.getByRole('alert')).toHaveTextContent('Correct this input.');
+    expect(screen.getByLabelText('Voice')).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Generate' })).toBeEnabled();
+    await generate();
+    expect(audio.startBackground).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('permits retry after a preparation failure', async () => {
+    const prepare = vi.fn().mockRejectedValueOnce(new Error('missing')).mockResolvedValue(['Text']);
+    const { audio } = await open(undefined, prepare);
+    await generate();
+    expect(audio.startBackground).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Generate' })).toBeEnabled();
+    await generate();
+    expect(audio.startBackground).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['command_timeout', 'internal_error', 'operation_cancelled', 'vault_changed', 'application_unavailable', 'server_stopping'] as const)(
+    'keeps an uncertain %s dismissible and prevents another invocation', async code => {
+      const audio = client();
+      vi.mocked(audio.startBackground).mockRejectedValue(new ChaError(code, 'Lost reply.'));
+      const { onClose } = await open(audio);
+      await generate();
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not confirm whether audio generation started. Check Settings → Events before starting again.');
+      expect(screen.getByRole('button', { name: 'Generate' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+      await tick(5000);
+      expect(audio.startBackground).toHaveBeenCalledTimes(1);
+      const cancel = new Event('cancel', { cancelable: true });
+      screen.getByRole('dialog').dispatchEvent(cancel);
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(audio.cancel).not.toHaveBeenCalled();
+    });
+
+  it('shows folder phases without fabricated counts', () => {
     expect(noteAudioPhase({ ...initial, phase: 'generating' })).toBe('Generating');
-    expect(noteAudioPhase({ ...initial, phase: 'generating', completed: 8, total: 20 })).toBe('Generating · 8 of 20 complete');
+    expect(noteAudioPhase({ ...initial, phase: 'generating', completed: 8, total: 20 })).toBe('Generating · 8 of 20 clips complete');
     expect(noteAudioPhase({ ...initial, phase: 'queued' })).toBe('Queued');
   });
 });

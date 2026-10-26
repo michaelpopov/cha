@@ -121,9 +121,18 @@ export type NoteBookImport = {
   notes: { name: string; document: Record<string, unknown> }[];
 };
 
+export function backgroundAudioStartRejected(failure: unknown): boolean {
+  return failure instanceof ChaError && ['invalid_argument', 'not_found', 'body_too_large',
+    'command_queue_full'].includes(failure.code);
+}
+
 export type NoteAudioInfo = components['schemas']['NoteAudioInfo'];
 export type NoteAudioStatus = components['schemas']['NoteAudioStatus'];
+export type NoteAudioAccepted = components['schemas']['NoteAudioAccepted'];
+export type NoteAudioBackgroundStatus = components['schemas']['NoteAudioBackgroundStatus'];
 export interface NoteAudioClient {
+  startBackground(id: number, voice: string, blocks: string[]): Promise<NoteAudioAccepted>;
+  backgroundStatus(id: number): Promise<NoteAudioBackgroundStatus>;
   info(id: number): Promise<NoteAudioInfo>;
   start(id: number, voice: string, blocks: string[]): Promise<NoteAudioStatus>;
   status(id: number): Promise<NoteAudioStatus>;

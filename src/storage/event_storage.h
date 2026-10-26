@@ -27,6 +27,9 @@ void create_event_history_schema(storage::SqliteDatabase& database);
 // Owns the insert-and-trim transaction; throws on failure.
 void event_append(storage::SqliteDatabase& database,
     EventSeverity severity, std::string_view message);
+// Caller owns the transaction.
+void event_append_in_transaction(storage::SqliteDatabase& database,
+    EventSeverity severity, std::string_view message);
 // Read-only; throws on failure.
 std::vector<ActivityEvent> event_list(storage::SqliteDatabase& database);
 void to_json(nlohmann::json& json, const ActivityEvent& event);

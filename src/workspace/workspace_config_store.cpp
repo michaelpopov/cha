@@ -2583,6 +2583,31 @@ NoteAudioClip WorkspaceConfigStore::get_note_audio_clip(std::int64_t id, std::in
     const std::lock_guard lock(impl_->mutex);
     return note_audio_clip(*impl_->database, id, ordinal);
 }
+std::optional<NoteAudioAttempt> WorkspaceConfigStore::get_note_audio_attempt() const {
+    const std::lock_guard lock(impl_->mutex);
+    if (consume_runtime_fault(WorkspaceConfigFault::note_audio_read))
+        throw std::runtime_error("Forced audio attempt read failure");
+    return note_audio_attempt(*impl_->database);
+}
+NoteAudioAttempt WorkspaceConfigStore::accept_note_audio(std::int64_t id, std::int64_t count,
+    std::string_view origin, std::string_view key_id,
+    const std::function<void(const NoteAudioAttempt&)>& launch) {
+    const std::lock_guard lock(impl_->mutex);
+    return note_audio_accept(*impl_->database, id, count, origin, key_id, launch);
+}
+bool WorkspaceConfigStore::register_note_audio(std::int64_t id, std::string_view batch_id, std::string_view voice) {
+    const std::lock_guard lock(impl_->mutex);
+    return note_audio_register(*impl_->database, id, batch_id, voice);
+}
+bool WorkspaceConfigStore::finish_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips) {
+    const std::lock_guard lock(impl_->mutex);
+    return note_audio_finish(*impl_->database, id, clips);
+}
+bool WorkspaceConfigStore::retire_note_audio(std::int64_t id, EventSeverity severity, std::string_view message) {
+    const std::lock_guard lock(impl_->mutex);
+    return note_audio_retire(*impl_->database, id, severity, message);
+}
+
 void WorkspaceConfigStore::save_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips) {
     const std::lock_guard lock(impl_->mutex);
     note_save_audio(*impl_->database, id, clips);

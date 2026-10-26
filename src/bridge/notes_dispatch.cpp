@@ -64,6 +64,7 @@ std::optional<nlohmann::json> dispatch_notes_operation(
     const nlohmann::json& params,
     std::uint64_t epoch) {
     switch (method) {
+    case Method::note_audio_start_background:
     case Method::note_audio_start: {
         require_only_keys(params, {"id", "voice", "blocks"});
         if (!params.contains("blocks") || !params.at("blocks").is_array())
@@ -73,11 +74,16 @@ std::optional<nlohmann::json> dispatch_notes_operation(
             if (!block.is_string()) throw std::invalid_argument("Block texts must be strings.");
             blocks.push_back(block.get<std::string>());
         }
+        if (method == Method::note_audio_start_background)
+            return application.start_background_note_audio(require_note_id(params), require_string(params, "voice"), std::move(blocks), epoch);
         return application.start_note_audio(require_note_id(params), require_string(params, "voice"), std::move(blocks), epoch);
     }
     case Method::note_audio_cancel:
         require_only_keys(params, {"id"});
         return application.cancel_note_audio(require_note_id(params), epoch);
+    case Method::note_audio_background_status:
+        require_only_keys(params, {"id"});
+        return application.background_note_audio_status(require_note_id(params), epoch);
     case Method::note_audio_status:
         require_only_keys(params, {"id"});
         return application.get_note_audio_status(require_note_id(params), epoch);
