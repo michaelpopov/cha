@@ -1433,6 +1433,7 @@ struct WorkspaceConfigStore::Impl {
         {
             storage::SqliteTransaction transaction(*database);
             create_note_items_schema(*database);
+            create_event_history_schema(*database);
             transaction.commit();
         }
         validate_workspace_session_contents(*database);
@@ -2585,6 +2586,16 @@ NoteAudioClip WorkspaceConfigStore::get_note_audio_clip(std::int64_t id, std::in
 void WorkspaceConfigStore::save_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips) {
     const std::lock_guard lock(impl_->mutex);
     note_save_audio(*impl_->database, id, clips);
+}
+
+void WorkspaceConfigStore::append_event(EventSeverity severity, std::string_view message) {
+    const std::lock_guard lock(impl_->mutex);
+    event_append(*impl_->database, severity, message);
+}
+
+std::vector<ActivityEvent> WorkspaceConfigStore::list_events() const {
+    const std::lock_guard lock(impl_->mutex);
+    return event_list(*impl_->database);
 }
 
 std::vector<NoteItem> WorkspaceConfigStore::list_note_items() const {

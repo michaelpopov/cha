@@ -268,6 +268,26 @@ export function CheckIcon(props: IconProps) {
   );
 }
 
+export function InformationIcon(props: IconProps) {
+  return <Icon {...props}>
+    <circle cx="12" cy="12" r="9" {...stroke} />
+    <path d="M12 11v6M12 7v.1" {...stroke} />
+  </Icon>;
+}
+
+export function WarningIcon(props: IconProps) {
+  return <Icon {...props}>
+    <path d="m12 3 10 18H2ZM12 9v5M12 17v.1" {...stroke} />
+  </Icon>;
+}
+
+export function ErrorIcon(props: IconProps) {
+  return <Icon {...props}>
+    <circle cx="12" cy="12" r="9" {...stroke} />
+    <path d="m9 9 6 6M15 9l-6 6" {...stroke} />
+  </Icon>;
+}
+
 export function CloseIcon(props: IconProps) {
   return (
     <Icon {...props}>

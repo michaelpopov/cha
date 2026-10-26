@@ -1,5 +1,6 @@
 #include "app/application.h"
 #include "providers/api_key_store.h"
+#include "storage/sqlite_storage.h"
 
 #include "support/test_workspace.h"
 #include "support/mock_http_server.h"
@@ -74,6 +75,57 @@ TEST(RuntimeSettings, DefaultsHavePositiveBatchSizes) {
     const RuntimeSettings settings;
     EXPECT_GT(settings.command_batch_size, 0U);
     EXPECT_GT(settings.event_batch_size, 0U);
+}
+
+TEST(Application, EventsAreBestEffortAndReadFailuresHidePrivateData) {
+    test::TestWorkspace workspace;
+    const auto path = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, path));
+    const auto epoch = application->context_epoch();
+    EXPECT_TRUE(application->list_events(epoch).empty());
+    application->record_event(EventSeverity::success, "Saved entry", epoch);
+    ASSERT_EQ(application->list_events(epoch).size(), 1U);
+    EXPECT_EQ(application->list_events(epoch)[0].message, "Saved entry");
+
+    const auto log = workspace.root() / "events.log";
+    initialize_diagnostic_logging(log, "warn");
+    storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+    database.execute("CREATE TRIGGER fail_event BEFORE INSERT ON event_history "
+        "BEGIN SELECT RAISE(ABORT, 'private SQL diagnostic'); END");
+    EXPECT_NO_THROW(application->record_event(EventSeverity::error, "private event payload", epoch));
+    EXPECT_NO_THROW(application->record_event(EventSeverity::info, "private stale payload", epoch + 1));
+    EXPECT_EQ(application->list_events(epoch).size(), 1U);
+    database.execute("DROP TABLE event_history");
+    EXPECT_NO_THROW(application->record_event(EventSeverity::info, "private missing table payload", epoch));
+    try {
+        (void)application->list_events(epoch);
+        FAIL() << "Expected read failure";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::internal_error);
+        EXPECT_STREQ(error.what(), "Could not load events");
+    }
+    try {
+        (void)application->list_events(epoch + 1);
+        FAIL() << "Expected stale context failure";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::vault_changed);
+    }
+    application->request_shutdown();
+    ASSERT_TRUE(application->join_shutdown(2s));
+    EXPECT_NO_THROW(application->record_event(EventSeverity::info, "private shutdown payload", epoch));
+    try {
+        (void)application->list_events(epoch);
+        FAIL() << "Expected unavailable context failure";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::application_unavailable);
+    }
+    shutdown_diagnostic_logging();
+    std::ifstream input(log);
+    const std::string warnings{std::istreambuf_iterator<char>(input), {}};
+    EXPECT_NE(warnings.find("Event recording failed"), std::string::npos);
+    EXPECT_NE(warnings.find("Event dropped: originating context unavailable"), std::string::npos);
+    EXPECT_NE(warnings.find("Event history read failed"), std::string::npos);
+    EXPECT_EQ(warnings.find("private"), std::string::npos);
 }
 
 TEST(Application, PictureReadsNeedNoSessionAndUseApplicationErrors) {

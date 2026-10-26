@@ -19,6 +19,28 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it('reads event snapshots without changing their order or contents', async () => {
+    const items = [{ id: 2, recorded_at: 0, severity: 'info', message: '日本語' },
+      { id: 1, recorded_at: 10, severity: 'success', message: 'Done' }];
+    const list = vi.fn(() => ({ items }));
+    const client = createNativeChaClient(createFakeNativeBridge({ 'events.list': list }));
+    expect(await client.listEvents()).toEqual(items);
+    expect(list).toHaveBeenCalledExactlyOnceWith({});
+  });
+
+  it.each([
+    null, [], {}, { items: null }, { items: [], extra: true },
+    ...[
+      { id: undefined }, { recorded_at: undefined }, { severity: undefined }, { message: undefined },
+      { id: 0 }, { id: 1.5 }, { id: Number.MAX_SAFE_INTEGER + 1 },
+      { recorded_at: -1 }, { recorded_at: 1.5 }, { recorded_at: 8640000000001 }, { severity: 'debug' },
+      { message: '' }, { message: null }, { extra: true },
+    ].map(patch => ({ items: [{ id: 1, recorded_at: 10, severity: 'info', message: 'Entry', ...patch }] })),
+  ])('rejects malformed event replies: %j', async (reply) => {
+    const client = createNativeChaClient(createFakeNativeBridge({ 'events.list': () => reply }));
+    await expect(client.listEvents()).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it.each(['macos', 'windows'])('uses the %s note audio payload and validates terminal timestamps and optional counts', async (platform) => {
     const initial = { id: 4, phase: 'uploading', done: false, error: '' };
     const start = vi.fn(() => initial);

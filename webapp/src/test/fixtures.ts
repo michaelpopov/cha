@@ -313,6 +313,7 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     getSessionNamingSettings: async () => ({ provider: '', reasoning_effort: 'low' }),
     saveSessionNamingSettings: async (settings) => settings,
     getNotesSettings: async () => ({ compression_provider: '', compression_reasoning_effort: 'high' }),
+    listEvents: async () => [],
     saveNotesSettings: async (settings) => settings,
     disableJev: async () => {},
     getWebSearchSettings: async () => ({

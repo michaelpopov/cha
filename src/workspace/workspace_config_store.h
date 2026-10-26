@@ -4,6 +4,7 @@
 #include "chat/character_metadata.h"
 #include "providers/credentials.h"
 #include "storage/note_storage.h"
+#include "storage/event_storage.h"
 #include "storage/session_lease.h"
 #include "workspace/workspace.h"
 
@@ -353,6 +354,9 @@ public:
         const SessionLease& source_lease,
         std::string_view source_password = {},
         const std::function<void()>& prepare_source = {});
+
+    void append_event(EventSeverity severity, std::string_view message);
+    [[nodiscard]] std::vector<ActivityEvent> list_events() const;
 
     [[nodiscard]] std::vector<NoteItem> list_note_items() const;
     [[nodiscard]] std::int64_t import_note_book(

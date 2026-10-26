@@ -102,6 +102,36 @@ async function openSettingsNavigation() {
   fireEvent.click(settings);
 }
 
+it('opens Events from Settings and clears rows on same-vault context resets', async () => {
+  const first = [{ id: 1, recorded_at: 10, severity: 'info' as const, message: 'Original history' }];
+  const stale = deferred();
+  const newest = deferred();
+  const listEvents = vi.fn<ChaClient['listEvents']>()
+    .mockResolvedValueOnce(first)
+    .mockImplementationOnce(async () => { await stale.promise; return [{ ...first[0], message: 'Late history' }]; })
+    .mockImplementationOnce(async () => { await newest.promise; return [{ ...first[0], message: 'Current history' }]; });
+  let contextChanged!: (event: { state: string; causing_request_id: number }) => void;
+  const contextEvents = { on: vi.fn((_name, handler) => { contextChanged = handler; return () => {}; }) };
+  render(<App client={fixtureClient({ listEvents })} contextEvents={contextEvents} connectSessionEvents={inertSessionEvents} />);
+  await screen.findByLabelText('Vault');
+  await openSettingsNavigation();
+  fireEvent.click(await screen.findByRole('button', { name: 'Events' }));
+  expect(await screen.findByText('Original history')).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Events' })).toBeInTheDocument();
+  const settings = within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' });
+  expect(settings).toHaveAttribute('aria-current', 'page');
+  act(() => contextChanged({ state: 'running', causing_request_id: 1 }));
+  expect(screen.queryByText('Original history')).not.toBeInTheDocument();
+  await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(2));
+  act(() => contextChanged({ state: 'running', causing_request_id: 2 }));
+  await waitFor(() => expect(listEvents).toHaveBeenCalledTimes(3));
+  await act(async () => newest.settle());
+  expect(await screen.findByText('Current history')).toBeInTheDocument();
+  await act(async () => stale.settle());
+  expect(screen.queryByText('Late history')).not.toBeInTheDocument();
+  expect(screen.getByText('Current history')).toBeInTheDocument();
+});
+
 // Recent also carries a Planning row, so the stored-session row is reached
 // through the sessions list itself.
 async function openPlanningFromTheLobby() {

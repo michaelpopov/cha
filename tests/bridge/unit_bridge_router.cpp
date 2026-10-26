@@ -172,6 +172,28 @@ protected:
     std::uint64_t next_id_{1};
 };
 
+TEST_F(BridgeRouterTest, EventsListUsesEmptyParametersAndReturnsOnlyStoredRecords) {
+    bootstrap_epoch();
+    EXPECT_EQ(call("events.list")["result"], (nlohmann::json{{"items", nlohmann::json::array()}}));
+    application_->record_event(EventSeverity::warning, "Check the connection.", epoch_);
+    const auto reply = call("events.list");
+    ASSERT_TRUE(reply["ok"]);
+    ASSERT_EQ(reply["result"]["items"].size(), 1U);
+    const auto item = reply["result"]["items"][0];
+    EXPECT_EQ(item.size(), 4U);
+    EXPECT_GT(item["id"].get<std::int64_t>(), 0);
+    EXPECT_GE(item["recorded_at"].get<std::int64_t>(), 0);
+    EXPECT_EQ(item["severity"], "warning");
+    EXPECT_EQ(item["message"], "Check the connection.");
+    EXPECT_FALSE(call("events.list", {{"unused", true}})["ok"]);
+    storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+    database.execute("DROP TABLE event_history");
+    const auto failed = call("events.list");
+    EXPECT_FALSE(failed["ok"]);
+    EXPECT_EQ(failed["error"]["code"], "internal_error");
+    EXPECT_EQ(failed["error"]["message"], "Could not load events");
+}
+
 TEST_F(BridgeRouterTest, NoteTextFileReadingUsesFullPathsAndValidatesTextWithoutChangingNotes) {
     bootstrap_epoch();
     const auto path = workspace_.root() / path_from_utf8("Plan с пробелами.md");

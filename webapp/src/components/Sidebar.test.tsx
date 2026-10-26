@@ -173,7 +173,7 @@ describe('Sidebar navigation', () => {
     'characters', 'character-instructions', 'new-character', 'character-detail', 'character-file',
     'new-character-file', 'character-files', 'character-settings', 'forums', 'new-forum',
     'sessions', 'forum-detail', 'forum-file', 'new-forum-file',
-    'forum-members', 'settings', 'settings-vaults',
+    'forum-members', 'settings', 'settings-vaults', 'settings-events',
     'settings-provider', 'settings-style', 'settings-voice', 'settings-api-key',
   ] satisfies MainView[])('keeps Settings current on %s', (mainView) => {
     renderSidebar({ ...readyState(), mainView });

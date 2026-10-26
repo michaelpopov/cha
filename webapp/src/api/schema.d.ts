@@ -7,6 +7,17 @@ export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ActivityEvent: {
+            id: number;
+            /** @description Whole seconds since the Unix epoch, UTC. */
+            recorded_at: number;
+            /** @enum {string} */
+            severity: "info" | "success" | "warning" | "error";
+            message: string;
+        };
+        ActivityEventList: {
+            items: components["schemas"]["ActivityEvent"][];
+        };
         /** @example lobby */
         Identifier: string;
         EmptyObject: Record<string, never>;

@@ -7,6 +7,36 @@ info:
 paths: {}
 components:
   schemas:
+    ActivityEvent:
+      type: object
+      additionalProperties: false
+      required: [id, recorded_at, severity, message]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        recorded_at:
+          type: integer
+          minimum: 0
+          description: Whole seconds since the Unix epoch, UTC.
+        severity:
+          type: string
+          enum: [info, success, warning, error]
+        message:
+          type: string
+          minLength: 1
+
+    ActivityEventList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityEvent"
+
     Identifier:
       type: string
       minLength: 1

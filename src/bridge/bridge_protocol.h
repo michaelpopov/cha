@@ -104,6 +104,7 @@ enum class Method {
     session_naming_save,
     notes_settings_get,
     notes_settings_save,
+    events_list,
     web_search_get,
     web_search_save,
     voice_input_get,

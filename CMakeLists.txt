@@ -316,6 +316,7 @@ add_library(cha_lib STATIC
     src/session/session_controller.cpp
     src/storage/session_database.cpp
     src/storage/note_storage.cpp
+    src/storage/event_storage.cpp
     src/storage/session_label.cpp
     src/storage/session_lease.cpp
     src/storage/session_repository.cpp
@@ -341,6 +342,7 @@ add_library(cha_lib STATIC
     src/media/audio_download.cpp
     src/app/media_operations.cpp
     src/app/notes_operations.cpp
+    src/app/events_operations.cpp
     src/app/note_audio_operations.cpp
     src/media/note_audio.cpp
     src/media/note_audio_codec.cpp
@@ -536,6 +538,7 @@ if(BUILD_TESTING)
         tests/session/unit_session_controller.cpp
         tests/storage/unit_session_lease.cpp
         tests/storage/unit_note_storage.cpp
+        tests/storage/unit_event_storage.cpp
         tests/storage/unit_session_repository.cpp
         tests/storage/unit_workspace_session_database.cpp
         tests/session/unit_controller_update.cpp

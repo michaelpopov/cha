@@ -74,6 +74,8 @@ export type VaultUploadCheck = {
   context_epoch: number;
 };
 export type NoteItem = components['schemas']['NoteItem'];
+export type ActivityEvent = components['schemas']['ActivityEvent'];
+export type ActivityEventList = components['schemas']['ActivityEventList'];
 export type NoteContent = components['schemas']['NoteContent'];
 
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
@@ -249,6 +251,7 @@ export interface ChaClient {
   getSessionNamingSettings(): Promise<SessionNamingSettings>;
   saveSessionNamingSettings(settings: SessionNamingSettings): Promise<SessionNamingSettings>;
   getNotesSettings(): Promise<NotesSettings>;
+  listEvents(): Promise<ActivityEvent[]>;
   saveNotesSettings(settings: NotesSettings): Promise<NotesSettings>;
   getWebSearchSettings(): Promise<WebSearchSettings>;
   saveWebSearchSettings(settings: WebSearchSettings): Promise<WebSearchSettings>;
@@ -673,6 +676,17 @@ export function isCommandResult(value: unknown): value is CommandResult {
 
 function isUnsignedInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+export function isActivityEventList(value: unknown): value is ActivityEventList {
+  return isRecord(value) && Object.keys(value).length === 1
+    && Array.isArray(value.items) && value.items.every((event) => isRecord(event)
+      && Object.keys(event).length === 4
+      && isUnsignedInteger(event.id) && event.id > 0
+      && isUnsignedInteger(event.recorded_at)
+      && Number.isFinite(new Date(event.recorded_at * 1000).getTime())
+      && isOneOf(event.severity, ['info', 'success', 'warning', 'error'])
+      && typeof event.message === 'string' && event.message.length > 0);
 }
 
 function isTranscriptEntry(value: unknown): boolean {

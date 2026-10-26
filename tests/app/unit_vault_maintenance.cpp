@@ -89,6 +89,31 @@ struct TwoVaults {
     ApplicationCommand command;
 };
 
+TEST(VaultMaintenance, EventsRejectOldEpochsAfterSwitchAndSameVaultReopen) {
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    const auto original = application->context_epoch();
+    application->record_event(EventSeverity::info, "Vault A", original);
+    const auto switched = application->switch_vault("B", {}, original);
+    application->record_event(EventSeverity::error, "Late A", original);
+    EXPECT_TRUE(application->list_events(switched.context_epoch).empty());
+    application->record_event(EventSeverity::success, "Vault B", switched.context_epoch);
+    const auto back = application->switch_vault("A", {}, switched.context_epoch);
+    application->record_event(EventSeverity::error, "Late original A", original);
+    ASSERT_EQ(application->list_events(back.context_epoch).size(), 1U);
+    EXPECT_EQ(application->list_events(back.context_epoch)[0].message, "Vault A");
+    EXPECT_THROW((void)application->list_events(original), ApplicationError);
+    (void)application->update_vault("A", {.display_name = "A", .password = "secret"}, back.context_epoch);
+    const auto reopened = application->context_epoch();
+    ASSERT_GT(reopened, back.context_epoch);
+    application->record_event(EventSeverity::error, "Late before protection", back.context_epoch);
+    EXPECT_THROW((void)application->list_events(back.context_epoch), ApplicationError);
+    ASSERT_EQ(application->list_events(reopened).size(), 1U);
+    EXPECT_EQ(application->list_events(reopened)[0].message, "Vault A");
+    application->record_event(EventSeverity::success, "Protected A", reopened);
+    EXPECT_EQ(application->list_events(reopened).size(), 2U);
+}
+
 std::string file_contents(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};

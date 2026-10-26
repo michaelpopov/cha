@@ -1779,6 +1779,40 @@ select.cha-form-control {
   padding-top: 1.2rem;
 }
 
+.cha-event-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cha-event-row {
+  padding-block: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.cha-event-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  color: var(--muted-foreground);
+}
+
+.cha-event-meta [role="img"] {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.cha-event-meta time {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cha-event-message {
+  margin: 0.5rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .cha-settings-card {
   display: grid;
   flex-shrink: 0;

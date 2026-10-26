@@ -22,6 +22,10 @@ std::optional<nlohmann::json> dispatch_settings_operation(
     std::uint64_t epoch) {
     nlohmann::json result = nlohmann::json::object();
     switch (method) {
+    case Method::events_list:
+        require_only_keys(params, {});
+        result = {{"items", application.list_events(epoch)}};
+        break;
     case Method::provider_list:
         require_only_keys(params, {});
         result = application.list_providers(epoch);

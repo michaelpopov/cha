@@ -11,6 +11,7 @@
 #include "runtime/protocol.h"
 #include "app/r2_database_transfer.h"
 #include "storage/note_storage.h"
+#include "storage/event_storage.h"
 #include "workspace/workspace_config_store.h"
 
 #include <chrono>
@@ -552,6 +553,11 @@ public:
     [[nodiscard]] R2DatabaseTransfer download_database(std::uint64_t epoch);
     [[nodiscard]] WorkspaceConfigTransfer import_configuration(std::uint64_t epoch);
     [[nodiscard]] WorkspaceConfigTransfer export_configuration(std::uint64_t epoch);
+
+    // Call outside lifecycle/store locks, after the producer's transaction ends.
+    // Use request handlers or BackgroundJobs, never actor/provider callbacks.
+    void record_event(EventSeverity severity, std::string_view message, std::uint64_t epoch) noexcept;
+    [[nodiscard]] std::vector<ActivityEvent> list_events(std::uint64_t epoch);
 
     [[nodiscard]] std::vector<NoteItem> list_note_items(std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> compress_note(

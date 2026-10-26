@@ -100,6 +100,7 @@ import { R2StorageScreen } from './R2StorageSettings';
 import { SessionSettingsScreen } from './SessionSettings';
 import { WebSearchSettingsScreen } from './WebSearchSettings';
 import { NotesSettingsScreen } from './NotesSettings';
+import { EventsScreen } from './EventsScreen';
 
 interface ScreenProps extends ChatActions {
   playbackPositions: Map<string, Map<number, number>>;
@@ -424,6 +425,7 @@ function ScreenContent({
     );
     case 'settings-jev': return <SessionSettingsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />;
     case 'settings-notes': return <NotesSettingsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />;
+    case 'settings-events': return <EventsScreen key={state.notesEpoch} client={client} navigate={navigate} />;
     case 'settings-web-search': return <WebSearchSettingsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />;
     case 'settings-voice-input': return (
       <VoiceSettingsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />

@@ -39,6 +39,7 @@ import {
   isJevSettings,
   isSessionNamingSettings,
   isNotesSettings,
+  isActivityEventList,
   isWebSearchSettings,
   type JevSettings,
   type SessionNamingSettings,
@@ -646,6 +647,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     saveSessionNamingSettings: (settings: SessionNamingSettings) => call(
       'sessionNaming.save', settings, isSessionNamingSettings),
     getNotesSettings: () => call('notesSettings.get', {}, isNotesSettings),
+    listEvents: async () => (await call('events.list', {}, isActivityEventList)).items,
     saveNotesSettings: (settings: NotesSettings) => call(
       'notesSettings.save', settings, isNotesSettings),
     getWebSearchSettings: () => call('webSearch.get', {}, isWebSearchSettings),
