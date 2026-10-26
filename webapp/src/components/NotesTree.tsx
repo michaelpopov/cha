@@ -99,6 +99,7 @@ type MenuState = {
   x: number;
   y: number;
   restore: HTMLElement | null;
+  audioPending: boolean;
 };
 
 export type NoteDeleteResult = 'deleted' | 'refresh-failed' | 'busy' | 'failed';
@@ -460,7 +461,7 @@ export function NotesTree({
     return refreshed;
   }
 
-  function openMenu(sourceId: string, anchor: HTMLElement) {
+  async function openMenu(sourceId: string, anchor: HTMLElement) {
     if (!canMutateNow()) return;
     const item = treeRef.current.getItemInstance(sourceId);
     item.setFocused();
@@ -468,7 +469,21 @@ export function NotesTree({
     // after the menu (or its dialog) has focused its first control.
     item.getElement()?.focus();
     const rect = anchor.getBoundingClientRect();
-    setMenu({ sourceId, x: rect.left, y: rect.bottom, restore: anchor });
+    const note = itemsRef.current.find(entry => String(entry.id) === sourceId);
+    const audio = clientRef.current.noteAudio;
+    const checkAudio = audio && note?.kind === 'note' && note.read_only;
+    const opened = { sourceId, x: rect.left, y: rect.bottom, restore: anchor, audioPending: !!checkAudio };
+    setMenu(opened);
+    if (!checkAudio) return;
+    let audioPending = false;
+    try {
+      audioPending = (await audio.backgroundStatus(note.id)).pending;
+    } catch {
+      // Starting generation still checks the native pending status.
+    }
+    if (alive.current) {
+      setMenu(current => current === opened ? { ...current, audioPending } : current);
+    }
   }
 
   function closeMenu(restore: boolean) {
@@ -868,7 +883,7 @@ export function NotesTree({
                 </button>
               )}
               {client.noteAudio && index.rows[menu.sourceId]?.kind !== 'annotation' && <button
-                disabled={menuIsNote && !items.find(item => String(item.id) === menu.sourceId)?.read_only}
+                disabled={menu.audioPending || (menuIsNote && !items.find(item => String(item.id) === menu.sourceId)?.read_only)}
                 onClick={() => {
                   const source = takeMenuSource();
                   if (!source) return;

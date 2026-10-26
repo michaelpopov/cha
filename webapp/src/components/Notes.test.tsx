@@ -159,7 +159,7 @@ describe('Notes in the application', () => {
     expect(screen.queryByText('Something went wrong while showing CHA.')).not.toBeInTheDocument();
   });
 
-  it('generates from the selected saved document and stops playback when its dialog opens', async () => {
+  it('generates saved blocks and disables another generation while the note is pending', async () => {
     const changed = vi.fn();
     window.addEventListener('cha-note-audio-changed', changed);
     const document = { type: 'doc', content: [
@@ -167,14 +167,20 @@ describe('Notes in the application', () => {
       { type: 'paragraph', content: [{ type: 'text', text: 'First' }, { type: 'hardBreak' }, { type: 'text', text: 'Second' }] },
     ] };
     const start = vi.fn(async () => ({ attempt_id: 1 }));
+    const backgroundStatus = vi.fn()
+      .mockResolvedValueOnce({ pending: false })
+      .mockResolvedValueOnce({ pending: true, attempt_id: 1 })
+      .mockResolvedValueOnce({ pending: false });
     try {
       render(<App client={fixtureClient({
         listNoteItems: async () => [{ ...plan, read_only: true }],
         getNote: async id => ({ id, document }),
-        noteAudio: { startBackground: start, backgroundStatus: vi.fn(), info: async () => ({ count: 0 }), start: vi.fn(), status: vi.fn(), cancel: vi.fn(), source: vi.fn(), release: vi.fn() },
+        noteAudio: { startBackground: start, backgroundStatus, info: async () => ({ count: 0 }), start: vi.fn(), status: vi.fn(), cancel: vi.fn(), source: vi.fn(), release: vi.fn() },
       })} />);
       await openNotes();
       fireEvent.click(await screen.findByRole('button', { name: 'Actions for Plan' }));
+      expect(screen.getByRole('menuitem', { name: 'Generate audio' })).toBeDisabled();
+      await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Generate audio' })).toBeEnabled());
       fireEvent.click(screen.getByRole('menuitem', { name: 'Generate audio' }));
       const dialog = await screen.findByRole('dialog', { name: 'Generate note audio' });
       expect(changed).toHaveBeenCalledOnce();
@@ -185,6 +191,19 @@ describe('Notes in the application', () => {
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
       expect(start).toHaveBeenCalledExactlyOnceWith(plan.id, 'grant', ['Title', 'First\nSecond']);
       expect(changed).toHaveBeenCalledTimes(1);
+
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' })));
+      expect(backgroundStatus).toHaveBeenLastCalledWith(plan.id);
+      expect(screen.getByRole('menuitem', { name: 'Generate audio' })).toBeDisabled();
+      expect(screen.getByRole('menuitem', { name: 'Make editable' })).toBeEnabled();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Generate audio' }));
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(start).toHaveBeenCalledOnce();
+
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+      fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+      await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Generate audio' })).toBeEnabled());
+      expect(backgroundStatus).toHaveBeenCalledTimes(3);
     } finally { window.removeEventListener('cha-note-audio-changed', changed); }
   });
 
