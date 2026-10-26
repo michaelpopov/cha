@@ -259,7 +259,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     release: async (resourceId: string) => { await call('speech.release', { resource_id: resourceId }, isRecord); },
   };
   return {
-    get noteAudio() { return platform === 'macos' ? noteAudio : undefined; },
+    get noteAudio() { return platform === 'macos' || platform === 'windows' ? noteAudio : undefined; },
     getBootstrap: async () => {
       platform = (await connectNativeBridge(bridge)).platform;
       const result = await bridge.invoke('app.bootstrap', {});

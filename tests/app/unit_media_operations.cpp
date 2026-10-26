@@ -81,7 +81,7 @@ std::optional<ResourceBytes> wait_resource(Application& application, const std::
 }
 
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
 TEST(ApplicationMedia, NoteAudioCommitHonorsContextAndNoteLifetime) {
     using Json = nlohmann::json;
     for (const auto& action : {"complete", "delete", "switch", "cancel"}) {

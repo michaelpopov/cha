@@ -436,7 +436,7 @@ if(WIN32)
         PUBLIC
             NOMINMAX
             WIN32_LEAN_AND_MEAN)
-    target_link_libraries(cha_lib PUBLIC advapi32 PRIVATE bcrypt)
+    target_link_libraries(cha_lib PUBLIC advapi32 PRIVATE bcrypt mfplat mfreadwrite mfuuid ole32)
 elseif(APPLE)
     find_library(CHA_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
     target_link_libraries(cha_lib PRIVATE "${CHA_COREFOUNDATION_FRAMEWORK}")

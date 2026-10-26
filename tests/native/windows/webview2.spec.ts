@@ -242,6 +242,25 @@ async function trackClose(page: Page, withhold = false): Promise<void> {
   }, withhold);
 }
 
+test('note audio parity', async () => {
+  test.skip(!process.env.CHA_NATIVE_PARITY_SCRIPT, 'Run through the note audio fixture service.');
+  test.setTimeout(90_000);
+  const launched = await launchHost(process.env.CHA_NATIVE_TEST_CONFIG);
+  try {
+    const page = launched.browser.contexts()[0].pages()[0];
+    await page.waitForSelector('textarea[aria-label="Message"]:not(:disabled)');
+    const script = readFileSync(process.env.CHA_NATIVE_PARITY_SCRIPT!, 'utf8');
+    const result = await page.evaluate(`${script}\nnativeParity()`);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    nativeWindow(launched.child, 'close');
+    await expect.poll(() => launched.child.exitCode).toBe(0);
+  } finally {
+    await launched.browser.close().catch(() => undefined);
+    if (launched.child.exitCode === null) launched.child.kill();
+    await expect.poll(() => launched.child.exitCode).not.toBeNull();
+  }
+});
+
 test.describe('WebView2 native host', () => {
   test.skip(
     !executable || !assets || !prepareVault,

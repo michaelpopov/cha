@@ -4,6 +4,13 @@
 #include "util/base64.h"
 #include <gtest/gtest.h>
 #include <fstream>
+#ifdef _WIN32
+#include <windows.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <wrl/client.h>
+#endif
 #ifdef __APPLE__
 #include <AudioToolbox/AudioToolbox.h>
 #endif
@@ -136,7 +143,7 @@ TEST(NoteAudioService, PreCancelledAttemptMakesNoRequests) {
     EXPECT_FALSE(std::filesystem::exists(workspace.root() / "0.m4a"));
 }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
 TEST_F(NoteAudioServiceTest, CancellationInterruptsRemoteWaitBeforeAnotherRead) {
     cancel_on_wait = true;
     EXPECT_THROW(run({json_response(operation())}), std::runtime_error);
@@ -210,6 +217,8 @@ TEST_F(NoteAudioServiceTest, RejectsIncompleteDuplicateUnknownAndFailedItems) {
     bad_base64["response"]["candidates"][0]["content"]["parts"][0]["inlineData"]["data"] = "????";
     EXPECT_THROW(run({json_response(operation(true)), http_response("application/jsonl", bad_base64.dump())}), std::runtime_error);
 }
+#endif
+#ifdef __APPLE__
 TEST(NoteAudioCodec, ConvertsAndFullyDecodesShortNormalAndLongClipsAndRejectsTruncation) {
     test::TestWorkspace workspace;
     const auto source = workspace.root() / "source.wav", output = workspace.root() / "encoded.m4a";
@@ -244,6 +253,73 @@ TEST(NoteAudioCodec, ConvertsAndFullyDecodesShortNormalAndLongClipsAndRejectsTru
     }
     const auto truncated = wav().substr(0, 100);
     { std::ofstream file(source, std::ios::binary); file.write(truncated.data(), static_cast<std::streamsize>(truncated.size())); }
+    EXPECT_THROW(encode_note_audio(source, output), std::runtime_error);
+}
+#endif
+#ifdef _WIN32
+TEST(NoteAudioCodec, WindowsResamplesAndDecodesShortNormalAndLongClips) {
+    using Microsoft::WRL::ComPtr;
+    ASSERT_TRUE(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)));
+    struct Runtime {
+        ~Runtime() { MFShutdown(); CoUninitialize(); }
+    } runtime;
+    ASSERT_TRUE(SUCCEEDED(MFStartup(MF_VERSION)));
+    test::TestWorkspace workspace;
+    const auto source = workspace.root() / L"narration-\u97f3.wav";
+    const auto output = workspace.root() / L"narration-\u97f3.m4a";
+    for (const std::size_t frames : {2400u, 48000u, 1440000u}) {
+        SCOPED_TRACE(frames);
+        const auto bytes = wav(frames);
+        { std::ofstream file(source, std::ios::binary); file.write(bytes.data(), static_cast<std::streamsize>(bytes.size())); }
+        ASSERT_NO_THROW(encode_note_audio(source, output));
+        ComPtr<IMFSourceReader> reader;
+        ASSERT_TRUE(SUCCEEDED(MFCreateSourceReaderFromURL(output.c_str(), nullptr, &reader)));
+        ComPtr<IMFMediaType> type;
+        ASSERT_TRUE(SUCCEEDED(reader->GetNativeMediaType(static_cast<DWORD>(MF_SOURCE_READER_FIRST_AUDIO_STREAM), 0, &type)));
+        GUID subtype{}; UINT32 rate{}, channels{};
+        ASSERT_TRUE(SUCCEEDED(type->GetGUID(MF_MT_SUBTYPE, &subtype)));
+        EXPECT_EQ(subtype, MFAudioFormat_AAC);
+        ASSERT_TRUE(SUCCEEDED(type->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &rate)));
+        ASSERT_TRUE(SUCCEEDED(type->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &channels)));
+        EXPECT_EQ(rate, 48000u); EXPECT_EQ(channels, 1u);
+        ASSERT_TRUE(SUCCEEDED(MFCreateMediaType(&type)));
+        ASSERT_TRUE(SUCCEEDED(type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio)));
+        ASSERT_TRUE(SUCCEEDED(type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM)));
+        ASSERT_TRUE(SUCCEEDED(type->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16)));
+        ASSERT_TRUE(SUCCEEDED(reader->SetCurrentMediaType(static_cast<DWORD>(MF_SOURCE_READER_FIRST_AUDIO_STREAM), nullptr, type.Get())));
+        std::vector<std::int16_t> decoded;
+        for (;;) {
+            DWORD flags{};
+            ComPtr<IMFSample> sample;
+            ASSERT_TRUE(SUCCEEDED(reader->ReadSample(static_cast<DWORD>(MF_SOURCE_READER_FIRST_AUDIO_STREAM), 0, nullptr, &flags, nullptr, &sample)));
+            if (sample) {
+                ComPtr<IMFMediaBuffer> buffer;
+                ASSERT_TRUE(SUCCEEDED(sample->ConvertToContiguousBuffer(&buffer)));
+                BYTE* data{}; DWORD length{};
+                ASSERT_TRUE(SUCCEEDED(buffer->Lock(&data, nullptr, &length)));
+                const auto* values = reinterpret_cast<const std::int16_t*>(data);
+                decoded.insert(decoded.end(), values, values + length / 2);
+                ASSERT_TRUE(SUCCEEDED(buffer->Unlock()));
+            }
+            if (flags & MF_SOURCE_READERF_ENDOFSTREAM) break;
+        }
+        // AAC adds frame padding. It must not shorten speech or change its pace.
+        EXPECT_GE(decoded.size(), frames * 2);
+        EXPECT_LE(decoded.size(), frames * 2 + 2048);
+        ASSERT_GT(decoded.size(), 2048u);
+        // The input square wave is 240 Hz. Check its middle to exclude padding.
+        const auto first = decoded.size() / 4, last = decoded.size() * 3 / 4;
+        std::size_t crossings{};
+        for (auto i = first + 1; i < last; ++i)
+            if (decoded[i - 1] < 0 && decoded[i] >= 0) ++crossings;
+        EXPECT_NEAR(static_cast<double>(crossings) * 48000 / static_cast<double>(last - first), 240.0, 25.0);
+    }
+    for (const auto& bytes : {wav().substr(0, 100), wav(0), std::string("invalid")}) {
+        std::ofstream(source, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        EXPECT_THROW(encode_note_audio(source, output), std::runtime_error);
+    }
+    auto wrong_rate = wav(); wrong_rate[24] = 0x44; wrong_rate[25] = static_cast<char>(0xac);
+    std::ofstream(source, std::ios::binary).write(wrong_rate.data(), static_cast<std::streamsize>(wrong_rate.size()));
     EXPECT_THROW(encode_note_audio(source, output), std::runtime_error);
 }
 #endif

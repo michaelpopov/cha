@@ -19,13 +19,13 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
-  it('uses the macOS note audio block payload and validates terminal timestamps and optional counts', async () => {
+  it.each(['macos', 'windows'])('uses the %s note audio payload and validates terminal timestamps and optional counts', async (platform) => {
     const initial = { id: 4, phase: 'uploading', done: false, error: '' };
     const start = vi.fn(() => initial);
     const cancel = vi.fn(() => ({}));
     let status: unknown = { ...initial, phase: 'complete', done: true, total: 2, finished_at_ms: 123456 };
     const client = createNativeChaClient(createFakeNativeBridge({
-      'bridge.info': () => ({ protocol_version: 1, application_version: 'development', platform: 'macos' }),
+      'bridge.info': () => ({ protocol_version: 1, application_version: 'development', platform }),
       'app.bootstrap': () => ({ state: 'running', context_epoch: 1, application_version: 'development', bootstrap: bootstrapFixture,
         capabilities: { can_modify: true, can_transfer_r2: false } }),
       'noteAudio.info': () => ({ count: 2 }), 'noteAudio.start': start, 'noteAudio.status': () => status,

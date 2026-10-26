@@ -22,9 +22,9 @@ std::int64_t now_ms() {
 
 nlohmann::json Application::start_note_audio(std::int64_t id, std::string voice,
     std::vector<std::string> blocks, std::uint64_t epoch) {
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
     (void)id; (void)voice; (void)blocks; (void)epoch;
-    throw ApplicationError(ErrorCode::invalid_argument, "Note audio generation is available on macOS only.");
+    throw ApplicationError(ErrorCode::invalid_argument, "Note audio generation is available on macOS and Windows only.");
 #else
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);

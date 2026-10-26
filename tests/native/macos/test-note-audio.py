@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Exercise the real macOS host with a disposable vault and a fake gem_audio.
+"""Exercise the real native host with a disposable vault and a fake gem_audio.
 
 Build webapp/dist, cha_macos_runtime, and cha_prepare_test_vault first.
+On Windows, build CHA/CHATest and cha_prepare_test_vault instead.
 """
 import base64
+from contextlib import closing, contextmanager
 import io
 import json
 import math
@@ -12,6 +14,7 @@ from pathlib import Path
 import sqlite3
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -21,6 +24,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 REPOSITORY = Path(__file__).resolve().parents[3]
+
+
+@contextmanager
+def temporary_vault():
+    directory = tempfile.TemporaryDirectory(prefix="cha-note-audio-")
+    try:
+        yield directory.name
+    finally:
+        try:
+            directory.cleanup()
+        except PermissionError:
+            if sys.platform != "win32":
+                raise
+            print("WebView2 profile cleanup deferred: Windows still holds a cache directory.", flush=True)
 
 
 def main():
@@ -87,11 +104,13 @@ def main():
                 }}]}}))
             self.respond(("\n".join(reversed(lines)) + "\n").encode(), "application/jsonl")
 
-    with tempfile.TemporaryDirectory(prefix="cha-note-audio-") as directory:
-        root = Path(directory)
-        subprocess.run([str(REPOSITORY / "build/ninja/cha_prepare_test_vault"), str(root)], check=True)
+    with temporary_vault() as directory:
+        windows = sys.platform == "win32"
+        root = Path(directory) / "config" if windows else Path(directory)
+        root.mkdir(exist_ok=True)
+        subprocess.run([str(REPOSITORY / ("build/ninja/cha_prepare_test_vault.exe" if windows else "build/ninja/cha_prepare_test_vault")), str(root)], check=True)
         server = ThreadingHTTPServer(("127.0.0.1", 0), Service)
-        with sqlite3.connect(root / "test.sqlite3") as database:
+        with closing(sqlite3.connect(root / "test.sqlite3")) as database, database:
             database.execute("INSERT INTO config VALUES (?,?)", ("system/keys/api_key_1/config.toml",
                 'type = "models"\ndisplay_name = "Audio test"\nvalue = "fake-audio-key"\n'))
             database.execute("INSERT INTO config VALUES (?,?)", ("system/notes/config.toml",
@@ -131,26 +150,26 @@ def main():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         source = REPOSITORY / "tests/native/note-audio.js"
-        environment = dict(os.environ, CHA_NATIVE_TEST_CONFIG=str(root),
+        environment = dict(os.environ, CHA_NATIVE_TEST_CONFIG=str(root.parent if windows else root),
                            CHA_NATIVE_TEST_HOST=str(root / "AudioTestHost.app"), CHA_NATIVE_PARITY_SCRIPT=str(source))
 
         def run_host():
-            subprocess.run(["tests/native/macos/run.sh", "parity", "--timeout-ms", "45000"],
-                           cwd=REPOSITORY, env=environment, check=True)
+            command = ["powershell", "-ExecutionPolicy", "Bypass", "-File", "tests/native/windows/run.ps1", "-Expect", "audio"] if windows else ["tests/native/macos/run.sh", "parity", "--timeout-ms", "45000"]
+            subprocess.run(command, cwd=REPOSITORY, env=environment, check=True)
 
         try:
             run_host()
             assert len(requests) == 4, requests
             assert [record["request"]["contents"][0]["parts"][0]["text"] for record in records] == [
                 "Audio check", "First paragraph with audio.", "Second paragraph with audio."]
-            with sqlite3.connect(root / "test.sqlite3") as database:
+            with closing(sqlite3.connect(root / "test.sqlite3")) as database, database:
                 database.execute("INSERT INTO note_audio SELECT ?,ordinal,mime_type,audio FROM note_audio WHERE note_id=(SELECT id FROM note_items WHERE name='Audio check')", (existing,))
             folder_source = root / "folder.js"
             folder_source.write_text(source.read_text() + "\nnativeParity = nativeFolderAudio;\n")
             environment["CHA_NATIVE_PARITY_SCRIPT"] = str(folder_source)
             run_host()
             assert submitted == ["Audio check", "Folder first", "Folder last", "Stop audio", "Before error", "Fail audio"], submitted
-            with sqlite3.connect(root / "test.sqlite3") as database:
+            with closing(sqlite3.connect(root / "test.sqlite3")) as database, database:
                 saved = database.execute("SELECT name,COUNT(*) FROM note_audio JOIN note_items ON note_id=id GROUP BY note_id ORDER BY name").fetchall()
                 assert saved == [("A first", 1), ("A saved", 1), ("Audio check", 3), ("D last", 1), ("F existing", 3)], saved
             server.shutdown()

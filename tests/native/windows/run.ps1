@@ -66,6 +66,10 @@ function Invoke-WebView2Probe {
 
 Push-Location (Join-Path $repository 'tests\native\windows')
 try {
+    if ($Expect -eq 'audio') {
+        $result = Invoke-WebView2Probe 'note audio parity'
+        exit $result.Code
+    }
     if ($Expect -eq 'fail') {
         $result = Invoke-WebView2Probe 'exits the assertion as failed'
         if ($result.Code -eq 0) {
