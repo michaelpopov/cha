@@ -237,6 +237,124 @@ TEST_F(NoteAudioBackground, AcceptanceReturnsDuringUploadAndCommitsOneCompleteOu
     EXPECT_EQ(application->background_note_audio_status(note.id, epoch), (nlohmann::json{{"pending", false}}));
 }
 
+TEST_F(NoteAudioBackground, UploadFailuresRetainAcceptanceUntilSubmissionSucceeds) {
+    MockHttpServer upload({audio_json({{"file", {{"name", audio_file}}}})});
+    MockHttpServer server({"", audio_http_error(503), audio_http_error(401),
+        "HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
+            + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
+    on_wait = [&](auto index) {
+        const auto attempt = application->store().get_note_audio_attempt_for_note(note.id);
+        ASSERT_TRUE(attempt);
+        EXPECT_FALSE(attempt->batch_id);
+        EXPECT_TRUE(application->background_note_audio_status(note.id, epoch)["pending"]);
+        EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
+        if (index == 3) application->api_keys().replace(key_id, "new-key");
+    };
+    configure(server.port()); activate(); upload.start(); server.start();
+    (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
+    ASSERT_TRUE(finished()); upload.join(); server.join();
+    EXPECT_EQ(waits_snapshot(), (std::vector<int>{10, 20, 40}));
+    ASSERT_EQ(server.requests().size(), 6u);
+    for (std::size_t i = 0; i < 4; ++i)
+        EXPECT_TRUE(server.requests()[i].starts_with("POST /upload/v1beta/files"));
+    EXPECT_NE(server.requests()[3].find("new-key"), std::string::npos);
+    EXPECT_TRUE(server.requests()[4].starts_with("POST /v1beta/models/"));
+    ASSERT_EQ(upload.requests().size(), 1u);
+    EXPECT_EQ(upload.requests()[0].find("x-goog-api-key"), std::string::npos);
+    const auto events = application->list_events(epoch);
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].severity, EventSeverity::success);
+    EXPECT_EQ(events[1].severity, EventSeverity::info);
+    EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 1);
+    EXPECT_EQ(completions.load(), 1);
+    EXPECT_EQ(log_text().find("new-key"), std::string::npos);
+}
+
+TEST_F(NoteAudioBackground, FailedFinalizationRestartsUploadBeforeCreatingOneBatch) {
+    MockHttpServer upload({audio_http_error(503), "", audio_json({{"file", {{"name", audio_file}}}})});
+    const auto upload_start = "HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
+        + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    MockHttpServer server({upload_start, upload_start, upload_start,
+        audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
+    configure(server.port()); activate(); upload.start(); server.start();
+    (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
+    ASSERT_TRUE(finished()); upload.join(); server.join();
+    EXPECT_EQ(waits_snapshot(), (std::vector<int>{10, 20}));
+    ASSERT_EQ(server.requests().size(), 5u);
+    EXPECT_TRUE(server.requests()[3].starts_with("POST /v1beta/models/"));
+    ASSERT_EQ(upload.requests().size(), 3u);
+    for (const auto& request : upload.requests()) {
+        EXPECT_EQ(request_body(request), request_body(upload.requests()[0]));
+        EXPECT_EQ(request.find("x-goog-api-key"), std::string::npos);
+    }
+    EXPECT_EQ(application->list_events(epoch).size(), 2u);
+    EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 1);
+    EXPECT_EQ(completions.load(), 1);
+}
+
+TEST_F(NoteAudioBackground, RejectedCreationRetriesTheSameFileWithoutUploadingAgain) {
+    MockHttpServer upload({audio_json({{"file", {{"name", audio_file}}}})});
+    MockHttpServer server({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
+        + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        audio_http_error(401), audio_http_error(429), audio_http_error(429),
+        audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
+    on_wait = [&](auto index) {
+        ASSERT_TRUE(application->store().get_note_audio_attempt_for_note(note.id));
+        if (index == 1) application->api_keys().replace(key_id, "new-key");
+    };
+    configure(server.port()); activate(); upload.start(); server.start();
+    (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
+    ASSERT_TRUE(finished()); upload.join(); server.join();
+    EXPECT_EQ(waits_snapshot(), (std::vector<int>{10, 20, 40}));
+    ASSERT_EQ(server.requests().size(), 6u);
+    for (std::size_t i = 1; i < 5; ++i) {
+        EXPECT_TRUE(server.requests()[i].starts_with("POST /v1beta/models/"));
+        EXPECT_EQ(request_body(server.requests()[i]), request_body(server.requests()[1]));
+    }
+    EXPECT_NE(server.requests()[1].find("old-key"), std::string::npos);
+    EXPECT_NE(server.requests()[2].find("new-key"), std::string::npos);
+    EXPECT_EQ(upload.requests().size(), 1u);
+    const auto events = application->list_events(epoch);
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].severity, EventSeverity::success);
+    EXPECT_EQ(events[1].severity, EventSeverity::info);
+    EXPECT_EQ(completions.load(), 1);
+}
+
+TEST_F(NoteAudioBackground, AbandonmentDuringSubmissionRetrySendsNothingMore) {
+    MockHttpServer server({audio_http_error(503)});
+    on_wait = [&](auto) { (void)application->set_note_read_only(note.id, false, epoch); };
+    configure(server.port()); activate(); server.start();
+    (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
+    ASSERT_TRUE(finished()); server.join();
+    application->request_shutdown();
+    ASSERT_TRUE(application->join_shutdown(2s));
+    EXPECT_EQ(server.requests().size(), 1u);
+    EXPECT_EQ(waits_snapshot(), (std::vector<int>{10}));
+    const auto events = application->store().list_events();
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events[0].severity, EventSeverity::warning);
+    EXPECT_NE(events[0].message.find("abandoned"), std::string::npos);
+    EXPECT_EQ(completions.load(), 0);
+}
+
+TEST_F(NoteAudioBackground, ShutdownDuringSubmissionRetryRetainsTheUnregisteredAttempt) {
+    MockHttpServer server({audio_http_error(503)});
+    std::promise<void> waiting;
+    on_wait = [&](auto) { application->request_shutdown(); waiting.set_value(); };
+    configure(server.port()); activate(); server.start();
+    (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
+    ASSERT_EQ(waiting.get_future().wait_for(2s), std::future_status::ready);
+    ASSERT_TRUE(application->join_shutdown(2s)); server.join();
+    ASSERT_TRUE(application->store().get_note_audio_attempt_for_note(note.id));
+    EXPECT_FALSE(application->store().get_note_audio_attempt_for_note(note.id)->batch_id);
+    EXPECT_TRUE(application->store().list_events().empty());
+    EXPECT_EQ(waits_snapshot(), (std::vector<int>{10}));
+    EXPECT_EQ(server.requests().size(), 1u);
+    EXPECT_EQ(completions.load(), 0);
+}
+
 TEST_F(NoteAudioBackground, AcceptanceCommitRollbackCannotSubmitOrCleanUpTheImmediateRetry) {
     MockHttpServer upload({audio_json({{"file", {{"name", audio_file}}}})});
     MockHttpServer server({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
@@ -277,11 +395,10 @@ TEST_F(NoteAudioBackground, AcceptanceCommitRollbackCannotSubmitOrCleanUpTheImme
     EXPECT_EQ(application->list_events(epoch).size(), 2u);
 }
 
-TEST_F(NoteAudioBackground, AnotherNoteFinishesWhileTheFirstUploadIsStalled) {
+TEST_F(NoteAudioBackground, SubmissionsAreSerializedButRegisteredBatchesFinishIndependently) {
     MockHttpServer a_upload({audio_json({{"file", {{"name", audio_file}}}})});
-    auto failed = audio_operation(); failed.erase("response"); failed["error"] = {{"message", "failed"}};
     MockHttpServer a({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
-        + std::to_string(a_upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", audio_json(failed)});
+        + std::to_string(a_upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
     MockHttpServer b_upload({audio_json({{"file", {{"name", "files/" + std::string(32, 'c')}}}})});
     auto b_operation = audio_operation(); b_operation["name"] = "batches/" + std::string(32, 'd');
     b_operation["response"]["responsesFile"] = "files/" + std::string(32, 'c');
@@ -290,16 +407,24 @@ TEST_F(NoteAudioBackground, AnotherNoteFinishesWhileTheFirstUploadIsStalled) {
         audio_json(b_operation), http_response("application/jsonl", audio_results())});
     const auto other = application->create_note_item({}, NoteItemKind::note, "B", epoch);
     (void)application->set_note_read_only(other.id, true, epoch);
-    AudioWorkerCleanup cleanup{application, [&] { a.resume_responses(); b.resume_responses(); }};
-    a.pause_before_response(1); a_upload.start(); a.start(); b_upload.start(); b.start();
+    AudioWorkerCleanup cleanup{application, [&] { a_upload.resume_responses(); a.resume_responses(); b.resume_responses(); }};
+    a_upload.pause_before_response(1); a.pause_before_response(3);
+    a_upload.start(); a.start(); b_upload.start(); b.start();
     configure(a.port()); activate();
     const auto first = application->start_background_note_audio(note.id, "Kore", {"A"}, epoch);
-    ASSERT_TRUE(a.wait_for_requests(1, 2s));
+    ASSERT_TRUE(a_upload.wait_for_requests(1, 2s));
     configure(b.port());
+    const auto submission_started = std::chrono::steady_clock::now();
     const auto second = application->start_background_note_audio(other.id, "Kore", {"B"}, epoch, true);
     EXPECT_NE(first["attempt_id"], second["attempt_id"]);
     EXPECT_THROW(application->start_background_note_audio(note.id, "Kore", {"duplicate"}, epoch), ApplicationError);
     EXPECT_EQ(application->start_background_note_audio(note.id, "Kore", {"duplicate"}, epoch, true), (nlohmann::json{{"skipped", true}}));
+    EXPECT_LT(std::chrono::steady_clock::now() - submission_started, 500ms);
+    EXPECT_FALSE(b.wait_for_requests(1, 150ms));
+    EXPECT_TRUE(application->background_note_audio_status(other.id, epoch)["pending"]);
+    // Registration releases submission even while A's result download is stalled.
+    a_upload.resume_responses();
+    ASSERT_TRUE(a.wait_for_requests(3, 2s));
     const bool b_finished = finished(other.id);
     // Release A even if an expectation fails; the mock has a five-second deadline.
     EXPECT_TRUE(application->background_note_audio_status(note.id, epoch)["pending"]);
@@ -309,9 +434,115 @@ TEST_F(NoteAudioBackground, AnotherNoteFinishesWhileTheFirstUploadIsStalled) {
     EXPECT_TRUE(b_finished);
     ASSERT_TRUE(finished());
     a_upload.join(); a.join(); b_upload.join(); b.join();
+    EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 1);
+    EXPECT_EQ(application->get_note_audio_info(other.id, epoch)["count"], 1);
+    EXPECT_EQ(application->list_events(epoch).front().severity, EventSeverity::success);
+}
+
+TEST_F(NoteAudioBackground, SubmissionRetryBudgetSpansUploadAndCreationThenReleasesTheNextNote) {
+    MockHttpServer upload({audio_http_error(503), audio_json({{"file", {{"name", audio_file}}}})});
+    const auto upload_start = "HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
+        + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    MockHttpServer first({audio_http_error(503), upload_start, upload_start, audio_http_error(429), audio_http_error(429)});
+    MockHttpServer next_upload({audio_json({{"file", {{"name", audio_file}}}})});
+    MockHttpServer next({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
+        + std::to_string(next_upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
+    const auto other = application->create_note_item({}, NoteItemKind::note, "Next", epoch);
+    (void)application->set_note_read_only(other.id, true, epoch);
+    AudioWorkerCleanup cleanup{application, [&] { first.resume_responses(); }};
+    first.pause_before_response(1);
+    first.start(); upload.start(); next.start(); next_upload.start();
+    configure(first.port()); activate();
+    (void)application->start_background_note_audio(note.id, "Kore", {"First"}, epoch);
+    ASSERT_TRUE(first.wait_for_requests(1, 2s));
+    configure(next.port());
+    (void)application->start_background_note_audio(other.id, "Kore", {"Next"}, epoch);
+    EXPECT_FALSE(next.wait_for_requests(1, 150ms));
+    first.resume_responses();
+    ASSERT_TRUE(finished()); ASSERT_TRUE(finished(other.id));
+    first.join(); upload.join(); next.join(); next_upload.join();
+    EXPECT_EQ(waits_snapshot(), (std::vector<int>{10, 20, 40}));
+    EXPECT_EQ(first.requests().size(), 5u);
+    EXPECT_EQ(upload.requests().size(), 2u);
+    EXPECT_EQ(next.requests().size(), 3u);
     EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
     EXPECT_EQ(application->get_note_audio_info(other.id, epoch)["count"], 1);
-    EXPECT_EQ(application->list_events(epoch).front().severity, EventSeverity::error);
+    const auto events = application->list_events(epoch);
+    ASSERT_EQ(events.size(), 3u);
+    const auto failure = std::find_if(events.begin(), events.end(), [](const auto& event) {
+        return event.severity == EventSeverity::error;
+    });
+    ASSERT_NE(failure, events.end());
+    EXPECT_NE(failure->message.find("Audio batch creation failed"), std::string::npos);
+    EXPECT_NE(failure->message.find("retry limit reached"), std::string::npos);
+}
+
+TEST_F(NoteAudioBackground, AbandoningAWaitingSubmissionAllowsRestartWithoutSendingTheOldRequest) {
+    const auto partial = "HTTP/1.1 200 OK\r\nContent-Length: 100000\r\nConnection: close\r\n\r\n";
+    MockHttpServer first({partial}, true);
+    MockHttpServer upload({audio_json({{"file", {{"name", audio_file}}}})});
+    MockHttpServer next({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
+        + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
+    const auto other = application->create_note_item({}, NoteItemKind::note, "Waiting", epoch);
+    (void)application->set_note_read_only(other.id, true, epoch);
+    first.start(); next.start(); upload.start(); configure(first.port()); activate();
+    (void)application->start_background_note_audio(note.id, "Kore", {"First"}, epoch);
+    ASSERT_TRUE(first.wait_for_requests(1, 2s));
+    configure(next.port());
+    const auto old = application->start_background_note_audio(other.id, "Kore", {"Discarded"}, epoch);
+    EXPECT_FALSE(next.wait_for_requests(1, 150ms));
+    (void)application->set_note_read_only(other.id, false, epoch);
+    (void)application->set_note_read_only(other.id, true, epoch);
+    const auto replacement = application->start_background_note_audio(other.id, "Kore", {"Replacement"}, epoch);
+    EXPECT_NE(old["attempt_id"], replacement["attempt_id"]);
+    (void)application->set_note_read_only(note.id, false, epoch);
+    ASSERT_TRUE(finished(other.id)); first.join(); next.join(); upload.join();
+    ASSERT_EQ(upload.requests().size(), 1u);
+    EXPECT_NE(request_body(upload.requests()[0]).find("Replacement"), std::string::npos);
+    EXPECT_EQ(request_body(upload.requests()[0]).find("Discarded"), std::string::npos);
+    EXPECT_EQ(completions.load(), 1);
+}
+
+TEST_F(NoteAudioBackground, ShutdownInterruptsActiveAndWaitingSubmissions) {
+    MockHttpServer first({"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\nConnection: close\r\n\r\n"}, true);
+    MockHttpServer upload({audio_json({{"file", {{"name", audio_file}}}})});
+    MockHttpServer next({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
+        + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
+    const auto other = application->create_note_item({}, NoteItemKind::note, "Waiting", epoch);
+    (void)application->set_note_read_only(other.id, true, epoch);
+    first.start(); next.start(); configure(first.port()); activate();
+    (void)application->start_background_note_audio(note.id, "Kore", {"First"}, epoch);
+    ASSERT_TRUE(first.wait_for_requests(1, 2s));
+    configure(next.port());
+    (void)application->start_background_note_audio(other.id, "Kore", {"Waiting"}, epoch);
+    application->request_shutdown();
+    EXPECT_TRUE(application->join_shutdown(2s)); first.join();
+    EXPECT_FALSE(next.wait_for_requests(1, 50ms));
+    EXPECT_EQ(application->store().get_note_audio_attempts().size(), 2u);
+    EXPECT_TRUE(application->store().list_events().empty());
+    application.reset();
+    application = Application::open(make_command(workspace, path));
+    epoch = application->context_epoch();
+    activate();
+    ASSERT_TRUE(finished()); ASSERT_TRUE(finished(other.id));
+    EXPECT_FALSE(next.wait_for_requests(1, 50ms));
+    const auto events = application->list_events(epoch);
+    ASSERT_EQ(events.size(), 2u);
+    for (const auto& event : events) {
+        EXPECT_EQ(event.severity, EventSeverity::warning);
+        EXPECT_NE(event.message.find("possibly before submission started"), std::string::npos);
+        EXPECT_NE(event.message.find("If it was submitted"), std::string::npos);
+    }
+    // An explicit new start succeeds against this same listening service, proving
+    // neither recovery worker sent a request before the warnings retired them.
+    upload.start();
+    (void)application->start_background_note_audio(other.id, "Kore", {"Explicit resubmission"}, epoch);
+    ASSERT_TRUE(finished(other.id)); next.join(); upload.join();
+    EXPECT_EQ(next.requests().size(), 3u);
+    EXPECT_EQ(application->get_note_audio_info(other.id, epoch)["count"], 1);
 }
 
 TEST_F(NoteAudioBackground, RecoveryLaunchFailureAndUnknownRowsDoNotBlockOtherRegisteredJobs) {
@@ -722,22 +953,57 @@ TEST_F(NoteAudioBackground, FailureEventsAndLogsKeepSafeSpecificReasons) {
 }
 
 TEST_F(NoteAudioBackground, UnusableCreationRepliesWarnAboutDuplicateWork) {
-    MockHttpServer upload({audio_json({{"file", {{"name", audio_file}}}})});
-    MockHttpServer server({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
-        + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        http_response("application/json", "private service body old-key")});
-    configure(server.port()); activate(); upload.start(); server.start();
-    (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
-    ASSERT_TRUE(finished()); upload.join(); server.join();
-    const auto events = application->list_events(epoch);
-    ASSERT_EQ(events.size(), 1u);
-    EXPECT_EQ(events[0].severity, EventSeverity::warning);
-    EXPECT_NE(events[0].message.find("Submission status unknown"), std::string::npos);
-    EXPECT_NE(events[0].message.find("Starting again may generate audio twice"), std::string::npos);
-    EXPECT_EQ(events[0].message.find("Check Events"), std::string::npos);
-    EXPECT_EQ(events[0].message.find("private service body"), std::string::npos);
+    const auto previous = workspace.root() / "previous.m4a";
+    std::ofstream(previous) << "previous audio";
+    application->store().save_note_audio(note.id, {previous});
+    std::size_t outcomes = 0;
+    for (const auto& response : std::vector<std::string>{"", audio_http_error(408), audio_http_error(500),
+        audio_http_error(503), "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n{\"name\":\"batches/", audio_json({{"name", "batches/invalid"}}),
+        http_response("application/json", "private service body old-key")}) {
+        SCOPED_TRACE(response);
+        MockHttpServer upload({audio_json({{"file", {{"name", audio_file}}}})});
+        MockHttpServer server({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
+            + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", response});
+        configure(server.port()); activate(); upload.start(); server.start();
+        (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
+        ASSERT_TRUE(finished()); upload.join(); server.join();
+        EXPECT_EQ(server.requests().size(), 2u);
+        EXPECT_EQ(upload.requests().size(), 1u);
+        EXPECT_TRUE(waits_snapshot().empty());
+        EXPECT_EQ(application->store().get_note_audio_clip(note.id, 0).bytes, "previous audio");
+        const auto events = application->list_events(epoch);
+        ASSERT_EQ(events.size(), ++outcomes);
+        EXPECT_EQ(events[0].severity, EventSeverity::warning);
+        EXPECT_NE(events[0].message.find("Audio batch creation for"), std::string::npos);
+        EXPECT_NE(events[0].message.find("Submission status unknown"), std::string::npos);
+        EXPECT_NE(events[0].message.find("Starting again may generate audio twice"), std::string::npos);
+        EXPECT_EQ(events[0].message.find("Check Events"), std::string::npos);
+        EXPECT_EQ(events[0].message.find("private service body"), std::string::npos);
+    }
     EXPECT_EQ(log_text().find("private service body"), std::string::npos);
     EXPECT_EQ(completions.load(), 0);
+}
+
+TEST_F(NoteAudioBackground, PermanentSubmissionRejectionsRetireWithoutRetrying) {
+    for (const bool creation : {false, true}) {
+        MockHttpServer upload(creation ? std::vector<std::string>{audio_json({{"file", {{"name", audio_file}}}})}
+            : std::vector<std::string>{});
+        std::vector<std::string> responses;
+        if (creation) responses.push_back("HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
+            + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        responses.push_back(audio_http_error(400));
+        MockHttpServer server(std::move(responses));
+        configure(server.port()); activate(); upload.start(); server.start();
+        (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
+        ASSERT_TRUE(finished()); upload.join(); server.join();
+        EXPECT_TRUE(waits_snapshot().empty());
+        EXPECT_EQ(server.requests().size(), creation ? 2u : 1u);
+        EXPECT_EQ(upload.requests().size(), creation ? 1u : 0u);
+        const auto event = application->list_events(epoch).front();
+        EXPECT_EQ(event.severity, EventSeverity::error);
+        EXPECT_NE(event.message.find(creation ? "Audio batch creation failed" : "Audio upload failed"), std::string::npos);
+        EXPECT_NE(event.message.find("HTTP 400"), std::string::npos);
+    }
 }
 
 TEST_F(NoteAudioBackground, SuccessfulMaintenanceResumesTheRegisteredBatchOnce) {
@@ -790,8 +1056,8 @@ TEST_F(NoteAudioBackground, SuccessfulMaintenanceRetiresAnInterruptedSubmissionW
     const auto events = application->list_events(epoch);
     ASSERT_EQ(events.size(), 1u);
     EXPECT_EQ(events[0].severity, EventSeverity::warning);
-    EXPECT_NE(events[0].message.find("Submission was interrupted"), std::string::npos);
-    EXPECT_NE(events[0].message.find("Starting again may generate audio twice"), std::string::npos);
+    EXPECT_NE(events[0].message.find("possibly before submission started"), std::string::npos);
+    EXPECT_NE(events[0].message.find("If it was submitted, starting again may generate audio twice"), std::string::npos);
     EXPECT_EQ(events[0].message.find("CHA stopped"), std::string::npos);
 }
 
@@ -872,7 +1138,7 @@ TEST_F(NoteAudioBackground, SwitchingBackRetiresAnUnregisteredAttemptOnlyInItsOr
     ASSERT_EQ(events.size(), 1u);
     EXPECT_EQ(events[0].severity, EventSeverity::warning);
     EXPECT_NE(events[0].message.find("“Chapter”"), std::string::npos);
-    EXPECT_NE(events[0].message.find("Starting again may generate audio twice"), std::string::npos);
+    EXPECT_NE(events[0].message.find("If it was submitted, starting again may generate audio twice"), std::string::npos);
     EXPECT_EQ(server.requests().size(), 1u);
     EXPECT_EQ(completions.load(), 0);
 }

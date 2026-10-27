@@ -2,7 +2,7 @@
 async function nativeParity() {
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   const until = async (label, condition) => {
-    const deadline = Date.now() + 12000;
+    const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       const value = condition();
       if (value) return value;
@@ -46,7 +46,7 @@ async function nativeParity() {
     await action('Batch', 'Compress');
     (await until('Batch', () => row('Batch'))).click();
     (await until('Nested folder', () => row('Nested folder'))).click();
-    await until('nested completion notice', () => row('B nested')?.querySelector('.cha-notes-compressed'));
+    check(!row('B nested')?.querySelector('.cha-notes-compressed'), 'Waiting folder note finished before the active request');
     check(!row('A slow')?.querySelector('.cha-notes-compressed'), 'Delayed folder note finished too early');
     await click('Actions for Batch');
     let folderMenu = await until('folder menu', () => document.querySelector('[role="menu"]'));
@@ -54,6 +54,7 @@ async function nativeParity() {
     folderMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     await until('folder menu closed', () => !document.querySelector('[role="menu"]'));
     await action('A slow', 'Cancel compression');
+    await until('nested completion after cancellation and retry', () => row('B nested')?.querySelector('.cha-notes-compressed'));
     await click('Actions for Batch');
     folderMenu = await until('folder menu after cancellation', () => document.querySelector('[role="menu"]'));
     await until('folder Compress enabled after last job retired', () => {
@@ -63,7 +64,7 @@ async function nativeParity() {
     await until('folder menu closed', () => !document.querySelector('[role="menu"]'));
     completed.push('folder Compress disabled for background jobs and enabled after cancellation');
     check(!document.querySelector('dialog'), 'Folder compression opened a modal');
-    completed.push('recursive folder acceptance, independent completion, per-note Cancel');
+    completed.push('recursive folder acceptance, serialized requests, bounded retry, per-note Cancel');
     await click('Settings', document.querySelector('aside'));
     await click('Events');
     await until('compression events', () => document.body.innerText.includes('Compressed version ready for “B nested”'));

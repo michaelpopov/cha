@@ -774,7 +774,20 @@ TEST(ProviderClient, ReportsProviderHttpFailure) {
     EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
     EXPECT_NE(result.message.find("HTTP 503"), std::string::npos);
     EXPECT_NE(result.message.find("request rejected"), std::string::npos);
+    EXPECT_TRUE(result.retryable);
     mock.join();
+}
+
+TEST(ProviderClient, RefusedConnectionIsRetryable) {
+    int port;
+    { MockHttpServer server({}); port = server.port(); }
+    ProviderClient client(shared_definition(network_definition(port, false)));
+    Transcript transcript;
+    std::atomic_bool cancellation{};
+    const auto result = complete(client, client_request(transcript, 9, "Question"),
+        transcript, [](GenerationDelta) {}, cancellation);
+    EXPECT_EQ(result.outcome, GenerationOutcome::transport_error);
+    EXPECT_TRUE(result.retryable);
 }
 
 TEST(ProviderClient, ClassifiesActionableProviderFailures) {
@@ -832,6 +845,7 @@ TEST(ProviderClient, ClassifiesActionableProviderFailures) {
 
         EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
         EXPECT_EQ(result.message, test_case.expected);
+        EXPECT_EQ(result.retryable, test_case.status == 429 || test_case.status >= 500);
         mock.join();
     }
 }
@@ -1007,6 +1021,7 @@ TEST(ProviderClient, BoundsOverallAndIdleGenerationTime) {
 
         EXPECT_EQ(result.outcome, GenerationOutcome::transport_error);
         EXPECT_NE(result.message.find(test_case.expected_message), std::string::npos);
+        EXPECT_FALSE(result.retryable);
         EXPECT_LT(elapsed, test_case.maximum_elapsed);
         mock.join();
     }
@@ -1073,6 +1088,7 @@ TEST(ProviderClient, ReportsATruncatedResponseAsATransportError) {
         EXPECT_EQ(result.outcome, GenerationOutcome::transport_error);
         EXPECT_NE(result.message.find("HTTP request failed"), std::string::npos);
         EXPECT_EQ(output, "Partial");
+        EXPECT_FALSE(result.retryable);
         mock.join();
     }
 }

@@ -4,7 +4,7 @@ async function nativeParity({ offline = false } = {}) {
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   const check = (condition, message) => { if (!condition) throw new Error(message); };
   const until = async (label, condition) => {
-    const deadline = Date.now() + 10000;
+    const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       const result = condition();
       if (result) return result;

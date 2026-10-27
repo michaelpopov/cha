@@ -229,8 +229,10 @@ void Application::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t e
     const auto diagnostic = [&](std::string_view reason) {
         log_warn("Audio " + step + " failed for " + note_audio_target(attempt) + ": " + std::string(reason));
     };
-    // Retry only the current step. POST submission never enters this loop.
-    const auto retry = [&](const auto& operation, bool local) -> decltype(operation()) {
+    unsigned submission_retries = 0;
+    // Retry only the current step. Creation hides ambiguous outcomes behind an
+    // uncertain failure, which must never enter another submission attempt.
+    const auto retry = [&](const auto& operation, bool local, bool submitting = false) -> decltype(operation()) {
         for (unsigned failures = 0;;) {
             std::string reason;
             bool credential = false;
@@ -240,7 +242,9 @@ void Application::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t e
             }
             catch (const NoteAudioError& error) {
                 if (error.kind != NoteAudioFailure::storage && error.kind != NoteAudioFailure::transport
-                    && !(error.kind == NoteAudioFailure::http && (error.code == 401 || error.code >= 500))) throw;
+                    && !(error.kind == NoteAudioFailure::http && (error.code == 401 || error.code == 429 || error.code >= 500))) throw;
+                if (submitting && submission_retries == 3)
+                    throw NoteAudioError(error.kind, std::string(error.what()) + " Submission retry limit reached.", error.code);
                 credential = error.kind == NoteAudioFailure::http && error.code == 401;
                 reason = error.kind == NoteAudioFailure::transport ? "The service connection failed. Check the service address and connection."
                     : error.kind == NoteAudioFailure::storage ? "Local audio storage failed. Check disk space and file access."
@@ -258,8 +262,11 @@ void Application::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t e
                 reason = "The local audio transaction failed. Check disk space and database access.";
                 diagnostic(reason); // Do not expose raw SQL or library exception text.
             }
-            if (credential || failures >= 3) warn(reason);
-            wait_note_audio(10 << std::min(failures, 2u), *cancel, settings.note_audio_wait);
+            if (submitting && submission_retries == 3)
+                throw NoteAudioError(NoteAudioFailure::storage, reason + " Submission retry limit reached.");
+            if (!submitting && (credential || failures >= 3)) warn(reason);
+            const auto delay = submitting ? submission_retries++ : std::min(failures, 2u);
+            wait_note_audio(10 << delay, *cancel, settings.note_audio_wait);
             if (failures < 3) ++failures;
         }
     };
@@ -274,11 +281,19 @@ void Application::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t e
         retry([&] { const std::lock_guard lock(lifecycle_mutex); check(); return true; }, true);
         if (!attempt.batch_id && jsonl.empty()) {
             retire(EventSeverity::warning, "Audio submission status unknown for " + note_audio_target(attempt)
-                + ". Submission was interrupted before the batch ID was saved. Starting again may generate audio twice. Check the service before starting again; do not assume the remote batch was cancelled.");
+                + ". The job stopped before its batch ID was saved, possibly before submission started. If it was submitted, starting again may generate audio twice. Check the service before starting again.");
         } else {
             nlohmann::json operation;
             if (!attempt.batch_id) {
-                operation = submit_note_audio(credentials, jsonl, *cancel);
+                std::unique_lock submission(audio_submission_mutex, std::defer_lock);
+                while (!cancel->load() && !submission.try_lock_for(std::chrono::milliseconds(100))) {}
+                if (cancel->load()) interrupted();
+                // Uploading alone cannot start generation. A failed upload can
+                // safely start over; once uploaded, keep the file for creation retries.
+                step = "upload";
+                const auto input = retry([&] { return upload_note_audio(credentials, jsonl, *cancel); }, false, true);
+                step = "batch creation";
+                operation = retry([&] { return create_note_audio_batch(credentials, input, *cancel); }, false, true);
                 attempt.batch_id = note_audio_batch_id(operation);
                 step = "batch registration";
                 retry([&] {

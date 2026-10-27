@@ -52,6 +52,9 @@ struct GenerationResult {
     std::string finish_reason;
     // Explicit provider refusal; answer deltas remain available for chat display.
     bool refused{};
+    // A definite temporary rejection or connection failure before sending.
+    // Partial responses and ambiguous transfer failures are not retried.
+    bool retryable{};
 };
 
 // How one streaming response ended. Failures the stream itself does not explain

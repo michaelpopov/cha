@@ -1117,9 +1117,11 @@ GenerationResult ProviderClient::perform_once(
         }
         if (perform_result != CURLE_OK) {
             return complete({
-                GenerationOutcome::transport_error,
-                "HTTP request failed: "
+                .outcome = GenerationOutcome::transport_error,
+                .message = "HTTP request failed: "
                     + std::string(curl_easy_strerror(perform_result)),
+                .retryable = perform_result == CURLE_COULDNT_RESOLVE_PROXY
+                    || perform_result == CURLE_COULDNT_RESOLVE_HOST || perform_result == CURLE_COULDNT_CONNECT,
             }, 0, "unknown");
         }
 
@@ -1135,8 +1137,9 @@ GenerationResult ProviderClient::perform_once(
             }, status, content_type);
         }
         return complete({
-            GenerationOutcome::protocol_error,
-            classified_http_error(status, response.body),
+            .outcome = GenerationOutcome::protocol_error,
+            .message = classified_http_error(status, response.body),
+            .retryable = status == 429 || status >= 500,
         }, status, content_type);
     }
 

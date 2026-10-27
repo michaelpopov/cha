@@ -57,7 +57,7 @@ protected:
         std::exception_ptr error;
         try {
             const NoteAudioCredentials credentials = [&] { return service; };
-            auto batch = submit_note_audio(credentials, jsonl, cancel);
+            auto batch = create_note_audio_batch(credentials, upload_note_audio(credentials, jsonl, cancel), cancel);
             const auto id = note_audio_batch_id(batch);
             while (!batch.value("done", false)) {
                 wait_note_audio(10, cancel, [&](int seconds) { waits.push_back(seconds); if (cancel_on_wait) cancel.store(true); });
@@ -169,11 +169,24 @@ TEST(NoteAudioService, PreCancelledAttemptMakesNoRequests) {
     // The server never starts, so only the cancellation check can end the
     // first request; a transfer failure would report a different message.
     try {
-        (void)submit_note_audio([&] { return service; }, prepare_note_audio(service, {"Hello"}), cancel);
+        (void)upload_note_audio([&] { return service; }, prepare_note_audio(service, {"Hello"}), cancel);
         FAIL();
     } catch (const std::runtime_error& error) { EXPECT_STREQ(error.what(), "Audio generation was interrupted."); }
     EXPECT_FALSE(std::filesystem::exists(workspace.root() / "results.jsonl"));
     EXPECT_FALSE(std::filesystem::exists(workspace.root() / "0.m4a"));
+}
+
+TEST(NoteAudioService, CreationConnectionFailureIsSafeToRetry) {
+    int port;
+    { MockHttpServer server({}); port = server.port(); }
+    NoteAudioService service{"http://127.0.0.1:" + std::to_string(port), "secret", "Kore"};
+    std::atomic_bool cancel{};
+    try {
+        (void)create_note_audio_batch([&] { return service; }, file_name, cancel);
+        FAIL() << "Closed listener must refuse the connection";
+    } catch (const NoteAudioError& error) {
+        EXPECT_EQ(error.kind, NoteAudioFailure::transport);
+    }
 }
 
 #if defined(__APPLE__) || defined(_WIN32)
@@ -186,7 +199,7 @@ TEST_F(NoteAudioServiceTest, CancellationInterruptsRemoteWaitBeforeAnotherRead) 
     EXPECT_FALSE(std::filesystem::exists(workspace.root() / "0.m4a"));
 }
 
-TEST_F(NoteAudioServiceTest, PostsAreNotRetried) {
+TEST_F(NoteAudioServiceTest, ServiceStepsDoNotRetryThemselves) {
     EXPECT_THROW(run({failure_response(500)}), std::runtime_error);
     EXPECT_TRUE(waits.empty());
     EXPECT_EQ(requests.size(), 2u);
@@ -197,7 +210,8 @@ TEST_F(NoteAudioServiceTest, PostsAreNotRetried) {
 TEST_F(NoteAudioServiceTest, UnusableCreationRepliesKeepTheirCauseAndWarnWithoutAnEventsReference) {
     for (const auto& response : std::vector<std::string>{
         json_response({{"name", "batches/invalid"}}), http_response("application/json", "not JSON"),
-        http_response("application/json", std::string(65537, 'x')), failure_response(500)}) {
+        http_response("application/json", std::string(65537, 'x')), failure_response(408), failure_response(500),
+        "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n{\"name\":\"batches/"}) {
         try {
             (void)run({response});
             FAIL() << "Invalid creation response must fail";

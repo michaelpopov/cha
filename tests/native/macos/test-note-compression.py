@@ -31,6 +31,11 @@ def main():
                 self.connection.settimeout(20)
                 assert self.connection.recv(1) == b'', 'Expected provider cancellation'
                 return
+            if 'FAST_NESTED' in text and text not in requests[:-1]:
+                self.send_response(429)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
             result = json.dumps({'choices': [{'message': {'content': 'Compressed result'}, 'finish_reason': 'stop'}]}).encode()
             try:
                 self.send_response(200)
@@ -73,7 +78,11 @@ def main():
                 assert saved == [('B nested',), ('Single',)], saved
                 events = database.execute('SELECT severity FROM event_history ORDER BY id').fetchall()
                 assert sorted(events) == sorted([('info',)] * 6 + [('success',)] * 2), events
-            assert len(requests) == 4, requests
+            counts = {marker: sum(marker in text for text in requests)
+                      for marker in ('SINGLE', 'SLOW_FOLDER', 'FAST_NESTED')}
+            assert counts['SINGLE'] == 2 and counts['FAST_NESTED'] == 2, counts
+            # A may be cancelled while waiting for the earlier transfer to unwind.
+            assert counts['SLOW_FOLDER'] <= 1 and len(requests) == sum(counts.values()), counts
         finally:
             server.shutdown()
             server.server_close()

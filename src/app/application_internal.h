@@ -153,6 +153,9 @@ struct Application::Impl {
     std::optional<std::string> speech_url_override;
     PendingMediaRegistry pending_media{media_resources};
     BackgroundJobs background_jobs;
+    // Network work waits outside lifecycle_mutex and observes its cancellation flag.
+    std::timed_mutex audio_submission_mutex;
+    std::timed_mutex compression_mutex;
     struct CompressionControl {
         std::shared_ptr<std::atomic_bool> cancel = std::make_shared<std::atomic_bool>(false);
         std::string name;

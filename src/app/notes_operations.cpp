@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <initializer_list>
+#include <thread>
 
 namespace cha {
 std::string_view embedded_compression_prompt();
@@ -280,6 +281,14 @@ nlohmann::json Application::compress_note(std::int64_t id, std::uint64_t epoch, 
     }
     auto provider = note_editing_provider(*impl_->store->snapshot());
     provider.config.timeout_s = 0;
+    // Bind legacy names to a stable reference, so deleting a key cannot make a
+    // waiting job select a different key later created with that name.
+    if (provider.config.api_key_id.empty() && !provider.config.api_key_env.empty()) {
+        const auto key = impl_->api_keys->find_by_name(provider.config.api_key_env);
+        if (!key) throw ApplicationError(ErrorCode::invalid_argument, "Select an existing compression API key in Settings.");
+        provider.config.api_key_id = key->id;
+        provider.config.api_key_env.clear();
+    }
     if (provider.config.mode == Mode::net && provider.config.auth == ProviderAuth::openai_subscription
         && impl_->openai_auth->status().state != OpenAiOAuthState::connected)
         throw ApplicationError(ErrorCode::invalid_argument, "Connect your OpenAI account in Settings before compressing notes.");
@@ -287,26 +296,45 @@ nlohmann::json Application::compress_note(std::int64_t id, std::uint64_t epoch, 
         .character = {"note-compression", "Note compression"}, .provider = std::move(provider),
         .system_prompt = std::string(embedded_compression_prompt()),
     });
-    std::shared_ptr<ProviderClient> client;
-    try { client = std::make_shared<ProviderClient>(definition, impl_->openai_auth.get(), impl_->api_keys.get()); }
+    // Validate before acceptance; the worker resolves the same key reference
+    // again under the lifecycle lock before every actual request.
+    try { ProviderClient validate(definition, impl_->openai_auth.get(), impl_->api_keys.get()); }
     catch (const std::exception& error) { throw ApplicationError(ErrorCode::invalid_argument, error.what()); }
     const auto control = std::make_shared<Impl::CompressionControl>();
     control->name = note.name;
     impl_->compressions[id] = control;
     try {
-        if (!impl_->background_jobs.launch([owner = impl_.get(), control, client, definition, note, epoch](std::atomic_bool& cancel) {
+        if (!impl_->background_jobs.launch([owner = impl_.get(), control, definition, note, epoch](std::atomic_bool& cancel) {
             const auto target = compression_target(note.id, control->name);
+            const auto discarded = "Compression discarded for " + target
+                + ": the saved text changed. Compress again to use the current text.";
             auto severity = EventSeverity::error;
             std::string outcome;
             try {
-                {
-                    const std::lock_guard lifecycle(owner->lifecycle_mutex);
-                    const auto found = owner->compressions.find(note.id);
-                    if (found == owner->compressions.end() || found->second != control) return;
-                    owner->require_admitted(epoch);
-                    if (cancel.load()) throw ApplicationError(ErrorCode::operation_cancelled, "Cancelled.");
+                std::unique_lock serial(owner->compression_mutex, std::defer_lock);
+                while (!cancel.load() && !serial.try_lock_for(std::chrono::milliseconds(100))) {}
+                NotePromptAnswer answer;
+                for (unsigned retries = 0;; ++retries) {
+                    std::unique_ptr<ProviderClient> client;
+                    {
+                        const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                        const auto found = owner->compressions.find(note.id);
+                        if (found == owner->compressions.end() || found->second != control) return;
+                        owner->require_admitted(epoch);
+                        if (cancel.load()) throw ApplicationError(ErrorCode::operation_cancelled, "Cancelled.");
+                        if (owner->store->get_note_text(note.id).text != note.text) {
+                            owner->retire_compression(note.id, control, epoch, EventSeverity::warning, discarded);
+                            return;
+                        }
+                        client = std::make_unique<ProviderClient>(definition, owner->openai_auth.get(), owner->api_keys.get());
+                    }
+                    answer = collect_note_prompt(*client, definition, note.text, cancel);
+                    if (!answer.result.retryable || cancel.load() || retries == 3) break;
+                    const auto seconds = 10 << retries;
+                    if (owner->settings.note_compression_wait) owner->settings.note_compression_wait(seconds);
+                    else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
-                const auto answer = collect_note_prompt(*client, definition, note.text, cancel);
                 const auto& result = answer.result;
                 const std::lock_guard lifecycle(owner->lifecycle_mutex);
                 const auto found = owner->compressions.find(note.id);
@@ -333,8 +361,7 @@ nlohmann::json Application::compress_note(std::int64_t id, std::uint64_t epoch, 
                         "Compressed version ready for " + target + ".")) {
                     owner->retire_compression(note.id, control, epoch, EventSeverity::success, "");
                 } else {
-                    owner->retire_compression(note.id, control, epoch, EventSeverity::warning,
-                        "Compression discarded for " + target + ": the saved text changed. Compress again to use the current text.");
+                    owner->retire_compression(note.id, control, epoch, EventSeverity::warning, discarded);
                 }
                 return;
             } catch (const ApplicationError& error) {

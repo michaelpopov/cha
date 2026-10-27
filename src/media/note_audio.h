@@ -23,7 +23,10 @@ struct NoteAudioService { std::string url, key, voice; };
 // Validates settings and limits before the worker or any service request starts.
 std::string prepare_note_audio(NoteAudioService& service, const std::vector<std::string>& blocks);
 using NoteAudioCredentials = std::function<NoteAudioService()>;
-nlohmann::json submit_note_audio(const NoteAudioCredentials& credentials, const std::string& jsonl,
+std::string upload_note_audio(const NoteAudioCredentials& credentials, const std::string& jsonl,
+    const std::atomic_bool& cancel);
+// A lost creation reply is uncertain: retrying it could create a second batch.
+nlohmann::json create_note_audio_batch(const NoteAudioCredentials& credentials, const std::string& input,
     const std::atomic_bool& cancel);
 std::string note_audio_batch_id(const nlohmann::json& operation);
 nlohmann::json read_note_audio_batch(const NoteAudioCredentials& credentials, const std::string& batch_id,

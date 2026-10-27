@@ -73,6 +73,13 @@ def main():
             data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             if self.path == "/upload/v1beta/files":
                 assert self.headers.get("x-goog-api-key") == "fake-audio-key"
+                # Fail before any remote batch exists. The accepted native job
+                # must retry this upload and complete without another UI start.
+                if len(requests) == 1:
+                    self.send_response(503)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 with lock:
                     token = f"{len(records) + 1:032x}"
                     records["files/" + token] = []
@@ -182,7 +189,8 @@ def main():
 
         try:
             run_host()
-            assert len(requests) == 4, requests
+            assert len(requests) == 5, requests
+            assert requests[:2] == ["/upload/v1beta/files"] * 2, requests
             assert [record["request"]["contents"][0]["parts"][0]["text"] for record in next(iter(records.values()))] == [
                 "Audio check", "First paragraph with audio.", "Second paragraph with audio."]
             with closing(sqlite3.connect(root / "test.sqlite3")) as database, database:
@@ -241,7 +249,7 @@ def main():
             offline_source.write_text(source.read_text() + "\nconst runAudioProbe = nativeParity;\nnativeParity = () => runAudioProbe({ offline: true });\n")
             environment["CHA_NATIVE_PARITY_SCRIPT"] = str(offline_source)
             run_host()
-            print("PASS background acceptance, registered restart without POST, unrelated playback, independent folder completion/skip/error/focus, and offline playback", flush=True)
+            print("PASS background acceptance, automatic submission retry after HTTP 503, registered restart without POST, unrelated playback, independent folder completion/skip/error/focus, and offline playback", flush=True)
         finally:
             server.shutdown()
             server.server_close()

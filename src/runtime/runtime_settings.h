@@ -23,6 +23,7 @@ struct RuntimeSettings {
     std::size_t pending_append_byte_limit{65536};
     // Optional wait injection for deterministic note-audio retry tests.
     std::function<void(int)> note_audio_wait;
+    std::function<void(int)> note_compression_wait;
     // Optional launch failure and worker-barrier hooks for lifecycle tests.
     std::function<void(std::int64_t)> note_audio_before_launch;
     std::function<void(std::int64_t, std::shared_ptr<std::atomic_bool>)> note_audio_worker_started;

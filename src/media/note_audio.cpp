@@ -82,13 +82,19 @@ Transfer request(const NoteAudioService& service, const std::string& url, const 
     if (t.local_failure) throw NoteAudioError(*t.local_failure, *t.local_failure == NoteAudioFailure::storage
         ? "Could not write audio results. Check available disk space."
         : "Audio results exceed the size limit. Check the service.");
-    if (result != CURLE_OK) throw NoteAudioError(ambiguous ? NoteAudioFailure::uncertain : NoteAudioFailure::transport, ambiguous
-        ? submission_unknown
-        : "The audio service transfer failed. Check the service and try again.", static_cast<long>(result));
+    if (result != CURLE_OK) {
+        // These failures precede sending the creation request. Other transfer
+        // failures can hide a batch that the service has already accepted.
+        const bool uncertain = ambiguous && result != CURLE_COULDNT_RESOLVE_PROXY
+            && result != CURLE_COULDNT_RESOLVE_HOST && result != CURLE_COULDNT_CONNECT;
+        throw NoteAudioError(uncertain ? NoteAudioFailure::uncertain : NoteAudioFailure::transport, uncertain
+            ? submission_unknown
+            : "The audio service transfer failed. Check the service and try again.", static_cast<long>(result));
+    }
     long status = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &status);
     if (status != 200) {
-        const bool uncertain = ambiguous && status >= 500;
+        const bool uncertain = ambiguous && (status == 408 || status >= 500);
         throw NoteAudioError(uncertain ? NoteAudioFailure::uncertain : NoteAudioFailure::http,
             "Audio service returned HTTP " + std::to_string(status) + ". "
                 + (uncertain ? submission_unknown : "Check the service and its API key."), status);
@@ -154,7 +160,7 @@ std::string note_audio_batch_id(const Json& operation) {
     return resource(operation, "name", "batches/");
 }
 
-Json submit_note_audio(const NoteAudioCredentials& credentials, const std::string& jsonl,
+std::string upload_note_audio(const NoteAudioCredentials& credentials, const std::string& jsonl,
     const std::atomic_bool& cancel) {
     const std::string metadata = "{}";
     auto service = credentials();
@@ -169,9 +175,14 @@ Json submit_note_audio(const NoteAudioCredentials& credentials, const std::strin
     const auto uploaded = Json::parse(request(service, upload.upload_url, cancel,
         {"Content-Type: application/jsonl", "X-Goog-Upload-Offset: 0", "X-Goog-Upload-Command: upload, finalize"},
         &jsonl, nullptr, 65536, false).body);
-    const std::string input = resource(uploaded.at("file"), "name", "files/");
+    return resource(uploaded.at("file"), "name", "files/");
+}
+
+Json create_note_audio_batch(const NoteAudioCredentials& credentials, const std::string& input,
+    const std::atomic_bool& cancel) {
+    (void)resource(Json{{"name", input}}, "name", "files/");
     const std::string body = Json({{"batch", {{"inputConfig", {{"fileName", input}}}}}}).dump();
-    service = credentials();
+    const auto service = credentials();
     try {
         auto operation = Json::parse(request(service, service.url + "/v1beta/models/gemini-3.8-flash-tts:batchGenerateContent",
             cancel, {"Content-Type: application/json"}, &body, nullptr, 65536, true, true).body);
