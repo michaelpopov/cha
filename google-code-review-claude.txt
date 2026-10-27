@@ -1,0 +1,101 @@
+I found no high-severity defect. One finding is probably a real decoder defect. The others are low priority, and most of them are simplifications. I did not run a build or tests, and no live Google call was made.
+
+These parts agree with `docs/google-design.md` and the repository rules:
+- **Streaming end:** the decoder reads to the HTTP end, collects usage that arrives after `finishReason`, and requires a final status. A response cut off before that status becomes an error.
+- **Signatures:** every part stays where Google put it, with its signature. This includes empty-text parts and parts that only carry a signature.
+- **Function calls:** results are matched to calls by their position in the returned content. Google's ID is sent back only when Google supplied one.
+- **Tool limit:** at the limit, the request keeps the declarations, sets `mode = "NONE"`, puts the final-answer instruction in `systemInstruction`, and ends with the function results.
+- **Credentials:** the key goes in `x-goog-api-key` only, and no key header is sent when no key is set. Headers are not written to the log.
+- **Settings:** unused settings give warnings and do not stop a load.
+- **Provider form:** switching from OpenAI OAuth clears the credential selection, a saved key stays selected, and the form sends `reasoning_effort = "none"`.
+- **Naming and notes:** their effort settings pass validation, give no warning on each request, and partial or refused answers are rejected.
+
+## Medium priority
+
+### 1. A candidate with no `parts` fails as "Malformed Google response JSON" (probable defect)
+
+**Location:** `src/providers/google_api.cpp:106`
+
+**Scenario:**
+- Google sends `{"content":{"role":"model"},"finishReason":"MAX_TOKENS"}`. This can happen when default thinking uses all of a configured `max_tokens`.
+- It can also happen in a last stream chunk that only carries a status and usage.
+- `content->at("parts")` throws, and the result becomes a protocol error with "Malformed Google response JSON". The `length` status is lost.
+- If a last `STOP` chunk has this shape, a correct streamed answer fails.
+
+**Reason:** Google's REST JSON leaves out empty lists, and `Content.parts` is a list. The decoder already accepts missing `index`, `role`, `args` and `text`, but not missing `parts`. All the tests send `parts`, so they cannot show this.
+
+**Fix:** use `const auto parts = content->value("parts", Json::array());` and keep the `is_array()` check.
+
+**Status:** the evidence is the schema rule and similar reports in other Gemini clients. I did not see this shape in a live response.
+
+## Low priority
+
+### 2. Saving through the settings API writes ignored Google values to the file (verified by reading the code)
+
+**Locations:**
+- `src/runtime/request_parser.cpp:367-368` and `:380-385`
+- `src/workspace/workspace_config_editor.cpp:154` and `:161-167`
+- warnings at `src/workspace/workspace.cpp:285-296`
+
+**Scenario:**
+- A client saves a Google provider with `reasoning_effort = "high"` or with `openrouter_targets`. The new settings test does this.
+- `parse_provider_update()` keeps both values, and `write_provider()` writes them to `config.toml`.
+- After that, every workspace load writes an "Ignoring … for Google provider" warning.
+- The web form does not cause this, because it sends `"none"` and `[]`.
+
+**Reason:** the parser resets `reasoning_format`, `web_search` and `cache_retention` to their defaults for Google, but not `reasoning_effort` or `openrouter_targets`. The design says Save must not keep a hidden effort value.
+
+**Fix:** for Google, set `reasoning_effort = "none"` and clear `openrouter_targets` in `parse_provider_update()` before validation. After this change, some code is no longer needed:
+- the `!google &&` conditions at `request_parser.cpp:386` and `:389`;
+- the three Google exceptions in `provider_config_error()` at `src/characters/character_config.cpp:193-200`. Its only callers are `load_provider()`, which already resets these fields, and `write_provider()`. The `web_search` exception at line 199 already does nothing, because both paths force `web_search` to off;
+- the test lines that check these exceptions, `tests/providers/unit_google_api.cpp:44-48`.
+
+### 3. A second argument-size check gives a different maintenance error (verified by reading the code)
+
+**Location:** `src/providers/google_api.cpp:119-123`
+
+**Scenario:** a maintenance response has a function call with oversized arguments and `finishReason = "MAX_TOKENS"`. The decoder stops early with "Tool arguments too large". With the same response, `tool_call_result()` at `src/providers/tool_calls.cpp:381-388` gives `maintenance_output_limit_message`, as the other protocols do.
+
+**Reason:** `tool_call_result()` already checks the size at `tool_calls.cpp:367-371`. The check in the decoder is a copy, and it runs first.
+
+**Fix:** remove lines 119-123. The existing tests still get "Tool arguments too large" from the shared check.
+
+### 4. Output tokens are "unknown" when the model writes no visible text (accepted by the design; uncertain with real data)
+
+**Location:** `src/providers/google_api.cpp:149`
+
+**Scenario:** thinking uses the whole output limit. Google probably leaves out `candidatesTokenCount` because it is 0, and sends `thoughtsTokenCount`. CHA then reports output as unknown, although the thought tokens are known.
+
+**Reason:** the design says output is unknown when `candidatesTokenCount` is missing. Google leaves out zero values, so a missing value probably means 0 here. Only the usage statistics are affected.
+
+**Fix (optional):** count a missing `candidatesTokenCount` as 0 when `thoughtsTokenCount` is present. This changes the design rule, so it is your decision.
+
+### 5. Small code that does nothing (verified by reading the code)
+
+- `src/workspace/workspace_config_editor.cpp:1093`: the Google exception cannot run. `nullable_reasoning_effort()` at `request_parser.cpp:127-133` rejects bad values first. For Google, `resolve_character_references()` also removes bad values at load. Remove the `provider->config.api != ProviderApi::google &&` condition.
+- `src/providers/tool_calls.cpp:314-319`: this recount of `system_prompt_bytes` always gives `text.size()`. `project_model_context()` makes no more than one system message (`model_context.cpp:90-92`), and the Google request has one system part. Remove these lines.
+- `src/providers/google_api.cpp:85-86`: the fallback "Google returned an error" cannot run, because `.at("message")` throws when `message` is missing. Use `.value("message", "")` so that the fallback works.
+
+## Areas reviewed
+
+- `google_api.h` and `google_api.cpp`: request body, SSE decoder, full-JSON decoder, status mapping, usage.
+- `provider_client.cpp`: preparation, the tool loop, matching results to calls, the limit request, headers, removal of the key from error messages, the three-way protocol switches.
+- `tool_calls.cpp`: function declarations, `update_tool_instructions()` with `NONE`, `tool_call_result()` for Google, and no change to the other two protocols.
+- `character_config.*`: model ID check, endpoints, capability functions, `provider_config_error()`.
+- The ignore rules in `workspace.cpp`, `request_parser.cpp` and `workspace_config_editor.cpp`, including the move of the character effort check into `resolve_character_references()`.
+- Naming (`session_controller.cpp:1191-1251`), the note operations (`notes_operations.cpp`) and provider Test (`settings_operations.cpp:424-486`).
+- `ProviderSettings.tsx`, `client.ts`, `dto.yaml` and `schema.d.ts`.
+- All new and changed tests.
+- Old vaults: existing provider files need no change, because the default `api` stays `responses`.
+
+## Validation gaps
+
+- I did not build or run the C++ tests or `npm run check`.
+- No live Google request was made. These items are not checked against the real service:
+  - the maintenance schemas in `parametersJsonSchema`: nullable type lists, empty parameter objects, `additionalProperties`;
+  - whether Gemini leaves out arguments that are required but null, which the maintenance tools may reject;
+  - whether Gemini accepts `contents` that start with a `model` item;
+  - whether sending back signed parts with empty text works;
+  - the real shape of the last stream chunk (finding 1);
+  - the shape of a non-2xx error body from `streamGenerateContent?alt=sse`. If it is a JSON array, `response_error()` shows the raw body text instead of `error.message`. The text is still readable.
+- The naming timeout of 10 seconds with Google's default thinking is not checked.

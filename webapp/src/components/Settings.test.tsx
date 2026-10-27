@@ -1078,6 +1078,48 @@ describe('Settings screens', () => {
     expect(await screen.findByText('Provider responded successfully.')).toBeInTheDocument();
   });
 
+
+  it.each(['key', 'oauth'] as const)('switches to Google from %s credentials and clears hidden effort on Test and Save', async (credential) => {
+    const configured: ProviderDetail = {
+      ...provider, reasoning_effort: 'high', api: 'responses',
+      host: 'generativelanguage.googleapis.com', base_path: '/v1beta',
+      api_key: credential === 'key' ? 'api_key_1' : null,
+      auth: credential === 'oauth' ? 'openai_subscription' : 'none',
+    };
+    const updateProvider = vi.fn<ChaClient['updateProvider']>(async (_id, update) => ({ ...configured, ...update }));
+    const testProvider = vi.fn(async () => undefined);
+    render(
+      <ProviderScreen
+        client={fixtureClient({
+          getProvider: async () => configured,
+          listApiKeys: async () => [{ id: 'api_key_1', display_name: 'Google key', has_value: true, used_by: [] }],
+          updateProvider, testProvider,
+        })}
+        dispatch={vi.fn()} navigate={vi.fn()}
+        state={{ ...initialAppState, inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id } }}
+      />,
+    );
+    const baseUrl = await screen.findByLabelText('Base URL');
+    await userEvent.selectOptions(screen.getByLabelText('API format'), 'google');
+    expect(screen.getByRole('option', { name: 'Google (Gemini)' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'OpenAI OAuth' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Credentials')).toHaveValue(credential === 'key' ? 'api_key_1' : '');
+    expect(baseUrl).toHaveValue('https://generativelanguage.googleapis.com/v1beta');
+    expect(screen.getByLabelText('Model')).toHaveValue(configured.model);
+    await userEvent.click(screen.getByRole('button', { name: 'Test' }));
+    expect(testProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
+      api: 'google', auth: 'none', api_key: credential === 'key' ? 'api_key_1' : null,
+      reasoning_effort: 'none', base_path: '/v1beta', model: configured.model,
+    }));
+    await screen.findByText('Provider responded successfully.');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(updateProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
+      api: 'google', auth: 'none', reasoning_effort: 'none',
+      api_key: credential === 'key' ? 'api_key_1' : null,
+    }));
+  });
+
   it('saves the provider reasoning effort', async () => {
     const configured: ProviderDetail = { ...provider, reasoning_effort: 'high' };
     const updateProvider = vi.fn(async (_id, update) => ({ ...configured, ...update }));

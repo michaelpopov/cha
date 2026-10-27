@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -458,6 +459,39 @@ TEST(Workspace, CreatesUpdatesAssignsAndDeletesVoices) {
     });
     EXPECT_EQ(
         Workspace::load(fixture.root()).find_voice("voice_1"), nullptr);
+}
+
+
+TEST(Workspace, GoogleIgnoresUnusedSettingsAndCharacterOverridesWithWarnings) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("google", "host = 'generativelanguage.googleapis.com'\nport = 443\nhttps = true\n"
+        "base_path = '/v1beta'\napi = 'google'\nmode = 'net'\nmodel = 'models/gemini-test'\n"
+        "reasoning_effort = 'obsolete'\nreasoning_format = 'obsolete'\ncache_retention = 'obsolete'\n"
+        "web_search = 'obsolete'\nopenrouter_targets = ['unused target']\n");
+    fixture.write_character_config("display_name = 'Guide'\nprovider = 'google'\nreasoning_effort = 'high'\nweb_search = 'required'\n");
+    LoadWarningCollector warnings;
+    auto workspace = Workspace::load(fixture.root(), &warnings);
+    const auto* provider = workspace.find_provider("google");
+    ASSERT_NE(provider, nullptr);
+    EXPECT_EQ(provider->config.api, ProviderApi::google);
+    EXPECT_EQ(provider->config.reasoning_effort, "none");
+    EXPECT_TRUE(provider->config.openrouter_targets.empty());
+    const auto* character = workspace.find_character("guide");
+    ASSERT_NE(character, nullptr);
+    EXPECT_EQ(character->reasoning_effort, "high");
+    EXPECT_FALSE(character->web_search);
+    for (const auto* field : {"reasoning_effort", "reasoning_format", "cache_retention", "openrouter_targets", "web_search"}) {
+        EXPECT_TRUE(std::ranges::any_of(warnings, [&](const auto& warning) {
+            return warning.message.find(field) != std::string::npos;
+        })) << field;
+    }
+    const auto config = provider->config;
+    edit_fixture(workspace, [&](auto& editor) { editor.write_provider("google", "Google", config); });
+    workspace = Workspace::load(fixture.root());
+    ASSERT_NE(workspace.find_provider("google"), nullptr);
+    EXPECT_EQ(workspace.find_provider("google")->config.model, "models/gemini-test");
+    EXPECT_EQ(workspace.find_provider("google")->config.base_path, "/v1beta");
+    EXPECT_EQ(workspace.find_provider("google")->config.api, ProviderApi::google);
 }
 
 TEST(Workspace, OmitsAnInvalidUnusedProvider) {

@@ -473,6 +473,48 @@ TEST_F(SessionNaming, UsesConfiguredProviderAndEffort) {
     EXPECT_EQ(title_definitions[0]->provider.config.reasoning_effort, "high");
 }
 
+
+TEST_F(SessionNaming, UsesNativeGoogleWithDefaultLowEffort) {
+    controller.reset();
+    providers->shutdown();
+    auto config = store->snapshot()->find_provider("naming")->config;
+    config.api = ProviderApi::google;
+    config.mode = Mode::net;
+    config.model = "gemini-test";
+    config.base_path = "/v1beta";
+    store->apply_provider_update("naming", "Google", config);
+    store->apply_session_naming_update({"naming", "low"});
+    int requests = 0;
+    providers = std::make_shared<Providers>(
+        [&](SharedCharacterDefinition definition) {
+            if (definition->character.id != "session-name") return std::make_unique<ProviderClient>(definition);
+            EXPECT_EQ(definition->provider.config.reasoning_effort, "low");
+            EXPECT_EQ(definition->provider.config.timeout_s, 10);
+            return std::make_unique<ProviderClient>(definition, nullptr,
+                [&](const ProviderHttpRequest& request, const auto&) {
+                    ++requests;
+                    EXPECT_EQ(request.url, "http://naming.test:1/v1beta/models/gemini-test:streamGenerateContent?alt=sse");
+                    const auto body = nlohmann::json::parse(request.body);
+                    EXPECT_TRUE(body.contains("systemInstruction"));
+                    EXPECT_TRUE(body.contains("contents"));
+                    EXPECT_FALSE(body.contains("messages"));
+                    EXPECT_FALSE(body.contains("reasoning_effort"));
+                    EXPECT_FALSE(body.contains("tools"));
+                    EXPECT_EQ(body.dump().find("tool_availability"), std::string::npos);
+                    return ProviderHttpResponse{200, "text/event-stream",
+                        "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Planning a small garden\"}]},\"finishReason\":\"STOP\"}]}\n\n"};
+                });
+        },
+        [this](auto worker) { workers.push_back(std::move(worker)); },
+        [this](const auto& input, const auto&) { classified.push_back(input); return decision; });
+    controller = make_controller(notifier, load_session_state(journal.path()));
+    controller->enable_auto_naming("New session");
+    (void)send("Plan a garden");
+    finish();
+    EXPECT_EQ(requests, 1);
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
+}
+
 TEST_F(SessionNaming, IdentifiedSelfNoteIsNamedAndSavedWithoutACharacterReply) {
     decision = {JevOutcome::success, "self_note", {}};
     (void)send("Note to self: buy milk.");

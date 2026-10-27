@@ -7,6 +7,7 @@ import {
   isCharacterDetail,
   isCharacterPicture,
   isCommandResult,
+  isProviderDetail,
   isNativeVoiceInputRuntime,
   isSessionSnapshot,
   isVoiceInputSettings,
@@ -53,6 +54,8 @@ describe('C++ wire fixtures', () => {
     expect(info.protocol_version).toBe(nativeProtocolVersion);
     const provider = loadFixture('provider-detail.json') as { api_key: unknown };
     expect(provider.api_key).toBeNull();
+    expect(isProviderDetail({ ...provider, api: 'google' })).toBe(true);
+    expect(isProviderDetail({ ...provider, api: 'unknown' })).toBe(false);
     const runtime = loadFixture('voice-input-runtime.json') as Record<string, unknown>;
     expect(runtime).not.toHaveProperty('api_key');
     expect(isNativeVoiceInputRuntime(runtime)).toBe(true);

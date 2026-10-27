@@ -7,6 +7,7 @@
 #include "providers/chat_completions_api.h"
 #include "providers/openai_oauth.h"
 #include "providers/responses_api.h"
+#include "providers/google_api.h"
 #include "providers/web_search.h"
 #include "providers/maintenance.h"
 #include "providers/tool_calls.h"
@@ -532,6 +533,14 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
             .web_read_tool = input.web_read_tool,
             .maintenance_tool = input.maintenance_tool,
         };
+    case ProviderApi::google:
+        return {
+            .bytes = build_google_request_body(input, config, definition_->system_prompt, &text_sizes),
+            .text_sizes = text_sizes,
+            .web_search_tool = input.web_search_tool,
+            .web_read_tool = input.web_read_tool,
+            .maintenance_tool = input.maintenance_tool,
+        };
     case ProviderApi::responses:
         return {
             .bytes = build_responses_request_body(
@@ -571,6 +580,7 @@ GenerationResult ProviderClient::perform(
         if (count) sum = sum.value_or(0) + *count;
     };
     const bool responses = definition_->provider.config.api == ProviderApi::responses;
+    const bool google = definition_->provider.config.api == ProviderApi::google;
     bool received_answer = false;
     Json body;
     for (;;) {
@@ -626,7 +636,7 @@ GenerationResult ProviderClient::perform(
                     : "Model kept requesting web search after the search limit", total};
         }
         if (body.is_null()) body = Json::parse(payload.bytes);
-        auto& messages = body[responses ? "input" : "messages"];
+        auto& messages = body[google ? "contents" : responses ? "input" : "messages"];
         const auto continuation = Json::parse(result.continuation);
         if (responses) {
             for (const auto& item : continuation) messages.push_back(item);
@@ -788,10 +798,22 @@ GenerationResult ProviderClient::perform(
             }
         }
         if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
+        Json google_parts = Json::array();
+        std::size_t google_part_index = 0;
         for (std::size_t index = 0; index < result.tool_calls.size(); ++index) {
             const auto& call = result.tool_calls[index];
             const auto& output = outputs[index];
-            if (responses) {
+            if (google) {
+                const auto& parts = continuation.at("parts");
+                while (!parts.at(google_part_index).contains("functionCall")) ++google_part_index;
+                const auto& function = parts.at(google_part_index++).at("functionCall");
+                auto response = Json::parse(output, nullptr, false);
+                if (response.is_discarded()) response = output;
+                if (!response.is_object()) response = {{"result", std::move(response)}};
+                Json function_response{{"name", function.at("name")}, {"response", std::move(response)}};
+                if (function.contains("id")) function_response["id"] = function.at("id");
+                google_parts.push_back({{"functionResponse", std::move(function_response)}});
+            } else if (responses) {
                 messages.push_back({{"type", "function_call_output"},
                     {"call_id", call.id}, {"output", output}});
             } else {
@@ -799,24 +821,34 @@ GenerationResult ProviderClient::perform(
                     {"tool_call_id", call.id}, {"content", output}});
             }
         }
+        if (google) messages.push_back({{"role", "user"}, {"parts", std::move(google_parts)}});
         // A full result budget ends tool use for the whole answer, as the call limit does.
         if (force_final) tool_calls_used = max_tool_calls;
         // Required provider-hosted search must not force another search forever.
-        body["tool_choice"] = "auto";
+        if (!google) body["tool_choice"] = "auto";
         if (tool_calls_used >= max_tool_calls) {
             // Some providers still request calls when tool definitions remain.
             log_debug("Tool limit reached: requesting final answer without tools");
-            body.erase("tools");
-            body.erase("tool_choice");
+            if (google) body["toolConfig"]["functionCallingConfig"]["mode"] = "NONE";
+            else {
+                body.erase("tools");
+                body.erase("tool_choice");
+            }
             update_tool_instructions(body, definition_->provider.config.api);
-            messages.push_back({{"role", "user"}, {"content", maintenance
+            const std::string directive = maintenance
                 ? "Maintenance tools are now unavailable because the tool limit was reached. "
                     "Answer the original request using the results already collected. "
                     "Earlier saved changes stay saved. Do not request more tools."
                 : "Web tools are now unavailable because the tool limit was reached. "
                     "Answer the original request using the results already collected. "
                     "State clearly if those results are insufficient to verify any requested information. "
-                    "Do not invent missing facts or request more tools."}});
+                    "Do not invent missing facts or request more tools.";
+            if (google) {
+                body["systemInstruction"]["parts"].back()["text"].get_ref<std::string&>()
+                    += "\n\n" + directive;
+            } else {
+                messages.push_back({{"role", "user"}, {"content", directive}});
+            }
         }
         payload.bytes = body.dump();
     }
@@ -879,6 +911,10 @@ GenerationResult ProviderClient::perform_once(
                 config.reasoning_format, on_delta, collect_tool_calls,
                 argument_limit, maintenance);
             break;
+        case ProviderApi::google:
+            decoder = std::make_unique<GoogleStreamDecoder>(
+                on_delta, collect_tool_calls, argument_limit, maintenance);
+            break;
         case ProviderApi::responses:
             decoder = std::make_unique<ResponsesStreamDecoder>(
                 on_delta, collect_tool_calls, argument_limit, maintenance);
@@ -908,6 +944,13 @@ GenerationResult ProviderClient::perform_once(
                               GenerationResult result,
                               long status,
                               std::string_view content_type) {
+        if (!credential.empty()) {
+            std::size_t offset = 0;
+            while ((offset = result.message.find(credential, offset)) != std::string::npos) {
+                result.message.replace(offset, credential.size(), "[REDACTED]");
+                offset += 10;
+            }
+        }
         log_debug_payload("HTTP model result diagnostic", result.message, credential);
         const std::string message = http_event(
             result.outcome == GenerationOutcome::completed
@@ -946,7 +989,8 @@ GenerationResult ProviderClient::perform_once(
         header_lines.push_back("originator: cha");
         header_lines.push_back("User-Agent: cha");
     } else if (!api_key_.empty()) {
-        header_lines.push_back("Authorization: Bearer " + api_key_);
+        header_lines.push_back((config.api == ProviderApi::google
+            ? "x-goog-api-key: " : "Authorization: Bearer ") + api_key_);
     }
     if (payload.session_id) {
         header_lines.push_back("session_id: " + *payload.session_id);
@@ -1096,6 +1140,10 @@ GenerationResult ProviderClient::perform_once(
             collect_tool_calls,
             argument_limit,
             maintenance);
+        break;
+    case ProviderApi::google:
+        result = decode_google_response(
+            response.body, on_delta, collect_tool_calls, argument_limit, maintenance);
         break;
     case ProviderApi::responses:
         result = decode_responses_response(

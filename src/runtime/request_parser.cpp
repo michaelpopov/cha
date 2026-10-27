@@ -347,6 +347,9 @@ ProviderUpdate parse_provider_update(
         throw std::invalid_argument("Invalid provider");
     }
     ProviderUpdate result;
+    result.config.api = settings_choice(
+        required_field<std::string>(json, "api"), parse_provider_api);
+    const bool google = result.config.api == ProviderApi::google;
     result.display_name = required_field<std::string>(json, "display_name");
     result.config.host = required_field<std::string>(json, "host");
     result.config.port = required_field<int>(json, "port");
@@ -361,29 +364,27 @@ ProviderUpdate parse_provider_update(
     result.config.idle_timeout_s = required_field<int>(json, "idle_timeout_s");
     result.config.api_key_id =
         settings_nullable_string(json, "api_key").value_or("");
-    result.config.reasoning_effort =
-        required_field<std::string>(json, "reasoning_effort");
-    if (!valid_reasoning_effort(result.config.reasoning_effort)) {
-        throw std::invalid_argument("Invalid reasoning effort");
-    }
-    result.config.reasoning_format = settings_choice(
+    result.config.reasoning_effort = google ? std::string(default_reasoning_effort)
+        : required_field<std::string>(json, "reasoning_effort");
+    result.config.reasoning_format = google ? ReasoningFormat::automatic : settings_choice(
         required_field<std::string>(json, "reasoning_format"),
         parse_reasoning_format);
     result.config.https = required_field<bool>(json, "https");
-    result.config.api = settings_choice(
-        required_field<std::string>(json, "api"), parse_provider_api);
     result.config.auth = settings_choice(
         required_field<std::string>(json, "auth"), parse_provider_auth);
-    result.config.web_search = settings_choice(
+    result.config.web_search = google ? WebSearchMode::off : settings_choice(
         required_field<std::string>(json, "web_search"), parse_web_search_mode);
-    result.config.cache_retention = settings_choice(
+    result.config.cache_retention = google ? CacheRetention::short_ : settings_choice(
         required_field<std::string>(json, "cache_retention"),
         parse_cache_retention);
-    if (includes_openrouter_targets) {
+    if (!google && includes_openrouter_targets) {
         result.config.openrouter_targets =
             required_field<std::vector<std::string>>(json, "openrouter_targets");
-    } else if (is_openrouter_host(result.config.host)) {
+    } else if (!google && is_openrouter_host(result.config.host)) {
         result.config.openrouter_targets = existing_openrouter_targets;
+    }
+    if (!valid_reasoning_effort(result.config.reasoning_effort)) {
+        throw std::invalid_argument("Invalid reasoning effort");
     }
     if (!valid_openrouter_targets(result.config)) {
         throw std::invalid_argument("Invalid OpenRouter inference targets");

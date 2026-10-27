@@ -6,6 +6,17 @@
 #include <stdexcept>
 
 namespace cha {
+namespace {
+std::optional<std::string_view> google_model_id(std::string_view model) {
+    if (model.starts_with("models/")) model.remove_prefix(7);
+    if (model.empty() || model.find_first_not_of(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+            != std::string_view::npos || model == "." || model == "..") {
+        return std::nullopt;
+    }
+    return model;
+}
+} // namespace
 
 bool valid_reasoning_effort(std::string_view value) {
     return value == "none" || value == "low"
@@ -44,6 +55,7 @@ bool valid_openrouter_targets(const ModelBackendConfig& config) {
 }
 
 bool provider_supports_reasoning_effort(const ModelBackendConfig& config, ProviderApi api) {
+    if (api == ProviderApi::google) return true;
     if (api == ProviderApi::responses) {
         return !(is_direct_openai_host(config.host)
             && (config.model == "gpt-4o" || config.model.starts_with("gpt-4o-")));
@@ -66,6 +78,7 @@ std::string_view to_string(ProviderApi value) {
     switch (value) {
     case ProviderApi::chat_completions: return "chat_completions";
     case ProviderApi::responses: return "responses";
+    case ProviderApi::google: return "google";
     }
     throw std::logic_error("Unknown provider API");
 }
@@ -106,6 +119,7 @@ std::optional<Mode> parse_mode(std::string_view value) {
 std::optional<ProviderApi> parse_provider_api(std::string_view value) {
     if (value == "chat_completions") return ProviderApi::chat_completions;
     if (value == "responses") return ProviderApi::responses;
+    if (value == "google") return ProviderApi::google;
     return std::nullopt;
 }
 
@@ -138,7 +152,7 @@ std::optional<CacheRetention> parse_cache_retention(std::string_view value) {
 }
 
 bool provider_supports_web_search(const ModelBackendConfig& config) {
-    if (config.auth == ProviderAuth::openai_subscription) return false;
+    if (config.auth == ProviderAuth::openai_subscription || config.api == ProviderApi::google) return false;
     return config.api == ProviderApi::responses || is_openrouter_host(config.host);
 }
 
@@ -149,6 +163,9 @@ std::optional<std::string_view> provider_config_error(
     }
     if (config.model.empty()) {
         return "requires non-empty string 'model'";
+    }
+    if (config.api == ProviderApi::google && !google_model_id(config.model)) {
+        return "has invalid Google model ID";
     }
     if (!config.api_key_id.empty() && !config.api_key_env.empty()) {
         return "cannot set both api_key and api_key_env";
@@ -173,13 +190,13 @@ std::optional<std::string_view> provider_config_error(
             || config.base_path.find_first_of("?# \t\r\n") != std::string::npos)) {
         return "has invalid base_path";
     }
-    if (!valid_reasoning_effort(config.reasoning_effort)) {
+    if (config.api != ProviderApi::google && !valid_reasoning_effort(config.reasoning_effort)) {
         return "has invalid reasoning_effort";
     }
-    if (!valid_openrouter_targets(config)) {
+    if (config.api != ProviderApi::google && !valid_openrouter_targets(config)) {
         return "has invalid OpenRouter inference targets";
     }
-    if (config.web_search != WebSearchMode::off
+    if (config.api != ProviderApi::google && config.web_search != WebSearchMode::off
         && !provider_supports_web_search(config)) {
         return "enables web search for an unsupported provider";
     }
@@ -231,6 +248,12 @@ std::string provider_endpoint(const ModelBackendConfig& config) {
         return base_url + "/v1/chat/completions";
     case ProviderApi::responses:
         return base_url + "/v1/responses";
+    case ProviderApi::google: {
+        const auto model = google_model_id(config.model);
+        if (!model) throw std::invalid_argument("Invalid Google model ID");
+        return base_url + "/models/" + std::string(*model)
+            + (config.stream ? ":streamGenerateContent?alt=sse" : ":generateContent");
+    }
     }
     throw std::logic_error("Unknown provider API");
 }

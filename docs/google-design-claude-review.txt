@@ -1,0 +1,124 @@
+# Review of `docs/google-design.md`
+
+I did not change files or run commands. I checked the design against the local code only. Claims that depend on the current Google API are in a separate section at the end.
+
+## P1: Must fix
+
+### 1. The tool loop adds OpenAI fields on every tool round, not only at the limit
+
+- **Design:** `docs/google-design.md:147-151` says not to add `tool_choice`, but only for the request at the tool limit. It does not say what shape the final "tools are unavailable" message takes for Google.
+- **Evidence:**
+  - `src/providers/provider_client.cpp:805` sets `body["tool_choice"] = "auto"` after every tool round, for every API.
+  - `src/providers/tool_calls.cpp:20` adds `tool_choice` each time it adds a tool.
+  - `src/providers/provider_client.cpp:812-819` adds the limit message as `{"role":"user","content":...}`.
+  - `src/providers/provider_client.cpp:629` writes to `"messages"` for every API that is not Responses.
+- **Result:** The second Google request in any tool loop has a top-level `tool_choice` field. The limit request has a content item without `parts`. Google will probably reject both (Q1 below). Web search, page reading, and Assistant maintenance would then fail after the first tool call.
+- **Fix:** Add one rule: "For Google, do not write `tool_choice` anywhere, including `append_tool()` and `provider_client.cpp:805`. Write the limit message as a Google user content with a text part." Add a test that runs two rounds and the limit round, then checks that no Google body contains `tool_choice`, `messages`, or `content`.
+
+## P2: Should fix
+
+### 2. Reasoning effort in naming and note operations is not specified
+
+- **Design:** `docs/google-design.md:85-90` says to drop `reasoning_effort` and log a warning when a non-default value is ignored.
+- **Evidence:**
+  - Session naming copies its own effort into the provider config (`src/session/session_controller.cpp:1213`). The default is `"low"` (`src/workspace/workspace.cpp:1462`).
+  - Note compression and page formatting do the same. Their default is `"high"` (`src/workspace/workspace.cpp:1500`, `src/app/notes_operations.cpp:30-37`).
+  - `src/app/notes_operations.cpp:31-35` stops the operation when `provider_supports_reasoning_effort()` returns false.
+  - The existing "ignore and warn" pattern for Mistral uses that same function (`src/providers/chat_completions_api.cpp:172-178`, `src/characters/character_config.cpp:46-55`).
+- **Result:** Suppose the implementer follows the Mistral pattern and makes that function return false for Google. Then every compression and page import with the default effort fails with "This compression provider's model does not support high reasoning effort." That breaks the AGENTS.md rule about unused settings. If the warning goes in the request builder instead, every session name and every compression logs a warning, even with default settings.
+- **Fix:**
+  - Keep `provider_supports_reasoning_effort()` true for Google.
+  - The Google builder ignores `reasoning_effort` and does not log a warning for each request.
+  - Log a warning only at workspace load, and only when a provider file or character override sets a non-default effort.
+  - State that the naming and compression effort settings have no effect for Google.
+
+### 3. The fallback tool ID has no defined path back to Google
+
+- **Design:** `docs/google-design.md:127-130` says: when Google omits a call ID, use a local number internally, and send no ID back to Google.
+- **Evidence:** `src/providers/tool_calls.cpp:318-320` requires a non-empty, unique `ToolCall::id`, so the local number is needed. But `src/providers/provider_client.cpp:791-801` builds the tool results from `call.id` only. At that point the loop cannot tell a real ID from a local number.
+- **Result:** The implementer must either send the local number to Google as `functionResponse.id`, or add extra state to remember which IDs were real. Both go against the design.
+- **Fix:** Build each `functionResponse` from the matching `functionCall` part in the continuation, pairing them by index. Copy `name` always, and copy `id` only when that part has one. The continuation already holds this data, so no new state is needed.
+
+### 4. The provider form rules do not agree with each other
+
+- **Design:** `docs/google-design.md:190-192` hides Reasoning effort for Google and does not offer OpenAI OAuth.
+- **Evidence:**
+  - `webapp/src/components/ProviderSettings.tsx:286-301` sends `draft.reasoning_effort` even when the field is hidden.
+  - `src/workspace/workspace_config_editor.cpp:154` saves that value.
+  - The Credentials select takes its value from `draft.auth` (`ProviderSettings.tsx:431-432`).
+  - `ProviderSettings.tsx:274-277` rejects OAuth for any API format other than Responses.
+  - The Character, Session naming, and Notes screens still show a Reasoning effort control for every provider (`CharacterScreens.tsx:531`, `SessionSettings.tsx:135`, `NotesSettings.tsx:77`).
+- **Result:**
+  - A provider with effort "high" that the user changes to Google keeps a hidden "high". The user cannot see or clear it, and each workspace load logs a warning.
+  - A draft that uses OAuth loses the OAuth option when the user picks Google. React then shows "No credentials", but Save fails with "OpenAI OAuth requires the Responses API format."
+- **Fix (smallest):**
+  - For Google, have `candidateUpdate()` send `reasoning_effort: 'none'`.
+  - Keep the OAuth option visible and let the existing error at `ProviderSettings.tsx:274-277` handle it. This removes one conditional UI rule.
+  - Say in the design that the other three effort controls have no effect for Google.
+
+## P3: Lower priority
+
+### 5. The "intermediate-answer suppression policy" does not exist in the code
+
+- **Design:** `docs/google-design.md:147`.
+- **Evidence:** `src/providers/provider_client.cpp:587-596` streams the text of every round, with a blank line between rounds. `tests/providers/unit_provider_client.cpp:2446-2463` checks that the preamble text stays visible. Only `src/providers/README.md:60-61` says intermediate text is hidden, and that line is out of date.
+- **Result:** An implementer could add hiding for Google only, and Google output would then behave differently from the other protocols.
+- **Fix:** Change the sentence to: "Keep the existing behavior: each round's text streams, with a blank line between rounds."
+
+### 6. The output-token rule is not clear when one count is missing
+
+- **Design:** `docs/google-design.md:179-181`.
+- **Result:** Responses without thinking can omit `thoughtsTokenCount`. A literal reading of "leave absent counts unknown" reports output tokens as unknown, and the logs then show "unreported" (`src/providers/providers.cpp:42-46`).
+- **Fix:** "Output is unknown only when `candidatesTokenCount` is missing. A missing `thoughtsTokenCount` counts as 0."
+
+### 7. The finish-reason mapping is not explicit
+
+- **Design:** `docs/google-design.md:171-176`.
+- **Evidence:** `src/providers/tool_calls.cpp:327-338` and `src/app/notes_operations.cpp:165-179, 317-331` check exactly `length`, `content_filter`, and `refused`.
+- **Result:** Which statuses count as "content blocks" changes what chat shows: partial text kept as the answer, or a failure. Two implementers could choose differently.
+- **Fix:** List the mapping by name:
+  - `STOP` → `stop`
+  - `MAX_TOKENS` → `length`
+  - `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` → `refused` plus `content_filter`
+  - all other values → error
+
+  Check these names against Google's current docs (Q6).
+
+### 8. The credential sentence does not match the code
+
+- **Design:** `docs/google-design.md:65-66` says a request without a usable saved key "returns the existing credential error path".
+- **Evidence:**
+  - The existing error path only covers a missing key ID or key name (`src/providers/api_key_store.cpp:175-200`).
+  - With no key configured, the request goes out without an auth header (`src/providers/provider_client.cpp:948-950`).
+  - Google's HTTP 401 or 403 then becomes "Provider authentication or permission was rejected." (`provider_client.cpp:380-387`).
+- **Result:** An implementer could add a new "key required" check. That would break the local test servers that `docs/google-design.md:82-83` says to keep working.
+- **Fix:** "With no key, send no key header. Google's HTTP error goes through the existing error mapping."
+
+### 9. Known failure: changing an existing OpenAI-compatible Google provider to the new format
+
+- **Evidence:** `src/characters/character_config.cpp:227-231` has a special case for base path `/v1beta/openai`, so you probably have a provider with that base path.
+- **Result:** If you change only its API format to Google (Gemini), the URL becomes `/v1beta/openai/models/...:streamGenerateContent`. Test then fails with HTTP 404. The design accepts this when it says "Keep Base URL explicit".
+- **Fix:** No change is required, because Test shows the failure. Optionally, note in the design that the Base URL must change to `/v1beta`.
+
+## Questions to check in Google's documentation
+
+- **Q1.** Does the Gemini REST API reject unknown top-level fields such as `tool_choice` with HTTP 400? I expect yes. If so, finding 1 is a hard failure. If not, finding 1 is still a contract error.
+- **Q2.** Does `parametersJsonSchema` accept the maintenance schemas as they are, for every target model? The schemas use `"type": ["string","null"]`, `"type": ["array","null"]`, `additionalProperties: false`, and objects with empty `properties` (`src/providers/tool_calls.cpp:60-73, 114, 179, 198`).
+- **Q3.** Does Gemini accept the limit request when it has `functionCall`/`functionResponse` history but no `tools`? If not, the smaller fix is to keep the declarations and send `toolConfig.functionCallingConfig.mode = "NONE"`. Also check whether `UNEXPECTED_TOOL_CALL` can occur there.
+- **Q4.** Where can the limit message go: in a separate user content after the `functionResponse` content, or as a text part in the same content?
+- **Q5.** Does Gemini accept `contents` that start with role `model`? This can happen when `covered_until` skips earlier entries and the first remaining entry is the character's own reply (`src/characters/model_context.cpp:101-110, 142-148`).
+- **Q6.** What are the current `finishReason` names? Can a stream send a chunk with only usage data after the chunk that has `finishReason`?
+- **Q7.** Does the Developer API return `functionCall.id` for your target models, and does it accept `functionResponse.id`?
+- **Q8.** Session naming has a 10-second timeout (`src/session/session_controller.cpp:1215`), and the naming effort setting has no effect for Google. If a model's default thinking is slow, naming will fall back to a timestamp. This follows from the design decision and is not a bug. Check the default thinking behavior of the models you plan to use.
+
+## Areas that are sound
+
+- **Response handling:** The decoder interface and SSE handling work as described. `SseFramer` already converts CRLF line endings (`src/providers/sse_framer.cpp:11-22`), and error text comes from `/error/message` (`provider_client.cpp:341-356`).
+- **Tool rounds:** Using the full model content as the continuation is correct, and outputs keep their index order (`provider_client.cpp:637, 785`).
+- **Configuration:** Character `web_search` overrides are already warned about and ignored for unsupported providers (`src/workspace/workspace.cpp:1661-1668`, `src/workspace/workspace_config_editor.cpp:1098-1104`). Test uses the same `ProviderClient` path as chat (`src/app/settings_operations.cpp:463-468`). The DTO and client guard updates cover every place that checks `api` (`resources/dto.yaml:484, 564`, `webapp/src/api/client.ts:486`).
+
+## Overall assessment
+
+The design is small and fits the code: it reuses the right seams and adds no new state. The main risk is the shared tool loop, which writes OpenAI fields outside the limit branch. The second risk is reasoning effort in naming and note operations. Fix findings 1 and 2 in the design before implementation. Findings 3 and 4 need short clarifications.
+
+**Suggested order:** 1, 2, 3, 4, then 5 to 8. Answer Q1 to Q4 before the tool-loop work starts.

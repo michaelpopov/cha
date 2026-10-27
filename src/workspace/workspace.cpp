@@ -280,6 +280,22 @@ WorkspaceProvider load_provider(
         "api", "auth", "web_search", "cache_retention", "openrouter_targets"};
     warn_unknown_fields(table, path, fields, "Provider config", warnings);
 
+    const auto api = choice(table, path, "api", parse_provider_api, ProviderApi::responses);
+    const bool google = api == ProviderApi::google;
+    if (google) {
+        for (const auto& [field, default_value] : {
+                 std::pair{"reasoning_effort", "none"}, {"reasoning_format", "auto"},
+                 {"cache_retention", "short"}, {"web_search", "off"}}) {
+            if (table.contains(field) && table[field].value<std::string>() != default_value) {
+                warnings.emit(path, "Ignoring " + std::string(field) + " for Google provider in " + utf8_path(path));
+            }
+        }
+        if (table.contains("openrouter_targets")
+            && (!table["openrouter_targets"].is_array() || !table["openrouter_targets"].as_array()->empty())) {
+            warnings.emit(path, "Ignoring openrouter_targets for Google provider in " + utf8_path(path));
+        }
+    }
+
     WorkspaceProvider provider{
         .id = id,
         .label = optional_value<std::string>(
@@ -307,26 +323,25 @@ WorkspaceProvider load_provider(
                 table, path, "api_key", "a string").value_or(""),
             .api_key_env = optional_value<std::string>(
                 table, path, "api_key_env", "a string").value_or(""),
-            .reasoning_format = choice(
+            .reasoning_format = google ? ReasoningFormat::automatic : choice(
                 table, path, "reasoning_format", parse_reasoning_format,
                 ReasoningFormat::automatic),
             .https = optional_value<bool>(table, path, "https", "a boolean")
                          .value_or(false),
-            .api = choice(
-                table, path, "api", parse_provider_api, ProviderApi::responses),
+            .api = api,
             .auth = choice(
                 table, path, "auth", parse_provider_auth, ProviderAuth::none),
-            .web_search = choice(
+            .web_search = google ? WebSearchMode::off : choice(
                 table, path, "web_search", parse_web_search_mode, WebSearchMode::off),
-            .cache_retention = choice(
+            .cache_retention = google ? CacheRetention::short_ : choice(
                 table, path, "cache_retention", parse_cache_retention,
                 CacheRetention::short_),
-            .openrouter_targets = optional_string_array(
+            .openrouter_targets = google ? std::vector<std::string>{} : optional_string_array(
                 table, path, "openrouter_targets"),
         },
     };
 
-    if (auto effort = optional_value<std::string>(
+    if (auto effort = google ? std::nullopt : optional_value<std::string>(
             table, path, "reasoning_effort", "a string")) {
         normalize_legacy_reasoning_effort(*effort, path, warnings);
         if (valid_reasoning_effort(*effort)) {
@@ -928,13 +943,6 @@ CharacterConfig load_character_config(
         if (result.provider_id) require_path_component(*result.provider_id, path);
         if (result.style_id) require_path_component(*result.style_id, path);
         if (result.voice_id) require_path_component(*result.voice_id, path);
-        if (result.reasoning_effort
-            && !valid_reasoning_effort(*result.reasoning_effort)) {
-            throw std::runtime_error(
-                "Character config '" + utf8_path(path)
-                + "' has unsupported reasoning_effort '"
-                + *result.reasoning_effort + "'");
-        }
     }
     return result;
 }
@@ -1657,6 +1665,17 @@ CharacterAppearance resolve_character_references(
         throw std::runtime_error(
             std::string(subject) + " references unknown provider '"
             + *config.provider_id + "'");
+    }
+    if (config.reasoning_effort) {
+        if (provider && provider->config.api == ProviderApi::google) {
+            if (*config.reasoning_effort != default_reasoning_effort) {
+                warnings.emit(path, std::string(subject) + " ignores reasoning_effort for Google");
+            }
+            if (!valid_reasoning_effort(*config.reasoning_effort)) config.reasoning_effort.reset();
+        } else if (!valid_reasoning_effort(*config.reasoning_effort)) {
+            throw std::runtime_error("Character config '" + utf8_path(path)
+                + "' has unsupported reasoning_effort '" + *config.reasoning_effort + "'");
+        }
     }
     if (config.web_search && (!provider
         || (*config.web_search != WebSearchMode::off

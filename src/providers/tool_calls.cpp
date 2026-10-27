@@ -10,6 +10,16 @@ namespace {
 void append_tool(nlohmann::json& body, ProviderApi api, nlohmann::json function) {
     using Json = nlohmann::json;
     if (!body.contains("tools")) body["tools"] = Json::array();
+    if (api == ProviderApi::google) {
+        function.erase("strict");
+        function["parametersJsonSchema"] = std::move(function["parameters"]);
+        function.erase("parameters");
+        if (body["tools"].empty()) {
+            body["tools"].push_back({{"functionDeclarations", Json::array()}});
+        }
+        body["tools"][0]["functionDeclarations"].push_back(std::move(function));
+        return;
+    }
     if (api == ProviderApi::responses) {
         function["type"] = "function";
         body["tools"].push_back(std::move(function));
@@ -235,6 +245,14 @@ void update_tool_instructions(nlohmann::json& body, ProviderApi api,
     bool read_available = false;
     if (const auto tools = body.find("tools"); tools != body.end()) {
         for (const auto& tool : *tools) {
+            if (api == ProviderApi::google) {
+                for (const auto& function : tool.at("functionDeclarations")) {
+                    const auto name = function.value("name", "");
+                    search_available |= name == "web_search";
+                    read_available |= name == "web_read";
+                }
+                continue;
+            }
             const auto type = tool.value("type", "");
             if (type == "web_search" || type == "openrouter:web_search") {
                 search_available = true;
@@ -247,8 +265,20 @@ void update_tool_instructions(nlohmann::json& body, ProviderApi api,
         }
     }
 
+    if (api == ProviderApi::google && body.contains("toolConfig")
+        && body["toolConfig"].value("functionCallingConfig", nlohmann::json::object())
+            .value("mode", "") == "NONE") {
+        search_available = read_available = false;
+    }
+
     nlohmann::json* instructions;
-    if (api == ProviderApi::responses) {
+    if (api == ProviderApi::google) {
+        auto& instruction = body["systemInstruction"];
+        if (instruction.is_null()) instruction = {{"parts", nlohmann::json::array()}};
+        auto& parts = instruction["parts"];
+        if (parts.empty()) parts.push_back({{"text", ""}});
+        instructions = &parts.back()["text"];
+    } else if (api == ProviderApi::responses) {
         instructions = &body["instructions"];
     } else {
         auto& messages = body["messages"];
@@ -297,26 +327,44 @@ GenerationResult tool_call_result(const nlohmann::json& continuation,
     bool saw_call = false;
     try {
         const bool responses = api == ProviderApi::responses;
-        auto calls = responses ? continuation
+        const bool google = api == ProviderApi::google;
+        auto calls = google ? continuation.at("parts") : responses ? continuation
             : continuation.value("tool_calls", nlohmann::json::array());
         if (calls.is_null() && !responses) calls = nlohmann::json::array();
         if (!calls.is_array()) throw std::invalid_argument("Invalid tool calls");
         std::unordered_set<std::string> ids;
+        std::size_t call_index = 0;
         for (const auto& item : calls) {
+            if (google && !item.contains("functionCall")) continue;
             if (responses && !item.is_object()) continue;
             if (responses && item.value("type", "") != "function_call") continue;
-            if (!responses && item.value("type", "") != "function")
+            if (!responses && !google && item.value("type", "") != "function")
                 throw std::invalid_argument("Unsupported tool call type");
-            const auto& function = responses ? item : item.at("function");
-            ToolCall call{item.at(responses ? "call_id" : "id").get<std::string>(),
-                function.at("name").get<std::string>(), function.at("arguments").get<std::string>()};
+            const auto& function = google ? item.at("functionCall")
+                : responses ? item : item.at("function");
+            ToolCall call;
+            call.name = function.at("name").get<std::string>();
+            if (google) {
+                // The ordinal is internal only; the continuation retains any provider ID.
+                call.id = "google_call_" + std::to_string(call_index++);
+                if (function.contains("id")) {
+                    call.id = function.at("id").get<std::string>();
+                    if (!ids.insert(call.id).second) throw std::invalid_argument("Duplicate tool ID");
+                }
+                const auto args = function.value("args", nlohmann::json::object());
+                if (!args.is_object()) throw std::invalid_argument("Invalid tool arguments");
+                call.arguments = args.dump();
+            } else {
+                call.id = item.at(responses ? "call_id" : "id").get<std::string>();
+                call.arguments = function.at("arguments").get<std::string>();
+            }
             if (call.arguments.size() > argument_limit) {
                 oversized = true;
                 saw_call = true;
                 continue;
             }
             if (call.id.empty() || call.name.empty()
-                || !ids.insert(call.id).second || result.tool_calls.size() >= 32)
+                || (!google && !ids.insert(call.id).second) || result.tool_calls.size() >= 32)
                 throw std::invalid_argument("Invalid tool call");
             saw_call = true;
             result.tool_calls.push_back(std::move(call));

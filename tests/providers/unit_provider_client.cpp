@@ -1049,51 +1049,63 @@ TEST(ProviderClient, WaitsThroughProviderThinkTimeBeforeTheFirstByte) {
 }
 
 TEST(ProviderClient, ReportsATruncatedResponseAsATransportError) {
-    const std::string body = "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n";
-    const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
-        "Content-Length: " + std::to_string(body.size() + 20)
-        + "\r\nConnection: close\r\n\r\n" + body;
-    MockHttpServer mock({response});
-    mock.start();
-    std::atomic_bool cancellation{false};
-    ProviderClient client(shared_definition(network_definition(mock.port())));
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 12, "Question");
-    std::string output;
+    for (const auto api : {ProviderApi::chat_completions, ProviderApi::google}) {
+        const std::string body = api == ProviderApi::google
+            ? "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Partial\"}]}}]}\n\n"
+            : "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n";
+        const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+            "Content-Length: " + std::to_string(body.size() + 20)
+            + "\r\nConnection: close\r\n\r\n" + body;
+        MockHttpServer mock({response});
+        mock.start();
+        std::atomic_bool cancellation{false};
+        auto definition = network_definition(mock.port());
+        definition.provider.config.api = api;
+        ProviderClient client(shared_definition(definition));
+        Transcript transcript;
+        const GenerationRequest request = client_request(transcript, 12, "Question");
+        std::string output;
 
-    const GenerationResult result = complete(
-        client, request, transcript,
-        [&output](GenerationDelta delta) { output += delta.text; }, cancellation);
+        const GenerationResult result = complete(
+            client, request, transcript,
+            [&output](GenerationDelta delta) { output += delta.text; }, cancellation);
 
-    EXPECT_EQ(result.outcome, GenerationOutcome::transport_error);
-    EXPECT_NE(result.message.find("HTTP request failed"), std::string::npos);
-    EXPECT_EQ(output, "Partial");
-    mock.join();
+        EXPECT_EQ(result.outcome, GenerationOutcome::transport_error);
+        EXPECT_NE(result.message.find("HTTP request failed"), std::string::npos);
+        EXPECT_EQ(output, "Partial");
+        mock.join();
+    }
 }
 
 TEST(ProviderClient, CancelsAnActiveStreamingTransfer) {
-    const std::string body = "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n";
-    const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
-        "Content-Length: " + std::to_string(body.size() + 20)
-        + "\r\nConnection: close\r\n\r\n" + body;
-    MockHttpServer mock({response}, true);
-    mock.start();
-    std::atomic_bool cancellation{false};
-    ProviderClient client(shared_definition(network_definition(mock.port())));
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 13, "Question");
-    std::string output;
+    for (const auto api : {ProviderApi::chat_completions, ProviderApi::google}) {
+        const std::string body = api == ProviderApi::google
+            ? "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Partial\"}]}}]}\n\n"
+            : "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n";
+        const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+            "Content-Length: " + std::to_string(body.size() + 20)
+            + "\r\nConnection: close\r\n\r\n" + body;
+        MockHttpServer mock({response}, true);
+        mock.start();
+        std::atomic_bool cancellation{false};
+        auto definition = network_definition(mock.port());
+        definition.provider.config.api = api;
+        ProviderClient client(shared_definition(definition));
+        Transcript transcript;
+        const GenerationRequest request = client_request(transcript, 13, "Question");
+        std::string output;
 
-    const GenerationResult result = complete(
-        client, request, transcript,
-        [&output, &cancellation](GenerationDelta delta) {
-            output += delta.text;
-            cancellation.store(true, std::memory_order_release);
-        }, cancellation);
+        const GenerationResult result = complete(
+            client, request, transcript,
+            [&output, &cancellation](GenerationDelta delta) {
+                output += delta.text;
+                cancellation.store(true, std::memory_order_release);
+            }, cancellation);
 
-    EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
-    EXPECT_EQ(output, "Partial");
-    mock.join();
+        EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
+        EXPECT_EQ(output, "Partial");
+        mock.join();
+    }
 }
 
 TEST(ProviderClient, ReportsAJsonErrorReturnedInsteadOfAStream) {
@@ -3387,6 +3399,194 @@ TEST(ProviderClientTools, SubscriptionMaintenanceDoesNotAddAnOutputTokenCap) {
     EXPECT_FALSE(body.contains("max_output_tokens"));
     EXPECT_FALSE(body.contains("max_tokens"));
     expect_maintenance_tools(body);
+}
+
+
+Json google_response(Json parts, std::string reason = "STOP") {
+    return {{"candidates", Json::array({{
+        {"content", {{"role", "model"}, {"parts", std::move(parts)}}},
+        {"finishReason", std::move(reason)}}})}};
+}
+
+TEST(ProviderClient, GoogleUsesNativeUrlsAndOptionalSavedKeyHeaders) {
+    test::TestWorkspace workspace;
+    auto config = WorkspaceConfigStore::open(test::import_test_database(workspace.root()));
+    ApiKeyStore keys(*config);
+    const auto key = keys.create("Google", "google-test-secret");
+    for (const bool stream : {false, true}) {
+        for (const int credential : {0, 1, 2}) {
+            auto definition = network_definition(443, stream);
+            auto& provider = definition.provider.config;
+            provider.api = ProviderApi::google;
+            provider.base_path = "/v1beta";
+            provider.model = "models/gemini-test";
+            if (credential == 1) provider.api_key_id = key.id;
+            if (credential == 2) provider.api_key_env = "Google";
+            int calls = 0;
+            ProviderClient client(shared_definition(definition), nullptr, &keys,
+                [&](const ProviderHttpRequest& request, const auto&) {
+                    ++calls;
+                    EXPECT_EQ(request.url, std::string("http://127.0.0.1:443/v1beta/models/gemini-test")
+                        + (stream ? ":streamGenerateContent?alt=sse" : ":generateContent"));
+                    EXPECT_EQ(std::ranges::count(request.headers, "x-goog-api-key: google-test-secret"), credential ? 1 : 0);
+                    for (const auto& header : request.headers) EXPECT_FALSE(header.starts_with("Authorization:"));
+                    EXPECT_FALSE(Json::parse(request.body).contains("messages"));
+                    auto response = google_response(Json::array({{{"text", "OK"}}})).dump();
+                    return ProviderHttpResponse{200, stream ? "text/event-stream" : "application/json",
+                        stream ? "data: " + response + "\n\n" : response};
+                });
+            Transcript transcript;
+            auto request = client_request(transcript, 1, "Question");
+            std::atomic_bool cancel{false};
+            std::string answer;
+            auto result = client.perform(client.prepare(request), [&](GenerationDelta d) { answer += d.text; }, cancel);
+            EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(answer, "OK");
+            EXPECT_EQ(calls, 1);
+        }
+    }
+    auto definition = network_definition(443);
+    definition.provider.config.api = ProviderApi::google;
+    definition.provider.config.api_key_id = "missing";
+    EXPECT_THROW((ProviderClient(shared_definition(definition), nullptr, &keys)), std::exception);
+}
+
+TEST(ProviderClient, GoogleKeepsParallelAndSequentialToolPartsInOrderThroughLimit) {
+    for (const bool stream : {false, true}) {
+        for (const bool keep_calling : {false, true}) {
+            auto definition = network_definition(8080, stream);
+            definition.provider.config.api = ProviderApi::google;
+            int requests = 0;
+            std::vector<Json> sent;
+            std::vector<Json> model_contents;
+            ProviderClient client(shared_definition(definition), nullptr,
+                [&](const ProviderHttpRequest& request, const auto&) {
+                    auto body = Json::parse(request.body);
+                    for (const auto* field : {"tool_choice", "messages", "input", "model", "stream"}) EXPECT_FALSE(body.contains(field));
+                    for (const auto& content : body.at("contents")) EXPECT_FALSE(content.contains("content"));
+                    if (requests) {
+                        const auto& contents = body.at("contents");
+                        EXPECT_EQ(contents.size(), 1u + 2u * static_cast<unsigned>(requests));
+                        for (int previous = 0; previous < requests; ++previous) {
+                            EXPECT_EQ(contents[1 + previous * 2], model_contents[previous]);
+                        }
+                        const auto& responses = contents.back().at("parts");
+                        EXPECT_EQ(contents.back().at("role"), "user");
+                        EXPECT_EQ(responses.size(), requests == 1 ? 2u : 1u);
+                        if (requests == 1) {
+                            EXPECT_EQ(responses[0]["functionResponse"]["name"], "web_search");
+                            EXPECT_EQ(responses[0]["functionResponse"]["id"], "provider-id");
+                            EXPECT_EQ(responses[0]["functionResponse"]["response"], (Json{{"answer", "first"}}));
+                            EXPECT_FALSE(responses[1]["functionResponse"].contains("id"));
+                            EXPECT_EQ(responses[1]["functionResponse"]["response"], (Json{{"result", Json::array({1, 2})}}));
+                        } else EXPECT_EQ(responses[0]["functionResponse"]["response"], (Json{{"result", "plain result"}}));
+                    }
+                    sent.push_back(body);
+                    ++requests;
+                    // Two parallel calls then two sequential calls exhaust the search limit of four.
+                    auto parts = Json::array({{{"text", requests == 1 ? "First" : requests == 4 ? "Final" : "Next"}}});
+                    if (requests < 4 || keep_calling) {
+                        Json call{{"name", "web_search"}, {"args", {{"query", requests == 1 ? "first" : "later"}}}};
+                        if (requests == 1) call["id"] = "provider-id";
+                        parts.push_back({{"functionCall", call}, {"thoughtSignature", "signed-" + std::to_string(requests)}});
+                        if (requests == 1) parts.push_back({{"functionCall", {{"name", "web_search"}, {"args", {{"query", "second"}}}}}});
+                        parts.push_back({{"thoughtSignature", "tail-" + std::to_string(requests)}});
+                    }
+                    auto response = google_response(parts);
+                    model_contents.push_back(response["candidates"][0]["content"]);
+                    response["usageMetadata"] = {{"promptTokenCount", 3}, {"candidatesTokenCount", 2}, {"thoughtsTokenCount", 1}};
+                    const auto encoded = response.dump();
+                    return ProviderHttpResponse{200, stream ? "text/event-stream" : "application/json",
+                        stream ? "data: " + encoded + "\n\n" : encoded};
+                });
+            Transcript transcript;
+            auto request = client_request(transcript, 1, "Question");
+            std::atomic_int executions{0};
+            request.web_search_tool = [&](std::string_view query, const auto&) {
+                ++executions;
+                if (query == "first") return std::string(R"({"answer":"first"})");
+                if (query == "second") return std::string("[1,2]");
+                return std::string("plain result");
+            };
+            std::atomic_bool cancel{false};
+            std::string answer;
+            const auto result = client.perform(client.prepare(request), [&](GenerationDelta d) { answer += d.text; }, cancel);
+            EXPECT_EQ(result.outcome, keep_calling ? GenerationOutcome::protocol_error : GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(executions.load(), 4);
+            ASSERT_EQ(sent.size(), 4u);
+            EXPECT_EQ(sent.back()["toolConfig"]["functionCallingConfig"]["mode"], "NONE");
+            EXPECT_TRUE(sent.back().contains("tools"));
+            EXPECT_NE(sent.back()["systemInstruction"].dump().find("Web search is unavailable"), std::string::npos);
+            EXPECT_NE(sent.back()["systemInstruction"].dump().find("tool limit was reached"), std::string::npos);
+            EXPECT_TRUE(sent.back()["contents"].back()["parts"][0].contains("functionResponse"));
+            EXPECT_EQ(result.usage.input_tokens, 12u);
+            EXPECT_EQ(result.usage.output_tokens, 12u);
+            EXPECT_EQ(answer, "First\n\nNext\n\nNext\n\nFinal");
+        }
+    }
+}
+
+TEST(ProviderClient, GoogleRejectsIncompleteCallsAndHonorsCancellationAndHttpErrors) {
+    for (const auto* reason : {"MAX_TOKENS", "SAFETY", "MALFORMED_FUNCTION_CALL", ""}) {
+        auto definition = network_definition(8080, false);
+        definition.provider.config.api = ProviderApi::google;
+        ProviderClient client(shared_definition(definition), nullptr, [&](const auto&, const auto&) {
+            return ProviderHttpResponse{200, "application/json", google_response(Json::array({
+                {{"text", "Partial"}}, {{"functionCall", {{"name", "assistant_events"}, {"args", Json::object()}}}}
+            }), reason).dump()};
+        });
+        Transcript transcript;
+        auto request = client_request(transcript, 1, "Question");
+        int executed = 0;
+        request.maintenance_tool = [&](auto, auto, const auto&) { ++executed; return "{}"; };
+        std::atomic_bool cancel{false};
+        std::string answer;
+        const auto result = client.perform(client.prepare(request), [&](GenerationDelta d) { answer += d.text; }, cancel);
+        EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+        EXPECT_EQ(executed, 0);
+        EXPECT_EQ(answer, "Partial");
+    }
+    for (const bool stream : {false, true}) {
+        auto definition = network_definition(8080, stream);
+        definition.provider.config.api = ProviderApi::google;
+        std::atomic_bool cancel{false};
+        int calls = 0;
+        ProviderClient client(shared_definition(definition), nullptr, [&](const auto&, const auto&) {
+            ++calls;
+            return ProviderHttpResponse{400, "application/json", R"({"error":{"message":"Google error detail"}})"};
+        });
+        Transcript transcript;
+        auto request = client_request(transcript, 1, "Question");
+        const GenerationDeltaSink sink = [](auto) {};
+        auto result = client.perform(client.prepare(request), sink, cancel);
+        EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+        EXPECT_NE(result.message.find("Google error detail"), std::string::npos);
+        cancel = true;
+        EXPECT_EQ(client.perform(client.prepare(request), sink, cancel).outcome, GenerationOutcome::cancelled);
+        EXPECT_EQ(calls, 1);
+    }
+}
+
+TEST(ProviderClient, GoogleCurlReadsSseThroughHttpEnd) {
+    const std::string stream = "data: " + google_response(Json::array({{{"text", "Answer"}}})).dump()
+        + "\n\ndata: {\"usageMetadata\":{\"candidatesTokenCount\":4}}\n\n";
+    MockHttpServer server({http_response("text/event-stream", stream)});
+    server.start();
+    auto definition = network_definition(server.port());
+    definition.provider.config.api = ProviderApi::google;
+    definition.provider.config.base_path = "/v1beta";
+    ProviderClient client(shared_definition(definition));
+    Transcript transcript;
+    const auto request = client_request(transcript, 1, "Question");
+    std::atomic_bool cancel{false};
+    std::string answer;
+    const auto result = client.perform(client.prepare(request), [&](GenerationDelta d) { answer += d.text; }, cancel);
+    server.join();
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+    EXPECT_EQ(result.usage.output_tokens, 4u);
+    EXPECT_EQ(answer, "Answer");
+    ASSERT_EQ(server.requests().size(), 1u);
+    EXPECT_TRUE(server.requests()[0].starts_with("POST /v1beta/models/configured-model:streamGenerateContent?alt=sse HTTP/1.1"));
 }
 
 } // namespace

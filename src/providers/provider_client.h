@@ -36,7 +36,7 @@ using ProviderHttpTransport = std::function<ProviderHttpResponse(
     const ProviderHttpRequest&,
     const std::atomic_bool& cancellation)>;
 
-// The ModelBackend for OpenAI-compatible HTTP endpoints, configured from
+// The ModelBackend for the supported HTTP protocols, configured from
 // one CharacterDefinition.
 // It projects the transcript into provider messages, performs the request over libcurl as either a
 // streaming or a single-response call, parses reasoning and answer content out of the provider

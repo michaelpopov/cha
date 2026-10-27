@@ -315,6 +315,58 @@ TEST(ApplicationSettings, TestsProvidersOnBackgroundWork) {
     EXPECT_EQ(application->get_provider("test", epoch).model, "fake");
 }
 
+
+TEST(ApplicationSettings, TestsAndSavesNativeGoogleIgnoringUnusedOpenRouterSettings) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    auto body = provider_body(application->get_provider("test", epoch));
+    MockHttpServer server({http_response("text/event-stream",
+        "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"OK\"}]},\"finishReason\":\"STOP\"}]}\n\n")});
+    server.start();
+    body["host"] = "127.0.0.1";
+    body["port"] = server.port();
+    body["base_path"] = "/v1beta";
+    body["https"] = false;
+    body["mode"] = "net";
+    body["model"] = "gemini-test";
+    body["api"] = "google";
+    body["reasoning_effort"] = "high";
+    body["reasoning_format"] = "reasoning_content";
+    body["web_search"] = "required";
+    body["openrouter_targets"] = {"duplicate", "duplicate"};
+    body["reasoning_format"] = "obsolete";
+    body["cache_retention"] = "obsolete";
+    body["web_search"] = "obsolete";
+    const auto parsed = parse_provider_update(body, {});
+    EXPECT_EQ(parsed.config.api, ProviderApi::google);
+    EXPECT_EQ(parsed.config.reasoning_effort, "none");
+    EXPECT_TRUE(parsed.config.openrouter_targets.empty());
+    const auto saved = application->update_provider("test", body, epoch);
+    EXPECT_EQ(saved.api, "google");
+    auto reply = application->test_provider("test", body, epoch);
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    std::optional<OperationReply::Result> result;
+    while (std::chrono::steady_clock::now() < deadline) {
+        result = reply->peek();
+        if (result) break;
+        std::this_thread::sleep_for(5ms);
+    }
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(std::holds_alternative<nlohmann::json>(*result));
+    server.join();
+    ASSERT_EQ(server.requests().size(), 1u);
+    EXPECT_TRUE(server.requests()[0].starts_with("POST /v1beta/models/gemini-test:streamGenerateContent?alt=sse HTTP/1.1"));
+    const auto request_body = nlohmann::json::parse(server.requests()[0].substr(server.requests()[0].find("\r\n\r\n") + 4));
+    EXPECT_TRUE(request_body.contains("contents"));
+    EXPECT_FALSE(request_body.contains("messages"));
+    EXPECT_FALSE(request_body.contains("reasoning_effort"));
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    EXPECT_EQ(application->get_provider("test", application->context_epoch()).api, "google");
+}
+
 TEST(ApplicationSettings, ShutdownDeadlineBoundsUncooperativeReplyCallback) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =

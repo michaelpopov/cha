@@ -310,6 +310,7 @@ add_library(cha_lib STATIC
     src/providers/openai_oauth.cpp
     src/providers/chat_completions_api.cpp
     src/providers/responses_api.cpp
+    src/providers/google_api.cpp
     src/providers/sse_framer.cpp
     src/characters/character_config.cpp
     src/session/controller_update.cpp
@@ -533,6 +534,7 @@ if(BUILD_TESTING)
         tests/providers/unit_openai_oauth.cpp
         tests/providers/unit_chat_completions_api.cpp
         tests/providers/unit_responses_api.cpp
+        tests/providers/unit_google_api.cpp
         tests/providers/unit_sse_framer.cpp
         tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_session_controller.cpp

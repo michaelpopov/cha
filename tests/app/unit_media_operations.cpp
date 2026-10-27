@@ -477,6 +477,51 @@ TEST(ApplicationMedia, DefaultElevenLabsVoiceUsesItsCredentialAndStreamsAudio) {
 }
 
 
+
+TEST(ApplicationMedia, GoogleNoteCompressionUsesDefaultEffortAndRejectsPartialAnswers) {
+    using Json = nlohmann::json;
+    for (const auto* reason : {"STOP", "MAX_TOKENS", "SAFETY"}) {
+        SCOPED_TRACE(reason);
+        const Json response{{"candidates", Json::array({{
+            {"content", {{"role", "model"}, {"parts", Json::array({{{"text", "Compressed text"}}})}}},
+            {"finishReason", reason}}})}};
+        MockHttpServer server({http_response("text/event-stream", "data: " + response.dump() + "\n\n")});
+        server.start();
+        test::TestWorkspace fixture;
+        fixture.write_provider("google", "host = '127.0.0.1'\nport = " + std::to_string(server.port())
+            + "\nmodel = 'gemini-test'\nbase_path = '/v1beta'\nmode = 'net'\napi = 'google'\n");
+        auto application = Application::open(make_command(fixture, test::import_test_database(fixture.root())));
+        const auto epoch = application->context_epoch();
+        EXPECT_EQ(application->get_notes_settings(epoch).compression_reasoning_effort, "high");
+        (void)application->save_notes_settings({.compression_provider = "google", .compression_reasoning_effort = "high"}, epoch);
+        const auto note = application->create_note_item({}, NoteItemKind::note, "Long note", epoch);
+        application->save_note(note.id, {{"type", "doc"}, {"content", Json::array({
+            {{"type", "paragraph"}, {"content", Json::array({{{"type", "text"}, {"text", std::string(4096, 'a')}}})}}
+        })}}, epoch);
+        ASSERT_EQ(application->compress_note(note.id, epoch), Json({{"accepted", true}}));
+        const auto deadline = std::chrono::steady_clock::now() + 3s;
+        while (application->note_compression_status(note.id, epoch)["pending"].get<bool>()
+            && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(2ms);
+        EXPECT_FALSE(application->note_compression_status(note.id, epoch)["pending"].get<bool>());
+        server.join();
+        const auto saved = application->get_note(note.id, epoch);
+        if (std::string_view(reason) == "STOP") EXPECT_EQ(saved.compressed_text, "Compressed text");
+        else EXPECT_FALSE(saved.compressed_text);
+        ASSERT_EQ(server.requests().size(), 1u);
+        const auto& wire = server.requests()[0];
+        EXPECT_TRUE(wire.starts_with("POST /v1beta/models/gemini-test:streamGenerateContent?alt=sse HTTP/1.1"));
+        const auto body = Json::parse(wire.substr(wire.find("\r\n\r\n") + 4));
+        EXPECT_TRUE(body.contains("systemInstruction"));
+        EXPECT_TRUE(body.contains("contents"));
+        EXPECT_FALSE(body.contains("reasoning_effort"));
+        EXPECT_FALSE(body.contains("thinkingConfig"));
+        EXPECT_FALSE(body.contains("tools"));
+        EXPECT_EQ(body.dump().find("tool_availability"), std::string::npos);
+        application->request_shutdown();
+        EXPECT_TRUE(application->join_shutdown(2s));
+    }
+}
+
 TEST(ApplicationMedia, PreviewReportsTheElevenLabsAuthenticationError) {
     const nlohmann::json error = {{"detail", {{"code", "invalid_api_key"},
         {"message", "API key ID used as API key."}}}};

@@ -1090,7 +1090,8 @@ void WorkspaceConfigEditor::write_character_settings(
         throw std::invalid_argument(
             "Voice '" + std::string(*voice_id) + "' does not exist");
     }
-    if (reasoning_effort && !valid_reasoning_effort(*reasoning_effort)) {
+    if (provider->config.api != ProviderApi::google
+        && reasoning_effort && !valid_reasoning_effort(*reasoning_effort)) {
         throw std::invalid_argument(
             "Reasoning effort '" + std::string(*reasoning_effort)
             + "' is not supported");
