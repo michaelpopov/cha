@@ -127,16 +127,15 @@ export function backgroundAudioStartRejected(failure: unknown): boolean {
 }
 
 export type NoteAudioInfo = components['schemas']['NoteAudioInfo'];
-export type NoteAudioStatus = components['schemas']['NoteAudioStatus'];
+export type NoteAudioStartResult = components['schemas']['NoteAudioStartResult'];
 export type NoteAudioAccepted = components['schemas']['NoteAudioAccepted'];
 export type NoteAudioBackgroundStatus = components['schemas']['NoteAudioBackgroundStatus'];
 export interface NoteAudioClient {
+  contextEpoch(): number;
   startBackground(id: number, voice: string, blocks: string[]): Promise<NoteAudioAccepted>;
+  startBackground(id: number, voice: string, blocks: string[], onlyIfMissing: true): Promise<NoteAudioStartResult>;
   backgroundStatus(id: number): Promise<NoteAudioBackgroundStatus>;
   info(id: number): Promise<NoteAudioInfo>;
-  start(id: number, voice: string, blocks: string[]): Promise<NoteAudioStatus>;
-  status(id: number): Promise<NoteAudioStatus>;
-  cancel(id: number): Promise<void>;
   source(id: number, ordinal: number): Promise<MediaResource>;
   release(resourceId: string): Promise<void>;
 }

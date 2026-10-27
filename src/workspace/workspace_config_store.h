@@ -378,10 +378,12 @@ public:
     void delete_note_item(std::int64_t id);
     nlohmann::json get_note_audio_info(std::int64_t id) const;
     NoteAudioClip get_note_audio_clip(std::int64_t id, std::int64_t ordinal) const;
-    std::optional<NoteAudioAttempt> get_note_audio_attempt() const;
-    NoteAudioAttempt accept_note_audio(std::int64_t id, std::int64_t count,
+    std::optional<NoteAudioAttempt> get_note_audio_attempt_by_id(std::int64_t id) const;
+    std::optional<NoteAudioAttempt> get_note_audio_attempt_for_note(std::int64_t id) const;
+    std::vector<NoteAudioAttempt> get_note_audio_attempts() const;
+    std::optional<NoteAudioAttempt> accept_note_audio(std::int64_t id, std::int64_t count,
         std::string_view origin, std::string_view key_id,
-        const std::function<void(const NoteAudioAttempt&)>& launch);
+        const std::function<void(const NoteAudioAttempt&)>& launch, bool only_if_missing = false);
     bool register_note_audio(std::int64_t attempt_id, std::string_view batch_id, std::string_view voice);
     bool finish_note_audio(std::int64_t attempt_id, const std::vector<std::filesystem::path>& clips);
     bool retire_note_audio(std::int64_t attempt_id, EventSeverity severity, std::string_view message);

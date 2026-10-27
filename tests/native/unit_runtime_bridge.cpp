@@ -3,6 +3,7 @@
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "util/path_name.h"
+#include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -198,6 +199,57 @@ TEST(NativeRuntimeDeathTest, ShutdownDeadlineIncludesBlockedDelivery) {
         std::_Exit(joined == 0 && std::chrono::steady_clock::now() - start < 500ms ? 0 : 1);
     }()), ::testing::ExitedWithCode(0), "");
 }
+#if defined(__APPLE__) || defined(_WIN32)
+TEST(NativeRuntimeDeathTest, AudioTransfersStopEvenWhenTheHostJoinFails) {
+    EXPECT_EXIT(([] {
+        cha::test::TestWorkspace workspace;
+        const auto config = make_config(workspace);
+        const std::string partial = "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n{";
+        cha::MockHttpServer a({partial}, true), b({partial}, true);
+        {
+            auto store = cha::WorkspaceConfigStore::open(workspace.root() / "workspace.sqlite3");
+            store->apply_api_key_create("api_key_1", "Audio", "secret");
+            for (auto* server : {&a, &b}) {
+                const auto note = store->create_note_item({}, cha::NoteItemKind::note, "Note " + std::to_string(server->port()));
+                (void)store->set_note_read_only(note.id, true);
+                const auto attempt = *store->accept_note_audio(note.id, 1,
+                    "http://127.0.0.1:" + std::to_string(server->port()), "api_key_1", [](const auto&) {});
+                (void)store->register_note_audio(attempt.id, "batches/" + std::string(32, 'b'), "Kore");
+            }
+        }
+        a.start(); b.start();
+        char* error = nullptr;
+        int32_t password_error{};
+        auto* runtime = cha_runtime_create(cha::utf8_path(config).c_str(), cha::utf8_path(workspace.root()).c_str(),
+            "", &password_error, &error);
+        if (!runtime) std::_Exit(2);
+        if (!a.wait_for_requests(1, 2s) || !b.wait_for_requests(1, 2s)) std::_Exit(3);
+        struct Blocked { std::mutex mutex; std::condition_variable changed; bool entered{}; } blocked;
+        cha_runtime_set_delivery_callback(runtime, [](void* context, const char*, const char*) {
+            auto& blocked = *static_cast<Blocked*>(context);
+            std::unique_lock lock(blocked.mutex);
+            blocked.entered = true; blocked.changed.notify_all();
+            blocked.changed.wait(lock, [] { return false; });
+        }, &blocked);
+        char* connection = cha_runtime_open_connection(runtime, &error);
+        if (!connection) std::_Exit(4);
+        const auto message = request(connection, 1, 0, "bridge.info").dump();
+        cha_runtime_handle_message(runtime, connection, message.c_str());
+        {
+            std::unique_lock lock(blocked.mutex);
+            if (!blocked.changed.wait_for(lock, 2s, [&] { return blocked.entered; })) std::_Exit(5);
+        }
+        const auto start = std::chrono::steady_clock::now();
+        cha_runtime_request_shutdown(runtime);
+        if (cha_runtime_join_shutdown(runtime, 20) != 0) std::_Exit(6);
+        // The mock sends an incomplete body and waits for the client to close.
+        // A failed host join never reaches Application::join_shutdown.
+        try { a.join(); b.join(); } catch (...) { std::_Exit(7); }
+        std::_Exit(std::chrono::steady_clock::now() - start < 1500ms ? 0 : 8);
+    }()), ::testing::ExitedWithCode(0), "");
+}
+#endif
+
 #endif
 
 TEST_F(NativeRuntimeTest, RejectsUnknownAndUnownedMediaResources) {

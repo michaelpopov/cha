@@ -111,8 +111,8 @@ async function nativeParity({ offline = false } = {}) {
   } catch (error) { return { ok: false, completed, reason: String(error), alerts: [...document.querySelectorAll('[role="alert"]')].map(node => node.textContent) }; }
 }
 
-// Uses the same disposable native host and mock service as the single-note test.
-async function nativeFolderAudio() {
+// Uses the same disposable native host and concurrent mock service.
+async function nativeFolderAudio({ recover = false } = {}) {
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   const check = (condition, message) => { if (!condition) throw new Error(message); };
   const until = async (label, condition) => {
@@ -129,63 +129,53 @@ async function nativeFolderAudio() {
   const click = async (name, root = document) => (await until(name, () => {
     const node = button(name, root); return node && !node.disabled && node;
   })).click();
-  const openFolder = async (name, count) => {
+  const generate = async name => {
     await click('Actions for ' + name);
-    const menu = await until('folder menu', () => document.querySelector('[role="menu"]'));
-    const labels = [...menu.querySelectorAll('button')].map(node => node.textContent);
-    check(labels.indexOf('Generate audio') + 1 === labels.indexOf('Compress'), 'folder action order');
-    await click('Generate audio', menu);
+    await click('Generate audio', await until('folder menu', () => document.querySelector('[role="menu"]')));
     const dialog = await until('folder dialog', () => document.querySelector('dialog[aria-label="Generate note audio"]'));
-    await until('eligibility', () => dialog.textContent.includes(count + ' notes to generate'));
     const voice = dialog.querySelector('select');
+    await until('eligibility', () => !voice.disabled);
     check(voice.value === '', 'folder voice was recalled');
-    check(document.activeElement === voice, 'voice did not get focus');
+    check(!dialog.querySelector('progress,[role="timer"]') && !button('Stop', dialog), 'obsolete modal controls');
     Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(voice, 'Kore');
     voice.dispatchEvent(new Event('change', { bubbles: true }));
     await click('Generate', dialog);
-    return dialog;
-  };
-  const closeFolder = async (dialog, name) => {
-    await click('Close', dialog);
-    await until('dialog closed', () => !dialog.isConnected);
+    await until('local acceptance closes setup', () => !dialog.isConnected);
     check(document.activeElement?.getAttribute('role') === 'treeitem'
       && document.activeElement.textContent.includes(name), 'folder focus was not restored');
   };
   const completed = [];
   try {
     await until('startup', () => document.querySelector('textarea[aria-label="Message"]:not(:disabled)'));
-    await click('Notes');
-    const success = await openFolder('Folder success', 4);
-    check(button('Close', success).disabled && success.querySelector('select').disabled, 'running controls not locked');
-    const escape = new Event('cancel', { cancelable: true }); success.dispatchEvent(escape);
-    check(escape.defaultPrevented && success.open, 'Escape closed a folder run');
-    await until('folder completion', () => success.textContent.includes('2 of 4 notes complete · 2 skipped') && !button('Close', success).disabled);
-    check(success.querySelector('progress').value === 4, 'folder progress is not complete');
-    check(success.textContent.includes('B empty') && success.textContent.includes('No text to narrate'), 'empty note skip missing');
-    check(success.textContent.includes('C oversized') && success.textContent.includes('1–5,000 Unicode code points'), 'size skip missing');
-    check(success.textContent.includes('Audio ready'), 'saved notes not ready');
-    const elapsed = success.querySelector('[role="timer"]').textContent;
-    await wait(1100);
-    check(success.querySelector('[role="timer"]').textContent === elapsed, 'folder terminal time kept running');
-    await closeFolder(success, 'Folder success');
-    completed.push('sequential folder saves, fixed eligibility, skips, Escape, and focus');
-
-    const stopped = await openFolder('Folder stop', 2);
-    await until('download active', () => stopped.textContent.includes('Downloading'));
-    await click('Stop', stopped);
-    await until('stopping', () => stopped.textContent.includes('Stopping…'));
-    check(button('Close', stopped).disabled && button('Stop', stopped).disabled, 'stopping controls enabled');
-    await until('stopped', () => stopped.textContent.includes('Folder run stopped') && !button('Close', stopped).disabled);
-    check(stopped.querySelector('progress').value === 0, 'cancelled note was counted');
-    await closeFolder(stopped, 'Folder stop');
-    completed.push('native Stop waits for terminal status and prevents later notes');
-
-    const failed = await openFolder('Folder error', 3);
-    await until('first error', () => failed.textContent.includes('Folder run stopped') && !button('Close', failed).disabled);
-    check(failed.querySelector('progress').value === 1, 'saved note was not retained after error');
-    check(failed.textContent.includes('B failing') && failed.textContent.includes('The audio batch failed'), 'folder error missing');
-    await closeFolder(failed, 'Folder error');
-    completed.push('first error stops remaining notes and preserves earlier saves');
+    if (!recover) {
+      await click('Notes');
+      await generate('Folder success');
+      // A's download remains gated until this host exits. B must finish first.
+      await generate('Folder error');
+      completed.push('independent folder jobs accepted and setup closed');
+    }
+    await click('Settings', document.querySelector('aside'));
+    await click('Events');
+    let saved = false;
+    let eventText = '';
+    for (let i = 0; i < 100; ++i) {
+      await until('event snapshot', () => document.querySelector('.cha-event-list'));
+      const text = document.querySelector('section[aria-label="Events"]').textContent;
+      eventText = text;
+      const expected = recover ? ['A first', 'D last', 'A saved', 'C remaining'] : ['D last', 'A saved', 'C remaining'];
+      saved = expected.every(name => text.includes('Audio ready for “' + name + '”'))
+        && text.includes('Audio skipped for “B empty”') && text.includes('Audio skipped for “C oversized”')
+        && text.includes('Audio batch read failed for “B failing”');
+      if (saved) break;
+      await wait(100);
+      await click('Settings', document.querySelector('aside'));
+      await click('Events');
+    }
+    check(saved, 'independent completions, skips, or error missing from Events: '
+      + eventText);
+    if (!recover) check(!eventText.includes('Audio ready for “A first”'), 'A completed before its gate was released');
+    check(!document.querySelector('.cha-note-audio-current'), 'completion autoplayed');
+    completed.push('Events show independent success, skips, and isolated failure');
     return { ok: true, completed };
   } catch (error) { return { ok: false, completed, reason: String(error) }; }
 }

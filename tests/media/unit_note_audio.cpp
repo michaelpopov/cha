@@ -56,12 +56,15 @@ protected:
         std::vector<std::filesystem::path> clips;
         std::exception_ptr error;
         try {
-            clips = generate_note_audio(service, jsonl, count, workspace.root(), cancel,
-                [&](auto phase, auto completed, auto total) {
-                    progress.push_back({{"phase", phase}});
-                    if (completed) progress.back()["completed"] = *completed;
-                    if (total) progress.back()["total"] = *total;
-                }, [&](int seconds) { waits.push_back(seconds); if (cancel_on_wait) cancel.store(true); });
+            const NoteAudioCredentials credentials = [&] { return service; };
+            auto batch = submit_note_audio(credentials, jsonl, cancel);
+            const auto id = note_audio_batch_id(batch);
+            while (!batch.value("done", false)) {
+                wait_note_audio(10, cancel, [&](int seconds) { waits.push_back(seconds); if (cancel_on_wait) cancel.store(true); });
+                batch = read_note_audio_batch(credentials, id, cancel);
+            }
+            download_note_audio(credentials, batch, count, workspace.root(), cancel);
+            clips = process_note_audio(count, workspace.root(), cancel);
         } catch (...) { error = std::current_exception(); }
         upload.join(); server.join();
         requests = server.requests(); upload_requests = upload.requests();
@@ -76,7 +79,6 @@ protected:
     std::atomic_bool cancel{};
     bool cancel_on_wait{};
     std::vector<int> waits;
-    std::vector<Json> progress;
     std::vector<std::string> requests, upload_requests;
 };
 
@@ -167,8 +169,7 @@ TEST(NoteAudioService, PreCancelledAttemptMakesNoRequests) {
     // The server never starts, so only the cancellation check can end the
     // first request; a transfer failure would report a different message.
     try {
-        (void)generate_note_audio(service, prepare_note_audio(service, {"Hello"}), 1,
-            workspace.root(), cancel, [](auto, auto, auto) {});
+        (void)submit_note_audio([&] { return service; }, prepare_note_audio(service, {"Hello"}), cancel);
         FAIL();
     } catch (const std::runtime_error& error) { EXPECT_STREQ(error.what(), "Audio generation was interrupted."); }
     EXPECT_FALSE(std::filesystem::exists(workspace.root() / "results.jsonl"));
@@ -185,30 +186,7 @@ TEST_F(NoteAudioServiceTest, CancellationInterruptsRemoteWaitBeforeAnotherRead) 
     EXPECT_FALSE(std::filesystem::exists(workspace.root() / "0.m4a"));
 }
 
-TEST_F(NoteAudioServiceTest, ReadRetriesResetAfterSuccessAndUseBatchState) {
-    auto stats = Json{{"successfulRequestCount", "1"}, {"failedRequestCount", "1"}, {"requestCount", "3"}, {"pendingRequestCount", "1"}};
-    const auto results = (item("0").dump() + '\n');
-    const auto clips = run({json_response(operation(false, "BATCH_STATE_PENDING")), failure_response(500), "",
-        json_response(operation(false, "BATCH_STATE_RUNNING", stats)), failure_response(500),
-        json_response(operation(true)), http_response("application/jsonl", results)});
-    EXPECT_EQ(waits, (std::vector<int>{10, 10, 20, 10, 10}));
-    ASSERT_EQ(progress.size(), 5u);
-    EXPECT_EQ(progress[1]["phase"], "queued");
-    EXPECT_FALSE(progress[1].contains("total"));
-    EXPECT_EQ(progress[2], (Json{{"phase", "generating"}, {"completed", 2}, {"total", 3}}));
-    EXPECT_EQ(requests.size(), 8u);
-    EXPECT_EQ(clips.size(), 1u);
-}
-
-TEST_F(NoteAudioServiceTest, StopsAfterExactlyThreeReadRetries) {
-    EXPECT_THROW(run({json_response(operation()), failure_response(500), failure_response(500), failure_response(500), failure_response(500)}), std::runtime_error);
-    EXPECT_EQ(waits, (std::vector<int>{10, 10, 20, 40}));
-    EXPECT_EQ(requests.size(), 6u);
-}
-TEST_F(NoteAudioServiceTest, OtherHttpErrorsAndPostsAreNotRetried) {
-    EXPECT_THROW(run({json_response(operation()), failure_response(503)}), std::runtime_error);
-    EXPECT_EQ(waits, (std::vector<int>{10}));
-    waits.clear();
+TEST_F(NoteAudioServiceTest, PostsAreNotRetried) {
     EXPECT_THROW(run({failure_response(500)}), std::runtime_error);
     EXPECT_TRUE(waits.empty());
     EXPECT_EQ(requests.size(), 2u);
@@ -249,19 +227,19 @@ TEST_F(NoteAudioServiceTest, RestartsPartialDownloadsAndAcceptsOutOfOrderResults
     const auto results = item("1").dump() + '\n' + item("0").dump() + '\n';
     const auto partial = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(results.size())
         + "\r\nConnection: close\r\n\r\n" + results.substr(0, 31);
-    auto clips = run({json_response(operation(true)), partial, http_response("application/jsonl", results)}, 2);
-    EXPECT_EQ(waits, (std::vector<int>{10}));
+    MockHttpServer server({partial, http_response("application/jsonl", results)});
+    NoteAudioService service{"http://127.0.0.1:" + std::to_string(server.port()), "key", "Kore"};
+    const NoteAudioCredentials credentials = [&] { return service; };
+    server.start();
+    EXPECT_THROW(download_note_audio(credentials, operation(true), 2, workspace.root(), cancel), NoteAudioError);
+    download_note_audio(credentials, operation(true), 2, workspace.root(), cancel);
+    const auto clips = process_note_audio(2, workspace.root(), cancel);
+    server.join();
     ASSERT_EQ(clips.size(), 2u);
     EXPECT_EQ(clips[0].filename(), "0.m4a");
     EXPECT_EQ(clips[1].filename(), "1.m4a");
-    EXPECT_FALSE(std::filesystem::exists(workspace.root() / "clip.wav"));
-    EXPECT_EQ(requests[2].substr(0, requests[2].find('\r')), requests[3].substr(0, requests[3].find('\r')));
-}
-TEST_F(NoteAudioServiceTest, MalformedCountsAreUnavailableRatherThanZero) {
-    const auto stats = Json{{"successfulRequestCount", 1}, {"failedRequestCount", "bad"}, {"requestCount", "oops"}};
-    (void)run({json_response(operation(false, "BATCH_STATE_RUNNING", stats)), json_response(operation(true)),
-        http_response("application/jsonl", item("0").dump() + '\n')});
-    EXPECT_EQ(progress[1], (Json{{"phase", "generating"}}));
+    EXPECT_EQ(server.requests().size(), 2u);
+
 }
 TEST_F(NoteAudioServiceTest, RejectsIncompleteDuplicateUnknownAndFailedItems) {
     const std::vector<std::string> invalid = {

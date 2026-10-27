@@ -32,9 +32,9 @@ function setup() {
     readPicture: async () => new Uint8Array() });
   editor.setEditable(false);
   const client: NoteAudioClient = {
-    cancel: vi.fn(),
+    contextEpoch: () => 1,
     startBackground: vi.fn(), backgroundStatus: vi.fn(),
-    info: vi.fn().mockResolvedValue({ count: 3 }), start: vi.fn(), status: vi.fn(),
+    info: vi.fn().mockResolvedValue({ count: 3 }),
     source: vi.fn(async (_id, ordinal) => ({ resource_id: `r${ordinal}`, url: `/media/r${ordinal}`, mime_type: 'audio/mp4', byte_length: 10 })),
     release: vi.fn().mockResolvedValue(undefined),
   };

@@ -114,10 +114,12 @@ struct NoteAudioAttempt {
     std::optional<std::string> batch_id;
 };
 std::string note_audio_target(const NoteAudioAttempt& attempt);
-std::optional<NoteAudioAttempt> note_audio_attempt(storage::SqliteDatabase& database);
-NoteAudioAttempt note_audio_accept(storage::SqliteDatabase& database, std::int64_t note_id,
+std::optional<NoteAudioAttempt> note_audio_attempt_by_id(storage::SqliteDatabase& database, std::int64_t id);
+std::optional<NoteAudioAttempt> note_audio_attempt_for_note(storage::SqliteDatabase& database, std::int64_t id);
+std::vector<NoteAudioAttempt> note_audio_attempts(storage::SqliteDatabase& database);
+std::optional<NoteAudioAttempt> note_audio_accept(storage::SqliteDatabase& database, std::int64_t note_id,
     std::int64_t count, std::string_view origin, std::string_view key_id,
-    const std::function<void(const NoteAudioAttempt&)>& launch);
+    const std::function<void(const NoteAudioAttempt&)>& launch, bool only_if_missing = false);
 bool note_audio_register(storage::SqliteDatabase& database, std::int64_t attempt_id,
     std::string_view batch_id, std::string_view voice);
 bool note_audio_finish(storage::SqliteDatabase& database, std::int64_t attempt_id,

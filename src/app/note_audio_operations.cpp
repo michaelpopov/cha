@@ -16,106 +16,19 @@ struct TemporaryAudio {
     }
     ~TemporaryAudio() { std::error_code error; std::filesystem::remove_all(path, error); }
 };
-std::int64_t now_ms() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-}
-}
-
-nlohmann::json Application::start_note_audio(std::int64_t id, std::string voice,
-    std::vector<std::string> blocks, std::uint64_t epoch) {
-#if !defined(__APPLE__) && !defined(_WIN32)
-    (void)id; (void)voice; (void)blocks; (void)epoch;
-    throw ApplicationError(ErrorCode::invalid_argument, "Note audio generation is available on macOS and Windows only.");
-#else
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    impl_->require_audio_slot(epoch);
-    const auto items = impl_->store->list_note_items();
-    const auto item = std::find_if(items.begin(), items.end(), [id](const auto& note) { return note.id == id; });
-    if (item == items.end() || item->kind != NoteItemKind::note || !item->read_only)
-        throw ApplicationError(ErrorCode::invalid_argument, "Make the note read-only to generate audio.");
-    if (blocks.empty()) throw ApplicationError(ErrorCode::invalid_argument, "No text to narrate");
-    const auto workspace = impl_->store->snapshot();
-    NoteAudioService service{workspace->notes().audio_url, {}, std::move(voice)};
-    if (service.url.empty() || !impl_->api_keys->find(workspace->notes().audio_api_key_id))
-        throw ApplicationError(ErrorCode::invalid_argument, "Configure the audio service URL and API key in Notes settings.");
-    service.key = impl_->api_keys->value(workspace->notes().audio_api_key_id);
-    std::string jsonl;
-    try { jsonl = prepare_note_audio(service, blocks); }
-    catch (const NoteAudioSizeError& error) { throw ApplicationError(ErrorCode::body_too_large, error.what()); }
-    catch (const std::exception& error) { throw ApplicationError(ErrorCode::invalid_argument, error.what()); }
-    impl_->note_audio_cancel = std::make_shared<std::atomic_bool>(false);
-    impl_->note_audio_epoch = epoch;
-    impl_->note_audio_status = {{"id", id}, {"phase", "uploading"}, {"done", false}, {"error", ""}};
-    const auto initial = impl_->note_audio_status;
-    try {
-        const bool launched = impl_->background_jobs.launch([owner = impl_.get(), id, epoch,
-            service = std::move(service), jsonl = std::move(jsonl), count = blocks.size()](std::atomic_bool& cancel) {
-            const auto update = [owner, epoch](std::string phase,
-                std::optional<std::size_t> completed, std::optional<std::size_t> total) {
-                const std::lock_guard lock(owner->lifecycle_mutex);
-                owner->require_admitted(epoch);
-                owner->note_audio_status["phase"] = std::move(phase);
-                for (const auto* field : {"completed", "total"}) owner->note_audio_status.erase(field);
-                if (completed) owner->note_audio_status["completed"] = *completed;
-                if (total) owner->note_audio_status["total"] = *total;
-            };
-            std::string error;
-            std::int64_t finished_at{};
-            try {
-                TemporaryAudio temporary;
-                auto clips = generate_note_audio(service, jsonl, count, temporary.path, cancel, update);
-                const std::lock_guard lock(owner->lifecycle_mutex);
-                owner->require_admitted(epoch);
-                if (cancel.load()) throw std::runtime_error("Audio generation was interrupted.");
-                try { owner->store->save_note_audio(id, clips); }
-                catch (const std::exception&) {
-                    throw std::runtime_error("Could not save note audio. Check that the note still exists and available disk space.");
-                }
-                finished_at = now_ms();
-                owner->note_audio_status.update({{"phase", "complete"}, {"completed", clips.size()}, {"total", clips.size()}});
-            } catch (const nlohmann::json::exception&) {
-                error = "The audio service returned an invalid response. Check the service before trying again.";
-            } catch (const std::exception& e) {
-                error = e.what();
-            } catch (...) {
-                error = "Note audio generation failed. Check the service and available disk space.";
-            }
-            if (!finished_at) finished_at = now_ms();
-            const std::lock_guard lock(owner->lifecycle_mutex);
-            try { owner->require_admitted(epoch); } catch (const ApplicationError&) { return; }
-            owner->note_audio_status.update({{"error", error}, {"done", true}, {"finished_at_ms", finished_at}});
-        }, impl_->note_audio_cancel);
-        if (!launched) throw ApplicationError(ErrorCode::operation_cancelled, "Audio generation was interrupted.");
-    } catch (...) {
-        impl_->note_audio_status.update({{"done", true}, {"error", "Audio generation could not start."}, {"finished_at_ms", now_ms()}});
-        throw;
-    }
-    return initial;
-#endif
-}
-
-void Application::Impl::require_audio_slot(std::uint64_t epoch) {
-    if (const auto attempt = store->get_note_audio_attempt())
-        throw ApplicationError(ErrorCode::invalid_argument, "Audio generation is already running for "
-            + note_audio_target(*attempt) + ". Make that note editable to abandon the attempt.");
-    if (note_audio_epoch == epoch && note_audio_status.is_object()
-        && !note_audio_status.value("done", true))
-        throw ApplicationError(ErrorCode::invalid_argument, "Note audio generation is already running.");
 }
 
 void Application::set_note_audio_changed(NoteAudioChanged callback) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
     impl_->note_audio_changed = std::move(callback);
     if (impl_->note_audio_changed) impl_->recover_note_audio();
-    else if (const auto cancel = std::atomic_load(&impl_->background_audio_cancel)) cancel->store(true);
+    else impl_->interrupt_note_audio();
 }
 
 nlohmann::json Application::start_background_note_audio(std::int64_t id, std::string voice,
-    std::vector<std::string> blocks, std::uint64_t epoch) {
+    std::vector<std::string> blocks, std::uint64_t epoch, bool only_if_missing) {
 #if !defined(__APPLE__) && !defined(_WIN32)
-    (void)id; (void)voice; (void)blocks; (void)epoch;
+    (void)id; (void)voice; (void)blocks; (void)epoch; (void)only_if_missing;
     throw ApplicationError(ErrorCode::invalid_argument, "Note audio generation is available on macOS and Windows only.");
 #else
     const std::lock_guard lock(impl_->lifecycle_mutex);
@@ -124,7 +37,27 @@ nlohmann::json Application::start_background_note_audio(std::int64_t id, std::st
         throw ApplicationError(ErrorCode::invalid_argument, "Open the native application to generate note audio.");
     try { impl_->store->require_main(); }
     catch (const SecondaryProcessError&) { throw ApplicationError(ErrorCode::invalid_argument, vault_in_use_message); }
-    impl_->require_audio_slot(epoch);
+    const auto items = impl_->store->list_note_items();
+    const auto item = std::find_if(items.begin(), items.end(), [id](const auto& note) { return note.id == id; });
+    const auto pending = impl_->store->get_note_audio_attempt_for_note(id);
+    if (only_if_missing && (item == items.end() || item->kind != NoteItemKind::note || !item->read_only
+        || pending || impl_->store->get_note_audio_info(id).at("count").get<std::int64_t>() > 0))
+        return {{"skipped", true}};
+    if (pending) throw ApplicationError(ErrorCode::invalid_argument, "Audio generation is already running for "
+        + note_audio_target(*pending) + ". Make that note editable to abandon the attempt.");
+    if (item == items.end() || item->kind != NoteItemKind::note || !item->read_only)
+        throw ApplicationError(ErrorCode::invalid_argument, "Make the note read-only to generate audio.");
+    const auto skip = [&](std::string_view reason) -> nlohmann::json {
+        try {
+            impl_->store->append_event(EventSeverity::warning, "Audio skipped for “" + item->name
+                + "” (note " + std::to_string(id) + "): " + std::string(reason));
+        } catch (const std::exception&) {
+            throw ApplicationError(ErrorCode::invalid_argument,
+                "Could not record the audio skip. No job was started for this note. Check disk space and file access.");
+        }
+        return {{"skipped", true}};
+    };
+    if (only_if_missing && blocks.empty()) return skip("No text to narrate.");
     const auto workspace = impl_->store->snapshot();
     const auto key_id = workspace->notes().audio_api_key_id;
     if (!impl_->api_keys->find(key_id))
@@ -132,21 +65,26 @@ nlohmann::json Application::start_background_note_audio(std::int64_t id, std::st
     NoteAudioService service{workspace->notes().audio_url, impl_->api_keys->value(key_id), voice};
     std::string jsonl;
     try { jsonl = prepare_note_audio(service, blocks); }
-    catch (const NoteAudioSizeError& error) { throw ApplicationError(ErrorCode::body_too_large, error.what()); }
+    catch (const NoteAudioSizeError& error) {
+        if (only_if_missing) return skip(error.what());
+        throw ApplicationError(ErrorCode::body_too_large, error.what());
+    }
     catch (const std::exception& error) { throw ApplicationError(ErrorCode::invalid_argument, error.what()); }
+    std::int64_t launched_id{};
+    std::shared_ptr<std::atomic_bool> launched;
     try {
         const auto attempt = impl_->store->accept_note_audio(id, static_cast<std::int64_t>(blocks.size()),
             service.url, key_id, [&](const NoteAudioAttempt& attempt) {
-                impl_->background_audio_warned = false;
-                impl_->launch_note_audio(attempt, voice, std::move(jsonl));
-            });
-        return {{"attempt_id", attempt.id}};
-    } catch (const NoteError& error) {
-        throw ApplicationError(ErrorCode::invalid_argument, error.what());
+                launched_id = attempt.id;
+                launched = impl_->launch_note_audio(attempt, voice, std::move(jsonl));
+            }, only_if_missing);
+        if (!attempt) return {{"skipped", true}};
+        return {{"attempt_id", attempt->id}};
     } catch (...) {
-        // The lifecycle lock is the launch barrier: even a failed commit cannot send HTTP.
-        if (const auto cancel = std::atomic_load(&impl_->background_audio_cancel)) cancel->store(true);
-        throw;
+        // The lifecycle lock is the launch barrier, including commit rollback.
+        if (launched) impl_->remove_note_audio_control(launched_id, launched);
+        try { throw; }
+        catch (const NoteError& error) { throw ApplicationError(ErrorCode::invalid_argument, error.what()); }
     }
 #endif
 }
@@ -154,18 +92,34 @@ nlohmann::json Application::start_background_note_audio(std::int64_t id, std::st
 nlohmann::json Application::background_note_audio_status(std::int64_t id, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    const auto attempt = impl_->store->get_note_audio_attempt();
-    if (attempt && attempt->note_id == id) return {{"pending", true}, {"attempt_id", attempt->id}};
+    const auto attempt = impl_->store->get_note_audio_attempt_for_note(id);
+    if (attempt) return {{"pending", true}, {"attempt_id", attempt->id}};
     return {{"pending", false}};
 }
 
+void Application::Impl::interrupt_note_audio() {
+    const std::lock_guard lock(background_audio_mutex);
+    for (const auto& [id, cancel] : background_audio) { (void)id; cancel->store(true); }
+}
+
+void Application::Impl::remove_note_audio_control(std::int64_t id, const std::shared_ptr<std::atomic_bool>& cancel) {
+    cancel->store(true);
+    const std::lock_guard lock(background_audio_mutex);
+    const auto found = background_audio.find(id);
+    if (found != background_audio.end() && found->second == cancel) background_audio.erase(found);
+}
+
 void Application::Impl::interrupt_abandoned_audio() {
-    const auto cancel = std::atomic_load(&background_audio_cancel);
-    if (!cancel) return;
     try {
-        if (!store->get_note_audio_attempt()) cancel->store(true);
+        const auto attempts = store->get_note_audio_attempts();
+        const std::lock_guard lock(background_audio_mutex);
+        for (auto it = background_audio.begin(); it != background_audio.end();) {
+            if (std::none_of(attempts.begin(), attempts.end(), [&](const auto& attempt) { return attempt.id == it->first; })) {
+                it->second->store(true);
+                it = background_audio.erase(it);
+            } else ++it;
+        }
     } catch (const std::exception&) {
-        // The note change has committed. A worker will check its row again.
         log_warn("Could not check audio abandonment after the note change committed.");
     }
 }
@@ -184,36 +138,62 @@ void Application::Impl::recover_note_audio() {
 #if defined(__APPLE__) || defined(_WIN32)
     if (!note_audio_changed || command.chaweb_host || state.load() != ApplicationState::running || stopping_flag || !store->is_main()) return;
     try {
-        const auto attempt = store->get_note_audio_attempt();
-        if (!attempt) return;
-        const auto cancel = std::atomic_load(&background_audio_cancel);
-        if (cancel && !cancel->load()) return;
-        launch_note_audio(*attempt);
-    } catch (const std::exception&) {
-        log_warn("Could not resume note audio. Reopen the vault to try again.");
-    }
+        for (const auto& attempt : store->get_note_audio_attempts()) {
+            {
+                const std::lock_guard lock(background_audio_mutex);
+                const auto found = background_audio.find(attempt.id);
+                if (found != background_audio.end() && !found->second->load()) continue;
+            }
+            try { (void)launch_note_audio(attempt); }
+            catch (const std::exception&) { log_warn("Could not resume audio for " + note_audio_target(attempt) + ". Reopen the vault to try again."); }
+        }
+    } catch (const std::exception&) { log_warn("Could not read saved audio attempts. Reopen the vault to try again."); }
 #endif
 }
 
-void Application::Impl::launch_note_audio(NoteAudioAttempt attempt, std::string voice, std::string jsonl) {
+std::shared_ptr<std::atomic_bool> Application::Impl::launch_note_audio(NoteAudioAttempt attempt, std::string voice, std::string jsonl) {
     auto cancel = std::make_shared<std::atomic_bool>(false);
     const auto epoch = published_epoch.load();
-    const bool launched = background_jobs.launch([this, attempt, epoch, cancel,
-        voice = std::move(voice), jsonl = std::move(jsonl)](std::atomic_bool&) mutable {
-        run_note_audio(attempt, epoch, cancel, std::move(voice), std::move(jsonl));
-    }, cancel);
-    if (!launched) throw std::runtime_error("Could not start note audio worker.");
-    std::atomic_store(&background_audio_cancel, std::move(cancel));
+    {
+        const std::lock_guard lock(background_audio_mutex);
+        auto& entry = background_audio[attempt.id];
+        if (entry) entry->store(true);
+        entry = cancel;
+    }
+    try {
+        if (settings.note_audio_before_launch) settings.note_audio_before_launch(attempt.id);
+        const bool launched = background_jobs.launch([this, attempt, epoch, cancel,
+            voice = std::move(voice), jsonl = std::move(jsonl)](std::atomic_bool&) mutable {
+            if (settings.note_audio_worker_started) settings.note_audio_worker_started(attempt.id, cancel);
+            run_note_audio(attempt, epoch, cancel, std::move(voice), std::move(jsonl));
+        }, cancel);
+        if (!launched) throw std::runtime_error("Could not start note audio worker.");
+    } catch (...) {
+        remove_note_audio_control(attempt.id, cancel);
+        throw;
+    }
+    return cancel;
 }
 
 void Application::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t epoch,
     std::shared_ptr<std::atomic_bool> cancel, std::string voice, std::string jsonl) {
+    struct Cleanup {
+        Impl& owner;
+        std::int64_t id;
+        const std::shared_ptr<std::atomic_bool>& cancel;
+        ~Cleanup() { owner.remove_note_audio_control(id, cancel); }
+    } cleanup{*this, attempt.id, cancel};
     const auto interrupted = [] { throw NoteAudioError(NoteAudioFailure::interrupted, "Audio generation was interrupted."); };
     // All calls to this guard hold lifecycle_mutex. No old worker can touch a new vault or launch.
     const auto check = [&] {
-        if (cancel->load() || std::atomic_load(&background_audio_cancel) != cancel || admit_locked(epoch)) interrupted();
+        if (cancel->load() || admit_locked(epoch)) interrupted();
+        {
+            const std::lock_guard lock(background_audio_mutex);
+            const auto found = background_audio.find(attempt.id);
+            if (found == background_audio.end() || found->second != cancel) interrupted();
+        }
         std::optional<NoteAudioAttempt> current;
-        try { current = store->get_note_audio_attempt(); }
+        try { current = store->get_note_audio_attempt_by_id(attempt.id); }
         catch (const std::exception&) { throw NoteAudioError(NoteAudioFailure::storage, "Could not read the saved audio attempt."); }
         if (!current || current->id != attempt.id) interrupted();
     };
@@ -232,10 +212,10 @@ void Application::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t e
         const std::lock_guard lock(lifecycle_mutex);
         try {
             check();
-            if (background_audio_warned) return;
+            if (background_audio_warned.contains(attempt.id)) return;
             store->append_event(EventSeverity::warning, "Audio generation retained for " + note_audio_target(attempt)
                 + ": " + std::string(reason) + " Make the note editable to abandon it.");
-            background_audio_warned = true;
+            background_audio_warned.insert(attempt.id);
         } catch (const NoteAudioError& error) {
             if (error.kind == NoteAudioFailure::interrupted) throw;
             log_warn("Could not record the retained audio warning.");
@@ -352,28 +332,6 @@ void Application::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t e
             + ". Check the service response and audio format before starting again."); }
         catch (...) { /* Interruption leaves the durable record for recovery. */ }
     }
-    const std::lock_guard lock(lifecycle_mutex);
-    if (std::atomic_load(&background_audio_cancel) == cancel)
-        std::atomic_store(&background_audio_cancel, std::shared_ptr<std::atomic_bool>{});
-}
-
-nlohmann::json Application::cancel_note_audio(std::int64_t id, std::uint64_t epoch) {
-    const std::lock_guard lock(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    if (impl_->note_audio_epoch == epoch && impl_->note_audio_status.is_object()
-        && impl_->note_audio_status.value("id", std::int64_t{}) == id
-        && !impl_->note_audio_status.value("done", true) && impl_->note_audio_cancel)
-        impl_->note_audio_cancel->store(true);
-    return nlohmann::json::object();
-}
-
-nlohmann::json Application::get_note_audio_status(std::int64_t id, std::uint64_t epoch) {
-    const std::lock_guard lock(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    if (impl_->note_audio_epoch != epoch || !impl_->note_audio_status.is_object()
-        || impl_->note_audio_status.value("id", std::int64_t{}) != id)
-        throw ApplicationError(ErrorCode::not_found, "There is no audio generation for this note.");
-    return impl_->note_audio_status;
 }
 
 nlohmann::json Application::get_note_audio_info(std::int64_t id, std::uint64_t epoch) {

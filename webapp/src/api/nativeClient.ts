@@ -11,7 +11,8 @@ import {
   type NoteAudioInfo,
   type NoteAudioAccepted,
   type NoteAudioBackgroundStatus,
-  type NoteAudioStatus,
+  type NoteAudioStartResult,
+  type NoteAudioClient,
   ChaError,
   ChaProtocolError,
   isApiKeyDetail,
@@ -216,15 +217,6 @@ export async function connectNativeBridge(bridge: NativeBridge) {
   return info;
 }
 
-function isNoteAudioStatus(value: unknown): value is NoteAudioStatus {
-  return isRecord(value) && isNoteId(value.id)
-    && ['uploading', 'queued', 'generating', 'downloading', 'saving', 'complete'].includes(value.phase as string)
-    && typeof value.done === 'boolean' && typeof value.error === 'string'
-    && ['completed', 'total', 'finished_at_ms'].every(key => value[key] === undefined
-      || (Number.isSafeInteger(value[key]) && (value[key] as number) >= 0))
-    && (!value.done || Number.isSafeInteger(value.finished_at_ms));
-}
-
 function isAudioAccepted(value: unknown): value is NoteAudioAccepted {
   return isRecord(value) && Object.keys(value).length === 1 && isNoteId(value.attempt_id);
 }
@@ -270,28 +262,35 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
   };
 
   const backgroundStatus = (id: number) => call('noteAudio.backgroundStatus', { id }, isAudioBackgroundStatus);
-  const noteAudio = {
-    backgroundStatus,
-    startBackground: async (id: number, voice: string, blocks: string[]) => {
-      const epoch = bridge.contextEpoch();
-      try { return await call('noteAudio.startBackground', { id, voice, blocks }, isAudioAccepted); }
-      catch (failure) {
-        if (backgroundAudioStartRejected(failure)) throw failure;
-        const contextEnded = failure instanceof ChaError && ['vault_changed', 'application_unavailable', 'server_stopping'].includes(failure.code);
-        if (!contextEnded && !connectionEnded && bridge.contextEpoch() === epoch) {
-          try {
-            const status = await backgroundStatus(id);
-            if (!connectionEnded && bridge.contextEpoch() === epoch && status.pending) return { attempt_id: status.attempt_id };
-          } catch { /* Absence or a failed read cannot prove rejection. */ }
-        }
-        throw failure;
+  function startBackground(id: number, voice: string, blocks: string[]): Promise<NoteAudioAccepted>;
+  function startBackground(id: number, voice: string, blocks: string[], onlyIfMissing: true): Promise<NoteAudioStartResult>;
+  async function startBackground(id: number, voice: string, blocks: string[], onlyIfMissing = false): Promise<NoteAudioStartResult> {
+    const epoch = bridge.contextEpoch();
+    try {
+      return await call('noteAudio.startBackground', { id, voice, blocks, ...(onlyIfMissing ? { only_if_missing: true } : {}) },
+        (value): value is NoteAudioStartResult => isAudioAccepted(value) || (onlyIfMissing && isRecord(value)
+          && Object.keys(value).length === 1 && value.skipped === true));
+    } catch (failure) {
+      if (backgroundAudioStartRejected(failure)) throw failure;
+      const contextEnded = failure instanceof ChaError && ['vault_changed', 'application_unavailable', 'server_stopping'].includes(failure.code);
+      if (!contextEnded && !connectionEnded && bridge.contextEpoch() === epoch) {
+        try {
+          const status = await backgroundStatus(id);
+          if (!connectionEnded && bridge.contextEpoch() === epoch && status.pending) return { attempt_id: status.attempt_id };
+        } catch { /* Absence or a failed read cannot prove rejection. */ }
       }
+      throw failure;
+    }
+  }
+  const noteAudio: NoteAudioClient = {
+    contextEpoch() {
+      if (connectionEnded) throw new ChaError('application_unavailable', 'The connection to CHA ended. Close this dialog and start again.');
+      return bridge.contextEpoch();
     },
+    backgroundStatus,
+    startBackground,
     info: (id: number) => call('noteAudio.info', { id }, (value): value is NoteAudioInfo =>
       isRecord(value) && Number.isSafeInteger(value.count) && (value.count as number) >= 0),
-    start: (id: number, voice: string, blocks: string[]) => call('noteAudio.start', { id, voice, blocks }, isNoteAudioStatus),
-    status: (id: number) => call('noteAudio.status', { id }, isNoteAudioStatus),
-    cancel: async (id: number) => { await call('noteAudio.cancel', { id }, isRecord); },
     source: (id: number, ordinal: number) => call('noteAudio.source', { id, ordinal }, isMediaResource),
     release: async (resourceId: string) => { await call('speech.release', { resource_id: resourceId }, isRecord); },
   };

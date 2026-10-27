@@ -762,9 +762,13 @@ export interface components {
         };
         NoteAudioStartBackground: {
             id: components["schemas"]["NoteId"];
-            /** @enum {string} */
-            voice: "boroda" | "grant" | "dzig" | "gerdt" | "Kore";
+            voice: string;
             blocks: string[];
+            only_if_missing?: boolean;
+        };
+        NoteAudioStartResult: components["schemas"]["NoteAudioAccepted"] | {
+            /** @enum {boolean} */
+            skipped: true;
         };
         NoteAudioAccepted: {
             attempt_id: components["schemas"]["NoteId"];
@@ -783,16 +787,6 @@ export interface components {
             event: "noteAudio.changed";
             id: components["schemas"]["NoteId"];
             context_epoch: components["schemas"]["NoteId"];
-        };
-        NoteAudioStatus: {
-            id: components["schemas"]["NoteId"];
-            /** @enum {string} */
-            phase: "uploading" | "queued" | "generating" | "downloading" | "saving" | "complete";
-            completed?: components["schemas"]["NativeSafeInteger"];
-            total?: components["schemas"]["NativeSafeInteger"];
-            done: boolean;
-            error: string;
-            finished_at_ms?: components["schemas"]["NativeSafeInteger"];
         };
         BridgeInfo: {
             /** @enum {integer} */

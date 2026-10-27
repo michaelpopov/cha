@@ -84,7 +84,7 @@ std::optional<ResourceBytes> wait_resource(Application& application, const std::
 #if defined(__APPLE__) || defined(_WIN32)
 TEST(ApplicationMedia, NoteAudioCommitHonorsContextAndNoteLifetime) {
     using Json = nlohmann::json;
-    for (const auto& action : {"complete", "delete", "switch", "cancel"}) {
+    for (const auto& action : {"complete", "delete", "switch", "editable"}) {
         SCOPED_TRACE(action);
         test::TestWorkspace workspace;
         const auto database = test::import_test_database(workspace.root());
@@ -97,9 +97,10 @@ TEST(ApplicationMedia, NoteAudioCommitHonorsContextAndNoteLifetime) {
         store.reset();
         auto application = Application::open(make_command(workspace, database));
         const auto epoch = application->context_epoch();
-        EXPECT_THROW(application->start_note_audio(note.id, "Kore", {}, epoch), ApplicationError);
+        application->set_note_audio_changed([](auto, auto) {});
+        EXPECT_THROW(application->start_background_note_audio(note.id, "Kore", {}, epoch), ApplicationError);
         try {
-            (void)application->start_note_audio(note.id, "Kore", std::vector<std::string>(1001, "x"), epoch);
+            (void)application->start_background_note_audio(note.id, "Kore", std::vector<std::string>(1001, "x"), epoch);
             FAIL();
         } catch (const ApplicationError& error) { EXPECT_EQ(error.code, ErrorCode::invalid_argument); }
         const auto key = application->create_api_key({.display_name = "Audio", .value = "secret"}, epoch);
@@ -121,32 +122,25 @@ TEST(ApplicationMedia, NoteAudioCommitHonorsContextAndNoteLifetime) {
         for (const auto& blocks : std::vector<std::vector<std::string>>{
             std::vector<std::string>(1001, "x"), {std::string(5001, 'x')},
             std::vector<std::string>(1000, std::string(5000, '\1'))}) {
-            try { (void)application->start_note_audio(note.id, "Kore", blocks, epoch); FAIL(); }
+            try { (void)application->start_background_note_audio(note.id, "Kore", blocks, epoch); FAIL(); }
             catch (const ApplicationError& error) { EXPECT_EQ(error.code, ErrorCode::body_too_large); }
         }
         server.pause_before_response(3);
         upload.start(); server.start();
-        const auto initial = application->start_note_audio(note.id, "Kore", {"Hello"}, epoch);
-        EXPECT_EQ(initial["phase"], "uploading"); EXPECT_FALSE(initial["done"].get<bool>());
-        EXPECT_THROW(application->start_note_audio(note.id, "Kore", {"Hello"}, epoch), ApplicationError);
+        const auto initial = application->start_background_note_audio(note.id, "Kore", {"Hello"}, epoch);
+        EXPECT_GT(initial["attempt_id"].get<int>(), 0);
+        EXPECT_THROW(application->start_background_note_audio(note.id, "Kore", {"Hello"}, epoch), ApplicationError);
         ASSERT_TRUE(server.wait_for_requests(3, 2s));
         if (std::string_view(action) == "delete") application->delete_note_item(note.id, epoch);
         if (std::string_view(action) == "switch") {
             const auto other = application->create_vault({.display_name = "Other"}, epoch);
             (void)application->switch_vault(other.name, {}, epoch);
         }
-        if (std::string_view(action) == "cancel") {
-            EXPECT_EQ(application->cancel_note_audio(note.id, epoch), Json::object());
-            EXPECT_EQ(application->cancel_note_audio(note.id, epoch), Json::object());
-        }
-        if (std::string_view(action) == "complete")
-            EXPECT_EQ(application->cancel_note_audio(note.id + 1, epoch), Json::object());
-        if (std::string_view(action) == "switch")
-            EXPECT_THROW(application->cancel_note_audio(note.id, epoch), ApplicationError);
+        if (std::string_view(action) == "editable") (void)application->set_note_read_only(note.id, false, epoch);
         server.resume_responses();
         upload.join(); server.join();
         if (std::string_view(action) == "switch") {
-            EXPECT_THROW(application->get_note_audio_status(note.id, epoch), ApplicationError);
+            EXPECT_THROW(application->background_note_audio_status(note.id, epoch), ApplicationError);
             application->request_shutdown(); ASSERT_TRUE(application->join_shutdown(2s));
             auto original = WorkspaceConfigStore::open(database);
             EXPECT_EQ(original->get_note_audio_info(note.id)["count"], 2);
@@ -154,41 +148,18 @@ TEST(ApplicationMedia, NoteAudioCommitHonorsContextAndNoteLifetime) {
             continue;
         }
         const auto deadline = std::chrono::steady_clock::now() + 2s;
-        auto status = application->get_note_audio_status(note.id, epoch);
-        while (!status["done"].get<bool>() && std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::sleep_for(2ms);
-            status = application->get_note_audio_status(note.id, epoch);
-        }
-        EXPECT_TRUE(status["done"].get<bool>()); EXPECT_TRUE(status.contains("finished_at_ms"));
+        while (application->background_note_audio_status(note.id, epoch)["pending"].get<bool>()
+            && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(2ms);
+        EXPECT_FALSE(application->background_note_audio_status(note.id, epoch)["pending"].get<bool>());
         if (std::string_view(action) == "complete") {
-            EXPECT_EQ(status["phase"], "complete"); EXPECT_EQ(status["error"], "");
             EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 1);
             auto resource = application->note_audio_source("view-1", note.id, 0, epoch);
             EXPECT_EQ(resource.mime_type, "audio/mp4");
             EXPECT_GT(resource.byte_length, 0u);
             application->release_resource("view-1", resource.resource_id, epoch);
-            EXPECT_EQ(application->cancel_note_audio(note.id, epoch), Json::object());
-            EXPECT_EQ(application->get_note_audio_status(note.id, epoch), status);
-        } else if (std::string_view(action) == "cancel") {
-            EXPECT_EQ(status["error"], "Audio generation was interrupted.");
+        } else if (std::string_view(action) == "editable") {
             EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 2);
-            // A new attempt gets a fresh flag after cancellation.
-            upload.start(); server.start();
-            const auto next = application->start_note_audio(note.id, "Kore", {"Again"}, epoch);
-            EXPECT_FALSE(next["done"].get<bool>());
-            upload.join(); server.join();
-            const auto retry_deadline = std::chrono::steady_clock::now() + 2s;
-            do {
-                status = application->get_note_audio_status(note.id, epoch);
-                if (!status["done"].get<bool>()) std::this_thread::yield();
-            } while (!status["done"].get<bool>() && std::chrono::steady_clock::now() < retry_deadline);
-            EXPECT_TRUE(status["done"].get<bool>());
-            EXPECT_EQ(status["error"], "");
-            EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 1);
-        } else {
-            EXPECT_NE(status["error"], "");
-            EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
-        }
+        } else EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
         application->request_shutdown(); ASSERT_TRUE(application->join_shutdown(2s));
     }
 }

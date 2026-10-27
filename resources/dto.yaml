@@ -1765,14 +1765,20 @@ components:
       required: [id, voice, blocks]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
-        voice:
-          type: string
-          enum: [boroda, grant, dzig, gerdt, Kore]
+        voice: {type: string}
         blocks:
           type: array
-          minItems: 1
-          maxItems: 1000
-          items: {type: string, minLength: 1, maxLength: 5000}
+          items: {type: string}
+        only_if_missing: {type: boolean}
+
+    NoteAudioStartResult:
+      oneOf:
+        - {$ref: "#/components/schemas/NoteAudioAccepted"}
+        - type: object
+          additionalProperties: false
+          required: [skipped]
+          properties:
+            skipped: {type: boolean, enum: [true]}
 
     NoteAudioAccepted:
       type: object
@@ -1804,23 +1810,6 @@ components:
         event: {type: string, enum: [noteAudio.changed]}
         id: {$ref: "#/components/schemas/NoteId"}
         context_epoch: {$ref: "#/components/schemas/NoteId"}
-
-    NoteAudioStatus:
-      type: object
-      additionalProperties: false
-      required: [id, phase, done, error]
-      properties:
-        id: {$ref: "#/components/schemas/NoteId"}
-        phase:
-          type: string
-          enum: [uploading, queued, generating, downloading, saving, complete]
-        completed: {$ref: "#/components/schemas/NativeSafeInteger"}
-        total: {$ref: "#/components/schemas/NativeSafeInteger"}
-        done:
-          type: boolean
-        error:
-          type: string
-        finished_at_ms: {$ref: "#/components/schemas/NativeSafeInteger"}
 
     BridgeInfo:
       type: object

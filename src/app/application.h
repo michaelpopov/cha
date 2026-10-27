@@ -354,11 +354,8 @@ public:
     using NoteAudioChanged = std::function<void(std::int64_t, std::uint64_t)>;
     void set_note_audio_changed(NoteAudioChanged callback);
     nlohmann::json start_background_note_audio(std::int64_t id, std::string voice,
-        std::vector<std::string> blocks, std::uint64_t epoch);
+        std::vector<std::string> blocks, std::uint64_t epoch, bool only_if_missing = false);
     nlohmann::json background_note_audio_status(std::int64_t id, std::uint64_t epoch);
-    nlohmann::json start_note_audio(std::int64_t id, std::string voice, std::vector<std::string> blocks, std::uint64_t epoch);
-    nlohmann::json cancel_note_audio(std::int64_t id, std::uint64_t epoch);
-    nlohmann::json get_note_audio_status(std::int64_t id, std::uint64_t epoch);
     nlohmann::json get_note_audio_info(std::int64_t id, std::uint64_t epoch);
     MediaResource note_audio_source(std::string_view connection_id, std::int64_t id,
         std::int64_t ordinal, std::uint64_t epoch);

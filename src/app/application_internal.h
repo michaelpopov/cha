@@ -14,6 +14,8 @@
 #include "session/session_mirror.h"
 
 #include <atomic>
+#include <map>
+#include <set>
 
 namespace cha::app {
 
@@ -151,19 +153,16 @@ struct Application::Impl {
     std::optional<std::string> speech_url_override;
     PendingMediaRegistry pending_media{media_resources};
     BackgroundJobs background_jobs;
-    // One modal operation; guarded by lifecycle_mutex, replaced on the next run.
-    nlohmann::json note_audio_status;
-    std::uint64_t note_audio_epoch{};
-    std::shared_ptr<std::atomic_bool> note_audio_cancel;
-    // Durable facts live in note_audio_attempts. Each launch owns a distinct flag.
-    // Atomic shared_ptr access also permits interruption from nonblocking shutdown.
-    std::shared_ptr<std::atomic_bool> background_audio_cancel;
-    bool background_audio_warned{};
+    std::mutex background_audio_mutex;
+    std::map<std::int64_t, std::shared_ptr<std::atomic_bool>> background_audio;
+    // Guarded by lifecycle_mutex; retained across worker replacement.
+    std::set<std::int64_t> background_audio_warned;
     NoteAudioChanged note_audio_changed;
-    void require_audio_slot(std::uint64_t epoch); // Caller holds lifecycle_mutex.
+    void interrupt_note_audio();
+    void remove_note_audio_control(std::int64_t id, const std::shared_ptr<std::atomic_bool>& cancel);
     void resume_note_audio(); // Schedule after maintenance releases its store guard.
     void recover_note_audio(); // Caller holds lifecycle_mutex.
-    void launch_note_audio(NoteAudioAttempt attempt, std::string voice = {}, std::string jsonl = {});
+    std::shared_ptr<std::atomic_bool> launch_note_audio(NoteAudioAttempt attempt, std::string voice = {}, std::string jsonl = {});
     void run_note_audio(NoteAudioAttempt attempt, std::uint64_t epoch,
         std::shared_ptr<std::atomic_bool> cancel, std::string voice, std::string jsonl);
     void interrupt_abandoned_audio();

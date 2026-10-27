@@ -2583,17 +2583,29 @@ NoteAudioClip WorkspaceConfigStore::get_note_audio_clip(std::int64_t id, std::in
     const std::lock_guard lock(impl_->mutex);
     return note_audio_clip(*impl_->database, id, ordinal);
 }
-std::optional<NoteAudioAttempt> WorkspaceConfigStore::get_note_audio_attempt() const {
+std::optional<NoteAudioAttempt> WorkspaceConfigStore::get_note_audio_attempt_by_id(std::int64_t id) const {
     const std::lock_guard lock(impl_->mutex);
     if (consume_runtime_fault(WorkspaceConfigFault::note_audio_read))
         throw std::runtime_error("Forced audio attempt read failure");
-    return note_audio_attempt(*impl_->database);
+    return note_audio_attempt_by_id(*impl_->database, id);
 }
-NoteAudioAttempt WorkspaceConfigStore::accept_note_audio(std::int64_t id, std::int64_t count,
-    std::string_view origin, std::string_view key_id,
-    const std::function<void(const NoteAudioAttempt&)>& launch) {
+std::optional<NoteAudioAttempt> WorkspaceConfigStore::get_note_audio_attempt_for_note(std::int64_t id) const {
     const std::lock_guard lock(impl_->mutex);
-    return note_audio_accept(*impl_->database, id, count, origin, key_id, launch);
+    if (consume_runtime_fault(WorkspaceConfigFault::note_audio_read))
+        throw std::runtime_error("Forced audio attempt read failure");
+    return note_audio_attempt_for_note(*impl_->database, id);
+}
+std::vector<NoteAudioAttempt> WorkspaceConfigStore::get_note_audio_attempts() const {
+    const std::lock_guard lock(impl_->mutex);
+    if (consume_runtime_fault(WorkspaceConfigFault::note_audio_read))
+        throw std::runtime_error("Forced audio attempt read failure");
+    return note_audio_attempts(*impl_->database);
+}
+std::optional<NoteAudioAttempt> WorkspaceConfigStore::accept_note_audio(std::int64_t id, std::int64_t count,
+    std::string_view origin, std::string_view key_id,
+    const std::function<void(const NoteAudioAttempt&)>& launch, bool only_if_missing) {
+    const std::lock_guard lock(impl_->mutex);
+    return note_audio_accept(*impl_->database, id, count, origin, key_id, launch, only_if_missing);
 }
 bool WorkspaceConfigStore::register_note_audio(std::int64_t id, std::string_view batch_id, std::string_view voice) {
     const std::lock_guard lock(impl_->mutex);

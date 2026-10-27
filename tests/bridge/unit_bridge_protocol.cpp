@@ -51,8 +51,6 @@ TEST(BridgeProtocol, ParsesSubmitEnvelopeAndRejectsMalformedRequests) {
     EXPECT_EQ(method_from_name("noteAudio.backgroundStatus"), Method::note_audio_background_status);
     EXPECT_FALSE(is_control_method(Method::note_audio_start_background));
     EXPECT_FALSE(is_control_method(Method::note_audio_background_status));
-    EXPECT_EQ(method_from_name("noteAudio.cancel"), Method::note_audio_cancel);
-    EXPECT_FALSE(is_control_method(Method::note_audio_cancel));
 
     const auto unknown_method = parse_request(
         nlohmann::json{

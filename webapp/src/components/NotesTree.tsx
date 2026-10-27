@@ -153,7 +153,7 @@ export function NotesTree({
   vaultName: string;
   onRegisterNoteActions?(actions: NoteActions | null): void;
 }) {
-  const [audioRun, setAudioRun] = useState<{ targets: NoteAudioTarget[]; folderMode: boolean } | null>(null);
+  const [audioRun, setAudioRun] = useState<{ targets: NoteAudioTarget[]; epoch: number; folderMode: boolean } | null>(null);
   const [items, setItems] = useState<NoteItem[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [stale, setStale] = useState(false);
@@ -893,7 +893,8 @@ export function NotesTree({
                     return note?.kind === 'note' && note.read_only ? [{ id: note.id, name: note.name }] : [];
                   }) : [{ id: source.id, name: source.name }];
                   notifyAudioChanged(source.id);
-                  setAudioRun({ targets, folderMode });
+                  try { setAudioRun({ targets, folderMode, epoch: client.noteAudio!.contextEpoch() }); }
+                  catch (failure) { setError(publicErrorMessage(failure, 'The connection to CHA ended.')); }
                 }} role="menuitem" type="button">Generate audio</button>}
               {index.rows[menu.sourceId]?.kind !== 'annotation' && <button onClick={() => void startCompress()} role="menuitem" type="button">Compress</button>}
               {menuIsNote && (
@@ -910,13 +911,12 @@ export function NotesTree({
         document.body,
       )}
       {audioRun !== null && client.noteAudio && <NoteAudioDialog client={client.noteAudio}
-        targets={audioRun.targets} folderMode={audioRun.folderMode}
+        targets={audioRun.targets} epoch={audioRun.epoch} folderMode={audioRun.folderMode}
         prepare={async id => {
           const note = await client.getNote(id);
           return noteAudioBlocks(getSchema(notesExtensions()).nodeFromJSON({ type: 'doc', ...note.document }))
             .map(block => block.text);
         }}
-        onSettled={notifyAudioChanged}
         onClose={() => setAudioRun(null)} />}
       {dialog?.action === 'create' && (
         <NameDialog

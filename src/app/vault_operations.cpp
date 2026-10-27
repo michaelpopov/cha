@@ -223,7 +223,7 @@ std::chrono::milliseconds Application::Impl::VaultMaintenance::maintenance_grace
 std::uint64_t Application::Impl::VaultMaintenance::publish_epoch(
     PendingContextNotice& notice,
     ApplicationState next_state) {
-    if (const auto cancel = std::atomic_load(&app.background_audio_cancel)) cancel->store(true);
+    app.interrupt_note_audio();
     const auto epoch = app.live_sessions->bump_context_epoch();
     app.published_epoch.store(epoch);
     ApplicationState expected = ApplicationState::maintenance;
@@ -327,7 +327,7 @@ void Application::Impl::VaultMaintenance::reopen(
     const SessionRepository::MaintenanceGuard& repository) {
     try {
         database.reopen();
-        app.background_audio_warned = false;
+        app.background_audio_warned.clear();
         repository.synchronize_forums(*app.store->snapshot());
         repository.recover_sessions();
     } catch (...) {
@@ -934,7 +934,7 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge(
         bool merged = false;
         try {
             app.store->merge(selected.data, source_lease, password, prepare_source);
-            app.background_audio_warned = false;
+            app.background_audio_warned.clear();
             merged = true;
             {
                 SessionRepository::MaintenanceGuard repository =

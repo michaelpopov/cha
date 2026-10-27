@@ -69,8 +69,7 @@ function historyAction(name: 'Undo' | 'Redo') {
 describe('Notes in the application', () => {
   it('generates direct read-only folder notes in tree order and restores folder focus', async () => {
     const info = vi.fn(async (id: number) => ({ count: id === 7 ? 2 : 0 }));
-    const start = vi.fn(async (id: number) => ({ id, phase: 'complete' as const, done: true,
-      error: '', total: 1, finished_at_ms: Date.now() }));
+    const start = vi.fn(async (id: number) => ({ attempt_id: id }));
     const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument(`Text ${id}`) }));
     const changed = vi.fn();
     window.addEventListener('cha-note-audio-changed', changed);
@@ -85,27 +84,52 @@ describe('Notes in the application', () => {
           { ...child, id: 8, name: 'ANNOTATIONS', kind: 'annotation' },
           { ...study, id: 2, parent_id: study.id, name: 'Subfolder' },
           { ...child, id: 3, parent_id: 2, name: 'Nested' }],
-        getNote, noteAudio: { startBackground: vi.fn().mockResolvedValue({ attempt_id: 1 }), backgroundStatus: vi.fn(), info, start, status: vi.fn(), cancel: vi.fn(), source: vi.fn(), release: vi.fn() },
+        getNote, noteAudio: { contextEpoch: () => 1, startBackground: start, backgroundStatus: vi.fn().mockResolvedValue({ pending: false }), info, source: vi.fn(), release: vi.fn() },
       })} />);
       await openNotes();
       fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
       const menuItems = screen.getAllByRole('menuitem').map(node => node.textContent);
       expect(menuItems.indexOf('Generate audio') + 1).toBe(menuItems.indexOf('Compress'));
       fireEvent.click(screen.getByRole('menuitem', { name: 'Generate audio' }));
-      await screen.findByText('2 notes to generate');
+      await waitFor(() => expect(screen.getByLabelText('Voice')).toBeEnabled());
       expect(info.mock.calls.map(([id]) => id)).toEqual([5, 7, 4]);
       expect(getNote).not.toHaveBeenCalled();
       fireEvent.change(screen.getByLabelText('Voice'), { target: { value: 'Kore' } });
       fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
-      await screen.findByText('2 of 2 notes complete');
-      expect(start.mock.calls).toEqual([[5, 'Kore', ['Text 5']], [4, 'Kore', ['Text 4']]]);
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(start.mock.calls).toEqual([[5, 'Kore', ['Text 5'], true], [4, 'Kore', ['Text 4'], true]]);
       expect(getNote.mock.calls.map(([id]) => id)).toEqual([5, 4]);
-      expect(changed.mock.calls.map(([event]) => event.detail)).toEqual([study.id, 5, 4]);
-      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      expect(changed.mock.calls.map(([event]) => event.detail)).toEqual([study.id]);
       expect(screen.getByRole('treeitem', { name: 'Study' })).toHaveFocus();
       fireEvent.click(screen.getByRole('button', { name: `Actions for ${bootstrapFixture.vault_name}` }));
       expect(screen.queryByRole('menuitem', { name: 'Generate audio' })).toBeNull();
     } finally { window.removeEventListener('cha-note-audio-changed', changed); }
+  });
+
+  it('rejects stale folder targets after a context notice without a causing request', async () => {
+    let epoch = 1;
+    let changed!: (event: { state: string }) => void;
+    const bus = { on: vi.fn((_name, handler) => { changed = handler; return () => {}; }) };
+    const getNote = vi.fn();
+    const start = vi.fn();
+    render(<App contextEvents={bus} client={fixtureClient({
+      listNoteItems: async () => [study, { ...plan, parent_id: study.id, read_only: true }],
+      getNote,
+      noteAudio: { contextEpoch: () => epoch, startBackground: start,
+        backgroundStatus: async () => ({ pending: false }), info: async () => ({ count: 0 }), source: vi.fn(), release: vi.fn() },
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Generate audio' }));
+    await waitFor(() => expect(screen.getByLabelText('Voice')).toBeEnabled());
+    const dialog = screen.getByRole('dialog');
+    act(() => { epoch = 2; changed({ state: 'running' }); });
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    fireEvent.change(screen.getByLabelText('Voice'), { target: { value: 'Kore' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await screen.findByText('The vault changed. Close this dialog and start again.');
+    expect(getNote).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
   });
 
   it('does not offer folder audio without native capability', async () => {
@@ -122,7 +146,7 @@ describe('Notes in the application', () => {
     try {
       render(<App client={fixtureClient({
         listNoteItems: async () => [study, { ...plan, parent_id: study.id }],
-        noteAudio: { startBackground: vi.fn().mockResolvedValue({ attempt_id: 1 }), backgroundStatus: vi.fn(), info, start: vi.fn(), status: vi.fn(), cancel: vi.fn(), source: vi.fn(), release: vi.fn() },
+        noteAudio: { contextEpoch: () => 1, startBackground: vi.fn().mockResolvedValue({ attempt_id: 1 }), backgroundStatus: vi.fn().mockResolvedValue({ pending: false }), info, source: vi.fn(), release: vi.fn() },
       })} />);
       await openNotes();
       fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
@@ -142,7 +166,7 @@ describe('Notes in the application', () => {
       listNoteItems: async () => items,
       deleteNoteItem: async id => { items = items.filter(item => item.id !== id); },
       getNote: async id => ({ id, document: noteDocument(`Chapter ${id}`) }),
-      noteAudio: { startBackground: vi.fn().mockResolvedValue({ attempt_id: 1 }), backgroundStatus: vi.fn(), info, start: vi.fn(), status: vi.fn(), cancel: vi.fn(), source: vi.fn(), release: vi.fn() },
+      noteAudio: { contextEpoch: () => 1, startBackground: vi.fn().mockResolvedValue({ attempt_id: 1 }), backgroundStatus: vi.fn().mockResolvedValue({ pending: false }), info, source: vi.fn(), release: vi.fn() },
     })} />);
     await openNotes();
     if (deleteEarlier) {
@@ -175,7 +199,7 @@ describe('Notes in the application', () => {
       render(<App client={fixtureClient({
         listNoteItems: async () => [{ ...plan, read_only: true }],
         getNote: async id => ({ id, document }),
-        noteAudio: { startBackground: start, backgroundStatus, info: async () => ({ count: 0 }), start: vi.fn(), status: vi.fn(), cancel: vi.fn(), source: vi.fn(), release: vi.fn() },
+        noteAudio: { contextEpoch: () => 1, startBackground: start, backgroundStatus, info: async () => ({ count: 0 }), source: vi.fn(), release: vi.fn() },
       })} />);
       await openNotes();
       fireEvent.click(await screen.findByRole('button', { name: 'Actions for Plan' }));

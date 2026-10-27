@@ -470,9 +470,19 @@ TEST_F(BridgeRouterTest, BackgroundAudioCommandsValidateAndStatusReadsTheDurable
     EXPECT_EQ(call("noteAudio.backgroundStatus", {{"id", note.id}})["result"], (nlohmann::json{{"pending", false}}));
     EXPECT_EQ(call("noteAudio.backgroundStatus", {{"id", 0}})["error"]["code"], "invalid_argument");
     EXPECT_EQ(call("noteAudio.backgroundStatus", {{"id", note.id}, {"extra", true}})["error"]["code"], "invalid_argument");
-    const auto attempt = application_->store().accept_note_audio(note.id, 1, "http://localhost:1", "key-1", [](const auto&) {});
+    const auto attempt = *application_->store().accept_note_audio(note.id, 1, "http://localhost:1", "key-1", [](const auto&) {});
     EXPECT_EQ(call("noteAudio.backgroundStatus", {{"id", note.id}})["result"],
         (nlohmann::json{{"pending", true}, {"attempt_id", attempt.id}}));
+    const auto other = application_->create_note_item({}, NoteItemKind::note, "Other", epoch_);
+    (void)application_->set_note_read_only(other.id, true, epoch_);
+    const auto second = *application_->store().accept_note_audio(other.id, 1, "http://localhost:1", "key-1", [](const auto&) {});
+    EXPECT_EQ(call("noteAudio.backgroundStatus", {{"id", other.id}})["result"],
+        (nlohmann::json{{"pending", true}, {"attempt_id", second.id}}));
+#if defined(__APPLE__) || defined(_WIN32)
+    EXPECT_EQ(call("noteAudio.startBackground", {{"id", note.id}, {"voice", "Kore"}, {"blocks", nlohmann::json::array()}, {"only_if_missing", true}})["result"],
+        (nlohmann::json{{"skipped", true}}));
+#endif
+    EXPECT_EQ(call("noteAudio.startBackground", {{"id", note.id}, {"voice", "Kore"}, {"blocks", {"Text"}}, {"only_if_missing", 1}})["error"]["code"], "invalid_argument");
     const auto blocked = call("noteAudio.startBackground", {{"id", note.id}, {"voice", "Kore"}, {"blocks", {"Text"}}});
     EXPECT_EQ(blocked["error"]["code"], "invalid_argument");
 #if defined(__APPLE__) || defined(_WIN32)
@@ -509,32 +519,47 @@ TEST_F(BridgeRouterTest, BackgroundCompletionPrecedesNewSourcesAndWaitsForDelive
         http_response("application/jsonl", result.dump() + '\n')});
     server.pause_before_response(2);
     const auto key = application_->create_api_key({.display_name = "Audio", .value = "secret"}, epoch_);
-    const auto attempt = application_->store().accept_note_audio(note.id, 1,
+    const auto attempt = *application_->store().accept_note_audio(note.id, 1,
         "http://127.0.0.1:" + std::to_string(server.port()), key.id, [](const auto&) {});
     ASSERT_TRUE(application_->store().register_note_audio(attempt.id, batch_id, "Kore"));
+    const auto other = application_->create_note_item({}, NoteItemKind::note, "Other", epoch_);
+    (void)application_->set_note_read_only(other.id, true, epoch_);
+    application_->store().save_note_audio(other.id, {old});
+    const auto other_batch = "batches/" + std::string(32, 'c');
+    MockHttpServer other_server({http_response("application/json", nlohmann::json{{"name", other_batch}, {"done", true},
+        {"response", {{"responsesFile", "files/" + std::string(32, 'd')}}}}.dump()),
+        http_response("application/jsonl", result.dump() + '\n')});
+    other_server.pause_before_response(2);
+    const auto other_attempt = *application_->store().accept_note_audio(other.id, 1,
+        "http://127.0.0.1:" + std::to_string(other_server.port()), key.id, [](const auto&) {});
+    ASSERT_TRUE(application_->store().register_note_audio(other_attempt.id, other_batch, "Kore"));
     // Reinstalling the native router activates recovery without a webview command.
     router_.reset();
-    server.start();
+    server.start(); other_server.start();
     router_ = std::make_unique<BridgeRouter>(*application_);
     connection_ = router_->open_connection(); next_id_ = 1;
     bootstrap_epoch();
     ASSERT_TRUE(server.wait_for_requests(2, 2s));
+    ASSERT_TRUE(other_server.wait_for_requests(2, 2s));
     const auto old_request = next_id_++;
     router_->handle_request(connection_, request_json(connection_, old_request, epoch_, "noteAudio.source",
         {{"id", note.id}, {"ordinal", 0}}).dump());
     const auto before = wait_delivery(*router_, connection_);
     ASSERT_TRUE(before);
     EXPECT_EQ(reply_with_id(*before, old_request)["result"]["byte_length"], 9);
-    server.resume_responses(); server.join();
+    server.resume_responses(); other_server.resume_responses(); server.join(); other_server.join();
     const auto deadline = std::chrono::steady_clock::now() + 3s;
-    while (application_->store().get_note_audio_attempt() && std::chrono::steady_clock::now() < deadline)
+    while (!application_->store().get_note_audio_attempts().empty() && std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(1ms);
-    ASSERT_FALSE(application_->store().get_note_audio_attempt());
+    ASSERT_TRUE(application_->store().get_note_audio_attempts().empty());
     // Completion cannot overtake the old source's unacknowledged delivery.
     EXPECT_FALSE(router_->take_delivery(connection_));
     const auto new_request = next_id_++;
     router_->handle_request(connection_, request_json(connection_, new_request, epoch_, "noteAudio.source",
         {{"id", note.id}, {"ordinal", 0}}).dump());
+    const auto other_request = next_id_++;
+    router_->handle_request(connection_, request_json(connection_, other_request, epoch_, "noteAudio.source",
+        {{"id", other.id}, {"ordinal", 0}}).dump());
     router_->run_tasks();
     ack_delivery(*router_, connection_, *before);
     const auto after = wait_delivery(*router_, connection_);
@@ -542,6 +567,9 @@ TEST_F(BridgeRouterTest, BackgroundCompletionPrecedesNewSourcesAndWaitsForDelive
     const auto& notice = after->at("messages")[0];
     EXPECT_EQ(notice, (nlohmann::json{{"connection_id", connection_}, {"event", "noteAudio.changed"},
         {"id", note.id}, {"context_epoch", epoch_}}));
+    EXPECT_EQ(after->at("messages")[1].at("event"), "noteAudio.changed");
+    EXPECT_EQ(after->at("messages")[1].at("id"), other.id);
+    EXPECT_GT(reply_with_id(*after, other_request)["result"]["byte_length"].get<int>(), 9);
     EXPECT_GT(reply_with_id(*after, new_request)["result"]["byte_length"].get<int>(), 9);
     ack_delivery(*router_, connection_, *after);
     EXPECT_FALSE(router_->take_delivery(connection_));
@@ -553,25 +581,20 @@ TEST_F(BridgeRouterTest, NoteAudioValidatesBlockPayloadAndKeepsOfflineLookupInde
     const auto note = application_->create_note_item({}, NoteItemKind::note, "Narration", epoch_);
     (void)application_->set_note_read_only(note.id, true, epoch_);
     EXPECT_EQ(call("noteAudio.info", {{"id", note.id}})["result"], (nlohmann::json{{"count", 0}}));
-    EXPECT_EQ(call("noteAudio.cancel", {{"id", note.id}})["result"], nlohmann::json::object());
-    EXPECT_EQ(call("noteAudio.cancel", {{"id", note.id}})["result"], nlohmann::json::object());
-    EXPECT_EQ(call("noteAudio.cancel", {{"id", 0}})["error"]["code"], "invalid_argument");
-    EXPECT_EQ(call("noteAudio.cancel", {{"id", note.id}, {"extra", true}})["error"]["code"], "invalid_argument");
     for (const auto& params : std::vector<nlohmann::json>{
         {{"id", note.id}, {"voice", "Kore"}},
         {{"id", note.id}, {"voice", "Kore"}, {"blocks", "text"}},
         {{"id", note.id}, {"voice", "Kore"}, {"blocks", nlohmann::json::array({42})}},
         {{"id", note.id}, {"voice", "Kore"}, {"blocks", nlohmann::json::array()}, {"extra", true}}}) {
-        const auto reply = call("noteAudio.start", params);
+        const auto reply = call("noteAudio.startBackground", params);
         EXPECT_FALSE(reply["ok"].get<bool>());
         EXPECT_EQ(reply["error"]["code"], "invalid_argument");
     }
 #ifdef __APPLE__
-    const auto empty = call("noteAudio.start", {{"id", note.id}, {"voice", "Kore"}, {"blocks", nlohmann::json::array()}});
-    EXPECT_EQ(empty["error"]["message"], "No text to narrate");
+    const auto empty = call("noteAudio.startBackground", {{"id", note.id}, {"voice", "Kore"}, {"blocks", nlohmann::json::array()}});
+    EXPECT_EQ(empty["error"]["code"], "invalid_argument");
 #endif
     EXPECT_EQ(call("noteAudio.source", {{"id", note.id}, {"ordinal", 0}})["error"]["code"], "not_found");
-    EXPECT_EQ(call("noteAudio.status", {{"id", note.id}})["error"]["code"], "not_found");
 }
 
 TEST_F(BridgeRouterTest, AttachesTextFilesWithoutCreatingNotesOrClearingThePrompt) {

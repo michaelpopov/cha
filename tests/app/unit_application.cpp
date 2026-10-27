@@ -98,6 +98,23 @@ std::string audio_http_error(int status) {
     return "HTTP/1.1 " + std::to_string(status) + " Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 }
 
+// Release test barriers and join before their captured local state is destroyed,
+// including when an ASSERT returns early.
+struct AudioWorkerCleanup {
+    std::unique_ptr<Application>& application;
+    std::function<void()> release;
+    ~AudioWorkerCleanup() {
+        if (!release) return;
+        application->request_shutdown();
+        release();
+        EXPECT_TRUE(application->join_shutdown(2s));
+    }
+};
+
+void release_audio_gate(std::promise<void>& gate) {
+    try { gate.set_value(); } catch (const std::future_error&) { /* Already released. */ }
+}
+
 class NoteAudioBackground : public testing::Test {
 protected:
     void SetUp() override {
@@ -107,9 +124,12 @@ protected:
         path = test::import_test_database(workspace.root());
         RuntimeSettings settings;
         settings.note_audio_wait = [this](int seconds) {
-            waits.push_back(seconds);
-            if (on_wait) on_wait(waits.size());
+            std::size_t index;
+            { const std::lock_guard lock(waits_mutex); waits.push_back(seconds); index = waits.size(); }
+            if (on_wait) on_wait(index);
         };
+        settings.note_audio_before_launch = [this](auto id) { if (on_launch) on_launch(id); };
+        settings.note_audio_worker_started = [this](auto id, auto cancel) { if (on_worker) on_worker(id, std::move(cancel)); };
         auto command = make_command(workspace, path);
         command.test_shutdown_grace_ms = 50;
         application = Application::open(command, {}, settings);
@@ -135,10 +155,11 @@ protected:
             completed_id = id; completed_epoch = context; ++completions;
         });
     }
-    bool finished() {
+    bool finished(std::int64_t id = 0) {
+        if (!id) id = note.id;
         const auto deadline = std::chrono::steady_clock::now() + 3s;
         while (std::chrono::steady_clock::now() < deadline) {
-            if (!application->background_note_audio_status(note.id, epoch).at("pending").get<bool>()) return true;
+            if (!application->background_note_audio_status(id, epoch).at("pending").get<bool>()) return true;
             std::this_thread::sleep_for(1ms);
         }
         return false;
@@ -165,7 +186,7 @@ protected:
     NoteAudioAttempt saved_attempt(int port, bool registered = true) {
         // Seed a recovered row completely before enabling its native worker.
         application->set_note_audio_changed({});
-        const auto attempt = application->store().accept_note_audio(note.id, 1,
+        const auto attempt = *application->store().accept_note_audio(note.id, 1,
             "http://127.0.0.1:" + std::to_string(port), key_id, [](const auto&) {});
         if (registered) EXPECT_TRUE(application->store().register_note_audio(attempt.id, audio_batch, "Kore"));
         return attempt;
@@ -176,7 +197,11 @@ protected:
     std::uint64_t epoch{};
     NoteItem note;
     std::string key_id;
+    std::mutex waits_mutex;
     std::vector<int> waits;
+    std::vector<int> waits_snapshot() { const std::lock_guard lock(waits_mutex); return waits; }
+    std::function<void(std::int64_t)> on_launch;
+    std::function<void(std::int64_t, std::shared_ptr<std::atomic_bool>)> on_worker;
     std::function<void(std::size_t)> on_wait;
     std::atomic_int completions{};
     std::atomic_int64_t completed_id{};
@@ -195,7 +220,6 @@ TEST_F(NoteAudioBackground, AcceptanceReturnsDuringUploadAndCommitsOneCompleteOu
     ASSERT_TRUE(server.wait_for_requests(1, 2s));
     EXPECT_EQ(application->background_note_audio_status(note.id, epoch),
         (nlohmann::json{{"pending", true}, {"attempt_id", accepted["attempt_id"]}}));
-    EXPECT_THROW(application->start_note_audio(note.id, "Kore", {"Paragraph"}, epoch), ApplicationError);
     EXPECT_THROW(application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch), ApplicationError);
     EXPECT_TRUE(application->list_events(epoch).empty());
     server.resume_responses();
@@ -218,18 +242,31 @@ TEST_F(NoteAudioBackground, AcceptanceCommitRollbackCannotSubmitOrCleanUpTheImme
     MockHttpServer server({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
         + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
+    std::promise<void> old_entered, release_old;
+    auto released = release_old.get_future().share();
+    std::atomic_int workers{};
+    AudioWorkerCleanup cleanup{application, [&] { release_audio_gate(release_old); }};
+    on_worker = [&](auto, auto cancel) {
+        if (++workers == 1) {
+            old_entered.set_value();
+            released.wait_for(2s);
+            EXPECT_TRUE(cancel->load());
+        }
+    };
     configure(server.port()); activate();
     storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
     database.execute("CREATE TABLE fail_accept(value INTEGER REFERENCES note_items(id) DEFERRABLE INITIALLY DEFERRED)");
     database.execute("CREATE TRIGGER fail_accept_commit AFTER INSERT ON note_audio_attempts BEGIN INSERT INTO fail_accept VALUES(-1); END");
     EXPECT_THROW(application->start_background_note_audio(note.id, "Kore", {"Discarded text"}, epoch), std::runtime_error);
-    EXPECT_FALSE(application->store().get_note_audio_attempt());
+    ASSERT_EQ(old_entered.get_future().wait_for(2s), std::future_status::ready);
+    EXPECT_FALSE(application->store().get_note_audio_attempt_for_note(note.id));
     EXPECT_TRUE(application->list_events(epoch).empty());
     database.execute("DROP TRIGGER fail_accept_commit");
     database.execute("DROP TABLE fail_accept");
     upload.start(); server.start();
     const auto accepted = application->start_background_note_audio(note.id, "Kore", {"Only this submission"}, epoch);
     EXPECT_EQ(accepted["attempt_id"], 1);
+    release_old.set_value();
     ASSERT_TRUE(finished());
     upload.join(); server.join();
     EXPECT_EQ(server.requests().size(), 3u);
@@ -238,6 +275,276 @@ TEST_F(NoteAudioBackground, AcceptanceCommitRollbackCannotSubmitOrCleanUpTheImme
     EXPECT_EQ(upload.requests()[0].find("Discarded text"), std::string::npos);
     EXPECT_EQ(completions.load(), 1);
     EXPECT_EQ(application->list_events(epoch).size(), 2u);
+}
+
+TEST_F(NoteAudioBackground, AnotherNoteFinishesWhileTheFirstUploadIsStalled) {
+    MockHttpServer a_upload({audio_json({{"file", {{"name", audio_file}}}})});
+    auto failed = audio_operation(); failed.erase("response"); failed["error"] = {{"message", "failed"}};
+    MockHttpServer a({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
+        + std::to_string(a_upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", audio_json(failed)});
+    MockHttpServer b_upload({audio_json({{"file", {{"name", "files/" + std::string(32, 'c')}}}})});
+    auto b_operation = audio_operation(); b_operation["name"] = "batches/" + std::string(32, 'd');
+    b_operation["response"]["responsesFile"] = "files/" + std::string(32, 'c');
+    MockHttpServer b({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
+        + std::to_string(b_upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        audio_json(b_operation), http_response("application/jsonl", audio_results())});
+    const auto other = application->create_note_item({}, NoteItemKind::note, "B", epoch);
+    (void)application->set_note_read_only(other.id, true, epoch);
+    AudioWorkerCleanup cleanup{application, [&] { a.resume_responses(); b.resume_responses(); }};
+    a.pause_before_response(1); a_upload.start(); a.start(); b_upload.start(); b.start();
+    configure(a.port()); activate();
+    const auto first = application->start_background_note_audio(note.id, "Kore", {"A"}, epoch);
+    ASSERT_TRUE(a.wait_for_requests(1, 2s));
+    configure(b.port());
+    const auto second = application->start_background_note_audio(other.id, "Kore", {"B"}, epoch, true);
+    EXPECT_NE(first["attempt_id"], second["attempt_id"]);
+    EXPECT_THROW(application->start_background_note_audio(note.id, "Kore", {"duplicate"}, epoch), ApplicationError);
+    EXPECT_EQ(application->start_background_note_audio(note.id, "Kore", {"duplicate"}, epoch, true), (nlohmann::json{{"skipped", true}}));
+    const bool b_finished = finished(other.id);
+    // Release A even if an expectation fails; the mock has a five-second deadline.
+    EXPECT_TRUE(application->background_note_audio_status(note.id, epoch)["pending"]);
+    EXPECT_EQ(application->get_note_audio_info(other.id, epoch)["count"], 1);
+    EXPECT_EQ(completed_id.load(), other.id);
+    a.resume_responses();
+    EXPECT_TRUE(b_finished);
+    ASSERT_TRUE(finished());
+    a_upload.join(); a.join(); b_upload.join(); b.join();
+    EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
+    EXPECT_EQ(application->get_note_audio_info(other.id, epoch)["count"], 1);
+    EXPECT_EQ(application->list_events(epoch).front().severity, EventSeverity::error);
+}
+
+TEST_F(NoteAudioBackground, RecoveryLaunchFailureAndUnknownRowsDoNotBlockOtherRegisteredJobs) {
+    MockHttpServer a({audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
+    auto operation = audio_operation(); operation["name"] = "batches/" + std::string(32, 'c');
+    operation["response"]["responsesFile"] = "files/" + std::string(32, 'd');
+    MockHttpServer b({audio_json(operation), http_response("application/jsonl", audio_results())});
+    const auto first = saved_attempt(a.port());
+    const auto other = application->create_note_item({}, NoteItemKind::note, "B", epoch);
+    const auto unknown = application->create_note_item({}, NoteItemKind::note, "Unknown", epoch);
+    for (auto id : {other.id, unknown.id}) (void)application->set_note_read_only(id, true, epoch);
+    const auto second = *application->store().accept_note_audio(other.id, 1, "http://127.0.0.1:" + std::to_string(b.port()), key_id, [](const auto&) {});
+    ASSERT_TRUE(application->store().register_note_audio(second.id, operation["name"].get<std::string>(), "Kore"));
+    (void)application->store().accept_note_audio(unknown.id, 1, "http://127.0.0.1:1", key_id, [](const auto&) {});
+    bool fail = true;
+    AudioWorkerCleanup cleanup{application, [&] { a.resume_responses(); b.resume_responses(); }};
+    on_launch = [&](auto id) { if (id == first.id && std::exchange(fail, false)) throw std::runtime_error("launch"); };
+    a.pause_before_response(1); b.pause_before_response(1); a.start(); b.start();
+    activate();
+    ASSERT_TRUE(b.wait_for_requests(1, 2s));
+    EXPECT_TRUE(application->background_note_audio_status(note.id, epoch)["pending"]);
+    EXPECT_TRUE(application->background_note_audio_status(other.id, epoch)["pending"]);
+    ASSERT_TRUE(finished(unknown.id));
+    activate(); activate();
+    ASSERT_TRUE(a.wait_for_requests(1, 2s));
+    b.resume_responses();
+    EXPECT_TRUE(finished(other.id));
+    EXPECT_TRUE(application->background_note_audio_status(note.id, epoch)["pending"]);
+    a.resume_responses();
+    EXPECT_TRUE(finished()); a.join(); b.join();
+    EXPECT_EQ(completions.load(), 2);
+    for (const auto* server : {&a, &b}) {
+        ASSERT_EQ(server->requests().size(), 2u);
+        for (const auto& request : server->requests()) EXPECT_TRUE(request.starts_with("GET "));
+    }
+    const auto events = application->list_events(epoch);
+    EXPECT_EQ(std::count_if(events.begin(), events.end(), [](const auto& event) { return event.severity == EventSeverity::warning; }), 1);
+}
+
+TEST_F(NoteAudioBackground, RetryingJobsWarnIndependentlyAndDoNotBlockCompletion) {
+    auto b_operation = audio_operation(); b_operation["name"] = "batches/" + std::string(32, 'c');
+    b_operation["response"]["responsesFile"] = "files/" + std::string(32, 'd');
+    auto c_operation = audio_operation(); c_operation["name"] = "batches/" + std::string(32, 'e');
+    c_operation["response"]["responsesFile"] = "files/" + std::string(32, 'f');
+    MockHttpServer a({audio_http_error(401), audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
+    MockHttpServer b({audio_http_error(401), audio_json(b_operation), http_response("application/jsonl", audio_results())});
+    MockHttpServer c({audio_json(c_operation), http_response("application/jsonl", audio_results())});
+    saved_attempt(a.port());
+    std::vector<std::int64_t> ids{note.id};
+    for (auto* server : {&b, &c}) {
+        const auto item = application->create_note_item({}, NoteItemKind::note, "Note " + std::to_string(ids.size()), epoch);
+        (void)application->set_note_read_only(item.id, true, epoch);
+        const auto attempt = *application->store().accept_note_audio(item.id, 1, "http://127.0.0.1:" + std::to_string(server->port()), key_id, [](const auto&) {});
+        ASSERT_TRUE(application->store().register_note_audio(attempt.id,
+            (server == &b ? b_operation : c_operation)["name"].get<std::string>(), "Kore"));
+        ids.push_back(item.id);
+    }
+    std::promise<void> both_waiting, release;
+    auto released = release.get_future().share();
+    AudioWorkerCleanup cleanup{application, [&] { release_audio_gate(release); }};
+    on_wait = [&](auto index) { if (index == 2) both_waiting.set_value(); released.wait_for(3s); };
+    a.start(); b.start(); c.start(); activate();
+    const auto waiting = both_waiting.get_future().wait_for(2s);
+    const bool c_finished = finished(ids[2]);
+    EXPECT_TRUE(application->background_note_audio_status(ids[0], epoch)["pending"]);
+    EXPECT_TRUE(application->background_note_audio_status(ids[1], epoch)["pending"]);
+    const auto events = application->list_events(epoch);
+    EXPECT_EQ(std::count_if(events.begin(), events.end(), [](const auto& event) { return event.severity == EventSeverity::warning; }), 2);
+    release.set_value();
+    EXPECT_EQ(waiting, std::future_status::ready); EXPECT_TRUE(c_finished);
+    EXPECT_TRUE(finished(ids[0])); EXPECT_TRUE(finished(ids[1]));
+    a.join(); b.join(); c.join();
+    EXPECT_EQ(completions.load(), 3);
+}
+
+TEST_F(NoteAudioBackground, MissingOnlySkipsUnusableContentAndWarningFailureIsDefinite) {
+    activate();
+    EXPECT_EQ(application->start_background_note_audio(note.id, "Kore", {}, epoch, true), (nlohmann::json{{"skipped", true}}));
+    EXPECT_EQ(application->list_events(epoch).size(), 1u); // Empty input needs no configured service.
+    configure(1);
+    EXPECT_EQ(application->start_background_note_audio(note.id, "Kore", {std::string(5001, 'x')}, epoch, true), (nlohmann::json{{"skipped", true}}));
+    EXPECT_EQ(application->list_events(epoch).size(), 2u);
+    storage::SqliteDatabase db(path, storage::SqliteDatabase::Mode::read_write);
+    db.execute("CREATE TRIGGER fail_warning BEFORE INSERT ON event_history BEGIN SELECT RAISE(ABORT,'private SQL'); END");
+    try { (void)application->start_background_note_audio(note.id, "Kore", {}, epoch, true); FAIL(); }
+    catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+        EXPECT_NE(std::string(error.what()).find("No job was started"), std::string::npos);
+        EXPECT_EQ(std::string(error.what()).find("private SQL"), std::string::npos);
+    }
+    EXPECT_TRUE(application->store().get_note_audio_attempts().empty());
+    db.execute("DROP TRIGGER fail_warning");
+    EXPECT_EQ(application->start_background_note_audio(note.id, "Kore", {}, epoch, true), (nlohmann::json{{"skipped", true}}));
+}
+
+TEST_F(NoteAudioBackground, ShutdownSignalsAllControlsBeforeJoinAndWithoutTheLifecycleLock) {
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::vector<std::shared_ptr<std::atomic_bool>> controls;
+    std::promise<void> release;
+    auto released = release.get_future().share();
+    AudioWorkerCleanup cleanup{application, [&] { release_audio_gate(release); }};
+    on_worker = [&](auto, auto cancel) {
+        { const std::lock_guard lock(mutex); controls.push_back(cancel); ready.notify_all(); }
+        released.wait_for(3s);
+    };
+    saved_attempt(1, false);
+    const auto other = application->create_note_item({}, NoteItemKind::note, "B", epoch);
+    (void)application->set_note_read_only(other.id, true, epoch);
+    (void)application->store().accept_note_audio(other.id, 1, "http://127.0.0.1:1", key_id, [](const auto&) {});
+    activate();
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(ready.wait_for(lock, 2s, [&] { return controls.size() == 2; }));
+    }
+    const auto third = application->create_note_item({}, NoteItemKind::note, "C", epoch);
+    (void)application->set_note_read_only(third.id, true, epoch);
+    configure(1);
+    std::promise<void> launching, release_launch;
+    auto launch_released = release_launch.get_future().share();
+    AudioWorkerCleanup launch_cleanup{application, [&] { release_audio_gate(release_launch); release_audio_gate(release); }};
+    on_launch = [&](auto) { launching.set_value(); launch_released.wait_for(3s); };
+    auto request = std::async(std::launch::async, [&] {
+        return application->start_background_note_audio(third.id, "Kore", {"C"}, epoch);
+    });
+    ASSERT_EQ(launching.get_future().wait_for(2s), std::future_status::ready);
+    const auto start = std::chrono::steady_clock::now();
+    application->request_shutdown();
+    EXPECT_LT(std::chrono::steady_clock::now() - start, 500ms);
+    { const std::lock_guard lock(mutex); for (const auto& control : controls) EXPECT_TRUE(control->load()); }
+    release_launch.set_value();
+    (void)request.get();
+    release.set_value();
+    EXPECT_TRUE(application->join_shutdown(2s));
+    EXPECT_EQ(application->store().get_note_audio_attempts().size(), 3u);
+}
+
+TEST_F(NoteAudioBackground, LaunchAndCommitFailureDoNotCancelAnotherLiveAttempt) {
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::vector<std::shared_ptr<std::atomic_bool>> controls;
+    std::promise<void> release;
+    const auto released = release.get_future().share();
+    AudioWorkerCleanup cleanup{application, [&] { release_audio_gate(release); }};
+    on_worker = [&](auto, auto cancel) {
+        { const std::lock_guard lock(mutex); controls.push_back(cancel); ready.notify_all(); }
+        released.wait_for(3s);
+    };
+    configure(1); activate();
+    const auto first = application->start_background_note_audio(note.id, "Kore", {"A"}, epoch);
+    { std::unique_lock lock(mutex); ASSERT_TRUE(ready.wait_for(lock, 2s, [&] { return controls.size() == 1; })); }
+    const auto other = application->create_note_item({}, NoteItemKind::note, "B", epoch);
+    (void)application->set_note_read_only(other.id, true, epoch);
+    on_launch = [](auto) { throw std::runtime_error("launch failed"); };
+    EXPECT_THROW(application->start_background_note_audio(other.id, "Kore", {"B"}, epoch), std::runtime_error);
+    EXPECT_TRUE(application->store().get_note_audio_attempt_by_id(first["attempt_id"].get<std::int64_t>()));
+    EXPECT_FALSE(application->store().get_note_audio_attempt_for_note(other.id));
+    { const std::lock_guard lock(mutex); EXPECT_FALSE(controls[0]->load()); }
+    on_launch = {};
+    storage::SqliteDatabase db(path, storage::SqliteDatabase::Mode::read_write);
+    db.execute("CREATE TABLE fail_accept(value INTEGER REFERENCES note_items(id) DEFERRABLE INITIALLY DEFERRED)");
+    db.execute("CREATE TRIGGER fail_commit AFTER INSERT ON note_audio_attempts BEGIN INSERT INTO fail_accept VALUES(-1); END");
+    EXPECT_THROW(application->start_background_note_audio(other.id, "Kore", {"B"}, epoch), std::runtime_error);
+    { std::unique_lock lock(mutex); ASSERT_TRUE(ready.wait_for(lock, 2s, [&] { return controls.size() == 2; }));
+      EXPECT_FALSE(controls[0]->load()); EXPECT_TRUE(controls[1]->load()); }
+    EXPECT_EQ(application->store().get_note_audio_attempts().size(), 1u);
+    application->request_shutdown(); release.set_value();
+    EXPECT_TRUE(application->join_shutdown(2s));
+}
+
+TEST_F(NoteAudioBackground, AbandonmentSignalsOnlyTheRemovedNotesAndContextChangesSignalAll) {
+    for (const std::string action : {"editable", "delete", "callback", "maintenance", "failed maintenance", "switch"}) {
+        SCOPED_TRACE(action);
+        std::mutex mutex;
+        std::condition_variable ready;
+        std::vector<std::pair<std::int64_t, std::shared_ptr<std::atomic_bool>>> controls;
+        std::promise<void> release;
+        const auto released = release.get_future().share();
+        AudioWorkerCleanup cleanup{application, [&] { release_audio_gate(release); }};
+        on_worker = [&](auto id, auto cancel) {
+            { const std::lock_guard lock(mutex); controls.emplace_back(id, cancel); ready.notify_all(); }
+            released.wait_for(3s);
+        };
+        application->set_note_audio_changed({});
+        const auto folder = application->create_note_item({}, NoteItemKind::folder, "Folder " + action, epoch);
+        const auto a = application->create_note_item(folder.id, NoteItemKind::note, "A", epoch);
+        const auto nested = application->create_note_item(folder.id, NoteItemKind::folder, "Nested", epoch);
+        const auto b = application->create_note_item(nested.id, NoteItemKind::note, "B", epoch);
+        const auto outside = application->create_note_item({}, NoteItemKind::note, "Outside " + action, epoch);
+        for (auto id : {a.id, b.id, outside.id}) {
+            (void)application->set_note_read_only(id, true, epoch);
+            (void)application->store().accept_note_audio(id, 1, "http://127.0.0.1:1", key_id, [](const auto&) {});
+        }
+        activate();
+        { std::unique_lock lock(mutex); ASSERT_TRUE(ready.wait_for(lock, 2s, [&] { return controls.size() == 3; })); }
+        const auto a_attempt = application->store().get_note_audio_attempt_for_note(a.id)->id;
+        const auto b_attempt = application->store().get_note_audio_attempt_for_note(b.id)->id;
+        if (action == "editable") (void)application->set_note_read_only(a.id, false, epoch);
+        else if (action == "delete") application->delete_note_item(folder.id, epoch);
+        else if (action == "callback") application->set_note_audio_changed({});
+        else if (action == "maintenance") (void)application->update_vault("Test", {.display_name = "Test"}, epoch);
+        else if (action == "failed maintenance") fail_maintenance();
+        else {
+            (void)application->create_vault({.display_name = "Switched"}, epoch);
+            (void)application->switch_vault("Switched", {}, epoch);
+        }
+        epoch = application->context_epoch();
+        { const std::lock_guard lock(mutex);
+          for (std::size_t i = 0; i < 3; ++i) {
+            const auto& [id, cancel] = controls[i];
+            const bool abandoned = action == "editable" ? id == a_attempt
+                : action == "delete" ? id == a_attempt || id == b_attempt : true;
+            EXPECT_EQ(cancel->load(), abandoned);
+          }
+        }
+        // Stop replacement workers too before releasing the barrier; no HTTP is needed.
+        application->set_note_audio_changed({});
+        release.set_value();
+        // Reopening the fixture joins all workers before the local hooks are destroyed.
+        application.reset();
+        cleanup.release = {};
+        on_worker = {};
+        std::filesystem::remove_all(workspace.root() / "cha-config");
+        auto command = make_command(workspace, path);
+        command.test_shutdown_grace_ms = 50;
+        RuntimeSettings settings;
+        settings.note_audio_worker_started = [this](auto id, auto cancel) { if (on_worker) on_worker(id, std::move(cancel)); };
+        application = Application::open(command, {}, settings);
+        epoch = application->context_epoch();
+        // Retire retained test rows without adding recovery workers to the next case.
+        for (const auto& attempt : application->store().get_note_audio_attempts())
+            (void)application->store().retire_note_audio(attempt.id, EventSeverity::warning, "Test cleanup");
+    }
 }
 
 TEST_F(NoteAudioBackground, RegistrationAndFinalEventFailuresRetryOnlyTheLocalTransaction) {
@@ -250,14 +557,14 @@ TEST_F(NoteAudioBackground, RegistrationAndFinalEventFailuresRetryOnlyTheLocalTr
     database.execute("CREATE TRIGGER fail_start BEFORE INSERT ON event_history WHEN NEW.severity='info' BEGIN SELECT RAISE(ABORT,'full'); END");
     database.execute("CREATE TRIGGER fail_finish BEFORE INSERT ON event_history WHEN NEW.severity='success' BEGIN SELECT RAISE(ABORT,'full'); END");
     on_wait = [&](auto index) {
-        EXPECT_TRUE(application->store().get_note_audio_attempt());
+        EXPECT_TRUE(application->store().get_note_audio_attempt_for_note(note.id));
         database.execute(index == 1 ? "DROP TRIGGER fail_start" : "DROP TRIGGER fail_finish");
     };
     upload.start(); server.start();
     (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
     ASSERT_TRUE(finished());
     upload.join(); server.join();
-    EXPECT_EQ(waits, (std::vector<int>{10, 10}));
+    EXPECT_EQ(waits_snapshot(), (std::vector<int>{10, 10}));
     EXPECT_EQ(server.requests().size(), 3u);
     EXPECT_EQ(application->list_events(epoch).size(), 2u);
     EXPECT_EQ(completions.load(), 1);
@@ -267,7 +574,7 @@ TEST_F(NoteAudioBackground, NativeRecoveryReadsSavedBatchImmediatelyWithoutSubmi
     MockHttpServer server({audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
     const auto attempt = saved_attempt(server.port());
     // A daemon/no native callback leaves the record untouched.
-    EXPECT_EQ(application->store().get_note_audio_attempt()->id, attempt.id);
+    EXPECT_EQ(application->store().get_note_audio_attempt_for_note(note.id)->id, attempt.id);
     application.reset();
     application = Application::open(make_command(workspace, path));
     epoch = application->context_epoch();
@@ -285,7 +592,7 @@ TEST_F(NoteAudioBackground, UnknownSubmissionRetiresOnceAndSecondaryProcessLeave
     const auto attempt = saved_attempt(1, false);
     auto secondary = Application::open(make_command(workspace, path));
     secondary->set_note_audio_changed([](auto, auto) {});
-    EXPECT_EQ(secondary->store().get_note_audio_attempt()->id, attempt.id);
+    EXPECT_EQ(secondary->store().get_note_audio_attempt_for_note(note.id)->id, attempt.id);
     EXPECT_THROW(secondary->start_background_note_audio(note.id, "Kore", {"Text"}, secondary->context_epoch()), ApplicationError);
     secondary.reset();
     activate(); activate();
@@ -307,7 +614,7 @@ TEST_F(NoteAudioBackground, RetainsReadsBeyondThreeFailuresAndResolvesTheSameKey
     server.start(); activate();
     ASSERT_TRUE(finished());
     server.join();
-    EXPECT_EQ(waits, (std::vector<int>{10, 20, 40, 40, 40}));
+    EXPECT_EQ(waits_snapshot(), (std::vector<int>{10, 20, 40, 40, 40}));
     ASSERT_EQ(server.requests().size(), 7u);
     EXPECT_NE(server.requests()[4].find("old-key"), std::string::npos);
     EXPECT_NE(server.requests()[5].find("new-key"), std::string::npos);
@@ -334,7 +641,7 @@ TEST_F(NoteAudioBackground, AbandonmentDiscardsLateCompletionAndDoesNotTouchANew
     const auto next = saved_attempt(1, false);
     EXPECT_GT(next.id, attempt.id);
     server.resume_responses(); server.join();
-    EXPECT_EQ(application->store().get_note_audio_attempt()->id, next.id);
+    EXPECT_EQ(application->store().get_note_audio_attempt_for_note(note.id)->id, next.id);
     EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
     EXPECT_EQ(completions.load(), 0);
     const auto events = application->list_events(epoch);
@@ -451,8 +758,8 @@ TEST_F(NoteAudioBackground, SuccessfulMaintenanceResumesTheRegisteredBatchOnce) 
         epoch = application->context_epoch();
         EXPECT_GT(epoch, old_epoch);
         EXPECT_EQ(application->check_context(old_epoch), ErrorCode::vault_changed);
-        ASSERT_TRUE(application->store().get_note_audio_attempt());
-        EXPECT_EQ(application->store().get_note_audio_attempt()->id, attempt.id);
+        ASSERT_TRUE(application->store().get_note_audio_attempt_for_note(note.id));
+        EXPECT_EQ(application->store().get_note_audio_attempt_for_note(note.id)->id, attempt.id);
         server.resume_responses();
         ASSERT_TRUE(finished()); server.join();
         ASSERT_EQ(server.requests().size(), 3u);
@@ -501,7 +808,7 @@ TEST_F(NoteAudioBackground, VaultSwitchesRecoverOnlyTheCurrentAttemptWithOverlap
     const auto other_note = application->create_note_item({}, NoteItemKind::note, "Other chapter", epoch);
     (void)application->set_note_read_only(other_note.id, true, epoch);
     (void)application->replace_api_key_value(key_id, "other-key", epoch);
-    const auto other_attempt = application->store().accept_note_audio(other_note.id, 1,
+    const auto other_attempt = *application->store().accept_note_audio(other_note.id, 1,
         "http://127.0.0.1:" + std::to_string(other.port()), key_id, [](const auto&) {});
     ASSERT_TRUE(application->store().register_note_audio(other_attempt.id, other_batch, "Kore"));
     epoch = application->switch_vault("Test", {}, epoch).context_epoch;
@@ -640,7 +947,7 @@ TEST_F(NoteAudioBackground, MainDaemonDoesNotRecoverEvenWithACallback) {
     auto command = make_command(workspace, path); command.chaweb_host = true;
     application = Application::open(command);
     activate();
-    EXPECT_EQ(application->store().get_note_audio_attempt()->id, attempt.id);
+    EXPECT_EQ(application->store().get_note_audio_attempt_for_note(note.id)->id, attempt.id);
     EXPECT_TRUE(application->list_events(application->context_epoch()).empty());
 }
 

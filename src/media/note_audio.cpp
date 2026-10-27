@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <charconv>
 #include <fstream>
-#include <limits>
 #include <thread>
 
 namespace cha {
@@ -117,16 +116,7 @@ std::string resource(const Json& value, const char* field, std::string_view pref
         throw NoteAudioError(NoteAudioFailure::invalid, "The audio service returned an invalid resource name. Check the service.");
     return name;
 }
-std::optional<std::size_t> count(const Json& stats, const char* field) {
-    if (!stats.is_object()) return {};
-    const auto found = stats.find(field);
-    if (found == stats.end() || !found->is_string()) return {};
-    const auto& text = found->get_ref<const std::string&>();
-    std::size_t value{};
-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-    if (error != std::errc{} || end != text.data() + text.size()) return {};
-    return value;
-}
+
 }
 
 std::string prepare_note_audio(NoteAudioService& service, const std::vector<std::string>& blocks) {
@@ -266,39 +256,4 @@ std::vector<std::filesystem::path> process_note_audio(std::size_t block_count,
     return clips;
 }
 
-std::vector<std::filesystem::path> generate_note_audio(const NoteAudioService& service,
-    const std::string& jsonl, std::size_t block_count, const std::filesystem::path& temporary,
-    const std::atomic_bool& cancel, const NoteAudioProgress& progress, const std::function<void(int)>& wait) {
-    const auto pause = [&](int seconds) { wait_note_audio(seconds, cancel, wait); };
-    const auto read = [&](const auto& operation) {
-        for (int retry = 0;; ++retry) {
-            try { return operation(); }
-            catch (const NoteAudioError& error) {
-                if ((error.kind != NoteAudioFailure::transport && !(error.kind == NoteAudioFailure::http && error.code == 500))
-                    || retry == 3) throw;
-                pause(10 << retry);
-            }
-        }
-    };
-    const NoteAudioCredentials credentials = [&] { return service; };
-    progress("uploading", {}, {});
-    auto operation = submit_note_audio(credentials, jsonl, cancel);
-    const auto name = note_audio_batch_id(operation);
-    while (!operation.value("done", false)) {
-        const auto& info = operation.at("metadata");
-        const auto stats = info.value("batchStats", Json::object());
-        const auto successful = count(stats, "successfulRequestCount"), failed = count(stats, "failedRequestCount");
-        std::optional<std::size_t> completed;
-        if (successful && failed && *successful <= std::numeric_limits<std::size_t>::max() - *failed)
-            completed = *successful + *failed;
-        progress(info.value("state", "") == "BATCH_STATE_PENDING" ? "queued" : "generating",
-            completed, count(stats, "requestCount"));
-        pause(note_audio_poll_seconds);
-        operation = read([&] { return read_note_audio_batch(credentials, name, cancel); });
-    }
-    progress("downloading", {}, {});
-    read([&] { download_note_audio(credentials, operation, block_count, temporary, cancel); return true; });
-    progress("saving", {}, {});
-    return process_note_audio(block_count, temporary, cancel);
-}
 }

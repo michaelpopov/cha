@@ -41,31 +41,6 @@ describe('native CHA client', () => {
     await expect(client.listEvents()).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
-  it.each(['macos', 'windows'])('uses the %s note audio payload and validates terminal timestamps and optional counts', async (platform) => {
-    const initial = { id: 4, phase: 'uploading', done: false, error: '' };
-    const start = vi.fn(() => initial);
-    const cancel = vi.fn(() => ({}));
-    let status: unknown = { ...initial, phase: 'complete', done: true, total: 2, finished_at_ms: 123456 };
-    const client = createNativeChaClient(createFakeNativeBridge({
-      'bridge.info': () => ({ protocol_version: 1, application_version: 'development', platform }),
-      'app.bootstrap': () => ({ state: 'running', context_epoch: 1, application_version: 'development', bootstrap: bootstrapFixture,
-        capabilities: { can_modify: true, can_transfer_r2: false } }),
-      'noteAudio.info': () => ({ count: 2 }), 'noteAudio.start': start, 'noteAudio.status': () => status,
-      'noteAudio.cancel': cancel,
-    }));
-    await client.getBootstrap();
-    expect(await client.noteAudio!.info(4)).toEqual({ count: 2 });
-    expect(await client.noteAudio!.start(4, 'Kore', ['First', 'Second'])).toEqual(initial);
-    expect(start).toHaveBeenCalledExactlyOnceWith({ id: 4, voice: 'Kore', blocks: ['First', 'Second'] });
-    expect(await client.noteAudio!.status(4)).toEqual(status);
-    await expect(client.noteAudio!.cancel(4)).resolves.toBeUndefined();
-    expect(cancel).toHaveBeenCalledExactlyOnceWith({ id: 4 });
-    status = { ...initial, done: true };
-    await expect(client.noteAudio!.status(4)).rejects.toBeInstanceOf(ChaProtocolError);
-    status = { ...initial, completed: '2' };
-    await expect(client.noteAudio!.status(4)).rejects.toBeInstanceOf(ChaProtocolError);
-  });
-
   async function audioClient(handlers: Parameters<typeof createFakeNativeBridge>[0] = {}) {
     const bridge = createFakeNativeBridge({
       'bridge.info': () => ({ protocol_version: 1, application_version: 'development', platform: 'macos' }),
@@ -76,6 +51,39 @@ describe('native CHA client', () => {
     await client.getBootstrap();
     return { bridge, audio: client.noteAudio! };
   }
+
+  it('sends missing-only only when requested and accepts its skip result', async () => {
+    const start = vi.fn().mockReturnValueOnce({ attempt_id: 1 }).mockReturnValueOnce({ skipped: true });
+    const { audio } = await audioClient({ 'noteAudio.startBackground': start });
+    await expect(audio.startBackground(4, 'Kore', ['Text'])).resolves.toEqual({ attempt_id: 1 });
+    await expect(audio.startBackground(5, 'grant', [], true)).resolves.toEqual({ skipped: true });
+    expect(start.mock.calls).toEqual([[{ id: 4, voice: 'Kore', blocks: ['Text'] }],
+      [{ id: 5, voice: 'grant', blocks: [], only_if_missing: true }]]);
+  });
+
+  it.each([false, true])('an explicit skip reply needs independent pending evidence: %s', async pending => {
+    const status = vi.fn(() => pending ? { pending: true, attempt_id: 9 } : { pending: false });
+    const { audio } = await audioClient({ 'noteAudio.startBackground': () => ({ skipped: true }), 'noteAudio.backgroundStatus': status });
+    const result = audio.startBackground(4, 'Kore', ['Text']);
+    if (pending) await expect(result).resolves.toEqual({ attempt_id: 9 });
+    else await expect(result).rejects.toBeInstanceOf(ChaProtocolError);
+    expect(status).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([{ skipped: false }, { skipped: true, extra: 1 }, { skipped: true, attempt_id: 1 }])('rejects malformed missing-only result %j', async reply => {
+    const { audio } = await audioClient({ 'noteAudio.startBackground': () => reply, 'noteAudio.backgroundStatus': () => ({ pending: false }) });
+    await expect(audio.startBackground(4, 'Kore', [], true)).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
+  it('exposes the epoch but rejects a dead connection even when its epoch is unchanged', async () => {
+    const { audio, bridge } = await audioClient();
+    expect(audio.contextEpoch()).toBe(1);
+    bridge.receive({ connection_id: 'view-9', delivery_id: 200, messages: [
+      { connection_id: 'view-9', event: 'app.connectionInvalidated' },
+    ] });
+    expect(bridge.contextEpoch()).toBe(1);
+    expect(() => audio.contextEpoch()).toThrow(expect.objectContaining({ code: 'application_unavailable' }));
+  });
 
   it('confirms a lost start once using the same context unfinished row', async () => {
     const start = vi.fn(() => { throw new ChaError('command_timeout', 'lost'); });

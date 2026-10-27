@@ -41,7 +41,10 @@ def temporary_vault():
 
 
 def main():
-    records = []
+    records = {}
+    lock = threading.Lock()
+    first_release = threading.Event()
+    first_waiting = threading.Event()
     requests = []
     submitted = []
     batches = {}
@@ -70,24 +73,32 @@ def main():
             data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             if self.path == "/upload/v1beta/files":
                 assert self.headers.get("x-goog-api-key") == "fake-audio-key"
-                self.respond({}, headers={"x-goog-upload-url": f"http://127.0.0.1:{self.server.server_port}/secret"})
-            elif self.path == "/secret":
+                with lock:
+                    token = f"{len(records) + 1:032x}"
+                    records["files/" + token] = []
+                self.respond({}, headers={"x-goog-upload-url": f"http://127.0.0.1:{self.server.server_port}/secret/{token}"})
+            elif self.path.startswith("/secret/"):
                 assert self.headers.get("x-goog-api-key") is None
-                records[:] = [json.loads(line) for line in data.splitlines()]
-                assert all(record["request"]["generationConfig"]["speechConfig"]["voiceConfig"]["voice"] == "Kore" for record in records)
-                self.respond({"file": {"name": "files/" + "a" * 32}})
+                current = [json.loads(line) for line in data.splitlines()]
+                assert all(record["request"]["generationConfig"]["speechConfig"]["voiceConfig"]["voice"] == "Kore" for record in current)
+                name = "files/" + self.path.rsplit("/", 1)[1]
+                with lock:
+                    records[name] = current
+                self.respond({"file": {"name": name}})
             elif self.path.endswith(":batchGenerateContent"):
-                text = records[0]["request"]["contents"][0]["parts"][0]["text"]
-                submitted.append(text)
-                batch_id = "batches/" + f"{len(batches) + 1:032x}"
-                output_id = "files/" + f"{len(batches) + 1:032x}"
-                operation = {"name": batch_id, "done": True}
-                if text == "Fail audio":
-                    operation["error"] = {"message": "fake failure"}
-                else:
-                    operation["response"] = {"responsesFile": output_id}
-                batches[batch_id] = operation
-                outputs[output_id] = list(records)
+                with lock:
+                    current = records[json.loads(data)["batch"]["inputConfig"]["fileName"]]
+                    text = current[0]["request"]["contents"][0]["parts"][0]["text"]
+                    submitted.append(text)
+                    batch_id = "batches/" + f"{len(batches) + 1:032x}"
+                    output_id = "files/" + f"{len(batches) + 1:032x}"
+                    operation = {"name": batch_id, "done": True}
+                    if text == "Fail audio":
+                        operation["error"] = {"message": "fake failure"}
+                    else:
+                        operation["response"] = {"responsesFile": output_id}
+                    batches[batch_id] = operation
+                    outputs[output_id] = current
                 self.respond(operation)
             else:
                 self.send_error(404)
@@ -97,11 +108,15 @@ def main():
             if self.path.startswith("/v1beta/batches/"):
                 self.respond(batches[self.path.removeprefix("/v1beta/")])
                 return
-            # Keep work active long enough to check navigation and folder Stop.
+            # Keep A stalled until the UI has observed B's completion and exits.
             output = self.path.removeprefix("/download/v1beta/").split(":download")[0]
             current = outputs[output]
             text = current[0]["request"]["contents"][0]["parts"][0]["text"]
-            time.sleep(4 if text == "Stop audio" else 1.4)
+            if text == "Folder first":
+                first_waiting.set()
+                assert first_release.wait(20), "B did not finish independently"
+            else:
+                time.sleep(1.4)
             lines = []
             for index, record in enumerate(current):
                 frames = int((0.6 if index == 0 else 2) * 24000)
@@ -151,13 +166,10 @@ def main():
             note(success, "ANNOTATIONS", "Do not generate", kind="annotation")
             nested = database.execute("INSERT INTO note_items (parent_id,kind,name) VALUES (?,'folder','Subfolder')", (success,)).lastrowid
             note(nested, "Nested", "Do not generate")
-            stopped = folder("Folder stop")
-            note(stopped, "A stopping", "Stop audio")
-            note(stopped, "B remaining", "Do not generate")
             failed = folder("Folder error")
             note(failed, "A saved", "Before error")
             note(failed, "B failing", "Fail audio")
-            note(failed, "C remaining", "Do not generate")
+            note(failed, "C remaining", "After error")
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         source = REPOSITORY / "tests/native/note-audio.js"
@@ -171,7 +183,7 @@ def main():
         try:
             run_host()
             assert len(requests) == 4, requests
-            assert [record["request"]["contents"][0]["parts"][0]["text"] for record in records] == [
+            assert [record["request"]["contents"][0]["parts"][0]["text"] for record in next(iter(records.values()))] == [
                 "Audio check", "First paragraph with audio.", "Second paragraph with audio."]
             with closing(sqlite3.connect(root / "test.sqlite3")) as database, database:
                 database.execute("INSERT INTO note_audio SELECT ?,ordinal,mime_type,audio FROM note_audio WHERE note_id=(SELECT id FROM note_items WHERE name='Audio check')", (existing,))
@@ -200,12 +212,26 @@ def main():
             folder_source = root / "folder.js"
             folder_source.write_text(source.read_text() + "\nnativeParity = nativeFolderAudio;\n")
             environment["CHA_NATIVE_PARITY_SCRIPT"] = str(folder_source)
+            try:
+                run_host()
+            finally:
+                first_release.set()
+            assert first_waiting.is_set(), "A never reached its download gate"
+            with closing(sqlite3.connect(root / "test.sqlite3")) as database:
+                saved = database.execute("SELECT DISTINCT name FROM note_audio JOIN note_items ON note_id=id WHERE name IN ('A first','D last')").fetchall()
+                assert saved == [("D last",)], saved
+                assert database.execute("SELECT note_name FROM note_audio_attempts").fetchall() == [("A first",)]
+            # Reopen A's saved batch after B completed. Inspect the database only
+            # with the native process stopped, using the UI for live observations.
+            folder_source.write_text(source.read_text() + "\nnativeParity = () => nativeFolderAudio({ recover: true });\n")
+            post_count = len(submitted)
             run_host()
-            assert submitted == ["Audio check", "Folder first", "Folder last", "Stop audio", "Before error", "Fail audio"], submitted
+            assert len(submitted) == post_count, submitted
+            assert sorted(submitted) == sorted(["Audio check", "Folder first", "Folder last", "Before error", "Fail audio", "After error"]), submitted
             with closing(sqlite3.connect(root / "test.sqlite3")) as database, database:
                 saved = database.execute("SELECT name,COUNT(*) FROM note_audio JOIN note_items ON note_id=id GROUP BY note_id ORDER BY name").fetchall()
-                assert saved == [("A first", 1), ("A saved", 1), ("Audio check", 3), ("D last", 1), ("F existing", 3), ("Recovery check", 3)], saved
-                assert database.execute("SELECT COUNT(*) FROM event_history").fetchone()[0] == 4
+                assert saved == [("A first", 1), ("A saved", 1), ("Audio check", 3), ("C remaining", 1), ("D last", 1), ("F existing", 3), ("Recovery check", 3)], saved
+                assert database.execute("SELECT COUNT(*) FROM event_history").fetchone()[0] == 16
                 assert database.execute("SELECT COUNT(*) FROM note_audio_attempts").fetchone()[0] == 0
             server.shutdown()
             server.server_close()
@@ -215,7 +241,7 @@ def main():
             offline_source.write_text(source.read_text() + "\nconst runAudioProbe = nativeParity;\nnativeParity = () => runAudioProbe({ offline: true });\n")
             environment["CHA_NATIVE_PARITY_SCRIPT"] = str(offline_source)
             run_host()
-            print("PASS background acceptance, registered restart without POST, unrelated playback, folder success/skip/Stop/error/focus, and offline playback", flush=True)
+            print("PASS background acceptance, registered restart without POST, unrelated playback, independent folder completion/skip/error/focus, and offline playback", flush=True)
         finally:
             server.shutdown()
             server.server_close()

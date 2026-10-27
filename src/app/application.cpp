@@ -377,7 +377,7 @@ void Application::Impl::require_admitted(std::uint64_t epoch) const {
 }
 
 void Application::Impl::pause_resources(bool cancel) {
-    if (const auto cancel = std::atomic_load(&background_audio_cancel)) cancel->store(true);
+    interrupt_note_audio();
     pending_media.cancel_all();
     xai_voice.cancel_all();
     media_resources.revoke_all();
