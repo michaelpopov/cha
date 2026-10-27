@@ -164,6 +164,7 @@ struct Application::Impl {
     void retire_compression(std::int64_t id, const std::shared_ptr<CompressionControl>& control,
         std::uint64_t epoch, EventSeverity severity, const std::string& message) noexcept;
     void cancel_compressions();
+    nlohmann::json note_compression_status(std::int64_t id); // Caller holds lifecycle_mutex.
     std::mutex background_audio_mutex;
     std::map<std::int64_t, std::shared_ptr<std::atomic_bool>> background_audio;
     // Guarded by lifecycle_mutex; retained across worker replacement.
@@ -173,6 +174,7 @@ struct Application::Impl {
     void remove_note_audio_control(std::int64_t id, const std::shared_ptr<std::atomic_bool>& cancel);
     void resume_note_audio(); // Schedule after maintenance releases its store guard.
     void recover_note_audio(); // Caller holds lifecycle_mutex.
+    nlohmann::json background_note_audio_status(std::int64_t id); // Caller holds lifecycle_mutex.
     std::shared_ptr<std::atomic_bool> launch_note_audio(NoteAudioAttempt attempt, std::string voice = {}, std::string jsonl = {});
     void run_note_audio(NoteAudioAttempt attempt, std::uint64_t epoch,
         std::shared_ptr<std::atomic_bool> cancel, std::string voice, std::string jsonl);

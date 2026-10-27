@@ -240,6 +240,18 @@ Application::Impl::Impl(
           .stopping = &stopping_flag,
           .admit = [this](std::uint64_t epoch) { return admit_locked(epoch); },
           .config_directory = command.config_directory,
+          .pending_notes = [this] {
+              auto pending = nlohmann::json::array();
+              for (const auto& note : store->list_note_items()) {
+                  if (note.kind != NoteItemKind::note) continue;
+                  auto audio = background_note_audio_status(note.id);
+                  auto compression = note_compression_status(note.id);
+                  if (audio.at("pending") == true || compression.at("pending") == true)
+                      pending.push_back({{"note_id", note.id}, {"name", note.name},
+                          {"audio", std::move(audio)}, {"compression", std::move(compression)}});
+              }
+              return pending;
+          },
       })),
       providers(shared_openai_provider_factory(
           openai_auth.get(), api_keys.get()), {},

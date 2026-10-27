@@ -115,7 +115,7 @@ void encode_note_audio(const std::filesystem::path& wav, const std::filesystem::
     AudioConverterRef converter{};
     size = sizeof(converter);
     check(ExtAudioFileGetProperty(output.value, kExtAudioFileProperty_AudioConverter, &size, &converter), "encoder setup");
-    UInt32 bitrate = 64000;
+    UInt32 bitrate = 32000;
     check(AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate, sizeof(bitrate), &bitrate), "encoder bit rate");
     std::array<std::int16_t, 4096> samples{};
     std::uint64_t total = 0;

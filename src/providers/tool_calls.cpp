@@ -168,6 +168,17 @@ void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
             Json::array({"minimum_level", "contains", "limit"}))},
     });
     append_tool(body, api, Json{
+        {"name", "assistant_events"},
+        {"description", "Read the active vault's latest 1000 Events, newest first, and current pending "
+            "note audio generation and text compression statuses. pending_notes lists only notes with "
+            "a pending operation; an empty list means neither operation is pending. Audio pending can "
+            "include retained or interrupted attempts, not just running work. Events are history, not "
+            "proof that an operation is still running. limited means event text or older entries were "
+            "omitted to fit the result. Read-only; does not start, cancel, or retry work."},
+        {"strict", true},
+        {"parameters", function_parameters(Json::object(), Json::array())},
+    });
+    append_tool(body, api, Json{
         {"name", "assistant_logging"},
         {"description", "Change the process file log level until changed again or restarted. "
             "This call does not save configuration. Debug also enables request/response payload logs. "

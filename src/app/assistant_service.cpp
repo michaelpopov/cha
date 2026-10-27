@@ -459,6 +459,34 @@ std::string read_tool(
     }.dump();
 }
 
+std::string events_tool(const Json& parsed, const AssistantService::Links& links,
+    const Redactor& redact, const AdmissionCheck& admission_error) {
+    if (!parsed.empty()) return tool_error("invalid_argument", "assistant_events takes no arguments.");
+    if (!links.pending_notes) return tool_error("unavailable", "Background status is not available.");
+    Json result{{"events", Json::array()}, {"pending_notes", links.pending_notes()}, {"limited", false}};
+    for (auto& note : result["pending_notes"]) {
+        note["name"] = redact(note.at("name").get<std::string>());
+    }
+    std::size_t total = result.dump().size();
+    if (total > maintenance_call_result_limit)
+        return tool_error("too_large", "Too many pending notes to return.");
+    for (const auto& event : links.store->list_events()) {
+        Json entry = event;
+        auto message = redact(event.message);
+        entry["message"] = cap_text(message, 4096);
+        if (entry["message"] != message) result["limited"] = true;
+        const auto size = entry.dump().size() + 1;
+        if (total + size > maintenance_call_result_limit) {
+            result["limited"] = true;
+            break;
+        }
+        total += size;
+        result["events"].push_back(std::move(entry));
+    }
+    if (const auto error = admission_error()) return *error;
+    return result.dump();
+}
+
 std::string logging_tool(const Json& parsed, const AdmissionCheck& admission_error) {
     if (parsed.size() != 1 || !parsed.contains("level") || !parsed["level"].is_string()) {
         return tool_error("invalid_argument", "assistant_logging requires level.");
@@ -919,6 +947,7 @@ std::string AssistantService::execute(
         if (name == "vault_config_read") return read_tool(parsed, *links_.store, admission_error);
         if (name == "assistant_logging") return logging_tool(parsed, admission_error);
         if (name == "assistant_logs") return logs_tool(parsed, redact, admission_error);
+        if (name == "assistant_events") return events_tool(parsed, links_, redact, admission_error);
         if (name == "add_character") {
             return add_character_tool(parsed, links_, context, lifecycle, cancel_check, redact);
         }

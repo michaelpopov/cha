@@ -58,24 +58,24 @@ TEST_F(EventStorageTest, UsesIdOrderWhenTimestampsAreEqualOrMoveBackwards) {
     EXPECT_EQ(events[2].id, 1);
 }
 
-TEST_F(EventStorageTest, TrimsOnlyBeyondTwoHundredAndReadsDoNotWrite) {
-    for (int i = 1; i <= 200; ++i) event_append(*database_, EventSeverity::info, std::to_string(i));
-    ASSERT_EQ(event_list(*database_).size(), 200U);
+TEST_F(EventStorageTest, TrimsOnlyBeyondOneThousandAndReadsDoNotWrite) {
+    for (int i = 1; i <= 1000; ++i) event_append(*database_, EventSeverity::info, std::to_string(i));
+    ASSERT_EQ(event_list(*database_).size(), 1000U);
     EXPECT_EQ(event_list(*database_).back().id, 1);
-    for (int i = 201; i <= 405; ++i) event_append(*database_, EventSeverity::success, std::to_string(i));
+    for (int i = 1001; i <= 2005; ++i) event_append(*database_, EventSeverity::success, std::to_string(i));
     database_->execute("UPDATE event_history SET recorded_at = 0");
     const auto before = sqlite3_total_changes(database_->handle());
     database_->execute("PRAGMA query_only = ON");
     const auto events = event_list(*database_);
-    ASSERT_EQ(events.size(), 200U);
-    EXPECT_EQ(events.front().id, 405);
-    EXPECT_EQ(events.back().id, 206);
+    ASSERT_EQ(events.size(), 1000U);
+    EXPECT_EQ(events.front().id, 2005);
+    EXPECT_EQ(events.back().id, 1006);
     EXPECT_EQ(events.back().recorded_at, 0);
     EXPECT_EQ(sqlite3_total_changes(database_->handle()), before);
 }
 
 TEST_F(EventStorageTest, InsertAndTrimFailuresRollBackEntireAppend) {
-    for (int i = 0; i < 200; ++i) event_append(*database_, EventSeverity::info, "Existing");
+    for (int i = 0; i < event_history_limit; ++i) event_append(*database_, EventSeverity::info, "Existing");
     const nlohmann::json original = event_list(*database_);
     database_->execute("CREATE TEMP TRIGGER fail_insert BEFORE INSERT ON event_history "
         "BEGIN SELECT RAISE(ABORT, 'insert failed'); END");
@@ -88,7 +88,7 @@ TEST_F(EventStorageTest, InsertAndTrimFailuresRollBackEntireAppend) {
     EXPECT_EQ(nlohmann::json(event_list(*database_)), original);
     database_->execute("DROP TRIGGER fail_trim");
     event_append(*database_, EventSeverity::success, "New");
-    EXPECT_EQ(event_list(*database_).front().id, 201);
+    EXPECT_EQ(event_list(*database_).front().id, event_history_limit + 1);
 }
 
 TEST_F(EventStorageTest, RejectsInvalidInputAndDamagedStoredRecords) {

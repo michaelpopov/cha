@@ -92,7 +92,11 @@ nlohmann::json Application::start_background_note_audio(std::int64_t id, std::st
 nlohmann::json Application::background_note_audio_status(std::int64_t id, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    const auto attempt = impl_->store->get_note_audio_attempt_for_note(id);
+    return impl_->background_note_audio_status(id);
+}
+
+nlohmann::json Application::Impl::background_note_audio_status(std::int64_t id) {
+    const auto attempt = store->get_note_audio_attempt_for_note(id);
     if (attempt) return {{"pending", true}, {"attempt_id", attempt->id}};
     return {{"pending", false}};
 }

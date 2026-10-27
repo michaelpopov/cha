@@ -3,6 +3,8 @@
 #include "providers/maintenance.h"
 #include "runtime/protocol.h"
 
+#include <nlohmann/json_fwd.hpp>
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -20,7 +22,7 @@ class OpenAiOAuth;
 class SessionRepository;
 class WorkspaceConfigStore;
 
-// Welcome maintenance tools for vault rows, host TOML files, and file logs.
+// Welcome maintenance tools for vault rows, host TOML files, logs, and activity.
 // This type does not own the store or diagnostic sink.
 class AssistantService {
 public:
@@ -33,6 +35,8 @@ public:
         LiveSessionManager* sessions{};
         SessionRepository* repository{};
         std::filesystem::path config_directory;
+        // Called with lifecycle held; reads existing operation status only.
+        std::function<nlohmann::json()> pending_notes;
     };
 
     explicit AssistantService(Links links);

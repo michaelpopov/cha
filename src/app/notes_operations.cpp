@@ -364,12 +364,16 @@ nlohmann::json Application::compress_note(std::int64_t id, std::uint64_t epoch, 
 nlohmann::json Application::note_compression_status(std::int64_t id, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    if (impl_->compressions.contains(id)) return {{"pending", true}};
-    if (impl_->compressions.empty()) return {{"pending", false}};
+    return impl_->note_compression_status(id);
+}
+
+nlohmann::json Application::Impl::note_compression_status(std::int64_t id) {
+    if (compressions.contains(id)) return {{"pending", true}};
+    if (compressions.empty()) return {{"pending", false}};
     try {
-        const auto items = impl_->store->list_note_items();
+        const auto items = store->list_note_items();
         const auto pending = [&](auto&& self, std::int64_t parent) -> bool {
-            if (impl_->compressions.contains(parent)) return true;
+            if (compressions.contains(parent)) return true;
             return std::any_of(items.begin(), items.end(), [&](const auto& item) {
                 return item.parent_id == parent && self(self, item.id);
             });

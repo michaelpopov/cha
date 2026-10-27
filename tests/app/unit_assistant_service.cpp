@@ -109,6 +109,7 @@ public:
     std::atomic_bool& stopping() { return stopping_; }
     std::atomic_bool& cancelled() { return cancelled_; }
     MaintenanceContext& context() { return context_; }
+    Json pending_notes = Json::array();
     const std::filesystem::path& config_directory() { return log_directory_; }
 
     // Admission runs first after the lifecycle lock, then again after the read.
@@ -161,6 +162,7 @@ private:
                 return std::nullopt;
             },
             .config_directory = log_directory_,
+            .pending_notes = [this] { return pending_notes; },
         });
     }
 
@@ -960,6 +962,74 @@ TEST(AssistantService, ExercisesTheFourMaintenanceRecipes) {
     const auto disabled = harness.run(
         "assistant_logs", logs_arguments("debug", "disabled debug", 5));
     EXPECT_TRUE(disabled["entries"].empty());
+}
+
+TEST(AssistantService, ReadsEventsAndCurrentPendingNotesWithoutChangingTheVault) {
+    ServiceHarness harness;
+    const auto empty = harness.run("assistant_events", Json::object());
+    EXPECT_TRUE(empty["events"].empty());
+    EXPECT_TRUE(empty["pending_notes"].empty());
+    EXPECT_EQ(empty["limited"], false);
+    harness.store().append_event(EventSeverity::info, "Audio batch started for Chapter (note 1).");
+    harness.store().append_event(EventSeverity::success, "Audio ready for Chapter (note 1): 2 clips saved.");
+    const auto events = Json(harness.store().list_events());
+    const auto revision = harness.store().config_revision();
+    // A new attempt can be pending even when an older success event exists.
+    harness.pending_notes = Json::array({{
+        {"note_id", 1}, {"name", "Chapter"},
+        {"audio", {{"pending", true}, {"attempt_id", 7}}},
+        {"compression", {{"pending", true}}},
+    }});
+    harness.use_secondary();
+    const auto result = harness.run("assistant_events", Json::object());
+    EXPECT_EQ(result["events"], events);
+    EXPECT_EQ(result["pending_notes"], harness.pending_notes);
+    EXPECT_EQ(result["limited"], false);
+    EXPECT_EQ(Json(harness.store().list_events()), events);
+    EXPECT_EQ(harness.store().config_revision(), revision);
+    harness.pending_notes.clear();
+    EXPECT_TRUE(harness.run("assistant_events", Json::object())["pending_notes"].empty());
+}
+
+TEST(AssistantService, EventsRejectArgumentsWrongIdentityStaleContextAndCancellation) {
+    ServiceHarness harness;
+    EXPECT_EQ(harness.run("assistant_events", {{"note_id", 1}})["error"], "invalid_argument");
+    harness.context().character_id = "guide";
+    EXPECT_EQ(harness.run("assistant_events", Json::object())["error"], "unavailable");
+    harness.context() = welcome_context(2);
+    EXPECT_EQ(harness.run("assistant_events", Json::object())["error"], "stale_context");
+    harness.context() = welcome_context();
+    harness.cancelled() = true;
+    EXPECT_EQ(harness.run("assistant_events", Json::object())["error"], "cancelled");
+    harness.cancelled() = false;
+    harness.deny_after_read(ErrorCode::vault_changed);
+    EXPECT_EQ(harness.run("assistant_events", Json::object())["error"], "stale_context");
+}
+
+TEST(AssistantService, EventsRedactSecretsAndPathsAndBoundTheResult) {
+    ServiceHarness harness;
+    harness.store().apply_api_key_create("api_key_1", "Secret", "event-secret-key-value");
+    const auto path = harness.store().workspace_path().string();
+    harness.store().append_event(EventSeverity::warning, "Failure event-secret-key-value at " + path);
+    harness.pending_notes = Json::array({{
+        {"note_id", 1}, {"name", "event-secret-key-value " + path},
+        {"audio", {{"pending", true}, {"attempt_id", 9}}},
+        {"compression", {{"pending", false}}},
+    }});
+    const auto redacted = harness.run("assistant_events", Json::object());
+    EXPECT_EQ(redacted.dump().find("event-secret-key-value"), std::string::npos);
+    EXPECT_EQ(redacted.dump().find(path), std::string::npos);
+    EXPECT_NE(redacted.dump().find("[REDACTED]"), std::string::npos);
+    EXPECT_NE(redacted.dump().find("[path]"), std::string::npos);
+    for (int i = 0; i < event_history_limit + 5; ++i)
+        harness.store().append_event(EventSeverity::info, std::string(5000, '\n') + std::to_string(i));
+    const auto limited = harness.run("assistant_events", Json::object());
+    EXPECT_EQ(limited["limited"], true);
+    EXPECT_GT(limited["events"].size(), 0u);
+    EXPECT_LT(limited["events"].size(), event_history_limit);
+    EXPECT_LE(limited.dump().size(), maintenance_call_result_limit);
+    EXPECT_EQ(limited["events"][0]["id"], harness.store().list_events().front().id);
+    EXPECT_EQ(limited["pending_notes"], redacted["pending_notes"]);
 }
 
 TEST(AssistantService, ReadsPersistedFileEntriesWithFiltersAndLimits) {

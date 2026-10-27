@@ -11,7 +11,7 @@
 
 namespace cha {
 
-inline constexpr std::int64_t event_history_limit = 200;
+inline constexpr std::int64_t event_history_limit = 1000;
 
 enum class EventSeverity { info, success, warning, error };
 

@@ -2976,6 +2976,9 @@ void expect_maintenance_tools(const Json& body) {
             EXPECT_EQ(item["properties"]["content"]["type"], Json::array({"string", "null"}));
             EXPECT_EQ(item["properties"]["key"]["type"], Json::array({"string", "null"}));
             EXPECT_EQ(item["properties"]["value"]["type"], Json::array({"string", "number", "boolean", "null"}));
+        } else if (function["name"] == "assistant_events") {
+            EXPECT_TRUE(schema["properties"].empty());
+            EXPECT_EQ(schema["required"], Json::array());
         } else if (function["name"] == "add_character") {
             EXPECT_EQ(schema["required"], Json::array({"version", "name", "description", "provider_id", "profile", "forum_id"}));
             EXPECT_EQ(schema["properties"].size(), 6U);
@@ -2990,7 +2993,7 @@ void expect_maintenance_tools(const Json& body) {
     }
     EXPECT_EQ(names, (std::vector<std::string>{
         "vault_config_list", "vault_config_read", "vault_config_apply", "add_character",
-        "assistant_logs", "assistant_logging",
+        "assistant_logs", "assistant_events", "assistant_logging",
         "host_config_list", "host_config_read", "host_config_write",
         "assistant_openai_login"}));
 }
