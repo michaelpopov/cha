@@ -9,7 +9,7 @@ namespace cha {
 
 enum class Mode { net, test };
 enum class ReasoningFormat { automatic, none, reasoning_content, reasoning };
-enum class ProviderApi { chat_completions, responses, google };
+enum class ProviderApi { chat_completions, responses, google, anthropic };
 enum class ProviderAuth { none, openai_subscription };
 enum class WebSearchMode { off, automatic, required };
 enum class CacheRetention { off, short_, long_ };

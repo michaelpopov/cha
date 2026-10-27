@@ -349,7 +349,19 @@ ProviderUpdate parse_provider_update(
     ProviderUpdate result;
     result.config.api = settings_choice(
         required_field<std::string>(json, "api"), parse_provider_api);
-    const bool google = result.config.api == ProviderApi::google;
+    const bool anthropic = result.config.api == ProviderApi::anthropic;
+    const bool unused_options = result.config.api == ProviderApi::google || anthropic;
+    if (anthropic) {
+        for (const auto& [field, default_value] : {
+                 std::pair{"reasoning_effort", "none"}, {"reasoning_format", "auto"},
+                 {"cache_retention", "short"}, {"web_search", "off"}}) {
+            if (json.at(field) != default_value) log_warn("Ignoring " + std::string(field) + " for Anthropic provider");
+        }
+        if (!json.at("temperature").is_null()) log_warn("Ignoring temperature for Anthropic provider");
+        if (includes_openrouter_targets && json.at("openrouter_targets") != nlohmann::json::array()) {
+            log_warn("Ignoring openrouter_targets for Anthropic provider");
+        }
+    }
     result.display_name = required_field<std::string>(json, "display_name");
     result.config.host = required_field<std::string>(json, "host");
     result.config.port = required_field<int>(json, "port");
@@ -358,29 +370,29 @@ ProviderUpdate parse_provider_update(
         required_field<std::string>(json, "mode"), parse_mode);
     result.config.model = required_field<std::string>(json, "model");
     result.config.stream = required_field<bool>(json, "stream");
-    result.config.temperature = settings_nullable_double(json, "temperature");
+    result.config.temperature = anthropic ? std::nullopt : settings_nullable_double(json, "temperature");
     result.config.max_tokens = settings_nullable_int(json, "max_tokens");
     result.config.timeout_s = required_field<int>(json, "timeout_s");
     result.config.idle_timeout_s = required_field<int>(json, "idle_timeout_s");
     result.config.api_key_id =
         settings_nullable_string(json, "api_key").value_or("");
-    result.config.reasoning_effort = google ? std::string(default_reasoning_effort)
+    result.config.reasoning_effort = unused_options ? std::string(default_reasoning_effort)
         : required_field<std::string>(json, "reasoning_effort");
-    result.config.reasoning_format = google ? ReasoningFormat::automatic : settings_choice(
+    result.config.reasoning_format = unused_options ? ReasoningFormat::automatic : settings_choice(
         required_field<std::string>(json, "reasoning_format"),
         parse_reasoning_format);
     result.config.https = required_field<bool>(json, "https");
     result.config.auth = settings_choice(
         required_field<std::string>(json, "auth"), parse_provider_auth);
-    result.config.web_search = google ? WebSearchMode::off : settings_choice(
+    result.config.web_search = unused_options ? WebSearchMode::off : settings_choice(
         required_field<std::string>(json, "web_search"), parse_web_search_mode);
-    result.config.cache_retention = google ? CacheRetention::short_ : settings_choice(
+    result.config.cache_retention = unused_options ? CacheRetention::short_ : settings_choice(
         required_field<std::string>(json, "cache_retention"),
         parse_cache_retention);
-    if (!google && includes_openrouter_targets) {
+    if (!unused_options && includes_openrouter_targets) {
         result.config.openrouter_targets =
             required_field<std::vector<std::string>>(json, "openrouter_targets");
-    } else if (!google && is_openrouter_host(result.config.host)) {
+    } else if (!unused_options && is_openrouter_host(result.config.host)) {
         result.config.openrouter_targets = existing_openrouter_targets;
     }
     if (!valid_reasoning_effort(result.config.reasoning_effort)) {

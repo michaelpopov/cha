@@ -8,6 +8,7 @@
 #include "providers/openai_oauth.h"
 #include "providers/responses_api.h"
 #include "providers/google_api.h"
+#include "providers/anthropic_api.h"
 #include "providers/web_search.h"
 #include "providers/maintenance.h"
 #include "providers/tool_calls.h"
@@ -533,6 +534,14 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
             .web_read_tool = input.web_read_tool,
             .maintenance_tool = input.maintenance_tool,
         };
+    case ProviderApi::anthropic:
+        return {
+            .bytes = build_anthropic_request_body(input, config, definition_->system_prompt, &text_sizes),
+            .text_sizes = text_sizes,
+            .web_search_tool = input.web_search_tool,
+            .web_read_tool = input.web_read_tool,
+            .maintenance_tool = input.maintenance_tool,
+        };
     case ProviderApi::google:
         return {
             .bytes = build_google_request_body(input, config, definition_->system_prompt, &text_sizes),
@@ -581,6 +590,7 @@ GenerationResult ProviderClient::perform(
     };
     const bool responses = definition_->provider.config.api == ProviderApi::responses;
     const bool google = definition_->provider.config.api == ProviderApi::google;
+    const bool anthropic = definition_->provider.config.api == ProviderApi::anthropic;
     bool received_answer = false;
     Json body;
     for (;;) {
@@ -798,6 +808,7 @@ GenerationResult ProviderClient::perform(
             }
         }
         if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
+        Json anthropic_results = Json::array();
         Json google_parts = Json::array();
         std::size_t google_part_index = 0;
         for (std::size_t index = 0; index < result.tool_calls.size(); ++index) {
@@ -813,6 +824,9 @@ GenerationResult ProviderClient::perform(
                 Json function_response{{"name", function.at("name")}, {"response", std::move(response)}};
                 if (function.contains("id")) function_response["id"] = function.at("id");
                 google_parts.push_back({{"functionResponse", std::move(function_response)}});
+            } else if (anthropic) {
+                anthropic_results.push_back({{"type", "tool_result"},
+                    {"tool_use_id", call.id}, {"content", output}});
             } else if (responses) {
                 messages.push_back({{"type", "function_call_output"},
                     {"call_id", call.id}, {"output", output}});
@@ -821,14 +835,21 @@ GenerationResult ProviderClient::perform(
                     {"tool_call_id", call.id}, {"content", output}});
             }
         }
+        if (anthropic) messages.push_back({{"role", "user"}, {"content", std::move(anthropic_results)}});
         if (google) messages.push_back({{"role", "user"}, {"parts", std::move(google_parts)}});
         // A full result budget ends tool use for the whole answer, as the call limit does.
         if (force_final) tool_calls_used = max_tool_calls;
         // Required provider-hosted search must not force another search forever.
-        if (!google) body["tool_choice"] = "auto";
+        if (!google && !anthropic) body["tool_choice"] = "auto";
         if (tool_calls_used >= max_tool_calls) {
             // Some providers still request calls when tool definitions remain.
             log_debug("Tool limit reached: requesting final answer without tools");
+            if (anthropic) {
+                // Preserve the signed prefix, including declarations and instructions.
+                body["tool_choice"] = {{"type", "none"}};
+                payload.bytes = body.dump();
+                continue;
+            }
             if (google) body["toolConfig"]["functionCallingConfig"]["mode"] = "NONE";
             else {
                 body.erase("tools");
@@ -911,6 +932,10 @@ GenerationResult ProviderClient::perform_once(
                 config.reasoning_format, on_delta, collect_tool_calls,
                 argument_limit, maintenance);
             break;
+        case ProviderApi::anthropic:
+            decoder = std::make_unique<AnthropicStreamDecoder>(
+                on_delta, collect_tool_calls, argument_limit, maintenance);
+            break;
         case ProviderApi::google:
             decoder = std::make_unique<GoogleStreamDecoder>(
                 on_delta, collect_tool_calls, argument_limit, maintenance);
@@ -991,6 +1016,9 @@ GenerationResult ProviderClient::perform_once(
     } else if (!api_key_.empty()) {
         header_lines.push_back((config.api == ProviderApi::google
             ? "x-goog-api-key: " : "Authorization: Bearer ") + api_key_);
+    }
+    if (config.api == ProviderApi::anthropic) {
+        header_lines.push_back("anthropic-version: " + std::string(anthropic_api_version));
     }
     if (payload.session_id) {
         header_lines.push_back("session_id: " + *payload.session_id);
@@ -1140,6 +1168,10 @@ GenerationResult ProviderClient::perform_once(
             collect_tool_calls,
             argument_limit,
             maintenance);
+        break;
+    case ProviderApi::anthropic:
+        result = decode_anthropic_response(
+            response.body, on_delta, collect_tool_calls, argument_limit, maintenance);
         break;
     case ProviderApi::google:
         result = decode_google_response(

@@ -74,6 +74,8 @@ A missing or ambiguous name can fail at request time. Do not set both fields.
 Do not invent a key ID or a model identifier. Subscription providers have the
 constraints in the supplied reference, including no `temperature` or
 `max_tokens`; do not add an output-token cap as a repair or test shortcut.
+Native Anthropic requires `max_tokens`: CHA uses its configured value or the
+default `64000`, including Test. Test adds no separate cap.
 
 Provider `mode` defaults to `test`, `https` to `false`, `api` to `responses`,
 `timeout_s` to `600`, and `idle_timeout_s` to `60`. Inspect the actual values
@@ -579,7 +581,8 @@ payload logging, so collect only what the diagnosis needs.
    On desktop, the existing manual provider Test can check the saved settings;
    its form can also contain unsaved candidates, so ensure the saved repair is
    what is tested. It uses network mode, ten-second request/idle timeouts,
-   no web search, and "Reply with OK." without adding an output-token cap.
+   no web search, and "Reply with OK." without adding a separate output-token cap.
+   Native Anthropic still sends its configured or default `max_tokens`.
    In ChaWeb, use logs and reproduction through existing chat.
 6. A successful parse or save does not prove a remote provider works or a prompt
    behaves as intended. A failed verification does not undo a committed repair.

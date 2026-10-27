@@ -243,7 +243,7 @@ export function ProviderScreen({
     setDraft((current) => {
       if (!current) return current;
       const next = { ...current, [key]: value };
-      if (key === 'api' && value === 'google' && current.auth === 'openai_subscription') {
+      if (key === 'api' && (value === 'google' || value === 'anthropic') && current.auth === 'openai_subscription') {
         next.auth = 'none';
         next.api_key = null;
       }
@@ -283,7 +283,7 @@ export function ProviderScreen({
       setError('OpenAI OAuth requires the Responses API format.');
       return null;
     }
-    const targets = draft.api !== 'google' && isOpenRouterHost(connection.host)
+    const targets = draft.api !== 'google' && draft.api !== 'anthropic' && isOpenRouterHost(connection.host)
       ? openRouterTargets.split(/\r?\n/).map((target) => target.trim()).filter(Boolean)
       : [];
     if (targets.some((target) => /\s/.test(target))
@@ -302,10 +302,11 @@ export function ProviderScreen({
       api_key: usesOpenAiOAuth ? null : draft.api_key,
       auth: usesOpenAiOAuth ? 'openai_subscription' : 'none',
       web_search: 'off',
-      reasoning_effort: draft.api === 'google' ? 'none' : draft.reasoning_effort,
-      temperature: usesOpenAiOAuth ? null : draft.temperature,
+      reasoning_effort: (draft.api === 'google' || draft.api === 'anthropic') ? 'none' : draft.reasoning_effort,
+      temperature: usesOpenAiOAuth || draft.api === 'anthropic' ? null : draft.temperature,
+      reasoning_format: draft.api === 'anthropic' ? 'auto' : draft.reasoning_format,
       max_tokens: usesOpenAiOAuth ? null : draft.max_tokens,
-      cache_retention: usesOpenAiOAuth ? 'off' : draft.cache_retention,
+      cache_retention: usesOpenAiOAuth ? 'off' : draft.api === 'anthropic' ? 'short' : draft.cache_retention,
       openrouter_targets: targets,
     };
   }
@@ -425,7 +426,7 @@ export function ProviderScreen({
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset aria-label="Provider details" disabled={saving || testing || deleting || !detail.writable}>
             <label>Model<input className="cha-form-control" onChange={(event) => change('model', event.target.value)} value={draft.model} /></label>
-            {draft.api !== 'google' && <label>Reasoning effort
+            {draft.api !== 'google' && draft.api !== 'anthropic' && <label>Reasoning effort
               <select className="cha-form-control" onChange={(event) => change('reasoning_effort', event.target.value as ProviderUpdate['reasoning_effort'])} value={draft.reasoning_effort}>
                 <option value="none">None</option>
                 <option value="low">Low</option>
@@ -436,11 +437,11 @@ export function ProviderScreen({
             </label>}
             <label>Base URL<input className="cha-form-control" onChange={(event) => { setBaseUrl(event.target.value); setError(null); setTestSucceeded(false); }} placeholder="https://api.openai.com" type="url" value={baseUrl} /></label>
             <div className="cha-settings-form-grid">
-              <label>API format<select className="cha-form-control" onChange={(event) => change('api', event.target.value as ProviderUpdate['api'])} value={draft.api}><option value="responses">Responses</option><option value="chat_completions">Chat completions</option><option value="google">Google (Gemini)</option></select></label>
+              <label>API format<select className="cha-form-control" onChange={(event) => change('api', event.target.value as ProviderUpdate['api'])} value={draft.api}><option value="responses">Responses</option><option value="chat_completions">Chat completions</option><option value="google">Google (Gemini)</option><option value="anthropic">Anthropic</option></select></label>
               <label>Credentials<select className="cha-form-control" onChange={(event) => changeCredential(event.target.value)} value={draft.auth === 'openai_subscription'
-                ? openAiOAuthCredential : draft.api_key ?? ''}><option value="">No credentials</option>{draft.api !== 'google' && <option value={openAiOAuthCredential}>OpenAI OAuth</option>}{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
+                ? openAiOAuthCredential : draft.api_key ?? ''}><option value="">No credentials</option>{draft.api !== 'google' && draft.api !== 'anthropic' && <option value={openAiOAuthCredential}>OpenAI OAuth</option>}{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
             </div>
-            {draft.api !== 'google' && isOpenRouterBaseUrl(baseUrl) && <label>Inference targets<textarea className="cha-form-control cha-provider-targets" onChange={(event) => { setOpenRouterTargets(event.target.value); setError(null); setTestSucceeded(false); }} rows={3} value={openRouterTargets} /></label>}
+            {draft.api !== 'google' && draft.api !== 'anthropic' && isOpenRouterBaseUrl(baseUrl) && <label>Inference targets<textarea className="cha-form-control cha-provider-targets" onChange={(event) => { setOpenRouterTargets(event.target.value); setError(null); setTestSucceeded(false); }} rows={3} value={openRouterTargets} /></label>}
           </fieldset>
           {!detail.writable && <p>This provider is read-only.</p>}
           <UsedBy empty="No characters use this provider." items={detail.used_by} />

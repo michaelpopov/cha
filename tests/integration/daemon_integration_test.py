@@ -757,7 +757,7 @@ class ChaWebIntegration(DaemonHarness):
         self.assertEqual(
             [tool["function"]["name"] for tool in opening["tools"]],
             ["vault_config_list", "vault_config_read", "vault_config_apply", "add_character",
-             "assistant_logs", "assistant_logging",
+             "assistant_logs", "assistant_events", "assistant_logging",
              "host_config_list", "host_config_read", "host_config_write",
              "assistant_openai_login"])
         system = opening["messages"][0]["content"]

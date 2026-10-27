@@ -208,7 +208,7 @@ export interface components {
             reasoning_format: "auto" | "none" | "reasoning_content" | "reasoning";
             https: boolean;
             /** @enum {string} */
-            api: "chat_completions" | "responses" | "google";
+            api: "chat_completions" | "responses" | "google" | "anthropic";
             /** @enum {string} */
             auth: "none" | "openai_subscription";
             /** @enum {string} */
@@ -238,7 +238,7 @@ export interface components {
             reasoning_format: "auto" | "none" | "reasoning_content" | "reasoning";
             https: boolean;
             /** @enum {string} */
-            api: "chat_completions" | "responses" | "google";
+            api: "chat_completions" | "responses" | "google" | "anthropic";
             /** @enum {string} */
             auth: "none" | "openai_subscription";
             /** @enum {string} */

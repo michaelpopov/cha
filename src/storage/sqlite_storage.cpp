@@ -2,12 +2,16 @@
 
 #include "util/path_name.h"
 
+#include <algorithm>
+#include <chrono>
 #include <mutex>
 #include <stdexcept>
 #include <utility>
 
 namespace cha::storage {
 namespace {
+
+constexpr int busy_timeout_ms = 5000;
 
 void initialize_sqlite_once() {
     static std::once_flag flag;
@@ -60,7 +64,7 @@ SqliteDatabase::SqliteDatabase(
             if (keyed != SQLITE_OK) fail(keyed, "Failed to apply database password");
         }
         sqlite3_extended_result_codes(handle_, 1);
-        sqlite3_busy_timeout(handle_, 5000);
+        sqlite3_busy_timeout(handle_, busy_timeout_ms);
         execute("PRAGMA foreign_keys = ON");
         if (mode != Mode::read_only) execute("PRAGMA synchronous = FULL");
         if (pragma_integer("foreign_keys") != 1) {
@@ -87,6 +91,25 @@ void SqliteDatabase::execute(std::string_view sql) {
         const std::string detail = error ? error : sqlite3_errmsg(handle_);
         sqlite3_free(error);
         fail(result, detail);
+    }
+}
+
+void SqliteDatabase::enable_wal() {
+    // A journal-mode lock upgrade can bypass SQLite's busy handler. Retry the
+    // whole pragma so its read lock is released before waiting for the writer.
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(busy_timeout_ms);
+    for (;;) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+        sqlite3_busy_timeout(handle_, static_cast<int>(std::max<std::int64_t>(0, remaining)));
+        const int result = sqlite3_exec(handle_, "PRAGMA journal_mode = WAL", nullptr, nullptr, nullptr);
+        sqlite3_busy_timeout(handle_, busy_timeout_ms);
+        if (result == SQLITE_OK) return;
+        if ((result & 0xff) != SQLITE_BUSY || std::chrono::steady_clock::now() >= deadline) {
+            fail(result);
+        }
+        sqlite3_sleep(10);
     }
 }
 

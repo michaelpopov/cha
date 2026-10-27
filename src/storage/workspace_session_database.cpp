@@ -361,7 +361,7 @@ void secure_workspace_database_files(const std::filesystem::path& path) {
 }
 
 void enable_wal_and_secure(Database& database, const std::filesystem::path& path) {
-    database.execute("PRAGMA journal_mode = WAL");
+    database.enable_wal();
     secure_workspace_database_files(path);
 }
 

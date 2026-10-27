@@ -55,6 +55,7 @@ describe('C++ wire fixtures', () => {
     const provider = loadFixture('provider-detail.json') as { api_key: unknown };
     expect(provider.api_key).toBeNull();
     expect(isProviderDetail({ ...provider, api: 'google' })).toBe(true);
+    expect(isProviderDetail({ ...provider, api: 'anthropic' })).toBe(true);
     expect(isProviderDetail({ ...provider, api: 'unknown' })).toBe(false);
     const runtime = loadFixture('voice-input-runtime.json') as Record<string, unknown>;
     expect(runtime).not.toHaveProperty('api_key');

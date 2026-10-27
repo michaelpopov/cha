@@ -693,7 +693,7 @@ stable provider ID does not change.
 | `api_key_env` | `""` | Legacy field spelling; its value is resolved as an exact display name among this vault's model keys, never as an environment variable |
 | `reasoning_effort` | `"none"` | `none`, `low`, `medium`, `high`, or `xhigh`; legacy `minimal` becomes `low` |
 | `reasoning_format` | `"auto"` | `auto`, `none`, `reasoning_content`, or `reasoning` |
-| `api` | `"responses"` | `responses` or `chat_completions` |
+| `api` | `"responses"` | `responses`, `chat_completions`, `google`, or `anthropic` |
 | `auth` | no special auth | Only special value is `openai_subscription` |
 | `web_search` | `"off"` | `off`, `auto`, or `required` |
 | `cache_retention` | `"short"` | `off`, `short`, or `long` |
@@ -720,7 +720,7 @@ normal provider from another:
 - the provider name, edited with the pencil beside the title;
 - Model;
 - Base URL;
-- API format (`Responses` or `Chat completions`);
+- API format (`Responses`, `Chat completions`, `Google (Gemini)`, or `Anthropic`);
 - Credentials: a key created under Settings → API Keys, `OpenAI OAuth`, or
   `No credentials`.
 
@@ -753,6 +753,27 @@ For ordinary providers, CHA constructs endpoints as follows:
 responses:        {scheme}://{host}:{port}{base_path}/v1/responses
 chat_completions: {scheme}://{host}:{port}{base_path}/v1/chat/completions
 ```
+
+### Native Anthropic providers
+
+Use `api = "anthropic"` with a model ID and a saved workspace-scoped Anthropic
+API key. Set Base URL to `https://api.anthropic.com` (no `/v1` suffix); CHA appends
+`/v1/messages`. Custom origins and base paths also work. Requests use the
+`anthropic-version: 2026-10-21` header and Bearer authentication. `auth = "none"`
+allows saved API keys; OpenAI OAuth and Claude subscription login are unsupported.
+
+The Messages API requires `max_tokens`. CHA sends the configured positive value,
+or `64000` when omitted, for streaming and non-streaming calls, including Test,
+naming, and notes. This is an upper bound shared by thinking and answer tokens.
+Use a lower value for models with a smaller output ceiling. Truncated note
+operations and tool calls are rejected rather than saved or executed.
+
+Anthropic uses model-default thinking. `temperature`, `reasoning_effort`,
+`reasoning_format`, `cache_retention`, `openrouter_targets`, and provider-hosted
+`web_search` are ignored before validation, with warnings for unused non-default
+settings. Character and auxiliary effort settings have no effect. Client-side
+web tools remain available. The provider editor hides effort and inference targets
+and preserves the model, endpoint, and saved key when selecting Anthropic.
 
 ### API-key provider example
 

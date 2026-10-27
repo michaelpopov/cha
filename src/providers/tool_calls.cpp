@@ -10,6 +10,13 @@ namespace {
 void append_tool(nlohmann::json& body, ProviderApi api, nlohmann::json function) {
     using Json = nlohmann::json;
     if (!body.contains("tools")) body["tools"] = Json::array();
+    if (api == ProviderApi::anthropic) {
+        function.erase("strict");
+        function["input_schema"] = std::move(function["parameters"]);
+        function.erase("parameters");
+        body["tools"].push_back(std::move(function));
+        return;
+    }
     if (api == ProviderApi::google) {
         function.erase("strict");
         function["parametersJsonSchema"] = std::move(function["parameters"]);
@@ -253,6 +260,12 @@ void update_tool_instructions(nlohmann::json& body, ProviderApi api,
                 }
                 continue;
             }
+            if (api == ProviderApi::anthropic) {
+                const auto name = tool.value("name", "");
+                search_available |= name == "web_search";
+                read_available |= name == "web_read";
+                continue;
+            }
             const auto type = tool.value("type", "");
             if (type == "web_search" || type == "openrouter:web_search") {
                 search_available = true;
@@ -278,6 +291,8 @@ void update_tool_instructions(nlohmann::json& body, ProviderApi api,
         auto& parts = instruction["parts"];
         if (parts.empty()) parts.push_back({{"text", ""}});
         instructions = &parts.back()["text"];
+    } else if (api == ProviderApi::anthropic) {
+        instructions = &body["system"];
     } else if (api == ProviderApi::responses) {
         instructions = &body["instructions"];
     } else {
@@ -309,6 +324,11 @@ void update_tool_instructions(nlohmann::json& body, ProviderApi api,
         "Do not give unverified details as facts. "
         "Do not invent missing facts or claim to have searched, read a page, or verified a claim "
         "unless you actually did.\n</tool_availability>";
+    if (api == ProviderApi::anthropic) {
+        text += "\nIf further tool calls become unavailable, answer the original request using "
+            "the results already collected, state any gaps in verification, and do not request more tools. "
+            "Earlier saved changes stay saved.";
+    }
     if (text_sizes) text_sizes->system_prompt_bytes = text.size();
     *instructions = std::move(text);
 }
@@ -328,7 +348,8 @@ GenerationResult tool_call_result(const nlohmann::json& continuation,
     try {
         const bool responses = api == ProviderApi::responses;
         const bool google = api == ProviderApi::google;
-        auto calls = google ? continuation.at("parts") : responses ? continuation
+        const bool anthropic = api == ProviderApi::anthropic;
+        auto calls = anthropic ? continuation.at("content") : google ? continuation.at("parts") : responses ? continuation
             : continuation.value("tool_calls", nlohmann::json::array());
         if (calls.is_null() && !responses) calls = nlohmann::json::array();
         if (!calls.is_array()) throw std::invalid_argument("Invalid tool calls");
@@ -336,12 +357,13 @@ GenerationResult tool_call_result(const nlohmann::json& continuation,
         std::size_t call_index = 0;
         for (const auto& item : calls) {
             if (google && !item.contains("functionCall")) continue;
+            if (anthropic && item.value("type", "") != "tool_use") continue;
             if (responses && !item.is_object()) continue;
             if (responses && item.value("type", "") != "function_call") continue;
-            if (!responses && !google && item.value("type", "") != "function")
+            if (!responses && !google && !anthropic && item.value("type", "") != "function")
                 throw std::invalid_argument("Unsupported tool call type");
             const auto& function = google ? item.at("functionCall")
-                : responses ? item : item.at("function");
+                : (responses || anthropic) ? item : item.at("function");
             ToolCall call;
             call.name = function.at("name").get<std::string>();
             if (google) {
@@ -354,6 +376,11 @@ GenerationResult tool_call_result(const nlohmann::json& continuation,
                 const auto args = function.value("args", nlohmann::json::object());
                 if (!args.is_object()) throw std::invalid_argument("Invalid tool arguments");
                 call.arguments = args.dump();
+            } else if (anthropic) {
+                call.id = item.at("id").get<std::string>();
+                const auto& input = item.at("input");
+                if (!input.is_object()) throw std::invalid_argument("Invalid tool arguments");
+                call.arguments = input.dump();
             } else {
                 call.id = item.at(responses ? "call_id" : "id").get<std::string>();
                 call.arguments = function.at("arguments").get<std::string>();

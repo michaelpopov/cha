@@ -55,7 +55,7 @@ bool valid_openrouter_targets(const ModelBackendConfig& config) {
 }
 
 bool provider_supports_reasoning_effort(const ModelBackendConfig& config, ProviderApi api) {
-    if (api == ProviderApi::google) return true;
+    if (api == ProviderApi::google || api == ProviderApi::anthropic) return true;
     if (api == ProviderApi::responses) {
         return !(is_direct_openai_host(config.host)
             && (config.model == "gpt-4o" || config.model.starts_with("gpt-4o-")));
@@ -79,6 +79,7 @@ std::string_view to_string(ProviderApi value) {
     case ProviderApi::chat_completions: return "chat_completions";
     case ProviderApi::responses: return "responses";
     case ProviderApi::google: return "google";
+    case ProviderApi::anthropic: return "anthropic";
     }
     throw std::logic_error("Unknown provider API");
 }
@@ -120,6 +121,7 @@ std::optional<ProviderApi> parse_provider_api(std::string_view value) {
     if (value == "chat_completions") return ProviderApi::chat_completions;
     if (value == "responses") return ProviderApi::responses;
     if (value == "google") return ProviderApi::google;
+    if (value == "anthropic") return ProviderApi::anthropic;
     return std::nullopt;
 }
 
@@ -152,7 +154,8 @@ std::optional<CacheRetention> parse_cache_retention(std::string_view value) {
 }
 
 bool provider_supports_web_search(const ModelBackendConfig& config) {
-    if (config.auth == ProviderAuth::openai_subscription || config.api == ProviderApi::google) return false;
+    if (config.auth == ProviderAuth::openai_subscription || config.api == ProviderApi::google
+        || config.api == ProviderApi::anthropic) return false;
     return config.api == ProviderApi::responses || is_openrouter_host(config.host);
 }
 
@@ -173,7 +176,7 @@ std::optional<std::string_view> provider_config_error(
     if (config.port < 1 || config.port > 65535) {
         return "requires port between 1 and 65535";
     }
-    if (config.temperature
+    if (config.api != ProviderApi::anthropic && config.temperature
         && (!std::isfinite(*config.temperature)
             || *config.temperature < 0.0 || *config.temperature > 2.0)) {
         return "requires temperature between 0 and 2";
@@ -190,13 +193,13 @@ std::optional<std::string_view> provider_config_error(
             || config.base_path.find_first_of("?# \t\r\n") != std::string::npos)) {
         return "has invalid base_path";
     }
-    if (config.api != ProviderApi::google && !valid_reasoning_effort(config.reasoning_effort)) {
+    if (config.api != ProviderApi::google && config.api != ProviderApi::anthropic && !valid_reasoning_effort(config.reasoning_effort)) {
         return "has invalid reasoning_effort";
     }
-    if (config.api != ProviderApi::google && !valid_openrouter_targets(config)) {
+    if (config.api != ProviderApi::google && config.api != ProviderApi::anthropic && !valid_openrouter_targets(config)) {
         return "has invalid OpenRouter inference targets";
     }
-    if (config.api != ProviderApi::google && config.web_search != WebSearchMode::off
+    if (config.api != ProviderApi::google && config.api != ProviderApi::anthropic && config.web_search != WebSearchMode::off
         && !provider_supports_web_search(config)) {
         return "enables web search for an unsupported provider";
     }
@@ -248,6 +251,8 @@ std::string provider_endpoint(const ModelBackendConfig& config) {
         return base_url + "/v1/chat/completions";
     case ProviderApi::responses:
         return base_url + "/v1/responses";
+    case ProviderApi::anthropic:
+        return base_url + "/v1/messages";
     case ProviderApi::google: {
         const auto model = google_model_id(config.model);
         if (!model) throw std::invalid_argument("Invalid Google model ID");

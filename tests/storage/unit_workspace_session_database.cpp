@@ -7,8 +7,10 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <string>
 #include <string_view>
@@ -153,6 +155,29 @@ TEST(WorkspaceSessionDatabase, CreatesValidEmptyDatabaseAndEnablesWal) {
     ASSERT_TRUE(journal_mode.step());
     EXPECT_EQ(journal_mode.text(0), "wal");
     EXPECT_NO_THROW(checkpoint_workspace_session_database(path));
+}
+
+TEST(WorkspaceSessionDatabase, EnablingWalWaitsForAConcurrentWriter) {
+    test::TestWorkspace workspace;
+    const auto path = workspace.root() / "workspace.sqlite3";
+    create_empty_workspace_session_database(path);
+    Database writer(path, Database::Mode::read_write);
+    storage::SqliteTransaction writing(writer);
+
+    std::promise<void> ready;
+    auto started = ready.get_future();
+    auto enabling = std::async(std::launch::async, [&] {
+        Database database(path, Database::Mode::read_write);
+        ready.set_value();
+        database.enable_wal();
+        auto mode = database.prepare("PRAGMA journal_mode");
+        if (!mode.step()) throw std::runtime_error("Missing journal mode");
+        return mode.text(0);
+    });
+    EXPECT_EQ(started.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    EXPECT_EQ(enabling.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+    writing.commit();
+    EXPECT_EQ(enabling.get(), "wal");
 }
 
 TEST(WorkspaceSessionDatabase, CreatesAndOpensSqlCipherDatabaseWithPassword) {

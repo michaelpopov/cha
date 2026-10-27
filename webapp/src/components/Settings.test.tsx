@@ -1079,10 +1079,11 @@ describe('Settings screens', () => {
   });
 
 
-  it.each(['key', 'oauth'] as const)('switches to Google from %s credentials and clears hidden effort on Test and Save', async (credential) => {
+  it.each([['key', 'google'], ['oauth', 'google'], ['key', 'anthropic'], ['oauth', 'anthropic']] as const)('switches from %s credentials to %s and clears hidden effort on Test and Save', async (credential, api) => {
     const configured: ProviderDetail = {
       ...provider, reasoning_effort: 'high', api: 'responses',
-      host: 'generativelanguage.googleapis.com', base_path: '/v1beta',
+      host: api === 'google' ? 'generativelanguage.googleapis.com' : credential === 'key' ? 'openrouter.ai' : 'api.anthropic.com',
+      base_path: api === 'google' ? '/v1beta' : '', temperature: 0.8,
       api_key: credential === 'key' ? 'api_key_1' : null,
       auth: credential === 'oauth' ? 'openai_subscription' : 'none',
     };
@@ -1100,22 +1101,24 @@ describe('Settings screens', () => {
       />,
     );
     const baseUrl = await screen.findByLabelText('Base URL');
-    await userEvent.selectOptions(screen.getByLabelText('API format'), 'google');
-    expect(screen.getByRole('option', { name: 'Google (Gemini)' })).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText('API format'), api);
+    expect(screen.getByRole('option', { name: api === 'google' ? 'Google (Gemini)' : 'Anthropic' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Inference targets')).not.toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'OpenAI OAuth' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Credentials')).toHaveValue(credential === 'key' ? 'api_key_1' : '');
-    expect(baseUrl).toHaveValue('https://generativelanguage.googleapis.com/v1beta');
+    expect(baseUrl).toHaveValue(api === 'google' ? 'https://generativelanguage.googleapis.com/v1beta' : `https://${configured.host}`);
     expect(screen.getByLabelText('Model')).toHaveValue(configured.model);
     await userEvent.click(screen.getByRole('button', { name: 'Test' }));
     expect(testProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
-      api: 'google', auth: 'none', api_key: credential === 'key' ? 'api_key_1' : null,
-      reasoning_effort: 'none', base_path: '/v1beta', model: configured.model,
+      api, auth: 'none', api_key: credential === 'key' ? 'api_key_1' : null,
+      reasoning_effort: 'none', base_path: configured.base_path, model: configured.model,
+      temperature: api === 'anthropic' ? null : 0.8,
     }));
     await screen.findByText('Provider responded successfully.');
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(updateProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
-      api: 'google', auth: 'none', reasoning_effort: 'none',
+      api, auth: 'none', reasoning_effort: 'none',
       api_key: credential === 'key' ? 'api_key_1' : null,
     }));
   });

@@ -30,6 +30,7 @@ public:
     SqliteDatabase& operator=(SqliteDatabase&&) = delete;
 
     void execute(std::string_view sql);
+    void enable_wal();
     [[nodiscard]] SqliteStatement prepare(std::string_view sql);
     template<typename First, typename... Rest>
     [[nodiscard]] SqliteStatement prepare(

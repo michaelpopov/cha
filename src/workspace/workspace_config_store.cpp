@@ -1437,7 +1437,7 @@ struct WorkspaceConfigStore::Impl {
             transaction.commit();
         }
         validate_workspace_session_contents(*database);
-        database->execute("PRAGMA journal_mode = WAL");
+        database->enable_wal();
         secure_workspace_session_database_files(database_path);
     }
 

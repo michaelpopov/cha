@@ -494,6 +494,40 @@ TEST(Workspace, GoogleIgnoresUnusedSettingsAndCharacterOverridesWithWarnings) {
     EXPECT_EQ(workspace.find_provider("google")->config.api, ProviderApi::google);
 }
 
+TEST(Workspace, AnthropicIgnoresUnusedSettingsAndCharacterOverridesWithWarnings) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("anthropic", "host = 'openrouter.ai'\nport = 443\nhttps = true\n"
+        "base_path = '/proxy'\napi = 'anthropic'\nmode = 'net'\nmodel = 'custom-claude-id'\n"
+        "temperature = 'obsolete'\nreasoning_effort = 'obsolete'\nreasoning_format = 'obsolete'\ncache_retention = 'obsolete'\n"
+        "web_search = 'obsolete'\nopenrouter_targets = ['unused target']\n");
+    fixture.write_character_config("display_name = 'Guide'\nprovider = 'anthropic'\nreasoning_effort = 42\nweb_search = ['obsolete']\n");
+    LoadWarningCollector warnings;
+    auto workspace = Workspace::load(fixture.root(), &warnings);
+    const auto* provider = workspace.find_provider("anthropic");
+    ASSERT_NE(provider, nullptr);
+    EXPECT_EQ(provider->config.api, ProviderApi::anthropic);
+    EXPECT_EQ(provider->config.reasoning_effort, "none");
+    EXPECT_TRUE(provider->config.openrouter_targets.empty());
+    const auto* character = workspace.find_character("guide");
+    ASSERT_NE(character, nullptr);
+    EXPECT_FALSE(character->reasoning_effort);
+    EXPECT_FALSE(character->web_search);
+    EXPECT_FALSE(provider->config.temperature);
+    EXPECT_FALSE(provider_supports_web_search(provider->config));
+    for (const auto* field : {"temperature", "reasoning_effort", "reasoning_format", "cache_retention", "openrouter_targets", "web_search"}) {
+        EXPECT_TRUE(std::ranges::any_of(warnings, [&](const auto& warning) {
+            return warning.message.find(field) != std::string::npos;
+        })) << field;
+    }
+    const auto config = provider->config;
+    edit_fixture(workspace, [&](auto& editor) { editor.write_provider("anthropic", "Anthropic", config); });
+    workspace = Workspace::load(fixture.root());
+    ASSERT_NE(workspace.find_provider("anthropic"), nullptr);
+    EXPECT_EQ(workspace.find_provider("anthropic")->config.model, "custom-claude-id");
+    EXPECT_EQ(workspace.find_provider("anthropic")->config.base_path, "/proxy");
+    EXPECT_EQ(workspace.find_provider("anthropic")->config.api, ProviderApi::anthropic);
+}
+
 TEST(Workspace, OmitsAnInvalidUnusedProvider) {
     test::TestWorkspace fixture;
     fixture.write_provider("unused", "host = \"localhost\"\nport = 80\n");

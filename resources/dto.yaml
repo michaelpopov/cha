@@ -481,7 +481,7 @@ components:
           type: boolean
         api:
           type: string
-          enum: [chat_completions, responses, google]
+          enum: [chat_completions, responses, google, anthropic]
         auth:
           type: string
           enum: [none, openai_subscription]
@@ -561,7 +561,7 @@ components:
           type: boolean
         api:
           type: string
-          enum: [chat_completions, responses, google]
+          enum: [chat_completions, responses, google, anthropic]
         auth:
           type: string
           enum: [none, openai_subscription]

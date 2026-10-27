@@ -522,6 +522,50 @@ TEST(ApplicationMedia, GoogleNoteCompressionUsesDefaultEffortAndRejectsPartialAn
     }
 }
 
+TEST(ApplicationMedia, AnthropicNoteCompressionUsesDefaultEffortAndRejectsPartialAnswers) {
+    using Json = nlohmann::json;
+    for (const auto* reason : {"end_turn", "max_tokens", "model_context_window_exceeded", "refusal"}) {
+        SCOPED_TRACE(reason);
+        const Json response{{"type", "message"}, {"role", "assistant"},
+            {"content", Json::array({{{"type", "text"}, {"text", "Compressed text"}}})}, {"stop_reason", reason}};
+        MockHttpServer server({http_response("application/json", response.dump())});
+        server.start();
+        test::TestWorkspace fixture;
+        fixture.write_provider("anthropic", "host = '127.0.0.1'\nport = " + std::to_string(server.port())
+            + "\nmodel = 'claude-test'\nbase_path = ''\nmode = 'net'\nstream = false\napi = 'anthropic'\n");
+        auto application = Application::open(make_command(fixture, test::import_test_database(fixture.root())));
+        const auto epoch = application->context_epoch();
+        EXPECT_EQ(application->get_notes_settings(epoch).compression_reasoning_effort, "high");
+        (void)application->save_notes_settings({.compression_provider = "anthropic", .compression_reasoning_effort = "high"}, epoch);
+        const auto note = application->create_note_item({}, NoteItemKind::note, "Long note", epoch);
+        application->save_note(note.id, {{"type", "doc"}, {"content", Json::array({
+            {{"type", "paragraph"}, {"content", Json::array({{{"type", "text"}, {"text", std::string(4096, 'a')}}})}}
+        })}}, epoch);
+        ASSERT_EQ(application->compress_note(note.id, epoch), Json({{"accepted", true}}));
+        const auto deadline = std::chrono::steady_clock::now() + 3s;
+        while (application->note_compression_status(note.id, epoch)["pending"].get<bool>()
+            && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(2ms);
+        EXPECT_FALSE(application->note_compression_status(note.id, epoch)["pending"].get<bool>());
+        server.join();
+        const auto saved = application->get_note(note.id, epoch);
+        if (std::string_view(reason) == "end_turn") EXPECT_EQ(saved.compressed_text, "Compressed text");
+        else EXPECT_FALSE(saved.compressed_text);
+        ASSERT_EQ(server.requests().size(), 1u);
+        const auto& wire = server.requests()[0];
+        EXPECT_TRUE(wire.starts_with("POST /v1/messages HTTP/1.1"));
+        const auto body = Json::parse(wire.substr(wire.find("\r\n\r\n") + 4));
+        EXPECT_TRUE(body.contains("system"));
+        EXPECT_TRUE(body.contains("messages"));
+        EXPECT_EQ(body["max_tokens"], 64000);
+        EXPECT_FALSE(body.contains("reasoning_effort"));
+        EXPECT_FALSE(body.contains("thinking"));
+        EXPECT_FALSE(body.contains("tools"));
+        EXPECT_EQ(body.dump().find("tool_availability"), std::string::npos);
+        application->request_shutdown();
+        EXPECT_TRUE(application->join_shutdown(2s));
+    }
+}
+
 TEST(ApplicationMedia, PreviewReportsTheElevenLabsAuthenticationError) {
     const nlohmann::json error = {{"detail", {{"code", "invalid_api_key"},
         {"message", "API key ID used as API key."}}}};

@@ -367,6 +367,61 @@ TEST(ApplicationSettings, TestsAndSavesNativeGoogleIgnoringUnusedOpenRouterSetti
     EXPECT_EQ(application->get_provider("test", application->context_epoch()).api, "google");
 }
 
+TEST(ApplicationSettings, TestsAndSavesNativeAnthropicIgnoringUnusedOpenRouterSettings) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    auto body = provider_body(application->get_provider("test", epoch));
+    MockHttpServer server({http_response("text/event-stream",
+        "data: {\"type\":\"message_start\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n"
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"OK\"}}\n\n"
+        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"
+        "data: {\"type\":\"message_stop\"}\n\n")});
+    server.start();
+    body["host"] = "127.0.0.1";
+    body["port"] = server.port();
+    body["base_path"] = "/proxy";
+    body["https"] = false;
+    body["mode"] = "net";
+    body["model"] = "claude-test";
+    body["api"] = "anthropic";
+    body["temperature"] = "obsolete";
+    body["reasoning_effort"] = nlohmann::json::array({42});
+    body["openrouter_targets"] = false;
+    body["reasoning_format"] = 123;
+    body["cache_retention"] = nlohmann::json::object();
+    body["web_search"] = false;
+    const auto parsed = parse_provider_update(body, {});
+    EXPECT_EQ(parsed.config.api, ProviderApi::anthropic);
+    EXPECT_EQ(parsed.config.reasoning_effort, "none");
+    EXPECT_TRUE(parsed.config.openrouter_targets.empty());
+    const auto saved = application->update_provider("test", body, epoch);
+    EXPECT_EQ(saved.api, "anthropic");
+    auto reply = application->test_provider("test", body, epoch);
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    std::optional<OperationReply::Result> result;
+    while (std::chrono::steady_clock::now() < deadline) {
+        result = reply->peek();
+        if (result) break;
+        std::this_thread::sleep_for(5ms);
+    }
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(std::holds_alternative<nlohmann::json>(*result));
+    server.join();
+    ASSERT_EQ(server.requests().size(), 1u);
+    EXPECT_TRUE(server.requests()[0].starts_with("POST /proxy/v1/messages HTTP/1.1"));
+    const auto request_body = nlohmann::json::parse(server.requests()[0].substr(server.requests()[0].find("\r\n\r\n") + 4));
+    EXPECT_TRUE(request_body.contains("messages"));
+    EXPECT_EQ(request_body["max_tokens"], 64000);
+    EXPECT_FALSE(request_body.contains("temperature"));
+    EXPECT_FALSE(request_body.contains("reasoning_effort"));
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    EXPECT_EQ(application->get_provider("test", application->context_epoch()).api, "anthropic");
+}
+
 TEST(ApplicationSettings, ShutdownDeadlineBoundsUncooperativeReplyCallback) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =

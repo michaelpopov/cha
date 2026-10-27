@@ -483,7 +483,7 @@ export function isProviderDetail(value: unknown): value is ProviderDetail {
     && isOneOf(value.reasoning_effort, ['none', 'low', 'medium', 'high', 'xhigh'])
     && isOneOf(value.reasoning_format, ['auto', 'none', 'reasoning_content', 'reasoning'])
     && typeof value.https === 'boolean'
-    && isOneOf(value.api, ['chat_completions', 'responses', 'google'])
+    && isOneOf(value.api, ['chat_completions', 'responses', 'google', 'anthropic'])
     && isOneOf(value.auth, ['none', 'openai_subscription'])
     && isOneOf(value.web_search, ['off', 'auto', 'required'])
     && isOneOf(value.cache_retention, ['off', 'short', 'long'])

@@ -1091,6 +1091,7 @@ void WorkspaceConfigEditor::write_character_settings(
             "Voice '" + std::string(*voice_id) + "' does not exist");
     }
     if (provider->config.api != ProviderApi::google
+        && provider->config.api != ProviderApi::anthropic
         && reasoning_effort && !valid_reasoning_effort(*reasoning_effort)) {
         throw std::invalid_argument(
             "Reasoning effort '" + std::string(*reasoning_effort)

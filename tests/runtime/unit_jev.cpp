@@ -515,6 +515,51 @@ TEST_F(SessionNaming, UsesNativeGoogleWithDefaultLowEffort) {
     EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
 }
 
+TEST_F(SessionNaming, UsesNativeAnthropicWithDefaultLowEffort) {
+    controller.reset();
+    providers->shutdown();
+    auto config = store->snapshot()->find_provider("naming")->config;
+    config.api = ProviderApi::anthropic;
+    config.mode = Mode::net;
+    config.model = "claude-test";
+    config.base_path = "";
+    store->apply_provider_update("naming", "Anthropic", config);
+    store->apply_session_naming_update({"naming", "low"});
+    int requests = 0;
+    providers = std::make_shared<Providers>(
+        [&](SharedCharacterDefinition definition) {
+            if (definition->character.id != "session-name") return std::make_unique<ProviderClient>(definition);
+            EXPECT_EQ(definition->provider.config.reasoning_effort, "low");
+            EXPECT_EQ(definition->provider.config.timeout_s, 10);
+            return std::make_unique<ProviderClient>(definition, nullptr,
+                [&](const ProviderHttpRequest& request, const auto&) {
+                    ++requests;
+                    EXPECT_EQ(request.url, "http://naming.test:1/v1/messages");
+                    const auto body = nlohmann::json::parse(request.body);
+                    EXPECT_TRUE(body.contains("system"));
+                    EXPECT_TRUE(body.contains("messages"));
+                    EXPECT_EQ(body["max_tokens"], 64000);
+                    EXPECT_FALSE(body.contains("reasoning_effort"));
+                    EXPECT_FALSE(body.contains("tools"));
+                    EXPECT_EQ(body.dump().find("tool_availability"), std::string::npos);
+                    return ProviderHttpResponse{200, "text/event-stream",
+                        "data: {\"type\":\"message_start\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n"
+                        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"Planning a small garden\"}}\n\n"
+                        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+                        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"
+                        "data: {\"type\":\"message_stop\"}\n\n"};
+                });
+        },
+        [this](auto worker) { workers.push_back(std::move(worker)); },
+        [this](const auto& input, const auto&) { classified.push_back(input); return decision; });
+    controller = make_controller(notifier, load_session_state(journal.path()));
+    controller->enable_auto_naming("New session");
+    (void)send("Plan a garden");
+    finish();
+    EXPECT_EQ(requests, 1);
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
+}
+
 TEST_F(SessionNaming, IdentifiedSelfNoteIsNamedAndSavedWithoutACharacterReply) {
     decision = {JevOutcome::success, "self_note", {}};
     (void)send("Note to self: buy milk.");

@@ -281,19 +281,25 @@ WorkspaceProvider load_provider(
     warn_unknown_fields(table, path, fields, "Provider config", warnings);
 
     const auto api = choice(table, path, "api", parse_provider_api, ProviderApi::responses);
-    const bool google = api == ProviderApi::google;
-    if (google) {
+    const bool anthropic = api == ProviderApi::anthropic;
+    const bool unused_options = api == ProviderApi::google || anthropic;
+    const std::string protocol = anthropic ? "Anthropic" : "Google";
+    if (unused_options) {
         for (const auto& [field, default_value] : {
                  std::pair{"reasoning_effort", "none"}, {"reasoning_format", "auto"},
                  {"cache_retention", "short"}, {"web_search", "off"}}) {
             if (table.contains(field) && table[field].value<std::string>() != default_value) {
-                warnings.emit(path, "Ignoring " + std::string(field) + " for Google provider in " + utf8_path(path));
+                warnings.emit(path, "Ignoring " + std::string(field) + " for " + protocol + " provider in " + utf8_path(path));
             }
         }
         if (table.contains("openrouter_targets")
             && (!table["openrouter_targets"].is_array() || !table["openrouter_targets"].as_array()->empty())) {
-            warnings.emit(path, "Ignoring openrouter_targets for Google provider in " + utf8_path(path));
+            warnings.emit(path, "Ignoring openrouter_targets for " + protocol + " provider in " + utf8_path(path));
         }
+    }
+
+    if (anthropic && table.contains("temperature")) {
+        warnings.emit(path, "Ignoring temperature for Anthropic provider in " + utf8_path(path));
     }
 
     WorkspaceProvider provider{
@@ -311,7 +317,7 @@ WorkspaceProvider load_provider(
                 table, path, "model", "a string").value_or(""),
             .stream = optional_value<bool>(table, path, "stream", "a boolean")
                           .value_or(true),
-            .temperature = optional_value<double>(
+            .temperature = anthropic ? std::nullopt : optional_value<double>(
                 table, path, "temperature", "a number"),
             .max_tokens = optional_value<int>(
                 table, path, "max_tokens", "an integer"),
@@ -323,7 +329,7 @@ WorkspaceProvider load_provider(
                 table, path, "api_key", "a string").value_or(""),
             .api_key_env = optional_value<std::string>(
                 table, path, "api_key_env", "a string").value_or(""),
-            .reasoning_format = google ? ReasoningFormat::automatic : choice(
+            .reasoning_format = unused_options ? ReasoningFormat::automatic : choice(
                 table, path, "reasoning_format", parse_reasoning_format,
                 ReasoningFormat::automatic),
             .https = optional_value<bool>(table, path, "https", "a boolean")
@@ -331,17 +337,17 @@ WorkspaceProvider load_provider(
             .api = api,
             .auth = choice(
                 table, path, "auth", parse_provider_auth, ProviderAuth::none),
-            .web_search = google ? WebSearchMode::off : choice(
+            .web_search = unused_options ? WebSearchMode::off : choice(
                 table, path, "web_search", parse_web_search_mode, WebSearchMode::off),
-            .cache_retention = google ? CacheRetention::short_ : choice(
+            .cache_retention = unused_options ? CacheRetention::short_ : choice(
                 table, path, "cache_retention", parse_cache_retention,
                 CacheRetention::short_),
-            .openrouter_targets = google ? std::vector<std::string>{} : optional_string_array(
+            .openrouter_targets = unused_options ? std::vector<std::string>{} : optional_string_array(
                 table, path, "openrouter_targets"),
         },
     };
 
-    if (auto effort = google ? std::nullopt : optional_value<std::string>(
+    if (auto effort = unused_options ? std::nullopt : optional_value<std::string>(
             table, path, "reasoning_effort", "a string")) {
         normalize_legacy_reasoning_effort(*effort, path, warnings);
         if (valid_reasoning_effort(*effort)) {
@@ -881,7 +887,8 @@ CharacterConfig load_character_config(
     bool definition,
     const LoadWarnings& warnings,
     bool allow_reserved_name = false,
-    bool require_provider = false) {
+    bool require_provider = false,
+    const Workspace* workspace = nullptr) {
     const toml::table table = read_toml(source, path, "character config");
     static constexpr std::string_view definition_fields[]{
         "display_name", "description", "provider", "style", "voice",
@@ -897,19 +904,31 @@ CharacterConfig load_character_config(
             .prompt_variables = template_scope_from_toml(table, "prompt", utf8_path(path)),
         };
     }
+    const auto provider_id = optional_value<std::string>(table, path, "provider", "a string");
+    const auto* provider = workspace && provider_id ? workspace->find_provider(*provider_id) : nullptr;
+    const bool anthropic = provider && provider->config.api == ProviderApi::anthropic;
+    if (anthropic) {
+        for (const auto& [field, default_value] : {
+                 std::pair{"reasoning_effort", "none"}, {"web_search", "off"}}) {
+            if (table.contains(field) && table[field].value<std::string>() != default_value) {
+                warnings.emit(path, "Ignoring " + std::string(field) + " for Anthropic character in " + utf8_path(path));
+            }
+        }
+    }
+    auto reasoning_effort = anthropic ? table["reasoning_effort"].value<std::string>()
+        : optional_value<std::string>(table, path, "reasoning_effort", "a string");
+    if (anthropic && reasoning_effort && !valid_reasoning_effort(*reasoning_effort)) reasoning_effort.reset();
     CharacterConfig result{
         .display_name = optional_value<std::string>(
             table, path, "display_name", "a string"),
         .description = optional_value<std::string>(
             table, path, "description", "a string"),
-        .provider_id = optional_value<std::string>(
-            table, path, "provider", "a string"),
+        .provider_id = provider_id,
         .style_id = optional_value<std::string>(
             table, path, "style", "a string"),
         .voice_id = optional_value<std::string>(
             table, path, "voice", "a string"),
-        .reasoning_effort = optional_value<std::string>(
-            table, path, "reasoning_effort", "a string"),
+        .reasoning_effort = std::move(reasoning_effort),
         .web_search_tool = optional_value<bool>(table, path, "web_search_tool", "a boolean"),
         .tags = definition ? load_tags(table, path) : std::vector<std::string>{},
         .prompt_variables = template_scope_from_toml(table, "prompt", utf8_path(path)),
@@ -917,7 +936,7 @@ CharacterConfig load_character_config(
     if (result.reasoning_effort) {
         normalize_legacy_reasoning_effort(*result.reasoning_effort, path, warnings);
     }
-    if (table.contains("web_search")) {
+    if (!anthropic && table.contains("web_search")) {
         result.web_search = choice(
             table, path, "web_search", parse_web_search_mode, WebSearchMode::off);
     }
@@ -1729,7 +1748,7 @@ LoadedCharacters load_characters(
                 "Character '" + id + "' requires character.toml and CHARACTER.md");
         }
         CharacterConfig config =
-            load_character_config(source, config_path, true, warnings);
+            load_character_config(source, config_path, true, warnings, false, false, &workspace);
         const CharacterAppearance appearance = resolve_character_references(
             config, "Character '" + id + "'", workspace, provider_errors, config_path, warnings);
         if (!result.directories.emplace(id, directory).second) {
@@ -1798,7 +1817,7 @@ WorkspaceCharacter load_assistant(
     const std::filesystem::path assistant_path =
         workspace.root() / "system" / "assistant" / "character.toml";
     CharacterConfig assistant =
-        load_character_config(source, assistant_path, true, warnings, true, true);
+        load_character_config(source, assistant_path, true, warnings, true, true, &workspace);
     const CharacterAppearance assistant_appearance = resolve_character_references(
         assistant, "Assistant", workspace, provider_errors, assistant_path, warnings);
     return {

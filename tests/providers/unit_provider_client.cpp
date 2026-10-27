@@ -3589,5 +3589,245 @@ TEST(ProviderClient, GoogleCurlReadsSseThroughHttpEnd) {
     EXPECT_TRUE(server.requests()[0].starts_with("POST /v1beta/models/configured-model:streamGenerateContent?alt=sse HTTP/1.1"));
 }
 
+Json anthropic_response(Json content, std::string reason = "end_turn") {
+    return {{"type", "message"}, {"role", "assistant"}, {"content", content}, {"stop_reason", reason},
+        {"usage", {{"input_tokens", 3}, {"output_tokens", 2}, {"cache_read_input_tokens", 1}}}};
+}
+std::string anthropic_stream(const Json& message) {
+    const auto event = [](Json value) { return "data: " + value.dump() + "\n\n"; };
+    auto start = message;
+    start["content"] = Json::array(); start["stop_reason"] = nullptr;
+    auto stream = event({{"type", "message_start"}, {"message", start}});
+    int index = 0;
+    for (const auto& block : message["content"]) {
+        stream += event({{"type", "content_block_start"}, {"index", index}, {"content_block", block}});
+        stream += event({{"type", "content_block_stop"}, {"index", index++}});
+    }
+    return stream + event({{"type", "message_delta"}, {"delta", {{"stop_reason", message["stop_reason"]}}}})
+        + event({{"type", "message_stop"}});
+}
+
+TEST(ProviderClient, AnthropicUsesNativeEndpointVersionAndOptionalSavedBearerKey) {
+    test::TestWorkspace workspace;
+    auto config = WorkspaceConfigStore::open(test::import_test_database(workspace.root()));
+    ApiKeyStore keys(*config);
+    const auto key = keys.create("Anthropic", "anthropic-test-secret");
+    for (const bool stream : {false, true}) {
+        for (const int credential : {0, 1, 2}) {
+            auto definition = network_definition(8080, stream);
+            auto& provider = definition.provider.config;
+            provider.api = ProviderApi::anthropic;
+            provider.base_path = "/proxy";
+            if (credential == 1) provider.api_key_id = key.id;
+            if (credential == 2) provider.api_key_env = "Anthropic";
+            ProviderClient client(shared_definition(definition), nullptr, &keys,
+                [&](const ProviderHttpRequest& request, const auto&) {
+                    EXPECT_EQ(request.url, "http://127.0.0.1:8080/proxy/v1/messages");
+                    EXPECT_EQ(std::ranges::count(request.headers, "Authorization: Bearer anthropic-test-secret"), credential ? 1 : 0);
+                    EXPECT_EQ(std::ranges::count(request.headers, "anthropic-version: 2026-10-21"), 1);
+                    const auto body = Json::parse(request.body);
+                    EXPECT_EQ(body["max_tokens"], 64000);
+                    auto response = anthropic_response(Json::array({{{"type", "text"}, {"text", "OK"}}}));
+                    return ProviderHttpResponse{200, stream ? "text/event-stream" : "application/json",
+                        stream ? anthropic_stream(response) : response.dump()};
+                });
+            Transcript transcript;
+            auto request = client_request(transcript, 1, "Question");
+            std::atomic_bool cancel{false};
+            std::string answer;
+            const auto result = client.perform(client.prepare(request), [&](GenerationDelta d) { answer += d.text; }, cancel);
+            EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(answer, "OK");
+        }
+    }
+    auto definition = network_definition(8080);
+    definition.provider.config.api = ProviderApi::anthropic;
+    definition.provider.config.api_key_id = "missing";
+    EXPECT_THROW((ProviderClient(shared_definition(definition), nullptr, &keys)), std::exception);
+}
+
+TEST(ProviderClient, AnthropicPreservesSignedPrefixAndParallelResultOrderThroughToolLimit) {
+    for (const bool stream : {false, true}) {
+        for (const bool keep_calling : {false, true}) {
+            auto definition = network_definition(8080, stream);
+            definition.provider.config.api = ProviderApi::anthropic;
+            std::vector<Json> sent, assistant_messages;
+            ProviderClient client(shared_definition(definition), nullptr,
+                [&](const ProviderHttpRequest& request, const auto&) {
+                    const auto body = Json::parse(request.body);
+                    for (const auto* field : {"input", "instructions", "temperature", "reasoning_effort", "reasoning", "provider"}) EXPECT_FALSE(body.contains(field));
+                    if (!sent.empty()) {
+                        EXPECT_EQ(body["system"], sent.front()["system"]);
+                        EXPECT_EQ(body["tools"], sent.front()["tools"]);
+                        const auto& messages = body["messages"];
+                        EXPECT_EQ(messages.size(), 1u + sent.size() * 2);
+                        for (std::size_t i = 0; i < sent.back()["messages"].size(); ++i) {
+                            EXPECT_EQ(messages[i], sent.back()["messages"][i]);
+                        }
+                        EXPECT_EQ(messages[messages.size() - 2], assistant_messages.back());
+                        EXPECT_EQ(messages.back()["role"], "user");
+                        const auto& results = messages.back()["content"];
+                        EXPECT_EQ(results.size(), sent.size() == 1 ? 2u : 1u);
+                        EXPECT_EQ(results[0], (Json{{"type", "tool_result"}, {"tool_use_id", "id-1"}, {"content", "first result"}}));
+                        if (sent.size() == 1) EXPECT_EQ(results[1], (Json{{"type", "tool_result"}, {"tool_use_id", "id-2"}, {"content", "second result"}}));
+                    }
+                    if (sent.size() == 3) EXPECT_EQ(body["tool_choice"], (Json{{"type", "none"}}));
+                    else EXPECT_FALSE(body.contains("tool_choice"));
+                    sent.push_back(body);
+                    auto content = Json::array({{{"type", "thinking"}, {"thinking", ""}, {"signature", "signed-" + std::to_string(sent.size())}},
+                        {{"type", "redacted_thinking"}, {"data", "opaque"}},
+                        {{"type", "text"}, {"text", sent.size() == 4 ? "Final" : "Checking"}}});
+                    const bool calls = sent.size() < 4 || keep_calling;
+                    if (calls) {
+                        content.push_back({{"type", "tool_use"}, {"id", "id-1"}, {"name", "web_search"}, {"input", {{"query", "first"}}}});
+                        if (sent.size() == 1) content.push_back({{"type", "tool_use"}, {"id", "id-2"}, {"name", "web_search"}, {"input", {{"query", "second"}}}});
+                    }
+                    assistant_messages.push_back({{"role", "assistant"}, {"content", content}});
+                    auto response = anthropic_response(content, calls ? "tool_use" : "end_turn");
+                    return ProviderHttpResponse{200, stream ? "text/event-stream" : "application/json",
+                        stream ? anthropic_stream(response) : response.dump()};
+                });
+            Transcript transcript;
+            auto request = client_request(transcript, 1, "Question");
+            std::atomic_int executions{0};
+            request.web_search_tool = [&](std::string_view query, const auto&) {
+                ++executions;
+                return query == "first" ? "first result" : "second result";
+            };
+            std::atomic_bool cancel{false};
+            std::string answer;
+            const auto result = client.perform(client.prepare(request), [&](GenerationDelta d) { answer += d.text; }, cancel);
+            EXPECT_EQ(result.outcome, keep_calling ? GenerationOutcome::protocol_error : GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(executions.load(), 4);
+            ASSERT_EQ(sent.size(), 4u);
+            EXPECT_EQ(result.usage.input_tokens, 16u);
+            EXPECT_EQ(result.usage.output_tokens, 8u);
+            EXPECT_EQ(answer, "Checking\n\nChecking\n\nChecking\n\nFinal");
+        }
+    }
+}
+
+TEST(ProviderClient, AnthropicRejectsTruncatedMaintenanceCallsAndSupportsCurlAndCancellation) {
+    for (const bool stream : {false, true}) {
+        for (const auto* reason : {"max_tokens", "model_context_window_exceeded"}) {
+            auto definition = network_definition(8080, stream);
+            definition.provider.config.api = ProviderApi::anthropic;
+            auto response = anthropic_response(Json::array({{{"type", "tool_use"}, {"id", "id"},
+                {"name", "vault_config_apply"}, {"input", "{incomplete"}}}), reason);
+            // Streaming truncation may leave both JSON and the content block incomplete.
+            const auto truncated = std::string("data: {\"type\":\"message_start\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n")
+                + "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"vault_config_apply\",\"input\":{}}}\n\n"
+                + "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{bad\"}}\n\n"
+                + "data: " + Json{{"type", "message_delta"}, {"delta", {{"stop_reason", reason}}}}.dump()
+                + "\n\ndata: {\"type\":\"message_stop\"}\n\n";
+            ProviderClient client(shared_definition(definition), nullptr, [&](const auto&, const auto&) {
+                return ProviderHttpResponse{200, stream ? "text/event-stream" : "application/json", stream ? truncated : response.dump()};
+            });
+            Transcript transcript;
+            auto request = client_request(transcript, 1, "Question");
+            int executions = 0;
+            request.maintenance_tool = [&](auto, auto, const auto&) { ++executions; return "{}"; };
+            std::atomic_bool cancel{false};
+            const auto result = client.perform(client.prepare(request), [](auto) {}, cancel);
+            EXPECT_EQ(result.message, maintenance_output_limit_message);
+            EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+            EXPECT_EQ(executions, 0);
+        }
+    }
+    const auto message = anthropic_response(Json::array({{{"type", "text"}, {"text", "Answer"}}}));
+    MockHttpServer server({http_response("text/event-stream", anthropic_stream(message))});
+    server.start();
+    auto definition = network_definition(server.port());
+    definition.provider.config.api = ProviderApi::anthropic;
+    ProviderClient client(shared_definition(definition));
+    Transcript transcript;
+    const auto request = client_request(transcript, 1, "Question");
+    std::atomic_bool cancel{false};
+    std::string answer;
+    auto result = client.perform(client.prepare(request), [&](GenerationDelta d) { answer += d.text; }, cancel);
+    server.join();
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+    EXPECT_EQ(answer, "Answer");
+    ASSERT_EQ(server.requests().size(), 1u);
+    EXPECT_TRUE(server.requests()[0].starts_with("POST /v1/messages HTTP/1.1"));
+    cancel = true;
+    EXPECT_EQ(client.perform(client.prepare(request), [](auto) {}, cancel).outcome, GenerationOutcome::cancelled);
+}
+
+TEST(ProviderClient, AnthropicRedactsSavedKeyFromHttpAndSseErrors) {
+    test::TestWorkspace workspace;
+    auto config = WorkspaceConfigStore::open(test::import_test_database(workspace.root()));
+    ApiKeyStore keys(*config);
+    const auto key = keys.create("Anthropic", "anthropic-secret");
+    for (const bool stream : {false, true}) {
+        auto definition = network_definition(8080, stream);
+        definition.provider.config.api = ProviderApi::anthropic;
+        definition.provider.config.api_key_id = key.id;
+        ProviderClient client(shared_definition(definition), nullptr, &keys, [&](const auto&, const auto&) {
+            const auto body = Json{{"type", "error"}, {"error", {{"message", "Rejected anthropic-secret"}}}}.dump();
+            return ProviderHttpResponse{stream ? 200 : 400, stream ? "text/event-stream" : "application/json", stream ? "data: " + body + "\n\n" : body};
+        });
+        Transcript transcript;
+        const auto request = client_request(transcript, 1, "Question");
+        std::atomic_bool cancel{false};
+        const auto result = client.perform(client.prepare(request), [](auto) {}, cancel);
+        EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+        EXPECT_NE(result.message.find("Rejected [REDACTED]"), std::string::npos);
+        EXPECT_EQ(result.message.find("anthropic-secret"), std::string::npos);
+    }
+}
+
+TEST(ProviderClient, AnthropicReturnsEveryToolResultIncludingRejectedCalls) {
+    auto definition = network_definition(8080, false);
+    definition.provider.config.api = ProviderApi::anthropic;
+    int rounds = 0;
+    ProviderClient client(shared_definition(definition), nullptr, [&](const ProviderHttpRequest& wire, const auto&) {
+        const auto body = Json::parse(wire.body);
+        if (++rounds == 1) {
+            auto calls = Json::array();
+            for (int i = 0; i < 5; ++i) calls.push_back({{"type", "tool_use"}, {"id", std::to_string(i)},
+                {"name", "web_search"}, {"input", {{"query", "query"}}}});
+            return ProviderHttpResponse{200, "application/json", anthropic_response(calls, "tool_use").dump()};
+        }
+        EXPECT_EQ(body["tool_choice"], (Json{{"type", "none"}}));
+        const auto& results = body["messages"].back()["content"];
+        EXPECT_EQ(results.size(), 5u);
+        for (std::size_t i = 0; i < results.size(); ++i) {
+            EXPECT_EQ(results[i]["tool_use_id"], std::to_string(i));
+            EXPECT_EQ(results[i]["type"], "tool_result");
+            if (i < 4) EXPECT_EQ(results[i]["content"], "result");
+            else EXPECT_NE(results[i]["content"].get<std::string>().find("limit reached"), std::string::npos);
+        }
+        return ProviderHttpResponse{200, "application/json",
+            anthropic_response(Json::array({{{"type", "text"}, {"text", "Final"}}})).dump()};
+    });
+    Transcript transcript;
+    auto request = client_request(transcript, 1, "Question");
+    std::atomic_int executions{0};
+    request.web_search_tool = [&](auto, const auto&) { ++executions; return "result"; };
+    std::atomic_bool cancel{false};
+    EXPECT_EQ(client.perform(client.prepare(request), [](auto) {}, cancel).outcome, GenerationOutcome::completed);
+    EXPECT_EQ(executions.load(), 4);
+    EXPECT_EQ(rounds, 2);
+}
+
+TEST(ProviderClient, AnthropicCancellationAfterTransportDoesNotExecuteCalls) {
+    auto definition = network_definition(8080, false);
+    definition.provider.config.api = ProviderApi::anthropic;
+    std::atomic_bool cancel{false};
+    ProviderClient client(shared_definition(definition), nullptr, [&](const auto&, const auto&) {
+        cancel = true;
+        return ProviderHttpResponse{200, "application/json", anthropic_response(Json::array({
+            {{"type", "tool_use"}, {"id", "id"}, {"name", "assistant_events"}, {"input", Json::object()}}
+        }), "tool_use").dump()};
+    });
+    Transcript transcript;
+    auto request = client_request(transcript, 1, "Question");
+    int executions = 0;
+    request.maintenance_tool = [&](auto, auto, const auto&) { ++executions; return "{}"; };
+    EXPECT_EQ(client.perform(client.prepare(request), [](auto) {}, cancel).outcome, GenerationOutcome::cancelled);
+    EXPECT_EQ(executions, 0);
+}
+
 } // namespace
 } // namespace cha

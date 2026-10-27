@@ -1523,7 +1523,7 @@ TEST(ChaWebAdapter, WelcomeRepairsAndUndoesThroughChat) {
     const auto first = nlohmann::json::parse(request_body(server.requests()[1]));
     EXPECT_EQ(tool_names(first), (std::vector<std::string>{
         "vault_config_list", "vault_config_read", "vault_config_apply", "add_character",
-        "assistant_logs", "assistant_logging",
+        "assistant_logs", "assistant_events", "assistant_logging",
         "host_config_list", "host_config_read", "host_config_write",
         "assistant_openai_login"}));
     const std::string system = first.at("messages").at(0).at("content").get<std::string>();

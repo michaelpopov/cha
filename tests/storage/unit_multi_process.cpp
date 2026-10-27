@@ -229,6 +229,11 @@ TEST_F(MultiProcessTest, ConcurrentCompatibleSchemaInitializationIsSerialized) {
     ASSERT_TRUE(first.at("ok")) << first;
     ASSERT_TRUE(second.at("ok")) << second;
     EXPECT_NE(first.at("main"), second.at("main"));
+
+    storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_only);
+    auto journal_mode = db.prepare("PRAGMA journal_mode");
+    ASSERT_TRUE(journal_mode.step());
+    EXPECT_EQ(journal_mode.text(0), "wal");
 }
 
 TEST_F(MultiProcessTest, NormalRepositoryShutdownDoesNotWaitForAnotherReadersSnapshot) {
