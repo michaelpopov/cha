@@ -870,46 +870,39 @@ export function App({
     }
   }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
 
-  const compressNote = useCallback<CompressNote>(async (sourceId, signal, ready, skipIneligible) => {
-    if (!noteLeave.beginNoteAction()) {
-      throw new ChaError('invalid_argument', 'A notes action is already in progress.');
-    }
-    const epoch = notesEpochRef.current;
+  const compressNote = useCallback<CompressNote>(async (sourceId, epoch, skipIneligible) => {
+    const checkContext = () => {
+      if (client.contextEpoch() !== epoch) throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
+    };
+    checkContext();
+    if (!noteLeave.beginNoteAction()) throw new ChaError('invalid_argument', 'A notes action is already in progress.');
+    const editorEpoch = notesEpochRef.current;
     const noteId = activeNoteIdRef.current;
     const save = sourceId === noteId ? noteSaveRef.current : null;
-    const sameNote = () => notesEpochRef.current === epoch && activeNoteIdRef.current === noteId;
-    let holdsSlot = true;
     let canceledUncovered = false;
     try {
       if (save?.isOpen) {
         canceledUncovered = save.freeze();
         const admitted = save.inFlightSerial();
-        // With nothing to save, the dialog shows Compressing at once.
         if (admitted !== null || save.hasUnsaved()) {
           await save.waitInFlight();
-          if (signal.aborted || !sameNote()) return false;
-          // As when leaving a note, only a failed save that was in flight stops here;
-          // an older failure gets a new save attempt.
-          if (save.saveError?.serial === admitted || !await save.flushRemaining()) {
-            throw new ChaError('internal_error', save.saveError?.message ?? 'The note could not be saved.');
-          }
+          checkContext();
+          if (save.saveError?.serial === admitted) throw new ChaError('internal_error', save.saveError.message);
+          const saved = await save.flushRemaining();
+          checkContext();
+          if (!saved) throw new ChaError('internal_error', save.saveError?.message ?? 'The note could not be saved.');
         }
       }
-      if (signal.aborted || notesEpochRef.current !== epoch) return false;
-      holdsSlot = false;
-      noteLeave.endNoteAction();
-      ready();
-      const skipped = await client.compressNote(sourceId, signal, skipIneligible);
-      return skipped ?? true;
-    } catch (failure) {
-      if (failure instanceof ChaError && failure.code === 'operation_cancelled') return false;
-      throw failure;
+      checkContext();
+      const result = await client.compressNote(sourceId, epoch, skipIneligible);
+      checkContext();
+      return result;
     } finally {
-      if (save?.isOpen && sameNote()) {
+      if (save?.isOpen && notesEpochRef.current === editorEpoch && activeNoteIdRef.current === noteId) {
         save.unfreeze();
         if (canceledUncovered && save.hasUnsaved() && !save.saveError) save.submitNow();
       }
-      if (holdsSlot) noteLeave.endNoteAction();
+      noteLeave.endNoteAction();
     }
   }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
 

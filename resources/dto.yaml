@@ -1738,6 +1738,29 @@ components:
       type: object
       additionalProperties: true
 
+    NoteCompressionStartResult:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [accepted]
+          properties:
+            accepted:
+              type: boolean
+              enum: [true]
+        - type: object
+          additionalProperties: false
+          required: [skipped]
+          properties:
+            skipped:
+              type: boolean
+              enum: [true]
+    NoteCompressionStatus:
+      type: object
+      additionalProperties: false
+      required: [pending]
+      properties:
+        pending:
+          type: boolean
     NoteContent:
       type: object
       additionalProperties: false

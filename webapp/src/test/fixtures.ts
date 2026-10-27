@@ -391,7 +391,10 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     renameNoteItem: unavailable('notes.rename'),
     setNoteReadOnly: unavailable('notes.setReadOnly'),
     deleteNoteItem: unavailable('notes.delete'),
-    compressNote: unavailable('notes.compress'),
+    contextEpoch: () => 1,
+    compressionStatus: async () => ({ pending: false }),
+    cancelCompression: async () => undefined,
+    compressNote: unavailable('notes.compressStart'),
     ...overrides,
     saveNote: async (id, document) => {
       const result = await (overrides.saveNote ?? unavailable('notes.save'))(id, document);

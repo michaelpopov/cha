@@ -114,7 +114,8 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
 }
 
 export type NotePage = { url: string; title: string; markdown: string };
-export type NoteCompressionSkip = 'already_compressed' | 'too_small';
+export type NoteCompressionStartResult = components['schemas']['NoteCompressionStartResult'];
+export type NoteCompressionStatus = components['schemas']['NoteCompressionStatus'];
 export type NoteBookImport = {
   parent_id: number | null;
   name: string;
@@ -141,6 +142,7 @@ export interface NoteAudioClient {
 }
 
 export interface NotesClient {
+  contextEpoch(): number;
   noteAudio?: NoteAudioClient;
   importEpub: (file: File, items: readonly NoteItem[], parentId: number | null) => Promise<number>;
   readNotePage: (url: string) => Promise<NotePage>;
@@ -156,7 +158,9 @@ export interface NotesClient {
   saveNote: (id: number, document: Record<string, unknown>) => Promise<components['schemas']['NoteSaveResult']>;
   saveNoteScrollPosition: (id: number, scrollTop: number) => Promise<void>;
   setNoteReadOnly: (id: number, readOnly: boolean) => Promise<NoteItem>;
-  compressNote: (id: number, signal: AbortSignal, skipIneligible?: boolean) => Promise<void | NoteCompressionSkip>;
+  compressNote: (id: number, epoch: number, skipIneligible?: boolean) => Promise<NoteCompressionStartResult>;
+  compressionStatus: (id: number, epoch: number) => Promise<NoteCompressionStatus>;
+  cancelCompression: (id: number, epoch: number) => Promise<void>;
   renameNoteItem: (id: number, name: string) => Promise<NoteItem>;
   deleteNoteItem: (id: number) => Promise<void>;
 }

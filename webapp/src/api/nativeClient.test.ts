@@ -628,21 +628,87 @@ describe('notes native client', () => {
     return createNativeChaClient(createFakeNativeBridge(handlers));
   }
 
-  it('keeps single-note compression unchanged and reports folder skips', async () => {
-    const compress = vi.fn().mockReturnValueOnce({}).mockReturnValueOnce({ skipped: 'already_compressed' })
-      .mockReturnValueOnce({ skipped: 'too_small' }).mockReturnValueOnce({});
-    const client = clientFor({ 'notes.compress': compress });
-    const signal = new AbortController().signal;
-    expect(await client.compressNote(4, signal)).toBeUndefined();
+  it('accepts compression and folder skips using the captured context', async () => {
+    const compress = vi.fn().mockReturnValueOnce({ accepted: true }).mockReturnValueOnce({ skipped: true });
+    const client = clientFor({ 'notes.compressStart': compress });
+    expect(await client.compressNote(4, client.contextEpoch())).toEqual({ accepted: true });
     expect(compress).toHaveBeenLastCalledWith({ id: 4 });
-    expect(await client.compressNote(4, signal, true)).toBe('already_compressed');
+    expect(await client.compressNote(4, client.contextEpoch(), true)).toEqual({ skipped: true });
     expect(compress).toHaveBeenLastCalledWith({ id: 4, skip_ineligible: true });
-    expect(await client.compressNote(4, signal, true)).toBe('too_small');
-    expect(await client.compressNote(4, signal, true)).toBeUndefined();
-    for (const invalid of [{ skipped: 'unknown' }, { skipped: true }, { skipped: 'too_small', extra: true }]) {
-      await expect(clientFor({ 'notes.compress': () => invalid }).compressNote(4, signal, true))
-        .rejects.toBeInstanceOf(ChaProtocolError);
-    }
+    await expect(client.compressNote(4, client.contextEpoch() + 1)).rejects.toMatchObject({ code: 'vault_changed' });
+    expect(compress).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([true, false])('resolves a lost compression reply once without resubmitting (pending=%s)', async pending => {
+    const compress = vi.fn(() => { throw new Error('Lost reply'); });
+    const status = vi.fn(() => ({ pending }));
+    const client = clientFor({ 'notes.compressStart': compress, 'notes.compressionStatus': status });
+    if (pending) expect(await client.compressNote(4, client.contextEpoch())).toEqual({ accepted: true });
+    else await expect(client.compressNote(4, client.contextEpoch())).rejects.toThrow('Could not confirm whether compression started. Check Settings → Events before starting again.');
+    expect(compress).toHaveBeenCalledOnce();
+    expect(status).toHaveBeenCalledOnce();
+  });
+
+  it('does not resolve a definite compression rejection through status', async () => {
+    const status = vi.fn();
+    const client = clientFor({ 'notes.compressStart': () => { throw new ChaError('invalid_argument', 'Missing key'); }, 'notes.compressionStatus': status });
+    await expect(client.compressNote(4, client.contextEpoch())).rejects.toThrow('Missing key');
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('confirms a lost cancellation reply through status (pending=%s)', async pending => {
+    const cancel = vi.fn(() => { throw new Error('Lost reply'); });
+    const client = clientFor({ 'notes.compressCancel': cancel, 'notes.compressionStatus': () => ({ pending }) });
+    if (pending) await expect(client.cancelCompression(4, client.contextEpoch())).rejects.toThrow('Could not confirm cancellation');
+    else await expect(client.cancelCompression(4, client.contextEpoch())).resolves.toBeUndefined();
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({ id: 4 });
+  });
+
+  it.each(['linux', 'macos', 'windows'])('exposes compression context on %s independently of audio', async platform => {
+    const status = vi.fn(() => ({ pending: false }));
+    const bridge = createFakeNativeBridge({
+      'bridge.info': () => ({ protocol_version: 1, application_version: 'development', platform }),
+      'app.bootstrap': () => ({ state: 'running', context_epoch: 7, application_version: 'development', bootstrap: bootstrapFixture,
+        capabilities: { can_modify: true, can_transfer_r2: false } }),
+      'notes.compressionStatus': status,
+    });
+    const client = createNativeChaClient(bridge);
+    await client.getBootstrap();
+    expect(client.contextEpoch()).toBe(7);
+    expect(await client.compressionStatus(4, 7)).toEqual({ pending: false });
+    if (platform === 'linux') expect(client.noteAudio).toBeUndefined();
+    bridge.dispose();
+    expect(() => client.contextEpoch()).toThrow(expect.objectContaining({ code: 'application_unavailable' }));
+  });
+
+  it.each(['context', 'connection'])('does not resolve compression through an ended %s', async kind => {
+    const status = vi.fn(() => ({ pending: true }));
+    const bridge = createFakeNativeBridge({ 'notes.compressionStatus': status });
+    bridge.setContextEpoch(1);
+    const client = createNativeChaClient(bridge);
+    const outcome = expect(client.compressNote(4, 1)).rejects.toMatchObject({ code: kind === 'context' ? 'vault_changed' : 'application_unavailable' });
+    if (kind === 'context') bridge.setContextEpoch(2);
+    else bridge.receive({ connection_id: 'view-9', delivery_id: 200, messages: [
+      { connection_id: 'view-9', event: 'app.connectionInvalidated' },
+    ] });
+    await outcome;
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it('forwards compression invalidations only for the live connection and epoch', () => {
+    const bridge = createFakeNativeBridge();
+    bridge.setContextEpoch(1);
+    createNativeChaClient(bridge);
+    const changed = vi.fn();
+    window.addEventListener('cha-note-compression-changed', changed);
+    try {
+      const notice = { connection_id: 'view-9', event: 'notes.compressionChanged', id: 4, context_epoch: 1 };
+      bridge.receive({ connection_id: 'view-9', delivery_id: 1, messages: [notice, { ...notice, context_epoch: 2 }, { ...notice, id: 0 }] });
+      expect(changed).toHaveBeenCalledOnce();
+      expect(changed.mock.calls[0][0].detail).toEqual({ id: 4, epoch: 1 });
+      bridge.receive({ connection_id: 'view-9', delivery_id: 2, messages: [{ connection_id: 'view-9', event: 'app.connectionInvalidated' }, notice] });
+      expect(changed).toHaveBeenCalledOnce();
+    } finally { window.removeEventListener('cha-note-compression-changed', changed); }
   });
 
   it('reads a local note file and validates the reply, including an ordinary prompt', async () => {

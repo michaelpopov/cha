@@ -214,6 +214,7 @@ export function createEnvelopeNativeBridge(options: {
     receive,
     setContextEpoch,
     contextEpoch() {
+      if (disposed) throw new ChaError('application_unavailable', 'The connection to CHA ended.');
       return epoch;
     },
     invoke<T>(
@@ -239,8 +240,7 @@ export function createEnvelopeNativeBridge(options: {
         const abort = () => {
           const request = pending.get(id);
           if (!request) return;
-          // Compression waits for the terminal reply before the next list read.
-          if (method !== 'notes.compress') pending.delete(id);
+          pending.delete(id);
           if (invokeOptions?.cancelMethod) {
             const cancelId = nextId;
             nextId += 1;
@@ -252,9 +252,7 @@ export function createEnvelopeNativeBridge(options: {
               params: { request_id: id },
             });
           }
-          if (method !== 'notes.compress') {
-            reject(new DOMException('The operation was aborted.', 'AbortError'));
-          }
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
         };
         invokeOptions?.signal?.addEventListener('abort', abort, { once: true });
         pending.set(id, {

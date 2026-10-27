@@ -751,6 +751,16 @@ export interface components {
         NoteDocument: {
             [key: string]: unknown;
         };
+        NoteCompressionStartResult: {
+            /** @enum {boolean} */
+            accepted: true;
+        } | {
+            /** @enum {boolean} */
+            skipped: true;
+        };
+        NoteCompressionStatus: {
+            pending: boolean;
+        };
         NoteContent: {
             id: components["schemas"]["NoteId"];
             document: components["schemas"]["NoteDocument"];

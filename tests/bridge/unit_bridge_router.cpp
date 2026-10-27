@@ -115,7 +115,7 @@ void ack_delivery(
 
 nlohmann::json reply_with_id(const nlohmann::json& batch, std::uint64_t id) {
     for (const auto& message : batch.at("messages")) {
-        if (message.contains("id") && message["id"] == id) return message;
+        if (message.contains("ok") && message.contains("id") && message["id"] == id) return message;
     }
     return {};
 }
@@ -157,10 +157,42 @@ protected:
         router_->handle_request(
             connection_,
             request_json(connection_, id, epoch_, method, std::move(params)).dump());
-        const auto batch = wait_delivery(*router_, connection_);
-        EXPECT_TRUE(batch) << method;
-        ack_delivery(*router_, connection_, *batch);
-        return reply_with_id(*batch, id);
+        for (const auto deadline = std::chrono::steady_clock::now() + 5s;
+             std::chrono::steady_clock::now() < deadline;) {
+            const auto batch = wait_delivery(*router_, connection_);
+            if (!batch) break;
+            ack_delivery(*router_, connection_, *batch);
+            auto reply = reply_with_id(*batch, id);
+            if (!reply.empty()) return reply;
+        }
+        ADD_FAILURE() << "No reply for " << method;
+        return {};
+    }
+
+    void wait_compression(std::int64_t id) {
+        for (const auto deadline = std::chrono::steady_clock::now() + 5s;
+             std::chrono::steady_clock::now() < deadline;) {
+            if (!application_->note_compression_status(id, epoch_)["pending"].get<bool>()) return;
+            std::this_thread::sleep_for(2ms);
+        }
+        ADD_FAILURE() << "Compression did not retire";
+    }
+
+    // Provider/result validation tests wait for Events; acceptance has its own tests.
+    nlohmann::json compress_and_wait(nlohmann::json params) {
+        auto accepted = call("notes.compressStart", params);
+        if (!accepted.value("ok", false) || accepted["result"].contains("skipped")) return accepted;
+        wait_compression(params.at("id").get<std::int64_t>());
+        const auto events = application_->list_events(epoch_);
+        if (!events.empty() && events.front().severity == EventSeverity::error) {
+            auto message = events.front().message;
+            const auto reason = message.find(": ");
+            if (reason != std::string::npos) message.erase(0, reason + 2);
+            return {{"ok", false}, {"error", {{"code", "internal_error"}, {"message", message}}}};
+        }
+        const bool committed = !events.empty() && events.front().severity == EventSeverity::success;
+        EXPECT_TRUE(committed) << "Expected a committed compression success event";
+        return {{"ok", committed}, {"result", nlohmann::json::object()}};
     }
 
     test::TestWorkspace workspace_;
@@ -2844,18 +2876,18 @@ TEST_F(BridgeRouterTest, CompressionRefusalsPreserveSavedTextAcrossProviderApis)
                 std::string(api) + (stream ? " streaming" : " non-streaming"), epoch_);
             const auto original = text_document("Original source" + std::string(4096, 'a'));
             application_->save_note(note.id, original, epoch_);
-            expect_note_error(call("notes.compress", {{"id", note.id}}), "internal_error",
+            expect_note_error(compress_and_wait({{"id", note.id}}), "internal_error",
                 "The provider refused to compress this note.");
             EXPECT_FALSE(application_->list_note_items(epoch_).back().has_compressed);
-            ASSERT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
+            ASSERT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
             for (int refusal = 0; refusal < 2; ++refusal) {
-                expect_note_error(call("notes.compress", {{"id", note.id}}), "internal_error",
+                expect_note_error(compress_and_wait({{"id", note.id}}), "internal_error",
                     "The provider refused to compress this note.");
                 EXPECT_EQ(stored_compression(database_, note.id), "Saved compression");
                 EXPECT_TRUE(application_->list_note_items(epoch_).back().has_compressed);
             }
             EXPECT_EQ(application_->get_note(note.id, epoch_).document, original);
-            EXPECT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
+            EXPECT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
             EXPECT_EQ(stored_compression(database_, note.id), "Successful replacement");
             server.join();
         }
@@ -2877,12 +2909,12 @@ TEST_F(BridgeRouterTest, CompressesOriginalAndReplacesOnlyCompleteAnswersAcrossP
                 std::string(api) + (stream ? " stream" : " single"), epoch_);
             const auto original = text_document("Original technical content" + std::string(4096, 'a'));
             application_->save_note(note.id, original, epoch_);
-            EXPECT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
+            EXPECT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
             EXPECT_EQ(stored_compression(database_, note.id), "First compression");
-            EXPECT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
+            EXPECT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
             EXPECT_EQ(stored_compression(database_, note.id), "Updated compression");
-            EXPECT_FALSE(call("notes.compress", {{"id", note.id}})["ok"]);
-            EXPECT_FALSE(call("notes.compress", {{"id", note.id}})["ok"]);
+            EXPECT_FALSE(compress_and_wait({{"id", note.id}})["ok"]);
+            EXPECT_FALSE(compress_and_wait({{"id", note.id}})["ok"]);
             EXPECT_EQ(stored_compression(database_, note.id), "Updated compression");
             EXPECT_EQ(application_->get_note(note.id, epoch_).document, original);
             EXPECT_TRUE(application_->rename_note_item(note.id, note.name + " renamed", epoch_).has_compressed);
@@ -2913,7 +2945,7 @@ TEST_F(BridgeRouterTest, CompressionUsesSelectedEffortAcrossProviderApis) {
             configure_compression(*application_, server.port(), api, false, epoch_);
             ASSERT_TRUE(call("notesSettings.save", {{"compression_provider", "test"},
                 {"compression_reasoning_effort", effort}})["ok"]);
-            ASSERT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
+            ASSERT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
             server.join();
             ASSERT_EQ(server.requests().size(), 1U);
             const auto body = nlohmann::json::parse(request_body(server.requests().front()));
@@ -2927,12 +2959,12 @@ TEST_F(BridgeRouterTest, CompressionUsesSelectedEffortAcrossProviderApis) {
 TEST_F(BridgeRouterTest, CompressionSkipsShortMarkdownBeforeProviderValidation) {
     bootstrap_epoch();
     const auto note = application_->create_note_item({}, NoteItemKind::note, "Source", epoch_);
-    expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
+    expect_note_error(compress_and_wait({{"id", note.id}}), "invalid_argument",
         "This note is under 4 KiB and does not need compression.");
     const auto short_document = text_document(std::string(4095, 'a'));
     ASSERT_GT(short_document.dump().size(), 4096U);
     application_->save_note(note.id, short_document, epoch_);
-    expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
+    expect_note_error(compress_and_wait({{"id", note.id}}), "invalid_argument",
         "This note is under 4 KiB and does not need compression.");
 
     MockHttpServer server({compression_response("chat_completions", false, "Compressed text")});
@@ -2942,7 +2974,7 @@ TEST_F(BridgeRouterTest, CompressionSkipsShortMarkdownBeforeProviderValidation) 
         storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
         note_save_compressed(database, note.id, "Existing compression");
     }
-    expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
+    expect_note_error(compress_and_wait({{"id", note.id}}), "invalid_argument",
         "This note is under 4 KiB and does not need compression.");
     EXPECT_EQ(stored_compression(database_, note.id), "Existing compression");
     EXPECT_EQ(application_->get_note(note.id, epoch_).document, short_document);
@@ -2952,7 +2984,7 @@ TEST_F(BridgeRouterTest, CompressionSkipsShortMarkdownBeforeProviderValidation) 
     for (int i = 0; i < 2048; ++i) text += "é";
     ASSERT_EQ(text.size(), 4096U);
     application_->save_note(note.id, text_document(text), epoch_);
-    ASSERT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
     server.join();
     ASSERT_EQ(server.requests().size(), 1U);
     EXPECT_EQ(stored_compression(database_, note.id), "Compressed text");
@@ -2961,25 +2993,25 @@ TEST_F(BridgeRouterTest, CompressionSkipsShortMarkdownBeforeProviderValidation) 
 TEST_F(BridgeRouterTest, FolderCompressionSkipsStoredAndShortNotesBeforeProviderValidation) {
     bootstrap_epoch();
     const auto note = application_->create_note_item({}, NoteItemKind::note, "Source", epoch_);
-    const auto compress = [&] { return call("notes.compress", {{"id", note.id}, {"skip_ineligible", true}}); };
+    const auto compress = [&] { return compress_and_wait({{"id", note.id}, {"skip_ineligible", true}}); };
     auto reply = compress();
     ASSERT_TRUE(reply["ok"]);
-    EXPECT_EQ(reply["result"], nlohmann::json({{"skipped", "too_small"}}));
+    EXPECT_EQ(reply["result"], nlohmann::json({{"skipped", true}}));
     application_->save_note(note.id, text_document(std::string(4095, 'a')), epoch_);
     reply = compress();
     ASSERT_TRUE(reply["ok"]);
-    EXPECT_EQ(reply["result"]["skipped"], "too_small");
+    EXPECT_EQ(reply["result"]["skipped"], true);
     {
         storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
         note_save_compressed(database, note.id, "Existing compression");
     }
     reply = compress();
     ASSERT_TRUE(reply["ok"]);
-    EXPECT_EQ(reply["result"]["skipped"], "already_compressed");
+    EXPECT_EQ(reply["result"]["skipped"], true);
     application_->save_note(note.id, text_document(std::string(4096, 'a')), epoch_);
     reply = compress();
     ASSERT_TRUE(reply["ok"]);
-    EXPECT_EQ(reply["result"]["skipped"], "already_compressed");
+    EXPECT_EQ(reply["result"]["skipped"], true);
     EXPECT_EQ(stored_compression(database_, note.id), "Existing compression");
 
     const auto eligible = application_->create_note_item({}, NoteItemKind::note, "Eligible", epoch_);
@@ -2987,22 +3019,22 @@ TEST_F(BridgeRouterTest, FolderCompressionSkipsStoredAndShortNotesBeforeProvider
     MockHttpServer server({compression_response("chat_completions", false, "New compression")});
     server.start();
     configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
-    reply = call("notes.compress", {{"id", eligible.id}, {"skip_ineligible", true}});
+    reply = compress_and_wait({{"id", eligible.id}, {"skip_ineligible", true}});
     ASSERT_TRUE(reply["ok"]);
     EXPECT_EQ(reply["result"], nlohmann::json::object());
     EXPECT_EQ(stored_compression(database_, eligible.id), "New compression");
     server.join();
     EXPECT_EQ(server.requests().size(), 1U);
-    EXPECT_FALSE(call("notes.compress", {{"id", eligible.id}, {"skip_ineligible", "true"}})["ok"]);
+    EXPECT_FALSE(compress_and_wait({{"id", eligible.id}, {"skip_ineligible", "true"}})["ok"]);
 }
 
 TEST_F(BridgeRouterTest, CompressionReportsProviderSettingsAndEmptyNotes) {
     bootstrap_epoch();
     const auto note = compression_source(*application_, epoch_);
-    expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
+    expect_note_error(compress_and_wait({{"id", note.id}}), "invalid_argument",
         "Select a compression provider in Settings → Notes.");
     application_->save_note(note.id, text_document(std::string(4096, ' ')), epoch_);
-    expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
+    expect_note_error(compress_and_wait({{"id", note.id}}), "invalid_argument",
         "This note has no text to compress.");
     application_->save_note(note.id, text_document("Original source" + std::string(4096, 'a')), epoch_);
     (void)application_->save_notes_settings({"test"}, epoch_);
@@ -3013,7 +3045,7 @@ TEST_F(BridgeRouterTest, CompressionReportsProviderSettingsAndEmptyNotes) {
         provider["host"] = std::string_view(api) == "responses" ? "api.openai.com" : "api.mistral.ai";
         provider["model"] = std::string_view(api) == "responses" ? "gpt-4o" : "mistral-large-latest";
         (void)application_->update_provider("test", provider, epoch_);
-        expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
+        expect_note_error(compress_and_wait({{"id", note.id}}), "invalid_argument",
             "This compression provider's model does not support high reasoning effort.");
     }
     nlohmann::json provider = application_->get_provider("test", epoch_);
@@ -3023,180 +3055,434 @@ TEST_F(BridgeRouterTest, CompressionReportsProviderSettingsAndEmptyNotes) {
     provider["api_key"] = "missing-key";
     (void)application_->update_provider("test", provider, epoch_);
     // The user can fix a missing key, so the reason must reach the dialog.
-    expect_note_error(call("notes.compress", {{"id", note.id}}), "invalid_argument",
+    expect_note_error(compress_and_wait({{"id", note.id}}), "invalid_argument",
         "API key 'missing-key' does not exist");
 }
 
-TEST_F(BridgeRouterTest, CompressionCancelDuringTheRequestKeepsTheOldText) {
+TEST_F(BridgeRouterTest, CompressionStatusIncludesOnlyJobsInTheRecursiveFolderSubtree) {
     bootstrap_epoch();
-    EXPECT_FALSE(is_control_method(Method::notes_compress_cancel));
-    MockHttpServer server({compression_response("chat_completions", false, "Old compression"),
-        blocked_compression_response}, true);
-    server.start();
-    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
-    const auto note = compression_source(*application_, epoch_);
-    ASSERT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
-    const auto compress = queue_request(
-        *router_, connection_, next_id_, epoch_, "notes.compress", {{"id", note.id}});
-    router_->run_ordinary_tasks();
-    ASSERT_TRUE(server.wait_for_requests(2, 2s));
-    const auto cancel = queue_request(
-        *router_, connection_, next_id_, epoch_, "notes.compressCancel", {{"request_id", compress}});
-    router_->run_ordinary_tasks();
-    auto replies = wait_replies(*router_, connection_, {compress, cancel});
-    ASSERT_EQ(replies.size(), 2U);
-    EXPECT_TRUE(replies[cancel]["ok"]);
-    EXPECT_EQ(replies[compress]["error"]["code"], "operation_cancelled");
-    EXPECT_EQ(stored_compression(database_, note.id), "Old compression");
-    EXPECT_NO_THROW(server.join());
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Folder", epoch_);
+    const auto nested = application_->create_note_item(folder.id, NoteItemKind::folder, "Nested", epoch_);
+    const auto other = application_->create_note_item({}, NoteItemKind::folder, "Other", epoch_);
+    const auto source = [&](std::int64_t parent, std::string name) {
+        const auto note = application_->create_note_item(parent, NoteItemKind::note, std::move(name), epoch_);
+        application_->save_note(note.id, text_document(std::string(4096, 'a')), epoch_);
+        return note;
+    };
+    const auto a = source(nested.id, "A"), b = source(folder.id, "B");
+    const auto c = source(other.id, "C"), idle = source(folder.id, "Idle");
+    MockHttpServer first({blocked_compression_response, blocked_compression_response}, true);
+    MockHttpServer second({blocked_compression_response}, true);
+    first.start(); second.start();
+    configure_compression(*application_, first.port(), "chat_completions", false, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", a.id}})["ok"]);
+    ASSERT_TRUE(first.wait_for_requests(1, 2s));
+    configure_compression(*application_, second.port(), "chat_completions", false, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", b.id}})["ok"]);
+    ASSERT_TRUE(second.wait_for_requests(1, 2s));
+    const auto pending = [&](std::int64_t id) {
+        const auto reply = call("notes.compressionStatus", {{"id", id}});
+        EXPECT_TRUE(reply["ok"]);
+        return reply["result"]["pending"].get<bool>();
+    };
+    EXPECT_TRUE(pending(folder.id));
+    EXPECT_TRUE(pending(nested.id));
+    EXPECT_TRUE(pending(a.id));
+    EXPECT_FALSE(pending(other.id));
+    EXPECT_FALSE(pending(idle.id));
+    ASSERT_TRUE(call("notes.compressCancel", {{"id", a.id}})["ok"]);
+    EXPECT_FALSE(pending(nested.id));
+    EXPECT_TRUE(pending(folder.id));
+    configure_compression(*application_, first.port(), "chat_completions", false, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", c.id}})["ok"]);
+    ASSERT_TRUE(first.wait_for_requests(2, 2s));
+    ASSERT_TRUE(call("notes.compressCancel", {{"id", b.id}})["ok"]);
+    // An unrelated job must not keep this folder disabled after its last job retires.
+    EXPECT_FALSE(pending(folder.id));
+    EXPECT_TRUE(pending(other.id));
+    ASSERT_TRUE(call("notes.compressCancel", {{"id", c.id}})["ok"]);
+    EXPECT_FALSE(pending(other.id));
+    first.join(); second.join();
 }
 
-TEST_F(BridgeRouterTest, CompressionCommittedBeforeCancelStaysSaved) {
+TEST_F(BridgeRouterTest, CompressionFolderStatusClearsAfterAResultIsCommitted) {
     bootstrap_epoch();
-    MockHttpServer server({compression_response("chat_completions", false, "Old compression"),
-        compression_response("chat_completions", false, "New compression")});
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Folder", epoch_);
+    const auto note = application_->create_note_item(folder.id, NoteItemKind::note, "Source", epoch_);
+    application_->save_note(note.id, text_document(std::string(4096, 'a')), epoch_);
+    MockHttpServer server({compression_response("chat_completions", false, "Summary")});
+    server.pause_before_response(1);
     server.start();
     configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
-    const auto note = compression_source(*application_, epoch_);
-    ASSERT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
-    const auto compress = queue_request(
-        *router_, connection_, next_id_, epoch_, "notes.compress", {{"id", note.id}});
-    router_->run_ordinary_tasks();
-    // Wait for the commit, but do not take the reply: Cancel must arrive before its delivery.
-    for (const auto deadline = std::chrono::steady_clock::now() + 5s;
-         stored_compression(database_, note.id) != "New compression"
-         && std::chrono::steady_clock::now() < deadline;) {
-        router_->wait_for_work(5ms);
-    }
-    ASSERT_EQ(stored_compression(database_, note.id), "New compression");
-    const auto cancel = queue_request(
-        *router_, connection_, next_id_, epoch_, "notes.compressCancel", {{"request_id", compress}});
-    router_->run_ordinary_tasks();
-    auto replies = wait_replies(*router_, connection_, {compress, cancel});
-    ASSERT_EQ(replies.size(), 2U);
-    EXPECT_TRUE(replies[cancel]["ok"]);
-    EXPECT_TRUE(replies[compress]["ok"]);
-    EXPECT_EQ(stored_compression(database_, note.id), "New compression");
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    EXPECT_EQ(call("notes.compressionStatus", {{"id", folder.id}})["result"], nlohmann::json({{"pending", true}}));
+    server.resume_responses();
+    wait_compression(note.id);
+    EXPECT_EQ(call("notes.compressionStatus", {{"id", folder.id}})["result"], nlohmann::json({{"pending", false}}));
+    EXPECT_EQ(stored_compression(database_, note.id), "Summary");
     server.join();
 }
 
-TEST_F(BridgeRouterTest, CompressionCancelQueuedBehindStartupIsNotLost) {
+TEST_F(BridgeRouterTest, CompressionCapturesTheKeyBeforeAcceptanceReturns) {
     bootstrap_epoch();
-    // This listener never answers, so the provider cannot finish before Cancel.
-    MockHttpServer silent({});
-    configure_compression(*application_, silent.port(), "chat_completions", false, epoch_);
+    MockHttpServer server({compression_response("chat_completions", false, "Summary")});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    const auto key = application_->create_api_key({.display_name = "Compression", .value = "original-secret"}, epoch_);
+    nlohmann::json provider = application_->get_provider("test", epoch_);
+    for (const char* field : {"id", "used_by", "writable"}) provider.erase(field);
+    provider["api_key"] = key.id;
+    (void)application_->update_provider("test", provider, epoch_);
     const auto note = compression_source(*application_, epoch_);
-    const auto compress = queue_request(
-        *router_, connection_, next_id_, epoch_, "notes.compress", {{"id", note.id}});
-    const auto cancel = queue_request(
-        *router_, connection_, next_id_, epoch_, "notes.compressCancel", {{"request_id", compress}});
-    router_->run_ordinary_tasks();
-    auto replies = wait_replies(*router_, connection_, {compress, cancel});
-    ASSERT_EQ(replies.size(), 2U);
-    EXPECT_TRUE(replies[cancel]["ok"]);
-    EXPECT_EQ(replies[compress]["error"]["code"], "operation_cancelled");
-    EXPECT_EQ(stored_compression(database_, note.id), "");
+    bool changed = false;
+    application_->set_note_compression_changed([&](auto, auto) {
+        if (changed) return;
+        changed = true;
+        // The acceptance notice runs under the lifecycle lock, before the worker
+        // can send. Editing the store directly avoids reacquiring that lock.
+        application_->store().apply_api_key_update(key.id, key.display_name, "replacement-secret");
+    });
+    EXPECT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
+    application_->set_note_compression_changed({});
+    server.join();
+    EXPECT_TRUE(changed);
+    ASSERT_EQ(server.requests().size(), 1U);
+    EXPECT_NE(server.requests().front().find("Authorization: Bearer original-secret"), std::string::npos);
+    EXPECT_EQ(server.requests().front().find("replacement-secret"), std::string::npos);
+    EXPECT_EQ(application_->store().snapshot()->find_api_key(key.id)->value, "replacement-secret");
 }
 
-TEST_F(BridgeRouterTest, ClosingTheConnectionCancelsCompression) {
+TEST_F(BridgeRouterTest, CompressionAndAudioOnTheSameNoteRunIndependently) {
+    bootstrap_epoch();
+    MockHttpServer compression({compression_response("chat_completions", false, "Summary")});
+    compression.start();
+    configure_compression(*application_, compression.port(), "chat_completions", false, epoch_);
+    const auto note = compression_source(*application_, epoch_);
+    (void)application_->set_note_read_only(note.id, true, epoch_);
+    const auto key = application_->create_api_key({.display_name = "Audio", .value = "audio-secret"}, epoch_);
+    MockHttpServer audio({blocked_compression_response}, true);
+    audio.start();
+    (void)application_->save_notes_settings({.compression_provider = "test", .compression_reasoning_effort = "none",
+        .audio_url = "http://127.0.0.1:" + std::to_string(audio.port()), .audio_api_key = key.id}, epoch_);
+    (void)application_->start_background_note_audio(note.id, "Kore", {"Audio source"}, epoch_);
+    ASSERT_TRUE(audio.wait_for_requests(1, 2s));
+    EXPECT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
+    compression.join();
+    EXPECT_EQ(stored_compression(database_, note.id), "Summary");
+    EXPECT_TRUE(application_->background_note_audio_status(note.id, epoch_)["pending"].get<bool>());
+    // Cancelling an already committed compression must not affect audio either.
+    application_->cancel_note_compression(note.id, epoch_);
+    EXPECT_TRUE(application_->background_note_audio_status(note.id, epoch_)["pending"].get<bool>());
+    (void)application_->set_note_read_only(note.id, false, epoch_);
+    audio.join();
+}
+
+TEST_F(BridgeRouterTest, CompressionAcceptsLocallyAndCancelAllowsImmediateRestart) {
+    bootstrap_epoch();
+    MockHttpServer slow({compression_response("chat_completions", false, "Cancelled result")});
+    slow.pause_before_response(1);
+    slow.start();
+    configure_compression(*application_, slow.port(), "chat_completions", false, epoch_);
+    const auto note = compression_source(*application_, epoch_);
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        note_save_compressed(database, note.id, "Previous");
+    }
+    EXPECT_EQ(call("notes.compressStart", {{"id", note.id}})["result"], nlohmann::json({{"accepted", true}}));
+    ASSERT_TRUE(slow.wait_for_requests(1, 2s));
+    EXPECT_EQ(call("notes.compressionStatus", {{"id", note.id}})["result"], nlohmann::json({{"pending", true}}));
+    EXPECT_EQ(call("notes.compressStart", {{"id", note.id}})["error"]["code"], "invalid_argument");
+    EXPECT_EQ(call("notes.compressStart", {{"id", note.id}, {"skip_ineligible", true}})["result"], nlohmann::json({{"skipped", true}}));
+    EXPECT_EQ(application_->list_events(epoch_).front().message, "Compression started for “Source” (note " + std::to_string(note.id) + ").");
+    EXPECT_TRUE(call("notes.compressCancel", {{"id", note.id}})["ok"]);
+    EXPECT_FALSE(application_->note_compression_status(note.id, epoch_)["pending"].get<bool>());
+    EXPECT_EQ(stored_compression(database_, note.id), "Previous");
+
+    MockHttpServer replacement({compression_response("chat_completions", false, "Replacement")});
+    replacement.start();
+    configure_compression(*application_, replacement.port(), "chat_completions", false, epoch_);
+    EXPECT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    slow.resume_responses();
+    slow.join();
+    wait_compression(note.id);
+    replacement.join();
+    EXPECT_EQ(stored_compression(database_, note.id), "Replacement");
+    EXPECT_TRUE(call("notes.compressCancel", {{"id", note.id}})["ok"]);
+    const auto events = application_->list_events(epoch_);
+    EXPECT_EQ(events.size(), 4U);
+    EXPECT_EQ(events.front().severity, EventSeverity::success);
+}
+
+TEST_F(BridgeRouterTest, CompressionForDifferentNotesRunsIndependentlyAndSurvivesConnectionLoss) {
+    bootstrap_epoch();
+    MockHttpServer slow({compression_response("chat_completions", false, "Slow result")});
+    slow.pause_before_response(1);
+    slow.start();
+    configure_compression(*application_, slow.port(), "chat_completions", false, epoch_);
+    const auto a = compression_source(*application_, epoch_);
+    const auto b = application_->create_note_item({}, NoteItemKind::note, "Second", epoch_);
+    application_->save_note(b.id, text_document(std::string(4096, 'b')), epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", a.id}})["ok"]);
+    ASSERT_TRUE(slow.wait_for_requests(1, 2s));
+    router_->close_connection(connection_);
+    connection_ = router_->open_connection();
+    MockHttpServer fast({compression_response("chat_completions", false, "Fast result")});
+    fast.start();
+    configure_compression(*application_, fast.port(), "chat_completions", false, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", b.id}, {"skip_ineligible", true}})["ok"]);
+    wait_compression(b.id);
+    fast.join();
+    EXPECT_EQ(stored_compression(database_, b.id), "Fast result");
+    EXPECT_TRUE(application_->note_compression_status(a.id, epoch_)["pending"].get<bool>());
+    slow.resume_responses();
+    wait_compression(a.id);
+    slow.join();
+    EXPECT_EQ(stored_compression(database_, a.id), "Slow result");
+}
+
+TEST_F(BridgeRouterTest, CompressionDiscardsChangedSourceAndDeletionCancels) {
+    bootstrap_epoch();
+    MockHttpServer server({compression_response("chat_completions", false, "Stale"),
+        compression_response("chat_completions", false, "Deleted")});
+    server.pause_before_response(1);
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    const auto note = compression_source(*application_, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    application_->save_note(note.id, text_document("Changed" + std::string(4096, 'a')), epoch_);
+    server.resume_responses();
+    wait_compression(note.id);
+    EXPECT_EQ(stored_compression(database_, note.id), "");
+    EXPECT_EQ(application_->list_events(epoch_).front().severity, EventSeverity::warning);
+    server.pause_before_response(2);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(server.wait_for_requests(2, 2s));
+    application_->delete_note_item(note.id, epoch_);
+    EXPECT_FALSE(application_->note_compression_status(note.id, epoch_)["pending"].get<bool>());
+    server.resume_responses();
+    server.join();
+    EXPECT_EQ(application_->list_events(epoch_).front().severity, EventSeverity::info);
+}
+
+TEST_F(BridgeRouterTest, CompressionCannotSaveIntoAChangedVault) {
     bootstrap_epoch();
     MockHttpServer server({blocked_compression_response}, true);
     server.start();
     configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
     const auto note = compression_source(*application_, epoch_);
-    (void)queue_request(*router_, connection_, next_id_, epoch_, "notes.compress", {{"id", note.id}});
-    router_->run_ordinary_tasks();
+    const auto copy = application_->create_vault(VaultCreate{.display_name = "Copied", .copy_from = "Test", .password = {}}, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
     ASSERT_TRUE(server.wait_for_requests(1, 2s));
-    router_->close_connection(connection_);
-    // The server returns only after the client has closed the provider request.
-    EXPECT_NO_THROW(server.join());
+    (void)application_->switch_vault(copy.name, {}, epoch_);
+    server.join();
     EXPECT_EQ(stored_compression(database_, note.id), "");
+    EXPECT_FALSE(application_->note_compression_status(note.id, application_->context_epoch())["pending"].get<bool>());
+    storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+    EXPECT_EQ(event_list(database).front().message, "Compression cancelled for “Source” (note " + std::to_string(note.id) + ").");
 }
 
-TEST_F(BridgeRouterTest, CompressionKeepsAResultAfterAnEditButNotAfterDeletion) {
+TEST_F(BridgeRouterTest, CompressionStartEventFailureRejectsBeforeSending) {
     bootstrap_epoch();
-    MockHttpServer server({compression_response("chat_completions", false, "From the original"),
-        compression_response("chat_completions", false, "Too late")});
+    MockHttpServer server({compression_response("chat_completions", false, "Summary")});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    const auto note = compression_source(*application_, epoch_);
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        database.execute("CREATE TRIGGER reject_event BEFORE INSERT ON event_history BEGIN SELECT RAISE(ABORT,'event failure'); END");
+    }
+    EXPECT_EQ(call("notes.compressStart", {{"id", note.id}})["error"]["code"], "command_queue_full");
+    EXPECT_FALSE(application_->note_compression_status(note.id, epoch_)["pending"].get<bool>());
+    EXPECT_FALSE(server.wait_for_requests(1, 50ms));
+    EXPECT_TRUE(application_->list_events(epoch_).empty());
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        database.execute("DROP TRIGGER reject_event");
+    }
+    // A subsequent start proves the server was actually listening during rejection.
+    EXPECT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
+    server.join();
+    EXPECT_EQ(server.requests().size(), 1U);
+}
+
+TEST_F(BridgeRouterTest, CompressionRetiresWhenSuccessEventOrNotificationFails) {
+    bootstrap_epoch();
+    MockHttpServer server({compression_response("chat_completions", false, "Unsaved"),
+        compression_response("chat_completions", false, "Saved")});
     server.pause_before_response(1);
     server.start();
     configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
     const auto note = compression_source(*application_, epoch_);
-    auto compress = queue_request(
-        *router_, connection_, next_id_, epoch_, "notes.compress", {{"id", note.id}});
-    router_->run_ordinary_tasks();
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
     ASSERT_TRUE(server.wait_for_requests(1, 2s));
-    const auto edited = text_document("Edited source" + std::string(4096, 'a'));
-    application_->save_note(note.id, edited, epoch_);
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        note_save_compressed(database, note.id, "Previous");
+        database.execute("CREATE TRIGGER reject_success BEFORE INSERT ON event_history WHEN NEW.severity='success' BEGIN SELECT RAISE(ABORT,'event failure'); END");
+    }
     server.resume_responses();
-    EXPECT_TRUE(wait_replies(*router_, connection_, {compress})[compress]["ok"]);
-    EXPECT_EQ(stored_compression(database_, note.id), "From the original");
-    EXPECT_EQ(application_->get_note(note.id, epoch_).document, edited);
-
-    server.pause_before_response(2);
-    compress = queue_request(
-        *router_, connection_, next_id_, epoch_, "notes.compress", {{"id", note.id}});
-    router_->run_ordinary_tasks();
-    ASSERT_TRUE(server.wait_for_requests(2, 2s));
-    application_->delete_note_item(note.id, epoch_);
-    server.resume_responses();
-    expect_note_error(wait_replies(*router_, connection_, {compress})[compress],
-        "not_found", "That note was not found.");
+    wait_compression(note.id);
+    EXPECT_EQ(stored_compression(database_, note.id), "Previous");
+    EXPECT_EQ(application_->list_events(epoch_).front().severity, EventSeverity::error);
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        database.execute("DROP TRIGGER reject_success");
+    }
+    application_->set_note_compression_changed([](auto, auto) { throw std::runtime_error("Notification failed"); });
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    wait_compression(note.id);
     server.join();
-    EXPECT_NE(request_body(server.requests()[0]).find("Original source"), std::string::npos);
+    EXPECT_EQ(stored_compression(database_, note.id), "Saved");
+    EXPECT_EQ(application_->list_events(epoch_).front().severity, EventSeverity::success);
 }
 
-TEST_F(BridgeRouterTest, CompressionCannotSaveIntoAChangedVault) {
+TEST_F(BridgeRouterTest, CompressionCancellationRetiresEvenWhenItsEventFails) {
     bootstrap_epoch();
-    MockHttpServer server({compression_response("chat_completions", false, "Old compression"),
-        blocked_compression_response}, true);
+    MockHttpServer server({blocked_compression_response}, true);
     server.start();
     configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
     const auto note = compression_source(*application_, epoch_);
-    ASSERT_TRUE(call("notes.compress", {{"id", note.id}})["ok"]);
-    const auto copy = application_->create_vault(VaultCreate{
-        .display_name = "Copied",
-        .copy_from = "Test",
-        .password = {},
-    }, epoch_);
-    const auto compress = queue_request(
-        *router_, connection_, next_id_, epoch_, "notes.compress", {{"id", note.id}});
-    router_->run_ordinary_tasks();
-    ASSERT_TRUE(server.wait_for_requests(2, 2s));
-    (void)application_->switch_vault(copy.name, {}, epoch_);
-    // The server returns only after the vault change has closed the provider request.
-    EXPECT_NO_THROW(server.join());
-    auto replies = wait_replies(*router_, connection_, {compress});
-    ASSERT_EQ(replies.size(), 1U);
-    EXPECT_EQ(replies[compress]["error"]["code"], "vault_changed");
-    EXPECT_EQ(stored_compression(database_, note.id), "Old compression");
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        database.execute("CREATE TRIGGER reject_event BEFORE INSERT ON event_history BEGIN SELECT RAISE(ABORT,'event failure'); END");
+    }
+    EXPECT_TRUE(call("notes.compressCancel", {{"id", note.id}})["ok"]);
+    EXPECT_FALSE(application_->note_compression_status(note.id, epoch_)["pending"].get<bool>());
+    server.join();
+    EXPECT_EQ(stored_compression(database_, note.id), "");
+}
+
+TEST_F(BridgeRouterTest, CompressionRenameAndMovePreserveWorkWhileFolderDeletionCancelsIt) {
+    bootstrap_epoch();
+    MockHttpServer finite({compression_response("chat_completions", false, "Summary")});
+    finite.pause_before_response(1);
+    finite.start();
+    configure_compression(*application_, finite.port(), "chat_completions", false, epoch_);
+    const auto note = compression_source(*application_, epoch_);
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Folder", epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(finite.wait_for_requests(1, 2s));
+    (void)application_->rename_note_item(note.id, "Renamed", epoch_);
+    EXPECT_THROW(application_->delete_note_item(999999, epoch_), app::ApplicationError);
+    EXPECT_TRUE(application_->note_compression_status(note.id, epoch_)["pending"].get<bool>());
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        database.prepare("UPDATE note_items SET parent_id=? WHERE id=?", folder.id, note.id).run();
+    }
+    finite.resume_responses();
+    wait_compression(note.id);
+    finite.join();
+    EXPECT_EQ(stored_compression(database_, note.id), "Summary");
+    EXPECT_NE(application_->list_events(epoch_).front().message.find("“Source”"), std::string::npos);
+    MockHttpServer blocked({blocked_compression_response}, true);
+    blocked.start();
+    configure_compression(*application_, blocked.port(), "chat_completions", false, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(blocked.wait_for_requests(1, 2s));
+    application_->delete_note_item(folder.id, epoch_);
+    EXPECT_FALSE(application_->note_compression_status(note.id, epoch_)["pending"].get<bool>());
+    blocked.join();
+}
+
+TEST_F(BridgeRouterTest, SuccessfulDeleteDoesNotDependOnAFollowupListing) {
+    bootstrap_epoch();
+    const auto target = application_->create_note_item({}, NoteItemKind::folder, "Delete me", epoch_);
+    const auto corrupt = application_->create_note_item({}, NoteItemKind::folder, "Damaged", epoch_);
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        database.execute("PRAGMA ignore_check_constraints=ON");
+        database.prepare("UPDATE note_items SET kind='broken' WHERE id=?", corrupt.id).run();
+    }
+    // A damaged unrelated row makes listing fail, while deleting this folder can succeed.
+    EXPECT_THROW((void)application_->list_note_items(epoch_), app::ApplicationError);
+    EXPECT_TRUE(call("notes.delete", {{"id", target.id}})["ok"]);
+    storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+    auto remaining = database.prepare("SELECT id FROM note_items WHERE id=?", target.id);
+    EXPECT_FALSE(remaining.step());
+}
+
+TEST_F(BridgeRouterTest, FailedDeletePreparationPreservesTheNoteAndItsCompression) {
+    bootstrap_epoch();
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Folder", epoch_);
+    const auto note = compression_source(*application_, epoch_);
+    const auto corrupt = application_->create_note_item({}, NoteItemKind::folder, "Damaged", epoch_);
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        database.prepare("UPDATE note_items SET parent_id=? WHERE id=?", folder.id, note.id).run();
+    }
+    MockHttpServer server({blocked_compression_response}, true);
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        database.execute("PRAGMA ignore_check_constraints=ON");
+        database.prepare("UPDATE note_items SET kind='broken' WHERE id=?", corrupt.id).run();
+    }
+    EXPECT_FALSE(call("notes.delete", {{"id", folder.id}})["ok"]);
+    EXPECT_TRUE(application_->note_compression_status(note.id, epoch_)["pending"].get<bool>());
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        auto present = database.prepare("SELECT id FROM note_items WHERE id=?", folder.id);
+        EXPECT_TRUE(present.step());
+        database.prepare("UPDATE note_items SET kind='folder' WHERE id=?", corrupt.id).run();
+    }
+    EXPECT_TRUE(call("notes.delete", {{"id", folder.id}})["ok"]);
+    EXPECT_FALSE(application_->note_compression_status(note.id, epoch_)["pending"].get<bool>());
+    server.join();
+}
+
+TEST_F(BridgeRouterTest, CompressionConfigurationExportCancelsTheSameVaultContext) {
+    bootstrap_epoch();
+    MockHttpServer server({blocked_compression_response}, true);
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    const auto note = compression_source(*application_, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    // No export destination is configured. Even failed maintenance revokes jobs.
+    try { (void)application_->export_configuration(epoch_); } catch (const std::exception&) {}
+    server.join();
+    EXPECT_EQ(stored_compression(database_, note.id), "");
+    EXPECT_FALSE(application_->note_compression_status(note.id, application_->context_epoch())["pending"].get<bool>());
+}
+
+TEST_F(BridgeRouterTest, CompressionShutdownSignalsTheSharedWorkerControl) {
+    bootstrap_epoch();
+    MockHttpServer server({blocked_compression_response}, true);
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    const auto note = compression_source(*application_, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    application_->request_shutdown();
+    EXPECT_TRUE(application_->join_shutdown(2s));
+    server.join();
+    EXPECT_EQ(stored_compression(database_, note.id), "");
+    storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+    EXPECT_EQ(event_list(database).front().message, "Compression cancelled for “Source” (note " + std::to_string(note.id) + ").");
 }
 
 TEST_F(BridgeRouterTest, CompressionHasNoTransferLimitButKeepsTheIdleTimeout) {
     bootstrap_epoch();
     const auto note = compression_source(*application_, epoch_);
-    {
-        // Without Content-Length, the body ends when the server closes, after the saved 1 s limit.
-        MockHttpServer slow({"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
-            + nlohmann::json{{"choices", nlohmann::json::array({{
-                {"message", {{"content", "Slow compression"}}}, {"finish_reason", "stop"},
-            }})}}.dump()}, false, 1200ms);
-        slow.start();
-        configure_compression(*application_, slow.port(), "chat_completions", false, epoch_, 1, 2);
-        const auto compress = queue_request(
-            *router_, connection_, next_id_, epoch_, "notes.compress", {{"id", note.id}});
-        EXPECT_TRUE(wait_replies(*router_, connection_, {compress})[compress]["ok"]);
-        slow.join();
-    }
+    MockHttpServer slow({"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
+        + nlohmann::json{{"choices", nlohmann::json::array({{{"message", {{"content", "Slow compression"}}}, {"finish_reason", "stop"}}})}}.dump()}, false, 1200ms);
+    slow.start();
+    configure_compression(*application_, slow.port(), "chat_completions", false, epoch_, 1, 2);
+    EXPECT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
+    slow.join();
     EXPECT_EQ(stored_compression(database_, note.id), "Slow compression");
-    // The idle timer starts at the first body byte.
     MockHttpServer stalled({blocked_compression_response + ": waiting\n\n"}, true);
     stalled.start();
     configure_compression(*application_, stalled.port(), "chat_completions", false, epoch_, 1, 1);
-    const auto compress = queue_request(
-        *router_, connection_, next_id_, epoch_, "notes.compress", {{"id", note.id}});
-    expect_note_error(wait_replies(*router_, connection_, {compress})[compress],
-        "internal_error", "HTTP request failed: idle timeout reached");
-    EXPECT_NO_THROW(stalled.join());
+    expect_note_error(compress_and_wait({{"id", note.id}}), "internal_error", "HTTP request failed: idle timeout reached");
+    stalled.join();
     EXPECT_EQ(stored_compression(database_, note.id), "Slow compression");
 }
 
@@ -3500,14 +3786,14 @@ TEST_F(BridgeRouterTest, AnnotationWireContractGuardsAndChatText) {
     EXPECT_EQ(items[1]["kind"], "annotation");
     EXPECT_TRUE(call("notes.get", {{"id", id}})["ok"]);
     EXPECT_TRUE(call("notes.saveScrollPosition", {{"id", id}, {"scroll_top", 17}})["ok"]);
-    for (const auto& method : {"notes.compress", "notes.save", "notes.rename", "notes.delete", "notes.setReadOnly"}) {
+    for (const auto& method : {"notes.compressStart", "notes.save", "notes.rename", "notes.delete", "notes.setReadOnly"}) {
         auto params = nlohmann::json{{"id", id}};
         if (std::string_view(method) == "notes.save") params["document"] = doc;
         if (std::string_view(method) == "notes.rename") params["name"] = "Other";
         if (std::string_view(method) == "notes.setReadOnly") params["read_only"] = false;
         expect_note_error(call(method, params), "invalid_argument", "That item is not a note.");
     }
-    expect_note_error(call("notes.compress", {{"id", id}, {"skip_ineligible", true}}), "invalid_argument", "That item is not a note.");
+    EXPECT_EQ(compress_and_wait({{"id", id}, {"skip_ineligible", true}})["result"], nlohmann::json({{"skipped", true}}));
     EXPECT_FALSE(call("notes.create", {{"parent_id", nullptr}, {"kind", "annotation"}, {"name", "Other"}})["ok"]);
 }
 

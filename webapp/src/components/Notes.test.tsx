@@ -556,7 +556,7 @@ describe('Notes in the application', () => {
   it('opens read-only notes with search and copying available and stays read-only after compression', async () => {
     const locked = { ...plan, read_only: true };
     const saveNote = vi.fn();
-    const compressNote = vi.fn(async () => undefined);
+    const compressNote = vi.fn(async () => ({ accepted: true as const }));
     render(<App client={fixtureClient({
       listNoteItems: async () => [locked],
       getNote: async (id) => ({ id, document: noteDocument('Original text') }),
@@ -581,9 +581,10 @@ describe('Notes in the application', () => {
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Replace' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
     fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
     await waitFor(() => expect(compressNote).toHaveBeenCalledOnce());
-    await within(screen.getByRole('dialog')).findByRole('button', { name: 'Close' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(editor.isEditable).toBe(false);
     expect(saveNote).not.toHaveBeenCalled();
   });
@@ -650,17 +651,15 @@ describe('Notes in the application', () => {
     expect(noteEditor().isEditable).toBe(true);
   });
 
-  it.each([false, true])('saves an edited subfolder note before compression or stops when cancelled (cancel=%s)', async (cancel) => {
+  it('saves an edited subfolder note before acceptance and releases the editor', async () => {
     const nested = { ...study, id: 2, parent_id: study.id, name: 'Nested' };
     const child = { ...plan, parent_id: nested.id };
     let finishSave!: () => void;
-    const saveNote = vi.fn((_id: number, _document: Record<string, unknown>) => new Promise<void>((resolve) => { finishSave = resolve; }));
-    const compressNote = vi.fn(async () => 'too_small' as const);
-    render(<App client={fixtureClient({
-      listNoteItems: async () => [study, nested, child],
-      getNote: async (id) => ({ id, document: noteDocument('Original') }),
-      saveNote, compressNote,
-    })} />);
+    const saveNote = vi.fn((_id: number, _document: Record<string, unknown>) => new Promise<void>(resolve => { finishSave = resolve; }));
+    let finishAcceptance!: (result: { accepted: true }) => void;
+    const compressNote = vi.fn(() => new Promise<{ accepted: true }>(resolve => { finishAcceptance = resolve; }));
+    render(<App client={fixtureClient({ listNoteItems: async () => [study, nested, child],
+      getNote: async id => ({ id, document: noteDocument('Original') }), saveNote, compressNote })} />);
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Nested' }));
@@ -668,56 +667,22 @@ describe('Notes in the application', () => {
     await waitFor(() => expect(noteEditor().isEditable).toBe(true));
     act(() => typeInNote(' edited'));
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
     fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
     await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByRole('listitem')).toHaveTextContent('PlanSaving…');
     expect(compressNote).not.toHaveBeenCalled();
     expect(noteEditor().isEditable).toBe(false);
-    if (cancel) fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await act(async () => finishSave());
-    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Close' })).toBeInTheDocument());
-    if (cancel) {
-      expect(compressNote).not.toHaveBeenCalled();
-      expect(within(dialog).getByRole('listitem')).toHaveTextContent('PlanCancelled');
-      expect(within(dialog).getByRole('status')).toHaveTextContent('Cancelled · 0 / 1 processed');
-    } else {
-      expect(compressNote).toHaveBeenCalledExactlyOnceWith(plan.id, expect.any(AbortSignal), true);
-      expect(within(dialog).getByRole('listitem')).toHaveTextContent('PlanToo small');
-      expect(within(dialog).getByRole('status')).toHaveTextContent('1 / 1 processed');
-    }
-    expect(saveNote.mock.calls[0][1]).toEqual(noteEditor().getJSON());
-    expect(noteEditor().isEditable).toBe(true);
-  });
-
-  it('saves pending edits before compression and cancels during saving without sending', async () => {
-    let finishSave!: () => void;
-    const compressNote = vi.fn();
-    const saveNote = vi.fn((_id: number, _document: Record<string, unknown>) => new Promise<void>((resolve) => { finishSave = resolve; }));
-    render(<App client={fixtureClient({
-      listNoteItems: async () => [plan],
-      getNote: async (id) => ({ id, document: noteDocument('Original') }),
-      saveNote, compressNote,
-    })} />);
-    await openNotes();
-    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
-    act(() => typeInNote(' edited'));
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
-    await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
-    expect(screen.getByRole('status')).toHaveTextContent('Saving “Plan”…');
+    await waitFor(() => expect(compressNote).toHaveBeenCalledExactlyOnceWith(plan.id, 1, true));
     expect(noteEditor().isEditable).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await act(async () => finishSave());
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(compressNote).not.toHaveBeenCalled();
+    await act(async () => finishAcceptance({ accepted: true }));
     expect(noteEditor().isEditable).toBe(true);
     expect(saveNote.mock.calls[0][1]).toEqual(noteEditor().getJSON());
   });
 
   it('does not compress after a failed save and saves again on the next attempt', async () => {
-    const compressNote = vi.fn(async () => undefined);
+    const compressNote = vi.fn(async () => ({ accepted: true as const }));
     const saveNote = vi.fn()
       .mockRejectedValueOnce(new ChaError('internal_error', 'The note could not be saved.'))
       .mockResolvedValue(undefined);
@@ -732,25 +697,26 @@ describe('Notes in the application', () => {
     await waitFor(() => expect(noteEditor().isEditable).toBe(true));
     act(() => typeInNote(' edited'));
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
     fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
-    await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert'))
-      .toHaveTextContent('The note could not be saved.'));
+    await waitFor(() => expect(screen.getAllByRole('alert').some(alert => alert.textContent?.includes('The note could not be saved.'))).toBe(true));
     expect(compressNote).not.toHaveBeenCalled();
     expect(noteEditor().isEditable).toBe(true);
     expect(noteEditor().getText()).toContain('edited');
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }));
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
     fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
     await waitFor(() => expect(compressNote).toHaveBeenCalledOnce());
     expect(saveNote).toHaveBeenCalledTimes(2);
   });
 
-  it('does not delay a window close while the compression request runs', async () => {
+  it('defers a window close only until local compression acceptance finishes', async () => {
     const post = vi.fn();
     window.__CHA_NATIVE_CONNECTION_ID__ = 'view-1';
     window.__CHA_NATIVE_POST__ = post;
     try {
-      const compressNote = vi.fn((_id: number, _signal: AbortSignal) => new Promise<void>(() => undefined));
+      let accept!: (result: { accepted: true }) => void;
+      const compressNote = vi.fn(() => new Promise<{ accepted: true }>(resolve => { accept = resolve; }));
       render(<App client={fixtureClient({
         listNoteItems: async () => [plan],
         getNote: async (id) => ({ id, document: noteDocument('Original') }),
@@ -760,45 +726,19 @@ describe('Notes in the application', () => {
       fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
       await waitFor(() => expect(noteEditor().isEditable).toBe(true));
       fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+      await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
       fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
       await waitFor(() => expect(compressNote).toHaveBeenCalledOnce());
       act(() => window.__CHA_NATIVE_PREPARE_CLOSE__?.(7));
+      expect(post.mock.calls.map(([message]) => JSON.parse(message as string)))
+        .not.toContainEqual(expect.objectContaining({ native_action: 'close_reply', attempt_id: 7 }));
+      await act(async () => accept({ accepted: true }));
       await waitFor(() => expect(post.mock.calls.map(([message]) => JSON.parse(message as string)))
         .toContainEqual({ native_action: 'close_reply', connection_id: 'view-1', attempt_id: 7, result: 'ready' }));
     } finally {
       delete window.__CHA_NATIVE_POST__;
       delete window.__CHA_NATIVE_CONNECTION_ID__;
     }
-  });
-
-  it('keeps editing frozen and delays refresh until cancellation is confirmed', async () => {
-    let fail!: (error: unknown) => void;
-    const compressNote = vi.fn((_id: number, _signal: AbortSignal) => new Promise<void>((_resolve, reject) => { fail = reject; }));
-    const listNoteItems = vi.fn(async () => [{ ...plan, read_only: false, has_compressed: true }]);
-    render(<App client={fixtureClient({
-      listNoteItems,
-      getNote: async (id) => ({ id, document: noteDocument('Original') }),
-      compressNote,
-    })} />);
-    await openNotes();
-    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
-    // The open note has nothing to save, so Saving never shows.
-    expect(screen.getByRole('status')).toHaveTextContent('Compressing “Plan”…');
-    expect(noteEditor().isEditable).toBe(false);
-    await waitFor(() => expect(compressNote).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(compressNote.mock.calls[0][1].aborted).toBe(true);
-    expect(listNoteItems).toHaveBeenCalledTimes(1);
-    expect(noteEditor().isEditable).toBe(false);
-    await act(async () => fail(new ChaError('operation_cancelled', 'Cancelled.')));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(listNoteItems).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(noteEditor().isEditable).toBe(true);
-    expect(screen.getByRole('img', { name: 'Compressed version saved' })).toBeInTheDocument();
   });
 
   it.each([0, 1, 3])('uses an available page title in the tree and Send label with %s existing names', async (count) => {

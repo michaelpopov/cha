@@ -130,7 +130,8 @@
   "notes.save": {"requires_context_epoch": true, "changes_context": false},
   "notes.saveScrollPosition": {"requires_context_epoch": true, "changes_context": false},
   "notes.setReadOnly": {"requires_context_epoch": true, "changes_context": false},
-  "notes.compress": {"requires_context_epoch": true, "changes_context": false},
+  "notes.compressStart": {"requires_context_epoch": true, "changes_context": false},
+  "notes.compressionStatus": {"requires_context_epoch": true, "changes_context": false},
   "notes.compressCancel": {"requires_context_epoch": true, "changes_context": false},
   "notes.rename": {"requires_context_epoch": true, "changes_context": false},
   "notes.delete": {"requires_context_epoch": true, "changes_context": false}

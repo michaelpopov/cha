@@ -922,6 +922,23 @@ void note_save_compressed(
     }
 }
 
+bool note_commit_compressed(storage::SqliteDatabase& database, std::int64_t id,
+    std::string_view source, std::string_view text, std::string_view success_message) {
+    if (text.find_first_not_of(" \t\r\n") == std::string_view::npos)
+        fail(NoteFailure::invalid, "The provider returned no compressed text.");
+    try {
+        storage::SqliteTransaction transaction(database);
+        if (note_get_text(database, id).text != source) return false;
+        database.prepare("UPDATE note_items SET compressed_text=? WHERE id=? AND kind='note'", text, id).run();
+        if (database.changes() != 1) fail(NoteFailure::not_found, missing_note_message);
+        event_append_in_transaction(database, EventSeverity::success, success_message);
+        transaction.commit();
+        return true;
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, NoteFailure::saving, saving_message);
+    }
+}
+
 NoteItem note_rename(
     storage::SqliteDatabase& database,
     std::int64_t id,

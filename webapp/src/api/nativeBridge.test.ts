@@ -26,33 +26,6 @@ const methodPolicies = loadFixture('native-method-policies.json') as Record<stri
 }>;
 
 describe('native bridge', () => {
-  it.each([true, false])('waits for compression outcome after Cancel (saved=%s)', async (saved) => {
-    const post = vi.fn();
-    const bridge = createEnvelopeNativeBridge({ connectionId: 'view', post });
-    bridge.setContextEpoch(1);
-    const cancel = new AbortController();
-    const settled = vi.fn();
-    const request = bridge.invoke('notes.compress', { id: 4 }, {
-      signal: cancel.signal, cancelMethod: 'notes.compressCancel',
-    });
-    void request.then(settled, settled);
-    cancel.abort();
-    cancel.abort();
-    await Promise.resolve();
-    expect(settled).not.toHaveBeenCalled();
-    expect(post).toHaveBeenCalledTimes(2);
-    expect(post.mock.calls[1][0]).toMatchObject({
-      method: 'notes.compressCancel', params: { request_id: 1 },
-    });
-    bridge.receive({ connection_id: 'view', delivery_id: 1, messages: [{
-      connection_id: 'view', context_epoch: 1, id: 1, ok: saved,
-      ...(saved ? { result: {} } : { error: { code: 'operation_cancelled', message: 'Cancelled.' } }),
-    }] });
-    if (saved) await expect(request).resolves.toEqual({});
-    else await expect(request).rejects.toMatchObject({ code: 'operation_cancelled' });
-    bridge.dispose();
-  });
-
   it.each(Object.entries(methodPolicies))(
     'applies the shared reply epoch requirement for %s',
     async (method, policy) => {

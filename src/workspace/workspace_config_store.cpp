@@ -2687,6 +2687,12 @@ void WorkspaceConfigStore::save_compressed_note(std::int64_t id, std::string_vie
     note_save_compressed(*impl_->database, id, text);
 }
 
+bool WorkspaceConfigStore::commit_compressed_note(std::int64_t id, std::string_view source,
+    std::string_view text, std::string_view success_message) {
+    const std::lock_guard lock(impl_->mutex);
+    return note_commit_compressed(*impl_->database, id, source, text, success_message);
+}
+
 NoteItem WorkspaceConfigStore::rename_note_item(
     std::int64_t id,
     std::string_view name) {

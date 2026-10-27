@@ -153,6 +153,17 @@ struct Application::Impl {
     std::optional<std::string> speech_url_override;
     PendingMediaRegistry pending_media{media_resources};
     BackgroundJobs background_jobs;
+    struct CompressionControl {
+        std::shared_ptr<std::atomic_bool> cancel = std::make_shared<std::atomic_bool>(false);
+        std::string name;
+    };
+    // All compression state and retirement use lifecycle_mutex.
+    std::map<std::int64_t, std::shared_ptr<CompressionControl>> compressions;
+    NoteAudioChanged note_compression_changed;
+    void notify_compression(std::int64_t id, std::uint64_t epoch) noexcept;
+    void retire_compression(std::int64_t id, const std::shared_ptr<CompressionControl>& control,
+        std::uint64_t epoch, EventSeverity severity, const std::string& message) noexcept;
+    void cancel_compressions();
     std::mutex background_audio_mutex;
     std::map<std::int64_t, std::shared_ptr<std::atomic_bool>> background_audio;
     // Guarded by lifecycle_mutex; retained across worker replacement.

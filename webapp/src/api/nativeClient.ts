@@ -8,6 +8,8 @@ import {
   type NotePage,
   type TextFileRequest,
   type NotesClient,
+  type NoteCompressionStartResult,
+  type NoteCompressionStatus,
   type NoteAudioInfo,
   type NoteAudioAccepted,
   type NoteAudioBackgroundStatus,
@@ -235,6 +237,26 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       || value.context_epoch !== bridge.contextEpoch()) return;
     window.dispatchEvent(new CustomEvent('cha-note-audio-changed', { detail: { id: value.id, affectedNoteOnly: true } }));
   });
+  function contextEpoch() {
+    if (connectionEnded) throw new ChaError('application_unavailable', 'The connection to CHA ended.');
+    return bridge.contextEpoch();
+  }
+  function requireContext(epoch: number) {
+    if (contextEpoch() !== epoch) throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
+  }
+  bridge.on<unknown>('notes.compressionChanged', value => {
+    if (connectionEnded || !isRecord(value) || value.event !== 'notes.compressionChanged'
+      || typeof value.connection_id !== 'string' || Object.keys(value).length !== 4
+      || !isNoteId(value.id) || !isNoteId(value.context_epoch) || value.context_epoch !== contextEpoch()) return;
+    window.dispatchEvent(new CustomEvent('cha-note-compression-changed', { detail: { id: value.id, epoch: value.context_epoch } }));
+  });
+  async function compressionStatus(id: number, epoch: number): Promise<NoteCompressionStatus> {
+    requireContext(epoch);
+    const result = await bridge.invoke('notes.compressionStatus', { id });
+    requireContext(epoch);
+    if (!isRecord(result) || !hasExactKeys(result, ['pending']) || typeof result.pending !== 'boolean') throw new ChaProtocolError();
+    return result as NoteCompressionStatus;
+  }
   const call = async <T>(
     method: string,
     params: unknown,
@@ -906,14 +928,41 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     saveNoteScrollPosition: async (id, scrollTop) => {
       await call('notes.saveScrollPosition', { id, scroll_top: scrollTop }, isEmptyResult);
     },
-    compressNote: async (id, signal, skipIneligible = false) => {
-      const result = await bridge.invoke('notes.compress', { id, ...(skipIneligible ? { skip_ineligible: true } : {}) }, {
-        signal, cancelMethod: 'notes.compressCancel',
-      });
-      if (isEmptyResult(result)) return;
-      if (skipIneligible && isRecord(result) && hasExactKeys(result, ['skipped'])
-        && (result.skipped === 'already_compressed' || result.skipped === 'too_small')) return result.skipped;
-      throw new ChaProtocolError();
+    contextEpoch,
+    compressionStatus,
+    compressNote: async (id, epoch, skipIneligible = false) => {
+      requireContext(epoch);
+      try {
+        const result = await bridge.invoke('notes.compressStart', { id, ...(skipIneligible ? { skip_ineligible: true } : {}) });
+        requireContext(epoch);
+        if (isRecord(result) && ((hasExactKeys(result, ['accepted']) && result.accepted === true)
+          || (skipIneligible && hasExactKeys(result, ['skipped']) && result.skipped === true))) return result as NoteCompressionStartResult;
+        throw new ChaProtocolError();
+      } catch (failure) {
+        if (backgroundAudioStartRejected(failure)) throw failure;
+        requireContext(epoch);
+        if (failure instanceof ChaError && ['vault_changed', 'application_unavailable', 'server_stopping'].includes(failure.code)) throw failure;
+        try {
+          if ((await compressionStatus(id, epoch)).pending) return { accepted: true };
+        } catch { /* A false or unavailable status cannot resolve a lost reply. */ }
+        requireContext(epoch);
+        throw new ChaError('internal_error', 'Could not confirm whether compression started. Check Settings → Events before starting again.');
+      }
+    },
+    cancelCompression: async (id, epoch) => {
+      requireContext(epoch);
+      try {
+        const result = await bridge.invoke('notes.compressCancel', { id });
+        requireContext(epoch);
+        if (!isEmptyResult(result)) throw new ChaProtocolError();
+      } catch (failure) {
+        requireContext(epoch);
+        if (failure instanceof ChaError && ['vault_changed', 'application_unavailable', 'server_stopping'].includes(failure.code)) throw failure;
+        try { if (!(await compressionStatus(id, epoch)).pending) return; }
+        catch { /* Show an error unless local retirement is confirmed. */ }
+        requireContext(epoch);
+        throw new ChaError('internal_error', 'Could not confirm cancellation. Reopen the note menu and try again.');
+      }
     },
     setNoteReadOnly: (id, readOnly) => call('notes.setReadOnly', { id, read_only: readOnly }, isNoteItem),
     renameNoteItem: (id, name) => call('notes.rename', { id, name }, isNoteItem),

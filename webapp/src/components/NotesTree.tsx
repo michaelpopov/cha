@@ -13,7 +13,7 @@ import { createPortal } from 'react-dom';
 import {
   ChaError,
   publicErrorMessage,
-  type NoteCompressionSkip,
+  type NoteCompressionStartResult,
   type NoteContent,
   type NoteItem,
   type NotesClient,
@@ -22,6 +22,7 @@ import {
   availableNoteName,
   buildNoteIndex,
   focusAfterRemoval,
+  noteInSubtree,
   type NoteTreeRow,
 } from '../notes/tree';
 import { NoteAudioDialog, type NoteAudioTarget } from './NoteAudioDialog';
@@ -57,42 +58,13 @@ type DeleteDialogState = {
   pending: boolean;
 };
 
-type CompressDialogState = {
-  action: 'compress';
-  sourceId: number;
-  name: string;
-  phase: 'saving' | 'compressing';
-  controller: AbortController;
-  pending: boolean;
-  error: string | null;
-};
-
 type CompressedDialogState = {
   action: 'show-compressed';
   sourceId: number;
   name: string;
 };
 
-type FolderCompressionRow = {
-  id: number;
-  name: string;
-  status: 'Saving…' | 'Compressing…' | 'Compressed' | 'Already compressed' | 'Too small' | 'Cancelled' | 'Failed';
-  error?: string;
-};
-
-type FolderCompressDialogState = {
-  action: 'compress-folder';
-  sourceId: number;
-  name: string;
-  controller: AbortController;
-  pending: boolean;
-  total: number;
-  rows: FolderCompressionRow[];
-  error: string | null;
-};
-
-type DialogState = CreateDialogState | RenameDialogState | DeleteDialogState | CompressDialogState
-  | FolderCompressDialogState | CompressedDialogState;
+type DialogState = CreateDialogState | RenameDialogState | DeleteDialogState | CompressedDialogState;
 
 type MenuState = {
   sourceId: string;
@@ -100,6 +72,9 @@ type MenuState = {
   y: number;
   restore: HTMLElement | null;
   audioPending: boolean;
+  identity: number;
+  epoch: number;
+  compressionPending: boolean | null;
 };
 
 export type NoteDeleteResult = 'deleted' | 'refresh-failed' | 'busy' | 'failed';
@@ -117,10 +92,9 @@ export type NoteActions = {
 
 export type SetNoteReadOnly = (id: number, readOnly: boolean) => Promise<NoteItem>;
 
-// True when saved, false when cancelled, or the reason a folder note was skipped.
 export type CompressNote = (
-  id: number, signal: AbortSignal, ready: () => void, skipIneligible?: boolean,
-) => Promise<boolean | NoteCompressionSkip>;
+  id: number, epoch: number, skipIneligible?: boolean,
+) => Promise<NoteCompressionStartResult>;
 
 type RefreshResult = 'applied' | 'ignored' | 'failed';
 
@@ -158,14 +132,22 @@ export function NotesTree({
   const [loaded, setLoaded] = useState(false);
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const [listing, setListing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [compressionSubmitting, setCompressionSubmitting] = useState(false);
   const generation = useRef(0);
   const alive = useRef(true);
   const started = useRef(false);
   const busy = useRef(false);
+  const compressionSubmittingRef = useRef(false);
+  const submission = useRef(0);
+  const pendingRefresh = useRef(false);
+  const menuIdentity = useRef(0);
+  const statusRead = useRef(0);
+  const currentMenu = useRef<MenuState | null>(null);
   const loadedRef = useRef(false);
   const dataRef = useRef(buildNoteIndex([]));
   const signatureRef = useRef<string | null>(null);
@@ -183,6 +165,7 @@ export function NotesTree({
   const staleRef = useRef(stale);
   const listingRef = useRef(listing);
   const dialogRef = useRef(dialog);
+  const audioRunRef = useRef(audioRun);
   clientRef.current = client;
   openRef.current = onOpenNote;
   beforeCreateRef.current = onBeforeCreateNote;
@@ -193,6 +176,8 @@ export function NotesTree({
   staleRef.current = stale;
   listingRef.current = listing;
   dialogRef.current = dialog;
+  audioRunRef.current = audioRun;
+  currentMenu.current = menu;
 
   const index = buildNoteIndex(items);
   index.rows.vault = {
@@ -252,10 +237,8 @@ export function NotesTree({
     alive.current = true;
     return () => {
       alive.current = false;
-      const current = dialogRef.current;
-      if ((current?.action === 'compress' || current?.action === 'compress-folder') && current.pending) {
-        current.controller.abort();
-      }
+      ++submission.current;
+      pendingRefresh.current = false;
     };
   }, []);
 
@@ -283,7 +266,8 @@ export function NotesTree({
     void current.getItemInstance(String(activeNoteId)).scrollTo({ block: 'nearest' }).catch(() => undefined);
   }, [activeNoteId]);
 
-  async function runList(gen: number) {
+  async function runList(gen: number, background = false) {
+    listingRef.current = true;
     setListing(true);
     try {
       const next = await clientRef.current.listNoteItems();
@@ -292,14 +276,19 @@ export function NotesTree({
       setItems(next);
       setLoaded(true);
       setStale(false);
-      setError(null);
+      setListError(null);
+      if (!background) setError(null);
       onNoteItemsRef.current(next);
     } catch (failure: unknown) {
       if (!alive.current || gen !== generation.current) return;
-      setError(publicErrorMessage(failure, 'Could not load notes.'));
+      setListError(publicErrorMessage(failure, 'Could not load notes.'));
       if (loadedRef.current) setStale(true);
     } finally {
-      if (alive.current && gen === generation.current) setListing(false);
+      if (alive.current && gen === generation.current) {
+        listingRef.current = false;
+        setListing(false);
+        flushBackgroundRefresh();
+      }
     }
   }
 
@@ -314,6 +303,54 @@ export function NotesTree({
     const gen = ++generation.current;
     void runList(gen);
   }
+
+  function flushBackgroundRefresh() {
+    if (!alive.current || !pendingRefresh.current || busy.current || compressionSubmittingRef.current
+      || listingRef.current || dialogRef.current !== null || audioRunRef.current !== null
+      || currentMenu.current !== null) return;
+    pendingRefresh.current = false;
+    void runList(++generation.current, true);
+  }
+
+  async function readCompressionStatus(opened: MenuState) {
+    const read = ++statusRead.current;
+    setMenu(current => current?.identity === opened.identity ? { ...current, compressionPending: null } : current);
+    try {
+      const epoch = opened.epoch;
+      const status = await clientRef.current.compressionStatus(Number(opened.sourceId), epoch);
+      if (!alive.current || read !== statusRead.current || currentMenu.current?.identity !== opened.identity
+        || clientRef.current.contextEpoch() !== epoch) return;
+      setMenu(current => current?.identity === opened.identity ? { ...current, compressionPending: status.pending } : current);
+    } catch (failure) {
+      if (!alive.current || read !== statusRead.current || currentMenu.current?.identity !== opened.identity) return;
+      setMenu(current => current?.identity === opened.identity ? { ...current, compressionPending: null } : current);
+      setError(publicErrorMessage(failure, 'Could not read compression status. Reopen the note menu to try again.'));
+    }
+  }
+
+  useEffect(() => {
+    ++submission.current;
+  }, [activeNoteId, browsing]);
+
+  useEffect(() => {
+    const changed = (event: Event) => {
+      const notice = (event as CustomEvent<{ id: number; epoch: number }>).detail;
+      try { if (clientRef.current.contextEpoch() !== notice.epoch) return; }
+      catch { return; }
+      const opened = currentMenu.current;
+      if (opened && noteInSubtree(itemsRef.current, Number(opened.sourceId), notice.id))
+        void readCompressionStatus(opened);
+      pendingRefresh.current = true;
+      flushBackgroundRefresh();
+    };
+    window.addEventListener('cha-note-compression-changed', changed);
+    return () => {
+      pendingRefresh.current = false;
+      window.removeEventListener('cha-note-compression-changed', changed);
+    };
+  }, [client]);
+
+  useEffect(() => { flushBackgroundRefresh(); });
 
   useLayoutEffect(() => {
     const reveal = revealId.current;
@@ -429,6 +466,7 @@ export function NotesTree({
       keepDialogError(failure, 'The item could not be created.');
     } finally {
       busy.current = false;
+      flushBackgroundRefresh();
     }
   }
 
@@ -445,6 +483,7 @@ export function NotesTree({
       if (alive.current) setError(publicErrorMessage(failure, 'The EPUB could not be imported.'));
     } finally {
       busy.current = false;
+      flushBackgroundRefresh();
       if (alive.current) setImporting(false);
     }
   }
@@ -472,8 +511,14 @@ export function NotesTree({
     const note = itemsRef.current.find(entry => String(entry.id) === sourceId);
     const audio = clientRef.current.noteAudio;
     const checkAudio = audio && note?.kind === 'note' && note.read_only;
-    const opened = { sourceId, x: rect.left, y: rect.bottom, restore: anchor, audioPending: !!checkAudio };
+    let epoch: number;
+    try { epoch = clientRef.current.contextEpoch(); }
+    catch (failure) { setError(publicErrorMessage(failure, 'The connection to CHA ended.')); return; }
+    const opened: MenuState = { sourceId, x: rect.left, y: rect.bottom, restore: anchor,
+      audioPending: !!checkAudio, identity: ++menuIdentity.current, epoch, compressionPending: null };
+    currentMenu.current = opened;
     setMenu(opened);
+    if (note && note.kind !== 'annotation') void readCompressionStatus(opened);
     if (!checkAudio) return;
     let audioPending = false;
     try {
@@ -482,7 +527,7 @@ export function NotesTree({
       // Starting generation still checks the native pending status.
     }
     if (alive.current) {
-      setMenu(current => current === opened ? { ...current, audioPending } : current);
+      setMenu(current => current?.identity === opened.identity ? { ...current, audioPending } : current);
     }
   }
 
@@ -536,6 +581,7 @@ export function NotesTree({
       if (alive.current) setError(publicErrorMessage(failure, 'The change could not be saved.'));
     } finally {
       busy.current = false;
+      flushBackgroundRefresh();
     }
   }
 
@@ -567,103 +613,58 @@ export function NotesTree({
     else await submitDelete(captured);
   }
 
-  async function startCompress() {
+  async function cancelCompression() {
+    const epoch = menu?.epoch;
     const source = takeMenuSource();
-    if (!source || !canMutateNow()) return;
-    if (source.kind === 'folder') {
-      await compressFolder(source);
-      return;
-    }
-    const captured: CompressDialogState = {
-      action: 'compress', sourceId: source.id, name: source.name,
-      phase: 'saving', controller: new AbortController(), pending: true, error: null,
-    };
-    busy.current = true;
-    setDialog(captured);
+    if (!source || epoch === undefined) return;
     try {
-      const saved = await onCompressRef.current(source.id, captured.controller.signal, () => {
-        if (alive.current) setDialog((current) => current?.action === 'compress'
-          ? { ...current, phase: 'compressing' } : current);
-      });
-      if (!alive.current) return;
-      if (saved) setDialog({ ...captured, pending: false });
-      const refreshed = await refreshListing(source.id);
-      if (!alive.current) return;
-      if (refreshed === 'failed' && saved) {
-        setDialog((current) => current?.action === 'compress' && current.controller === captured.controller
-          ? { ...current, error: `Compression was saved for “${source.name}”, but the notes list could not be refreshed.` }
-          : current);
-      }
-      if (!saved) setDialog(null);
-    } catch (failure: unknown) {
-      const reason = publicErrorMessage(failure, 'Try again.');
-      if (alive.current) setDialog({ ...captured, pending: false,
-        error: failure instanceof ChaError && failure.code === 'invalid_argument'
-          ? reason : `Could not compress “${source.name}”.\n${reason}` });
-    } finally {
-      busy.current = false;
+      if (clientRef.current.contextEpoch() !== epoch) throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
+      await clientRef.current.cancelCompression(source.id, epoch);
+      pendingRefresh.current = true;
+      flushBackgroundRefresh();
+    } catch (failure) {
+      if (alive.current) setError(publicErrorMessage(failure, 'Could not cancel compression. Reopen the note menu to try again.'));
     }
   }
 
-  async function compressFolder(source: NoteItem) {
-    const notes: NoteTreeRow[] = [];
+  async function startCompress() {
+    const epoch = menu?.epoch;
+    const source = takeMenuSource();
+    if (!source || epoch === undefined || !canMutateNow() || compressionSubmittingRef.current) return;
+    const folder = source.kind === 'folder';
+    const ids: number[] = [];
     const collect = (key: string) => {
       for (const child of index.children[key] ?? []) {
         const row = index.rows[child];
         if (row.kind === 'folder') collect(child);
-        else if (row.kind === 'note') notes.push(row);
+        else if (row.kind === 'note') ids.push(row.noteId!);
       }
     };
-    collect(String(source.id));
-    const controller = new AbortController();
-    const captured: FolderCompressDialogState = {
-      action: 'compress-folder', sourceId: source.id, name: source.name,
-      controller, pending: true, total: notes.length, rows: [], error: null,
-    };
-    const update = (change: (current: FolderCompressDialogState) => FolderCompressDialogState) => {
-      if (alive.current) setDialog((current) => current?.action === 'compress-folder'
-        && current.controller === controller ? change(current) : current);
-    };
-    busy.current = true;
-    setDialog(captured);
+    if (folder) collect(String(source.id));
+    else ids.push(source.id);
+    const invocation = ++submission.current;
+    let accepted = false;
+    compressionSubmittingRef.current = true;
+    setCompressionSubmitting(true);
+    setError(null);
     try {
-      for (const note of notes) {
-        if (!alive.current || controller.signal.aborted) break;
-        const id = note.noteId!;
-        const updateRow = (patch: Partial<FolderCompressionRow>) => update((current) => ({
-          ...current, rows: current.rows.map((row) => row.id === id ? { ...row, ...patch } : row),
-        }));
-        update((current) => ({ ...current, rows: [...current.rows, { id, name: note.name, status: 'Saving…' }] }));
-        try {
-          const result = await onCompressRef.current(id, controller.signal,
-            () => updateRow({ status: 'Compressing…' }), true);
-          updateRow({ status: result === 'already_compressed' ? 'Already compressed'
-            : result === 'too_small' ? 'Too small' : result ? 'Compressed' : 'Cancelled' });
-          if (result === false) {
-            controller.abort();
-            break;
-          }
-        } catch (failure: unknown) {
-          if (!alive.current) break;
-          if (controller.signal.aborted || (failure instanceof ChaError && failure.code === 'operation_cancelled')) {
-            updateRow({ status: 'Cancelled' });
-            controller.abort();
-            break;
-          }
-          updateRow({ status: 'Failed', error: publicErrorMessage(failure, 'Try again.') });
-          // Settings errors would repeat for every remaining note.
-          if (failure instanceof ChaError
-            && (failure.code === 'vault_changed' || failure.code === 'invalid_argument')) break;
-        }
+      for (const id of ids) {
+        if (!alive.current || invocation !== submission.current) break;
+        if (clientRef.current.contextEpoch() !== epoch) break;
+        // Only the single note's preparation owns the notes-action guard in App.
+        if (!folder) busy.current = true;
+        const result = await onCompressRef.current(id, epoch, folder);
+        if ('accepted' in result) accepted = true;
+        if (!alive.current || invocation !== submission.current || clientRef.current.contextEpoch() !== epoch) break;
       }
-      update((current) => ({ ...current, pending: false }));
-      if (!alive.current) return;
-      const refreshed = await refreshListing(source.id);
-      if (refreshed === 'failed') update((current) => ({
-        ...current, error: 'The notes list could not be refreshed.',
-      }));
+    } catch (failure) {
+      if (alive.current) setError(publicErrorMessage(failure, 'Could not start compression. Try again.')
+        + (accepted ? ' Jobs already accepted continue in the background.' : ''));
     } finally {
-      busy.current = false;
+      if (!folder) busy.current = false;
+      compressionSubmittingRef.current = false;
+      if (alive.current) setCompressionSubmitting(false);
+      flushBackgroundRefresh();
     }
   }
 
@@ -704,7 +705,7 @@ export function NotesTree({
       // ANNOTATIONS sorts its groups by note name, so it reloads after the new list.
       if (alive.current && source?.kind === 'note') onSourceChanged?.(source.parent_id);
     } finally {
-      if (alive.current) busy.current = false;
+      if (alive.current) { busy.current = false; flushBackgroundRefresh(); }
     }
   }
 
@@ -743,7 +744,7 @@ export function NotesTree({
         error: publicErrorMessage(failure, 'That item could not be deleted.'),
       });
     } finally {
-      if (alive.current) busy.current = false;
+      if (alive.current) { busy.current = false; flushBackgroundRefresh(); }
     }
   }
 
@@ -775,16 +776,16 @@ export function NotesTree({
 
   return (
     <div className="cha-notes-browser">
-      {error && (
+      {(error ?? listError) && (
         <p className="cha-error-message" role="alert">
-          {error}
+          {error ?? listError}
           {' '}
           {(!loaded || stale) && (
             <button className="cha-button cha-button-ghost" onClick={retryList} type="button">Retry</button>
           )}
         </p>
       )}
-      {!loaded && !error && <p role="status">Loading notes…</p>}
+      {!loaded && !error && !listError && <p role="status">Loading notes…</p>}
       {importing && <p role="status">Importing EPUB…</p>}
       <input
         accept=".epub"
@@ -896,7 +897,11 @@ export function NotesTree({
                   try { setAudioRun({ targets, folderMode, epoch: client.noteAudio!.contextEpoch() }); }
                   catch (failure) { setError(publicErrorMessage(failure, 'The connection to CHA ended.')); }
                 }} role="menuitem" type="button">Generate audio</button>}
-              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button onClick={() => void startCompress()} role="menuitem" type="button">Compress</button>}
+              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button
+                disabled={menu.compressionPending === null || (!menuIsNote && menu.compressionPending)
+                  || (compressionSubmitting && !(menuIsNote && menu.compressionPending))}
+                onClick={() => void (menuIsNote && menu.compressionPending ? cancelCompression() : startCompress())}
+                role="menuitem" type="button">{menuIsNote && menu.compressionPending ? 'Cancel compression' : 'Compress'}</button>}
               {menuIsNote && (
                 <button disabled={!index.rows[menu.sourceId]?.hasCompressed}
                   onClick={showCompressed} role="menuitem" type="button">Show compressed</button>
@@ -949,9 +954,6 @@ export function NotesTree({
           onClose={() => { if (!dialog.pending) setDialog(null); }}
           onSubmit={() => void submitDelete()}
         />
-      )}
-      {(dialog?.action === 'compress' || dialog?.action === 'compress-folder') && (
-        <CompressDialog dialog={dialog} onClose={() => setDialog(null)} />
       )}
       {dialog?.action === 'show-compressed' && (
         <CompressedDialog client={client} sourceId={dialog.sourceId} name={dialog.name}
@@ -1020,81 +1022,6 @@ function CompressedDialog({ client, sourceId, name, onClose }: {
       <div className="cha-dialog-actions">
         {text !== null && <span className="cha-compression-ratio">Compression: {ratio}</span>}
         <button className="cha-button cha-button-ghost" type="button" ref={button} onClick={onClose}>Close</button>
-      </div>
-    </dialog>, document.body,
-  );
-}
-
-function CompressDialog({ dialog, onClose }: {
-  dialog: CompressDialogState | FolderCompressDialogState;
-  onClose(): void;
-}) {
-  const button = useRef<HTMLButtonElement | null>(null);
-  const element = useDialogElement(() => button.current?.focus());
-  const [startedAt] = useState(() => performance.now());
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const rows = dialog.action === 'compress-folder' ? dialog.rows : null;
-  const lastRow = useRef<HTMLLIElement | null>(null);
-  useEffect(() => {
-    lastRow.current?.scrollIntoView?.({ block: 'nearest' });
-  }, [rows?.length]);
-  useEffect(() => {
-    const update = () => setElapsedSeconds(Math.floor((performance.now() - startedAt) / 1000));
-    update();
-    if (!dialog.pending) return;
-    const timer = window.setInterval(update, 1000);
-    return () => window.clearInterval(timer);
-  }, [dialog.pending, startedAt]);
-  return createPortal(
-    <dialog className={`cha-dialog cha-compress-dialog${rows ? ' cha-folder-compress-dialog' : ''}`} ref={element}
-      aria-label={`Compress “${dialog.name}”`}
-      onCancel={(event) => {
-        event.preventDefault();
-        if (!dialog.pending) onClose();
-      }}
-      onKeyDown={(event) => { if (event.key === 'Escape' && dialog.pending) event.preventDefault(); }}>
-      {dialog.action === 'compress-folder' ? (
-        <>
-          <ul className="cha-folder-compress-list" aria-label="Note compression progress" aria-live="polite">
-            {dialog.rows.map((row, position) => {
-              const active = row.status === 'Saving…' || row.status === 'Compressing…';
-              return <li key={row.id} ref={position === dialog.rows.length - 1 ? lastRow : undefined}>
-                <span className={active ? 'cha-compress-spinner' : undefined} aria-hidden="true">
-                  {active ? null : row.status === 'Compressed' ? '✓' : row.status === 'Failed' ? '!'
-                    : row.status === 'Cancelled' ? '×' : '–'}
-                </span>
-                <span>{row.name}</span><span>{row.status}</span>
-                {row.error && <span className="cha-folder-compress-error">{row.error}</span>}
-              </li>;
-            })}
-          </ul>
-          {dialog.error && <p role="alert">{dialog.error}</p>}
-        </>
-      ) : dialog.error ? (
-        <p role="alert">{dialog.error}</p>
-      ) : (
-        <p className="cha-compress-status" role="status">
-          {dialog.pending && <span className="cha-compress-spinner" aria-hidden="true" />}
-          <span>{dialog.pending
-            ? `${dialog.phase === 'saving' ? 'Saving' : 'Compressing'} “${dialog.name}”…`
-            : `Compressed “${dialog.name}”.`}</span>
-        </p>
-      )}
-      <div className={rows ? 'cha-folder-compress-footer' : undefined}>
-        {dialog.action === 'compress-folder' && <span role="status">
-          {!dialog.pending && dialog.controller.signal.aborted ? 'Cancelled · ' : ''}
-          {dialog.rows.filter((row) => ['Compressed', 'Already compressed', 'Too small', 'Failed'].includes(row.status)).length}
-          {' / '}{dialog.total} processed
-        </span>}
-        <p role="timer" aria-label="Elapsed time">
-          {String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:{String(elapsedSeconds % 60).padStart(2, '0')}
-        </p>
-        <div className="cha-dialog-actions">
-          <button className="cha-button" type="button" ref={button}
-            onClick={() => { if (dialog.pending) dialog.controller.abort(); else onClose(); }}>
-            {dialog.pending ? 'Cancel' : 'Close'}
-          </button>
-        </div>
       </div>
     </dialog>, document.body,
   );

@@ -99,6 +99,9 @@ bool note_save(
     const nlohmann::json& document);
 void note_save_compressed(
     storage::SqliteDatabase& database, std::int64_t id, std::string_view text);
+// Checks the saved Markdown and commits the result and success event together.
+bool note_commit_compressed(storage::SqliteDatabase& database, std::int64_t id,
+    std::string_view source, std::string_view text, std::string_view success_message);
 void note_save_scroll_position(
     storage::SqliteDatabase& database, std::int64_t id, std::int64_t scroll_top);
 [[nodiscard]] NoteItem note_set_read_only(
