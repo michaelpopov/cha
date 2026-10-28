@@ -17,6 +17,7 @@ import { noteHeadings, selectNoteEnd, withIsolatedHistory } from '../notes/edito
 import { noteHighlights } from '../notes/highlights';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveDelayMs, type NoteSaveHandle } from '../notes/useNoteSave';
+import * as noteAudio from '../notes/useNoteAudio';
 import type { AppAction } from '../state/view';
 import { fixtureClient } from '../test/fixtures';
 import { VoiceInputSession } from '../voiceInput';
@@ -376,26 +377,115 @@ describe('Notes screen', () => {
     expect(screen.getByRole('menuitem', { name: opposite })).toHaveFocus();
   });
 
-  it('navigates and dismisses the Font size menu without changing the size', async () => {
+  it.each([
+    ['Font size', 'Decrease font size', 'Increase font size'],
+    ['Playback speed', 'Decrease speed', 'Increase speed'],
+  ])('navigates and dismisses the %s menu without changing the preference', async (label, decrease, increase) => {
     const user = userEvent.setup();
     render(<Harness />);
     const editor = await openedEditor();
-    const fontSize = screen.getByRole('button', { name: 'Font size' });
-    await user.click(fontSize);
-    expect(screen.getByRole('menuitem', { name: 'Decrease font size' })).toHaveFocus();
+    const button = screen.getByRole('button', { name: label });
+    await user.click(button);
+    expect(screen.getByRole('menuitem', { name: decrease })).toHaveFocus();
     await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitem', { name: 'Increase font size' })).toHaveFocus();
+    expect(screen.getByRole('menuitem', { name: increase })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitem', { name: decrease })).toHaveFocus();
     await user.keyboard('{Escape}');
-    expect(fontSize).toHaveAttribute('aria-expanded', 'false');
+    expect(button).toHaveAttribute('aria-expanded', 'false');
     expect(editor.view.dom).toHaveFocus();
-    await user.click(fontSize);
+    await user.click(button);
     await user.click(screen.getByRole('button', { name: 'Headings' }));
-    expect(screen.queryByRole('menu', { name: 'Font size' })).not.toBeInTheDocument();
-    await user.click(fontSize);
+    expect(screen.queryByRole('menu', { name: label })).not.toBeInTheDocument();
+    await user.click(button);
     expect(screen.queryByRole('menu', { name: 'Headings' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
-    expect(fontSize).toHaveAttribute('aria-expanded', 'false');
+    expect(button).toHaveAttribute('aria-expanded', 'false');
     expect(editor.view.dom.closest('.cha-notes-document')).toHaveStyle({ fontSize: '14px' });
+    expect(screen.getByRole('button', { name: 'Playback speed' })).toHaveAttribute('title', 'Playback speed: 1.0×');
+  });
+
+  it.each([false, true])('changes playback speed without changing the note, selection, or scroll (read-only: %s)', async (readOnly) => {
+    const hook = vi.spyOn(noteAudio, 'useNoteAudio');
+    const saveNote = vi.fn();
+    render(<Harness saveNote={saveNote} items={[{ ...plan, read_only: readOnly }]} />);
+    const editor = await openedEditor();
+    act(() => { editor.commands.setTextSelection({ from: 2, to: 4 }); });
+    const before = editor.getJSON();
+    const host = editor.view.dom.closest('.cha-notes-document')!;
+    host.scrollTop = 640;
+    const button = screen.getByRole('button', { name: 'Playback speed' });
+    const group = button.closest('.cha-notes-toolbar-group')!;
+    expect(group.previousElementSibling).toContainElement(screen.getByRole('button', { name: 'Font size' }));
+    expect(group.nextElementSibling).toContainElement(screen.getByRole('button', { name: 'Headings' }));
+    expect(group.querySelectorAll('button')).toHaveLength(1);
+    expect(button).toHaveTextContent('');
+    expect(button).toHaveAccessibleDescription('Playback speed: 1.0×');
+    expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ playbackRate: 1 }));
+    fireEvent.click(button);
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Decrease speed', 'Increase speed', 'Default speed']);
+    expect(screen.getByRole('menuitem', { name: 'Default speed' })).toBeDisabled();
+    expect(host.scrollTop).toBe(640);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Increase speed' }));
+    expect(button).toHaveAccessibleName('Playback speed');
+    expect(button).toHaveAttribute('title', 'Playback speed: 1.5×');
+    expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ playbackRate: 1.5 }));
+    expect(button).toHaveAttribute('aria-expanded', 'false');
+    expect(editor.view.dom).toHaveFocus();
+    expect(editor.state.selection.from).toBe(2);
+    expect(editor.state.selection.to).toBe(4);
+    expect(host.scrollTop).toBe(640);
+    expect(editor.getJSON()).toEqual(before);
+    expect(editor.can().undo()).toBe(false);
+    expect(saveNote).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Decrease speed', 'Increase speed', 5, -5],
+    ['Increase speed', 'Decrease speed', 20, 5],
+  ] as const)('steps by 0.5× to the %s limit and restores the default directly', async (action, opposite, limit, direction) => {
+    const hook = vi.spyOn(noteAudio, 'useNoteAudio');
+    render(<Harness />);
+    await openedEditor();
+    const button = screen.getByRole('button', { name: 'Playback speed' });
+    for (let speed = 10 + direction; speed !== limit + direction; speed += direction) {
+      fireEvent.click(button);
+      fireEvent.click(screen.getByRole('menuitem', { name: action }));
+      expect(button).toHaveAttribute('aria-expanded', 'false');
+      expect(button).toHaveAttribute('title', `Playback speed: ${(speed / 10).toFixed(1)}×`);
+      expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ playbackRate: speed / 10 }));
+    }
+    fireEvent.click(button);
+    expect(screen.getByRole('menuitem', { name: action })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: opposite })).toHaveFocus();
+    expect(screen.getByRole('menuitem', { name: 'Default speed' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('menuitem', { name: action }));
+    expect(button).toHaveAttribute('title', `Playback speed: ${(limit / 10).toFixed(1)}×`);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Default speed' }));
+    expect(button).toHaveAttribute('title', 'Playback speed: 1.0×');
+    expect(button).toHaveAttribute('aria-expanded', 'false');
+    expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ playbackRate: 1 }));
+    fireEvent.click(button);
+    expect(screen.getByRole('menuitem', { name: 'Default speed' })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: 'Decrease speed' })).toBeEnabled();
+    expect(screen.getByRole('menuitem', { name: 'Increase speed' })).toBeEnabled();
+  });
+
+  it('keeps playback speed when switching notes and resets it on a new Notes screen', async () => {
+    const hook = vi.spyOn(noteAudio, 'useNoteAudio');
+    const view = render(<Harness />);
+    await openedEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Playback speed' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Decrease speed' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
+    expect(await screen.findByText('Essay text')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Playback speed' })).toHaveAttribute('title', 'Playback speed: 0.5×');
+    expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ id: 5, playbackRate: 0.5 }));
+    view.unmount();
+    render(<Harness />);
+    await openedEditor();
+    expect(screen.getByRole('button', { name: 'Playback speed' })).toHaveAttribute('title', 'Playback speed: 1.0×');
+    expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ playbackRate: 1 }));
   });
 
   it('keeps note actions out of the editor toolbar', async () => {

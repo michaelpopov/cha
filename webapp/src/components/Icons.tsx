@@ -169,6 +169,16 @@ export function SpeakerIcon(props: IconProps) {
   );
 }
 
+// Lucide gauge icon (ISC license).
+export function PlaybackSpeedIcon(props: IconProps) {
+  return (
+    <Icon {...stroke} strokeWidth={2} {...props}>
+      <path d="m12 14 4-4" />
+      <path d="M3.34 19a10 10 0 1 1 17.32 0" />
+    </Icon>
+  );
+}
+
 export function ClearAudioIcon(props: IconProps) {
   return (
     <Icon {...props}>

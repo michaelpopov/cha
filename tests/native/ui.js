@@ -223,6 +223,7 @@ async function nativeParity() {
       for (const focusControl of [false, true]) {
         for (const [name, menu] of [
           ['Increase font size', 'Font size'], ['Decrease font size', 'Font size'],
+          ['Increase speed', 'Playback speed'], ['Default speed', 'Playback speed'],
           ['Bold', 'Edit'], ['Italic', 'Edit'], ['Underline', 'Edit'], ['Highlight', null], ['Code', 'Insert'],
           ['Title', 'Headings'], ['Chapter', 'Headings'], ['Section', 'Headings'],
         ]) {

@@ -54,6 +54,7 @@ import {
   FontSizeIcon,
   HighlighterIcon,
   HistoryIcon,
+  PlaybackSpeedIcon,
   SearchIcon,
   TextFormatIcon,
   TextLinesIcon,
@@ -132,6 +133,7 @@ function runHistory(editor: Editor, command: 'undo' | 'redo') {
 function ToolbarMenu({
   editor,
   label,
+  title = label,
   icon,
   open,
   disabled = false,
@@ -141,6 +143,7 @@ function ToolbarMenu({
 }: {
   editor: Editor;
   label: string;
+  title?: string;
   icon: ReactNode;
   open: boolean;
   disabled?: boolean;
@@ -172,7 +175,7 @@ function ToolbarMenu({
     <div className="cha-notes-toolbar-menu" ref={root}>
       <button
         aria-label={label}
-        title={label}
+        title={title}
         aria-expanded={visible}
         aria-haspopup="menu"
         className="cha-button"
@@ -207,6 +210,8 @@ function FormatBar({
   immutable,
   fontSize,
   onFontSizeChange,
+  playbackSpeed,
+  onPlaybackSpeedChange,
   toolbarRef,
   onFind,
   onPicture,
@@ -220,6 +225,8 @@ function FormatBar({
   immutable: boolean;
   fontSize: number;
   onFontSizeChange(size: number): void;
+  playbackSpeed: number;
+  onPlaybackSpeedChange(speed: number): void;
   toolbarRef: { current: HTMLDivElement | null };
   onFind(): void;
   onPicture(file: File): void;
@@ -228,7 +235,7 @@ function FormatBar({
   uploadEnabled: boolean;
 }) {
   const [, setTick] = useState(0);
-  const [formatMenu, setFormatMenu] = useState<'content' | 'history' | 'edit' | 'font' | 'heading' | 'insert' | 'list' | null>(null);
+  const [formatMenu, setFormatMenu] = useState<'content' | 'history' | 'edit' | 'font' | 'speed' | 'heading' | 'insert' | 'list' | null>(null);
   const [headingsOpen, setHeadingsOpen] = useState(false);
   const listButton = useRef<HTMLButtonElement | null>(null);
   const listMenu = useRef<HTMLDivElement | null>(null);
@@ -462,6 +469,36 @@ function FormatBar({
           >
             Increase font size
           </button>
+        </ToolbarMenu>
+      </div>
+      <div className="cha-notes-toolbar-group">
+        <ToolbarMenu
+          editor={editor}
+          icon={<PlaybackSpeedIcon />}
+          label="Playback speed"
+          title={`Playback speed: ${(playbackSpeed / 10).toFixed(1)}×`}
+          menuClassName="cha-notes-font-menu"
+          onOpenChange={(open) => setFormatMenu(open ? 'speed' : null)}
+          open={formatMenu === 'speed'}
+        >
+          {[
+            { label: 'Decrease speed', speed: Math.max(5, playbackSpeed - 5), disabled: playbackSpeed <= 5 },
+            { label: 'Increase speed', speed: Math.min(20, playbackSpeed + 5), disabled: playbackSpeed >= 20 },
+            { label: 'Default speed', speed: 10, disabled: playbackSpeed === 10 },
+          ].map(({ label, speed, disabled }) => (
+            <button
+              disabled={disabled}
+              key={label}
+              onClick={() => {
+                setFormatMenu(null);
+                onPlaybackSpeedChange(speed);
+              }}
+              role="menuitem"
+              type="button"
+            >
+              {label}
+            </button>
+          ))}
         </ToolbarMenu>
       </div>
       <div className="cha-notes-toolbar-group">
@@ -837,6 +874,7 @@ export function NotesScreen({
   const [phase, setPhase] = useState<Phase>(activeNoteId === null ? 'empty' : 'loading');
   const [editing, setEditing] = useState(false);
   const [fontSize, setFontSize] = useState(14);
+  const [playbackSpeed, setPlaybackSpeed] = useState(10);
   const [openError, setOpenError] = useState<string | null>(null);
   const [promptError, setPromptError] = useState<string | null>(null);
   const [importingFile, setImportingFile] = useState(false);
@@ -869,7 +907,7 @@ export function NotesScreen({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; position: number } | null>(null);
   const noteAudio = useNoteAudio({ client: client.noteAudio, id: activeNoteId, editor,
     enabled: readOnly && !immutable && phase === 'ready', menuOpen: contextMenu !== null,
-    onError: setCommandError });
+    playbackRate: playbackSpeed / 10, onError: setCommandError });
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const findRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
@@ -1369,6 +1407,8 @@ export function NotesScreen({
           immutable={immutable}
           fontSize={fontSize}
           onFontSizeChange={setFontSize}
+          playbackSpeed={playbackSpeed}
+          onPlaybackSpeedChange={setPlaybackSpeed}
           onFind={openFind}
           onPicture={onPicture}
           onUpload={() => fileInput.current?.click()}

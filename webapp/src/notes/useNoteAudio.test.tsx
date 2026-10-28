@@ -17,15 +17,18 @@ class AudioClip {
   onplaying: (() => void) | null = null;
   onpause: (() => void) | null = null;
   currentTime = 0;
-  play = vi.fn(async () => { this.onplaying?.(); });
-  pause = vi.fn(() => { this.onpause?.(); });
+  defaultPlaybackRate = 1;
+  playbackRate = 1;
+  paused = true;
+  play = vi.fn(async () => { this.paused = false; this.onplaying?.(); });
+  pause = vi.fn(() => { this.paused = true; this.onpause?.(); });
   removeAttribute = vi.fn();
   load = vi.fn();
   constructor() { AudioClip.clips.push(this); }
 }
 let editor: Editor;
 let host: HTMLDivElement;
-function setup() {
+function setup(playbackRate = 1) {
   host = document.createElement('div'); host.className = 'cha-notes-document'; document.body.appendChild(host);
   editor = createNotesEditor({ element: host.appendChild(document.createElement('div')),
     content: { type: 'doc', content: [paragraph('First'), paragraph('Second'), paragraph('Third')] },
@@ -39,8 +42,8 @@ function setup() {
     release: vi.fn().mockResolvedValue(undefined),
   };
   const error = vi.fn();
-  const hook = renderHook(({ enabled, menuOpen }) => useNoteAudio({ client, id: 4, editor, enabled, menuOpen, onError: error }),
-    { initialProps: { enabled: true, menuOpen: false } });
+  const hook = renderHook(({ enabled, menuOpen, playbackRate }) => useNoteAudio({ client, id: 4, editor, enabled, menuOpen, playbackRate, onError: error }),
+    { initialProps: { enabled: true, menuOpen: false, playbackRate } });
   return { ...hook, client, error };
 }
 async function flush() { await act(async () => {}); }
@@ -78,6 +81,138 @@ describe('note narration blocks', () => {
 });
 
 describe('note playlist', () => {
+  it('changes the active clip rate without moving, restarting, or unpausing it', async () => {
+    const { result, rerender } = setup(0.5); await flush();
+    expect(AudioClip.clips).toHaveLength(0);
+    act(() => result.current.play(0)); await flush();
+    const audio = AudioClip.clips[0];
+    expect(audio.defaultPlaybackRate).toBe(0.5);
+    expect(audio.playbackRate).toBe(0.5);
+    audio.currentTime = 12;
+    host.scrollTop = 320;
+    rerender({ enabled: true, menuOpen: false, playbackRate: 2 });
+    expect(AudioClip.clips).toEqual([audio]);
+    expect(audio.defaultPlaybackRate).toBe(2);
+    expect(audio.playbackRate).toBe(2);
+    expect(audio.currentTime).toBe(12);
+    expect(audio.paused).toBe(false);
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    expect(audio.pause).not.toHaveBeenCalled();
+    expect(result.current.state).toBe('playing');
+    expect(editor.view.dom.children[0]).toHaveClass('cha-note-audio-current');
+    expect(host.scrollTop).toBe(320);
+
+    act(() => space());
+    rerender({ enabled: true, menuOpen: false, playbackRate: 1.3 });
+    expect(audio.defaultPlaybackRate).toBe(1.3);
+    expect(audio.playbackRate).toBe(1.3);
+    expect(audio.paused).toBe(true);
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    expect(audio.pause).toHaveBeenCalledTimes(1);
+    expect(result.current.state).toBe('paused');
+    act(() => space()); await flush();
+    expect(audio.currentTime).toBe(12);
+    expect(audio.paused).toBe(false);
+    expect(audio.playbackRate).toBe(1.3);
+    expect(result.current.state).toBe('playing');
+    expect(host.scrollTop).toBe(320);
+  });
+
+  it.each(['source', 'audio data'] as const)('uses the latest rate after loading %s for the first and next clips', async (loading) => {
+    const { result, rerender, client } = setup(); await flush();
+    for (const [index, playbackRate] of [1.4, 1.8].entries()) {
+      let resolve!: () => void;
+      if (loading === 'source') {
+        vi.mocked(client.source).mockImplementationOnce(() => new Promise(done => {
+          resolve = () => done({ resource_id: `r${index}`, url: `/media/r${index}`, mime_type: 'audio/mp4', byte_length: 10 });
+        }));
+      } else {
+        vi.mocked(fetchLocalResource).mockImplementationOnce(() => new Promise(done => {
+          resolve = () => done(new Blob(['audio']));
+        }));
+      }
+      act(() => { if (index === 0) result.current.play(0); else AudioClip.clips[0].onended?.(); });
+      await flush();
+      rerender({ enabled: true, menuOpen: false, playbackRate });
+      expect(AudioClip.clips).toHaveLength(index);
+      await act(async () => resolve());
+      const audio = AudioClip.clips[index];
+      expect(audio.defaultPlaybackRate).toBe(playbackRate);
+      expect(audio.playbackRate).toBe(playbackRate);
+      expect(audio.paused).toBe(false);
+      expect(audio.play).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('updates a clip paused before its first playback and resumes at the selected rate', async () => {
+    const { result, rerender } = setup(); await flush();
+    let resolve!: (blob: Blob) => void;
+    vi.mocked(fetchLocalResource).mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    act(() => result.current.play(0));
+    act(() => space());
+    rerender({ enabled: true, menuOpen: false, playbackRate: 1.5 });
+    await act(async () => resolve(new Blob(['audio'])));
+    const audio = AudioClip.clips[0];
+    expect(audio.defaultPlaybackRate).toBe(1.5);
+    expect(audio.playbackRate).toBe(1.5);
+    expect(audio.play).not.toHaveBeenCalled();
+    rerender({ enabled: true, menuOpen: false, playbackRate: 2 });
+    expect(audio.defaultPlaybackRate).toBe(2);
+    expect(audio.playbackRate).toBe(2);
+    expect(audio.paused).toBe(true);
+    expect(result.current.state).toBe('paused');
+    act(() => space()); await flush();
+    expect(audio.paused).toBe(false);
+    expect(audio.playbackRate).toBe(2);
+  });
+
+  it('updates both rates while the first play is pending and preserves an immediate pause', async () => {
+    let resolve!: () => void;
+    const pending = new Promise<void>(done => { resolve = done; });
+    vi.stubGlobal('Audio', class extends AudioClip {
+      play = vi.fn(async () => { this.paused = false; await pending; this.onplaying?.(); });
+    });
+    const { result, rerender } = setup(); await flush();
+    act(() => result.current.play(0)); await flush();
+    const audio = AudioClip.clips[0];
+    rerender({ enabled: true, menuOpen: false, playbackRate: 1.2 });
+    expect(audio.defaultPlaybackRate).toBe(1.2);
+    expect(audio.playbackRate).toBe(1.2);
+    expect(audio.play).toHaveBeenCalledOnce();
+    expect(audio.pause).not.toHaveBeenCalled();
+    expect(result.current.state).toBe('playing');
+    act(() => space());
+    rerender({ enabled: true, menuOpen: false, playbackRate: 1.7 });
+    expect(audio.defaultPlaybackRate).toBe(1.7);
+    expect(audio.playbackRate).toBe(1.7);
+    expect(audio.play).toHaveBeenCalledOnce();
+    expect(result.current.state).toBe('paused');
+    await act(async () => resolve());
+    expect(audio.paused).toBe(true);
+    expect(result.current.state).toBe('paused');
+    act(() => space()); await flush();
+    expect(audio.play).toHaveBeenCalledTimes(2);
+    expect(audio.paused).toBe(false);
+    expect(audio.playbackRate).toBe(1.7);
+    expect(result.current.state).toBe('playing');
+  });
+
+  it('keeps the selected rate after Stop, restart, and the end of the playlist', async () => {
+    const { result, rerender } = setup(); await flush();
+    rerender({ enabled: true, menuOpen: false, playbackRate: 1.6 });
+    expect(result.current.state).toBe('stopped');
+    expect(AudioClip.clips).toHaveLength(0);
+    act(() => result.current.play(0)); await flush();
+    act(() => result.current.stop());
+    act(() => result.current.play(noteAudioBlocks(editor.state.doc)[2].position)); await flush();
+    expect(AudioClip.clips[1].playbackRate).toBe(1.6);
+    act(() => AudioClip.clips[1].onended?.()); await flush();
+    expect(result.current.state).toBe('stopped');
+    act(() => result.current.play(0)); await flush();
+    expect(AudioClip.clips[2].defaultPlaybackRate).toBe(1.6);
+    expect(AudioClip.clips[2].playbackRate).toBe(1.6);
+  });
+
   it('starts at the clicked middle block, plays in order, and stops at the end', async () => {
     const { result, client } = setup(); await flush();
     act(() => result.current.play(noteAudioBlocks(editor.state.doc)[1].position)); await flush();
@@ -177,7 +312,7 @@ describe('note playlist', () => {
     act(() => window.dispatchEvent(new CustomEvent('cha-note-audio-changed', { detail: 9 })));
     expect(result.current.state).toBe('stopped');
     act(() => result.current.play(0)); await flush();
-    rerender({ enabled: false, menuOpen: false });
+    rerender({ enabled: false, menuOpen: false, playbackRate: 1 });
     expect(result.current.state).toBe('stopped');
     expect(editor.view.dom.querySelector('.cha-note-audio-current')).toBeNull();
   });
@@ -188,7 +323,7 @@ describe('note playlist', () => {
     const input = editor.view.dom.appendChild(document.createElement('input'));
     act(() => { expect(space(input)).toBe(true); });
     expect(result.current.state).toBe('playing');
-    rerender({ enabled: true, menuOpen: true });
+    rerender({ enabled: true, menuOpen: true, playbackRate: 1 });
     act(() => { expect(space()).toBe(true); });
     expect(result.current.state).toBe('playing');
     act(() => AudioClip.clips[0].onerror?.());

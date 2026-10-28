@@ -26,13 +26,19 @@ export function noteAudioBlocks(document: ProseMirrorNode): Block[] {
 }
 
 type PlaybackState = 'stopped' | 'playing' | 'paused';
-export function useNoteAudio({ client, id, editor, enabled, menuOpen, onError }: {
+function setPlaybackRate(audio: HTMLAudioElement, rate: number) {
+  audio.defaultPlaybackRate = rate;
+  audio.playbackRate = rate;
+}
+
+export function useNoteAudio({ client, id, editor, enabled, menuOpen, playbackRate, onError }: {
   client: NoteAudioClient | undefined; id: number | null; editor: Editor | null;
-  enabled: boolean; menuOpen: boolean; onError(message: string): void;
+  enabled: boolean; menuOpen: boolean; playbackRate: number; onError(message: string): void;
 }) {
   const [count, setCount] = useState(0);
   const [state, setState] = useState<PlaybackState>('stopped');
-  const actions = useRef<{ play(index: number): void; stop(): void } | null>(null);
+  const actions = useRef<{ play(index: number): void; stop(): void; setRate(rate: number): void } | null>(null);
+  const rate = useRef(playbackRate); rate.current = playbackRate;
   const menu = useRef(menuOpen); menu.current = menuOpen;
   const report = useRef(onError); report.current = onError;
 
@@ -107,6 +113,7 @@ export function useNoteAudio({ client, id, editor, enabled, menuOpen, onError }:
         objectUrl = URL.createObjectURL(blob);
         const clip = new Audio(objectUrl);
         audio = clip;
+        setPlaybackRate(clip, rate.current);
         let revealed = false;
         clip.onended = () => { if (serial === token) void load(index + 1, token); };
         clip.onerror = () => {
@@ -145,7 +152,7 @@ export function useNoteAudio({ client, id, editor, enabled, menuOpen, onError }:
       if (currentState === 'playing') { transition('paused'); audio?.pause(); }
       else { transition('playing'); if (audio) void startClip(audio, serial); }
     }
-    actions.current = { play, stop };
+    actions.current = { play, stop, setRate(value) { if (audio) setPlaybackRate(audio, value); } };
     dom.addEventListener('keydown', keydown);
     window.addEventListener('cha-note-audio-changed', changed);
     return () => {
@@ -154,6 +161,8 @@ export function useNoteAudio({ client, id, editor, enabled, menuOpen, onError }:
       window.removeEventListener('cha-note-audio-changed', changed);
     };
   }, [client, id, editor, enabled]);
+
+  useEffect(() => { actions.current?.setRate(playbackRate); }, [playbackRate]);
 
   function blockAt(position: number) {
     if (!editor || !enabled) return -1;
