@@ -240,6 +240,72 @@ nlohmann::json stored_notes(const std::filesystem::path& path, std::string_view 
     return {{"items", items}, {"audio", audio}, {"sequence", sequence.step() ? sequence.integer(0) : 0}};
 }
 
+TEST(ApplicationVault, ChildCopyAcceptsSourceWithoutFolderStoreSchema) {
+    TwoVaults pair;
+    (void)seed_notes(pair.database_b, "Older source");
+    const auto before = stored_notes(pair.database_b);
+    {
+        storage::SqliteDatabase source(pair.database_b, storage::SqliteDatabase::Mode::read_write);
+        source.execute("DROP TABLE folder_store_files");
+        source.execute("DROP TABLE folder_stores");
+        source.execute("DROP TABLE session_folders");
+    }
+    auto application = Application::open(pair.command);
+    const auto child = application->create_vault({.display_name = "Child", .copy_from = "B"}, application->context_epoch());
+    EXPECT_EQ(stored_notes(child.data), before);
+    (void)application->switch_vault("Child", {}, application->context_epoch());
+    EXPECT_TRUE(application->list_folder_stores(application->context_epoch()).empty());
+    EXPECT_EQ(stored_notes(pair.database_b), before);
+    storage::SqliteDatabase source(pair.database_b, storage::SqliteDatabase::Mode::read_only);
+    EXPECT_FALSE(folder_store_tables_exist(source));
+}
+
+TEST(ApplicationVault, ConfigurationMergeKeepsStoreOwnershipAndUsesTheChangedSavedKey) {
+    TwoVaults pair;
+    {
+        auto source = WorkspaceConfigStore::open(pair.database_b);
+        source->apply_api_key_create("api_key_1", "Source project", "source-secret");
+    }
+    std::promise<void> finished;
+    auto done = finished.get_future();
+    RuntimeSettings settings;
+    settings.folder_store_worker_finished = [&](auto) { finished.set_value(); };
+    auto application = Application::open(pair.command, {}, settings);
+    const auto key = application->create_api_key({.display_name = "Original project", .value = "original-secret"}, application->context_epoch());
+    ASSERT_EQ(key.id, "api_key_1");
+    const auto folder = application->create_note_item({}, NoteItemKind::folder, "Research", application->context_epoch());
+    const auto id = application->store().register_folder_store(folder.id, FolderStoreService::openai, key.id, 1);
+    application->store().save_folder_store_remote_id(id, "vs_original_project");
+    application->store().add_folder_store_file_id(id, "file_original_project");
+    application->store().mark_folder_store_ready(id, "Uploaded");
+    int requests = 0;
+    application->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        ++requests;
+        EXPECT_EQ(request.headers.front().value, "Bearer source-secret");
+        return FolderStoreHttpResponse{.status = 401};
+    });
+    (void)application->merge_vault("B", {}, application->context_epoch());
+    EXPECT_EQ(requests, 0);
+    const auto epoch = application->context_epoch();
+    const auto merged = application->folder_store_record(folder.id, epoch);
+    ASSERT_TRUE(merged);
+    EXPECT_EQ(merged->id, id);
+    EXPECT_EQ(merged->api_key_id, key.id);
+    (void)application->start_folder_store_remove(folder.id, id, epoch);
+    ASSERT_EQ(done.wait_for(2s), std::future_status::ready);
+    const auto status = application->folder_store_operation_status(folder.id, epoch);
+    EXPECT_EQ(status.phase, "failed");
+    EXPECT_EQ(status.result, "error");
+    EXPECT_TRUE(status.known_cleanup_remains);
+    EXPECT_EQ(requests, 2);
+    const auto remaining = application->folder_store_record(folder.id, epoch);
+    ASSERT_TRUE(remaining);
+    EXPECT_EQ(remaining->remote_store_id, "vs_original_project");
+    EXPECT_EQ(remaining->file_ids, std::vector<std::string>({"file_original_project"}));
+    EXPECT_EQ(status.error.find("source-secret"), std::string::npos);
+    EXPECT_EQ(status.error.find("original-secret"), std::string::npos);
+}
+
 TEST(ApplicationVault, NotesFollowWholeCopiesProtectionAndEmptyNewVaults) {
     TwoVaults pair;
     const auto note = seed_notes(pair.database_a, "Original");

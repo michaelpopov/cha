@@ -159,7 +159,12 @@ void SessionRepository::release_pending() {
 void SessionRepository::MaintenanceGuard::retarget(
     std::filesystem::path database_path,
     std::string database_password) {
+    const bool path_changed = repository_->database_path_ != database_path;
     repository_->release_pending();
+    if (path_changed) {
+        SessionJournal welcome(repository_->temporary_database_path_);
+        welcome.clear_folder_associations();
+    }
     repository_->database_path_ = std::move(database_path);
     repository_->database_password_ = std::move(database_password);
 }

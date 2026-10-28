@@ -5,8 +5,10 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -56,6 +58,8 @@ SessionDatabaseMetadata read_session_database_metadata(
 
 SessionRestore load_session_state(const std::filesystem::path& path);
 
+void force_next_session_folder_notice_failure();
+
 LoadedSessionDatabase load_session_database(
     const std::filesystem::path& path,
     const FullSessionId& expected_identity,
@@ -90,6 +94,20 @@ public:
     [[nodiscard]] TranscriptEntry add_note(const NoteText& note, EntryId entry_id);
     [[nodiscard]] TranscriptEntry add_text_file(
         std::string_view name, std::string_view text, EntryId entry_id);
+    // Persistent attach rechecks readiness on this journal connection when
+    // welcome_ready is empty. Welcome supplies a vault callback instead.
+    [[nodiscard]] TranscriptEntry add_folder(
+        std::int64_t folder_id,
+        std::string_view folder_name,
+        EntryId entry_id,
+        std::function<bool(std::int64_t)> welcome_ready = {});
+    [[nodiscard]] TranscriptEntry detach_folder(
+        std::int64_t folder_id,
+        std::string_view folder_name,
+        EntryId entry_id);
+    [[nodiscard]] std::vector<std::int64_t> folder_ids() const;
+    void prune_folders(std::span<const std::int64_t> folder_ids);
+    void clear_folder_associations();
     // Returns the note copies and the file copies for the system prompt.
     [[nodiscard]] std::string notes_prompt() const;
     void complete_turn(RequestId request_id, const TranscriptEntry& response);

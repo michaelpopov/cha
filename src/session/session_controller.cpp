@@ -932,6 +932,13 @@ void SessionController::flush_configuration_notices() {
     pending_notices_.clear();
 }
 
+void SessionController::prune_folder_associations(
+    std::span<const std::int64_t> folder_ids) {
+    persist("prune folder associations", [this, folder_ids] {
+        journal_.prune_folders(folder_ids);
+    });
+}
+
 bool SessionController::record_configuration_notice(std::string text) {
     if (generation_) {
         pending_notices_.push_back(std::move(text));

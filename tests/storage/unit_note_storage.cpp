@@ -1,4 +1,5 @@
 #include "storage/note_storage.h"
+#include "storage/folder_store_storage.h"
 #include "storage/session_label.h"
 #include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
@@ -1022,7 +1023,12 @@ TEST_F(NoteStorageTest, DeleteCascadesAndDoesNotReuseIds) {
         *database_, child.id, NoteItemKind::note, "Grandchild");
     const auto sibling = note_create(
         *database_, std::nullopt, NoteItemKind::note, "Sibling");
+    database_->execute("INSERT INTO forums (forum_id) VALUES ('refs')");
+    database_->execute("INSERT INTO sessions (forum_key,session_id,label,updated_at,history_epoch,next_entry_id,next_request_id) VALUES (1,'s','S',0,1,1,1)");
+    session_folder_insert(*database_, 1, root.id);
+    session_folder_insert(*database_, 1, child.id);
     note_delete(*database_, root.id);
+    EXPECT_TRUE(session_folder_ids(*database_, 1).empty());
     const auto remaining = note_list(*database_);
     ASSERT_EQ(remaining.size(), 1U);
     EXPECT_EQ(remaining.front().id, sibling.id);

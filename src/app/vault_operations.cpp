@@ -2,6 +2,8 @@
 
 #include "app/application_internal.h"
 #include "app/workspace_operations.h"
+#include "storage/folder_store_storage.h"
+#include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
 #include "util/logging.h"
 #include "util/path_name.h"
@@ -246,6 +248,7 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         throw std::runtime_error("CHA application is unavailable");
     }
     app.cancel_compressions();
+    app.interrupt_folder_stores();
     app.state.store(ApplicationState::maintenance);
     GlobalMaintenanceResult reserved = [&] {
         try {
@@ -497,6 +500,16 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
     auto target_use = SessionLease::acquire(candidate.data, vault_in_use_message);
     vault::require_available_database_path(candidate.data);
     write_toml_file(candidate.source, vault::vault_definition_table(candidate));
+    const auto remove_unpublished = [&] {
+        std::error_code ignored;
+        std::filesystem::remove(candidate.source, ignored);
+        std::filesystem::remove(candidate.data, ignored);
+        for (const auto suffix : {"-journal", "-wal", "-shm"}) {
+            auto sidecar = candidate.data;
+            sidecar += suffix;
+            std::filesystem::remove(sidecar, ignored);
+        }
+    };
     try {
         if (copied != nullptr) {
             std::string source_password;
@@ -513,6 +526,11 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
                 candidate.data,
                 source_password,
                 create.password);
+            storage::SqliteDatabase destination(
+                candidate.data, storage::SqliteDatabase::Mode::read_write, create.password);
+            storage::SqliteTransaction transaction(destination);
+            folder_store_clear_ownership(destination);
+            transaction.commit();
         } else {
             create_workspace_session_database_from_configuration(
                 app.current_vault_.get().data,
@@ -521,8 +539,7 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
                 create.password);
         }
     } catch (...) {
-        std::error_code ignored;
-        std::filesystem::remove(candidate.source, ignored);
+        remove_unpublished();
         throw;
     }
 

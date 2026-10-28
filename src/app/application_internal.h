@@ -7,6 +7,7 @@
 #include "app/xai_voice_session.h"
 #include "media/pending_media_registry.h"
 #include "providers/api_key_store.h"
+#include "providers/folder_store_client.h"
 #include "providers/openai_oauth.h"
 #include "providers/providers.h"
 #include "storage/session_repository.h"
@@ -14,6 +15,7 @@
 #include "session/session_mirror.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <map>
 #include <set>
 
@@ -182,6 +184,69 @@ struct Application::Impl {
     void run_note_audio(NoteAudioAttempt attempt, std::uint64_t epoch,
         std::shared_ptr<std::atomic_bool> cancel, std::string voice, std::string jsonl);
     void interrupt_abandoned_audio();
+    enum class FolderStoreOpKind { upload, remove, folder_delete };
+    enum class FolderStorePhase {
+        preparing,
+        uploading,
+        indexing,
+        cleaning,
+        removing,
+        completed,
+        failed,
+        cancelled,
+        warning
+    };
+    struct FolderStoreControl {
+        std::int64_t operation_id{};
+        std::uint64_t epoch{};
+        FolderStoreOpKind kind{FolderStoreOpKind::upload};
+        std::int64_t root_id{};
+        std::optional<std::int64_t> store_record_id;
+        FolderStorePhase phase{FolderStorePhase::preparing};
+        std::int64_t completed{};
+        std::int64_t total{};
+        std::string error;
+        std::string result;
+        bool terminal{};
+        // Retained across failed-delete retries, even after a warned store is gone.
+        bool warned{};
+        bool known_cleanup_remains{};
+        bool delete_failed{};
+        bool folder_deleted{};
+        std::shared_ptr<std::atomic_bool> cancel_forward =
+            std::make_shared<std::atomic_bool>(false);
+        std::shared_ptr<std::atomic_bool> cancel_all =
+            std::make_shared<std::atomic_bool>(false);
+        std::mutex wait_mutex;
+        std::condition_variable wait_cv;
+        std::string vault_name;
+        std::string folder_name;
+        FolderStoreService service{FolderStoreService::openai};
+        std::string api_key_id;
+        std::optional<std::string> unsaved_store_id;
+        std::vector<std::string> unsaved_file_ids;
+    };
+    std::map<std::int64_t, std::shared_ptr<FolderStoreControl>> folder_store_controls;
+    std::int64_t next_folder_store_operation{1};
+    FolderStoreTransport folder_store_transport;
+    void interrupt_folder_stores();
+    [[nodiscard]] bool folder_in_delete_subtree(std::int64_t folder_id);
+    [[nodiscard]] bool folder_store_reserved(std::int64_t folder_id);
+    [[nodiscard]] bool folder_store_blocks_delete(std::int64_t item_id);
+    [[nodiscard]] std::shared_ptr<FolderStoreControl> folder_store_operation(std::int64_t operation_id);
+    void retire_deleted_note_work(const std::vector<std::int64_t>& note_ids, std::uint64_t epoch);
+    void release_folder_store_control_locked(const std::shared_ptr<FolderStoreControl>& control);
+    [[nodiscard]] bool folder_store_lifetime_locked(
+        const std::shared_ptr<FolderStoreControl>& control,
+        std::optional<std::int64_t> store_id = {});
+    [[nodiscard]] bool folder_store_lifetime(
+        const std::shared_ptr<FolderStoreControl>& control,
+        std::optional<std::int64_t> store_id = {});
+    void run_folder_store_upload(std::shared_ptr<FolderStoreControl> control);
+    void run_folder_store_remove(std::shared_ptr<FolderStoreControl> control);
+    void run_folder_store_delete(std::shared_ptr<FolderStoreControl> control, bool retry);
+    bool launch_folder_store_control(
+        const std::shared_ptr<FolderStoreControl>& control, std::function<void()> work);
     XaiVoiceSessions xai_voice{background_jobs};
     mutable std::timed_mutex lifecycle_mutex;
     std::atomic_bool stopping_flag{};

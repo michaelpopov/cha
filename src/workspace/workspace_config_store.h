@@ -3,6 +3,7 @@
 #include "characters/character_config.h"
 #include "chat/character_metadata.h"
 #include "providers/credentials.h"
+#include "storage/folder_store_storage.h"
 #include "storage/note_storage.h"
 #include "storage/event_storage.h"
 #include "storage/session_lease.h"
@@ -378,6 +379,40 @@ public:
         std::int64_t id,
         std::string_view name);
     void delete_note_item(std::int64_t id);
+    [[nodiscard]] std::optional<FolderStoreRecord> get_folder_store(std::int64_t store_id) const;
+    [[nodiscard]] std::optional<FolderStoreRecord> get_folder_store_by_folder(
+        std::int64_t folder_id) const;
+    [[nodiscard]] std::vector<FolderStoreRecord> list_folder_stores() const;
+    [[nodiscard]] std::vector<FolderStoreRecord> folder_stores_in_subtree(
+        std::int64_t folder_id) const;
+    [[nodiscard]] std::int64_t folder_store_count_in_subtree(std::int64_t folder_id) const;
+    [[nodiscard]] bool folder_store_owns_subtree(std::int64_t folder_id) const;
+    [[nodiscard]] std::vector<std::int64_t> folder_ids_in_subtree(std::int64_t folder_id) const;
+    [[nodiscard]] std::vector<FolderStoreKeyUsage> folder_store_usage() const;
+    [[nodiscard]] std::optional<NoteItem> folder_store_folder(std::int64_t folder_id) const;
+    [[nodiscard]] FolderStoreCapture capture_folder_store(
+        std::int64_t folder_id, FolderStoreService service);
+    [[nodiscard]] std::int64_t register_folder_store(
+        std::int64_t folder_id,
+        FolderStoreService service,
+        std::string_view api_key_id,
+        std::int64_t note_count);
+    void set_folder_store_uncertainty(std::int64_t store_id, bool unknown);
+    void save_folder_store_remote_id(std::int64_t store_id, std::string_view remote_store_id);
+    void add_folder_store_file_id(std::int64_t store_id, std::string_view file_id);
+    void remove_folder_store_file_id(
+        std::int64_t store_id, std::string_view file_id, std::string_view warning = {});
+    void clear_folder_store_remote_id(
+        std::int64_t store_id, std::string_view warning = {});
+    void mark_folder_store_ready(std::int64_t store_id, std::string_view success_message);
+    void mark_folder_store_incomplete(std::int64_t store_id);
+    void mark_folder_stores_incomplete_in_subtree(std::int64_t folder_id);
+    void delete_folder_store_record(std::int64_t store_id, std::string_view outcome_message,
+        EventSeverity severity = EventSeverity::success);
+    void delete_folder_subtree_locally(
+        std::int64_t folder_id,
+        const std::vector<std::string>& warnings,
+        const std::vector<std::int64_t>& remaining_store_ids);
     nlohmann::json get_note_audio_info(std::int64_t id) const;
     NoteAudioClip get_note_audio_clip(std::int64_t id, std::int64_t ordinal) const;
     std::optional<NoteAudioAttempt> get_note_audio_attempt_by_id(std::int64_t id) const;

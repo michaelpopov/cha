@@ -197,6 +197,11 @@ void LiveSession::record_configuration_notice(std::string text) {
     }
 }
 
+void LiveSession::prune_folder_associations(std::vector<std::int64_t> folder_ids) {
+    if (!controller_) return;
+    controller_->prune_folder_associations(folder_ids);
+}
+
 void LiveSession::install(OpenedSession opened) {
     if (!opened.controller) {
         throw std::runtime_error("Session opener returned no controller");

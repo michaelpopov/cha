@@ -76,6 +76,8 @@ void create_note_items_schema(storage::SqliteDatabase& database);
 
 // Markdown for chat context, retaining headings, lists, links, emphasis, and code blocks.
 [[nodiscard]] std::string note_document_markdown(const nlohmann::json& document);
+[[nodiscard]] nlohmann::json note_parse_saved_document(
+    std::string_view bytes, std::int64_t id);
 [[nodiscard]] NoteText note_get_text(
     storage::SqliteDatabase& database, std::int64_t id, bool prefer_compressed = false);
 
@@ -111,6 +113,8 @@ void note_save_scroll_position(
     std::int64_t id,
     std::string_view name);
 void note_delete(storage::SqliteDatabase& database, std::int64_t id);
+// Caller owns the transaction.
+void note_delete_in_transaction(storage::SqliteDatabase& database, std::int64_t id);
 struct NoteAudioAttempt {
     std::int64_t id{}, note_id{}, clip_count{};
     std::string note_name, service_origin, api_key_id;

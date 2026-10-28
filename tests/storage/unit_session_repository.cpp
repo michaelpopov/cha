@@ -137,6 +137,34 @@ protected:
     std::filesystem::path welcome_;
 };
 
+TEST_F(SessionRepositoryTest, WelcomeFolderRefsFollowVaultPathButKeepTranscriptAndCopies) {
+    auto repository = make_repository();
+    const auto prepared = repository.prepare(temporary_identity());
+    {
+        SessionJournal journal(prepared.database_path, prepared.session_key);
+        (void)journal.add_folder(11, "Research", 1, [](auto) { return true; });
+        (void)journal.add_text_file("Notes", "copied text", 2);
+    }
+    {
+        auto maintenance = repository.reserve_maintenance();
+        maintenance.retarget(database_path());
+    }
+    {
+        SessionJournal journal(prepared.database_path, prepared.session_key);
+        EXPECT_EQ(journal.folder_ids(), std::vector<std::int64_t>({11}));
+    }
+    const auto target = fixture_.root() / "other.sqlite3";
+    copy_workspace_session_database(database_path(), target);
+    {
+        auto maintenance = repository.reserve_maintenance();
+        maintenance.retarget(target);
+    }
+    SessionJournal journal(prepared.database_path, prepared.session_key);
+    EXPECT_TRUE(journal.folder_ids().empty());
+    EXPECT_NE(journal.notes_prompt().find("copied text"), std::string::npos);
+    EXPECT_EQ(repository.history(temporary_identity()).size(), 2U);
+}
+
 TEST_F(SessionRepositoryTest, EntryAudioPersistsAndIsScopedToItsSession) {
     {
         storage::SqliteDatabase database(database_path(), storage::SqliteDatabase::Mode::read_write);

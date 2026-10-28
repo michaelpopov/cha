@@ -437,6 +437,9 @@ NoteItem Application::create_note_item(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
+    if (parent_id && impl_->folder_in_delete_subtree(*parent_id)) {
+        throw ApplicationError(ErrorCode::invalid_argument, "This folder is being deleted.");
+    }
     try {
         return impl_->store->create_note_item(parent_id, kind, name);
     } catch (const NoteError& error) {
@@ -449,6 +452,9 @@ std::int64_t Application::import_note_book(
     std::string name, const std::vector<NoteImportEntry>& notes, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
+    if (parent_id && impl_->folder_in_delete_subtree(*parent_id)) {
+        throw ApplicationError(ErrorCode::invalid_argument, "This folder is being deleted.");
+    }
     try {
         return impl_->store->import_note_book(parent_id, name, notes);
     } catch (const NoteError& error) {
@@ -613,6 +619,11 @@ void Application::delete_note_item(std::int64_t id, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     try {
+        if (impl_->store->folder_store_owns_subtree(id) || impl_->folder_store_blocks_delete(id)) {
+            throw ApplicationError(ErrorCode::invalid_argument,
+                "This folder has a store or an active operation. Use folder delete after that operation finishes.");
+        }
+        const auto folder_ids = impl_->store->folder_ids_in_subtree(id);
         // Capture affected controls before the delete. After it commits, retirement
         // must not depend on another fallible list read.
         std::vector<std::int64_t> deleted;
@@ -633,6 +644,9 @@ void Application::delete_note_item(std::int64_t id, std::uint64_t epoch) {
                 "Compression cancelled for " + compression_target(note_id, control->name) + ".");
         }
         impl_->interrupt_abandoned_audio();
+        if (!folder_ids.empty() && !impl_->live_sessions->post_welcome_folder_prune(epoch, folder_ids)) {
+            log_warn("Could not enqueue Welcome folder prune.");
+        }
     } catch (const NoteError& error) {
         rethrow_note(error);
     }

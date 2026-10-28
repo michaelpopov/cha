@@ -10,6 +10,7 @@
 #include "runtime/live_session_manager.h"
 #include "runtime/protocol.h"
 #include "app/r2_database_transfer.h"
+#include "providers/folder_store_client.h"
 #include "storage/note_storage.h"
 #include "storage/event_storage.h"
 #include "workspace/workspace_config_store.h"
@@ -591,6 +592,53 @@ public:
         std::string name,
         std::uint64_t epoch);
     void delete_note_item(std::int64_t id, std::uint64_t epoch);
+
+    struct FolderStoreChoiceView {
+        std::string service;
+        std::string api_key_id;
+        std::string api_key_name;
+    };
+    struct FolderStoreStart {
+        std::int64_t operation_id{};
+    };
+    struct FolderStoreOperationStatus {
+        bool present{};
+        std::int64_t operation_id{};
+        std::string kind;
+        std::string phase;
+        std::int64_t completed{};
+        std::int64_t total{};
+        std::string error;
+        std::string result;
+        bool known_cleanup_remains{};
+        bool folder_deleted{};
+    };
+    [[nodiscard]] std::vector<FolderStoreChoiceView> folder_store_choices(std::uint64_t epoch);
+    [[nodiscard]] FolderStoreStart start_folder_store_upload(
+        std::int64_t folder_id,
+        std::string service,
+        std::string api_key_id,
+        std::uint64_t epoch);
+    [[nodiscard]] FolderStoreStart start_folder_store_remove(
+        std::int64_t folder_id,
+        std::int64_t expected_store_id,
+        std::uint64_t epoch);
+    [[nodiscard]] FolderStoreOperationStatus folder_store_operation_status(
+        std::int64_t folder_id, std::uint64_t epoch);
+    void cancel_folder_store_upload(std::int64_t operation_id, std::uint64_t epoch);
+    void close_folder_store_operation(std::int64_t operation_id, std::uint64_t epoch);
+    [[nodiscard]] FolderStoreStart start_folder_delete(
+        std::int64_t folder_id, std::int64_t confirmed_store_count, std::uint64_t epoch);
+    [[nodiscard]] FolderStoreStart retry_folder_delete(
+        std::int64_t operation_id, std::uint64_t epoch);
+    void delete_folder_anyway(std::int64_t operation_id, std::uint64_t epoch);
+    [[nodiscard]] std::optional<FolderStoreRecord> folder_store_record(
+        std::int64_t folder_id, std::uint64_t epoch);
+    [[nodiscard]] std::vector<FolderStoreRecord> list_folder_stores(std::uint64_t epoch);
+    [[nodiscard]] std::int64_t folder_store_count_in_subtree(
+        std::int64_t folder_id, std::uint64_t epoch);
+    [[nodiscard]] std::vector<FolderStoreKeyUsage> folder_store_usage(std::uint64_t epoch);
+    void set_folder_store_transport_for_tests(FolderStoreTransport transport);
 
     void save_file(
         std::uint64_t epoch,

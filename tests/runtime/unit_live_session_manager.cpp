@@ -154,6 +154,34 @@ private:
     std::map<FullSessionId, std::shared_ptr<test::BackendControls>> controls_;
 };
 
+TEST(LiveSessionManager, WelcomeFolderPruneRunsInOrderAndIgnoresOldVaultEpochs) {
+    test::TestWorkspace fixture;
+    const test::WebGraph graph(fixture.root());
+    const FullSessionId welcome{std::string(entrance_id), std::string(welcome_id)};
+    const auto path = graph.repository->prepare(welcome).database_path;
+    {
+        SessionJournal journal(path);
+        (void)journal.add_folder(11, "First", 1, [](auto) { return true; });
+        (void)journal.add_folder(22, "Second", 2, [](auto) { return true; });
+    }
+    LiveSessionManager manager(manager_settings(2), graph.opener());
+    const auto old_epoch = manager.context_epoch();
+    manager.bump_context_epoch();
+    EXPECT_FALSE(manager.post_welcome_folder_prune(old_epoch, {22}));
+    // Prune must also work while Welcome is unloaded.
+    EXPECT_TRUE(manager.post_welcome_folder_prune(manager.context_epoch(), {11}));
+    const auto opened = manager.open(welcome, 5s);
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(opened)) << static_cast<int>(std::get<LiveSessionOpenFailure>(opened));
+    auto live = manager.lookup(welcome);
+    ASSERT_TRUE(live);
+    EXPECT_TRUE(manager.post_welcome_folder_prune(manager.context_epoch(), {22}));
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(live->snapshot(5s)));
+    SessionJournal check(path);
+    EXPECT_TRUE(check.folder_ids().empty());
+    manager.begin_shutdown();
+    EXPECT_TRUE(manager.join_shutdown(5s));
+}
+
 TEST(LiveSessionManager, ReusesRunningSessionAndReturnsTheActor) {
     SessionFiles files;
     std::atomic<int> starts{};

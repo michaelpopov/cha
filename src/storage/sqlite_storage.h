@@ -108,7 +108,8 @@ SqliteStatement SqliteDatabase::prepare(
 
 class SqliteTransaction final {
 public:
-    explicit SqliteTransaction(SqliteDatabase& database);
+    enum class Mode { read, write };
+    explicit SqliteTransaction(SqliteDatabase& database, Mode mode = Mode::write);
     ~SqliteTransaction();
 
     SqliteTransaction(const SqliteTransaction&) = delete;

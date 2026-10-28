@@ -258,9 +258,9 @@ void SqliteStatement::require(int result) const {
     if (result != SQLITE_OK) database_->fail(result);
 }
 
-SqliteTransaction::SqliteTransaction(SqliteDatabase& database)
+SqliteTransaction::SqliteTransaction(SqliteDatabase& database, Mode mode)
     : database_(&database) {
-    database_->execute("BEGIN IMMEDIATE");
+    database_->execute(mode == Mode::read ? "BEGIN" : "BEGIN IMMEDIATE");
 }
 
 SqliteTransaction::~SqliteTransaction() {

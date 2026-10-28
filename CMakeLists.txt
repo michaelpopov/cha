@@ -312,12 +312,14 @@ add_library(cha_lib STATIC
     src/providers/responses_api.cpp
     src/providers/anthropic_api.cpp
     src/providers/google_api.cpp
+    src/providers/folder_store_client.cpp
     src/providers/sse_framer.cpp
     src/characters/character_config.cpp
     src/session/controller_update.cpp
     src/session/session_controller.cpp
     src/storage/session_database.cpp
     src/storage/note_storage.cpp
+    src/storage/folder_store_storage.cpp
     src/storage/event_storage.cpp
     src/storage/session_label.cpp
     src/storage/session_lease.cpp
@@ -344,6 +346,7 @@ add_library(cha_lib STATIC
     src/media/audio_download.cpp
     src/app/media_operations.cpp
     src/app/notes_operations.cpp
+    src/app/folder_store_operations.cpp
     src/app/events_operations.cpp
     src/app/note_audio_operations.cpp
     src/media/note_audio.cpp
@@ -537,11 +540,13 @@ if(BUILD_TESTING)
         tests/providers/unit_responses_api.cpp
         tests/providers/unit_anthropic_api.cpp
         tests/providers/unit_google_api.cpp
+        tests/providers/unit_folder_store_client.cpp
         tests/providers/unit_sse_framer.cpp
         tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_session_controller.cpp
         tests/storage/unit_session_lease.cpp
         tests/storage/unit_note_storage.cpp
+        tests/storage/unit_folder_store_storage.cpp
         tests/storage/unit_event_storage.cpp
         tests/storage/unit_session_repository.cpp
         tests/storage/unit_workspace_session_database.cpp
@@ -621,6 +626,7 @@ if(BUILD_TESTING)
         tests/app/unit_media_operations.cpp
         tests/app/unit_settings_operations.cpp
         tests/app/unit_vault_maintenance.cpp
+        tests/app/unit_folder_store_operations.cpp
         tests/runtime/unit_session_output.cpp
         tests/app/unit_session_retirement.cpp
         tests/providers/unit_voice_output.cpp

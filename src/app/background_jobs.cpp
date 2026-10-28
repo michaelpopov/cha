@@ -6,11 +6,16 @@
 namespace cha::app {
 
 bool BackgroundJobs::launch(std::function<void(std::atomic_bool&)> work,
-    std::shared_ptr<std::atomic_bool> cancel) {
+    std::shared_ptr<std::atomic_bool> cancel, std::function<void()> on_cancel) {
     auto control = std::make_shared<BackgroundControl>();
     control->cancel = cancel ? std::move(cancel) : std::make_shared<std::atomic_bool>(false);
+    control->on_cancel = std::move(on_cancel);
     std::lock_guard lock(mutex_);
     if (closed_) return false;
+    if (stop_requested_) {
+        control->cancel->store(true);
+        if (control->on_cancel) control->on_cancel();
+    }
     reap_finished_locked();
     jobs_.push_back({std::thread{}, control});
     try {
@@ -30,7 +35,17 @@ bool BackgroundJobs::launch(std::function<void(std::atomic_bool&)> work,
     return true;
 }
 
+void BackgroundJobs::request_stop() {
+    std::lock_guard lock(mutex_);
+    stop_requested_ = true;
+    for (const auto& job : jobs_) {
+        job.control->cancel->store(true);
+        if (job.control->on_cancel) job.control->on_cancel();
+    }
+}
+
 void BackgroundJobs::join() {
+    request_stop();
     for (;;) {
         std::vector<BackgroundJob> jobs;
         {
@@ -48,6 +63,7 @@ void BackgroundJobs::join() {
 
 bool BackgroundJobs::join_until(
     std::chrono::steady_clock::time_point deadline) {
+    request_stop();
     std::vector<std::shared_ptr<BackgroundControl>> controls;
     {
         std::lock_guard lock(mutex_);

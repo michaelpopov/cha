@@ -17,7 +17,9 @@ namespace cha::app {
 class BackgroundJobs {
 public:
     bool launch(std::function<void(std::atomic_bool&)> work,
-        std::shared_ptr<std::atomic_bool> cancel = {});
+        std::shared_ptr<std::atomic_bool> cancel = {}, std::function<void()> on_cancel = {});
+    // Signals all workers without joining or acquiring application lifecycle locks.
+    void request_stop();
     void join();
     bool join_until(std::chrono::steady_clock::time_point deadline);
 
@@ -25,6 +27,7 @@ private:
     void reap_finished_locked();
     struct BackgroundControl {
         std::shared_ptr<std::atomic_bool> cancel;
+        std::function<void()> on_cancel;
         std::atomic_bool finished{};
         std::mutex mutex;
         std::condition_variable changed;
@@ -35,6 +38,7 @@ private:
     };
     std::mutex mutex_;
     std::vector<BackgroundJob> jobs_;
+    bool stop_requested_{};
     bool closed_{};
 };
 

@@ -1,5 +1,6 @@
 #include "storage/note_storage.h"
 
+#include "storage/folder_store_storage.h"
 #include "storage/session_label.h"
 #include "util/logging.h"
 
@@ -625,6 +626,10 @@ std::string note_document_markdown(const nlohmann::json& document) {
     return document_markdown(document);
 }
 
+nlohmann::json note_parse_saved_document(std::string_view bytes, std::int64_t id) {
+    return parse_document(bytes, id);
+}
+
 void create_note_items_schema(storage::SqliteDatabase& database) {
     bool legacy_notes = false;
     {
@@ -969,31 +974,40 @@ NoteItem note_rename(
     }
 }
 
+void note_delete_in_transaction(storage::SqliteDatabase& database, std::int64_t id) {
+    const auto item = find_item(database, id);
+    if (item && item->kind == NoteItemKind::annotation) fail(NoteFailure::invalid, not_note_message);
+    if (folder_store_owns_subtree(database, id)) {
+        fail(NoteFailure::invalid,
+            "This folder has a store. Remove the store before deleting it.");
+    }
+    auto descendants = database.prepare(
+        "WITH RECURSIVE tree(id) AS (SELECT id FROM note_items WHERE id=? "
+        "UNION ALL SELECT n.id FROM note_items n JOIN tree t ON n.parent_id=t.id) "
+        "SELECT a.id FROM note_audio_attempts a JOIN tree t ON a.note_id=t.id ORDER BY a.id", id);
+    std::vector<std::int64_t> attempt_ids;
+    while (descendants.step()) attempt_ids.push_back(descendants.integer(0));
+    for (const auto attempt_id : attempt_ids) {
+        const auto attempt = note_audio_attempt_by_id(database, attempt_id);
+        event_append_in_transaction(database, EventSeverity::warning,
+            "Audio generation abandoned for " + note_audio_target(*attempt) + ": note deleted.");
+        database.prepare("DELETE FROM note_audio_attempts WHERE id=?", attempt_id).run();
+    }
+    folder_store_delete_session_folders_in_subtree(database, id);
+    storage::SqliteStatement statement = database.prepare(
+        "DELETE FROM note_items WHERE id = ?1");
+    statement.bind(1, id);
+    statement.run();
+    if (database.changes() != 1) {
+        fail(NoteFailure::not_found, missing_item_message);
+    }
+    if (item && item->kind == NoteItemKind::note) rebuild_folder_annotations(database, item->parent_id, false);
+}
+
 void note_delete(storage::SqliteDatabase& database, std::int64_t id) {
     try {
         storage::SqliteTransaction transaction(database);
-        const auto item = find_item(database, id);
-        if (item && item->kind == NoteItemKind::annotation) fail(NoteFailure::invalid, not_note_message);
-        auto descendants = database.prepare(
-            "WITH RECURSIVE tree(id) AS (SELECT id FROM note_items WHERE id=? "
-            "UNION ALL SELECT n.id FROM note_items n JOIN tree t ON n.parent_id=t.id) "
-            "SELECT a.id FROM note_audio_attempts a JOIN tree t ON a.note_id=t.id ORDER BY a.id", id);
-        std::vector<std::int64_t> attempt_ids;
-        while (descendants.step()) attempt_ids.push_back(descendants.integer(0));
-        for (const auto attempt_id : attempt_ids) {
-            const auto attempt = note_audio_attempt_by_id(database, attempt_id);
-            event_append_in_transaction(database, EventSeverity::warning,
-                "Audio generation abandoned for " + note_audio_target(*attempt) + ": note deleted.");
-            database.prepare("DELETE FROM note_audio_attempts WHERE id=?", attempt_id).run();
-        }
-        storage::SqliteStatement statement = database.prepare(
-            "DELETE FROM note_items WHERE id = ?1");
-        statement.bind(1, id);
-        statement.run();
-        if (database.changes() != 1) {
-            fail(NoteFailure::not_found, missing_item_message);
-        }
-        if (item && item->kind == NoteItemKind::note) rebuild_folder_annotations(database, item->parent_id, false);
+        note_delete_in_transaction(database, id);
         transaction.commit();
     } catch (const std::runtime_error& error) {
         throw sql_failure(error, NoteFailure::saving, change_message);

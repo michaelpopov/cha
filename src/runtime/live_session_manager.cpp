@@ -759,6 +759,37 @@ bool LiveSessionManager::post_maintenance_result(
         std::chrono::steady_clock::now() + queue_wait);
 }
 
+bool LiveSessionManager::post_welcome_folder_prune(
+    std::uint64_t epoch, std::vector<std::int64_t> folder_ids) {
+    auto& impl = *runtime_->impl_;
+    if (epoch == 0 || epoch != impl.context_epoch.load()) return false;
+    constexpr auto queue_wait = std::chrono::seconds(1);
+    return impl.enqueue_control_until(
+        [&impl, epoch, folder_ids = std::move(folder_ids)] {
+            try {
+                if (impl.stopping_requested.load() || epoch != impl.context_epoch.load()) {
+                    return;
+                }
+                const FullSessionId welcome{
+                    std::string(entrance_id), std::string(welcome_id)};
+                if (const auto found = impl.sessions.find(welcome); found != impl.sessions.end()) {
+                    found->second->prune_folder_associations(folder_ids);
+                } else {
+                    // Welcome's journal survives unloading. Reopen it on its
+                    // owner runtime so a later selection cannot revive deleted refs.
+                    auto temporary = impl.create_session(welcome, epoch);
+                    temporary->prune_folder_associations(folder_ids);
+                    temporary->finalize(ShutdownReason::retired);
+                }
+            } catch (const std::exception& error) {
+                log_error(std::string("Welcome folder prune failed: ") + error.what());
+            } catch (...) {
+                log_error("Welcome folder prune failed");
+            }
+        },
+        std::chrono::steady_clock::now() + queue_wait);
+}
+
 void LiveSessionManager::reload_session(
     const FullSessionId& key,
     std::chrono::steady_clock::time_point deadline) {

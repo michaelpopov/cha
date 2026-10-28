@@ -27,6 +27,14 @@ struct RuntimeSettings {
     // Optional launch failure and worker-barrier hooks for lifecycle tests.
     std::function<void(std::int64_t)> note_audio_before_launch;
     std::function<void(std::int64_t, std::shared_ptr<std::atomic_bool>)> note_audio_worker_started;
+    std::chrono::milliseconds folder_store_poll_interval{5000};
+    std::function<void(int)> folder_store_wait;
+    // Test barrier after reading the poll predicate, while its wait mutex is held.
+    std::function<void()> folder_store_poll_predicate_read;
+    std::function<void()> folder_store_before_launch;
+    std::function<void(std::int64_t, std::shared_ptr<std::atomic_bool>)> folder_store_worker_started;
+    std::function<void()> folder_store_before_lifetime_lock;
+    std::function<void(std::int64_t)> folder_store_worker_finished;
 };
 
 } // namespace cha

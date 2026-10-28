@@ -1568,6 +1568,7 @@ void Application::request_shutdown() {
     impl_->state.store(ApplicationState::stopping);
     impl_->speech_proxy.stop();
     if (impl_->audio_downloads) impl_->audio_downloads->request_stop();
+    impl_->background_jobs.request_stop();
     impl_->pause_resources(true);
     impl_->live_sessions->begin_shutdown();
 }

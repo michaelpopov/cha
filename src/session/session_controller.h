@@ -22,6 +22,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -125,6 +126,7 @@ public:
     [[nodiscard]] std::uint64_t context_epoch() const noexcept { return context_epoch_; }
     // Queues the notice while an answer is active. Returns true when it was stored now.
     bool record_configuration_notice(std::string text);
+    void prune_folder_associations(std::span<const std::int64_t> folder_ids);
     [[nodiscard]] bool classification_pending() const noexcept { return pending_classification_.has_value(); }
     [[nodiscard]] std::chrono::steady_clock::time_point next_deadline() const noexcept;
     enum class SubmissionOutcome { accepted, cancelled, expired, failed };
