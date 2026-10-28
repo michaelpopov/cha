@@ -1,0 +1,265 @@
+REVIEW OF docs/anthropic-design.md (NATIVE ANTHROPIC API SUPPORT)
+
+Date: October 27, 2026
+Type: Read-only design review
+
+METHOD
+
+I read AGENTS.md, CLAUDE.md, the design, and the related code with the Read
+tool only. The Glob and Grep tools were not available in this session. I found
+files through the paths in the design, in CMakeLists.txt, and in include lines.
+I did not run commands. I did not change application files. I had no web
+access, so I did not check Anthropic API behavior. I accept the API facts that
+the design cites: version 2026-10-21 (no temperature), Bearer API keys,
+workspace-scoped keys, and default thinking that changes with the model.
+Section 4 lists the API questions that need an external check.
+
+SUMMARY
+
+The design follows the Google adapter closely. It reuses the current
+transport, tool loop, settings parser, and provider form. It needs no
+registry, model catalog, SDK, or new store, and I recommend none. Most
+integration points are correct (see section 5). Two medium findings concern
+the output limit: a tool call cut off by max_tokens gives the wrong error, and
+the 8192 fallback is a new cap that only Anthropic has. Correct these two
+items before implementation. One medium item is a known failure risk that the
+design accepts. Four low items are small corrections or decisions.
+
+
+1. MEDIUM PRIORITY (FACTUAL)
+
+1.1 A tool call cut off by max_tokens gives a generic protocol error, not the
+    existing message
+
+Design: "Responses, streaming, and errors", lines 205-208 ("incomplete tool
+JSON are protocol failures"), and lines 196-199 (parse the input at block
+completion; apply the argument limits while buffering).
+
+Code: tool_calls.cpp:375-386; maintenance.h:17-19;
+resources/assistant-maintenance.md:426-429; chat_completions_api.cpp:292-321.
+
+Problem: Today, when the output limit cuts a tool call, tool_call_result()
+sees the call together with finish_reason "length". For a maintenance call it
+returns maintenance_output_limit_message ("The model's output limit cut off
+the tool call. This call was not applied. ..."). For a web call it returns
+"Tool response ended incomplete". The Chat Completions decoder keeps argument
+text unparsed, so tool_call_result() always sees the cut call. The Assistant
+prompt tells the model to report the maintenance message exactly. In the
+Anthropic design, the decoder parses the tool input when the block stops. A
+call that max_tokens cuts has incomplete JSON, so the decoder fails first
+with a generic protocol error. tool_call_result() does not see the call, and
+the existing messages are not used. Finding 1.2 makes this case likely for
+Assistant writes. The same problem occurs when buffered input passes the
+argument limit: the user must get "Tool arguments too large", not a JSON
+parse failure.
+
+Correction: When stop_reason is max_tokens or model_context_window_exceeded,
+keep an incomplete tool_use block as a seen call (for example, with an empty
+input object), and pass finish_reason "length" to tool_call_result(). The
+existing code then returns the correct message and runs no tool. When
+buffered input passes the limit, use the existing oversize result. Keep
+"incomplete tool JSON is a protocol failure" only for a stream that ends
+without a terminal stop reason. Add one test: a maintenance call cut at
+max_tokens returns maintenance_output_limit_message, and no tool runs.
+
+1.2 The 8192 fallback is a new output cap that only Anthropic has
+
+Design: "Request encoding", lines 115-119; configuration example, line 52;
+thinking, lines 121-123.
+
+Code: chat_completions_api.cpp:166-168 and google_api.cpp:49 send no output
+limit when max_tokens is not set. ProviderSettings.tsx has no max_tokens
+control (lines 424-443) and keeps the saved value (line 307).
+notes_operations.cpp:149-199 formats a complete page or YouTube transcript
+and rejects "length" (lines 173-176). resources/assistant-maintenance.md:423
+permits complete file writes of up to 64 KiB. Lines 75-76 and 581-582 of the
+same file say that Test and repairs add no output-token cap.
+
+Problem: The Anthropic API requires max_tokens, so some value is necessary.
+But 8192 tokens is approximately 30 KB of English text, and less when the
+model thinks first, because thinking uses the same budget (design line 117).
+The form cannot set max_tokens, so a provider that the form makes or edits
+always uses the fallback. These operations then fail on real data, with a
+provider that works for short chat:
+- Page and transcript formatting of a long source ("The page is too long to
+  format.").
+- Compression of a large note.
+- An Assistant write of a large file or character profile (see finding 1.1).
+Chat answers can also stop early when the model thinks for a long time. The
+design says that a user "can raise it in provider configuration". The only
+paths are a TOML edit or an Assistant edit, and the Assistant cannot edit its
+own provider (resources/assistant-maintenance.md:592-595). The Assistant text
+that says Test adds no output-token cap becomes incorrect for Anthropic.
+
+Correction: Keep one constant and no per-model table. Choose the value from
+the documented output limits of the models that you will use, not from a
+generic default, and write the reason in the design. State the effect on note
+formatting, compression, and Assistant writes. Add two manual checks to step
+5: format a long page, and do an Assistant write of a large file. If some
+models can refuse the selected value, the design must say that those
+providers need an explicit max_tokens in TOML.
+
+1.3 Known failures with default thinking: provider Test and session naming
+    (the design accepts these; I report them because they can occur on real
+    data)
+
+Design: "Provider form", lines 267-268.
+
+Code: settings_operations.cpp:439-443 (Test: 10 s total, 10 s idle).
+session_controller.cpp:29, 1215, 1246 (naming: 10 s). provider_client.cpp:
+227-237 and 260-261 (the idle clock starts at the first body byte).
+
+Problem: With a model that thinks by default, Test can fail for a correct
+provider, and each new session can get a timestamp name instead of a
+generated name. Also, if message_start arrives before thinking starts, it
+starts the idle clock. If hidden thinking then sends no bytes for longer than
+idle_timeout_s (60 s by default), a chat request fails with "idle timeout
+reached". Ping events can prevent this; see question 4.3.
+
+Correction: Add no code now. In step 5, record the Test, naming, and
+long-thinking chat results for each model that you will use. If Test always
+fails with a model, write that as a known limit in the design. Do not leave
+only "keep the existing failure".
+
+
+2. LOW PRIORITY (FACTUAL)
+
+2.1 provider_supports_web_search() needs the same Anthropic exception as
+    Google
+
+Design: lines 73-74 and 90-92 ignore provider-hosted web_search for
+Anthropic. The design does not name this function.
+
+Code: character_config.cpp:154-157 returns true for every non-Google API on
+host openrouter.ai. Callers: provider_config_error() (character_config.cpp:
+199-202) and resolve_character_references() (workspace.cpp:1680-1687).
+workspace.cpp:2369-2371 copies a character override into the effective
+configuration.
+
+Problem: For an Anthropic provider with a custom openrouter.ai origin, a
+character web_search override stays in the effective configuration with no
+warning. The existing "ignores web search for an unsupported provider"
+warning does not occur.
+
+Correction: On character_config.cpp:155, add ProviderApi::anthropic to the
+Google condition. This is one line.
+
+2.2 The settings parser has no warning path; normalize silently, as for
+    Google
+
+Design: lines 75-82 ("Warn through the existing load/settings diagnostics";
+"Apply this rule in ... settings Test/Save parsing ..., following the Google
+path").
+
+Code: request_parser.cpp:352-385 silently sets unused Google fields to their
+defaults. Warnings come only from load_provider() (workspace.cpp:285-297) and
+resolve_character_references() (workspace.cpp:1669-1679). write_provider()
+writes the normalized values (workspace_config_editor.cpp:146, 154-160), so
+the reload after Save gives no warning.
+
+Problem: The Google path has no settings-parser diagnostics. A reader can
+interpret the design text as a request for a new warning path in
+parse_provider_update().
+
+Correction: Write: "parse_provider_update() sets unused Anthropic fields to
+their defaults silently, as for Google. Warnings come from workspace loading
+and character resolution." Add no new diagnostics.
+
+2.3 The new test file needs registration
+
+Design: step 2 (line 278) registers only the adapter source. Step 4 (line
+286) adds tests/providers/unit_anthropic_api.cpp.
+
+Code: CMakeLists.txt:521-552 lists each test source by name
+(unit_google_api.cpp is at line 537).
+
+Correction: In step 4, add the new file to CHA_TEST_SOURCES.
+
+2.4 Assistant reference text (a decision for the operator)
+
+Code: CMakeLists.txt:420-425 compiles docs/MaintainerGuide.md into the
+Assistant prompt. resources/assistant-maintenance.md:7-8 tells the Assistant
+to use that reference. resources/assistant-maintenance.md:75-76 and 581-582
+say that Test adds no output-token cap.
+
+Problem: The design adds a new api value and an implicit output cap. It does
+not say whether the Assistant reference changes. If the maintainer guide
+lists the permitted api values, the Assistant does not know "anthropic" and
+can give an incorrect diagnosis. AGENTS.md does not permit changes in docs/
+without an explicit request, so this is your decision.
+
+Correction: Add one line to the design that records your decision: update
+the Assistant reference, or accept that it does not mention Anthropic.
+
+
+3. OPTIONAL SUGGESTION (SIMPLIFICATION)
+
+3.1 Remove the system-fragment join rule
+
+Design line 110 says "Join multiple system fragments with a blank line".
+project_model_context() makes at most one system message, and only as the
+first message (model_context.cpp:90-92). Notes and the maintenance prompt are
+added to that one string before projection (session_controller.cpp:766-778).
+Use the single system message directly. The rule to merge adjacent messages
+with the same role is necessary (a shared-history block can come before a
+direct user message), so keep it.
+
+
+4. EXTERNAL VERIFICATION QUESTIONS (NOT CHECKED; NO WEB ACCESS)
+
+4.1 Leading assistant message. After /cover, the first projected message can
+    be an assistant reply (model_context.cpp:104). Does API version
+    2026-10-21 accept a messages array that starts with role "assistant"?
+    Step 5 already has a manual test for this. If the API refuses it, decide
+    the behavior before implementation.
+
+4.2 Stream events for a cut tool call. When max_tokens stops output inside a
+    tool_use block, does the stream still send content_block_stop, a
+    message_delta with stop_reason max_tokens, and message_stop? Finding 1.1
+    depends on this sequence.
+
+4.3 Ping interval during hidden thinking. How often does the API send ping
+    events while a model thinks without a visible summary? Compare the
+    interval with idle_timeout_s (60 s by default; 10 s in Test).
+
+4.4 tool_choice "none". Does the API accept tool_choice {"type": "none"} with
+    default thinking, when the history contains tool_use and tool_result
+    blocks and the tool declarations stay? The final-answer round (design
+    lines 178-184) depends on this.
+
+4.5 Large max_tokens without streaming. If the fallback becomes larger
+    (finding 1.2), does the API refuse large max_tokens values on
+    non-streaming requests? The form always sends stream = true
+    (ProviderSettings.tsx:301), but TOML can set stream = false.
+
+
+5. CHECKED AND CONSISTENT (NO ACTION)
+
+- Endpoint: provider_endpoint() appends /v1/responses for Responses
+  (character_config.cpp:249-250). The same pattern for /v1/messages is
+  correct.
+- Credentials: non-Google calls already send "Authorization: Bearer"
+  (provider_client.cpp:991-994). Only the version header is new. The
+  request-id response header is already read (provider_client.cpp:197-205).
+- Errors: response_error() reads /error/message (provider_client.cpp:
+  342-357). This fits the error body that the design uses.
+- Tool loop: perform() needs one Anthropic branch for the continuation and
+  the tool results (provider_client.cpp:638-645, 801-824). The design
+  correctly removes the unconditional tool_choice "auto" (line 828) and
+  keeps the declarations at the limit instead of the OpenAI erase (lines
+  829-851).
+- update_tool_instructions(): the non-Google branch reads the tool "type"
+  field and inserts a system message (tool_calls.cpp:256-290). An Anthropic
+  branch is necessary, as the design says.
+- Effort checks: note_editing_provider() is the only effort check that
+  blocks an operation (notes_operations.cpp:30-35). Naming copies its effort
+  with no check (session_controller.cpp:1212-1215). The planned
+  provider_supports_reasoning_effort() change is sufficient.
+- Character overrides: resolve_character_references() needs the same branch
+  as Google (workspace.cpp:1669-1679), as the design says.
+- Provider form: the Google rules for OAuth, reasoning effort, and inference
+  targets (ProviderSettings.tsx:246-249, 286, 305, 428, 441, 443) are the
+  correct places for the Anthropic changes. The design includes the required
+  visual sketch.
+- Migration: none is necessary. The change adds one api value, and existing
+  provider files keep their meaning.
