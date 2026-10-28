@@ -9,6 +9,8 @@
 
 namespace cha {
 
+[[nodiscard]] bool google_file_search_only_model(std::string_view model);
+
 std::string build_google_request_body(
     const GenerationRequest& input, const ModelBackendConfig& config,
     std::string_view system_prompt, RequestTextSizes* text_sizes = nullptr);

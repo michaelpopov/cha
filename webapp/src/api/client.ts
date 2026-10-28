@@ -74,6 +74,13 @@ export type VaultUploadCheck = {
   context_epoch: number;
 };
 export type NoteItem = components['schemas']['NoteItem'];
+export type FolderStoreService = components['schemas']['FolderStoreService'];
+export type FolderStoreSummary = components['schemas']['FolderStoreSummary'];
+export type FolderStoreChoice = components['schemas']['FolderStoreChoice'];
+export type FolderStoreChoices = components['schemas']['FolderStoreChoices'];
+export type FolderStoreStart = components['schemas']['FolderStoreStart'];
+export type FolderStoreOperation = components['schemas']['FolderStoreOperation'];
+export type FolderDeleteRequest = components['schemas']['FolderDeleteRequest'];
 export type ActivityEvent = components['schemas']['ActivityEvent'];
 export type ActivityEventList = components['schemas']['ActivityEventList'];
 export type NoteContent = components['schemas']['NoteContent'];
@@ -148,7 +155,15 @@ export interface NotesClient {
   readNotePage: (url: string) => Promise<NotePage>;
   readNoteTextFile: (path: string) => Promise<TextFileRequest | null>;
   readNotePicture: (url: string) => Promise<Uint8Array>;
+  // Folder store summaries come from this listing; reload after item mutations.
   listNoteItems: () => Promise<NoteItem[]>;
+  storeChoices: (epoch: number) => Promise<FolderStoreChoices>;
+  storeUpload: (folderId: number, service: FolderStoreService, apiKeyId: string, epoch: number) => Promise<FolderStoreStart>;
+  storeRemove: (folderId: number, storeId: number, epoch: number) => Promise<FolderStoreStart>;
+  storeOperation: (folderId: number, epoch: number) => Promise<FolderStoreOperation>;
+  storeCancel: (operationId: number, epoch: number) => Promise<void>;
+  storeClose: (operationId: number, epoch: number) => Promise<void>;
+  folderDelete: (request: FolderDeleteRequest, epoch: number) => Promise<FolderStoreStart>;
   createNoteItem: (
     parentId: number | null,
     kind: 'folder' | 'note',

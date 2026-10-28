@@ -588,5 +588,52 @@ TEST(ResponsesApi, EncodesProjectedResearchBlockAndCountsConversationBytes) {
     EXPECT_NE(instructions.find("Do not give unverified details as facts."), std::string::npos);
 }
 
+
+TEST(ResponsesApi, FolderSearchCoexistsWithHostedWebAndFunctionsAndYieldsToMaintenance) {
+    for (const auto mode : {WebSearchMode::off, WebSearchMode::automatic, WebSearchMode::required}) {
+        Transcript transcript;
+        auto input = make_request(transcript, "Question");
+        input.folder_search = FolderSearchAccess{FolderStoreService::openai, {"vs_one", "vs_two"}};
+        input.folder_search_context = "Research ##00000B /detach ##00000B";
+        input.web_search_tool = [](auto, const auto&) { return "[]"; };
+        input.web_read_tool = [](auto, const auto&, const auto&) { return "page"; };
+        ModelBackendConfig config;
+        config.api = ProviderApi::responses;
+        config.web_search = mode;
+        auto body = Json::parse(build_responses_request_body(input, config, "System"));
+        EXPECT_EQ(body["store"], false);
+        EXPECT_EQ(body["tool_choice"], mode == WebSearchMode::required ? "required" : "auto");
+        EXPECT_EQ(body["tools"].size(), mode == WebSearchMode::off ? 3u : 4u);
+        EXPECT_EQ(body["tools"].back(), (Json{{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}));
+        EXPECT_EQ(body.dump().find("Research"), std::string::npos);
+        EXPECT_NE(body["instructions"].get<std::string>().find("Folder search is available"), std::string::npos);
+        input.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
+        body = Json::parse(build_responses_request_body(input, config, "System"));
+        for (const auto& tool : body["tools"]) EXPECT_NE(tool.value("type", ""), "file_search");
+    }
+}
+
+TEST(ResponsesApi, HostedSearchOutputIsRetainedWithoutBecomingALocalCall) {
+    const auto output = Json::array({
+        {{"type", "file_search_call"}, {"id", "fs_1"}, {"status", "completed"}, {"queries", {"fact"}}},
+        {{"type", "function_call"}, {"call_id", "custom"}, {"name", "web_search"}, {"arguments", R"({"query":"q"})"}},
+        {{"type", "reasoning"}, {"id", "r_1"}, {"encrypted_content", "signed"}}
+    });
+    const Json response{{"status", "completed"}, {"output", output}};
+    for (const bool stream : {false, true}) {
+        Output observed;
+        GenerationResult result;
+        if (stream) {
+            ResponsesStreamDecoder decoder(observed.sink(), true);
+            decoder.consume("data: " + Json{{"type", "response.completed"}, {"response", response}}.dump() + "\n\n");
+            result = decoder.finish().result;
+        } else result = decode_responses_response(response.dump(), observed.sink(), true);
+        ASSERT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        ASSERT_EQ(result.tool_calls.size(), 1u);
+        EXPECT_EQ(result.tool_calls[0].id, "custom");
+        EXPECT_EQ(Json::parse(result.continuation), output);
+    }
+}
+
 } // namespace
 } // namespace cha

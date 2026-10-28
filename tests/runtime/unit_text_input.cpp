@@ -490,11 +490,14 @@ TEST(TextInput, DecodesCaseSensitiveBase62ReferencesAndPreservesMissingNoteDraft
     EXPECT_EQ(entries[0].text, "Added note “Uppercase” to this chat.");
     EXPECT_EQ(entries[1].text, "Added note “Lowercase” to this chat.");
     EXPECT_EQ(entries[2].text, "Added note “Maximum” to this chat.");
-    for (const auto reference : {"##000000", "##000001", "##000002"}) {
+    for (const auto reference : {"##000000", "##000001"}) {
         const auto missing = handle_text_input(*controller, "operator", reference);
         EXPECT_FALSE(missing.clear_input);
         EXPECT_EQ(missing.session.notice, "That note was not found.");
     }
+    const auto folder = handle_text_input(*controller, "operator", "##000002");
+    EXPECT_FALSE(folder.clear_input);
+    EXPECT_EQ(folder.session.notice, "Upload this folder to a store before adding it to the conversation.");
     EXPECT_FALSE(controller->is_generating());
     EXPECT_EQ(controller->view().transcript.entries.size(), 3U);
 }
@@ -702,6 +705,50 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptance) {
         handle_text_input(*controller, "operator", "Another question");
     EXPECT_FALSE(undispatchable.session.input_consumed);
     EXPECT_FALSE(undispatchable.clear_input);
+}
+
+
+TEST(TextInput, FolderReferencesAndDetachUseTheJournalWithoutGeneratingOrCopyingText) {
+    TemporaryTextSession temporary;
+    storage::SqliteDatabase db(temporary.path, storage::SqliteDatabase::Mode::read_write);
+    const auto folder = note_create(db, {}, NoteItemKind::folder, "Research");
+    const auto note = note_create(db, {}, NoteItemKind::note, "Note");
+    const auto store = folder_store_register(db, folder.id, FolderStoreService::openai, "saved", 1);
+    folder_store_save_remote_id(db, store, "vs_test"); folder_store_mark_ready(db, store);
+    auto controller = test::from_test_workspace(std::vector<CharacterDefinition>{definition()}, temporary.path, notifier()).release();
+    auto attached = handle_text_input(*controller, "operator", " \n" + note_item_ref_id(folder.id) + "\t ");
+    EXPECT_TRUE(attached.clear_input);
+    EXPECT_FALSE(controller->is_generating());
+    SessionJournal journal(temporary.path);
+    EXPECT_EQ(journal.folder_ids(), (std::vector<std::int64_t>{folder.id}));
+    EXPECT_TRUE(journal.notes_prompt().empty());
+    folder_store_mark_incomplete(db, store);
+    EXPECT_TRUE(handle_text_input(*controller, "operator", note_item_ref_id(folder.id)).clear_input);
+    EXPECT_NE(controller->view().transcript.entries.back().text.find("already attached"), std::string::npos);
+    EXPECT_TRUE(handle_text_input(*controller, "operator", note_item_ref_id(note.id)).clear_input);
+    const auto text = journal.notes_prompt();
+    EXPECT_TRUE(controller->add_text_file("file.txt", "saved text").input_consumed);
+    for (const auto input : {"/detach", "/detach ##000000", "/detach ##00000", "/detach ##0000000", "/detach ##000001 extra", "/detach ##0000!1"}) {
+        const auto result = handle_text_input(*controller, "operator", input);
+        EXPECT_EQ(result.session.notice, "Usage: /detach <Ref ID>");
+        EXPECT_FALSE(journal.folder_ids().empty());
+    }
+    controller->shutdown(); controller.reset();
+    controller = test::from_test_workspace(std::vector<CharacterDefinition>{definition()}, temporary.path, notifier(), load_session_state(temporary.path)).release();
+    EXPECT_EQ(journal.folder_ids(), (std::vector<std::int64_t>{folder.id}));
+    (void)controller->cover_conversation(); (void)controller->uncover_conversation();
+    EXPECT_FALSE(journal.folder_ids().empty());
+    // Even an association whose metadata is gone can be removed using its Ref ID.
+    folder_store_delete_record(db, store);
+    db.prepare("DELETE FROM note_items WHERE id=?", folder.id).run();
+    EXPECT_TRUE(handle_text_input(*controller, "operator", "/detach " + note_item_ref_id(folder.id)).clear_input);
+    EXPECT_TRUE(journal.folder_ids().empty());
+    EXPECT_NE(controller->view().transcript.entries.back().text.find(note_item_ref_id(folder.id)), std::string::npos);
+    EXPECT_TRUE(handle_text_input(*controller, "operator", "/detach " + note_item_ref_id(folder.id)).clear_input);
+    EXPECT_NE(controller->view().transcript.entries.back().text.find("not attached"), std::string::npos);
+    EXPECT_NE(journal.notes_prompt().find(text), std::string::npos);
+    EXPECT_NE(journal.notes_prompt().find("saved text"), std::string::npos);
+    EXPECT_FALSE(controller->is_generating());
 }
 
 } // namespace

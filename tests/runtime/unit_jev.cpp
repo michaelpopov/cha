@@ -1955,5 +1955,29 @@ TEST_F(JevRouting, SharesResearchNeedsAcrossImplicitChildrenAndPreservesBypasses
     EXPECT_FALSE(inputs.back().research_needs.actual_data);
 }
 
+
+TEST_F(JevRouting, DetectionFailurePreservesFolderOmissionNoticeForFallbackTargets) {
+    storage::SqliteDatabase db(journal.path(), storage::SqliteDatabase::Mode::read_write);
+    const auto folder = note_create(db, {}, NoteItemKind::folder, "Research");
+    const auto record = folder_store_register(db, folder.id, FolderStoreService::openai, config.api_key_id, 1);
+    folder_store_save_remote_id(db, record, "vs_research"); folder_store_mark_ready(db, record);
+    const auto ref = note_item_ref_id(folder.id);
+    ASSERT_TRUE(send(ref).clear_input);
+    decision = {JevOutcome::failure, {}, "timeout"};
+    for (const auto target : {"guide", "*"}) {
+        (void)controller->set_default_character_by_id(target);
+        (void)send("Question");
+        run_workers();
+        const auto completed = controller->receive_events(100);
+        ASSERT_TRUE(completed.update.notice);
+        EXPECT_NE(completed.update.notice->find("Recipient detection failed."), std::string::npos);
+        EXPECT_NE(completed.update.notice->find("Folder access omitted:"), std::string::npos);
+        EXPECT_NE(completed.update.notice->find("Research"), std::string::npos);
+        EXPECT_NE(completed.update.notice->find("/detach " + ref), std::string::npos);
+        EXPECT_EQ(controller->take_submission_result()->update.notice, completed.update.notice);
+        finish();
+    }
+}
+
 } // namespace
 } // namespace cha

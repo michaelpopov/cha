@@ -909,3 +909,97 @@ describe('notes native client', () => {
     await expect(action).rejects.toBeInstanceOf(ChaProtocolError);
   });
 });
+
+
+describe('native folder store contract', () => {
+  const contract = loadFixture('folder-store-contract.json') as {
+    folder: Record<string, unknown>; choices: unknown; start: unknown;
+    no_operation: unknown; failed_delete: Record<string, unknown>;
+  };
+  it('accepts optional summaries and every operation method with exact wire parameters', async () => {
+    const handlers = Object.fromEntries([
+      ['notes.list', vi.fn(() => ({ items: [contract.folder] }))],
+      ['notes.storeChoices', vi.fn(() => contract.choices)],
+      ['notes.storeUpload', vi.fn(() => contract.start)],
+      ['notes.storeRemove', vi.fn(() => contract.start)],
+      ['notes.storeOperation', vi.fn(() => contract.failed_delete)],
+      ['notes.storeCancel', vi.fn(() => ({}))], ['notes.storeClose', vi.fn(() => ({}))],
+      ['notes.folderDelete', vi.fn(() => contract.start)],
+    ]);
+    const bridge = createFakeNativeBridge(handlers);
+    const client = createNativeChaClient(bridge);
+    const epoch = client.contextEpoch();
+    expect(await client.listNoteItems()).toEqual([contract.folder]);
+    expect(await client.storeChoices(epoch)).toEqual(contract.choices);
+    expect(await client.storeUpload(11, 'openai', 'api_key_1', epoch)).toEqual(contract.start);
+    expect(handlers['notes.storeUpload']).toHaveBeenCalledWith({ folder_id: 11, service: 'openai', api_key_id: 'api_key_1' });
+    expect(await client.storeRemove(11, 7, epoch)).toEqual(contract.start);
+    expect(handlers['notes.storeRemove']).toHaveBeenCalledWith({ folder_id: 11, store_id: 7 });
+    expect(await client.storeOperation(11, epoch)).toEqual(contract.failed_delete);
+    expect(handlers['notes.storeOperation']).toHaveBeenCalledWith({ folder_id: 11 });
+    await client.storeCancel(7, epoch); await client.storeClose(7, epoch);
+    expect(handlers['notes.storeCancel']).toHaveBeenCalledWith({ operation_id: 7 });
+    expect(handlers['notes.storeClose']).toHaveBeenCalledWith({ operation_id: 7 });
+    for (const request of [{ folder_id: 11, confirmed_store_count: 2 }, { operation_id: 7 }, { operation_id: 7, delete_anyway: true }]) {
+      expect(await client.folderDelete(request, epoch)).toEqual(contract.start);
+      expect(handlers['notes.folderDelete']).toHaveBeenLastCalledWith(request);
+    }
+    await expect(client.storeUpload(11, 'openai', 'api_key_1', epoch + 1)).rejects.toMatchObject({ code: 'vault_changed' });
+    expect(handlers['notes.storeUpload']).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts no operation and every terminal outcome without guessing local deletion', async () => {
+    let status: unknown = contract.no_operation;
+    const client = createNativeChaClient(createFakeNativeBridge({ 'notes.storeOperation': () => status }));
+    expect(await client.storeOperation(11, client.contextEpoch())).toEqual({ present: false });
+    for (const [phase, result, folder_deleted] of [
+      ['failed', 'preflight', false], ['failed', 'error', false], ['cancelled', 'cancelled', false],
+      ['completed', 'success', false], ['completed', 'folder_deleted', true], ['warning', 'warning', true],
+    ]) {
+      status = { ...contract.failed_delete, phase, result, folder_deleted };
+      expect(await client.storeOperation(11, client.contextEpoch())).toEqual(status);
+    }
+  });
+
+  it.each([
+    undefined, null, {}, { service: 'other', id: 7, state: 'ready' },
+    { service: 'openai', id: 0, state: 'ready' }, { service: 'google', id: 1.5, state: 'incomplete' },
+    { service: 'openai', id: 7, state: 'working' }, { service: 'openai', id: 7, state: 'ready', remote_id: 'vs_private' },
+  ])('rejects malformed optional summary %j', async store => {
+    const client = createNativeChaClient(createFakeNativeBridge({ 'notes.list': () => ({ items: [{ ...contract.folder, store }] }) }));
+    await expect(client.listNoteItems()).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
+  it('rejects a store summary on a note or annotation', async () => {
+    for (const kind of ['note', 'annotation']) {
+      const client = createNativeChaClient(createFakeNativeBridge({ 'notes.list': () => ({ items: [{ ...contract.folder, kind }] }) }));
+      await expect(client.listNoteItems()).rejects.toBeInstanceOf(ChaProtocolError);
+    }
+  });
+
+  it.each([
+    { present: false, operation_id: 1 }, { present: 'true' },
+    ...[{ operation_id: 0 }, { operation_id: 1.5 }, { kind: 'delete' }, { phase: 'pending' },
+      { completed: -1 }, { completed: Number.MAX_SAFE_INTEGER + 1 }, { total: 1.5 },
+      { result: 'accepted' }, { terminal: 1 }, { folder_deleted: 'yes' }, { known_cleanup_remains: null },
+      { error: null }, { remote_store_id: 'vs_private' }, { api_key: 'secret' },
+    ].map(patch => ({ ...contract.failed_delete, ...patch })),
+  ])('rejects malformed operation status %j', async result => {
+    const client = createNativeChaClient(createFakeNativeBridge({ 'notes.storeOperation': () => result }));
+    await expect(client.storeOperation(11, client.contextEpoch())).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
+  it.each([{ operation_id: 0 }, { operation_id: 1.5 }, { operation_id: 7, extra: true }, {}])('rejects malformed acceptance %j', async result => {
+    const client = createNativeChaClient(createFakeNativeBridge({ 'notes.storeUpload': () => result }));
+    await expect(client.storeUpload(11, 'openai', 'api_key_1', client.contextEpoch())).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
+  it.each([{ choices: [{ service: 'other', api_key_id: 'key', api_key_name: 'Name' }] },
+    { choices: [{ service: 'openai', api_key_id: '', api_key_name: 'Name' }] },
+    { choices: [{ service: 'google', api_key_id: 'key', api_key_name: 'Name', value: 'secret' }] },
+    { choices: [], extra: true },
+  ])('rejects malformed choices %j', async result => {
+    const client = createNativeChaClient(createFakeNativeBridge({ 'notes.storeChoices': () => result }));
+    await expect(client.storeChoices(client.contextEpoch())).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+});

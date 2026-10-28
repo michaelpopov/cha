@@ -1,6 +1,7 @@
 #include "bridge/bridge_protocol.h"
 
 #include "runtime/protocol.h"
+#include "storage/note_storage.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -185,6 +186,15 @@ TEST(BridgeProtocol, RejectsUnknownMethodsAndKeepsVersionFixed) {
     EXPECT_TRUE(is_control_method(Method::session_unsubscribe));
     EXPECT_TRUE(is_control_method(Method::session_close));
     EXPECT_FALSE(is_control_method(Method::session_submit));
+}
+
+
+TEST(BridgeProtocol, FolderStoreListingMatchesTheSharedWireContract) {
+    NoteItem folder{.id = 11, .kind = NoteItemKind::folder, .name = "Research",
+        .store = NoteStoreSummary{"openai", 7, "ready"}};
+    EXPECT_EQ(nlohmann::json(folder), load_fixture("folder-store-contract.json")["folder"]);
+    folder.store.reset();
+    EXPECT_FALSE(nlohmann::json(folder).contains("store"));
 }
 
 } // namespace

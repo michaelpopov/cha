@@ -611,6 +611,9 @@ void to_json(nlohmann::json& json, const NoteItem& item) {
         {"has_compressed", item.has_compressed},
         {"read_only", item.read_only},
     };
+    if (item.kind == NoteItemKind::folder && item.store) {
+        json["store"] = {{"service", item.store->service}, {"id", item.store->id}, {"state", item.store->state}};
+    }
 }
 
 void to_json(nlohmann::json& json, const NoteContent& content) {
@@ -700,6 +703,11 @@ CREATE TABLE IF NOT EXISTS session_files (
     PRIMARY KEY (session_key, name)
 ) STRICT;
 )sql");
+}
+
+std::optional<NoteItem> note_find_item(storage::SqliteDatabase& database, std::int64_t id) {
+    if (id <= 0 || id > note_id_limit) return {};
+    return find_item(database, id);
 }
 
 std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {

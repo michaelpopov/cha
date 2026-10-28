@@ -121,6 +121,11 @@ nlohmann::json reply_with_id(const nlohmann::json& batch, std::uint64_t id) {
     return {};
 }
 
+nlohmann::json folder_store_wire_fixture() {
+    std::ifstream file(std::string(CHA_WIRE_FIXTURE_DIRECTORY) + "/folder-store-contract.json");
+    return nlohmann::json::parse(file);
+}
+
 class BridgeRouterTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -4156,6 +4161,207 @@ TEST_F(BridgeRouterTest, NotesListUsesTheOrdinaryRequestLimit) {
     EXPECT_EQ(reply["error"]["code"], "command_queue_full");
     EXPECT_EQ(reply["error"]["message"], "Too many in-flight requests.");
     ack_delivery(*router_, connection_, *overflow);
+}
+
+
+TEST_F(BridgeRouterTest, StoreMethodsRejectMalformedInputsAndListOnlySafeSummaries) {
+    bootstrap_epoch();
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Research", epoch_);
+    const auto child = application_->create_note_item(folder.id, NoteItemKind::folder, "Empty", epoch_);
+    const auto key = application_->create_api_key({.display_name = "Saved", .value = "private-value"}, epoch_);
+    std::int64_t store_id;
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        store_id = folder_store_register(db, folder.id, FolderStoreService::openai, key.id, 1);
+        folder_store_save_remote_id(db, store_id, "vs_private"); folder_store_mark_ready(db, store_id);
+        (void)folder_store_register(db, child.id, FolderStoreService::google, key.id, 1);
+    }
+    EXPECT_EQ(call("notes.storeOperation", {{"folder_id", folder.id}})["result"], (nlohmann::json{{"present", false}}));
+    auto listed = call("notes.list")["result"];
+    ASSERT_EQ(listed["items"].size(), 2u);
+    EXPECT_EQ(listed["items"][0]["store"], (nlohmann::json{{"service", "openai"}, {"id", store_id}, {"state", "ready"}}));
+    EXPECT_EQ(listed["items"][1]["store"]["state"], "incomplete");
+    EXPECT_EQ(listed.dump().find("vs_private"), std::string::npos);
+    EXPECT_EQ(listed.dump().find("private-value"), std::string::npos);
+    for (const auto& [method, params] : std::vector<std::pair<std::string, nlohmann::json>>{
+        {"notes.storeChoices", {{"unused", true}}},
+        {"notes.storeUpload", {{"folder_id", child.id}, {"service", "openai"}, {"api_key_id", "bad/key"}}},
+        {"notes.storeUpload", {{"folder_id", 0}, {"service", "openai"}, {"api_key_id", key.id}}},
+        {"notes.storeUpload", {{"folder_id", child.id}, {"service", "other"}, {"api_key_id", key.id}}},
+        {"notes.storeRemove", {{"folder_id", folder.id}, {"store_id", store_id + 100}}},
+        {"notes.storeRemove", {{"folder_id", folder.id}, {"store_id", 1.5}}},
+        {"notes.storeOperation", {{"folder_id", -1}}},
+        {"notes.storeCancel", {{"operation_id", 999}}},
+        {"notes.storeClose", {{"operation_id", 999}}},
+        {"notes.folderDelete", {{"folder_id", folder.id}, {"confirmed_store_count", 1}}},
+        {"notes.folderDelete", {{"folder_id", folder.id}, {"confirmed_store_count", 2}, {"operation_id", 1}}},
+        {"notes.folderDelete", {{"folder_id", folder.id}, {"confirmed_store_count", 2}, {"delete_anyway", true}}},
+        {"notes.folderDelete", {{"operation_id", 1}, {"delete_anyway", "true"}}},
+        {"notes.folderDelete", {{"operation_id", 1}, {"delete_anyway", true}}},
+        {"notes.delete", {{"id", folder.id}}},
+        {"notes.delete", {{"id", child.id}}},
+    }) {
+        SCOPED_TRACE(method + " " + params.dump());
+        const auto reply = call(method, params);
+        EXPECT_EQ(reply["ok"], false);
+        EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    }
+    EXPECT_EQ(application_->list_note_items(epoch_).size(), 2u);
+    const auto current_epoch = epoch_;
+    epoch_ += 1;
+    EXPECT_EQ(call("notes.storeChoices")["error"]["code"], "vault_changed");
+    epoch_ = current_epoch;
+}
+
+TEST_F(BridgeRouterTest, StoreDeletionSurvivesDisconnectAndRetainsTerminalControlWithoutFolder) {
+    bootstrap_epoch();
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Research", epoch_);
+    const auto key = application_->create_api_key({.display_name = "Saved", .value = "secret"}, epoch_);
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        const auto id = folder_store_register(db, folder.id, FolderStoreService::openai, key.id, 1);
+        folder_store_save_remote_id(db, id, "vs_one");
+    }
+    std::promise<void> release;
+    const auto gate = release.get_future().share();
+    std::atomic_int calls{0};
+    application_->set_folder_store_transport_for_tests([&](const auto&, const auto& cancelled) {
+        ++calls;
+        gate.wait_for(3s);
+        EXPECT_FALSE(cancelled.load());
+        return FolderStoreHttpResponse{.status = 200, .body = R"({"deleted":true})"};
+    });
+    const auto accepted = call("notes.folderDelete", {{"folder_id", folder.id}, {"confirmed_store_count", 1}});
+    ASSERT_TRUE(accepted.value("ok", false)) << accepted.dump();
+    const auto operation_id = accepted["result"]["operation_id"];
+    EXPECT_EQ(call("notes.storeClose", {{"operation_id", operation_id}})["ok"], false);
+    EXPECT_EQ(call("notes.storeCancel", {{"operation_id", operation_id}})["ok"], false);
+    router_->close_connection(connection_);
+    connection_ = router_->open_connection(); bootstrap_epoch();
+    EXPECT_EQ(call("notes.storeOperation", {{"folder_id", folder.id}})["result"]["operation_id"], operation_id);
+    release.set_value();
+    nlohmann::json status;
+    for (const auto deadline = std::chrono::steady_clock::now() + 3s; std::chrono::steady_clock::now() < deadline;) {
+        status = call("notes.storeOperation", {{"folder_id", folder.id}})["result"];
+        if (status.value("terminal", false)) break;
+        std::this_thread::sleep_for(1ms);
+    }
+    EXPECT_EQ(status["terminal"], true);
+    EXPECT_EQ(status["folder_deleted"], true);
+    EXPECT_EQ(status["result"], "folder_deleted");
+    EXPECT_TRUE(application_->list_note_items(epoch_).empty());
+    EXPECT_EQ(calls.load(), 1);
+    EXPECT_EQ(call("notes.storeClose", {{"operation_id", operation_id}})["ok"], true);
+    EXPECT_EQ(call("notes.storeOperation", {{"folder_id", folder.id}})["result"], (nlohmann::json{{"present", false}}));
+    EXPECT_EQ(call("notes.storeClose", {{"operation_id", operation_id}})["ok"], false);
+}
+
+TEST_F(BridgeRouterTest, StoreUploadReportsEditablePreflightAndFolderDeleteRequiresFailedOperation) {
+    bootstrap_epoch();
+    const auto fixture = folder_store_wire_fixture();
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Empty", epoch_);
+    const auto accepted = call("notes.storeUpload", {{"folder_id", folder.id}, {"service", "openai"}, {"api_key_id", "missing"}});
+    ASSERT_EQ(accepted["ok"], true);
+    nlohmann::json status;
+    for (const auto deadline = std::chrono::steady_clock::now() + 3s; std::chrono::steady_clock::now() < deadline;) {
+        status = call("notes.storeOperation", {{"folder_id", folder.id}})["result"];
+        if (status.value("terminal", false)) break;
+        std::this_thread::sleep_for(1ms);
+    }
+    EXPECT_EQ(status["result"], "preflight");
+    EXPECT_EQ(status["phase"], "failed");
+    EXPECT_EQ(status["folder_deleted"], false);
+    EXPECT_EQ(status["known_cleanup_remains"], false);
+    EXPECT_FALSE(status["error"].get<std::string>().empty());
+    const auto id = accepted["result"]["operation_id"];
+    auto expected_start = fixture.at("start");
+    expected_start["operation_id"] = id;
+    EXPECT_EQ(accepted.at("result"), expected_start);
+    auto expected_status = fixture.at("failed_delete");
+    expected_status["operation_id"] = id;
+    expected_status["kind"] = "upload";
+    expected_status["completed"] = 0;
+    expected_status["total"] = 0;
+    expected_status["result"] = "preflight";
+    expected_status["error"] = "The selected service and saved API key are not eligible.";
+    expected_status["known_cleanup_remains"] = false;
+    EXPECT_EQ(status, expected_status);
+    EXPECT_EQ(call("notes.folderDelete", {{"operation_id", id}})["ok"], false);
+    EXPECT_EQ(call("notes.folderDelete", {{"operation_id", id}, {"delete_anyway", true}})["ok"], false);
+    EXPECT_EQ(call("notes.storeClose", {{"operation_id", id}})["ok"], true);
+    EXPECT_EQ(call("notes.storeOperation", {{"folder_id", folder.id}}).at("result"), fixture.at("no_operation"));
+}
+
+
+TEST_F(BridgeRouterTest, FailedFolderDeleteAcceptsOnlyItsCurrentRetryOrExplicitFallback) {
+    bootstrap_epoch();
+    const auto key = application_->create_api_key({.display_name = "Saved", .value = "secret"}, epoch_);
+    const auto wait_terminal = [&](std::int64_t folder) {
+        nlohmann::json status;
+        for (const auto deadline = std::chrono::steady_clock::now() + 3s; std::chrono::steady_clock::now() < deadline;) {
+            status = call("notes.storeOperation", {{"folder_id", folder}})["result"];
+            if (status.value("terminal", false)) break;
+            std::this_thread::sleep_for(1ms);
+        }
+        EXPECT_EQ(status["terminal"], true);
+        return status;
+    };
+    for (int variant = 0; variant < 3; ++variant) {
+        const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Research" + std::to_string(variant), epoch_);
+        {
+            storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+            const auto record = folder_store_register(db, folder.id, FolderStoreService::openai, key.id, 1);
+            folder_store_save_remote_id(db, record, "vs_one");
+        }
+        std::atomic_int calls{0};
+        application_->set_folder_store_transport_for_tests([&](const auto&, const auto&) {
+            ++calls; return FolderStoreHttpResponse{.status = 403};
+        });
+        const auto accepted = call("notes.folderDelete", {{"folder_id", folder.id}, {"confirmed_store_count", 1}});
+        ASSERT_TRUE(accepted.value("ok", false)) << accepted.dump();
+        const auto operation = accepted["result"]["operation_id"];
+        auto failed = wait_terminal(folder.id);
+        EXPECT_EQ(failed["result"], "error"); EXPECT_EQ(failed["folder_deleted"], false);
+        nlohmann::json request{{"operation_id", operation}};
+        if (variant != 0) request["delete_anyway"] = variant == 2;
+        application_->set_folder_store_transport_for_tests([&](const auto&, const auto&) {
+            ++calls; return FolderStoreHttpResponse{.status = 200, .body = R"({"deleted":true})"};
+        });
+        const auto retried = call("notes.folderDelete", request);
+        ASSERT_TRUE(retried.value("ok", false)) << retried.dump();
+        EXPECT_EQ(retried["result"]["operation_id"], operation);
+        const auto done = wait_terminal(folder.id);
+        EXPECT_EQ(done["folder_deleted"], true);
+        EXPECT_EQ(done["result"], variant == 2 ? "warning" : "folder_deleted");
+        EXPECT_EQ(calls.load(), variant == 2 ? 1 : 2);
+        EXPECT_TRUE(call("notes.storeClose", {{"operation_id", operation}}).value("ok", false));
+        EXPECT_FALSE(call("notes.folderDelete", request).value("ok", true));
+    }
+}
+
+
+TEST_F(BridgeRouterTest, StoreChoicesMatchTheSharedWireFixture) {
+    bootstrap_epoch();
+    const auto openai = application_->create_api_key({.display_name = "OpenAI", .value = "openai-secret"}, epoch_);
+    const auto google = application_->create_api_key({.display_name = "Google", .value = "google-secret"}, epoch_);
+    nlohmann::json provider = application_->get_provider("test", epoch_);
+    for (const char* field : {"id", "used_by", "writable"}) provider.erase(field);
+    provider["mode"] = "net"; provider["https"] = true; provider["port"] = 443;
+    provider["host"] = "api.openai.com"; provider["api"] = "responses";
+    provider["base_path"] = ""; provider["api_key"] = openai.id;
+    (void)application_->update_provider("test", provider, epoch_);
+    const auto google_provider = application_->create_provider({.display_name = "Google", .copy_from = "test"}, epoch_);
+    provider["host"] = "generativelanguage.googleapis.com"; provider["api"] = "google";
+    provider["base_path"] = "/v1beta"; provider["api_key"] = google.id;
+    (void)application_->update_provider(google_provider.id, provider, epoch_);
+    auto actual = call("notes.storeChoices").at("result");
+    auto expected = folder_store_wire_fixture().at("choices");
+    expected["choices"][0]["api_key_id"] = openai.id;
+    expected["choices"][1]["api_key_id"] = google.id;
+    const auto by_service = [](const auto& left, const auto& right) { return left.at("service") < right.at("service"); };
+    std::sort(actual["choices"].begin(), actual["choices"].end(), by_service);
+    std::sort(expected["choices"].begin(), expected["choices"].end(), by_service);
+    EXPECT_EQ(actual, expected);
 }
 
 } // namespace

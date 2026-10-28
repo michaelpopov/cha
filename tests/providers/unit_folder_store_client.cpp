@@ -345,5 +345,21 @@ TEST(FolderStoreHttp, UsesOpenAiIdAndGoogleNameWhenBothFieldsExist) {
     EXPECT_TRUE(failed.unknown_allocation);
 }
 
+
+TEST_F(FolderStoreClientTest, AmbiguousLegacyNamesNeverChooseAnArbitrarySavedKey) {
+    const auto duplicate = keys_->create("OpenAI", "same-secret");
+    auto config = openai_config(""); config.api_key_env = "OpenAI";
+    const auto saved = keys_->list();
+    for (const auto& matched : {folder_store_match(config, *keys_), folder_store_match(config, saved)}) {
+        EXPECT_FALSE(matched.service);
+        EXPECT_TRUE(matched.api_key_id.empty());
+        EXPECT_NE(matched.reason.find("ambiguous"), std::string::npos);
+    }
+    config.api_key_id = duplicate.id;
+    EXPECT_EQ(folder_store_match(config, *keys_).api_key_id, duplicate.id);
+    config.api_key_id = openai_key_;
+    EXPECT_EQ(folder_store_match(config, saved).api_key_id, openai_key_);
+}
+
 } // namespace
 } // namespace cha

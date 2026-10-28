@@ -424,7 +424,19 @@ std::vector<NoteItem> Application::list_note_items(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     try {
-        return impl_->store->list_note_items();
+        auto items = impl_->store->list_note_items();
+        const auto stores = impl_->store->list_folder_stores();
+        for (auto& item : items) {
+            if (item.kind != NoteItemKind::folder) continue;
+            for (const auto& store : stores) {
+                if (store.folder_id == item.id) {
+                    item.store = NoteStoreSummary{std::string(folder_store_service_name(store.service)), store.id,
+                        store.state == FolderStoreState::ready ? "ready" : "incomplete"};
+                    break;
+                }
+            }
+        }
+        return items;
     } catch (const NoteError& error) {
         rethrow_note(error);
     }

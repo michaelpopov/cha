@@ -1,6 +1,10 @@
 #include "session/session_open.h"
 
 #include "providers/providers.h"
+#include "providers/api_key_store.h"
+#include "runtime/text_input.h"
+#include "session/session_controller.h"
+#include "storage/folder_store_storage.h"
 #include "storage/not_found_error.h"
 #include "storage/session_repository.h"
 #include "storage/note_storage.h"
@@ -239,6 +243,181 @@ TEST_F(SessionOpenTest, ReportsMissingForumAndSession) {
     EXPECT_THROW(
         (void)open({"lobby", "missing"}),
         SessionNotFoundError);
+}
+
+
+class FolderRequestBackend final : public ModelBackend {
+public:
+    FolderRequestBackend(std::vector<GenerationRequest>& requests, bool& reject)
+        : requests_(requests), reject_(reject) {}
+    RequestPayload prepare(const GenerationRequest& input) override {
+        requests_.push_back(input);
+        return {};
+    }
+    GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink, const std::atomic_bool&) override {
+        if (reject_ && requests_.back().folder_search && requests_.back().run.target.id == "guide")
+            return {GenerationOutcome::protocol_error, "Provider rejected store count"};
+        sink({GenerationDeltaKind::answer, "Answer"});
+        return {};
+    }
+private:
+    std::vector<GenerationRequest>& requests_;
+    bool& reject_;
+};
+
+TEST_F(SessionOpenTest, FolderAccessResolvesPerTargetAndRefreshesAfterReplacementAndDetach) {
+    fixture_.add_character("writer", "Writer");
+    const auto member = fixture_.root() / "forums/lobby/members/writer";
+    std::filesystem::create_directories(member);
+    std::ofstream(member / "character.toml") << "# member\n";
+    reimport_fixture();
+    ApiKeyStore keys(*store_);
+    const auto openai = keys.create("OpenAI", "same-secret");
+    const auto google = keys.create("Google", "same-secret");
+    ModelBackendConfig config;
+    config.host = "api.openai.com"; config.port = 443; config.https = true;
+    config.mode = Mode::net; config.api = ProviderApi::responses; config.model = "test";
+    config.api_key_id = openai.id;
+    (void)store_->apply_provider_update("test", "Test", config);
+    const auto google_provider = store_->create_provider("Google", "test");
+    config.host = "generativelanguage.googleapis.com"; config.api = ProviderApi::google;
+    config.base_path = "/v1beta"; config.api_key_id = google.id;
+    (void)store_->apply_provider_update(google_provider, "Google", config);
+    (void)store_->apply_character_settings("writer", google_provider, {});
+    const auto folder = store_->create_note_item({}, NoteItemKind::folder, "Research");
+    const auto duplicate = store_->create_note_item({}, NoteItemKind::folder, "Alias");
+    const auto mismatched = store_->create_note_item({}, NoteItemKind::folder, "Other key");
+    const auto seed = [&](std::int64_t id, FolderStoreService service, const std::string& key, const std::string& remote) {
+        const auto record = store_->register_folder_store(id, service, key, 1);
+        store_->save_folder_store_remote_id(record, remote);
+        store_->mark_folder_store_ready(record, "Ready");
+        return record;
+    };
+    const auto original = seed(folder.id, FolderStoreService::openai, openai.id, "vs_shared");
+    seed(duplicate.id, FolderStoreService::openai, openai.id, "vs_shared");
+    seed(mismatched.id, FolderStoreService::openai, google.id, "vs_other");
+    std::vector<GenerationRequest> requests;
+    bool reject = true;
+    Providers providers([&](auto) { return std::make_unique<FolderRequestBackend>(requests, reject); }, [](auto work) { work(); });
+    const auto stored = sessions_->create("lobby", "Stores");
+    auto opened = open_session(*sessions_, stored.identity, providers, std::make_shared<test::TestNotifier>(), *store_);
+    auto& controller = *opened.controller;
+    for (const auto id : {folder.id, duplicate.id, mismatched.id})
+        ASSERT_TRUE(handle_text_input(controller, workspace_guest_id, note_item_ref_id(id)).clear_input);
+    EXPECT_TRUE(requests.empty());
+    const auto sent = controller.start_multicast(workspace_guest_id, "Question", {"Guide", "Writer"});
+    ASSERT_TRUE(sent.notice);
+    EXPECT_NE(sent.notice->find("different saved API key"), std::string::npos);
+    EXPECT_NE(sent.notice->find("Writer"), std::string::npos);
+    EXPECT_NE(sent.notice->find("/detach " + note_item_ref_id(folder.id)), std::string::npos);
+    for (int i = 0; i < 10 && controller.is_generating(); ++i) (void)controller.receive_events(100);
+    ASSERT_FALSE(controller.is_generating());
+    ASSERT_EQ(requests.size(), 2u);
+    ASSERT_TRUE(requests[0].folder_search);
+    EXPECT_EQ(requests[0].folder_search->remote_store_ids, (std::vector<std::string>{"vs_shared"}));
+    EXPECT_FALSE(requests[1].folder_search);
+    bool saw_error = false, saw_writer = false;
+    for (const auto& entry : controller.view().transcript.entries) {
+        if (entry.text.find("Provider rejected store count") != std::string::npos) {
+            saw_error = true;
+            EXPECT_NE(entry.text.find("/detach " + note_item_ref_id(folder.id)), std::string::npos);
+        }
+        saw_writer |= entry.participant_id == "writer" && entry.text == "Answer";
+    }
+    EXPECT_TRUE(saw_error); EXPECT_TRUE(saw_writer);
+    store_->delete_folder_store_record(original, "Removed");
+    seed(folder.id, FolderStoreService::google, google.id, "fileSearchStores/new");
+    (void)store_->rename_note_item(folder.id, "Renamed");
+    (void)controller.submit_prompt(workspace_guest_id, "Next", "Writer");
+    for (int i = 0; i < 10 && controller.is_generating(); ++i) (void)controller.receive_events(100);
+    ASSERT_EQ(requests.size(), 3u);
+    ASSERT_TRUE(requests.back().folder_search);
+    EXPECT_EQ(requests.back().folder_search->service, FolderStoreService::google);
+    EXPECT_EQ(requests.back().folder_search->remote_store_ids, (std::vector<std::string>{"fileSearchStores/new"}));
+    // The earlier request keeps its captured IDs.
+    EXPECT_EQ(requests[0].folder_search->remote_store_ids, (std::vector<std::string>{"vs_shared"}));
+    for (const auto id : {folder.id, duplicate.id, mismatched.id})
+        EXPECT_TRUE(handle_text_input(controller, workspace_guest_id, "/detach " + note_item_ref_id(id)).clear_input);
+    (void)controller.submit_prompt(workspace_guest_id, "Recovered", "Guide");
+    for (int i = 0; i < 10 && controller.is_generating(); ++i) (void)controller.receive_events(100);
+    ASSERT_EQ(requests.size(), 4u);
+    EXPECT_FALSE(requests.back().folder_search);
+    EXPECT_EQ(controller.view().transcript.entries.back().text, "Answer");
+}
+
+TEST_F(SessionOpenTest, FolderAttachRechecksThePersistentJournalAfterCallbackAndRollsBackNotices) {
+    const auto folder = store_->create_note_item({}, NoteItemKind::folder, "Research");
+    const auto record = store_->register_folder_store(folder.id, FolderStoreService::openai, "saved", 1);
+    store_->save_folder_store_remote_id(record, "vs_test");
+    store_->mark_folder_store_ready(record, "Ready");
+    const auto stored = sessions_->create("lobby", "Race");
+    auto prepared = sessions_->prepare(stored.identity);
+    bool invalidate = true;
+    auto controller = SessionController::from_workspace([&] { return store_->snapshot(); },
+        [&](auto id) { return store_->get_note_text(id, true); },
+        [&](auto id) { return store_->get_note_item(id); }, [&](auto id) {
+            auto current = store_->get_folder_store_by_folder(id);
+            if (invalidate) store_->mark_folder_store_incomplete(record);
+            return current;
+        },
+        "guide", std::string(workspace_guest_id),
+        prepared.database_path, prepared.session_key, prepared.database_password, providers_,
+        std::make_shared<test::TestNotifier>(), prepared.restore, prepared.identity, 0, {});
+    EXPECT_FALSE(controller->add_item(folder.id).input_consumed);
+    SessionJournal journal(prepared.database_path, prepared.session_key);
+    EXPECT_TRUE(journal.folder_ids().empty());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
+    invalidate = false;
+    store_->mark_folder_store_ready(record, "Ready");
+    force_next_session_folder_notice_failure();
+    EXPECT_FALSE(controller->add_item(folder.id).input_consumed);
+    EXPECT_TRUE(journal.folder_ids().empty());
+    EXPECT_TRUE(controller->add_item(folder.id).input_consumed);
+    EXPECT_EQ(journal.folder_ids(), (std::vector<std::int64_t>{folder.id}));
+}
+
+TEST_F(SessionOpenTest, WelcomeMaintenanceSkipsFolderLookupAndReadyAttachUsesTheActiveVault) {
+    const auto folder = store_->create_note_item({}, NoteItemKind::folder, "Research");
+    const auto record = store_->register_folder_store(folder.id, FolderStoreService::openai, "saved", 1);
+    store_->save_folder_store_remote_id(record, "vs_test"); store_->mark_folder_store_ready(record, "Ready");
+    auto prepared = sessions_->prepare({std::string(entrance_id), std::string(welcome_id)});
+    std::vector<GenerationRequest> requests;
+    bool reject = false;
+    Providers providers([&](auto) { return std::make_unique<FolderRequestBackend>(requests, reject); }, [](auto work) { work(); });
+    int lookups = 0;
+    auto controller = SessionController::from_workspace([&] { return store_->snapshot(); },
+        [&](auto id) { return store_->get_note_text(id, true); },
+        [&](auto id) { return store_->get_note_item(id); }, [&](auto id) {
+            ++lookups; return store_->get_folder_store_by_folder(id);
+        },
+        std::string(workspace_assistant_id), std::string(workspace_guest_id),
+        prepared.database_path, prepared.session_key, prepared.database_password, providers,
+        std::make_shared<test::TestNotifier>(), prepared.restore, prepared.identity, 0, {});
+    ASSERT_TRUE(controller->add_item(folder.id).input_consumed);
+    EXPECT_TRUE(requests.empty());
+    const auto before = lookups;
+    (void)controller->submit_prompt(workspace_guest_id, "Maintenance");
+    EXPECT_EQ(lookups, before);
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_TRUE(requests[0].maintenance_tool);
+    EXPECT_FALSE(requests[0].folder_search);
+}
+
+
+TEST_F(SessionOpenTest, ProductionControllersRequireExplicitActiveVaultReaders) {
+    const auto stored = sessions_->create("lobby", "Required readers");
+    const auto prepared = sessions_->prepare(stored.identity);
+    for (const bool missing_item : {false, true}) {
+        SessionController::ItemReader read_item = [&](auto id) { return store_->get_note_item(id); };
+        SessionController::StoreReader read_store = [&](auto id) { return store_->get_folder_store_by_folder(id); };
+        if (missing_item) read_item = {};
+        else read_store = {};
+        EXPECT_THROW((void)SessionController::from_workspace([&] { return store_->snapshot(); },
+            [&](auto id) { return store_->get_note_text(id, true); }, read_item, read_store,
+            "guide", std::string(workspace_guest_id), prepared.database_path, prepared.session_key,
+            prepared.database_password, providers_, std::make_shared<test::TestNotifier>(),
+            prepared.restore, prepared.identity), std::invalid_argument);
+    }
 }
 
 } // namespace

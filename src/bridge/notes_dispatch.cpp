@@ -56,6 +56,21 @@ const nlohmann::json& require_document(const nlohmann::json& params) {
     return document;
 }
 
+std::int64_t require_positive_id(const nlohmann::json& params, const char* key) {
+    const auto id = params.contains(key) ? as_safe_uint(params.at(key)) : std::nullopt;
+    if (!id || *id == 0) throw std::invalid_argument("The item or operation id is not valid.");
+    return static_cast<std::int64_t>(*id);
+}
+
+nlohmann::json store_status(const app::Application::FolderStoreOperationStatus& status) {
+    if (!status.present) return {{"present", false}};
+    return {{"present", true}, {"operation_id", status.operation_id},
+        {"kind", status.kind}, {"phase", status.phase},
+        {"completed", status.completed}, {"total", status.total},
+        {"error", status.error}, {"result", status.result}, {"terminal", status.terminal},
+        {"known_cleanup_remains", status.known_cleanup_remains}, {"folder_deleted", status.folder_deleted}};
+}
+
 } // namespace
 
 std::optional<nlohmann::json> dispatch_notes_operation(
@@ -84,6 +99,58 @@ std::optional<nlohmann::json> dispatch_notes_operation(
     case Method::note_audio_info:
         require_only_keys(params, {"id"});
         return application.get_note_audio_info(require_note_id(params), epoch);
+    case Method::notes_store_choices: {
+        require_only_keys(params, {});
+        auto choices = nlohmann::json::array();
+        for (const auto& choice : application.folder_store_choices(epoch))
+            choices.push_back({{"service", choice.service}, {"api_key_id", choice.api_key_id},
+                {"api_key_name", choice.api_key_name}});
+        return nlohmann::json{{"choices", std::move(choices)}};
+    }
+    case Method::notes_store_upload: {
+        require_only_keys(params, {"folder_id", "service", "api_key_id"});
+        const auto start = application.start_folder_store_upload(require_positive_id(params, "folder_id"),
+            require_string(params, "service"), require_identifier(params, "api_key_id"), epoch);
+        return nlohmann::json{{"operation_id", start.operation_id}};
+    }
+    case Method::notes_store_remove: {
+        require_only_keys(params, {"folder_id", "store_id"});
+        const auto start = application.start_folder_store_remove(require_positive_id(params, "folder_id"),
+            require_positive_id(params, "store_id"), epoch);
+        return nlohmann::json{{"operation_id", start.operation_id}};
+    }
+    case Method::notes_store_operation:
+        require_only_keys(params, {"folder_id"});
+        return store_status(application.folder_store_operation_status(require_positive_id(params, "folder_id"), epoch));
+    case Method::notes_store_cancel:
+        require_only_keys(params, {"operation_id"});
+        application.cancel_folder_store_upload(require_positive_id(params, "operation_id"), epoch);
+        return nlohmann::json::object();
+    case Method::notes_store_close:
+        require_only_keys(params, {"operation_id"});
+        application.close_folder_store_operation(require_positive_id(params, "operation_id"), epoch);
+        return nlohmann::json::object();
+    case Method::notes_folder_delete: {
+        if (params.contains("delete_anyway") && !params.at("delete_anyway").is_boolean())
+            throw std::invalid_argument("The delete-anyway flag must be a boolean.");
+        if (params.contains("operation_id")) {
+            require_only_keys(without_key(params, "delete_anyway"), {"operation_id"});
+            const auto operation_id = require_positive_id(params, "operation_id");
+            if (params.value("delete_anyway", false)) {
+                application.delete_folder_anyway(operation_id, epoch);
+                return nlohmann::json{{"operation_id", operation_id}};
+            }
+            return nlohmann::json{{"operation_id", application.retry_folder_delete(operation_id, epoch).operation_id}};
+        }
+        if (params.contains("delete_anyway"))
+            throw std::invalid_argument("Delete anyway requires a failed operation id.");
+        require_only_keys(params, {"folder_id", "confirmed_store_count"});
+        const auto count = params.contains("confirmed_store_count")
+            ? as_safe_uint(params.at("confirmed_store_count")) : std::nullopt;
+        if (!count) throw std::invalid_argument("The confirmed store count is not valid.");
+        return nlohmann::json{{"operation_id", application.start_folder_delete(
+            require_positive_id(params, "folder_id"), static_cast<std::int64_t>(*count), epoch).operation_id}};
+    }
     case Method::notes_list:
         require_only_keys(params, {});
         return nlohmann::json{{"items", application.list_note_items(epoch)}};

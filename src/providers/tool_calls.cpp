@@ -21,10 +21,13 @@ void append_tool(nlohmann::json& body, ProviderApi api, nlohmann::json function)
         function.erase("strict");
         function["parametersJsonSchema"] = std::move(function["parameters"]);
         function.erase("parameters");
-        if (body["tools"].empty()) {
-            body["tools"].push_back({{"functionDeclarations", Json::array()}});
+        for (auto& tool : body["tools"]) {
+            if (tool.contains("functionDeclarations")) {
+                tool["functionDeclarations"].push_back(std::move(function));
+                return;
+            }
         }
-        body["tools"][0]["functionDeclarations"].push_back(std::move(function));
+        body["tools"].push_back({{"functionDeclarations", Json::array({std::move(function)})}});
         return;
     }
     if (api == ProviderApi::responses) {
@@ -250,10 +253,15 @@ void update_tool_instructions(nlohmann::json& body, ProviderApi api,
     RequestTextSizes* text_sizes) {
     bool search_available = false;
     bool read_available = false;
+    bool folder_available = false;
     if (const auto tools = body.find("tools"); tools != body.end()) {
         for (const auto& tool : *tools) {
             if (api == ProviderApi::google) {
-                for (const auto& function : tool.at("functionDeclarations")) {
+                if (const auto search = tool.find("fileSearch"); search != tool.end())
+                    folder_available |= !search->value("fileSearchStoreNames", nlohmann::json::array()).empty();
+                const auto functions = tool.find("functionDeclarations");
+                if (functions == tool.end() || !functions->is_array()) continue;
+                for (const auto& function : *functions) {
                     const auto name = function.value("name", "");
                     search_available |= name == "web_search";
                     read_available |= name == "web_read";
@@ -267,6 +275,8 @@ void update_tool_instructions(nlohmann::json& body, ProviderApi api,
                 continue;
             }
             const auto type = tool.value("type", "");
+            if (api == ProviderApi::responses && type == "file_search")
+                folder_available |= !tool.value("vector_store_ids", nlohmann::json::array()).empty();
             if (type == "web_search" || type == "openrouter:web_search") {
                 search_available = true;
             } else if (type == "function") {
@@ -317,6 +327,8 @@ void update_tool_instructions(nlohmann::json& body, ProviderApi api,
                              : "Web search is unavailable for this request.\n";
     text += read_available ? "Web page reading is available for this request.\n"
                            : "Web page reading is unavailable for this request.\n";
+    if (folder_available) text += "Folder search is available for this request. "
+        "Access alone does not mean a folder was searched.\n";
     text += "Search and page-reading requirements in character and forum instructions apply "
         "only when the corresponding capability is available. Use available tools when "
         "verification is needed. If verification is needed but is unavailable, fails, or gives "

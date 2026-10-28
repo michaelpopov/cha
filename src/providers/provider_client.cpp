@@ -852,14 +852,32 @@ GenerationResult ProviderClient::perform(
             }
             if (google) body["toolConfig"]["functionCallingConfig"]["mode"] = "NONE";
             else {
-                body.erase("tools");
-                body.erase("tool_choice");
+                Json retained = Json::array();
+                if (responses && body.contains("tools")) {
+                    for (const auto& tool : body["tools"])
+                        if (tool.value("type", "") == "file_search") retained.push_back(tool);
+                }
+                if (retained.empty()) {
+                    body.erase("tools");
+                    body.erase("tool_choice");
+                } else {
+                    body["tools"] = std::move(retained);
+                    body["tool_choice"] = "auto";
+                }
             }
+            const bool folder_search = body.contains("tools") && std::any_of(
+                body["tools"].begin(), body["tools"].end(), [&](const auto& tool) {
+                    return google ? tool.contains("fileSearch") : responses && tool.value("type", "") == "file_search";
+                });
             update_tool_instructions(body, definition_->provider.config.api);
             const std::string directive = maintenance
                 ? "Maintenance tools are now unavailable because the tool limit was reached. "
                     "Answer the original request using the results already collected. "
                     "Earlier saved changes stay saved. Do not request more tools."
+                : folder_search
+                ? "CHA web functions are now unavailable because the tool limit was reached. "
+                    "Answer using collected results and available folder search. "
+                    "State any gaps in verification and do not invent missing facts."
                 : "Web tools are now unavailable because the tool limit was reached. "
                     "Answer the original request using the results already collected. "
                     "State clearly if those results are insufficient to verify any requested information. "

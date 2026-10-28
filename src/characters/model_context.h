@@ -4,6 +4,7 @@
 #include "chat/research_needs.h"
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
+#include "storage/folder_store_storage.h"
 
 #include <atomic>
 #include <functional>
@@ -39,6 +40,11 @@ struct RunSpec {
     std::int64_t created_at{};
 };
 
+struct FolderSearchAccess {
+    FolderStoreService service;
+    std::vector<std::string> remote_store_ids;
+};
+
 // Complete immutable input for backend preparation. Ordinary requests and
 // multicast children use the same representation.
 struct GenerationRequest {
@@ -52,6 +58,9 @@ struct GenerationRequest {
     // Auxiliary requests such as session naming do not need conversation tool rules.
     bool include_tool_instructions{true};
     ResearchNeeds research_needs{};
+    std::optional<FolderSearchAccess> folder_search;
+    // Local error context only; never serialized as a provider tool payload.
+    std::string folder_search_context;
 };
 
 enum class ModelRole {

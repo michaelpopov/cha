@@ -2,6 +2,7 @@
 #include "storage/note_storage.h"
 
 #include "providers/maintenance.h"
+#include "providers/folder_store_client.h"
 #include "workspace/builtins.h"
 
 #include "storage/session_label.h"
@@ -185,6 +186,8 @@ std::string format_duplicate_character_notice(std::string_view display_name) {
 std::unique_ptr<SessionController> SessionController::from_workspace(
     WorkspaceReader read_workspace,
     NoteReader read_note,
+    ItemReader read_item,
+    StoreReader read_store,
     CharacterId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path database_path,
@@ -199,6 +202,8 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(read_workspace),
         std::move(read_note),
+        std::move(read_item),
+        std::move(read_store),
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id), std::move(database_path),
         session_key, std::move(database_password), providers,
@@ -225,9 +230,19 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
         storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
         return note_get_text(database, id, /*prefer_compressed=*/ true);
     };
+    ItemReader read_item = [path = database_path](std::int64_t id) {
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
+        return note_find_item(database, id);
+    };
+    StoreReader read_store = [path = database_path](std::int64_t id) {
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
+        return folder_store_get_by_folder(database, id);
+    };
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(read_workspace),
         std::move(read_note),
+        std::move(read_item),
+        std::move(read_store),
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id),
         std::move(database_path), session_key, {}, provider,
@@ -239,6 +254,8 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
 SessionController::SessionController(
     WorkspaceReader read_workspace,
     NoteReader read_note,
+    ItemReader read_item,
+    StoreReader read_store,
     ParticipantId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path path,
@@ -255,6 +272,8 @@ SessionController::SessionController(
     : read_workspace_(std::move(read_workspace)),
       journal_(std::move(path), session_key, database_password),
       read_note_(std::move(read_note)),
+      read_item_(std::move(read_item)),
+      read_store_(std::move(read_store)),
       providers_owner_(std::move(providers_owner)),
       providers_(providers),
       notifier_(std::move(notifier)),
@@ -265,6 +284,8 @@ SessionController::SessionController(
       maintenance_prompt_(std::move(maintenance_prompt)) {
     if (!notifier_) throw std::invalid_argument("Session controller requires a wake notifier");
     if (!read_note_) throw std::invalid_argument("Session controller requires a note reader");
+    if (!read_item_) throw std::invalid_argument("Session controller requires an item reader");
+    if (!read_store_) throw std::invalid_argument("Session controller requires a store reader");
     initialize(std::move(restored), initial_default_persona_id);
 }
 
@@ -423,6 +444,64 @@ void SessionController::record_monologue(
     update.input_consumed = true;
     update.notice = "";
     require_snapshot(update);
+}
+
+ControllerUpdate SessionController::add_item(
+    std::int64_t item_id, std::shared_ptr<SubmissionState> submission) {
+    if (submission && submission->expired()) return {.notice = "Submission expired"};
+    if (shutdown_) return {.notice = "Request could not be dispatched"};
+    if (is_generating()) return busy_notice();
+    try {
+        const auto attached = journal_.folder_ids();
+        const bool duplicate = std::find(attached.begin(), attached.end(), item_id) != attached.end();
+        const auto item = read_item_(item_id);
+        if (!duplicate && (!item || item->kind != NoteItemKind::folder))
+            return add_note(item_id, std::move(submission));
+        const auto ready = [this](std::int64_t id) {
+            const auto folder = read_item_(id);
+            const auto store = read_store_(id);
+            return folder && folder->kind == NoteItemKind::folder && store
+                && store->state == FolderStoreState::ready && store->remote_store_id;
+        };
+        if (!duplicate && !ready(item_id))
+            return {.notice = "Upload this folder to a store before adding it to the conversation."};
+        if (submission && submission->expired()) return {.notice = "Submission expired"};
+        const bool welcome = identity_.forum_id == workspace_entrance_id && identity_.session_id == welcome_id;
+        auto entry = journal_.add_folder(item_id, item ? item->name : "", next_entry_id_,
+            welcome ? std::function<bool(std::int64_t)>(ready) : std::function<bool(std::int64_t)>{});
+        ++next_entry_id_;
+        transcript_.add_entry(std::move(entry));
+        ControllerUpdate update{.state = SnapshotRequired{}, .input_consumed = true, .notice = ""};
+        publish_recent(update);
+        return update;
+    } catch (const std::invalid_argument&) {
+        return {.notice = "Upload this folder to a store before adding it to the conversation."};
+    } catch (const std::exception& error) {
+        log_warn("Could not add folder to chat: " + std::string(error.what()));
+        return {.notice = "The folder could not be added to this chat. Try again."};
+    }
+}
+
+ControllerUpdate SessionController::detach_folder(
+    std::int64_t folder_id, std::shared_ptr<SubmissionState> submission) {
+    if (submission && submission->expired()) return {.notice = "Submission expired"};
+    if (shutdown_) return {.notice = "Request could not be dispatched"};
+    if (is_generating()) return busy_notice();
+    try {
+        std::string name;
+        try { if (const auto item = read_item_(folder_id)) name = item->name; }
+        catch (const std::exception&) { /* Detach also works without metadata. */ }
+        if (submission && submission->expired()) return {.notice = "Submission expired"};
+        auto entry = journal_.detach_folder(folder_id, name, next_entry_id_);
+        ++next_entry_id_;
+        transcript_.add_entry(std::move(entry));
+        ControllerUpdate update{.state = SnapshotRequired{}, .input_consumed = true, .notice = ""};
+        publish_recent(update);
+        return update;
+    } catch (const std::exception& error) {
+        log_warn("Could not detach folder: " + std::string(error.what()));
+        return {.notice = "The folder could not be detached. Try again."};
+    }
 }
 
 ControllerUpdate SessionController::add_note(
@@ -694,14 +773,17 @@ ControllerUpdate SessionController::finish_classification() {
     auto dispatched = dispatch_target(input.author, std::move(input.text), target, result.research_needs);
     if (dispatched.input_consumed) {
         if (failed) {
+            std::string notice;
             if (target == all_characters_target) {
-                dispatched.notice = "Recipient detection failed. Sent to all characters.";
+                notice = "Recipient detection failed. Sent to all characters.";
             } else if (target == null_agent_handle) {
-                dispatched.notice = "Recipient detection failed. Saved as a self-note.";
+                notice = "Recipient detection failed. Saved as a self-note.";
             } else {
-                dispatched.notice = "Recipient detection failed. Sent to "
+                notice = "Recipient detection failed. Sent to "
                     + active_->character_display_name + ".";
             }
+            if (!dispatched.notice) dispatched.notice.emplace();
+            append_line(*dispatched.notice, notice);
         }
     } else {
         default_character_id_ = previous_target;
@@ -735,6 +817,7 @@ void SessionController::start_generation(
         [this, &notes] { notes = journal_.notes_prompt(); });
     std::vector<ProviderRequestInput> inputs;
     inputs.reserve(targets.size());
+    std::string folder_omissions;
     for (CharacterMetadata& target : targets) {
         SharedCharacterDefinition definition = definition_for(target.id);
         if (!definition) {
@@ -778,6 +861,43 @@ void SessionController::start_generation(
             }
             definition = std::move(copy);
         }
+        std::optional<FolderSearchAccess> folder_search;
+        std::string folder_context;
+        if (!maintenance) {
+            const auto folder_ids = journal_.folder_ids();
+            if (!folder_ids.empty()) {
+                std::vector<ApiKeyInfo> keys;
+                for (const auto& key : current->api_keys())
+                    keys.push_back({key.id, key.display_name, !key.value.empty()});
+                const auto match = folder_store_match(definition->provider.config, keys);
+                std::vector<std::string> ids;
+                std::string omitted;
+                for (const auto id : folder_ids) {
+                    const auto item = read_item_(id);
+                    const auto record = read_store_(id);
+                    const auto ref = note_item_ref_id(id);
+                    const auto label = item ? "“" + item->name + "” (" + ref + ")" : ref;
+                    std::string reason;
+                    if (!item) reason = "folder unavailable";
+                    else if (!record || record->state != FolderStoreState::ready || !record->remote_store_id)
+                        reason = "no ready store";
+                    else if (!match.service) reason = match.reason;
+                    else if (*match.service != record->service) reason = "different service";
+                    else if (match.api_key_id != record->api_key_id) reason = "different saved API key";
+                    if (!reason.empty()) {
+                        if (!omitted.empty()) omitted += "; ";
+                        omitted += label + ": " + reason + " (/detach " + ref + ")";
+                        continue;
+                    }
+                    if (std::find(ids.begin(), ids.end(), *record->remote_store_id) == ids.end())
+                        ids.push_back(*record->remote_store_id);
+                    if (!folder_context.empty()) folder_context += "; ";
+                    folder_context += label + " (/detach " + ref + ")";
+                }
+                if (!ids.empty()) folder_search = FolderSearchAccess{*match.service, std::move(ids)};
+                if (!omitted.empty()) append_line(folder_omissions, target.display_name + ": " + omitted);
+            }
+        }
         const RequestId request_id = next_request_id_++;
         const std::string cache_key = prompt_cache_key(identity_, target.id);
         std::optional<MaintenanceContext> maintenance_context;
@@ -804,6 +924,8 @@ void SessionController::start_generation(
                     .created_at = unix_now(),
                 },
                 .research_needs = research_needs,
+                .folder_search = std::move(folder_search),
+                .folder_search_context = std::move(folder_context),
             },
             .web_search_tool = tool_enabled
                 ? std::optional<WorkspaceWebSearch>(current->web_search()) : std::nullopt,
@@ -826,6 +948,9 @@ void SessionController::start_generation(
     for (ProviderRequestInput& input : inputs) {
         generation_->requests.push_back(
             providers_.make_request(std::move(input), notifier_));
+    }
+    if (!folder_omissions.empty()) {
+        update.notice = "Folder access omitted: " + folder_omissions;
     }
     // Sessions without Jev start naming alongside the reply.
     start_session_name(update);

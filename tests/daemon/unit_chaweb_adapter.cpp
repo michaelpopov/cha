@@ -7,6 +7,7 @@
 #include "support/test_workspace.h"
 #include "support/xai_fake_server.h"
 #include "storage/session_database.h"
+#include "storage/folder_store_storage.h"
 #include "storage/session_repository.h"
 #include "util/logging.h"
 #include "workspace/builtins.h"
@@ -1639,6 +1640,30 @@ TEST(ChaWebAdapter, StopAfterASavedRepairStoresTheNotice) {
     EXPECT_TRUE(transcript_has_notice(snapshot, "Configuration was saved."));
     server.resume_responses();
     server.join();
+}
+
+
+TEST_F(ChaWebAdapterTest, SharedFolderReferenceAndDetachCommandsDoNotGenerateAnAnswer) {
+    const auto epoch = application_->context_epoch();
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Research", epoch);
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        const auto record = folder_store_register(db, folder.id, FolderStoreService::openai, "saved", 1);
+        folder_store_save_remote_id(db, record, "vs_test"); folder_store_mark_ready(db, record);
+    }
+    const auto id = create_session();
+    const auto uri = session_path("lobby", id);
+    const auto ref = note_item_ref_id(folder.id);
+    EXPECT_EQ(post(uri + "/input", text_body(ref)).status, 204);
+    auto snapshot = get(uri).json;
+    EXPECT_EQ(snapshot["generation"]["active"], false);
+    EXPECT_EQ(snapshot["transcript"].back()["text"], "Added folder “Research” to this chat.");
+    EXPECT_EQ(post(uri + "/input", text_body("/detach " + ref)).status, 204);
+    snapshot = get(uri).json;
+    EXPECT_EQ(snapshot["generation"]["active"], false);
+    EXPECT_EQ(snapshot["transcript"].back()["text"], "Removed folder “Research” from this chat.");
+    EXPECT_EQ(post(uri + "/input", text_body("/detach " + ref)).status, 204);
+    EXPECT_EQ(get(uri).json["transcript"].back()["text"], "Folder “Research” is not attached to this chat.");
 }
 
 } // namespace

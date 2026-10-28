@@ -389,6 +389,7 @@ public:
     [[nodiscard]] bool folder_store_owns_subtree(std::int64_t folder_id) const;
     [[nodiscard]] std::vector<std::int64_t> folder_ids_in_subtree(std::int64_t folder_id) const;
     [[nodiscard]] std::vector<FolderStoreKeyUsage> folder_store_usage() const;
+    [[nodiscard]] std::optional<NoteItem> get_note_item(std::int64_t id) const;
     [[nodiscard]] std::optional<NoteItem> folder_store_folder(std::int64_t folder_id) const;
     [[nodiscard]] FolderStoreCapture capture_folder_store(
         std::int64_t folder_id, FolderStoreService service);

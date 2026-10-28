@@ -612,6 +612,7 @@ public:
         std::string result;
         bool known_cleanup_remains{};
         bool folder_deleted{};
+        bool terminal{};
     };
     [[nodiscard]] std::vector<FolderStoreChoiceView> folder_store_choices(std::uint64_t epoch);
     [[nodiscard]] FolderStoreStart start_folder_store_upload(

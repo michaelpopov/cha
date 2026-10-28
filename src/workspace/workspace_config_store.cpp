@@ -2762,6 +2762,11 @@ std::vector<FolderStoreKeyUsage> WorkspaceConfigStore::folder_store_usage() cons
     return cha::folder_store_usage(*impl_->database);
 }
 
+std::optional<NoteItem> WorkspaceConfigStore::get_note_item(std::int64_t id) const {
+    const std::lock_guard lock(impl_->mutex);
+    return note_find_item(*impl_->database, id);
+}
+
 std::optional<NoteItem> WorkspaceConfigStore::folder_store_folder(
     std::int64_t folder_id) const {
     const std::lock_guard lock(impl_->mutex);

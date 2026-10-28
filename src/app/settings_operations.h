@@ -1,6 +1,7 @@
 #pragma once
 
 #include "providers/credentials.h"
+#include "storage/folder_store_storage.h"
 #include "providers/openai_oauth.h"
 #include "runtime/protocol.h"
 #include "workspace/workspace.h"
@@ -138,21 +139,22 @@ void disable_jev(WorkspaceConfigStore& store);
 
 [[nodiscard]] std::vector<ApiKeyDetail> list_api_keys(
     const Workspace& workspace,
-    const ApiKeyStore& api_keys);
+    const ApiKeyStore& api_keys,
+    std::span<const FolderStoreKeyUsage> stores);
 [[nodiscard]] ApiKeyDetail create_api_key(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
-    const CreateApiKeyRequest& create);
+    const CreateApiKeyRequest& create, std::span<const FolderStoreKeyUsage> stores);
 [[nodiscard]] ApiKeyDetail rename_api_key(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
-    std::string_view display_name);
+    std::string_view display_name, std::span<const FolderStoreKeyUsage> stores);
 [[nodiscard]] ApiKeyDetail replace_api_key_value(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
-    std::string_view value);
+    std::string_view value, std::span<const FolderStoreKeyUsage> stores);
 void delete_api_key(ApiKeyStore& api_keys, std::string_view id);
 
 [[nodiscard]] std::optional<R2StorageDetail> get_r2_storage(

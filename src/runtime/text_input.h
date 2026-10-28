@@ -17,6 +17,7 @@ enum class CommandKind {
     text,
     mcast,
     clear,
+    detach,
     unknown,
 };
 

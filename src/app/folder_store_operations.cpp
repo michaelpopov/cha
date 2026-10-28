@@ -61,7 +61,7 @@ Application::FolderStoreOperationStatus status_from(const auto& control) {
         .completed = control.completed, .total = control.total,
         .error = control.error, .result = control.result,
         .known_cleanup_remains = control.known_cleanup_remains,
-        .folder_deleted = control.folder_deleted};
+        .folder_deleted = control.folder_deleted, .terminal = control.terminal};
 }
 
 // All application/store access by a worker goes through this guard. Network
@@ -165,6 +165,18 @@ void persist_id(auto& self, const auto& control, std::string id, bool file) {
     }
 }
 
+// Caller holds the lifecycle lock. Retain each unsaved ID until its write succeeds.
+void save_unsaved_ids(WorkspaceConfigStore& store, auto& control, std::int64_t record_id) {
+    if (control.unsaved_store_id) {
+        store.save_folder_store_remote_id(record_id, *control.unsaved_store_id);
+        control.unsaved_store_id.reset();
+    }
+    while (!control.unsaved_file_ids.empty()) {
+        store.add_folder_store_file_id(record_id, control.unsaved_file_ids.back());
+        control.unsaved_file_ids.pop_back();
+    }
+}
+
 // The same routine serves Remove, failed uploads, cancellation and subtree delete.
 // Each known resource is attempted once; only explicit user work retries failures.
 bool cleanup(auto& self, const auto& control, FolderStoreClient& client, FolderStoreRecord record, bool finalize) {
@@ -226,14 +238,7 @@ bool cleanup(auto& self, const auto& control, FolderStoreClient& client, FolderS
         // A failed cleanup must keep learned IDs available to a later explicit
         // Remove. Retry only local bookkeeping; never replay an allocation.
         try {
-            if (control->unsaved_store_id) {
-                self.store->save_folder_store_remote_id(record.id, *control->unsaved_store_id);
-                control->unsaved_store_id.reset();
-            }
-            while (!control->unsaved_file_ids.empty()) {
-                self.store->add_folder_store_file_id(record.id, control->unsaved_file_ids.back());
-                control->unsaved_file_ids.pop_back();
-            }
+            save_unsaved_ids(*self.store, *control, record.id);
         } catch (...) { log_warn("Folder store ownership bookkeeping still failed; returned IDs remain in the operation and logs."); }
         auto latest = self.store->get_folder_store(record.id);
         if (!latest) throw FolderStoreError("That folder store was not found.");
@@ -281,6 +286,9 @@ bool Application::Impl::folder_store_reserved(std::int64_t folder_id) {
 }
 
 bool Application::Impl::folder_in_delete_subtree(std::int64_t folder_id) {
+    if (std::none_of(folder_store_controls.begin(), folder_store_controls.end(), [](const auto& entry) {
+        return entry.second->kind == FolderStoreOpKind::folder_delete && reserved(*entry.second);
+    })) return false;
     const auto items = store->list_note_items();
     for (const auto& [id, control] : folder_store_controls) {
         if (control->kind == FolderStoreOpKind::folder_delete && reserved(*control)
@@ -290,6 +298,9 @@ bool Application::Impl::folder_in_delete_subtree(std::int64_t folder_id) {
 }
 
 bool Application::Impl::folder_store_blocks_delete(std::int64_t item_id) {
+    if (std::none_of(folder_store_controls.begin(), folder_store_controls.end(), [](const auto& entry) {
+        return reserved(*entry.second);
+    })) return false;
     const auto items = store->list_note_items();
     for (const auto& [id, control] : folder_store_controls) {
         if (!reserved(*control)) continue;
@@ -722,7 +733,22 @@ Application::FolderStoreOperationStatus Application::folder_store_operation_stat
     const std::lock_guard lock(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     const auto found = impl_->folder_store_controls.find(folder_id);
-    return found == impl_->folder_store_controls.end() ? FolderStoreOperationStatus{} : status_from(*found->second);
+    if (found == impl_->folder_store_controls.end()) return {};
+    auto status = status_from(*found->second);
+    if (status.terminal && status.phase == "failed") {
+        // Delete owns its reserved subtree; upload and Remove own one attempt.
+        // Recheck retained IDs after exceptional local bookkeeping failures.
+        if (found->second->kind == Impl::FolderStoreOpKind::folder_delete) {
+            for (const auto& record : impl_->store->folder_stores_in_subtree(folder_id))
+                status.known_cleanup_remains |= record.remote_store_id.has_value() || !record.file_ids.empty();
+        } else if (found->second->store_record_id) {
+            if (const auto record = impl_->store->get_folder_store(*found->second->store_record_id))
+                status.known_cleanup_remains |= record->remote_store_id.has_value() || !record->file_ids.empty();
+        }
+        status.known_cleanup_remains |= found->second->unsaved_store_id.has_value()
+            || !found->second->unsaved_file_ids.empty();
+    }
+    return status;
 }
 
 void Application::cancel_folder_store_upload(std::int64_t operation_id, std::uint64_t epoch) {
@@ -730,7 +756,10 @@ void Application::cancel_folder_store_upload(std::int64_t operation_id, std::uin
     impl_->require_admitted(epoch);
     impl_->store->require_main();
     const auto control = impl_->folder_store_operation(operation_id);
-    if (!control || control->terminal || control->kind != Impl::FolderStoreOpKind::upload) return;
+    if (!control) throw ApplicationError(ErrorCode::invalid_argument, "That store operation is no longer current.");
+    if (control->kind != Impl::FolderStoreOpKind::upload)
+        throw ApplicationError(ErrorCode::invalid_argument, "Only an upload can be cancelled.");
+    if (control->terminal) return;
     const std::lock_guard wait_lock(control->wait_mutex);
     control->cancel_forward->store(true);
     control->wait_cv.notify_all();
@@ -741,8 +770,16 @@ void Application::close_folder_store_operation(std::int64_t operation_id, std::u
     impl_->require_admitted(epoch);
     impl_->store->require_main();
     const auto control = impl_->folder_store_operation(operation_id);
-    if (!control) return;
+    if (!control) throw ApplicationError(ErrorCode::invalid_argument, "That store operation is no longer current.");
     if (!control->terminal) throw ApplicationError(ErrorCode::invalid_argument, "The operation is still running.");
+    // Close must not discard ownership IDs retained after a failed local write.
+    if (control->store_record_id) {
+        try {
+            save_unsaved_ids(*impl_->store, *control, *control->store_record_id);
+        } catch (...) {
+            throw ApplicationError(ErrorCode::invalid_argument, "Cleanup IDs could not be saved. Keep this operation open and try Remove again.");
+        }
+    }
     impl_->release_folder_store_control_locked(control);
 }
 
@@ -765,14 +802,7 @@ Application::FolderStoreStart Application::start_folder_delete(std::int64_t fold
         if (previous == impl_->folder_store_controls.end() || previous->second->store_record_id != record.id) continue;
         auto& previous_control = *previous->second;
         try {
-            if (previous_control.unsaved_store_id) {
-                impl_->store->save_folder_store_remote_id(record.id, *previous_control.unsaved_store_id);
-                previous_control.unsaved_store_id.reset();
-            }
-            while (!previous_control.unsaved_file_ids.empty()) {
-                impl_->store->add_folder_store_file_id(record.id, previous_control.unsaved_file_ids.back());
-                previous_control.unsaved_file_ids.pop_back();
-            }
+            save_unsaved_ids(*impl_->store, previous_control, record.id);
         } catch (...) {
             throw ApplicationError(ErrorCode::invalid_argument, "Returned resource IDs could not be saved. Use Remove or check the operation's cleanup details.");
         }
@@ -802,11 +832,14 @@ Application::FolderStoreStart Application::retry_folder_delete(std::int64_t oper
     control->terminal = false;
     control->delete_failed = false;
     control->error.clear();
+    control->result.clear();
     control->phase = Impl::FolderStorePhase::removing;
     if (!impl_->launch_folder_store_control(control, [owner = impl_.get(), control] { owner->run_folder_store_delete(control, true); })) {
         control->terminal = true;
         control->delete_failed = true;
         control->phase = Impl::FolderStorePhase::failed;
+        control->result = "error";
+        control->error = "The folder delete retry could not be started. Retry or close this operation.";
         throw ApplicationError(ErrorCode::operation_cancelled, "The operation could not be started.");
     }
     return {.operation_id = control->operation_id};

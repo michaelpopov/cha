@@ -891,5 +891,183 @@ TEST_F(FolderStoreOperationsTest, CancelCannotMissThePollWakeupAfterPredicateRea
     EXPECT_EQ(done.result, "cancelled");
 }
 
+
+TEST_F(FolderStoreOperationsTest, StaleOperationIdsCannotCancelOrCloseReplacementAndRetryHasNoTerminalResult) {
+    const auto id = seed_store(folder_.id);
+    application_->set_folder_store_transport_for_tests([](const auto&, const auto&) { return FolderStoreHttpResponse{.status = 401}; });
+    const auto first = application_->start_folder_delete(folder_.id, 1, epoch_);
+    ASSERT_EQ(wait_status(folder_.id).result, "error");
+    auto gate = std::make_shared<Gate>();
+    application_->set_folder_store_transport_for_tests([gate](const auto&, const auto&) {
+        gate->arrive_and_wait(); return json_ok(R"({"deleted":true})");
+    });
+    (void)application_->retry_folder_delete(first.operation_id, epoch_);
+    ASSERT_TRUE(gate->wait_entered());
+    const auto retry = application_->folder_store_operation_status(folder_.id, epoch_);
+    EXPECT_FALSE(retry.terminal); EXPECT_TRUE(retry.result.empty());
+    gate->release();
+    EXPECT_TRUE(wait_status(folder_.id).folder_deleted);
+    application_->close_folder_store_operation(first.operation_id, epoch_);
+    EXPECT_THROW(application_->close_folder_store_operation(first.operation_id, epoch_), ApplicationError);
+    EXPECT_THROW(application_->cancel_folder_store_upload(first.operation_id, epoch_), ApplicationError);
+    (void)id;
+}
+
+TEST_F(FolderStoreOperationsTest, SavedKeyUsageIncludesIncompleteAndReadyStoresAfterKeyAndFolderEdits) {
+    const auto id = seed_store(folder_.id);
+    const auto usage = [&](const ApiKeyDetail& detail, std::string_view name) {
+        EXPECT_NE(std::find(detail.used_by.begin(), detail.used_by.end(), name), detail.used_by.end());
+    };
+    const auto find = [&]() -> ApiKeyDetail {
+        const auto list = application_->list_api_keys(epoch_);
+        return *std::find_if(list.begin(), list.end(), [&](const auto& key) { return key.id == key_; });
+    };
+    usage(find(), "Folder store: Research (OpenAI)");
+    usage(application_->rename_api_key(key_, "Renamed key", epoch_), "Folder store: Research (OpenAI)");
+    (void)application_->rename_note_item(folder_.id, "Renamed folder", epoch_);
+    usage(application_->replace_api_key_value(key_, "replacement", epoch_), "Folder store: Renamed folder (OpenAI)");
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        folder_store_mark_ready(db, id);
+    }
+    usage(find(), "Folder store: Renamed folder (OpenAI)");
+    EXPECT_NO_THROW(application_->delete_api_key(key_, epoch_));
+    EXPECT_EQ(application_->folder_store_record(folder_.id, epoch_)->api_key_id, key_);
+}
+
+
+TEST_F(FolderStoreOperationsTest, FailedRetryLaunchRetainsACompleteFailureStatusAndReservation) {
+    auto fail_launch = std::make_shared<bool>(false);
+    RuntimeSettings settings;
+    settings.folder_store_before_launch = [fail_launch] { if (*fail_launch) throw std::runtime_error("launch failure"); };
+    reopen(settings);
+    (void)seed_store(folder_.id);
+    application_->set_folder_store_transport_for_tests([](const auto&, const auto&) { return FolderStoreHttpResponse{.status = 401}; });
+    const auto operation = application_->start_folder_delete(folder_.id, 1, epoch_);
+    ASSERT_EQ(wait_status(folder_.id).result, "error");
+    *fail_launch = true;
+    EXPECT_THROW((void)application_->retry_folder_delete(operation.operation_id, epoch_), ApplicationError);
+    const auto status = application_->folder_store_operation_status(folder_.id, epoch_);
+    EXPECT_TRUE(status.terminal);
+    EXPECT_EQ(status.phase, "failed"); EXPECT_EQ(status.result, "error");
+    EXPECT_FALSE(status.error.empty()); EXPECT_FALSE(status.folder_deleted);
+    EXPECT_TRUE(status.known_cleanup_remains);
+    EXPECT_THROW((void)application_->create_note_item(folder_.id, NoteItemKind::note, "Blocked", epoch_), ApplicationError);
+    application_->close_folder_store_operation(operation.operation_id, epoch_);
+    EXPECT_NO_THROW((void)application_->create_note_item(folder_.id, NoteItemKind::note, "Allowed", epoch_));
+}
+
+
+TEST_F(FolderStoreOperationsTest, ClosePreservesUnsavedOwnershipUntilItCanBeRecorded) {
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (request.method == "DELETE") return FolderStoreHttpResponse{.status = 403};
+        auto response = openai_transport()(request, cancel);
+        if (request.url.ends_with("/vector_stores") && request.method == "POST") {
+            storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+            db.execute("CREATE TRIGGER block_remote_id BEFORE UPDATE OF remote_store_id ON folder_stores "
+                "BEGIN SELECT RAISE(ABORT, 'injected write failure'); END");
+        }
+        return response;
+    });
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
+    const auto status = wait_status(folder_.id);
+    EXPECT_EQ(status.phase, "failed"); EXPECT_TRUE(status.known_cleanup_remains);
+    ASSERT_TRUE(application_->folder_store_record(folder_.id, epoch_));
+    EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_)->remote_store_id);
+    EXPECT_THROW(application_->close_folder_store_operation(operation.operation_id, epoch_), ApplicationError);
+    EXPECT_TRUE(application_->folder_store_operation_status(folder_.id, epoch_).present);
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        db.execute("DROP TRIGGER block_remote_id");
+    }
+    application_->close_folder_store_operation(operation.operation_id, epoch_);
+    EXPECT_FALSE(application_->folder_store_operation_status(folder_.id, epoch_).present);
+    EXPECT_EQ(application_->folder_store_record(folder_.id, epoch_)->remote_store_id, "vs_1");
+}
+
+
+TEST_F(FolderStoreOperationsTest, UploadFailureDoesNotReportAnUntouchedChildStoreAsCleanup) {
+    const auto child = application_->create_note_item(folder_.id, NoteItemKind::folder, "Child", epoch_);
+    const auto child_store = seed_store(child.id, "vs_child", {});
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        folder_store_mark_ready(db, child_store);
+    }
+    int requests = 0;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        ++requests;
+        EXPECT_FALSE(request.url.ends_with("vs_child"));
+        return openai_transport(true)(request, cancel);
+    });
+    const auto preflight = application_->start_folder_store_upload(folder_.id, "openai", "missing", epoch_);
+    auto status = wait_status(folder_.id);
+    EXPECT_EQ(status.result, "preflight"); EXPECT_FALSE(status.known_cleanup_remains);
+    EXPECT_EQ(requests, 0);
+    application_->close_folder_store_operation(preflight.operation_id, epoch_);
+    // A failed remote upload whose own cleanup succeeded also leaves no cleanup.
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
+    status = wait_status(folder_.id);
+    EXPECT_EQ(status.result, "error"); EXPECT_FALSE(status.known_cleanup_remains);
+    EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
+    const auto retained = application_->folder_store_record(child.id, epoch_);
+    ASSERT_TRUE(retained);
+    EXPECT_EQ(retained->state, FolderStoreState::ready);
+    EXPECT_EQ(retained->remote_store_id, "vs_child");
+}
+
+TEST_F(FolderStoreOperationsTest, FailedRemoveRechecksOnlyItsOwnStoreRecord) {
+    const auto child = application_->create_note_item(folder_.id, NoteItemKind::folder, "Child", epoch_);
+    const auto child_store = seed_store(child.id, "vs_child", {});
+    const auto parent_store = seed_store(folder_.id, {}, {});
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        folder_store_mark_ready(db, child_store);
+        db.execute("CREATE TRIGGER block_store_delete BEFORE DELETE ON folder_stores "
+            "BEGIN SELECT RAISE(ABORT, 'injected local failure'); END");
+    }
+    application_->set_folder_store_transport_for_tests([](const auto&, const auto&) {
+        ADD_FAILURE() << "Remove has no remote resources";
+        return FolderStoreHttpResponse{};
+    });
+    (void)application_->start_folder_store_remove(folder_.id, parent_store, epoch_);
+    const auto status = wait_status(folder_.id);
+    EXPECT_EQ(status.phase, "failed"); EXPECT_FALSE(status.known_cleanup_remains);
+    EXPECT_TRUE(application_->folder_store_record(folder_.id, epoch_));
+    EXPECT_EQ(application_->folder_store_record(child.id, epoch_)->state, FolderStoreState::ready);
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        db.execute("DROP TRIGGER block_store_delete");
+        folder_store_save_remote_id(db, parent_store, "vs_parent");
+        db.execute("CREATE TRIGGER block_incomplete BEFORE UPDATE OF state ON folder_stores "
+            "BEGIN SELECT RAISE(ABORT, 'injected local failure'); END");
+    }
+    // If failure precedes cleanup, the parent's retained IDs must still count.
+    (void)application_->start_folder_store_remove(folder_.id, parent_store, epoch_);
+    const auto with_resources = wait_status(folder_.id);
+    EXPECT_EQ(with_resources.phase, "failed"); EXPECT_TRUE(with_resources.known_cleanup_remains);
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        db.execute("DROP TRIGGER block_incomplete");
+    }
+}
+
+TEST_F(FolderStoreOperationsTest, SecondaryProcessCanReadStoresButCannotMutateOperations) {
+    const auto record = seed_store(folder_.id);
+    auto secondary = Application::open(make_command(workspace_, database_));
+    const auto epoch = secondary->context_epoch();
+    EXPECT_NO_THROW((void)secondary->folder_store_choices(epoch));
+    EXPECT_FALSE(secondary->folder_store_operation_status(folder_.id, epoch).present);
+    EXPECT_THROW((void)secondary->start_folder_store_upload(folder_.id, "openai", key_, epoch), SecondaryProcessError);
+    EXPECT_THROW((void)secondary->start_folder_store_remove(folder_.id, record, epoch), SecondaryProcessError);
+    EXPECT_THROW(secondary->cancel_folder_store_upload(1, epoch), SecondaryProcessError);
+    EXPECT_THROW(secondary->close_folder_store_operation(1, epoch), SecondaryProcessError);
+    EXPECT_THROW((void)secondary->start_folder_delete(folder_.id, 1, epoch), SecondaryProcessError);
+    EXPECT_THROW((void)secondary->retry_folder_delete(1, epoch), SecondaryProcessError);
+    EXPECT_THROW(secondary->delete_folder_anyway(1, epoch), SecondaryProcessError);
+    EXPECT_EQ(application_->folder_store_record(folder_.id, epoch_)->id, record);
+    secondary->request_shutdown();
+    EXPECT_TRUE(secondary->join_shutdown(2s));
+}
+
 } // namespace
 } // namespace cha::app

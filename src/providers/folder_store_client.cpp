@@ -179,10 +179,20 @@ bool google_upload_url_valid(std::string_view url) {
 }
 
 std::string resolve_key_id(
-    const ModelBackendConfig& config, const ApiKeyStore& keys, std::string& reason) {
+    const ModelBackendConfig& config, std::span<const ApiKeyInfo> keys, std::string& reason) {
     std::optional<ApiKeyInfo> info;
-    if (!config.api_key_id.empty()) info = keys.find(config.api_key_id);
-    else if (!config.api_key_env.empty()) info = keys.find_by_name(config.api_key_env);
+    for (const auto& key : keys) {
+        if ((!config.api_key_id.empty() && key.id == config.api_key_id)
+            || (config.api_key_id.empty() && !config.api_key_env.empty()
+                && key.display_name == config.api_key_env)) {
+            if (info) {
+                reason = "The saved API key name is ambiguous. Select a saved key ID.";
+                return {};
+            }
+            info = key;
+            if (!config.api_key_id.empty()) break;
+        }
+    }
     if (!info) {
         reason = "The saved API key was not found.";
         return {};
@@ -198,6 +208,12 @@ std::string resolve_key_id(
 
 FolderStoreEligibility folder_store_match(
     const ModelBackendConfig& config, const ApiKeyStore& keys) {
+    const auto saved = keys.list();
+    return folder_store_match(config, saved);
+}
+
+FolderStoreEligibility folder_store_match(
+    const ModelBackendConfig& config, std::span<const ApiKeyInfo> keys) {
     FolderStoreEligibility result;
     if (config.mode != Mode::net) {
         result.reason = "Store access requires a network provider.";

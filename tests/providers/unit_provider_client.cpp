@@ -3470,6 +3470,7 @@ TEST(ProviderClient, GoogleUsesNativeUrlsAndOptionalSavedKeyHeaders) {
 TEST(ProviderClient, GoogleKeepsParallelAndSequentialToolPartsInOrderThroughLimit) {
     for (const bool stream : {false, true}) {
         for (const bool keep_calling : {false, true}) {
+          for (const bool with_stores : {false, true}) {
             auto definition = network_definition(8080, stream);
             definition.provider.config.api = ProviderApi::google;
             int requests = 0;
@@ -3497,6 +3498,11 @@ TEST(ProviderClient, GoogleKeepsParallelAndSequentialToolPartsInOrderThroughLimi
                             EXPECT_EQ(responses[1]["functionResponse"]["response"], (Json{{"result", Json::array({1, 2})}}));
                         } else EXPECT_EQ(responses[0]["functionResponse"]["response"], (Json{{"result", "plain result"}}));
                     }
+                    if (with_stores) {
+                        EXPECT_EQ(body["tools"].back(), (Json{{"fileSearch", {{"fileSearchStoreNames", {"fileSearchStores/one"}}}}}));
+                        EXPECT_EQ(body["toolConfig"]["includeServerSideToolInvocations"], true);
+                        EXPECT_EQ(body["toolConfig"]["functionCallingConfig"]["mode"], requests < 3 ? "VALIDATED" : "NONE");
+                    }
                     sent.push_back(body);
                     ++requests;
                     // Two parallel calls then two sequential calls exhaust the search limit of four.
@@ -3508,6 +3514,10 @@ TEST(ProviderClient, GoogleKeepsParallelAndSequentialToolPartsInOrderThroughLimi
                         if (requests == 1) parts.push_back({{"functionCall", {{"name", "web_search"}, {"args", {{"query", "second"}}}}}});
                         parts.push_back({{"thoughtSignature", "tail-" + std::to_string(requests)}});
                     }
+                    if (with_stores) {
+                        parts.insert(parts.begin(), Json{{"toolCall", {{"id", "hosted"}, {"toolType", "FILE_SEARCH"}, {"args", {{"query", "q"}}}}}, {"thoughtSignature", "hosted-signature"}});
+                        parts.push_back({{"toolResponse", {{"id", "hosted"}, {"response", {{"text", "retrieved"}}}}}});
+                    }
                     auto response = google_response(parts);
                     model_contents.push_back(response["candidates"][0]["content"]);
                     response["usageMetadata"] = {{"promptTokenCount", 3}, {"candidatesTokenCount", 2}, {"thoughtsTokenCount", 1}};
@@ -3517,6 +3527,7 @@ TEST(ProviderClient, GoogleKeepsParallelAndSequentialToolPartsInOrderThroughLimi
                 });
             Transcript transcript;
             auto request = client_request(transcript, 1, "Question");
+            if (with_stores) request.folder_search = FolderSearchAccess{FolderStoreService::google, {"fileSearchStores/one"}};
             std::atomic_int executions{0};
             request.web_search_tool = [&](std::string_view query, const auto&) {
                 ++executions;
@@ -3534,10 +3545,15 @@ TEST(ProviderClient, GoogleKeepsParallelAndSequentialToolPartsInOrderThroughLimi
             EXPECT_TRUE(sent.back().contains("tools"));
             EXPECT_NE(sent.back()["systemInstruction"].dump().find("Web search is unavailable"), std::string::npos);
             EXPECT_NE(sent.back()["systemInstruction"].dump().find("tool limit was reached"), std::string::npos);
+            if (with_stores) {
+                EXPECT_NE(sent.back()["systemInstruction"].dump().find("Folder search is available"), std::string::npos);
+                EXPECT_EQ(sent.back()["systemInstruction"].dump().find("Do not invent missing facts or request more tools"), std::string::npos);
+            }
             EXPECT_TRUE(sent.back()["contents"].back()["parts"][0].contains("functionResponse"));
             EXPECT_EQ(result.usage.input_tokens, 12u);
             EXPECT_EQ(result.usage.output_tokens, 12u);
             EXPECT_EQ(answer, "First\n\nNext\n\nNext\n\nFinal");
+          }
         }
     }
 }
@@ -3843,6 +3859,79 @@ TEST(ProviderClient, AnthropicCancellationAfterTransportDoesNotExecuteCalls) {
     request.maintenance_tool = [&](auto, auto, const auto&) { ++executions; return "{}"; };
     EXPECT_EQ(client.perform(client.prepare(request), [](auto) {}, cancel).outcome, GenerationOutcome::cancelled);
     EXPECT_EQ(executions, 0);
+}
+
+
+TEST(ProviderClientTools, ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetRound) {
+    for (const bool stream : {false, true}) {
+        auto definition = network_definition(443, stream);
+        definition.provider.config.api = ProviderApi::responses;
+        definition.provider.config.host = "api.openai.com";
+        definition.provider.config.web_search = WebSearchMode::required;
+        int requests = 0;
+        Json first_output;
+        ProviderClient client(shared_definition(definition), nullptr,
+            [&](const ProviderHttpRequest& request, const auto&) {
+                const auto body = Json::parse(request.body);
+                EXPECT_EQ(body["store"], false);
+                if (++requests == 1) {
+                    EXPECT_EQ(body["tool_choice"], "required");
+                    auto calls = Json::array({{{"type", "file_search_call"}, {"id", "hosted"}, {"status", "completed"}, {"queries", {"fact"}}}});
+                    for (int i = 0; i < 4; ++i) calls.push_back(search_call(ProviderApi::responses, "call" + std::to_string(i)));
+                    first_output = calls;
+                    return tool_reply(ProviderApi::responses, stream, calls);
+                }
+                EXPECT_EQ(body["tools"], (Json::array({{{"type", "file_search"}, {"vector_store_ids", {"vs_one"}}}})));
+                EXPECT_EQ(body["tool_choice"], "auto");
+                EXPECT_EQ(body["input"][2], first_output[0]);
+                EXPECT_EQ(body["input"][1]["encrypted_content"], "opaque reasoning");
+                EXPECT_NE(body["instructions"].dump().find("Folder search is available"), std::string::npos);
+                EXPECT_NE(body["instructions"].dump().find("Web search is unavailable"), std::string::npos);
+                const Json done{{"status", "completed"}, {"output", Json::array({{{"type", "message"}, {"role", "assistant"},
+                    {"content", Json::array({{{"type", "output_text"}, {"text", "Answer"}}})}}})}};
+                return ProviderHttpResponse{200, stream ? "text/event-stream" : "application/json", stream
+                    ? "data: " + Json{{"type", "response.output_text.delta"}, {"delta", "Answer"}}.dump() + "\n\n"
+                        + "data: " + Json{{"type", "response.completed"}, {"response", done}}.dump() + "\n\n"
+                    : done.dump()};
+            });
+        Transcript transcript;
+        auto request = client_request(transcript, 1, "Question");
+        request.folder_search = FolderSearchAccess{FolderStoreService::openai, {"vs_one"}};
+        std::atomic_int executions{0};
+        request.web_search_tool = [&](auto, const auto&) { ++executions; return "[]"; };
+        std::string answer;
+        const auto result = client.perform(client.prepare(request), [&](GenerationDelta d) { answer += d.text; }, std::atomic_bool{false});
+        EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(executions.load(), 4);
+        EXPECT_EQ(requests, 2);
+        EXPECT_EQ(answer, "Answer");
+    }
+}
+
+
+TEST(ProviderClient, UnknownGoogleMixedModelFailureDoesNotRetryOrDropStoresOrFunctions) {
+    auto definition = network_definition(443, false);
+    definition.provider.config.api = ProviderApi::google;
+    definition.provider.config.model = "unknown-model";
+    int attempts = 0;
+    ProviderClient client(shared_definition(definition), nullptr, [&](const auto& request, const auto&) {
+        ++attempts;
+        const auto body = Json::parse(request.body);
+        EXPECT_EQ(body["tools"].size(), 2u);
+        EXPECT_EQ(body["tools"][0]["functionDeclarations"][0]["name"], "web_search");
+        EXPECT_EQ(body["tools"][1]["fileSearch"]["fileSearchStoreNames"], Json::array({"fileSearchStores/one"}));
+        EXPECT_EQ(body["toolConfig"]["functionCallingConfig"]["mode"], "VALIDATED");
+        return ProviderHttpResponse{400, "application/json", R"({"error":{"message":"This model rejects the tool combination"}})"};
+    });
+    Transcript transcript;
+    auto request = client_request(transcript, 1, "Question");
+    request.folder_search = FolderSearchAccess{FolderStoreService::google, {"fileSearchStores/one"}};
+    request.web_search_tool = [](auto, const auto&) { ADD_FAILURE() << "No local function should run"; return "[]"; };
+    const auto result = client.perform(client.prepare(request), [](auto) {}, std::atomic_bool{false});
+    EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+    EXPECT_NE(result.message.find("This model rejects"), std::string::npos);
+    EXPECT_EQ(attempts, 1);
+    EXPECT_EQ(request.folder_search->remote_store_ids, (std::vector<std::string>{"fileSearchStores/one"}));
 }
 
 } // namespace

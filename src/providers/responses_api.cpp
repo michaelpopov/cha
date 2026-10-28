@@ -214,6 +214,14 @@ std::string build_responses_request_body(
     } else {
         if (input.web_search_tool) add_web_search_tool(body, config.api);
         if (input.web_read_tool) add_web_read_tool(body, config.api);
+        if (!subscription && input.folder_search
+            && input.folder_search->service == FolderStoreService::openai
+            && !input.folder_search->remote_store_ids.empty()) {
+            if (!body.contains("tools")) body["tools"] = Json::array();
+            body["tools"].push_back({{"type", "file_search"},
+                {"vector_store_ids", input.folder_search->remote_store_ids}});
+            if (!body.contains("tool_choice")) body["tool_choice"] = "auto";
+        }
     }
     if (input.include_tool_instructions) update_tool_instructions(body, config.api, text_sizes);
     return dump_json(body, "Model request");

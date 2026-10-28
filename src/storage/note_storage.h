@@ -41,6 +41,12 @@ private:
     std::string message_;
 };
 
+struct NoteStoreSummary {
+    std::string service;
+    std::int64_t id{};
+    std::string state;
+};
+
 struct NoteItem {
     std::int64_t id{};
     std::optional<std::int64_t> parent_id;
@@ -48,6 +54,7 @@ struct NoteItem {
     std::string name;
     bool has_compressed{};
     bool read_only{};
+    std::optional<NoteStoreSummary> store;
 };
 
 struct NoteContent {
@@ -81,6 +88,7 @@ void create_note_items_schema(storage::SqliteDatabase& database);
 [[nodiscard]] NoteText note_get_text(
     storage::SqliteDatabase& database, std::int64_t id, bool prefer_compressed = false);
 
+[[nodiscard]] std::optional<NoteItem> note_find_item(storage::SqliteDatabase& database, std::int64_t id);
 [[nodiscard]] std::vector<NoteItem> note_list(storage::SqliteDatabase& database);
 [[nodiscard]] std::int64_t note_import_book(
     storage::SqliteDatabase& database,

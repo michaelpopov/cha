@@ -81,6 +81,8 @@ struct FolderStoreRemoteResult {
 
 [[nodiscard]] FolderStoreEligibility folder_store_match(
     const ModelBackendConfig& config, const ApiKeyStore& keys);
+[[nodiscard]] FolderStoreEligibility folder_store_match(
+    const ModelBackendConfig& config, std::span<const ApiKeyInfo> keys);
 [[nodiscard]] std::vector<FolderStoreChoice> folder_store_choices_from_providers(
     std::span<const ModelBackendConfig> configs, const ApiKeyStore& keys);
 

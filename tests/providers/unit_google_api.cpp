@@ -276,5 +276,49 @@ TEST(GoogleApi, RejectsBlocksMalformedResponsesAndOversizedArguments) {
     EXPECT_EQ(decoder.finish().result.outcome, GenerationOutcome::protocol_error);
     EXPECT_EQ(output.answer, "Delivered");
 }
+
+TEST(GoogleApi, FolderSearchCapabilitiesAndDeclarationOrderAreIndependent) {
+    for (const auto model : {"gemini-2.5-pro", "gemini-2.5-flash", "models/gemini-2.5-flash-lite", "gemini-3.8-flash", "gemini-4-argon", "unknown-model"}) {
+        GenerationRequest request;
+        request.history = std::make_shared<const ModelHistory>();
+        request.run.prompt_text = "Question";
+        request.folder_search = FolderSearchAccess{FolderStoreService::google, {"fileSearchStores/one"}};
+        request.web_search_tool = [](auto, const auto&) { return "[]"; };
+        request.web_read_tool = [](auto, const auto&, const auto&) { return "page"; };
+        ModelBackendConfig config;
+        config.model = model;
+        const bool only = google_file_search_only_model(model);
+        auto body = Json::parse(build_google_request_body(request, config, "System"));
+        EXPECT_EQ(body["tools"].size(), only ? 1u : 2u);
+        EXPECT_EQ(body["tools"].back(), (Json{{"fileSearch", {{"fileSearchStoreNames", {"fileSearchStores/one"}}}}}));
+        if (!only) {
+            EXPECT_EQ(body["toolConfig"], (Json{{"includeServerSideToolInvocations", true},
+                {"functionCallingConfig", {{"mode", "VALIDATED"}}}}));
+            EXPECT_EQ(body["tools"][0]["functionDeclarations"].size(), 2u);
+        } else EXPECT_FALSE(body.contains("toolConfig"));
+        EXPECT_NE(body["systemInstruction"].dump().find(only ? "Web search is unavailable" : "Web search is available"), std::string::npos);
+        EXPECT_NE(body["systemInstruction"].dump().find("Folder search is available"), std::string::npos);
+        request.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
+        body = Json::parse(build_google_request_body(request, config, "System"));
+        for (const auto& tool : body["tools"]) EXPECT_FALSE(tool.contains("fileSearch"));
+    }
+    for (const bool search_first : {false, true}) {
+        Json body{{"contents", Json::array()}};
+        const Json search{{"fileSearch", {{"fileSearchStoreNames", {"fileSearchStores/one"}}}}};
+        if (search_first) body["tools"] = Json::array({search});
+        add_web_search_tool(body, ProviderApi::google);
+        if (!search_first) body["tools"].push_back(search);
+        add_web_read_tool(body, ProviderApi::google);
+        ASSERT_EQ(body["tools"].size(), 2u);
+        EXPECT_EQ(body["tools"][search_first ? 1 : 0]["functionDeclarations"].size(), 2u);
+        body["toolConfig"] = {{"includeServerSideToolInvocations", true}, {"functionCallingConfig", {{"mode", "NONE"}}}};
+        update_tool_instructions(body, ProviderApi::google);
+        const auto instruction = body["systemInstruction"].dump();
+        EXPECT_NE(instruction.find("Web search is unavailable"), std::string::npos);
+        EXPECT_NE(instruction.find("Web page reading is unavailable"), std::string::npos);
+        EXPECT_NE(instruction.find("Folder search is available"), std::string::npos);
+    }
+}
+
 } // namespace
 } // namespace cha
