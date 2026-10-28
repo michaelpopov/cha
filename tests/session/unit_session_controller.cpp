@@ -2681,5 +2681,106 @@ TEST(SessionController, ThreadLaunchFailureClosesTheCommittedTurn) {
     EXPECT_EQ(entries.back().status, EntryStatus::failed);
 }
 
+
+TEST(SessionController, SavesIndependentSettingsRestoresAndValidatesBeforeWriting) {
+    TemporaryJournal temporary;
+    const auto definition = [](std::string id) {
+        return CharacterDefinition{.character = {.id = id, .display_name = id},
+            .provider = {.id = "test", .config = {.host = "test", .port = 1, .model = id}}};
+    };
+    auto definitions = std::vector{definition("one"), definition("two")};
+    {
+        auto controller = test::from_test_workspace(definitions, temporary.path, notifier());
+        const auto changed = controller->set_character_settings("one", std::optional<std::string>("test-provider-1"),
+            std::optional<std::string>("high"));
+        EXPECT_TRUE(requires_snapshot(changed));
+        EXPECT_FALSE(changed.input_consumed);
+        EXPECT_FALSE(changed.notice);
+        EXPECT_TRUE(requires_snapshot(controller->set_character_settings("two", std::nullopt,
+            std::optional<std::string>("low"))));
+        const auto saved = load_session_state(temporary.path).character_settings;
+        const auto invalid = controller->set_character_settings("one", std::optional<std::string>("test-provider-0"),
+            std::optional<std::string>("invalid"));
+        EXPECT_TRUE(invalid.notice);
+        EXPECT_EQ(load_session_state(temporary.path).character_settings, saved);
+        EXPECT_TRUE(requires_snapshot(controller->set_character_settings("one", std::optional<std::string>("removed"), std::nullopt)));
+        EXPECT_TRUE(requires_snapshot(controller->set_character_settings("*", std::nullopt, std::optional<std::string>("high"))));
+        EXPECT_EQ(*controller->view().character_settings, saved);
+        (void)controller->set_default_character_by_id("-");
+        EXPECT_TRUE(requires_snapshot(controller->set_character_settings("one", std::nullopt, std::optional<std::string>("medium"))));
+        EXPECT_EQ(controller->view().default_character_id, "-");
+    }
+    auto restored = load_session_state(temporary.path);
+    auto controller = test::from_test_workspace(definitions, temporary.path, notifier(), restored);
+    EXPECT_EQ(*controller->view().character_settings, restored.character_settings);
+    EXPECT_EQ(controller->view().character_settings->at("one").reasoning_effort, "medium");
+    (void)controller->set_character_settings("one", std::optional<std::string>{}, std::nullopt);
+    EXPECT_FALSE(controller->view().character_settings->at("one").provider_id);
+    EXPECT_EQ(controller->view().character_settings->at("one").reasoning_effort, "medium");
+    (void)controller->set_character_settings("one", std::nullopt, std::optional<std::string>{});
+    EXPECT_FALSE(controller->view().character_settings->contains("one"));
+    EXPECT_TRUE(controller->view().character_settings->contains("two"));
+}
+
+TEST(SessionController, RestoresObsoleteReferencesWithoutChangingStoredRows) {
+    TemporaryJournal temporary;
+    {
+        SessionJournal journal(temporary.path);
+        journal.set_character_settings("guide-id", {"removed", "future-effort"});
+        journal.set_character_settings("removed-character", {"removed", "high"});
+    }
+    auto controller = test::from_test_backends(test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path, notifier(), load_session_state(temporary.path));
+    ASSERT_EQ(controller->view().character_settings->size(), 1U);
+    EXPECT_EQ(controller->view().character_settings->at("guide-id").provider_id, "removed");
+    EXPECT_FALSE(controller->view().character_settings->at("guide-id").reasoning_effort);
+    EXPECT_EQ(load_session_state(temporary.path).character_settings.at("guide-id").reasoning_effort, "future-effort");
+    (void)controller->set_character_settings("guide-id", std::nullopt, std::optional<std::string>("low"));
+    EXPECT_EQ(load_session_state(temporary.path).character_settings.at("guide-id"),
+        (SessionCharacterSettings{"removed", "low"}));
+}
+
+
+TEST(SessionController, EveryGenerationTargetUsesItsOwnImmutableSessionSettings) {
+    TemporaryJournal temporary;
+    std::mutex mutex;
+    std::vector<SharedCharacterDefinition> captured;
+    const ProviderClientFactory factory = [&](SharedCharacterDefinition definition) {
+        std::lock_guard lock(mutex);
+        captured.push_back(definition);
+        auto slot = std::make_shared<test::RequestBackendFacade::Slot>(
+            std::make_unique<ScriptedBackend>(GenerationResult{}, std::vector<std::string>{"Answer"}));
+        return std::make_unique<test::RequestBackendFacade>(slot);
+    };
+    test::TestController controller({
+        {.character = {.id = "one", .display_name = "One"},
+         .provider = {.id = "test", .config = {.host = "test", .port = 1, .model = "first-model"}}},
+        {.character = {.id = "two", .display_name = "Two"},
+         .provider = {.id = "test", .config = {.host = "test", .port = 1, .model = "second-model"}}},
+    }, test::operator_roster(), "one", temporary.path,
+        std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}), {}, factory);
+    (void)controller->set_character_settings("one", std::optional<std::string>("test-provider-1"),
+        std::optional<std::string>("high"));
+    (void)controller->set_character_settings("two", std::optional<std::string>("test-provider-0"),
+        std::optional<std::string>("low"));
+    (void)controller->start_multicast("operator", "Question", {});
+    ASSERT_TRUE(controller->is_generating());
+    EXPECT_TRUE(controller->set_character_settings("one", std::nullopt, std::optional<std::string>("none")).notice);
+    (void)receive_until_idle(*controller);
+    ASSERT_EQ(captured.size(), 2U);
+    for (const auto& definition : captured) {
+        const bool first = definition->character.id == "one";
+        EXPECT_EQ(definition->provider.config.model, first ? "second-model" : "first-model");
+        EXPECT_EQ(definition->provider.config.reasoning_effort, first ? "high" : "low");
+    }
+    captured.clear();
+    (void)controller->submit_prompt("operator", "Mention", "Two");
+    (void)receive_until_idle(*controller);
+    ASSERT_EQ(captured.size(), 1U);
+    EXPECT_EQ(captured.front()->character.id, "two");
+    EXPECT_EQ(captured.front()->provider.config.reasoning_effort, "low");
+    EXPECT_EQ(load_session_state(temporary.path).character_settings.at("one").reasoning_effort, "high");
+}
+
 } // namespace
 } // namespace cha

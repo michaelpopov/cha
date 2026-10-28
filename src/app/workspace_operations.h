@@ -51,6 +51,7 @@ namespace cha::app::workspace {
 void invalidate_affected_sessions(
     LiveSessionManager& live_sessions,
     std::span<const std::string> forum_ids);
+void refresh_all_sessions(LiveSessionManager& live_sessions);
 void refresh_affected_sessions(
     LiveSessionManager& live_sessions,
     std::span<const std::string> forum_ids);

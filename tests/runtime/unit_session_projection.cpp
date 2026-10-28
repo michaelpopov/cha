@@ -119,6 +119,11 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
         .notice = "Current notice",
         .lifecycle = SessionLifecycle::stopping,
         .shutdown_reason = ShutdownReason::server_stopping,
+        .chat_settings = {
+            {{"test-provider-0", "Test provider 0", "test-model", "127.0.0.1"},
+             {"test-provider-1", "Test provider 1", "test-model", "127.0.0.1"}},
+            {{"guide", "test-provider-1", "none"}, {"reviewer", "test-provider-0", "none"}},
+        },
     };
     SessionSnapshot snapshot;
     {

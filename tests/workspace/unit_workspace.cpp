@@ -2517,5 +2517,49 @@ TEST(Workspace, SavingOpenAiSubscriptionIgnoresUnsupportedWebSearchOverrides) {
         std::string::npos);
 }
 
+
+TEST(Workspace, SessionModelAndEffortUseConfiguredPrecedenceAndGuardSearch) {
+    test::TestWorkspace fixture;
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"test\"\nreasoning_effort = \"high\"\nweb_search = \"auto\"\n");
+    fixture.write_provider("other",
+        "host = \"other\"\nport = 1\nmode = \"test\"\nmodel = \"other-model\"\n"
+        "api = \"chat_completions\"\nreasoning_effort = \"low\"\n");
+    auto workspace = Workspace::load(fixture.root());
+    const auto defaults = workspace.resolve_character_settings("lobby", "guide");
+    EXPECT_EQ(defaults.id, "test");
+    EXPECT_EQ(defaults.config.reasoning_effort, "high");
+    EXPECT_EQ(defaults.config.web_search, WebSearchMode::automatic);
+    SessionCharacterSettings settings{.provider_id = "other"};
+    auto selected = workspace.character_definition("lobby", "guide", {}, &settings).provider;
+    EXPECT_EQ(selected.id, "other");
+    EXPECT_EQ(selected.config.model, "other-model");
+    EXPECT_EQ(selected.config.reasoning_effort, "high");
+    EXPECT_EQ(selected.config.web_search, WebSearchMode::off);
+    settings.reasoning_effort = "xhigh";
+    EXPECT_EQ(workspace.resolve_character_settings("lobby", "guide", &settings).config.reasoning_effort, "xhigh");
+    settings.provider_id = "removed";
+    selected = workspace.resolve_character_settings("lobby", "guide", &settings);
+    EXPECT_EQ(selected.id, "test");
+    EXPECT_EQ(selected.config.reasoning_effort, "xhigh");
+    EXPECT_EQ(workspace.find_character("guide")->provider_id, "test");
+    EXPECT_EQ(workspace.find_provider("other")->config.reasoning_effort, "low");
+    for (const std::string api : {"responses", "google", "anthropic"}) {
+        fixture.write_provider("other",
+            "host = \"chatgpt.com\"\nport = 443\nhttps = true\nmode = \"net\"\nmodel = \"other\"\napi = \""
+            + api + "\"\n" + (api == "responses" ? "auth = \"openai_subscription\"\nbase_path = \"/backend-api/codex\"\ncache_retention = \"off\"\n" : ""));
+        workspace = Workspace::load(fixture.root());
+        settings.provider_id = "other";
+        selected = workspace.character_definition("lobby", "guide", {}, &settings).provider;
+        EXPECT_EQ(selected.config.web_search, WebSearchMode::off) << api;
+        EXPECT_EQ(selected.config.reasoning_effort, "xhigh") << api;
+    }
+    fixture.write_character_config("display_name = \"Guide\"\nprovider = \"test\"\n");
+    workspace = Workspace::load(fixture.root());
+    settings = {.provider_id = "other"};
+    EXPECT_EQ(workspace.resolve_character_settings("lobby", "guide", &settings).config.reasoning_effort,
+        workspace.find_provider("other")->config.reasoning_effort);
+}
+
 } // namespace
 } // namespace cha

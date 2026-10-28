@@ -5,6 +5,7 @@
 #include "characters/character.h"
 #include "chat/persona.h"
 #include "chat/session_identity.h"
+#include "chat/session_character_settings.h"
 #include "providers/credentials.h"
 
 #include <cstdint>
@@ -276,13 +277,19 @@ public:
         std::string_view handle) const;
     [[nodiscard]] std::string forum_handle_list(
         std::string_view forum_id) const;
+    [[nodiscard]] ProviderSelection resolve_character_settings(
+        std::string_view forum_id,
+        std::string_view character_id,
+        const SessionCharacterSettings* overrides = nullptr) const;
     [[nodiscard]] CharacterDefinition character_definition(
         const FullSessionId& identity,
-        std::string_view character_id) const;
+        std::string_view character_id,
+        const SessionCharacterSettings* overrides = nullptr) const;
     [[nodiscard]] CharacterDefinition character_definition(
         std::string_view forum_id,
         std::string_view character_id,
-        std::string_view variants = {}) const;
+        std::string_view variants = {},
+        const SessionCharacterSettings* overrides = nullptr) const;
     [[nodiscard]] std::optional<std::filesystem::path> character_directory(
         std::string_view id) const;
     [[nodiscard]] bool character_is_writable(

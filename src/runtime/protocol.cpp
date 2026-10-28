@@ -249,6 +249,7 @@ void to_json(nlohmann::json& json, const SessionSnapshot& value) {
         {"forum", value.forum},
         {"session_id", value.session_id},
         {"session_label", value.session_label},
+        {"chat_settings", value.chat_settings},
         {"characters", value.characters},
         {"default_character_id", value.default_character_id},
         {"transcript", std::move(transcript)},
@@ -383,6 +384,21 @@ void to_json(nlohmann::json& json, const ProviderSummary& value) {
         {"display_name", value.display_name},
         {"model", value.model},
         {"host", value.host},
+    };
+}
+
+void to_json(nlohmann::json& json, const CharacterChatSettings& value) {
+    json = {
+        {"character_id", value.character_id},
+        {"provider_id", value.provider_id},
+        {"reasoning_effort", value.reasoning_effort},
+    };
+}
+
+void to_json(nlohmann::json& json, const ChatSettings& value) {
+    json = {
+        {"model_options", value.model_options},
+        {"characters", value.characters},
     };
 }
 

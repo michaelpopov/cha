@@ -68,6 +68,10 @@ TEST(WebWireFixtures, SerializesBootstrapSnapshotCommandsErrorsAndAppends) {
     }};
     snapshot.lifecycle = SessionLifecycle::running;
     snapshot.cached_audio_entries = {1};
+    snapshot.chat_settings = {
+        {{"test", "Test", "test-model", "localhost"}},
+        {{"assistant", "test", "none"}},
+    };
     EXPECT_EQ(nlohmann::json(snapshot), load_fixture("snapshot.json"));
 
     EXPECT_EQ(

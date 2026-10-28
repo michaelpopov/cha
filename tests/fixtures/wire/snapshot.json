@@ -60,5 +60,22 @@
     "character_display_name": "",
     "phase": "waiting"
   },
-  "lifecycle": "running"
+  "lifecycle": "running",
+  "chat_settings": {
+    "model_options": [
+      {
+        "id": "test",
+        "display_name": "Test",
+        "model": "test-model",
+        "host": "localhost"
+      }
+    ],
+    "characters": [
+      {
+        "character_id": "assistant",
+        "provider_id": "test",
+        "reasoning_effort": "none"
+      }
+    ]
+  }
 }

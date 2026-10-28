@@ -2356,37 +2356,67 @@ std::string Workspace::forum_handle_list(std::string_view forum_id) const {
 
 CharacterDefinition Workspace::character_definition(
     const FullSessionId& identity,
-    std::string_view character_id) const {
+    std::string_view character_id,
+    const SessionCharacterSettings* overrides) const {
     const auto* character = find_character(character_id);
     if (!character) throw std::invalid_argument("Unknown character");
     return character_definition(identity.forum_id, character_id,
-        character_variants(*character, identity));
+        character_variants(*character, identity), overrides);
+}
+
+ProviderSelection Workspace::resolve_character_settings(
+    std::string_view forum_id,
+    std::string_view character_id,
+    const SessionCharacterSettings* overrides) const {
+    if (!find_forum_member(forum_id, character_id)) {
+        throw std::invalid_argument(
+            "Character '" + std::string(character_id)
+            + "' is not a member of forum '" + std::string(forum_id) + "'");
+    }
+    const auto* character = find_character(character_id);
+    const auto* provider = character && character->provider_id
+        ? find_provider(*character->provider_id) : nullptr;
+    if (!provider) {
+        throw std::logic_error("Workspace contains an invalid forum member");
+    }
+    if (overrides && overrides->provider_id) {
+        if (const auto* selected = find_provider(*overrides->provider_id)) {
+            provider = selected;
+        }
+    }
+    ProviderSelection result{provider->id, provider->config};
+    if (character->reasoning_effort) {
+        result.config.reasoning_effort = *character->reasoning_effort;
+    }
+    if (overrides && overrides->reasoning_effort) {
+        result.config.reasoning_effort = *overrides->reasoning_effort;
+    }
+    if (character->web_search && (*character->web_search == WebSearchMode::off
+            || provider_supports_web_search(result.config))) {
+        result.config.web_search = *character->web_search;
+    }
+    return result;
 }
 
 CharacterDefinition Workspace::character_definition(
     std::string_view forum_id,
     std::string_view character_id,
-    std::string_view variants) const {
-    const WorkspaceForumMember* const member =
-        find_forum_member(forum_id, character_id);
-    if (member == nullptr) {
-        throw std::invalid_argument(
-            "Character '" + std::string(character_id)
-            + "' is not a member of forum '" + std::string(forum_id) + "'");
+    std::string_view variants,
+    const SessionCharacterSettings* overrides) const {
+    ProviderSelection provider = resolve_character_settings(forum_id, character_id, overrides);
+    const auto* character = find_character(character_id);
+    const auto* member = find_forum_member(forum_id, character_id);
+    if (overrides && overrides->provider_id && !find_provider(*overrides->provider_id)) {
+        log_warn("Ignoring unavailable session provider '" + *overrides->provider_id + "'");
     }
-    const WorkspaceCharacter* const character = find_character(character_id);
-    const WorkspaceProvider* const provider = character == nullptr
-        || !character->provider_id
-        ? nullptr : find_provider(*character->provider_id);
-    if (character == nullptr || provider == nullptr) {
-        throw std::logic_error("Workspace contains an invalid forum member");
+    if (character->web_search && *character->web_search != WebSearchMode::off
+        && !provider_supports_web_search(provider.config)) {
+        log_warn("Ignoring character web_search for selected provider '" + provider.id + "'");
     }
-    ModelBackendConfig provider_config = provider->config;
-    if (character->reasoning_effort) {
-        provider_config.reasoning_effort = *character->reasoning_effort;
-    }
-    if (character->web_search) {
-        provider_config.web_search = *character->web_search;
+    if ((provider.config.api == ProviderApi::google || provider.config.api == ProviderApi::anthropic)
+        && provider.config.reasoning_effort != default_reasoning_effort
+        && (character->reasoning_effort || (overrides && overrides->reasoning_effort))) {
+        log_warn("Selected provider '" + provider.id + "' ignores character/session reasoning_effort");
     }
     std::string character_prompt = member->character_prompt;
     std::string description = character_description(character_prompt);
@@ -2416,10 +2446,7 @@ CharacterDefinition Workspace::character_definition(
         + participant_roster(find_persona(forum.default_persona_id));
     return {
         .character = character->character,
-        .provider = {
-            .id = provider->id,
-            .config = std::move(provider_config),
-        },
+        .provider = std::move(provider),
         .character_prompt = std::move(character_prompt),
         .character_description = std::move(description),
         .system_prompt = std::move(system_prompt),

@@ -103,6 +103,27 @@ struct ForumSummary {
     bool operator==(const ForumSummary&) const = default;
 };
 
+struct ProviderSummary {
+    std::string id;
+    std::string display_name;
+    std::string model;
+    std::string host;
+    bool operator==(const ProviderSummary&) const = default;
+};
+
+struct CharacterChatSettings {
+    CharacterId character_id;
+    std::string provider_id;
+    std::string reasoning_effort;
+    bool operator==(const CharacterChatSettings&) const = default;
+};
+
+struct ChatSettings {
+    std::vector<ProviderSummary> model_options;
+    std::vector<CharacterChatSettings> characters;
+    bool operator==(const ChatSettings&) const = default;
+};
+
 struct SessionSnapshot {
     ForumSummary forum;
     SessionId session_id;
@@ -118,6 +139,7 @@ struct SessionSnapshot {
     std::set<EntryId> cached_audio_entries;
     bool recent_pending{};
     bool discardable{};
+    ChatSettings chat_settings;
     bool operator==(const SessionSnapshot&) const = default;
 };
 
@@ -148,6 +170,12 @@ struct DeleteTurnCommand {
 
 struct SetDefaultCharacterCommand {
     CharacterId character_id;
+};
+
+struct SetCharacterSettingsCommand {
+    CharacterId character_id;
+    std::optional<std::optional<std::string>> provider_id;
+    std::optional<std::optional<std::string>> reasoning_effort;
 };
 
 struct RenameSessionCommand {
@@ -188,6 +216,7 @@ using WebCommand = std::variant<
     UncoverCommand,
     DeleteTurnCommand,
     SetDefaultCharacterCommand,
+    SetCharacterSettingsCommand,
     RenameSessionCommand,
     SnapshotCommand,
     SubscribeCommand,
@@ -349,13 +378,6 @@ struct MarkdownFile {
 
 struct SessionExport {
     std::string markdown;
-};
-
-struct ProviderSummary {
-    std::string id;
-    std::string display_name;
-    std::string model;
-    std::string host;
 };
 
 struct ProviderDetail {
@@ -603,6 +625,8 @@ void to_json(nlohmann::json& json, const ForumDetail& value);
 void to_json(nlohmann::json& json, const MarkdownFile& value);
 void to_json(nlohmann::json& json, const SessionExport& value);
 void to_json(nlohmann::json& json, const ProviderSummary& value);
+void to_json(nlohmann::json& json, const CharacterChatSettings& value);
+void to_json(nlohmann::json& json, const ChatSettings& value);
 void to_json(nlohmann::json& json, const ProviderDetail& value);
 void to_json(nlohmann::json& json, const StyleDetail& value);
 void to_json(nlohmann::json& json, const VoiceDetail& value);

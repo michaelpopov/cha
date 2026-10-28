@@ -1391,6 +1391,48 @@ components:
           type: string
           minLength: 1
 
+    SetCharacterSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [character_id]
+      minProperties: 2
+      properties:
+        character_id:
+          $ref: "#/components/schemas/Identifier"
+        provider_id:
+          type: [string, "null"]
+        reasoning_effort:
+          oneOf:
+            - $ref: "#/components/schemas/Effort"
+            - type: "null"
+
+    Effort:
+      type: string
+      enum: [none, low, medium, high, xhigh]
+
+    ChatSettings:
+      type: object
+      additionalProperties: false
+      required: [model_options, characters]
+      properties:
+        model_options:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderSummary"
+        characters:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [character_id, provider_id, reasoning_effort]
+            properties:
+              character_id:
+                $ref: "#/components/schemas/Identifier"
+              provider_id:
+                $ref: "#/components/schemas/Identifier"
+              reasoning_effort:
+                $ref: "#/components/schemas/Effort"
+
     CommandResult:
       type: object
       additionalProperties: false
@@ -1513,7 +1555,10 @@ components:
         - transcript
         - generation
         - lifecycle
+        - chat_settings
       properties:
+        chat_settings:
+          $ref: "#/components/schemas/ChatSettings"
         forum:
           $ref: "#/components/schemas/ForumSummary"
         session_id:

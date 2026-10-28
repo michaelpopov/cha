@@ -16,6 +16,7 @@ import {
   publicErrorMessage,
   type Bootstrap,
   type ChaClient,
+  type CharacterSettingsPatch,
   type NoteItem,
   type NotesClient,
   type TextFileRequest,
@@ -210,6 +211,7 @@ function ScreenContent({
   onRetryStream,
   onReturnToStart,
   onSetDefaultCharacter,
+  onSetCharacterSettings,
   onStopGeneration,
   onSubmitInput,
   onAttachTextFile,
@@ -232,6 +234,7 @@ function ScreenContent({
         onRetryStream={onRetryStream}
         onReturnToStart={onReturnToStart}
         onSetDefaultCharacter={onSetDefaultCharacter}
+        onSetCharacterSettings={onSetCharacterSettings}
         onStopGeneration={onStopGeneration}
         onSubmitInput={onSubmitInput}
         onAttachTextFile={onAttachTextFile}
@@ -712,11 +715,15 @@ export function App({
   }
   useEffect(() => {
     reportNativeLayout(state.layoutMode === 'split', state.sidebarOpen, state.pictureOpen,
-      state.notesToolbarVisible, state.notesPromptVisible);
-  }, [state.layoutMode, state.sidebarOpen, state.pictureOpen, state.notesToolbarVisible, state.notesPromptVisible]);
+      state.notesToolbarVisible, state.notesPromptVisible, state.chatToolbarVisible);
+  }, [state.layoutMode, state.sidebarOpen, state.pictureOpen, state.notesToolbarVisible, state.notesPromptVisible, state.chatToolbarVisible]);
   useEffect(() => installNativeLayoutHandler((requested) => {
     if (requested === 'toggle-notes-prompt') {
       dispatch({ type: 'toggle-notes-prompt' });
+      return;
+    }
+    if (requested === 'toggle-chat-toolbar') {
+      dispatch({ type: 'toggle-chat-toolbar' });
       return;
     }
     if (requested === 'toggle-toolbar') {
@@ -1126,6 +1133,14 @@ export function App({
     ));
   }, [client, runMutation, state.activeConversation]);
 
+  const setCharacterSettings = useCallback((characterId: string, patch: CharacterSettingsPatch) => {
+    const active = state.activeConversation;
+    if (!active) return Promise.reject(new Error('No live conversation is selected.'));
+    return runMutation(active, 'settings', () => client.setCharacterSettings(
+      active.forumId, active.sessionId, { character_id: characterId, ...patch },
+    ));
+  }, [client, runMutation, state.activeConversation]);
+
   const renameSession = useCallback(async (
     forumId: string,
     sessionId: string,
@@ -1318,6 +1333,7 @@ export function App({
                 onRetryStream={retryStream}
                 onReturnToStart={returnToStart}
                 onSetDefaultCharacter={setDefaultCharacter}
+                onSetCharacterSettings={setCharacterSettings}
                 onStopGeneration={stopGeneration}
                 onSubmitInput={submitInput}
                 onAttachTextFile={attachTextFile}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "chat/session_identity.h"
+#include "chat/session_character_settings.h"
 #include "chat/transcript.h"
 
 #include <cstdint>
@@ -35,6 +36,7 @@ struct SessionRestore {
     RequestId next_request_id{1};
     EntryId next_entry_id{1};
     std::vector<InterruptedTurn> interrupted_turns;
+    SessionCharacterSettingsMap character_settings;
     bool recent_pending{};
     // New automatic sessions become permanent before their first submission.
     bool discardable{};
@@ -114,6 +116,8 @@ public:
     void fail_turn(RequestId request_id, const TranscriptEntry& error);
     void delete_turn(EntryId response_entry_id);
     void clear_history();
+    void set_character_settings(
+        std::string_view character_id, const SessionCharacterSettings& settings);
     void rename(std::string_view label);
     void publish_recent();
     void retain();

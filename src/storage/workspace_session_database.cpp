@@ -382,6 +382,21 @@ void create_entry_audio_table(Database& database) {
     )sql");
 }
 
+void create_session_character_settings_table(Database& database) {
+    database.execute(R"sql(
+        CREATE TABLE IF NOT EXISTS session_character_settings (
+            session_key INTEGER NOT NULL
+                REFERENCES sessions(session_key) ON DELETE CASCADE,
+            character_id TEXT NOT NULL
+                CHECK (character_id <> '' AND character_id NOT IN ('*', '-')),
+            provider_id TEXT CHECK (provider_id IS NULL OR provider_id <> ''),
+            reasoning_effort TEXT,
+            PRIMARY KEY (session_key, character_id),
+            CHECK (provider_id IS NOT NULL OR reasoning_effort IS NOT NULL)
+        ) STRICT;
+    )sql");
+}
+
 void create_workspace_session_schema(Database& database) {
     database.execute(R"sql(
         CREATE TABLE forums (
@@ -458,6 +473,7 @@ void create_workspace_session_schema(Database& database) {
             WHERE kind = 0 AND request_id IS NOT NULL;
     )sql");
     create_config_table(database);
+    create_session_character_settings_table(database);
     create_entry_audio_table(database);
     create_note_items_schema(database);
     create_folder_store_schema(database);

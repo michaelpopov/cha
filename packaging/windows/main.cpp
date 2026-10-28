@@ -52,6 +52,7 @@ constexpr UINT kViewSidebar = 1004;
 constexpr UINT kViewPictures = 1005;
 constexpr UINT kViewToolbar = 1006;
 constexpr UINT kViewNotesPrompt = 1007;
+constexpr UINT kViewChatToolbar = 1008;
 constexpr UINT kFatalError = WM_APP + 2;
 constexpr UINT kDeliveryReady = WM_APP + 3;
 constexpr UINT kShutdownDone = WM_APP + 4;
@@ -598,6 +599,7 @@ private:
         ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewSidebar, L"Sidebar");
         ::AppendMenuW(layout_menu, MF_STRING, kViewPictures, L"Pictures");
         ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewToolbar, L"Toolbar");
+        ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewChatToolbar, L"Chat toolbar");
         ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewNotesPrompt, L"Notes prompt");
         ::AppendMenuW(main_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layout_menu), L"&View");
 
@@ -1273,6 +1275,7 @@ private:
                 && json.contains("sidebar") && json["sidebar"].is_boolean()
                 && json.contains("pictures") && json["pictures"].is_boolean()
                 && json.contains("toolbar") && json["toolbar"].is_boolean()
+                && json.contains("chat_toolbar") && json["chat_toolbar"].is_boolean()
                 && json.contains("notes_prompt") && json["notes_prompt"].is_boolean()) {
                 // View follows File in the native menu bar.
                 const auto view_menu = ::GetSubMenu(::GetMenu(window_), 1);
@@ -1282,6 +1285,8 @@ private:
                     MF_BYCOMMAND | (json["sidebar"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
                 ::CheckMenuItem(view_menu, kViewPictures,
                     MF_BYCOMMAND | (json["pictures"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
+                ::CheckMenuItem(view_menu, kViewChatToolbar,
+                    MF_BYCOMMAND | (json["chat_toolbar"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
                 ::CheckMenuItem(view_menu, kViewToolbar,
                     MF_BYCOMMAND | (json["toolbar"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
                 ::CheckMenuItem(view_menu, kViewNotesPrompt,
@@ -1628,6 +1633,9 @@ private:
             break;
         case kViewPictures:
             set_layout("toggle-pictures");
+            break;
+        case kViewChatToolbar:
+            set_layout("toggle-chat-toolbar");
             break;
         case kViewToolbar:
             set_layout("toggle-toolbar");

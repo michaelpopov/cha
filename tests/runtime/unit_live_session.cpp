@@ -983,5 +983,33 @@ TEST(LiveSession, ControllerFailureIsContainedAndReleasesOnlyThatSession) {
         healthy_session->submit(StopCommand{}, 2s)));
 }
 
+
+TEST(LiveSession, CharacterSettingsFailureEndsSessionWithoutAcknowledgingAnUnsavedValue) {
+    test::TemporarySessionFile file("settings_failure");
+    {
+        SessionJournal journal(file.path());
+        journal.set_character_settings("guide", {std::nullopt, "high"});
+    }
+    LiveSessionHost host(test_settings(), [&](const FullSessionId& identity,
+        std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
+        return test::open_test_session(identity, file.path(), notifier);
+    });
+    subscribe(*host);
+    const auto initial = next_output(*host);
+    ASSERT_TRUE(initial);
+    host->acknowledge_output();
+    const std::string id = initial->snapshot.characters.front().id;
+    execute_sql(file.path(), "CREATE TRIGGER reject_settings BEFORE INSERT ON session_character_settings "
+        "BEGIN SELECT RAISE(ABORT, 'settings failure'); END");
+    EXPECT_EQ(std::get<ErrorCode>(host->submit(SetCharacterSettingsCommand{
+        .character_id = id, .reasoning_effort = std::optional<std::string>("low")}, 2s)),
+        ErrorCode::internal_error);
+    EXPECT_TRUE(wait_for_finished(host.handle()));
+    const auto terminal = next_output(*host);
+    ASSERT_TRUE(terminal);
+    EXPECT_EQ(terminal->snapshot.shutdown_reason, ShutdownReason::session_failed);
+    EXPECT_EQ(load_session_state(file.path()).character_settings.at("guide").reasoning_effort, "high");
+}
+
 } // namespace
 } // namespace cha

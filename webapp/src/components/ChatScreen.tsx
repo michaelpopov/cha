@@ -15,6 +15,7 @@ import {
   type AudioDownloadBatchEntry,
   type ChaClient,
   type CharacterAppearance,
+  type CharacterSettingsPatch,
   type CommandResult,
   type SessionSnapshot,
   type TextFileRequest,
@@ -45,6 +46,7 @@ import {
 } from './Icons';
 import { PromptInput, type PromptVoiceControls } from './PromptInput';
 import { voiceClasses } from './characterAppearance';
+import { ChatToolbar } from './ChatToolbar';
 
 // The chat controls App owns, declared once so the screen and the router that
 // feeds it cannot drift apart.
@@ -55,6 +57,7 @@ export interface ChatActions {
   onRetryStream(): void;
   onReturnToStart(): void;
   onSetDefaultCharacter(characterId: string): Promise<CommandResult>;
+  onSetCharacterSettings(characterId: string, patch: CharacterSettingsPatch): Promise<CommandResult>;
   onStopGeneration(): Promise<CommandResult>;
   onSubmitInput(text: string): Promise<CommandResult>;
   onUncoverConversation(): Promise<CommandResult>;
@@ -325,6 +328,7 @@ export function ChatScreen({
   onCoverConversation,
   onDeleteTurn,
   onSetDefaultCharacter,
+  onSetCharacterSettings,
   onStopGeneration,
   onSubmitInput,
   onUncoverConversation,
@@ -332,7 +336,7 @@ export function ChatScreen({
 }: ChatScreenProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<
-    'target' | 'cover' | 'delete' | 'upload' | null
+    'target' | 'settings' | 'cover' | 'delete' | 'upload' | null
   >(null);
   const [sendPending, setSendPending] = useState(false);
   const [stopPending, setStopPending] = useState(false);
@@ -732,16 +736,31 @@ export function ChatScreen({
   }
 
   async function chooseTarget(characterId: string) {
-    if (!characterId || generationActive || actionPending || stopping.current) return;
+    if (!connected || !characterId || generationActive || actionPending || stopping.current) return;
     if (characterId === state.currentDefaultCharacterId) return;
+    const epoch = composerEpoch.current;
     setPendingAction('target');
     setActionError(null);
     try {
       await onSetDefaultCharacter(characterId);
     } catch (failure: unknown) {
-      setActionError(actionMessage(failure));
+      if (composerEpoch.current === epoch) setActionError(actionMessage(failure));
     } finally {
-      setPendingAction(null);
+      if (composerEpoch.current === epoch) setPendingAction(null);
+    }
+  }
+
+  async function changeSettings(characterId: string, patch: CharacterSettingsPatch) {
+    if (!connected || generationActive || actionPending || stopping.current) return;
+    const epoch = composerEpoch.current;
+    setPendingAction('settings');
+    setActionError(null);
+    try {
+      await onSetCharacterSettings(characterId, patch);
+    } catch (failure: unknown) {
+      if (composerEpoch.current === epoch) setActionError(actionMessage(failure));
+    } finally {
+      if (composerEpoch.current === epoch) setPendingAction(null);
     }
   }
 
@@ -760,6 +779,11 @@ export function ChatScreen({
   return (
     <ChatPictureLayout client={client} dispatch={dispatch} state={state}>
     <section className="cha-chat-column" aria-label="Chat area">
+      {state.chatToolbarVisible && snapshot && (
+        <ChatToolbar snapshot={snapshot} disabled={!connected || generationActive || actionPending}
+          onCharacter={(id) => void chooseTarget(id)}
+          onSettings={(id, patch) => void changeSettings(id, patch)} />
+      )}
       <div
         aria-label="Conversation transcript"
         className="cha-transcript"

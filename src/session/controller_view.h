@@ -2,6 +2,7 @@
 
 #include "session/generation_status.h"
 #include "chat/transcript.h"
+#include "chat/session_character_settings.h"
 
 #include <optional>
 #include <string_view>
@@ -30,6 +31,7 @@ struct ControllerView {
     std::string_view default_persona_id;
     TranscriptView transcript;
     ControllerGenerationView generation;
+    const SessionCharacterSettingsMap* character_settings{};
 };
 
 } // namespace cha

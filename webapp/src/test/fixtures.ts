@@ -164,6 +164,10 @@ export const waitingAuth: OpenAiAuth = {
 export const connectedAuth: OpenAiAuth = { status: 'connected' };
 
 export const snapshotFixture: SessionSnapshot = {
+  chat_settings: {
+    model_options: [{ id: 'test', display_name: 'Test', model: 'test-model', host: 'localhost' }],
+    characters: [{ character_id: 'assistant', provider_id: 'test', reasoning_effort: 'none' }],
+  },
   forum: bootstrapFixture.forums[0],
   session_id: 'welcome',
   session_label: 'Welcome',
@@ -281,6 +285,7 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     deleteTurn: async () => ({ clear_input: false }),
     stopGeneration: async () => ({ clear_input: false }),
     setDefaultCharacter: async () => ({ clear_input: false }),
+    setCharacterSettings: async () => ({ clear_input: false }),
     getOpenAiAuth: async () => signedOutAuth,
     startOpenAiAuth: async () => signedOutAuth,
     pollOpenAiAuth: async () => signedOutAuth,

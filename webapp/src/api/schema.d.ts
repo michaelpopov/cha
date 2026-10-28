@@ -600,6 +600,21 @@ export interface components {
         SetDefaultCharacterRequest: {
             character_id: string;
         };
+        SetCharacterSettingsRequest: {
+            character_id: components["schemas"]["Identifier"];
+            provider_id?: string | null;
+            reasoning_effort?: components["schemas"]["Effort"] | null;
+        };
+        /** @enum {string} */
+        Effort: "none" | "low" | "medium" | "high" | "xhigh";
+        ChatSettings: {
+            model_options: components["schemas"]["ProviderSummary"][];
+            characters: {
+                character_id: components["schemas"]["Identifier"];
+                provider_id: components["schemas"]["Identifier"];
+                reasoning_effort: components["schemas"]["Effort"];
+            }[];
+        };
         CommandResult: {
             clear_input: boolean;
             notice?: string;
@@ -649,6 +664,7 @@ export interface components {
             progress?: components["schemas"]["GenerationProgress"];
         };
         SessionSnapshot: {
+            chat_settings: components["schemas"]["ChatSettings"];
             forum: components["schemas"]["ForumSummary"];
             session_id: components["schemas"]["Identifier"];
             session_label: string;

@@ -15,6 +15,7 @@
   "session.cover": {"requires_context_epoch": true, "changes_context": false},
   "session.uncover": {"requires_context_epoch": true, "changes_context": false},
   "session.deleteTurn": {"requires_context_epoch": true, "changes_context": false},
+  "session.setCharacterSettings": {"requires_context_epoch": true, "changes_context": false},
   "session.setDefaultCharacter": {"requires_context_epoch": true, "changes_context": false},
   "session.export": {"requires_context_epoch": true, "changes_context": false},
   "session.subscribe": {"requires_context_epoch": true, "changes_context": false},

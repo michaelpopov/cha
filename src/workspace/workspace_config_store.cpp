@@ -1431,6 +1431,7 @@ struct WorkspaceConfigStore::Impl {
         validate_workspace_session_database_identity(*database);
         ensure_entry_metadata_columns(*database);
         ensure_session_lifecycle_columns(*database);
+        create_session_character_settings_table(*database);
         {
             storage::SqliteTransaction transaction(*database);
             create_note_items_schema(*database);

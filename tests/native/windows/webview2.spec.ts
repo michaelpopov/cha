@@ -297,6 +297,45 @@ test.describe('WebView2 native host', () => {
     if (userData) removeTestData(userData);
   });
 
+  test('Chat toolbar saves per-session effort and toggles independently from Notes', async () => {
+    await waitForApplication(page);
+    const effort = page.getByRole('combobox', { name: 'Effort', exact: true });
+    const original = await effort.inputValue();
+    await effort.selectOption('high');
+    await expect(effort).toBeEnabled();
+    await expect(effort).toHaveValue('high');
+    const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+    await composer.fill('Keep toolbar draft');
+    await page.evaluate(() => {
+      const host = window as any;
+      const post = host.__CHA_NATIVE_POST__;
+      host.__CHA_NATIVE_POST__ = (raw: string) => {
+        const message = JSON.parse(raw);
+        if (message.native_action === 'view_state') host.__CHA_TEST_VIEW_STATE__ = message;
+        post(raw);
+      };
+      host.__CHA_NATIVE_SET_LAYOUT__('toggle-chat-toolbar');
+    });
+    await expect(effort).toHaveCount(0);
+    await expect(composer).toHaveValue('Keep toolbar draft');
+    await expect.poll(() => page.evaluate(() => (window as any).__CHA_TEST_VIEW_STATE__))
+      .toMatchObject({ toolbar: true, chat_toolbar: false });
+    await page.evaluate(() => (window as any).__CHA_NATIVE_SET_LAYOUT__('toggle-toolbar'));
+    await expect.poll(() => page.evaluate(() => (window as any).__CHA_TEST_VIEW_STATE__))
+      .toMatchObject({ toolbar: false, chat_toolbar: false });
+    await page.evaluate(() => (window as any).__CHA_NATIVE_SET_LAYOUT__('toggle-chat-toolbar'));
+    await expect(effort).toHaveValue('high');
+    await expect.poll(() => page.evaluate(() => (window as any).__CHA_TEST_VIEW_STATE__))
+      .toMatchObject({ toolbar: false, chat_toolbar: true });
+    await page.evaluate(() => (window as any).__CHA_NATIVE_SET_LAYOUT__('toggle-toolbar'));
+    await composer.fill('');
+    await page.reload();
+    await waitForApplication(page);
+    await expect(effort).toHaveValue('high');
+    await effort.selectOption('');
+    await expect(effort).toHaveValue(original);
+  });
+
   test('runs the packaged application through the real native runtime', async () => {
     await waitForApplication(page);
     expect(await page.evaluate(() => window.location.origin)).toBe(devOrigin ?? 'cha://app');

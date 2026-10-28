@@ -71,6 +71,27 @@ SetDefaultCharacterCommand parse_default_character_command(
     return {required_string(json, "character_id")};
 }
 
+SetCharacterSettingsCommand parse_character_settings_command(const nlohmann::json& json) {
+    if (!json.is_object()) throw std::invalid_argument("Invalid web command");
+    for (const auto& [key, value] : json.items()) {
+        if (key != "character_id" && key != "provider_id" && key != "reasoning_effort") {
+            throw std::invalid_argument("Invalid web command");
+        }
+    }
+    SetCharacterSettingsCommand result{.character_id = required_string(json, "character_id")};
+    if (result.character_id.empty() || (!json.contains("provider_id") && !json.contains("reasoning_effort"))) {
+        throw std::invalid_argument("Invalid web command");
+    }
+    const auto field = [&](const char* key, auto& target) {
+        if (!json.contains(key)) return;
+        target.emplace();
+        if (!json.at(key).is_null()) *target = required_string(json, key);
+    };
+    field("provider_id", result.provider_id);
+    field("reasoning_effort", result.reasoning_effort);
+    return result;
+}
+
 std::string parse_create_session_label(const nlohmann::json& json) {
     exact_keys(json, {"label"});
     return required_string(json, "label");

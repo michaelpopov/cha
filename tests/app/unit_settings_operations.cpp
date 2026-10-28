@@ -1,4 +1,5 @@
 #include "app/application.h"
+#include "runtime/live_session.h"
 
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
@@ -9,6 +10,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -783,6 +785,78 @@ TEST(ApplicationSettings, KeepsLegacyFishVoicesAndPersistsElevenLabsAlongsideFis
     settings.api_key = fish_key.id;
     EXPECT_THROW((void)application->save_voice_output_settings(settings, epoch), ApplicationError);
     EXPECT_THROW((void)application->create_voice({.display_name = "Bad", .elevenlabs_voice_id = "bad", .provider = "unknown"}, epoch), ApplicationError);
+}
+
+
+TEST(ApplicationSettings, ProviderEditsRefreshSessionOnlyChoicesAndRestartRestoresOverrides) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    auto epoch = application->context_epoch();
+    const auto created = application->create_session("lobby", "Settings test", epoch);
+    const auto id = created.id;
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", id, epoch)));
+    const auto subscribed = application->subscribe("lobby", id,
+        {.connection_id = "settings-test", .context_epoch = epoch, .subscription_id = "settings-sub"}, epoch);
+    ASSERT_TRUE(std::holds_alternative<SubscribeResult>(subscribed));
+    auto live = std::get<SubscribeResult>(subscribed).session;
+    ASSERT_TRUE(live);
+    const auto next = [&] {
+        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (auto output = live->take_output()) {
+                SessionSnapshot snapshot = output->snapshot;
+                live->acknowledge_output();
+                return snapshot;
+            }
+            std::this_thread::sleep_for(1ms);
+        }
+        ADD_FAILURE() << "No presentation refresh";
+        return SessionSnapshot{};
+    };
+    ASSERT_EQ(next().chat_settings.model_options.size(), 1U);
+    const auto provider = application->create_provider({"Session preset", "test"}, epoch);
+    const auto added = next();
+    ASSERT_EQ(added.chat_settings.model_options.size(), 2U);
+    EXPECT_EQ(added.chat_settings.characters.front().provider_id, "test");
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(application->submit("lobby", id,
+        SetCharacterSettingsCommand{.character_id = "guide", .provider_id = std::optional(provider.id)}, epoch)));
+    EXPECT_EQ(next().chat_settings.characters.front().provider_id, provider.id);
+    auto body = provider_body(provider);
+    body["display_name"] = "Renamed preset";
+    body["reasoning_effort"] = "medium";
+    (void)application->update_provider(provider.id, body, epoch);
+    auto updated = next();
+    ASSERT_EQ(updated.chat_settings.model_options.size(), 2U);
+    EXPECT_TRUE(std::ranges::any_of(updated.chat_settings.model_options, [&](const auto& option) {
+        return option.id == provider.id && option.display_name == "Renamed preset";
+    }));
+    EXPECT_EQ(updated.chat_settings.characters.front().reasoning_effort, "medium");
+    EXPECT_EQ(live->lifecycle(), LiveSessionState::running);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(application->submit("lobby", id,
+        SetCharacterSettingsCommand{.character_id = "guide", .reasoning_effort = std::optional<std::string>("high")}, epoch)));
+    EXPECT_EQ(next().chat_settings.characters.front().reasoning_effort, "high");
+    application->delete_provider(provider.id, epoch);
+    const auto removed = next();
+    ASSERT_EQ(removed.chat_settings.model_options.size(), 1U);
+    EXPECT_EQ(removed.chat_settings.characters.front().provider_id, "test");
+    EXPECT_EQ(removed.chat_settings.characters.front().reasoning_effort, "high");
+    EXPECT_EQ(live->lifecycle(), LiveSessionState::running);
+    live.reset();
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    epoch = application->context_epoch();
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", id, epoch)));
+    const auto reopened = application->snapshot("lobby", id, epoch);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(reopened));
+    EXPECT_EQ(std::get<SessionSnapshot>(reopened).chat_settings.characters.front().provider_id, "test");
+    EXPECT_EQ(std::get<SessionSnapshot>(reopened).chat_settings.characters.front().reasoning_effort, "high");
+    EXPECT_EQ(application->get_character("guide", epoch).provider, "test");
+    const auto fresh = application->create_session("lobby", "Fresh", epoch);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", fresh.id, epoch)));
+    const auto defaults = application->snapshot("lobby", fresh.id, epoch);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(defaults));
+    EXPECT_EQ(std::get<SessionSnapshot>(defaults).chat_settings.characters.front().reasoning_effort, "none");
 }
 
 } // namespace

@@ -276,6 +276,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndEntryAppend) {
 
     const auto value = nlohmann::json(SnapshotEvent{std::move(snapshot)});
     const nlohmann::json expected = {
+        {"chat_settings", {{"model_options", nlohmann::json::array()}, {"characters", nlohmann::json::array()}}},
         {"default_character_id", "guide"},
         {"forum", {{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", ""}, {"default_persona_id", ""}, {"default_persona_display_name", ""}, {"members", nlohmann::json::array()}}},
         {"generation",
@@ -697,6 +698,26 @@ TEST(WebProtocol, RequiresExplicitToolSettingsOnSave) {
     }
     search["tool_enabled"] = nullptr;
     EXPECT_THROW((void)parse_web_search_settings(search), std::invalid_argument);
+}
+
+
+TEST(WebProtocol, ParsesSessionCharacterSettingsPatchesWithoutLosingResets) {
+    const auto patch = parse_character_settings_command({
+        {"character_id", "guide"}, {"provider_id", nullptr}, {"reasoning_effort", "high"}});
+    EXPECT_EQ(patch.character_id, "guide");
+    ASSERT_TRUE(patch.provider_id);
+    EXPECT_FALSE(*patch.provider_id);
+    ASSERT_TRUE(patch.reasoning_effort);
+    EXPECT_EQ(**patch.reasoning_effort, "high");
+    EXPECT_FALSE(parse_character_settings_command({
+        {"character_id", "guide"}, {"provider_id", "test"}}).reasoning_effort);
+    for (const auto& body : std::vector<nlohmann::json>{
+        {{"character_id", "guide"}}, {{"provider_id", "test"}},
+        {{"character_id", ""}, {"provider_id", "test"}},
+        {{"character_id", "guide"}, {"provider_id", 7}},
+        {{"character_id", "guide"}, {"reasoning_effort", false}},
+        {{"character_id", "guide"}, {"provider_id", "test"}, {"extra", nullptr}},
+    }) EXPECT_THROW((void)parse_character_settings_command(body), std::invalid_argument);
 }
 
 } // namespace

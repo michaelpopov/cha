@@ -103,6 +103,7 @@ export interface AppState {
   sidebarOpen: boolean;
   pictureOpen: boolean;
   notesToolbarVisible: boolean;
+  chatToolbarVisible: boolean;
   notesPromptVisible: boolean;
   pictureWidth: number;
   pictureCharacterId: string | null;
@@ -148,6 +149,7 @@ export const initialAppState: AppState = {
   sidebarOpen: true,
   pictureOpen: false,
   notesToolbarVisible: true,
+  chatToolbarVisible: true,
   notesPromptVisible: true,
   pictureWidth: 280,
   pictureCharacterId: null,
@@ -196,6 +198,7 @@ export type AppAction =
   | { type: 'close-note' }
   | { type: 'toggle-picture' }
   | { type: 'toggle-notes-toolbar' }
+  | { type: 'toggle-chat-toolbar' }
   | { type: 'toggle-notes-prompt' }
   | { type: 'resize-picture'; width: number }
   | { type: 'select-picture-character'; characterId: string }
@@ -491,6 +494,8 @@ function reduceApp(state: AppState, action: AppAction): AppState {
     }
     case 'toggle-picture':
       return { ...state, pictureOpen: !state.pictureOpen };
+    case 'toggle-chat-toolbar':
+      return { ...state, chatToolbarVisible: !state.chatToolbarVisible };
     case 'toggle-notes-toolbar':
       return { ...state, notesToolbarVisible: !state.notesToolbarVisible };
     case 'toggle-notes-prompt':

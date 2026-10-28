@@ -406,6 +406,15 @@ SessionRestore build_restore(Database& database, SessionKey session_key) {
         .recent_pending = state.recent_pending,
         .discardable = state.discardable,
     };
+    Statement settings = database.prepare(
+        "SELECT character_id, provider_id, reasoning_effort "
+        "FROM session_character_settings WHERE session_key = ?1", session_key);
+    while (settings.step()) {
+        result.character_settings.emplace(settings.text(0), SessionCharacterSettings{
+            settings.is_null(1) ? std::nullopt : std::optional(settings.text(1)),
+            settings.is_null(2) ? std::nullopt : std::optional(settings.text(2)),
+        });
+    }
     Statement interrupted = database.prepare(
         "SELECT t.request_id, e.addressed_to FROM turns AS t "
         "JOIN entries AS e ON e.session_key = t.session_key "
@@ -863,6 +872,30 @@ void SessionJournal::delete_turn(EntryId response_entry_id) {
         throw std::runtime_error("Failed to delete transcript turn");
     }
     touch_session(impl_->database, impl_->session_key);
+    transaction.commit();
+}
+
+void SessionJournal::set_character_settings(
+    std::string_view character_id, const SessionCharacterSettings& settings) {
+    Transaction transaction(impl_->database);
+    if (!settings.provider_id && !settings.reasoning_effort) {
+        auto statement = impl_->database.prepare(
+            "DELETE FROM session_character_settings WHERE session_key = ?1 AND character_id = ?2",
+            impl_->session_key, character_id);
+        statement.run();
+    } else {
+        auto statement = impl_->database.prepare(
+            "INSERT INTO session_character_settings "
+            "(session_key, character_id, provider_id, reasoning_effort) VALUES (?1, ?2, ?3, ?4) "
+            "ON CONFLICT (session_key, character_id) DO UPDATE SET "
+            "provider_id = excluded.provider_id, reasoning_effort = excluded.reasoning_effort",
+            impl_->session_key, character_id);
+        if (settings.provider_id) statement.bind(3, *settings.provider_id);
+        else statement.bind_null(3);
+        if (settings.reasoning_effort) statement.bind(4, *settings.reasoning_effort);
+        else statement.bind_null(4);
+        statement.run();
+    }
     transaction.commit();
 }
 

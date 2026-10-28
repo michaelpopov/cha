@@ -25,6 +25,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::session_uncover, "session.uncover"},
     {Method::session_delete_turn, "session.deleteTurn"},
     {Method::session_set_default_character, "session.setDefaultCharacter"},
+    {Method::session_set_character_settings, "session.setCharacterSettings"},
     {Method::session_export, "session.export"},
     {Method::session_subscribe, "session.subscribe"},
     {Method::session_unsubscribe, "session.unsubscribe"},

@@ -973,5 +973,49 @@ TEST_F(SessionRepositoryTest, CompetingWriterWaitsAtImmediateTransactionStart) {
         (std::vector<TranscriptEntry>{prompt}));
 }
 
+
+TEST_F(SessionRepositoryTest, CharacterSettingsStayWithTheirSessionAndDoNotTouchRecents) {
+    const auto repository = make_repository();
+    const auto first = repository.prepare(repository.create("lobby", "First").identity);
+    const auto second = repository.prepare(repository.create("lobby", "Second").identity);
+    const auto updated = scalar(first.database_path, "SELECT updated_at FROM sessions WHERE session_key = 1");
+    SessionJournal journal(first.database_path, first.session_key);
+    journal.set_character_settings("guide", {"other", "high"});
+    journal.set_character_settings("second", {std::nullopt, "low"});
+    EXPECT_TRUE(repository.prepare(second.identity).restore.character_settings.empty());
+    auto saved = repository.prepare(first.identity).restore.character_settings;
+    ASSERT_EQ(saved.size(), 2U);
+    EXPECT_EQ(saved.at("guide"), (SessionCharacterSettings{"other", "high"}));
+    EXPECT_EQ(scalar(first.database_path, "SELECT updated_at FROM sessions WHERE session_key = 1"), updated);
+    journal.clear_history();
+    EXPECT_EQ(repository.prepare(first.identity).restore.character_settings, saved);
+    journal.set_character_settings("guide", {});
+    saved.erase("guide");
+    EXPECT_EQ(repository.prepare(first.identity).restore.character_settings, saved);
+
+    const auto copy = fixture_.root() / "copied.sqlite3";
+    copy_workspace_session_database(first.database_path, copy);
+    EXPECT_EQ(load_session_database(copy, first.identity).restore.character_settings, saved);
+    repository.delete_session(first.identity);
+    EXPECT_EQ(scalar(first.database_path, "SELECT COUNT(*) FROM session_character_settings"), 0);
+}
+
+TEST_F(SessionRepositoryTest, CharacterSettingsWriteRollsBackAndUnusedSessionStillDiscards) {
+    const auto repository = make_repository();
+    const auto automatic = repository.prepare(repository.create("lobby", "").identity);
+    SessionJournal journal(automatic.database_path, automatic.session_key);
+    journal.set_character_settings("guide", {"test", "high"});
+    {
+        storage::SqliteDatabase database(automatic.database_path, storage::SqliteDatabase::Mode::read_write);
+        database.execute("CREATE TRIGGER reject_settings BEFORE UPDATE ON session_character_settings "
+                         "BEGIN SELECT RAISE(ABORT, 'settings write failed'); END");
+    }
+    EXPECT_THROW(journal.set_character_settings("guide", {"other", "low"}), std::runtime_error);
+    EXPECT_EQ(repository.prepare(automatic.identity).restore.character_settings.at("guide"),
+        (SessionCharacterSettings{"test", "high"}));
+    EXPECT_TRUE(repository.discard_unused(automatic.identity));
+    EXPECT_EQ(scalar(automatic.database_path, "SELECT COUNT(*) FROM session_character_settings"), 0);
+}
+
 } // namespace
 } // namespace cha

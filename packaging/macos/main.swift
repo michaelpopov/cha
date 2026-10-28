@@ -43,6 +43,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private var sidebarMenuItem: NSMenuItem?
     private var picturesMenuItem: NSMenuItem?
     private var toolbarMenuItem: NSMenuItem?
+    private var chatToolbarMenuItem: NSMenuItem?
     private var notesPromptMenuItem: NSMenuItem?
     private var webViewTitleObservation: NSKeyValueObservation?
     private var runtime: OpaquePointer?
@@ -176,6 +177,11 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         toolbar.target = self
         toolbar.state = .on
         toolbarMenuItem = toolbar
+        let chatToolbar = layoutMenu.addItem(
+            withTitle: "Chat toolbar", action: #selector(toggleChatToolbar(_:)), keyEquivalent: "")
+        chatToolbar.target = self
+        chatToolbar.state = .on
+        chatToolbarMenuItem = chatToolbar
         let notesPrompt = layoutMenu.addItem(
             withTitle: "Notes prompt", action: #selector(toggleNotesPrompt(_:)), keyEquivalent: "")
         notesPrompt.target = self
@@ -217,6 +223,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
 
     @objc private func togglePictures(_ sender: Any?) {
         nativeBridge?.setLayout("toggle-pictures")
+    }
+
+    @objc private func toggleChatToolbar(_ sender: Any?) {
+        nativeBridge?.setLayout("toggle-chat-toolbar")
     }
 
     @objc private func toggleToolbar(_ sender: Any?) {
@@ -382,11 +392,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             receiver.onPageClose = { [weak self] in
                 self?.pageRequestedClose()
             }
-            receiver.onLayoutChanged = { [weak self] split, sidebar, pictures, toolbar, notesPrompt in
+            receiver.onLayoutChanged = { [weak self] split, sidebar, pictures, toolbar, notesPrompt, chatToolbar in
                 self?.splitViewMenuItem?.state = split ? .on : .off
                 self?.sidebarMenuItem?.state = sidebar ? .on : .off
                 self?.picturesMenuItem?.state = pictures ? .on : .off
                 self?.toolbarMenuItem?.state = toolbar ? .on : .off
+                self?.chatToolbarMenuItem?.state = chatToolbar ? .on : .off
                 self?.notesPromptMenuItem?.state = notesPrompt ? .on : .off
             }
             receiver.attach(to: view, mediaHandler: built.1)

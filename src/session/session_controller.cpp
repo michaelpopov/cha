@@ -317,6 +317,22 @@ void SessionController::initialize(
         }
         default_persona_id_ = found->id;
     }
+    for (auto& [id, settings] : restored.character_settings) {
+        if (!current->find_forum_member(identity_.forum_id, id)) {
+            log_warn("Ignoring session settings for removed character '" + id + "'");
+            continue;
+        }
+        if (settings.reasoning_effort && !valid_reasoning_effort(*settings.reasoning_effort)) {
+            log_warn("Ignoring unknown stored reasoning_effort '" + *settings.reasoning_effort + "'");
+            settings.reasoning_effort.reset();
+        }
+        if (settings.provider_id && !current->find_provider(*settings.provider_id)) {
+            log_warn("Ignoring unavailable session provider '" + *settings.provider_id + "'");
+        }
+        if (settings.provider_id || settings.reasoning_effort) {
+            character_settings_.emplace(id, std::move(settings));
+        }
+    }
     transcript_.replace_entries(std::move(restored.entries));
     recent_pending_ = restored.recent_pending;
     discardable_ = restored.discardable;
@@ -356,8 +372,10 @@ SharedCharacterDefinition SessionController::definition_for(
     std::string_view id) const {
     const std::shared_ptr<const Workspace> current = workspace();
     if (current->find_forum_member(identity_.forum_id, id) == nullptr) return {};
+    const auto settings = character_settings_.find(id);
     return std::make_shared<const CharacterDefinition>(
-        current->character_definition(identity_, id));
+        current->character_definition(identity_, id,
+            settings == character_settings_.end() ? nullptr : &settings->second));
 }
 
 ControllerGenerationView SessionController::generation_view() const noexcept {
@@ -394,6 +412,7 @@ ControllerView SessionController::view() const noexcept {
         .default_persona_id = default_persona_id_,
         .transcript = transcript_.view(),
         .generation = generation_view(),
+        .character_settings = &character_settings_,
     };
 }
 
@@ -1255,6 +1274,43 @@ ControllerUpdate SessionController::set_default_character_by_id(std::string_view
     require_snapshot(update);
     update.notice = "Default character is now " + character->display_name;
     return update;
+}
+
+ControllerUpdate SessionController::set_character_settings(
+    std::string_view character_id,
+    const std::optional<std::optional<std::string>>& provider_id,
+    const std::optional<std::optional<std::string>>& reasoning_effort) {
+    if (shutdown_) return {.notice = "Session is closed"};
+    if (is_generating()) return busy_notice();
+    const auto current = workspace();
+    ControllerUpdate rejected{.state = SnapshotRequired{}};
+    if (!current->find_forum_member(identity_.forum_id, character_id)) {
+        rejected.notice = "Unknown character";
+        return rejected;
+    }
+    if (provider_id && *provider_id && !current->find_provider(**provider_id)) {
+        rejected.notice = "Unknown provider";
+        return rejected;
+    }
+    if ((!provider_id && !reasoning_effort)
+        || (reasoning_effort && *reasoning_effort && !valid_reasoning_effort(**reasoning_effort))) {
+        rejected.notice = "Invalid character settings";
+        return rejected;
+    }
+    const auto found = character_settings_.find(character_id);
+    SessionCharacterSettings settings = found == character_settings_.end()
+        ? SessionCharacterSettings{} : found->second;
+    if (provider_id) settings.provider_id = *provider_id;
+    if (reasoning_effort) settings.reasoning_effort = *reasoning_effort;
+    persist("save character settings", [this, character_id, &settings] {
+        journal_.set_character_settings(character_id, settings);
+    });
+    if (settings.provider_id || settings.reasoning_effort) {
+        character_settings_[std::string(character_id)] = std::move(settings);
+    } else {
+        character_settings_.erase(std::string(character_id));
+    }
+    return {.state = SnapshotRequired{}};
 }
 
 ControllerUpdate SessionController::request_stop() {

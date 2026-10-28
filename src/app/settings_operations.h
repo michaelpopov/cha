@@ -54,6 +54,7 @@ namespace cha::app::settings {
     const ApiKeyStore& api_keys);
 [[nodiscard]] ProviderDetail create_provider(
     WorkspaceConfigStore& store,
+    LiveSessionManager& live_sessions,
     const ApiKeyStore& api_keys,
     const CreateProviderRequest& create);
 [[nodiscard]] ProviderDetail update_provider(
@@ -62,7 +63,7 @@ namespace cha::app::settings {
     const ApiKeyStore& api_keys,
     std::string_view id,
     const nlohmann::json& body);
-void delete_provider(WorkspaceConfigStore& store, std::string_view id);
+void delete_provider(WorkspaceConfigStore& store, LiveSessionManager& live_sessions, std::string_view id);
 void test_provider(
     const Workspace& workspace,
     std::string_view id,

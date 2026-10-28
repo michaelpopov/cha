@@ -287,6 +287,10 @@ void invalidate_affected_sessions(
     }
 }
 
+void refresh_all_sessions(LiveSessionManager& live_sessions) {
+    for (const auto& live : live_sessions.active_sessions()) live->refresh_presentation();
+}
+
 void refresh_affected_sessions(
     LiveSessionManager& live_sessions,
     std::span<const std::string> forum_ids) {

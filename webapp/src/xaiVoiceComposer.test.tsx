@@ -113,6 +113,7 @@ function renderChat(
     onRetryStream: vi.fn(),
     onReturnToStart: vi.fn(),
     onSetDefaultCharacter: vi.fn(async () => ({ clear_input: false })),
+    onSetCharacterSettings: vi.fn(async () => ({ clear_input: false })),
     onStopGeneration: vi.fn(async () => ({ clear_input: false })),
     onSubmitInput: vi.fn(async () => ({ clear_input: true })),
     onAttachTextFile: vi.fn(async () => ({ clear_input: false })),

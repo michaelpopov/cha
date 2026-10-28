@@ -1024,6 +1024,29 @@ TEST_F(BridgeRouterTest, ListsRenamesExportsAndEditsWorkspaceOverTheBridge) {
          {"session_id", session_id},
          {"character_id", "guide"}});
     ASSERT_TRUE(reply["ok"]);
+    reply = call("session.setCharacterSettings", {
+        {"forum_id", "lobby"}, {"session_id", session_id},
+        {"character_id", "guide"}, {"provider_id", "test"}, {"reasoning_effort", "high"}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"]["clear_input"], false);
+    reply = call("session.snapshot", {{"forum_id", "lobby"}, {"session_id", session_id}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"]["chat_settings"]["characters"][0]["reasoning_effort"], "high");
+    reply = call("session.setCharacterSettings", {
+        {"forum_id", "lobby"}, {"session_id", session_id},
+        {"character_id", "guide"}, {"provider_id", "removed"}, {"reasoning_effort", "low"}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_TRUE(reply["result"].contains("notice"));
+    reply = call("session.snapshot", {{"forum_id", "lobby"}, {"session_id", session_id}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"]["chat_settings"]["characters"][0]["reasoning_effort"], "high");
+    reply = call("session.setCharacterSettings", {
+        {"forum_id", "lobby"}, {"session_id", session_id}, {"character_id", "guide"}});
+    EXPECT_FALSE(reply["ok"]);
+    reply = call("session.setCharacterSettings", {
+        {"forum_id", "lobby"}, {"session_id", session_id}, {"character_id", "guide"},
+        {"reasoning_effort", nullptr}, {"extra", "bad"}});
+    EXPECT_FALSE(reply["ok"]);
     reply = call(
         "session.uncover",
         {{"forum_id", "lobby"}, {"session_id", session_id}});

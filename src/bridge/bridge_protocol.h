@@ -39,6 +39,7 @@ enum class Method {
     session_uncover,
     session_delete_turn,
     session_set_default_character,
+    session_set_character_settings,
     session_export,
     session_subscribe,
     session_unsubscribe,

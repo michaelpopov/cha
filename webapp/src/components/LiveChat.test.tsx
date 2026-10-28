@@ -2623,7 +2623,7 @@ describe('live chat', () => {
         onDeleteTurn={vi.fn()}
         onRetryStream={vi.fn()}
         onReturnToStart={vi.fn()}
-        onSetDefaultCharacter={vi.fn()}
+        onSetCharacterSettings={vi.fn()} onSetDefaultCharacter={vi.fn()}
         onStopGeneration={vi.fn()}
         onSubmitInput={vi.fn(async () => ({ clear_input: true }))}
         onAttachTextFile={vi.fn()}
@@ -2766,7 +2766,7 @@ describe('live chat', () => {
           onDeleteTurn={vi.fn()}
           onRetryStream={vi.fn()}
           onReturnToStart={vi.fn()}
-          onSetDefaultCharacter={vi.fn()}
+          onSetCharacterSettings={vi.fn()} onSetDefaultCharacter={vi.fn()}
           onStopGeneration={vi.fn()}
           onSubmitInput={onSubmitInput}
           onAttachTextFile={vi.fn()}
@@ -3789,7 +3789,7 @@ it('clears a picture immediately on a vault change and ignores the old vault res
     client={client} dispatch={vi.fn()} navigate={vi.fn()} playbackPositions={new Map()}
     draft="" onDraftChange={() => {}}
     onCoverConversation={vi.fn()} onDeleteTurn={vi.fn()} onRetryStream={vi.fn()}
-    onReturnToStart={vi.fn()} onSetDefaultCharacter={vi.fn()} onStopGeneration={vi.fn()}
+    onReturnToStart={vi.fn()} onSetCharacterSettings={vi.fn()} onSetDefaultCharacter={vi.fn()} onStopGeneration={vi.fn()}
     onSubmitInput={vi.fn()} onUncoverConversation={vi.fn()}
     onAttachTextFile={vi.fn()}
     state={{ ...initialAppState, bootstrap: { ...bootstrapFixture, vault_name: vaultName },
@@ -3980,7 +3980,7 @@ describe('spoken send while the session closes', () => {
           onDeleteTurn={vi.fn()}
           onRetryStream={vi.fn()}
           onReturnToStart={vi.fn()}
-          onSetDefaultCharacter={vi.fn()}
+          onSetCharacterSettings={vi.fn()} onSetDefaultCharacter={vi.fn()}
           onStopGeneration={vi.fn()}
           onSubmitInput={onSubmitInput}
           onAttachTextFile={vi.fn()}
@@ -4043,5 +4043,83 @@ describe('sidebar session activity', () => {
     await waitFor(() => expect(events.connections[2]?.key).toBe('entrance/welcome'));
     expect(recents.queryByRole('img', { name: 'New response' })).not.toBeInTheDocument();
     expect(within(recents.getByRole('button', { name: /^Planning/ })).getByRole('img', { name: 'Generating' })).toBeInTheDocument();
+  });
+});
+
+describe('session character toolbar integration', () => {
+  it('saves only the changed field and preserves confirmed values and the input draft', async () => {
+    const events = drivableEvents();
+    let finish!: (result: { clear_input: boolean }) => void;
+    const setCharacterSettings = vi.fn(() => new Promise<{ clear_input: boolean }>((resolve) => { finish = resolve; }));
+    render(<App client={fixtureClient({ setCharacterSettings })} connectSessionEvents={events.connect} />);
+    expect(screen.queryByLabelText('Model')).toBeNull();
+    await attachInitial(events);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(input, { target: { value: 'Keep this draft' } });
+    fireEvent.change(screen.getByLabelText('Effort'), { target: { value: 'high' } });
+    expect(setCharacterSettings).toHaveBeenCalledWith('entrance', 'welcome', {
+      character_id: 'assistant', reasoning_effort: 'high',
+    });
+    expect(screen.getByLabelText('Effort')).toHaveValue('none');
+    expect(screen.getByLabelText('Effort')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture,
+      chat_settings: { ...snapshotFixture.chat_settings,
+        characters: [{ character_id: 'assistant', provider_id: 'test', reasoning_effort: 'high' }] },
+    }));
+    await act(async () => finish({ clear_input: false }));
+    expect(screen.getByLabelText('Effort')).toHaveValue('high');
+    expect(screen.getByLabelText('Effort')).toBeEnabled();
+    expect(input).toHaveValue('Keep this draft');
+  });
+
+  it('toggles Chat and Notes toolbar preferences independently without remounting chat', async () => {
+    const post = vi.fn();
+    window.__CHA_NATIVE_CONNECTION_ID__ = 'chat-toolbar-test';
+    window.__CHA_NATIVE_POST__ = post;
+    try {
+      const events = drivableEvents();
+      render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+      await attachInitial(events);
+      const input = screen.getByRole('textbox', { name: 'Message' });
+      fireEvent.change(input, { target: { value: 'Toolbar draft' } });
+      const transcript = screen.getByLabelText('Conversation transcript');
+      placeReadingPosition(transcript, { scrollTop: 100, clientHeight: 100, scrollHeight: 1000 });
+      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-chat-toolbar'));
+      expect(screen.queryByLabelText('Model')).toBeNull();
+      expect(screen.getByRole('textbox', { name: 'Message' })).toBe(input);
+      expect(input).toHaveValue('Toolbar draft');
+      expect(screen.getByLabelText('Conversation transcript')).toBe(transcript);
+      expect(transcript.scrollTop).toBe(100);
+      const reports = () => post.mock.calls.map(([message]) => JSON.parse(message as string))
+        .filter((message) => message.native_action === 'view_state').at(-1);
+      expect(reports()).toMatchObject({ toolbar: true, chat_toolbar: false });
+      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-toolbar'));
+      expect(reports()).toMatchObject({ toolbar: false, chat_toolbar: false });
+      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-chat-toolbar'));
+      expect(reports()).toMatchObject({ toolbar: false, chat_toolbar: true });
+      expect(screen.getByLabelText('Model')).toBeEnabled();
+      expect(input).toHaveValue('Toolbar draft');
+      expect(events.connections).toHaveLength(1);
+    } finally {
+      delete window.__CHA_NATIVE_CONNECTION_ID__;
+      delete window.__CHA_NATIVE_POST__;
+    }
+  });
+
+  it('disables toolbar edits during generation, classification, reconnect and shutdown', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture, generation: { ...snapshotFixture.generation, active: true },
+    }));
+    expect(screen.getByLabelText('Model')).toBeDisabled();
+    expect(screen.getByLabelText('Effort')).toBeDisabled();
+    act(() => events.handlers[0].onSnapshot(snapshotFixture));
+    expect(screen.getByLabelText('Model')).toBeEnabled();
+    act(() => events.handlers[0].onSnapshot({ ...snapshotFixture, lifecycle: 'stopping' }));
+    expect(screen.getByLabelText('Model')).toBeDisabled();
   });
 });

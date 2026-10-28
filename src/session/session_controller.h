@@ -121,6 +121,10 @@ public:
         std::vector<std::string> handles,
         std::shared_ptr<SubmissionState> submission = {});
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
+    [[nodiscard]] ControllerUpdate set_character_settings(
+        std::string_view character_id,
+        const std::optional<std::optional<std::string>>& provider_id,
+        const std::optional<std::optional<std::string>>& reasoning_effort);
     [[nodiscard]] ControllerUpdate request_stop();
     void retain();
     void rename(std::string_view label);
@@ -285,6 +289,7 @@ private:
     std::shared_ptr<WakeNotifier> notifier_;
     FullSessionId identity_;
     CharacterId default_character_id_;
+    SessionCharacterSettingsMap character_settings_;
     std::string default_persona_id_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};

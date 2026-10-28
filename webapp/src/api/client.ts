@@ -34,6 +34,10 @@ export type CreateSessionResult = components['schemas']['CreateSessionResult'];
 export type SessionLabelResult = components['schemas']['SessionLabelResult'];
 export type OpenSessionResult = components['schemas']['OpenSessionResult'];
 export type SessionSnapshot = components['schemas']['SessionSnapshot'];
+export type ChatSettings = components['schemas']['ChatSettings'];
+export type Effort = components['schemas']['Effort'];
+export type SetCharacterSettingsRequest = components['schemas']['SetCharacterSettingsRequest'];
+export type CharacterSettingsPatch = Omit<SetCharacterSettingsRequest, 'character_id'>;
 export type CommandResult = components['schemas']['CommandResult'];
 export type InputRequest = components['schemas']['InputRequest'];
 export type TextFileRequest = components['schemas']['TextFileRequest'];
@@ -240,6 +244,11 @@ export interface ChaClient {
     request: DeleteTurnRequest,
   ): Promise<CommandResult>;
   stopGeneration(forumId: string, sessionId: string): Promise<CommandResult>;
+  setCharacterSettings(
+    forumId: string,
+    sessionId: string,
+    request: SetCharacterSettingsRequest,
+  ): Promise<CommandResult>;
   setDefaultCharacter(
     forumId: string,
     sessionId: string,
@@ -750,6 +759,15 @@ export function isGenerationState(value: unknown): value is SessionSnapshot['gen
         && typeof activity.retrying === 'boolean')));
 }
 
+export function isChatSettings(value: unknown): value is ChatSettings {
+  return isRecord(value)
+    && Array.isArray(value.model_options) && value.model_options.every(isProviderSummary)
+    && Array.isArray(value.characters) && value.characters.every((item) => isRecord(item)
+      && typeof item.character_id === 'string' && item.character_id.length > 0
+      && typeof item.provider_id === 'string' && item.provider_id.length > 0
+      && isOneOf(item.reasoning_effort, ['none', 'low', 'medium', 'high', 'xhigh']));
+}
+
 // Requests and events share this check before publishing parsed JSON to React.
 export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
   return isRecord(value)
@@ -759,6 +777,7 @@ export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
     && value.forum.default_persona_display_name.length > 0
     && typeof value.session_id === 'string' && value.session_id.length > 0
     && typeof value.session_label === 'string'
+    && isChatSettings(value.chat_settings)
     && (value.recent_pending === undefined || typeof value.recent_pending === 'boolean')
     && (value.discardable === undefined || typeof value.discardable === 'boolean')
     && Array.isArray(value.characters)

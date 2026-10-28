@@ -88,6 +88,14 @@ SessionSnapshot to_snapshot(
             entry.text = remove_url_references(entry.text);
         }
     }
+    for (const auto& provider : workspace.providers()) {
+        snapshot.chat_settings.model_options.push_back({
+            .id = provider.id,
+            .display_name = provider.label,
+            .model = provider.config.model,
+            .host = provider.config.host,
+        });
+    }
     snapshot.characters.reserve(workspace_forum->members.size());
     for (const WorkspaceForumMember& member : workspace_forum->members) {
         const WorkspaceCharacter* const character =
@@ -95,6 +103,13 @@ SessionSnapshot to_snapshot(
         if (character == nullptr) {
             throw std::logic_error("Forum member has no workspace character");
         }
+        const SessionCharacterSettings* overrides = nullptr;
+        if (controller.character_settings) {
+            const auto found = controller.character_settings->find(member.character_id);
+            if (found != controller.character_settings->end()) overrides = &found->second;
+        }
+        const auto selected = workspace.resolve_character_settings(identity.forum_id, member.character_id, overrides);
+        snapshot.chat_settings.characters.push_back({member.character_id, selected.id, selected.config.reasoning_effort});
         snapshot.characters.push_back({
             .id = character->character.id,
             .display_name = character->character.display_name,

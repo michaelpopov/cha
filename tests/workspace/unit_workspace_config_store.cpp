@@ -3712,5 +3712,24 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SettingsMergeAndDeletionPreservePictureR
     EXPECT_FALSE(rows.contains("characters/writer/PICTURE.webp"));
 }
 
+
+TEST(WorkspaceConfigStore, AddsSessionCharacterSettingsToAnExistingSchemaTwoVault) {
+    test::TestWorkspace fixture;
+    const auto path = test::import_test_database(fixture.root());
+    {
+        Database database(path, Database::Mode::read_write);
+        database.execute("DROP TABLE session_character_settings");
+    }
+    {
+        auto store = WorkspaceConfigStore::open(path);
+        EXPECT_TRUE(store->snapshot()->find_character("guide"));
+    }
+    Database database(path, Database::Mode::read_only);
+    auto rows = database.prepare("SELECT COUNT(*) FROM session_character_settings");
+    ASSERT_TRUE(rows.step());
+    EXPECT_EQ(rows.integer(0), 0);
+    EXPECT_EQ(database.pragma_integer("user_version"), 2);
+}
+
 } // namespace
 } // namespace cha

@@ -77,6 +77,64 @@ async function nativeParity() {
     setValue(message, '');
     completed.push('Chat draft and layout');
 
+    step = 'Chat toolbar';
+    const toolbar = await until('Chat toolbar', () => document.querySelector('.cha-chat-toolbar'));
+    check(toolbar.querySelectorAll('select').length === 3, 'Chat toolbar must have three controls');
+    const effort = toolbar.querySelector('select[aria-label="Effort"]');
+    const model = toolbar.querySelector('select[aria-label="Model"]');
+    const originalEffort = effort.value;
+    setValue(effort, 'high');
+    await until('saved Chat effort', () => effort.value === 'high' && !effort.disabled);
+    const column = bounds(document.querySelector('.cha-chat-column'));
+    for (const select of toolbar.querySelectorAll('select')) {
+      const rect = bounds(select);
+      check(rect.left >= column.left - 1 && rect.right <= column.right + 1, 'Chat toolbar exceeds its column');
+    }
+    setValue(message, 'Preserved toolbar draft');
+    const transcript = document.querySelector('.cha-transcript');
+    let reported;
+    const post = window.__CHA_NATIVE_POST__;
+    window.__CHA_NATIVE_POST__ = (raw) => {
+      const value = JSON.parse(raw);
+      if (value.native_action === 'view_state') reported = value;
+      post(raw);
+    };
+    try {
+      window.__CHA_NATIVE_SET_LAYOUT__('toggle-chat-toolbar');
+      await until('hidden Chat toolbar', () => !document.querySelector('.cha-chat-toolbar') && reported?.chat_toolbar === false);
+      check(reported.toolbar === true, 'Chat toggle changed Notes toolbar preference');
+      check(message === document.querySelector('textarea[aria-label="Message"]'), 'Chat was remounted');
+      check(message.value === 'Preserved toolbar draft', 'Chat toggle lost draft');
+      check(transcript === document.querySelector('.cha-transcript'), 'Chat toggle replaced transcript');
+      window.__CHA_NATIVE_SET_LAYOUT__('toggle-toolbar');
+      await until('hidden Notes toolbar preference', () => reported.toolbar === false);
+      window.__CHA_NATIVE_SET_LAYOUT__('toggle-chat-toolbar');
+      await until('restored Chat toolbar', () => document.querySelector('.cha-chat-toolbar') && reported.chat_toolbar === true);
+      check(reported.toolbar === false, 'Chat toggle reset Notes preference');
+      check(document.querySelector('select[aria-label="Effort"]').value === 'high', 'Chat toggle lost saved effort');
+      window.__CHA_NATIVE_SET_LAYOUT__('toggle-toolbar');
+      await until('restored Notes toolbar preference', () => reported.toolbar === true);
+    } finally {
+      window.__CHA_NATIVE_POST__ = post;
+    }
+    await snapshot('chat-toolbar');
+    document.documentElement.style.colorScheme = 'light';
+    await snapshot('chat-toolbar-light');
+    document.documentElement.style.colorScheme = 'dark';
+    await snapshot('chat-toolbar-dark');
+    document.documentElement.style.removeProperty('color-scheme');
+    window.__CHA_NATIVE_SET_LAYOUT__('split');
+    await until('split Chat toolbar', () => document.querySelector('.cha-main.is-chat.is-notes .cha-chat-toolbar'));
+    await snapshot('chat-toolbar-split');
+    window.__CHA_NATIVE_SET_LAYOUT__('single');
+    await until('single Chat toolbar', () => !document.querySelector('.cha-main.is-chat.is-notes'));
+    setValue(document.querySelector('select[aria-label="Effort"]'), '');
+    await until('reset Chat effort', () => document.querySelector('select[aria-label="Effort"]').value === originalEffort
+      && !document.querySelector('select[aria-label="Effort"]').disabled);
+    check(document.querySelector('select[aria-label="Model"]').value === model.value, 'Effort reset changed model');
+    setValue(message, '');
+    completed.push('Chat toolbar persistence, layout, and independent View toggles');
+
     step = 'Notes';
     await click('Notes');
     await click('Actions for Test');

@@ -36,6 +36,7 @@ enum class WorkspaceDatabaseState {
 void create_workspace_session_schema(storage::SqliteDatabase& database);
 // Optional, recreatable audio storage; also added when opening existing v2 vaults.
 void create_entry_audio_table(storage::SqliteDatabase& database);
+void create_session_character_settings_table(storage::SqliteDatabase& database);
 void set_workspace_session_database_identity(
     storage::SqliteDatabase& database);
 void validate_workspace_session_database_identity(

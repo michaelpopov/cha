@@ -71,7 +71,7 @@ std::string_view generation_terminal_status(
     return "unknown";
 }
 
-static_assert(std::variant_size_v<WebCommand> == 11);
+static_assert(std::variant_size_v<WebCommand> == 12);
 
 } // namespace
 
@@ -303,6 +303,9 @@ void LiveSession::execute(OwnerCommand command) {
                     std::string(controller.view().default_character_id);
             }
             return result;
+        } else if constexpr (std::is_same_v<T, SetCharacterSettingsCommand>) {
+            return {.session = controller.set_character_settings(
+                value.character_id, value.provider_id, value.reasoning_effort)};
         } else if constexpr (std::is_same_v<T, RenameSessionCommand>
             || std::is_same_v<T, SnapshotCommand>
             || std::is_same_v<T, SubscribeCommand>

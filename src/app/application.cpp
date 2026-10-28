@@ -1118,7 +1118,7 @@ ProviderDetail Application::create_provider(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::create_provider(*impl_->store, *impl_->api_keys, create);
+    return settings::create_provider(*impl_->store, *impl_->live_sessions, *impl_->api_keys, create);
 }
 
 ProviderDetail Application::update_provider(
@@ -1140,7 +1140,7 @@ void Application::delete_provider(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    settings::delete_provider(*impl_->store, provider_id);
+    settings::delete_provider(*impl_->store, *impl_->live_sessions, provider_id);
 }
 
 std::shared_ptr<OperationReply> Application::test_provider(

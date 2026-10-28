@@ -1555,6 +1555,15 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     });
                     break;
                 }
+                case Method::session_set_character_settings: {
+                    outstanding.forum_id = require_identifier(params, "forum_id");
+                    outstanding.session_id = require_identifier(params, "session_id");
+                    auto patch = params;
+                    patch.erase("forum_id");
+                    patch.erase("session_id");
+                    command = parse_character_settings_command(patch);
+                    break;
+                }
                 case Method::session_set_default_character: {
                     require_only_keys(
                         params, {"forum_id", "session_id", "character_id"});
@@ -1642,6 +1651,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             || method == Method::session_uncover
             || method == Method::session_delete_turn
             || method == Method::session_set_default_character
+            || method == Method::session_set_character_settings
             || method == Method::session_subscribe
             || method == Method::session_unsubscribe;
     }

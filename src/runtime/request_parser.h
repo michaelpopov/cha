@@ -18,6 +18,7 @@ RawCommand parse_input_command(const nlohmann::json& json);
 CoverCommand parse_cover_command(const nlohmann::json& json);
 DeleteTurnCommand parse_delete_turn_command(const nlohmann::json& json);
 SetDefaultCharacterCommand parse_default_character_command(const nlohmann::json& json);
+SetCharacterSettingsCommand parse_character_settings_command(const nlohmann::json& json);
 std::string parse_create_session_label(const nlohmann::json& json);
 std::string parse_create_persona_name(const nlohmann::json& json);
 CreateForumRequest parse_create_forum_request(const nlohmann::json& json);

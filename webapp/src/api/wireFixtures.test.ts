@@ -194,3 +194,14 @@ describe('snapshot validation', () => {
     expect(isSessionSnapshot(value)).toBe(true);
   });
 });
+
+describe('chat settings snapshot validation', () => {
+  it.each([
+    undefined, null, {}, { model_options: [], characters: [{}] },
+    { model_options: [{}], characters: [] },
+    { model_options: [], characters: [{ character_id: 'guide', provider_id: 'test', reasoning_effort: 'invalid' }] },
+    { model_options: [], characters: [{ character_id: 'guide', provider_id: null, reasoning_effort: 'high' }] },
+  ])('rejects malformed settings %j', (chat_settings) => {
+    expect(isSessionSnapshot({ ...(loadFixture('snapshot.json') as SessionSnapshot), chat_settings })).toBe(false);
+  });
+});

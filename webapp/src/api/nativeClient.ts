@@ -619,6 +619,11 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       { forum_id: forumId, session_id: sessionId, ...request },
       isCommandResult,
     ),
+    setCharacterSettings: (forumId, sessionId, request) => call(
+      'session.setCharacterSettings',
+      { forum_id: forumId, session_id: sessionId, ...request },
+      isCommandResult,
+    ),
     setDefaultCharacter: (forumId, sessionId, characterId) => call(
       'session.setDefaultCharacter',
       { forum_id: forumId, session_id: sessionId, character_id: characterId },

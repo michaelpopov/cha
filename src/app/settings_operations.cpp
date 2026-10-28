@@ -347,12 +347,14 @@ ProviderDetail get_provider(
 
 ProviderDetail create_provider(
     WorkspaceConfigStore& store,
+    LiveSessionManager& live_sessions,
     const ApiKeyStore& api_keys,
     const CreateProviderRequest& create) {
     return with_settings_edit([&] {
         std::string id;
         try {
             id = store.create_provider(create.display_name, create.copy_from);
+            workspace::refresh_all_sessions(live_sessions);
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid provider.");
         }
@@ -390,6 +392,7 @@ ProviderDetail update_provider(
                 id, update.display_name, update.config);
             workspace::invalidate_affected_sessions(
                 live_sessions, edited.affected_forum_ids);
+            workspace::refresh_all_sessions(live_sessions);
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid provider settings.");
         }
@@ -406,7 +409,7 @@ ProviderDetail update_provider(
     });
 }
 
-void delete_provider(WorkspaceConfigStore& store, std::string_view id) {
+void delete_provider(WorkspaceConfigStore& store, LiveSessionManager& live_sessions, std::string_view id) {
     const auto workspace = store.snapshot();
     require_provider(*workspace, id, true);
     if (!provider_uses(*workspace, id).empty()) {
@@ -417,6 +420,7 @@ void delete_provider(WorkspaceConfigStore& store, std::string_view id) {
     with_settings_edit([&] {
         try {
             store.apply_provider_delete(id);
+            workspace::refresh_all_sessions(live_sessions);
         } catch (const std::invalid_argument&) {
             fail(
                 ErrorCode::invalid_argument,
