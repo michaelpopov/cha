@@ -58,7 +58,6 @@ SessionDatabaseMetadata read_session_database_metadata(
 
 SessionRestore load_session_state(const std::filesystem::path& path);
 
-void force_next_session_folder_notice_failure();
 
 LoadedSessionDatabase load_session_database(
     const std::filesystem::path& path,

@@ -53,6 +53,33 @@ bool json_error_object(const Json& body) {
     return body.is_object() && body.contains("error") && body["error"].is_object();
 }
 
+// Provider messages can echo uploaded text or credentials. Translate only known
+// machine-readable categories; never display an unrecognized code or message.
+std::string_view safe_error_reason(const Json& error) {
+    if (!error.is_object()) return {};
+    const auto code = error.find("code");
+    if (code != error.end()) {
+        if (*code == "invalid_file") return "The provider could not read this file. Check the note content before uploading again.";
+        if (*code == "unsupported_file") return "The provider does not support this file.";
+        if (*code == "server_error") return "The provider could not process the request. Try again later.";
+        if (*code == "insufficient_quota") return "The provider account has insufficient quota. Check its billing and quota settings.";
+        if (*code == "rate_limit_exceeded") return "The provider rate limit was reached. Try again later.";
+        if (*code == "invalid_api_key") return "The saved API key was rejected.";
+    }
+    const auto status = error.find("status");
+    const auto google_error = [&](int number, std::string_view name) {
+        return (code != error.end() && *code == number)
+            || (status != error.end() && *status == name);
+    };
+    if (google_error(3, "INVALID_ARGUMENT")) return "The provider rejected the file or request parameters. Check the note content and configuration.";
+    if (google_error(7, "PERMISSION_DENIED")) return "The saved API key cannot access this resource. Check its project and permissions.";
+    if (google_error(8, "RESOURCE_EXHAUSTED")) return "The provider quota or rate limit was reached. Check its quota settings or try again later.";
+    if (google_error(4, "DEADLINE_EXCEEDED")) return "The provider timed out. Try again later.";
+    if (google_error(13, "INTERNAL") || google_error(14, "UNAVAILABLE")) return "The provider could not process the request. Try again later.";
+    if (google_error(16, "UNAUTHENTICATED")) return "The saved API key was rejected.";
+    return {};
+}
+
 bool structured_not_found(const Json& body) {
     if (!json_error_object(body)) return false;
     const auto& error = body["error"];
@@ -94,6 +121,9 @@ FolderStoreRemoteResult classify(
             }
             if (body.contains("error") && !body["error"].is_null()) {
                 result.operation_error = true;
+                result.message = safe_error_reason(body["error"]);
+            } else if (body.contains("last_error")) {
+                result.message = safe_error_reason(body["last_error"]);
             }
         }
         return result;
@@ -103,15 +133,11 @@ FolderStoreRemoteResult classify(
         result.message = "The remote resource was not found.";
         return result;
     }
-    if (response.status == 400 && json_error_object(body) && !allocating) {
+    if ((response.status == 400 || (allocating && response.status == 409))
+        && json_error_object(body)) {
         result.kind = FolderStoreRemoteKind::rejected;
-        result.message = "The provider rejected the request.";
-        return result;
-    }
-    if ((response.status == 400 || response.status == 409)
-        && json_error_object(body) && allocating) {
-        result.kind = FolderStoreRemoteKind::rejected;
-        result.message = "The provider rejected the request.";
+        result.message = safe_error_reason(body["error"]);
+        if (result.message.empty()) result.message = "The provider rejected the request.";
         return result;
     }
     result.kind = FolderStoreRemoteKind::failed;
@@ -125,6 +151,11 @@ FolderStoreRemoteResult classify(
     } else {
         result.message = "The provider request failed.";
     }
+    const auto reason = json_error_object(body) ? safe_error_reason(body["error"]) : std::string_view{};
+    if (!reason.empty()) result.message = reason;
+    else if (response.status == 413) result.message = "The provider's file-size limit was exceeded. Reduce the note size before uploading again.";
+    else if (response.status == 429) result.message = "The provider quota or rate limit was reached. Check its quota settings or try again later.";
+    else if (response.status >= 500 && response.status < 600) result.message = "The provider could not process the request. Try again later.";
     return result;
 }
 
@@ -486,8 +517,12 @@ FolderStoreRemoteResult FolderStoreClient::openai_attach_file(
     request.body = Json{{"file_id", file_id}}.dump();
     auto result = classify(transport_(request, cancel), false);
     if (result.kind == FolderStoreRemoteKind::ok) {
-        if (result.status == "failed" || result.status == "cancelled") return invalid_response("Indexing did not complete.");
-        if (result.status != "in_progress" && result.status != "completed") return invalid_response("The provider returned an invalid indexing status.");
+        if (result.status == "failed" || result.status == "cancelled") {
+            result.kind = FolderStoreRemoteKind::failed;
+            if (result.message.empty()) result.message = "Indexing did not complete.";
+        } else if (result.status != "in_progress" && result.status != "completed") {
+            return invalid_response("The provider returned an invalid indexing status.");
+        }
     }
     return result;
 }
@@ -507,7 +542,7 @@ FolderStoreRemoteResult FolderStoreClient::openai_inspect_file(
     if (result.kind == FolderStoreRemoteKind::ok) {
         if (result.status == "failed" || result.status == "cancelled") {
             result.kind = FolderStoreRemoteKind::failed;
-            result.message = "Indexing did not complete.";
+            if (result.message.empty()) result.message = "Indexing did not complete.";
         } else if (result.status != "completed" && result.status != "in_progress") {
             return invalid_response("The provider returned an invalid indexing status.");
         }
@@ -569,8 +604,10 @@ FolderStoreRemoteResult FolderStoreClient::google_upload_document(
     std::string_view display_name,
     std::string_view markdown,
     std::string_view key,
-    const std::atomic_bool& cancel) {
+    const std::atomic_bool& cancel,
+    const std::atomic_bool& cancel_forward) {
     if (!google_store_valid(store_name)) return invalid_response("The remote store name is invalid.");
+    if (cancel_forward.load()) return {.kind = FolderStoreRemoteKind::cancelled, .message = "The request was cancelled."};
     FolderStoreHttpRequest start;
     start.method = "POST";
     start.url = std::string(google_origin) + "/upload/v1beta/" + std::string(store_name)
@@ -606,6 +643,9 @@ FolderStoreRemoteResult FolderStoreClient::google_upload_document(
     upload.headers.push_back({"Content-Type", "text/markdown"});
     upload.headers.push_back({"Content-Length", std::to_string(markdown.size())});
     upload.body = std::string(markdown);
+    // A user cancel stops the next transfer, but an already-sent finalize must
+    // still return its operation ID. Only lifecycle interruption aborts it.
+    if (cancel_forward.load()) return {.kind = FolderStoreRemoteKind::cancelled, .message = "The request was cancelled."};
     auto result = classify(transport_(upload, cancel), false, "name");
     if (result.kind == FolderStoreRemoteKind::ok) {
         if (!google_operation_valid(result.id, store_name)) {
@@ -616,7 +656,7 @@ FolderStoreRemoteResult FolderStoreClient::google_upload_document(
     }
     if (result.kind == FolderStoreRemoteKind::ok && result.operation_error) {
         result.kind = FolderStoreRemoteKind::failed;
-        result.message = "Indexing did not complete.";
+        if (result.message.empty()) result.message = "Indexing did not complete.";
     }
     return result;
 }
@@ -635,7 +675,7 @@ FolderStoreRemoteResult FolderStoreClient::google_inspect_operation(
         if (result.id != operation) return invalid_response("The provider returned an invalid upload operation.");
         if (result.operation_error) {
             result.kind = FolderStoreRemoteKind::failed;
-            result.message = "Indexing did not complete.";
+            if (result.message.empty()) result.message = "Indexing did not complete.";
         }
     }
     return result;

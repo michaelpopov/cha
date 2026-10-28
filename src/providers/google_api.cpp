@@ -22,8 +22,7 @@ void update_count(const Json& usage, const char* field,
 
 bool google_file_search_only_model(std::string_view model) {
     if (model.starts_with("models/")) model.remove_prefix(7);
-    return model == "gemini-2.5-pro" || model == "gemini-2.5-flash"
-        || model == "gemini-2.5-flash-lite";
+    return model.starts_with("gemini-2.5-");
 }
 
 std::string build_google_request_body(

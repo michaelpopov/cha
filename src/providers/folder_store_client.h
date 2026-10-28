@@ -122,7 +122,8 @@ public:
         std::string_view display_name,
         std::string_view markdown,
         std::string_view key,
-        const std::atomic_bool& cancel);
+        const std::atomic_bool& cancel,
+        const std::atomic_bool& cancel_forward);
     [[nodiscard]] FolderStoreRemoteResult google_inspect_operation(
         std::string_view operation,
         std::string_view key,

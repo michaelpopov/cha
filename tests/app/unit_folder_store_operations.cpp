@@ -130,6 +130,11 @@ protected:
         }
     }
 
+    void execute_sql(std::string_view sql) {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        db.execute(sql);
+    }
+
     Application::FolderStoreOperationStatus wait_status(std::int64_t folder_id) {
         const auto initial = application_->folder_store_operation_status(folder_id, epoch_);
         if (!initial.present) return initial;
@@ -242,11 +247,17 @@ TEST_F(FolderStoreOperationsTest, IndexFailureCleansOwnedFiles) {
     application_->set_folder_store_transport_for_tests(
         [&](const FolderStoreHttpRequest& request, const std::atomic_bool& cancel) {
             if (request.method == "DELETE") deletes.push_back(request.url);
+            if (request.method == "GET" && request.url.ends_with("/files/file_1")) {
+                return json_ok(R"({"status":"failed","last_error":{"code":"invalid_file","message":"private note text"}})");
+            }
             return openai_transport(true)(request, cancel);
         });
     (void)application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.phase, "failed");
+    EXPECT_NE(status.error.find("Note “Log”"), std::string::npos);
+    EXPECT_NE(status.error.find("Check the note content before uploading again."), std::string::npos);
+    EXPECT_EQ(status.error.find("private note text"), std::string::npos);
     EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
     ASSERT_GE(deletes.size(), 2U);
 }
@@ -434,8 +445,10 @@ TEST_F(FolderStoreOperationsTest, UnpersistedReturnedIdIsStillCleaned) {
     std::vector<std::string> deletes;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
         auto response = openai_transport()(request, cancel);
-        if (request.url.ends_with("/vector_stores") && request.method == "POST") force_next_folder_store_fault(FolderStoreFault::commit);
-        if (request.method == "DELETE") deletes.push_back(request.url);
+        if (request.url.ends_with("/vector_stores") && request.method == "POST")
+            execute_sql("CREATE TRIGGER reject_id BEFORE UPDATE OF remote_store_id ON folder_stores "
+                "BEGIN SELECT RAISE(ABORT, 'write failure'); END");
+        if (request.method == "DELETE") { execute_sql("DROP TRIGGER IF EXISTS reject_id"); deletes.push_back(request.url); }
         return response;
     });
     (void)application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
@@ -447,9 +460,10 @@ TEST_F(FolderStoreOperationsTest, UnpersistedReturnedIdIsStillCleaned) {
 
 TEST_F(FolderStoreOperationsTest, FailedPersistenceAndCleanupRetainTheReturnedIdInEvents) {
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
-        if (request.method == "DELETE") { FolderStoreHttpResponse response; response.status = 403; return response; }
+        if (request.method == "DELETE") { execute_sql("DROP TRIGGER IF EXISTS reject_id"); return FolderStoreHttpResponse{.status = 403}; }
         auto response = openai_transport()(request, cancel);
-        force_next_folder_store_fault(FolderStoreFault::commit);
+        execute_sql("CREATE TRIGGER reject_id BEFORE UPDATE OF remote_store_id ON folder_stores "
+            "BEGIN SELECT RAISE(ABORT, 'write failure'); END");
         return response;
     });
     (void)application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
@@ -567,7 +581,11 @@ TEST_F(FolderStoreOperationsTest, EarlierNotFoundWarningSurvivesASeparateRemoveR
     EXPECT_EQ(wait_status(folder_.id).phase, "failed");
     application_->set_folder_store_transport_for_tests(openai_transport());
     (void)application_->start_folder_store_remove(folder_.id, id, epoch_);
-    EXPECT_EQ(wait_status(folder_.id).result, "warning");
+    EXPECT_EQ(wait_status(folder_.id).result, "success");
+    const auto events = application_->list_events(epoch_);
+    EXPECT_TRUE(std::any_of(events.begin(), events.end(), [](const auto& event) {
+        return event.severity == EventSeverity::warning && event.message.find("was not found for") != std::string::npos;
+    }));
 }
 
 TEST_F(FolderStoreOperationsTest, DeleteFailureRetainsReservationAndDeleteAnywayRollback) {
@@ -577,9 +595,10 @@ TEST_F(FolderStoreOperationsTest, DeleteFailureRetainsReservationAndDeleteAnyway
     EXPECT_EQ(wait_status(folder_.id).phase, "failed");
     EXPECT_THROW((void)application_->create_note_item(folder_.id, NoteItemKind::note, "Blocked", epoch_), ApplicationError);
     EXPECT_THROW((void)application_->start_folder_store_remove(folder_.id, id, epoch_), ApplicationError);
-    force_next_folder_store_fault(FolderStoreFault::warning);
+    execute_sql("CREATE TRIGGER reject_warning BEFORE INSERT ON event_history BEGIN SELECT RAISE(ABORT, 'warning failure'); END");
     EXPECT_THROW(application_->delete_folder_anyway(operation.operation_id, epoch_), std::exception);
     EXPECT_TRUE(application_->folder_store_record(folder_.id, epoch_));
+    execute_sql("DROP TRIGGER reject_warning");
     application_->delete_folder_anyway(operation.operation_id, epoch_);
     const auto status = application_->folder_store_operation_status(folder_.id, epoch_);
     EXPECT_TRUE(status.folder_deleted);
@@ -662,6 +681,83 @@ TEST_F(FolderStoreOperationsTest, GoogleTransfersBeforePollingAndWaitsForLagging
     EXPECT_EQ(wait_status(folder_.id).result, "success");
 }
 
+TEST_F(FolderStoreOperationsTest, GoogleCancelDuringResumableStartDoesNotUploadNoteBytes) {
+    nlohmann::json body = application_->get_provider("test", epoch_);
+    for (const char* field : {"id", "used_by", "writable"}) body.erase(field);
+    body["host"] = "generativelanguage.googleapis.com";
+    body["api"] = "google";
+    body["base_path"] = "/v1beta";
+    (void)application_->update_provider("test", body, epoch_);
+    int finalized = 0, deleted = 0;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        if (request.method == "DELETE") {
+            ++deleted;
+            EXPECT_TRUE(request.url.ends_with("/fileSearchStores/test?force=true"));
+            const auto record = application_->folder_store_record(folder_.id, epoch_);
+            EXPECT_TRUE(record && record->state == FolderStoreState::incomplete);
+            return json_ok("{}");
+        }
+        if (request.url.ends_with("/v1beta/fileSearchStores"))
+            return json_ok(R"({"name":"fileSearchStores/test"})");
+        if (request.capture_headers) {
+            const auto operation = application_->folder_store_operation_status(folder_.id, epoch_);
+            application_->cancel_folder_store_upload(operation.operation_id, epoch_);
+            return json_ok("", {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}});
+        }
+        if (request.url.ends_with("/upload/session")) {
+            ++finalized;
+            return json_ok(R"({"name":"fileSearchStores/test/upload/operations/op1"})");
+        }
+        ADD_FAILURE() << "Unexpected request after cancellation: " << request.url;
+        return json_ok("{}");
+    });
+    (void)application_->start_folder_store_upload(folder_.id, "google", key_, epoch_);
+    const auto done = wait_status(folder_.id);
+    EXPECT_EQ(done.result, "cancelled");
+    EXPECT_EQ(finalized, 0);
+    EXPECT_EQ(deleted, 1);
+    EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
+}
+
+TEST_F(FolderStoreOperationsTest, GoogleCancelDuringFinalizeWaitsForResponseAndCleansStore) {
+    nlohmann::json body = application_->get_provider("test", epoch_);
+    for (const char* field : {"id", "used_by", "writable"}) body.erase(field);
+    body["host"] = "generativelanguage.googleapis.com";
+    body["api"] = "google";
+    body["base_path"] = "/v1beta";
+    (void)application_->update_provider("test", body, epoch_);
+    int finalized = 0, deleted = 0;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (request.method == "DELETE") {
+            ++deleted;
+            EXPECT_TRUE(request.url.ends_with("/fileSearchStores/test?force=true"));
+            EXPECT_FALSE(cancel.load());
+            const auto record = application_->folder_store_record(folder_.id, epoch_);
+            EXPECT_TRUE(record && record->state == FolderStoreState::incomplete);
+            return json_ok("{}");
+        }
+        if (request.url.ends_with("/v1beta/fileSearchStores"))
+            return json_ok(R"({"name":"fileSearchStores/test"})");
+        if (request.capture_headers)
+            return json_ok("", {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}});
+        if (request.url.ends_with("/upload/session")) {
+            ++finalized;
+            const auto operation = application_->folder_store_operation_status(folder_.id, epoch_);
+            application_->cancel_folder_store_upload(operation.operation_id, epoch_);
+            EXPECT_FALSE(cancel.load()) << "An already-sent allocation must return its resource ID";
+            return json_ok(R"({"name":"fileSearchStores/test/upload/operations/op1","done":true})");
+        }
+        ADD_FAILURE() << "Unexpected request after cancellation: " << request.url;
+        return json_ok("{}");
+    });
+    (void)application_->start_folder_store_upload(folder_.id, "google", key_, epoch_);
+    const auto done = wait_status(folder_.id);
+    EXPECT_EQ(done.result, "cancelled");
+    EXPECT_EQ(finalized, 1);
+    EXPECT_EQ(deleted, 1);
+    EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
+}
+
 TEST_F(FolderStoreOperationsTest, VaultSwitchDuringAllocationLeavesOnlyOriginalUncertainty) {
     Gate gate;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
@@ -742,23 +838,12 @@ TEST_F(FolderStoreOperationsTest, CannotCloseActiveCleanupAndCloseFailedDeleteRe
     EXPECT_EQ(application_->folder_store_record(folder_.id, epoch_)->id, id);
 }
 
-TEST_F(FolderStoreOperationsTest, AllocationFailureStopsBeforeRegistrationAndHttp) {
-    int calls = 0;
-    application_->set_folder_store_transport_for_tests([&](const auto&, const auto&) { ++calls; return json_ok("{}"); });
-    force_next_folder_store_fault(FolderStoreFault::allocation);
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
-    const auto status = wait_status(folder_.id);
-    EXPECT_EQ(status.result, "preflight");
-    EXPECT_NE(status.error.find("allocate memory"), std::string::npos);
-    EXPECT_EQ(calls, 0);
-    EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
-}
-
 TEST_F(FolderStoreOperationsTest, FailedChildCopyRemovesOnlyUnpublishedDestination) {
     seed_store(folder_.id);
-    force_next_folder_store_fault(FolderStoreFault::write);
+    execute_sql("CREATE TRIGGER reject_reset BEFORE DELETE ON folder_stores BEGIN SELECT RAISE(ABORT, 'ownership reset failure'); END");
     EXPECT_THROW((void)application_->create_vault({.display_name = "Child", .copy_from = "Test"}, epoch_), std::exception);
     EXPECT_TRUE(application_->folder_store_record(folder_.id, epoch_));
+    execute_sql("DROP TRIGGER reject_reset");
     const auto child = application_->create_vault({.display_name = "Child", .copy_from = "Test"}, epoch_);
     EXPECT_TRUE(std::filesystem::exists(child.data));
     storage::SqliteDatabase db(child.data, storage::SqliteDatabase::Mode::read_only);
@@ -1000,6 +1085,105 @@ TEST_F(FolderStoreOperationsTest, ClosePreservesUnsavedOwnershipUntilItCanBeReco
     application_->close_folder_store_operation(operation.operation_id, epoch_);
     EXPECT_FALSE(application_->folder_store_operation_status(folder_.id, epoch_).present);
     EXPECT_EQ(application_->folder_store_record(folder_.id, epoch_)->remote_store_id, "vs_1");
+}
+
+TEST_F(FolderStoreOperationsTest, FailedRemoveLaunchPreservesPreviousOperationAndUnsavedOwnership) {
+    auto fail_launch = std::make_shared<bool>(false);
+    RuntimeSettings settings;
+    settings.folder_store_before_launch = [fail_launch] {
+        if (*fail_launch) throw std::runtime_error("injected launch failure");
+    };
+    reopen(settings);
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (request.method == "DELETE") return FolderStoreHttpResponse{.status = 403};
+        auto response = openai_transport()(request, cancel);
+        if (request.url.ends_with("/vector_stores") && request.method == "POST") {
+            storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+            db.execute("CREATE TRIGGER block_remote_id BEFORE UPDATE OF remote_store_id ON folder_stores "
+                "BEGIN SELECT RAISE(ABORT, 'injected write failure'); END");
+        }
+        return response;
+    });
+    const auto upload = application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
+    const auto failed = wait_status(folder_.id);
+    ASSERT_EQ(failed.result, "error");
+    ASSERT_TRUE(failed.known_cleanup_remains);
+    const auto record = application_->folder_store_record(folder_.id, epoch_);
+    ASSERT_TRUE(record);
+    ASSERT_FALSE(record->remote_store_id);
+
+    *fail_launch = true;
+    EXPECT_THROW((void)application_->start_folder_store_remove(folder_.id, record->id, epoch_), ApplicationError);
+    const auto retained = application_->folder_store_operation_status(folder_.id, epoch_);
+    EXPECT_TRUE(retained.present);
+    EXPECT_EQ(retained.operation_id, upload.operation_id);
+    EXPECT_TRUE(retained.terminal);
+    EXPECT_TRUE(retained.known_cleanup_remains);
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        db.execute("DROP TRIGGER block_remote_id");
+    }
+    *fail_launch = false;
+    std::vector<std::string> deleted;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (request.method == "DELETE") deleted.push_back(request.url);
+        return openai_transport()(request, cancel);
+    });
+    (void)application_->start_folder_store_remove(folder_.id, record->id, epoch_);
+    const auto done = wait_status(folder_.id);
+    EXPECT_EQ(deleted, std::vector<std::string>({"https://api.openai.com/v1/vector_stores/vs_1"}));
+    EXPECT_EQ(done.result, "warning");
+    EXPECT_FALSE(done.known_cleanup_remains);
+    EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
+}
+
+TEST_F(FolderStoreOperationsTest, RemoveRetriesUnsavedIdsWithoutClosingOrPersistingThemFirst) {
+    for (const bool file : {false, true}) {
+        SCOPED_TRACE(file ? "unsaved file" : "unsaved store");
+        application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+            if (request.method == "DELETE") return FolderStoreHttpResponse{.status = 403};
+            auto response = openai_transport()(request, cancel);
+            if ((file && !request.multipart.empty())
+                || (!file && request.url.ends_with("/vector_stores") && request.method == "POST")) {
+                storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+                db.execute(file
+                    ? "CREATE TRIGGER block_returned_id BEFORE INSERT ON folder_store_files "
+                      "BEGIN SELECT RAISE(ABORT, 'injected write failure'); END"
+                    : "CREATE TRIGGER block_returned_id BEFORE UPDATE OF remote_store_id ON folder_stores "
+                      "WHEN NEW.remote_store_id IS NOT NULL "
+                      "BEGIN SELECT RAISE(ABORT, 'injected write failure'); END");
+            }
+            return response;
+        });
+        const auto upload = application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
+        const auto failed = wait_status(folder_.id);
+        ASSERT_EQ(failed.result, "error");
+        ASSERT_TRUE(failed.known_cleanup_remains);
+        const auto record = application_->folder_store_record(folder_.id, epoch_);
+        ASSERT_TRUE(record);
+        EXPECT_TRUE(record->remote_outcome_unknown);
+        if (file) EXPECT_TRUE(record->file_ids.empty());
+        else EXPECT_FALSE(record->remote_store_id);
+        EXPECT_THROW(application_->close_folder_store_operation(upload.operation_id, epoch_), ApplicationError);
+
+        // Keep the write fault active: cleanup must use the returned IDs in memory.
+        std::vector<std::string> deleted;
+        application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+            if (request.method == "DELETE") deleted.push_back(request.url);
+            return openai_transport()(request, cancel);
+        });
+        const auto remove = application_->start_folder_store_remove(folder_.id, record->id, epoch_);
+        const auto done = wait_status(folder_.id);
+        auto expected = std::vector<std::string>{"https://api.openai.com/v1/vector_stores/vs_1"};
+        if (file) expected.push_back("https://api.openai.com/v1/files/file_1");
+        EXPECT_EQ(deleted, expected);
+        EXPECT_EQ(done.result, "warning");
+        EXPECT_FALSE(done.known_cleanup_remains);
+        EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
+        application_->close_folder_store_operation(remove.operation_id, epoch_);
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        db.execute("DROP TRIGGER block_returned_id");
+    }
 }
 
 

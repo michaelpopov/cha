@@ -277,6 +277,12 @@ TEST(GoogleApi, RejectsBlocksMalformedResponsesAndOversizedArguments) {
     EXPECT_EQ(output.answer, "Delivered");
 }
 
+TEST(GoogleApi, Gemini25AliasesUseFileSearchWithoutFunctions) {
+    for (const auto model : {"gemini-2.5-flash-preview-09-2025", "gemini-2.5-pro-latest",
+            "models/gemini-2.5-flash-lite-preview"}) EXPECT_TRUE(google_file_search_only_model(model));
+    EXPECT_FALSE(google_file_search_only_model("gemini-3-flash"));
+}
+
 TEST(GoogleApi, FolderSearchCapabilitiesAndDeclarationOrderAreIndependent) {
     for (const auto model : {"gemini-2.5-pro", "gemini-2.5-flash", "models/gemini-2.5-flash-lite", "gemini-3.8-flash", "gemini-4-argon", "unknown-model"}) {
         GenerationRequest request;

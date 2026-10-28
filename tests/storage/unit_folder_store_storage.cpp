@@ -213,7 +213,8 @@ TEST(FolderStoreJournal, NoticeFailureRollsBackTheAssociation) {
     const auto path = workspace.root() / "journal.sqlite3";
     ASSERT_TRUE(create_session_database(path, {.id = "s", .forum = "f", .label = "S"}));
     SessionJournal journal(path);
-    force_next_session_folder_notice_failure();
+    Database failure_db(path, Database::Mode::read_write);
+    failure_db.execute("CREATE TRIGGER reject_notice BEFORE INSERT ON entries BEGIN SELECT RAISE(ABORT, 'notice failure'); END");
     EXPECT_THROW((void)journal.add_folder(1, "Research", 1, [](std::int64_t) { return true; }), std::exception);
     EXPECT_TRUE(journal.folder_ids().empty());
 }
@@ -334,16 +335,24 @@ TEST_F(FolderStoreStorageTest, ReadyEventAndNotFoundWarningRollBackWithTheirStat
     const auto folder = store->create_note_item({}, NoteItemKind::folder, "Research");
     const auto id = store->register_folder_store(folder.id, FolderStoreService::openai, "api_key_1", 1);
     store->save_folder_store_remote_id(id, "vs_1");
-    force_next_folder_store_fault(FolderStoreFault::commit);
+    Database failure_db(path_, Database::Mode::read_write);
+    failure_db.execute("CREATE TABLE commit_failure(id INTEGER REFERENCES note_items(id) DEFERRABLE INITIALLY DEFERRED)");
+    const auto reject_commit = [&] {
+        failure_db.execute("CREATE TRIGGER reject_commit AFTER INSERT ON event_history "
+            "BEGIN INSERT INTO commit_failure VALUES (-1); END");
+    };
+    reject_commit();
     EXPECT_THROW(store->mark_folder_store_ready(id, "Uploaded"), std::exception);
     EXPECT_EQ(store->get_folder_store(id)->state, FolderStoreState::incomplete);
     EXPECT_TRUE(store->list_events().empty());
+    failure_db.execute("DROP TRIGGER reject_commit");
     store->add_folder_store_file_id(id, "file_1");
-    force_next_folder_store_fault(FolderStoreFault::warning);
+    failure_db.execute("CREATE TRIGGER reject_warning BEFORE INSERT ON event_history BEGIN SELECT RAISE(ABORT, 'warning failure'); END");
     EXPECT_THROW(store->remove_folder_store_file_id(id, "file_1", "Not found"), std::exception);
     EXPECT_EQ(store->get_folder_store(id)->file_ids, std::vector<std::string>({"file_1"}));
     EXPECT_TRUE(store->list_events().empty());
-    force_next_folder_store_fault(FolderStoreFault::commit);
+    failure_db.execute("DROP TRIGGER reject_warning");
+    reject_commit();
     EXPECT_THROW(store->delete_folder_store_record(id, "Removed"), std::exception);
     EXPECT_TRUE(store->get_folder_store(id));
     EXPECT_TRUE(store->list_events().empty());

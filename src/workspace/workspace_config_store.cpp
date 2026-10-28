@@ -2707,16 +2707,6 @@ void WorkspaceConfigStore::delete_note_item(std::int64_t id) {
     note_delete(*impl_->database, id);
 }
 
-namespace {
-
-void require_folder_store_commit() {
-    if (consume_folder_store_fault(FolderStoreFault::commit) == FolderStoreFault::commit) {
-        throw std::runtime_error("injected folder store commit failure");
-    }
-}
-
-} // namespace
-
 std::optional<FolderStoreRecord> WorkspaceConfigStore::get_folder_store(
     std::int64_t store_id) const {
     const std::lock_guard lock(impl_->mutex);
@@ -2791,7 +2781,6 @@ std::int64_t WorkspaceConfigStore::register_folder_store(
     storage::SqliteTransaction transaction(*impl_->database);
     const auto id = folder_store_register(
         *impl_->database, folder_id, service, api_key_id, note_count);
-    require_folder_store_commit();
     transaction.commit();
     return id;
 }
@@ -2801,7 +2790,6 @@ void WorkspaceConfigStore::set_folder_store_uncertainty(
     const std::lock_guard lock(impl_->mutex);
     storage::SqliteTransaction transaction(*impl_->database);
     folder_store_set_uncertainty(*impl_->database, store_id, unknown);
-    require_folder_store_commit();
     transaction.commit();
 }
 
@@ -2810,7 +2798,6 @@ void WorkspaceConfigStore::save_folder_store_remote_id(
     const std::lock_guard lock(impl_->mutex);
     storage::SqliteTransaction transaction(*impl_->database);
     folder_store_save_remote_id(*impl_->database, store_id, remote_store_id);
-    require_folder_store_commit();
     transaction.commit();
 }
 
@@ -2819,7 +2806,6 @@ void WorkspaceConfigStore::add_folder_store_file_id(
     const std::lock_guard lock(impl_->mutex);
     storage::SqliteTransaction transaction(*impl_->database);
     folder_store_add_file_id(*impl_->database, store_id, file_id);
-    require_folder_store_commit();
     transaction.commit();
 }
 
@@ -2828,13 +2814,9 @@ void WorkspaceConfigStore::remove_folder_store_file_id(
     const std::lock_guard lock(impl_->mutex);
     storage::SqliteTransaction transaction(*impl_->database);
     if (!warning.empty()) {
-        if (consume_folder_store_fault(FolderStoreFault::warning) == FolderStoreFault::warning) {
-            throw std::runtime_error("injected folder store warning failure");
-        }
         event_append_in_transaction(*impl_->database, EventSeverity::warning, warning);
     }
     folder_store_remove_file_id(*impl_->database, store_id, file_id);
-    require_folder_store_commit();
     transaction.commit();
 }
 
@@ -2843,13 +2825,9 @@ void WorkspaceConfigStore::clear_folder_store_remote_id(
     const std::lock_guard lock(impl_->mutex);
     storage::SqliteTransaction transaction(*impl_->database);
     if (!warning.empty()) {
-        if (consume_folder_store_fault(FolderStoreFault::warning) == FolderStoreFault::warning) {
-            throw std::runtime_error("injected folder store warning failure");
-        }
         event_append_in_transaction(*impl_->database, EventSeverity::warning, warning);
     }
     folder_store_clear_remote_store_id(*impl_->database, store_id);
-    require_folder_store_commit();
     transaction.commit();
 }
 
@@ -2859,7 +2837,6 @@ void WorkspaceConfigStore::mark_folder_store_ready(
     storage::SqliteTransaction transaction(*impl_->database);
     folder_store_mark_ready(*impl_->database, store_id);
     event_append_in_transaction(*impl_->database, EventSeverity::success, success_message);
-    require_folder_store_commit();
     transaction.commit();
 }
 
@@ -2883,13 +2860,9 @@ void WorkspaceConfigStore::delete_folder_store_record(
     const std::lock_guard lock(impl_->mutex);
     storage::SqliteTransaction transaction(*impl_->database);
     if (!outcome_message.empty()) {
-        if (consume_folder_store_fault(FolderStoreFault::warning) == FolderStoreFault::warning) {
-            throw std::runtime_error("injected folder store warning failure");
-        }
         event_append_in_transaction(*impl_->database, severity, outcome_message);
     }
     folder_store_delete_record(*impl_->database, store_id);
-    require_folder_store_commit();
     transaction.commit();
 }
 
@@ -2899,9 +2872,6 @@ void WorkspaceConfigStore::delete_folder_subtree_locally(
     const std::vector<std::int64_t>& remaining_store_ids) {
     const std::lock_guard lock(impl_->mutex);
     storage::SqliteTransaction transaction(*impl_->database);
-    if (consume_folder_store_fault(FolderStoreFault::warning) == FolderStoreFault::warning) {
-        throw std::runtime_error("injected folder store warning failure");
-    }
     for (const auto& warning : warnings) {
         event_append_in_transaction(*impl_->database, EventSeverity::warning, warning);
     }
@@ -2910,7 +2880,6 @@ void WorkspaceConfigStore::delete_folder_subtree_locally(
     }
     folder_store_delete_session_folders_in_subtree(*impl_->database, folder_id);
     note_delete_in_transaction(*impl_->database, folder_id);
-    require_folder_store_commit();
     transaction.commit();
 }
 

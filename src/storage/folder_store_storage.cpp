@@ -4,7 +4,6 @@
 #include "util/text.h"
 
 #include <algorithm>
-#include <atomic>
 #include <map>
 #include <new>
 #include <stdexcept>
@@ -12,8 +11,6 @@
 
 namespace cha {
 namespace {
-
-std::atomic<FolderStoreFault> next_fault{FolderStoreFault::none};
 
 constexpr std::string_view store_missing = "That folder store was not found.";
 constexpr std::string_view not_folder = "A store can only belong to a real folder.";
@@ -139,16 +136,6 @@ std::string ancestor_path(
 }
 
 } // namespace
-
-void force_next_folder_store_fault(FolderStoreFault fault) {
-    next_fault.store(fault);
-}
-
-FolderStoreFault consume_folder_store_fault(FolderStoreFault expected) {
-    auto value = expected;
-    return next_fault.compare_exchange_strong(value, FolderStoreFault::none)
-        ? expected : FolderStoreFault::none;
-}
 
 void create_folder_store_schema(storage::SqliteDatabase& database) {
     database.execute(R"sql(
@@ -413,9 +400,6 @@ std::int64_t folder_store_register(
     if (!folder) fail_store(not_folder);
     if (api_key_id.empty()) fail_store("A saved API key is required.");
     if (note_count <= 0) fail_store("A store needs at least one note.");
-    if (consume_folder_store_fault(FolderStoreFault::write) == FolderStoreFault::write) {
-        throw std::runtime_error("injected folder store write failure");
-    }
     auto insert = database.prepare(
         "INSERT INTO folder_stores (folder_id, service, api_key_id, state, note_count) "
         "VALUES (?1, ?2, ?3, 'incomplete', ?4)",
@@ -430,9 +414,6 @@ std::int64_t folder_store_register(
 void folder_store_set_uncertainty(
     storage::SqliteDatabase& database, std::int64_t store_id, bool unknown) {
     require_current_store(database, store_id);
-    if (consume_folder_store_fault(FolderStoreFault::write) == FolderStoreFault::write) {
-        throw std::runtime_error("injected folder store write failure");
-    }
     database.prepare(
         "UPDATE folder_stores SET remote_outcome_unknown = ?1, state = 'incomplete' "
         "WHERE id = ?2",
@@ -448,9 +429,6 @@ void folder_store_save_remote_id(
     std::string_view remote_store_id) {
     require_current_store(database, store_id);
     if (remote_store_id.empty()) fail_store("The remote store ID is empty.");
-    if (consume_folder_store_fault(FolderStoreFault::write) == FolderStoreFault::write) {
-        throw std::runtime_error("injected folder store write failure");
-    }
     database.prepare(
         "UPDATE folder_stores SET remote_store_id = ?1, remote_outcome_unknown = 0, "
         "state = 'incomplete' WHERE id = ?2",
@@ -466,9 +444,6 @@ void folder_store_add_file_id(
     std::string_view file_id) {
     require_current_store(database, store_id);
     if (file_id.empty()) fail_store("The file ID is empty.");
-    if (consume_folder_store_fault(FolderStoreFault::write) == FolderStoreFault::write) {
-        throw std::runtime_error("injected folder store write failure");
-    }
     database.prepare(
         "INSERT OR IGNORE INTO folder_store_files (store_id, file_id) VALUES (?1, ?2)",
         store_id,
@@ -505,9 +480,6 @@ void folder_store_mark_ready(
     storage::SqliteDatabase& database, std::int64_t store_id) {
     const auto record = folder_store_get(database, store_id);
     if (!record || !record->remote_store_id || record->remote_outcome_unknown) fail_store("The folder store is not ready.");
-    if (consume_folder_store_fault(FolderStoreFault::write) == FolderStoreFault::write) {
-        throw std::runtime_error("injected folder store write failure");
-    }
     database.prepare(
         "UPDATE folder_stores SET state = 'ready', uploaded_at = ?1, "
         "remote_outcome_unknown = 0 WHERE id = ?2 AND remote_store_id IS NOT NULL",
@@ -558,9 +530,6 @@ void folder_store_delete_session_folders_in_subtree(
 }
 
 void folder_store_clear_ownership(storage::SqliteDatabase& database) {
-    if (consume_folder_store_fault(FolderStoreFault::write) == FolderStoreFault::write) {
-        throw std::runtime_error("injected folder store write failure");
-    }
     if (table_exists(database, "folder_store_files")) database.execute("DELETE FROM folder_store_files");
     if (table_exists(database, "folder_stores")) database.execute("DELETE FROM folder_stores");
 }
@@ -669,7 +638,6 @@ FolderStoreCapture capture_impl(
 FolderStoreCapture folder_store_capture(storage::SqliteDatabase& database,
     std::int64_t folder_id, FolderStoreService service) {
     try {
-        if (consume_folder_store_fault(FolderStoreFault::allocation) == FolderStoreFault::allocation) throw std::bad_alloc{};
         return capture_impl(database, folder_id, service);
     } catch (const std::bad_alloc&) {
         throw FolderStoreError("Could not allocate memory for the folder snapshot.");

@@ -165,24 +165,36 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
     if (!loading) element.current?.querySelector<HTMLElement>('select:not(:disabled), button:not(:disabled)')?.focus();
   }, [loading, op?.terminal, op?.phase]);
 
-  async function submit(deleteAnyway = false) {
-    if (busy.current || blocked || loading || (mode === 'upload' && !key) || !current()) return;
+  async function submit(action: 'submit' | 'delete-anyway' | 'cleanup' = 'submit') {
+    const nextMode = action === 'cleanup' ? 'remove' : mode;
+    if (busy.current || blocked || loading || (nextMode === 'upload' && !key) || !current()) return;
     busy.current = true; setPending(true); setError(null);
     const failed = operation.current;
     try {
       const start = async () => {
-        const accepted = mode === 'delete'
-          ? await client.folderDelete(failed ? { operation_id: failed.operation_id, delete_anyway: deleteAnyway }
+        let storeId = source.store?.id;
+        if (action === 'cleanup') {
+          if (!failed?.terminal || failed.kind === 'folder_delete' || !failed.known_cleanup_remains) return false;
+          const previous = await read(failed.operation_id);
+          if (!previous) return false;
+          if (!previous.terminal || !previous.known_cleanup_remains)
+            throw new ChaError('invalid_argument', 'The store operation changed. Close this dialog and reopen the folder menu.');
+          storeId = listing.find(item => item.id === source.id)?.store?.id;
+          if (!storeId) throw new ChaError('invalid_argument', 'The folder store was not found. Refresh the notes list and reopen the folder menu.');
+        }
+        const accepted = nextMode === 'delete'
+          ? await client.folderDelete(failed ? { operation_id: failed.operation_id, delete_anyway: action === 'delete-anyway' }
             : { folder_id: source.id, confirmed_store_count: count }, epoch)
-          : mode === 'upload' ? await client.storeUpload(source.id, service, key, epoch)
-            : await client.storeRemove(source.id, source.store!.id, epoch);
+          : nextMode === 'upload' ? await client.storeUpload(source.id, service, key, epoch)
+            : await client.storeRemove(source.id, storeId!, epoch);
         if (!current()) return false;
         const result = await read(accepted.operation_id);
         if (!result) return false;
+        setMode(nextMode);
         setPending(false);
         return follow(result);
       };
-      if (mode === 'delete') await guardedDelete(start);
+      if (nextMode === 'delete') await guardedDelete(start);
       else await start();
       await finish();
     } catch (failure) {
@@ -234,6 +246,7 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
   }
   const active = !!op && !op.terminal;
   const failedDelete = mode === 'delete' && !!op?.terminal && !op.folder_deleted;
+  const canRetryCleanup = !!op?.terminal && op.kind !== 'folder_delete' && op.known_cleanup_remains;
   const editable = !loading && !blocked && !op;
   const canCancel = active && op.kind === 'upload' && !['cleaning', 'removing'].includes(op.phase);
   const status = op?.phase === 'uploading' ? `Uploading ${op.completed} of ${op.total} notes…`
@@ -265,7 +278,6 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
         {count > 0 && <p>{count} remote {count === 1 ? 'store will' : 'stores will'} also be removed.</p>}</>}
       {op?.terminal && op.result === 'warning' && <p role="alert">{warning}</p>}
       {op?.terminal && op.error && <p className="cha-error-message" role="alert">{op.error}</p>}
-      {op?.terminal && mode === 'upload' && op.known_cleanup_remains && <p>Use Remove from store to retry cleanup.</p>}
       {failedDelete && <p>Delete anyway removes the local folder and notes. Remote data and charges may remain.</p>}
       {statusError && <p className="cha-error-message" role="alert">{statusError}</p>}
       {error && <p className="cha-error-message" role="alert">{error}</p>}
@@ -275,9 +287,11 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
           {editable || failedDelete ? 'Cancel' : 'Close'}</button>}
         {editable && <button className="cha-button cha-button-primary" type="submit" disabled={pending || mode === 'upload' && !key}>
           {mode === 'upload' ? 'Upload' : mode === 'remove' ? 'Remove' : 'Delete'}</button>}
+        {canRetryCleanup && !blocked && <button className="cha-button cha-button-primary" type="button" disabled={pending || loading}
+          onClick={() => void submit('cleanup')}>Retry cleanup</button>}
         {failedDelete && !blocked && <>
           <button className="cha-button" type="button" disabled={pending} onClick={() => void submit()}>Retry</button>
-          <button className="cha-button cha-button-primary" type="button" disabled={pending} onClick={() => void submit(true)}>Delete anyway</button>
+          <button className="cha-button cha-button-primary" type="button" disabled={pending} onClick={() => void submit('delete-anyway')}>Delete anyway</button>
         </>}
       </div>
     </form>

@@ -6,6 +6,7 @@
 #include "session/session_controller.h"
 #include "storage/folder_store_storage.h"
 #include "storage/not_found_error.h"
+#include "storage/sqlite_storage.h"
 #include "storage/session_repository.h"
 #include "storage/note_storage.h"
 #include "support/test_notifier.h"
@@ -369,9 +370,11 @@ TEST_F(SessionOpenTest, FolderAttachRechecksThePersistentJournalAfterCallbackAnd
     EXPECT_TRUE(controller->view().transcript.entries.empty());
     invalidate = false;
     store_->mark_folder_store_ready(record, "Ready");
-    force_next_session_folder_notice_failure();
+    storage::SqliteDatabase failure_db(prepared.database_path, storage::SqliteDatabase::Mode::read_write);
+    failure_db.execute("CREATE TRIGGER reject_folder_notice BEFORE INSERT ON entries BEGIN SELECT RAISE(ABORT, 'notice failure'); END");
     EXPECT_FALSE(controller->add_item(folder.id).input_consumed);
     EXPECT_TRUE(journal.folder_ids().empty());
+    failure_db.execute("DROP TRIGGER reject_folder_notice");
     EXPECT_TRUE(controller->add_item(folder.id).input_consumed);
     EXPECT_EQ(journal.folder_ids(), (std::vector<std::int64_t>{folder.id}));
 }

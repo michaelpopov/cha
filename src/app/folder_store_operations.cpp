@@ -189,15 +189,6 @@ bool cleanup(auto& self, const auto& control, FolderStoreClient& client, FolderS
     guarded(self, control, [&] {
         using Phase = decltype(control->phase);
         control->phase = kind_name(control->kind) == "upload" ? Phase::cleaning : Phase::removing;
-        // Reuse finite Events history to keep earlier not-found outcomes visible
-        // across an explicit retry or reopen. No second warning store is needed.
-        const auto marker = "store_record=" + std::to_string(record.id);
-        for (const auto& event : self.store->list_events()) {
-            const auto at = event.message.find(marker);
-            const auto end = at == std::string::npos ? 0 : at + marker.size();
-            if (at != std::string::npos && (end == event.message.size() || event.message[end] < '0' || event.message[end] > '9')
-                && event.message.find("was not found for") != std::string::npos) control->warned = true;
-        }
         if (control->unsaved_store_id) record.remote_store_id = control->unsaved_store_id;
         for (const auto& id : control->unsaved_file_ids) {
             if (std::find(record.file_ids.begin(), record.file_ids.end(), id) == record.file_ids.end()) record.file_ids.push_back(id);
@@ -275,7 +266,7 @@ bool cleanup(auto& self, const auto& control, FolderStoreClient& client, FolderS
                 latest->remote_outcome_unknown ? unknown_warning(*latest)
                     : "Removed the local store association for " + context(*latest)
                         + ". Cleanup of known resources finished; earlier Events may contain warnings.",
-                control->warned ? EventSeverity::warning : EventSeverity::success);
+                control->warned ? EventSeverity::warning : EventSeverity::info);
             control->store_record_id.reset();
         }
         return true;
@@ -427,7 +418,7 @@ void Application::Impl::run_folder_store_upload(std::shared_ptr<FolderStoreContr
                 item.done = attached.status == "completed";
             } else {
                 const auto uploaded = client.google_upload_document(created.id, item.document.filename,
-                    item.document.markdown, key, *control->cancel_all);
+                    item.document.markdown, key, *control->cancel_all, *control->cancel_forward);
                 if (!uploaded.id.empty()) {
                     log_id(*control, "operation", uploaded.id);
                     if (!folder_store_lifetime(control, control->store_record_id)) {
@@ -745,14 +736,16 @@ Application::FolderStoreStart Application::start_folder_store_remove(std::int64_
     control->service = record->service;
     control->api_key_id = record->api_key_id;
     control->phase = Impl::FolderStorePhase::removing;
-    if (const auto previous = impl_->folder_store_controls.find(folder_id);
-        previous != impl_->folder_store_controls.end() && previous->second->store_record_id == expected_store_id) {
-        control->unsaved_store_id = previous->second->unsaved_store_id;
-        control->unsaved_file_ids = previous->second->unsaved_file_ids;
+    const auto found = impl_->folder_store_controls.find(folder_id);
+    const auto previous = found == impl_->folder_store_controls.end() ? nullptr : found->second;
+    if (previous && previous->store_record_id == expected_store_id) {
+        control->unsaved_store_id = previous->unsaved_store_id;
+        control->unsaved_file_ids = previous->unsaved_file_ids;
     }
     impl_->folder_store_controls[folder_id] = control;
     if (!impl_->launch_folder_store_control(control, [owner = impl_.get(), control] { owner->run_folder_store_remove(control); })) {
-        impl_->release_folder_store_control_locked(control);
+        if (previous) impl_->folder_store_controls[folder_id] = previous;
+        else impl_->release_folder_store_control_locked(control);
         throw ApplicationError(ErrorCode::operation_cancelled, "The operation could not be started.");
     }
     return {.operation_id = control->operation_id};
@@ -806,7 +799,7 @@ void Application::close_folder_store_operation(std::int64_t operation_id, std::u
         try {
             save_unsaved_ids(*impl_->store, *control, *control->store_record_id);
         } catch (...) {
-            throw ApplicationError(ErrorCode::invalid_argument, "Cleanup IDs could not be saved. Keep this operation open and try Remove again.");
+            throw ApplicationError(ErrorCode::invalid_argument, "Cleanup IDs could not be saved. Retry cleanup or try Close again.");
         }
     }
     impl_->release_folder_store_control_locked(control);

@@ -23,14 +23,6 @@ inline constexpr std::size_t folder_store_google_document_byte_limit =
 enum class FolderStoreService { openai, google };
 enum class FolderStoreState { incomplete, ready };
 
-enum class FolderStoreFault {
-    none,
-    write,
-    commit,
-    warning,
-    allocation,
-};
-
 class FolderStoreError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -157,8 +149,5 @@ void session_folder_prune(
     storage::SqliteDatabase& database,
     SessionKey session_key,
     std::span<const std::int64_t> folder_ids);
-
-void force_next_folder_store_fault(FolderStoreFault fault);
-[[nodiscard]] FolderStoreFault consume_folder_store_fault(FolderStoreFault expected);
 
 } // namespace cha

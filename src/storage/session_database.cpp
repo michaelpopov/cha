@@ -10,7 +10,6 @@
 
 #include <uv.h>
 
-#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <limits>
@@ -508,14 +507,6 @@ bool publish_database_path(
 
 } // namespace
 
-namespace {
-std::atomic_bool fail_next_folder_notice{false};
-}
-
-void force_next_session_folder_notice_failure() {
-    fail_next_folder_notice.store(true);
-}
-
 bool create_session_database(
     const std::filesystem::path& path,
     const SessionDatabaseMetadata& metadata) {
@@ -737,9 +728,6 @@ TranscriptEntry SessionJournal::add_folder(
                 "That folder does not have a ready store.");
         }
         session_folder_insert(impl_->database, impl_->session_key, folder_id);
-    }
-    if (fail_next_folder_notice.exchange(false)) {
-        throw std::runtime_error("injected folder notice failure");
     }
     TranscriptEntry entry = make_notice_entry(entry_id, already
         ? "Folder " + folder_label(folder_id, folder_name) + " is already attached to this chat."

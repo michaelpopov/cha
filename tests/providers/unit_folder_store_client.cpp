@@ -218,7 +218,7 @@ TEST(FolderStoreHttp, GoogleUploadValidatesOperationAndCounts) {
     const auto created = client.google_create_store("Research", "key", cancel);
     EXPECT_EQ(created.id, "fileSearchStores/store1");
     const auto uploaded = client.google_upload_document(
-        created.id, "note.md", "# Note", "key", cancel);
+        created.id, "note.md", "# Note", "key", cancel, cancel);
     EXPECT_EQ(uploaded.id, "fileSearchStores/store1/upload/operations/op1");
     EXPECT_TRUE(client.google_inspect_operation(uploaded.id, "key", cancel).done);
     auto short_count = client.google_inspect_store(created.id, "key", cancel);
@@ -243,7 +243,7 @@ TEST(FolderStoreHttp, RejectsForeignUploadUrlAndMalformedCounts) {
     });
     std::atomic_bool cancel{false};
     EXPECT_EQ(
-        client.google_upload_document("fileSearchStores/store1", "note.md", "body", "key", cancel).kind,
+        client.google_upload_document("fileSearchStores/store1", "note.md", "body", "key", cancel, cancel).kind,
         FolderStoreRemoteKind::failed);
     EXPECT_EQ(
         client.google_inspect_store("fileSearchStores/store1", "key", cancel).kind,
@@ -273,7 +273,7 @@ TEST(FolderStoreHttp, RejectsUnsafeUploadOriginsAndOperationPathsBeforeSendingCr
             ++calls;
             return FolderStoreHttpResponse{.status = 200, .headers = {{"X-Goog-Upload-URL", url}}};
         });
-        EXPECT_EQ(client.google_upload_document("fileSearchStores/store1", "note.md", "body", "secret", cancel).kind, FolderStoreRemoteKind::failed);
+        EXPECT_EQ(client.google_upload_document("fileSearchStores/store1", "note.md", "body", "secret", cancel, cancel).kind, FolderStoreRemoteKind::failed);
         EXPECT_EQ(calls, 1);
     }
     for (const auto& name : {"fileSearchStores/other/upload/operations/op1", "fileSearchStores/store1/upload/operations/",
@@ -283,7 +283,7 @@ TEST(FolderStoreHttp, RejectsUnsafeUploadOriginsAndOperationPathsBeforeSendingCr
                 .headers = {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}}};
             return FolderStoreHttpResponse{.status = 200, .body = nlohmann::json{{"name", name}}.dump()};
         });
-        const auto result = client.google_upload_document("fileSearchStores/store1", "note.md", "body", "key", cancel);
+        const auto result = client.google_upload_document("fileSearchStores/store1", "note.md", "body", "key", cancel, cancel);
         EXPECT_EQ(result.kind, FolderStoreRemoteKind::failed);
         EXPECT_TRUE(result.id.empty());
     }
@@ -324,6 +324,135 @@ TEST(FolderStoreHttp, GoogleTerminalErrorsAndCountsAreStrict) {
         return FolderStoreHttpResponse{.status = 404, .body = R"({"error":{"code":404,"status":"NOT_FOUND","message":"missing"}})"};
     });
     EXPECT_EQ(not_found.google_delete_store("fileSearchStores/store1", "key", cancel).kind, FolderStoreRemoteKind::not_found);
+}
+
+TEST(FolderStoreHttp, GoogleCancelAfterResumableStartDoesNotUploadNoteContent) {
+    std::atomic_bool interrupted{false};
+    std::atomic_bool cancelled{false};
+    int requests = 0;
+    FolderStoreClient client([&](const auto& request, const auto& transfer_cancel) {
+        ++requests;
+        EXPECT_TRUE(request.capture_headers);
+        EXPECT_EQ(&transfer_cancel, &interrupted);
+        cancelled = true;
+        return FolderStoreHttpResponse{.status = 200,
+            .headers = {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}}};
+    });
+    const auto result = client.google_upload_document(
+        "fileSearchStores/store1", "note.md", "private note content", "key", interrupted, cancelled);
+    EXPECT_EQ(result.kind, FolderStoreRemoteKind::cancelled);
+    EXPECT_EQ(requests, 1);
+    EXPECT_TRUE(result.id.empty());
+    EXPECT_FALSE(interrupted.load());
+}
+
+TEST(FolderStoreHttp, GoogleCancelDuringFinalizeStillReturnsItsOperationId) {
+    std::atomic_bool interrupted{false};
+    std::atomic_bool cancelled{false};
+    int requests = 0;
+    FolderStoreClient client([&](const auto& request, const auto& transfer_cancel) {
+        ++requests;
+        EXPECT_EQ(&transfer_cancel, &interrupted);
+        if (request.capture_headers) return FolderStoreHttpResponse{.status = 200,
+            .headers = {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}}};
+        EXPECT_EQ(request.body, "note content");
+        cancelled = true;
+        EXPECT_FALSE(transfer_cancel.load());
+        return FolderStoreHttpResponse{.status = 200,
+            .body = R"({"name":"fileSearchStores/store1/upload/operations/op1"})"};
+    });
+    const auto result = client.google_upload_document(
+        "fileSearchStores/store1", "note.md", "note content", "key", interrupted, cancelled);
+    EXPECT_EQ(result.kind, FolderStoreRemoteKind::ok);
+    EXPECT_EQ(result.id, "fileSearchStores/store1/upload/operations/op1");
+    EXPECT_EQ(requests, 2);
+}
+
+TEST(FolderStoreHttp, OpenAiIndexErrorsKeepSafeReasonsWithoutProviderText) {
+    const std::vector<std::pair<std::string, std::string>> cases{
+        {"invalid_file", "The provider could not read this file. Check the note content before uploading again."},
+        {"unsupported_file", "The provider does not support this file."},
+        {"server_error", "The provider could not process the request. Try again later."},
+        {"private unknown code", "Indexing did not complete."},
+    };
+    std::atomic_bool cancel{false};
+    for (const auto& [code, expected] : cases) {
+        SCOPED_TRACE(code);
+        FolderStoreClient client([&](const auto&, const auto&) {
+            return FolderStoreHttpResponse{.status = 200, .body = nlohmann::json{
+                {"id", "file_1"}, {"status", "failed"},
+                {"last_error", {{"code", code}, {"message", "private note content and secret key"}}}}.dump()};
+        });
+        for (const auto& result : {
+                 client.openai_attach_file("vs_1", "file_1", "key", cancel),
+                 client.openai_inspect_file("vs_1", "file_1", "key", cancel)}) {
+            EXPECT_EQ(result.kind, FolderStoreRemoteKind::failed);
+            EXPECT_EQ(result.message, expected);
+        }
+    }
+}
+
+TEST(FolderStoreHttp, GoogleOperationErrorsKeepSafeReasonsWithoutProviderText) {
+    const std::vector<std::pair<int, std::string>> cases{
+        {3, "The provider rejected the file or request parameters. Check the note content and configuration."},
+        {7, "The saved API key cannot access this resource. Check its project and permissions."},
+        {8, "The provider quota or rate limit was reached. Check its quota settings or try again later."},
+        {13, "The provider could not process the request. Try again later."},
+        {999, "Indexing did not complete."},
+    };
+    std::atomic_bool cancel{false};
+    for (const auto& [code, expected] : cases) {
+        SCOPED_TRACE(code);
+        FolderStoreClient client([&](const auto& request, const auto&) {
+            if (request.capture_headers) return FolderStoreHttpResponse{.status = 200,
+                .headers = {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}}};
+            return FolderStoreHttpResponse{.status = 200, .body = nlohmann::json{
+                {"name", "fileSearchStores/store1/upload/operations/op1"}, {"done", true},
+                {"error", {{"code", code}, {"message", "private note content and secret key"}}}}.dump()};
+        });
+        for (const auto& result : {
+                 client.google_upload_document("fileSearchStores/store1", "note.md", "body", "key", cancel, cancel),
+                 client.google_inspect_operation("fileSearchStores/store1/upload/operations/op1", "key", cancel)}) {
+            EXPECT_EQ(result.kind, FolderStoreRemoteKind::failed);
+            EXPECT_EQ(result.message, expected);
+            EXPECT_EQ(result.id, "fileSearchStores/store1/upload/operations/op1");
+        }
+    }
+}
+
+TEST(FolderStoreHttp, HttpErrorsKeepSafeReasonsWithoutChangingCleanupUncertainty) {
+    struct ErrorCase {
+        long status;
+        nlohmann::json error;
+        std::string expected;
+        bool unknown;
+    };
+    const std::vector<ErrorCase> cases{
+        {429, {{"code", "insufficient_quota"}}, "The provider account has insufficient quota. Check its billing and quota settings.", true},
+        {429, {{"code", "rate_limit_exceeded"}}, "The provider rate limit was reached. Try again later.", true},
+        {400, {{"code", 400}, {"status", "INVALID_ARGUMENT"}}, "The provider rejected the file or request parameters. Check the note content and configuration.", false},
+        {403, {{"code", 403}, {"status", "PERMISSION_DENIED"}}, "The saved API key cannot access this resource. Check its project and permissions.", false},
+        {429, {{"code", 429}, {"status", "RESOURCE_EXHAUSTED"}}, "The provider quota or rate limit was reached. Check its quota settings or try again later.", true},
+        {413, nlohmann::json::object(), "The provider's file-size limit was exceeded. Reduce the note size before uploading again.", true},
+        {503, nlohmann::json::object(), "The provider could not process the request. Try again later.", true},
+        {400, {{"code", "private unknown code"}}, "The provider rejected the request.", false},
+    };
+    std::atomic_bool cancel{false};
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.status);
+        FolderStoreClient client([&](const auto&, const auto&) {
+            auto error = item.error;
+            error["message"] = "private note content and secret key";
+            return FolderStoreHttpResponse{.status = item.status,
+                .body = nlohmann::json{{"error", error}}.dump()};
+        });
+        for (const auto& result : {client.openai_create_store("Folder", "key", cancel),
+                 client.google_create_store("Folder", "key", cancel)}) {
+            EXPECT_NE(result.kind, FolderStoreRemoteKind::ok);
+            EXPECT_EQ(result.message, item.expected);
+            EXPECT_EQ(result.unknown_allocation, item.unknown);
+        }
+    }
 }
 
 TEST(FolderStoreHttp, UsesOpenAiIdAndGoogleNameWhenBothFieldsExist) {
