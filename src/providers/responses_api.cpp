@@ -221,6 +221,9 @@ std::string build_responses_request_body(
             body["tools"].push_back({{"type", "file_search"},
                 {"vector_store_ids", input.folder_search->remote_store_ids}});
             if (!body.contains("tool_choice")) body["tool_choice"] = "auto";
+            // Hosted results must be self-contained when replayed with store: false.
+            if (!body.contains("include")) body["include"] = Json::array();
+            body["include"].push_back("file_search_call.results");
         }
     }
     if (input.include_tool_instructions) update_tool_instructions(body, config.api, text_sizes);

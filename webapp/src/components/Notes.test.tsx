@@ -90,6 +90,7 @@ describe('Notes in the application', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
       const menuItems = screen.getAllByRole('menuitem').map(node => node.textContent);
       expect(menuItems.indexOf('Generate audio') + 1).toBe(menuItems.indexOf('Compress'));
+      await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Generate audio' })).toBeEnabled());
       fireEvent.click(screen.getByRole('menuitem', { name: 'Generate audio' }));
       await waitFor(() => expect(screen.getByLabelText('Voice')).toBeEnabled());
       expect(info.mock.calls.map(([id]) => id)).toEqual([5, 7, 4]);
@@ -120,6 +121,7 @@ describe('Notes in the application', () => {
     })} />);
     await openNotes();
     fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Generate audio' })).toBeEnabled());
     fireEvent.click(screen.getByRole('menuitem', { name: 'Generate audio' }));
     await waitFor(() => expect(screen.getByLabelText('Voice')).toBeEnabled());
     const dialog = screen.getByRole('dialog');
@@ -150,6 +152,7 @@ describe('Notes in the application', () => {
       })} />);
       await openNotes();
       fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
+      await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Generate audio' })).toBeEnabled());
       fireEvent.click(screen.getByRole('menuitem', { name: 'Generate audio' }));
       await screen.findByText('No notes need audio');
       expect(changed.mock.calls.map(([event]) => event.detail)).toEqual([study.id]);
@@ -1753,4 +1756,153 @@ it('shows annotation groups in folder tree order, also after a source rename', a
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Zulu' } });
   fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
   await waitFor(() => expect(noteEditor().getText()).toMatch(/Zebra[\s\S]*Zulu/u));
+});
+
+describe('Folder deletion with remote cleanup', () => {
+  const folder: NoteItem = { ...study, store: { service: 'openai', id: 20, state: 'ready' } };
+  const child: NoteItem = { ...plan, parent_id: folder.id };
+  type Operation = Extract<import('../api/client').FolderStoreOperation, { present: true }>;
+  const removing: Operation = { present: true, operation_id: 8, kind: 'folder_delete', phase: 'removing',
+    completed: 0, total: 1, terminal: false, result: '', error: '', folder_deleted: false, known_cleanup_remains: false };
+  const failed: Operation = { ...removing, phase: 'failed', terminal: true, result: 'error', error: 'The saved API key is missing.', known_cleanup_remains: true };
+  async function open() {
+    await openNotes();
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Study' }));
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved store note');
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+  }
+  async function deleteFolder() {
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  }
+  it.each(['success', 'warning'] as const)('keeps the editor through acceptance and disposes only after committed %s', async result => {
+    let status: import('../api/client').FolderStoreOperation = { present: false };
+    let deleted = false;
+    const start = vi.fn(async () => { status = removing; return { operation_id: 8 }; });
+    const save = vi.fn(async () => undefined);
+    render(<App client={fixtureClient({ contextEpoch: () => 1,
+      listNoteItems: async () => deleted ? [] : [folder, child],
+      getNote: async id => ({ id, document: noteDocument('Saved store note') }), saveNote: save,
+      storeOperation: async () => status, folderDelete: start, storeClose: async () => undefined,
+    })} />);
+    await open();
+    const editor = noteEditor();
+    typeInNote(' unsaved');
+    await deleteFolder();
+    await waitFor(() => expect(start).toHaveBeenCalled());
+    expect(editor.isDestroyed).toBe(false);
+    expect(editor.getText()).toContain('unsaved');
+    expect(save).not.toHaveBeenCalled();
+    deleted = true;
+    status = { ...removing, terminal: true, folder_deleted: true, phase: result === 'warning' ? 'warning' : 'completed', result: result === 'warning' ? 'warning' : 'folder_deleted' };
+    await waitFor(() => expect(editor.isDestroyed).toBe(true));
+    expect(screen.queryByRole('treeitem', { name: 'Plan' })).not.toBeInTheDocument();
+    if (result === 'warning') {
+      expect(screen.getByRole('alert')).toHaveTextContent('Some remote data could not be confirmed deleted.');
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    }
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(start).toHaveBeenCalledOnce();
+  });
+  it.each(['Retry', 'Delete anyway'])('unfreezes and saves after cleanup failure, then guards %s again', async action => {
+    let status: import('../api/client').FolderStoreOperation = { present: false };
+    let deleted = false;
+    const save = vi.fn(async () => undefined);
+    const start = vi.fn(async (request: import('../api/client').FolderDeleteRequest) => {
+      if ('operation_id' in request) {
+        deleted = true; status = { ...removing, terminal: true, folder_deleted: true, phase: 'warning', result: 'warning' };
+      } else status = failed;
+      return { operation_id: 8 };
+    });
+    render(<App client={fixtureClient({ contextEpoch: () => 1,
+      listNoteItems: async () => deleted ? [] : [folder, child],
+      getNote: async id => ({ id, document: noteDocument('Saved store note') }), saveNote: save,
+      storeOperation: async () => status, folderDelete: start, storeClose: async () => undefined,
+    })} />);
+    await open(); const editor = noteEditor(); typeInNote(' pending draft');
+    await deleteFolder();
+    expect(await screen.findByRole('alert')).toHaveTextContent('The saved API key is missing.');
+    expect(editor.isDestroyed).toBe(false); expect(editor.isEditable).toBe(true);
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete anyway' })).toBeEnabled());
+    typeInNote(' another unsaved edit');
+    fireEvent.click(screen.getByRole('button', { name: action }));
+    await waitFor(() => expect(editor.isDestroyed).toBe(true));
+    expect(save).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenLastCalledWith({ operation_id: 8, delete_anyway: action === 'Delete anyway' }, 1);
+  });
+  it('waits for a save already in flight before admitting remote cleanup', async () => {
+    let finishSave!: () => void;
+    let status: import('../api/client').FolderStoreOperation = { present: false };
+    const save = vi.fn(() => new Promise<void>(resolve => { finishSave = resolve; }));
+    const start = vi.fn(async () => { status = failed; return { operation_id: 8 }; });
+    render(<App client={fixtureClient({ contextEpoch: () => 1,
+      listNoteItems: async () => [folder, child], getNote: async id => ({ id, document: noteDocument('Saved store note') }),
+      saveNote: save, storeOperation: async () => status, folderDelete: start,
+    })} />);
+    await open();
+    vi.useFakeTimers();
+    try {
+      act(() => typeInNote(' saved first'));
+      await act(async () => vi.advanceTimersByTime(5000));
+    } finally { vi.useRealTimers(); }
+    expect(save).toHaveBeenCalledOnce();
+    await deleteFolder();
+    expect(start).not.toHaveBeenCalled();
+    await act(async () => finishSave());
+    await waitFor(() => expect(start).toHaveBeenCalledOnce());
+    expect(noteEditor().isDestroyed).toBe(false);
+  });
+  it('does not apply an old folder deletion to an editor opened in the next vault', async () => {
+    const events = contextBus();
+    let epoch = 1;
+    let started = false;
+    let status: import('../api/client').FolderStoreOperation = removing;
+    const read = vi.fn(async () => started ? status : { present: false as const });
+    render(<App contextEvents={events} client={fixtureClient({ contextEpoch: () => epoch,
+      listNoteItems: async () => epoch === 1 ? [folder, child] : [plan],
+      getNote: async id => ({ id, document: noteDocument(epoch === 1 ? 'Saved store note' : 'New vault note') }),
+      saveNote: async () => undefined, storeOperation: read,
+      folderDelete: async () => { started = true; return { operation_id: 8 }; },
+    })} />);
+    await open();
+    await deleteFolder();
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Removing remote stores…'));
+    epoch = 2;
+    act(() => events.emit());
+    await screen.findByRole('treeitem', { name: 'Plan' });
+    await act(() => new Promise(resolve => setTimeout(resolve, 550)));
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('New vault note');
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    const editor = noteEditor();
+    const reads = read.mock.calls.length;
+    status = { ...removing, terminal: true, folder_deleted: true, phase: 'completed', result: 'folder_deleted' };
+    await act(() => new Promise(resolve => setTimeout(resolve, 550)));
+    expect(noteEditor()).toBe(editor);
+    expect(editor.isDestroyed).toBe(false);
+    expect(read).toHaveBeenCalledTimes(reads);
+  });
+
+  it('closes the deleted editor and preserves refresh-failed handling without deleting again', async () => {
+    let deleted = false;
+    const start = vi.fn(async () => { deleted = true; return { operation_id: 8 }; });
+    render(<App client={fixtureClient({ contextEpoch: () => 1,
+      listNoteItems: async () => { if (deleted) throw new Error('list unavailable'); return [folder, child]; },
+      getNote: async id => ({ id, document: noteDocument('Saved store note') }), saveNote: async () => undefined,
+      storeOperation: async () => deleted ? { ...removing, terminal: true, folder_deleted: true, phase: 'completed', result: 'folder_deleted' } : { present: false },
+      folderDelete: start, storeClose: async () => undefined,
+    })} />);
+    await open(); const editor = noteEditor();
+    await deleteFolder();
+    await waitFor(() => expect(editor.isDestroyed).toBe(true));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load notes.');
+    expect(start).toHaveBeenCalledOnce();
+  });
+
 });

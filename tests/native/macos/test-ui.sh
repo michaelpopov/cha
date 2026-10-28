@@ -26,6 +26,6 @@ export CHA_RUNTIME_LIB="$repository/build/ninja/libChaRuntime.dylib"
 for width in 1200 430; do
     echo "UI smoke test: ${width}px"
     export CHA_NATIVE_TEST_CONFIG="$temporary/vault-$width"
-    "$repository/build/ninja/cha_prepare_test_vault" "$CHA_NATIVE_TEST_CONFIG"
+    "$repository/build/ninja/cha_prepare_test_vault" --folder-stores "$CHA_NATIVE_TEST_CONFIG"
     CHA_NATIVE_TEST_WIDTH="$width" ./tests/native/macos/run.sh parity
 done

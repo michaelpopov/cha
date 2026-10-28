@@ -80,8 +80,9 @@ function renderTree({
   const onNoteItems = vi.fn();
   const notesClient = notes ?? client({ listNoteItems: async () => items });
   // App deletes under the operation slot. This stub keeps only the RPC and refresh.
-  const deleteItem: DeleteNoteItem = onDeleteItem ?? (async (id, _listing, refresh) => {
-    await notesClient.deleteNoteItem(id);
+  const deleteItem: DeleteNoteItem = onDeleteItem ?? (async (id, _listing, refresh, remove) => {
+    if (remove) { if (!await remove()) return 'failed'; }
+    else await notesClient.deleteNoteItem(id);
     await refresh();
     return 'deleted';
   });
@@ -910,14 +911,14 @@ describe('Notes tree', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
     expect(study).toHaveAttribute('aria-expanded', 'false');
     const menu = await screen.findByRole('menu');
-    expect(within(menu).getByRole('menuitem', { name: 'New note' })).toHaveFocus();
+    await waitFor(() => expect(within(menu).getByRole('menuitem', { name: 'New note' })).toHaveFocus());
     expect(within(menu).queryByRole('menuitem', { name: 'Move' })).not.toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
     fireEvent.keyDown(menu, { key: 'Escape' });
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
 
     fireEvent.keyDown(screen.getByRole('tree'), { key: 'F10', shiftKey: true });
-    expect(await screen.findByRole('menuitem', { name: 'New note' })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'New note' })).toHaveFocus());
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     expect(study).toHaveFocus();
 
@@ -975,11 +976,13 @@ describe('Notes tree', () => {
     renderTree();
     const study = await screen.findByRole('treeitem', { name: 'Study' });
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    await waitFor(() => expect(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Rename' })).toBeEnabled());
     fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Rename' }));
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
     expect(study).toHaveFocus();
 
     fireEvent.keyDown(screen.getByRole('tree'), { key: 'F10', shiftKey: true });
+    await waitFor(() => expect(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Delete' })).toBeEnabled());
     fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Delete' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
@@ -1202,4 +1205,129 @@ describe('Notes tree', () => {
     expect(onDeleteItem).toHaveBeenCalledExactlyOnceWith(2, [study, aardvark], expect.any(Function));
   });
 
+});
+
+describe('Folder store tree actions', () => {
+  it.each([undefined, { service: 'openai' as const, id: 9, state: 'ready' as const }, { service: 'google' as const, id: 10, state: 'incomplete' as const }])('copies the stable folder ref with store %j', async store => {
+    userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, 'writeText').mockReset().mockResolvedValue();
+    renderTree({ items: [{ ...study, store }] });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: store ? 'Remove from store' : 'Upload to store' })).toBeEnabled());
+    expect(screen.queryByRole('menuitem', { name: store ? 'Upload to store' : 'Remove from store' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy Ref ID' }));
+    expect(write).toHaveBeenCalledWith('##000001');
+    expect(screen.getByRole('treeitem', { name: 'Study' })).toHaveFocus();
+  });
+  it('excludes the synthetic root from folder store and reference actions', async () => {
+    renderTree();
+    await screen.findByRole('treeitem', { name: 'Personal' });
+    await chooseAction('Personal', 'New folder');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Personal' }));
+    for (const name of ['Copy Ref ID', 'Upload to store', 'Remove from store'])
+      expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument();
+  });
+  it('recovers incomplete work when the dialog is reopened without a duplicate upload', async () => {
+    const upload = vi.fn();
+    const read = vi.fn<NotesClient['storeOperation']>().mockResolvedValue({ present: true, operation_id: 8,
+      kind: 'upload', phase: 'indexing', completed: 2, total: 2, terminal: false,
+      error: '', result: '', folder_deleted: false, known_cleanup_remains: false });
+    renderTree({ items: [study], notes: client({ listNoteItems: async () => [study], storeOperation: read, storeUpload: upload }) });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    await chooseAction('Study', 'Upload to store');
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Indexing notes…'));
+    expect(upload).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledWith(1, 1);
+  });
+  it('confirms an empty folder with an incomplete store instead of using local deletion', async () => {
+    const stored: NoteItem = { ...study, store: { service: 'openai', id: 3, state: 'incomplete' } };
+    const remove = vi.fn();
+    renderTree({ items: [stored], notes: client({ listNoteItems: async () => [stored], deleteNoteItem: remove }) });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    await chooseAction('Study', 'Delete');
+    expect(await screen.findByRole('dialog', { name: 'Delete “Study”' })).toHaveTextContent('1 remote store will also be removed.');
+    expect(remove).not.toHaveBeenCalled();
+  });
+  it('keeps store actions disabled after a failed status read while allowing identity copy', async () => {
+    renderTree({ items: [study], notes: client({ listNoteItems: async () => [study], storeOperation: async () => { throw new Error('private body'); } }) });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not read store status');
+    expect(screen.getByRole('menuitem', { name: 'Upload to store' })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: 'Copy Ref ID' })).toBeEnabled();
+    expect(document.body).not.toHaveTextContent('private body');
+  });
+});
+
+it('requires explicit reconfirmation with the refreshed subtree count after admission rejects a changed count', async () => {
+  const stored: NoteItem = { ...study, store: { service: 'openai', id: 20, state: 'ready' } };
+  const child: NoteItem = { ...philosophy, store: { service: 'google', id: 21, state: 'incomplete' } };
+  let items = [stored];
+  let status: import('../api/client').FolderStoreOperation = { present: false };
+  const start = vi.fn<NotesClient['folderDelete']>().mockImplementationOnce(async () => {
+    items = [stored, child];
+    throw new ChaError('invalid_argument', 'The folder store count changed. Refresh and try again.');
+  }).mockImplementationOnce(async () => {
+    status = { present: true, operation_id: 4, kind: 'folder_delete', phase: 'failed', completed: 0, total: 2,
+      terminal: true, error: 'Offline', result: 'error', known_cleanup_remains: true, folder_deleted: false };
+    return { operation_id: 4 };
+  });
+  renderTree({ notes: client({ listNoteItems: async () => items, storeOperation: async () => status, folderDelete: start }) });
+  await screen.findByRole('treeitem', { name: 'Study' });
+  await chooseAction('Study', 'Delete');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await screen.findByText('2 remote stores will also be removed.');
+  expect(start).toHaveBeenCalledExactlyOnceWith({ folder_id: 1, confirmed_store_count: 1 }, 1);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(start).toHaveBeenLastCalledWith({ folder_id: 1, confirmed_store_count: 2 }, 1));
+});
+
+it('shows a connection error if the connection ends after the store-aware Delete menu opens', async () => {
+  let connected = true;
+  const stored: NoteItem = { ...study, store: { service: 'openai', id: 3, state: 'ready' } };
+  const remove = vi.fn();
+  renderTree({ items: [stored], notes: client({ listNoteItems: async () => [stored], folderDelete: remove,
+    contextEpoch: () => { if (!connected) throw new ChaError('application_unavailable', 'The connection to CHA ended.'); return 1; } }) });
+  await screen.findByRole('treeitem', { name: 'Study' });
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+  await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeEnabled());
+  connected = false;
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('The connection to CHA ended.');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(remove).not.toHaveBeenCalled();
+});
+
+it('disables conflicting folder actions while an upload is active and keeps reference copy available', async () => {
+  renderTree({ items: [study], notes: client({ listNoteItems: async () => [study], storeOperation: async () => ({
+    present: true, operation_id: 8, kind: 'upload', phase: 'indexing', completed: 2, total: 2,
+    terminal: false, error: '', result: '', folder_deleted: false, known_cleanup_remains: false,
+  }) }) });
+  await screen.findByRole('treeitem', { name: 'Study' });
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+  await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Upload to store' })).toBeEnabled());
+  for (const name of ['New note', 'New folder', 'Import EPUB…', 'Rename', 'Compress'])
+    expect(screen.getByRole('menuitem', { name })).toBeDisabled();
+  expect(screen.getByRole('menuitem', { name: 'Copy Ref ID' })).toBeEnabled();
+});
+
+it('recovers a failed folder-delete reservation from the store menu without a fresh delete', async () => {
+  const stored: NoteItem = { ...study, store: { service: 'openai', id: 3, state: 'incomplete' } };
+  const start = vi.fn(); const close = vi.fn(async () => undefined);
+  renderTree({ items: [stored], notes: client({ listNoteItems: async () => [stored], folderDelete: start, storeClose: close,
+    storeOperation: async () => ({ present: true, operation_id: 8, kind: 'folder_delete', phase: 'failed', completed: 0, total: 1,
+      terminal: true, error: 'Access denied.', result: 'error', folder_deleted: false, known_cleanup_remains: true }) }) });
+  await screen.findByRole('treeitem', { name: 'Study' });
+  await chooseAction('Study', 'Remove from store');
+  const dialog = await screen.findByRole('dialog', { name: 'Delete “Study”' });
+  await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Retry' })).toBeEnabled());
+  expect(within(dialog).getByRole('button', { name: 'Delete anyway' })).toBeInTheDocument();
+  expect(start).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => expect(close).toHaveBeenCalledExactlyOnceWith(8, 1));
 });

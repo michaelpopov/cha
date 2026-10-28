@@ -1,4 +1,5 @@
 #include "support/test_workspace.h"
+#include "storage/folder_store_storage.h"
 
 #include <nlohmann/json.hpp>
 
@@ -12,7 +13,7 @@
 namespace {
 
 constexpr const char usage[] =
-    "usage: cha_prepare_test_vault [--provider-port PORT] CONFIG_DIR\n";
+    "usage: cha_prepare_test_vault [--provider-port PORT | --folder-stores] CONFIG_DIR\n";
 
 // Points the default character at an HTTP provider on 127.0.0.1:PORT and
 // turns off session naming, so every provider request is a character reply.
@@ -45,13 +46,14 @@ std::optional<int> parse_port(std::string_view text) {
 
 int main(int argc, char** argv) {
     std::optional<int> provider_port;
+    const bool folder_stores = argc == 3 && std::string_view(argv[1]) == "--folder-stores";
     if (argc == 4 && std::string_view(argv[1]) == "--provider-port") {
         provider_port = parse_port(argv[2]);
         if (!provider_port) {
             std::cerr << usage;
             return 2;
         }
-    } else if (argc != 2) {
+    } else if (argc != 2 && !folder_stores) {
         std::cerr << usage;
         return 2;
     }
@@ -61,6 +63,20 @@ int main(int argc, char** argv) {
     if (provider_port) use_net_provider(workspace, *provider_port);
     const std::filesystem::path database = destination / "test.sqlite3";
     (void)cha::test::import_test_database(workspace.root(), database);
+    if (folder_stores) {
+        cha::storage::SqliteDatabase db(database, cha::storage::SqliteDatabase::Mode::read_write);
+        const auto empty = cha::note_create(db, {}, cha::NoteItemKind::folder, "UI store empty");
+        const auto failed = cha::note_create(db, {}, cha::NoteItemKind::folder, "UI store failure");
+        const auto note = cha::note_create(db, failed.id, cha::NoteItemKind::note, "UI store note");
+        (void)cha::note_save(db, note.id, nlohmann::json::parse(
+            R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Native store editor fixture"}]}]})"));
+        cha::storage::SqliteTransaction tx(db);
+        (void)cha::folder_store_register(db, empty.id, cha::FolderStoreService::openai, "missing_native_test_key", 1);
+        const auto id = cha::folder_store_register(db, failed.id, cha::FolderStoreService::openai, "missing_native_test_key", 1);
+        // Synthetic ownership: the missing key prevents all network requests.
+        cha::folder_store_save_remote_id(db, id, "vs_native_ui_fixture_not_a_real_resource");
+        tx.commit();
+    }
     {
         std::ofstream app(destination / "app.toml");
         app << "vault = \"Test\"\n"

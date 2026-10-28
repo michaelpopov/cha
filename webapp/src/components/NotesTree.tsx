@@ -13,6 +13,7 @@ import { createPortal } from 'react-dom';
 import {
   ChaError,
   publicErrorMessage,
+  type FolderStoreOperation,
   type NoteCompressionStartResult,
   type NoteContent,
   type NoteItem,
@@ -25,6 +26,7 @@ import {
   noteInSubtree,
   type NoteTreeRow,
 } from '../notes/tree';
+import { FolderStoreDialog } from './FolderStoreDialog';
 import { NoteAudioDialog, type NoteAudioTarget } from './NoteAudioDialog';
 import { noteReference } from '../notes/reference';
 import { notesExtensions } from '../notes/editor';
@@ -75,6 +77,7 @@ type MenuState = {
   identity: number;
   epoch: number;
   compressionPending: boolean | null;
+  storeStatus: FolderStoreOperation | null;
 };
 
 export type NoteDeleteResult = 'deleted' | 'refresh-failed' | 'busy' | 'failed';
@@ -83,6 +86,7 @@ export type DeleteNoteItem = (
   sourceId: number,
   listing: readonly NoteItem[],
   refresh: () => Promise<void>,
+  remove?: () => Promise<boolean>,
 ) => Promise<NoteDeleteResult>;
 
 export type NoteActions = {
@@ -127,6 +131,9 @@ export function NotesTree({
   vaultName: string;
   onRegisterNoteActions?(actions: NoteActions | null): void;
 }) {
+  const [storeRun, setStoreRun] = useState<{ source: NoteItem; mode: 'upload' | 'remove' | 'delete'; epoch: number } | null>(null);
+  const storeRunRef = useRef(storeRun);
+  storeRunRef.current = storeRun;
   const [audioRun, setAudioRun] = useState<{ targets: NoteAudioTarget[]; epoch: number; folderMode: boolean } | null>(null);
   const [items, setItems] = useState<NoteItem[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -244,7 +251,9 @@ export function NotesTree({
 
   useEffect(() => {
     if (!menu) return;
-    menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    if (menu.sourceId !== 'vault' && dataRef.current.rows[menu.sourceId]?.kind === 'folder' && menu.storeStatus === null)
+      menuRef.current?.focus();
+    else menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
     const dismiss = (event: PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && menuRef.current?.contains(target)) return;
@@ -252,7 +261,7 @@ export function NotesTree({
     };
     window.addEventListener('pointerdown', dismiss);
     return () => window.removeEventListener('pointerdown', dismiss);
-  }, [menu?.sourceId, menu?.x, menu?.y]);
+  }, [menu?.sourceId, menu?.x, menu?.y, menu?.storeStatus === null]);
 
   // Reveal a newly active note. A visible row does not move.
   useEffect(() => {
@@ -307,7 +316,7 @@ export function NotesTree({
   function flushBackgroundRefresh() {
     if (!alive.current || !pendingRefresh.current || busy.current || compressionSubmittingRef.current
       || listingRef.current || dialogRef.current !== null || audioRunRef.current !== null
-      || currentMenu.current !== null) return;
+      || currentMenu.current !== null || storeRunRef.current !== null) return;
     pendingRefresh.current = false;
     void runList(++generation.current, true);
   }
@@ -354,7 +363,7 @@ export function NotesTree({
 
   useLayoutEffect(() => {
     const reveal = revealId.current;
-    if (reveal === null || dialog !== null) return;
+    if (reveal === null || dialog !== null || storeRun !== null) return;
     const key = String(reveal.id);
     if (!dataRef.current.rows[key]) return;
     const current = treeRef.current;
@@ -384,7 +393,7 @@ export function NotesTree({
       && !staleRef.current
       && !listingRef.current
       && !busy.current
-      && dialogRef.current === null;
+      && dialogRef.current === null && storeRunRef.current === null;
   }
 
   async function refreshListing(reveal: number | null, expand = false): Promise<RefreshResult> {
@@ -398,7 +407,9 @@ export function NotesTree({
       setStale(false);
       setError(null);
       onNoteItemsRef.current(next);
-      revealId.current = { id: reveal ?? 'vault', expand };
+      const target = reveal !== null && !next.some(item => item.id === reveal)
+        ? focusAfterRemoval(itemsRef.current, reveal) : reveal;
+      revealId.current = { id: target ?? 'vault', expand };
       return 'applied';
     } catch (failure: unknown) {
       if (!alive.current || gen !== generation.current) return 'ignored';
@@ -500,6 +511,11 @@ export function NotesTree({
     return refreshed;
   }
 
+  function storeContextCurrent(epoch: number) {
+    try { return alive.current && clientRef.current.contextEpoch() === epoch; }
+    catch { return false; }
+  }
+
   async function openMenu(sourceId: string, anchor: HTMLElement) {
     if (!canMutateNow()) return;
     const item = treeRef.current.getItemInstance(sourceId);
@@ -515,10 +531,19 @@ export function NotesTree({
     try { epoch = clientRef.current.contextEpoch(); }
     catch (failure) { setError(publicErrorMessage(failure, 'The connection to CHA ended.')); return; }
     const opened: MenuState = { sourceId, x: rect.left, y: rect.bottom, restore: anchor,
-      audioPending: !!checkAudio, identity: ++menuIdentity.current, epoch, compressionPending: null };
+      audioPending: !!checkAudio, identity: ++menuIdentity.current, epoch, compressionPending: null, storeStatus: null };
     currentMenu.current = opened;
     setMenu(opened);
     if (note && note.kind !== 'annotation') void readCompressionStatus(opened);
+    if (note?.kind === 'folder') {
+      void clientRef.current.storeOperation(note.id, epoch).then(status => {
+        if (storeContextCurrent(epoch))
+          setMenu(current => current?.identity === opened.identity ? { ...current, storeStatus: status } : current);
+      }).catch(failure => {
+        if (storeContextCurrent(epoch) && currentMenu.current?.identity === opened.identity)
+          setError(publicErrorMessage(failure, 'Could not read store status. Reopen the folder menu to try again.'));
+      });
+    }
     if (!checkAudio) return;
     let audioPending = false;
     try {
@@ -586,6 +611,7 @@ export function NotesTree({
   }
 
   async function startDelete() {
+    const epoch = menu?.epoch;
     const source = takeMenuSource();
     if (!source || source.kind === 'annotation' || !canMutateNow()) return;
     const captured: DeleteDialogState = {
@@ -596,6 +622,16 @@ export function NotesTree({
       error: null,
       pending: false,
     };
+    if (source.kind === 'folder' && (itemsRef.current.some(item => item.store && noteInSubtree(itemsRef.current, source.id, item.id)) || menu?.storeStatus?.present)) {
+      try {
+        if (epoch === undefined || clientRef.current.contextEpoch() !== epoch)
+          throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
+        setStoreRun({ source, mode: 'delete', epoch });
+      } catch (failure) {
+        setError(publicErrorMessage(failure, 'The connection to CHA ended.'));
+      }
+      return;
+    }
     busy.current = true;
     const gen = generation.current;
     let confirm = true;
@@ -676,7 +712,7 @@ export function NotesTree({
 
   async function copyReference() {
     const source = takeMenuSource();
-    if (!source || source.kind === 'folder') return;
+    if (!source) return;
     setError(null);
     try {
       await navigator.clipboard.writeText(noteReference(source.id));
@@ -757,10 +793,12 @@ export function NotesTree({
     openMenu(focused, anchor);
   }
 
-  const canMutate = loaded && !stale && !listing && dialog === null && !busy.current;
+  const canMutate = loaded && !stale && !listing && dialog === null && storeRun === null && !busy.current;
   const activeNoteAvailable = items.some((item) => item.id === activeNoteId && item.kind !== 'folder');
   const rows = tree.getItems();
   const menuIsNote = menu !== null && index.rows[menu.sourceId]?.kind !== 'folder';
+  const menuFolderBusy = menu !== null && !menuIsNote && menu.sourceId !== 'vault'
+    && (menu.storeStatus === null || menu.storeStatus.present && (!menu.storeStatus.terminal || menu.storeStatus.kind === 'folder_delete'));
   const menuParentId = menu?.sourceId === 'vault' ? null : Number(menu?.sourceId);
   const containerProps = tree.getContainerProps('Notes');
 
@@ -855,6 +893,7 @@ export function NotesTree({
           className="cha-session-menu"
           onKeyDown={(event) => menuKeys(event, () => closeMenu(true))}
           ref={menuRef}
+          tabIndex={-1}
           role="menu"
           style={{
             left: Math.max(8, Math.min(menu.x, window.innerWidth - 168)),
@@ -863,12 +902,12 @@ export function NotesTree({
         >
           {!menuIsNote && (
             <>
-              <button onClick={() => beginCreate('note', menuParentId)} role="menuitem" type="button">New note</button>
-              <button onClick={() => beginCreate('folder', menuParentId)} role="menuitem" type="button">New folder</button>
+              <button disabled={menuFolderBusy} onClick={() => beginCreate('note', menuParentId)} role="menuitem" type="button">New note</button>
+              <button disabled={menuFolderBusy} onClick={() => beginCreate('folder', menuParentId)} role="menuitem" type="button">New folder</button>
             </>
           )}
           {!menuIsNote && (
-            <button onClick={() => {
+            <button disabled={menuFolderBusy} onClick={() => {
               epubParentId.current = menuParentId;
               closeMenu(true);
               epubInput.current?.click();
@@ -876,7 +915,7 @@ export function NotesTree({
           )}
           {menu.sourceId !== 'vault' && (
             <>
-              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button onClick={() => startRename()} role="menuitem" type="button">Rename</button>}
+              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button disabled={menuFolderBusy} onClick={() => startRename()} role="menuitem" type="button">Rename</button>}
               {menuIsNote && index.rows[menu.sourceId]?.kind === 'note' && (
                 <button onClick={() => void toggleReadOnly()} role="menuitem" type="button">
                   {items.find((item) => String(item.id) === menu.sourceId)?.read_only
@@ -884,7 +923,7 @@ export function NotesTree({
                 </button>
               )}
               {client.noteAudio && index.rows[menu.sourceId]?.kind !== 'annotation' && <button
-                disabled={menu.audioPending || (menuIsNote && !items.find(item => String(item.id) === menu.sourceId)?.read_only)}
+                disabled={menuFolderBusy || menu.audioPending || (menuIsNote && !items.find(item => String(item.id) === menu.sourceId)?.read_only)}
                 onClick={() => {
                   const source = takeMenuSource();
                   if (!source) return;
@@ -898,7 +937,7 @@ export function NotesTree({
                   catch (failure) { setError(publicErrorMessage(failure, 'The connection to CHA ended.')); }
                 }} role="menuitem" type="button">Generate audio</button>}
               {index.rows[menu.sourceId]?.kind !== 'annotation' && <button
-                disabled={menu.compressionPending === null || (!menuIsNote && menu.compressionPending)
+                disabled={menuFolderBusy || menu.compressionPending === null || (!menuIsNote && menu.compressionPending)
                   || (compressionSubmitting && !(menuIsNote && menu.compressionPending))}
                 onClick={() => void (menuIsNote && menu.compressionPending ? cancelCompression() : startCompress())}
                 role="menuitem" type="button">{menuIsNote && menu.compressionPending ? 'Cancel compression' : 'Compress'}</button>}
@@ -906,15 +945,28 @@ export function NotesTree({
                 <button disabled={!index.rows[menu.sourceId]?.hasCompressed}
                   onClick={showCompressed} role="menuitem" type="button">Show compressed</button>
               )}
-              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button onClick={() => startDelete()} role="menuitem" type="button">Delete</button>}
+              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button disabled={!menuIsNote && menu.storeStatus === null} onClick={() => startDelete()} role="menuitem" type="button">Delete</button>}
             </>
           )}
-          {menuIsNote && (
+          {menu.sourceId !== 'vault' && (
             <button onClick={() => void copyReference()} role="menuitem" type="button">Copy Ref ID</button>
           )}
+          {!menuIsNote && menu.sourceId !== 'vault' && <button role="menuitem" type="button"
+            disabled={menu.storeStatus === null}
+            onClick={() => {
+              const source = takeMenuSource();
+              if (source) setStoreRun({ source, mode: menu.storeStatus?.present && menu.storeStatus.kind === 'folder_delete' ? 'delete' : source.store ? 'remove' : 'upload', epoch: menu.epoch });
+            }}>{items.find(item => String(item.id) === menu.sourceId)?.store ? 'Remove from store' : 'Upload to store'}</button>}
         </div>,
         document.body,
       )}
+      {storeRun && <FolderStoreDialog client={client} source={storeRun.source} mode={storeRun.mode}
+        epoch={storeRun.epoch} listing={items} onDeleteItem={onDeleteItem}
+        refresh={async () => {
+          if (await refreshListing(storeRun.source.id) === 'failed')
+            throw new Error('The notes list could not be refreshed.');
+        }}
+        onClose={() => setStoreRun(null)} />}
       {audioRun !== null && client.noteAudio && <NoteAudioDialog client={client.noteAudio}
         targets={audioRun.targets} epoch={audioRun.epoch} folderMode={audioRun.folderMode}
         prepare={async id => {

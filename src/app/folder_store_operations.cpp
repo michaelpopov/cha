@@ -56,8 +56,10 @@ std::string kind_name(Kind kind) {
 }
 
 Application::FolderStoreOperationStatus status_from(const auto& control) {
+    // A sent allocation may still be returning its ID after cancellation is accepted.
     return {.present = true, .operation_id = control.operation_id,
-        .kind = kind_name(control.kind), .phase = phase_name(control.phase),
+        .kind = kind_name(control.kind),
+        .phase = !control.terminal && control.cancel_forward->load() ? "cleaning" : phase_name(control.phase),
         .completed = control.completed, .total = control.total,
         .error = control.error, .result = control.result,
         .known_cleanup_remains = control.known_cleanup_remains,
@@ -107,7 +109,7 @@ std::string current_key(auto& self, const auto& control, bool forward) {
         if (forward && control->cancel_forward->load()) throw Cancelled{};
         const auto info = self.api_keys->find(control->api_key_id);
         if (!info || !info->has_value) {
-            throw FolderStoreError("The saved API key '" + control->api_key_id + "' is missing or empty.");
+            throw FolderStoreError("The saved API key is missing or empty.");
         }
         return self.api_keys->value(control->api_key_id);
     });
@@ -132,6 +134,10 @@ void finish(auto& self, const auto& control, std::string result, std::string err
         control->phase = result == "warning" ? Phase::warning
             : result == "cancelled" ? Phase::cancelled
             : result == "success" || result == "folder_deleted" ? Phase::completed : Phase::failed;
+        if (result == "error" && control->warned) {
+            if (!error.empty()) error += " ";
+            error += "Some remote data could not be confirmed deleted. See Events for manual-cleanup details.";
+        }
         control->result = std::move(result);
         control->error = std::move(error);
         control->terminal = true;
@@ -199,6 +205,7 @@ bool cleanup(auto& self, const auto& control, FolderStoreClient& client, FolderS
     });
     bool ok = true;
     std::string errors;
+    std::string first_error;
     const auto remove = [&](const std::string& id, bool store_resource) {
         try {
             const auto key = current_key(self, control, false);
@@ -225,10 +232,12 @@ bool cleanup(auto& self, const auto& control, FolderStoreClient& client, FolderS
         } catch (const Interrupted&) { throw; }
         catch (const FolderStoreError& error) {
             ok = false;
+            if (first_error.empty()) first_error = error.what();
             errors += " " + std::string(error.what()) + " Resource=" + id + ".";
         }
         catch (const std::exception&) {
             ok = false;
+            if (first_error.empty()) first_error = "Could not confirm remote cleanup.";
             errors += " Could not confirm cleanup of " + id + ".";
         }
     };
@@ -244,22 +253,23 @@ bool cleanup(auto& self, const auto& control, FolderStoreClient& client, FolderS
         if (!latest) throw FolderStoreError("That folder store was not found.");
         control->known_cleanup_remains = !ok || latest->remote_store_id || !latest->file_ids.empty()
             || control->unsaved_store_id || !control->unsaved_file_ids.empty();
+        if (latest->remote_outcome_unknown) control->warned = true;
         if (control->known_cleanup_remains) {
             auto remaining = *latest;
             if (control->unsaved_store_id) remaining.remote_store_id = control->unsaved_store_id;
             for (const auto& id : control->unsaved_file_ids) {
                 if (std::find(remaining.file_ids.begin(), remaining.file_ids.end(), id) == remaining.file_ids.end()) remaining.file_ids.push_back(id);
             }
-            control->error = context(remaining) + errors + resource_ids(remaining);
-            log_warn(control->error);
-            try { self.store->append_event(EventSeverity::warning, control->error); }
+            control->error = first_error.empty() ? "Could not confirm remote cleanup." : first_error;
+            const auto diagnostic = context(remaining) + errors + resource_ids(remaining);
+            log_warn(diagnostic);
+            try { self.store->append_event(EventSeverity::warning, diagnostic); }
             catch (...) { log_warn("Folder store cleanup warning could not be recorded."); }
             return false;
         }
         // If the only uncertain allocation returned an ID that failed to save,
         // confirmed cleanup still cannot prove the original storage commit. Keep
         // the precommitted uncertainty warning instead of claiming full deletion.
-        if (latest->remote_outcome_unknown) control->warned = true;
         if (finalize) {
             self.store->delete_folder_store_record(record.id,
                 latest->remote_outcome_unknown ? unknown_warning(*latest)
@@ -511,7 +521,13 @@ void Application::Impl::run_folder_store_upload(std::shared_ptr<FolderStoreContr
                         || control->unsaved_store_id || !control->unsaved_file_ids.empty();
                     return ids;
                 });
-                finish(*this, control, "error", "Cleanup could not be recorded. Remote resources may remain; see Events and logs." + ids);
+                const auto message = "Cleanup could not be recorded. Remote resources may remain; see Events and logs.";
+                log_warn(std::string(message) + ids);
+                guarded(*this, control, [&] {
+                    try { store->append_event(EventSeverity::warning, std::string(message) + ids); }
+                    catch (...) { log_warn("Folder store cleanup warning could not be recorded."); }
+                });
+                finish(*this, control, "error", message);
             }
             catch (...) {}
         }
@@ -530,7 +546,9 @@ void Application::Impl::run_folder_store_remove(std::shared_ptr<FolderStoreContr
         const bool ok = cleanup(*this, control, client, record, true);
         const auto status = guarded(*this, control, [&] { return status_from(*control); });
         const bool warned = guarded(*this, control, [&] { return control->warned; });
-        finish(*this, control, ok ? (warned ? "warning" : "success") : "error", ok ? "" : status.error);
+        finish(*this, control, ok ? (warned ? "warning" : "success") : "error", ok ? ""
+            : "Could not remove “" + record.folder_name + "” from "
+                + (record.service == FolderStoreService::openai ? "OpenAI" : "Google") + ": " + status.error);
     } catch (const Interrupted&) {}
     catch (...) {
         try { finish(*this, control, "error", "The folder store could not be removed. Known resources remain recorded."); }
@@ -578,7 +596,9 @@ void Application::Impl::run_folder_store_delete(std::shared_ptr<FolderStoreContr
         const auto transport = guarded(*this, control, [&] { return folder_store_transport; });
         FolderStoreClient client(transport);
         bool failed = false;
-        std::string failures;
+        std::string first_failure;
+        std::int64_t failed_openai = 0;
+        std::int64_t failed_google = 0;
         for (const auto& record : records) {
             guarded(*this, control, [&] {
                 control->store_record_id = record.id;
@@ -595,13 +615,22 @@ void Application::Impl::run_folder_store_delete(std::shared_ptr<FolderStoreContr
                 control->store_record_id.reset();
                 if (ok) ++control->completed;
             });
-            if (!ok) failures += guarded(*this, control, [&] { return control->error + "\n"; });
+            if (!ok) {
+                if (first_failure.empty()) first_failure = guarded(*this, control, [&] { return control->error; });
+                ++(record.service == FolderStoreService::openai ? failed_openai : failed_google);
+            }
             failed = failed || !ok;
         }
         if (failed) {
             const auto error = guarded(*this, control, [&] {
                 control->known_cleanup_remains = true;
-                return failures;
+                std::string counts;
+                for (const auto& [count, provider] : {std::pair{failed_openai, "OpenAI"}, std::pair{failed_google, "Google"}}) {
+                    if (!count) continue;
+                    if (!counts.empty()) counts += " and ";
+                    counts += std::to_string(count) + " " + provider + (count == 1 ? " store" : " stores");
+                }
+                return "Could not remove " + counts + " in “" + control->folder_name + "”: " + first_failure;
             });
             finish(*this, control, "error", error, true);
             return;

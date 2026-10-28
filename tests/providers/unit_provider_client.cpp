@@ -3874,9 +3874,11 @@ TEST(ProviderClientTools, ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetR
             [&](const ProviderHttpRequest& request, const auto&) {
                 const auto body = Json::parse(request.body);
                 EXPECT_EQ(body["store"], false);
+                EXPECT_EQ(body["include"], Json::array({"reasoning.encrypted_content", "file_search_call.results"}));
                 if (++requests == 1) {
                     EXPECT_EQ(body["tool_choice"], "required");
-                    auto calls = Json::array({{{"type", "file_search_call"}, {"id", "hosted"}, {"status", "completed"}, {"queries", {"fact"}}}});
+                    auto calls = Json::array({{{"type", "file_search_call"}, {"id", "hosted"}, {"status", "completed"}, {"queries", {"fact"}},
+                        {"results", Json::array({{{"file_id", "file_1"}, {"filename", "note.md"}, {"score", 0.9}, {"text", "retrieved fact"}}})}}});
                     for (int i = 0; i < 4; ++i) calls.push_back(search_call(ProviderApi::responses, "call" + std::to_string(i)));
                     first_output = calls;
                     return tool_reply(ProviderApi::responses, stream, calls);
@@ -3884,6 +3886,7 @@ TEST(ProviderClientTools, ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetR
                 EXPECT_EQ(body["tools"], (Json::array({{{"type", "file_search"}, {"vector_store_ids", {"vs_one"}}}})));
                 EXPECT_EQ(body["tool_choice"], "auto");
                 EXPECT_EQ(body["input"][2], first_output[0]);
+                EXPECT_EQ(body["input"][2]["results"][0]["text"], "retrieved fact");
                 EXPECT_EQ(body["input"][1]["encrypted_content"], "opaque reasoning");
                 EXPECT_NE(body["instructions"].dump().find("Folder search is available"), std::string::npos);
                 EXPECT_NE(body["instructions"].dump().find("Web search is unavailable"), std::string::npos);

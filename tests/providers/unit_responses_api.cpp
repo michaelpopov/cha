@@ -196,12 +196,13 @@ TEST(ResponsesApi, DefaultsToNoneReasoningAndAddsToolInstructionsWithoutSystemPr
     EXPECT_EQ(body["input"][0]["content"], "from You:\nHi");
 }
 
-TEST(ResponsesApi, OmitsUnsupportedReasoningForDirectOpenAiGpt4o) {
+TEST(ResponsesApi, OmitsUnsupportedReasoningForDirectOpenAiNonReasoningModels) {
     Transcript transcript;
     const GenerationRequest request = make_request(transcript, "Hi");
     ModelBackendConfig config = responses_config();
     config.host = "API.OPENAI.COM.";
-    for (const char* model : {"gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-mini"}) {
+    for (const char* model : {"gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-mini",
+            "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1-mini-2025-04-14"}) {
         SCOPED_TRACE(model);
         config.model = model;
         for (const char* effort : {"none", "high"}) {
@@ -602,6 +603,7 @@ TEST(ResponsesApi, FolderSearchCoexistsWithHostedWebAndFunctionsAndYieldsToMaint
         config.web_search = mode;
         auto body = Json::parse(build_responses_request_body(input, config, "System"));
         EXPECT_EQ(body["store"], false);
+        EXPECT_EQ(body["include"], Json::array({"reasoning.encrypted_content", "file_search_call.results"}));
         EXPECT_EQ(body["tool_choice"], mode == WebSearchMode::required ? "required" : "auto");
         EXPECT_EQ(body["tools"].size(), mode == WebSearchMode::off ? 3u : 4u);
         EXPECT_EQ(body["tools"].back(), (Json{{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}));
@@ -615,7 +617,8 @@ TEST(ResponsesApi, FolderSearchCoexistsWithHostedWebAndFunctionsAndYieldsToMaint
 
 TEST(ResponsesApi, HostedSearchOutputIsRetainedWithoutBecomingALocalCall) {
     const auto output = Json::array({
-        {{"type", "file_search_call"}, {"id", "fs_1"}, {"status", "completed"}, {"queries", {"fact"}}},
+        {{"type", "file_search_call"}, {"id", "fs_1"}, {"status", "completed"}, {"queries", {"fact"}},
+            {"results", Json::array({{{"file_id", "file_1"}, {"filename", "note.md"}, {"score", 0.9}, {"text", "retrieved fact"}}})}},
         {{"type", "function_call"}, {"call_id", "custom"}, {"name", "web_search"}, {"arguments", R"({"query":"q"})"}},
         {{"type", "reasoning"}, {"id", "r_1"}, {"encrypted_content", "signed"}}
     });

@@ -419,6 +419,9 @@ TEST_F(FolderStoreOperationsTest, LostAllocationResponseStopsWithoutAutomaticRep
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "error");
     EXPECT_EQ(calls, 1);
+    EXPECT_FALSE(status.known_cleanup_remains);
+    EXPECT_NE(status.error.find("The store connection failed."), std::string::npos);
+    EXPECT_NE(status.error.find("Some remote data could not be confirmed deleted."), std::string::npos);
     EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
     EXPECT_EQ(status.error.find("secret-key"), std::string::npos);
     const auto events = application_->list_events(epoch_);
@@ -442,7 +445,7 @@ TEST_F(FolderStoreOperationsTest, UnpersistedReturnedIdIsStillCleaned) {
     EXPECT_TRUE(deletes.front().ends_with("/vs_1"));
 }
 
-TEST_F(FolderStoreOperationsTest, FailedPersistenceAndCleanupExposeTheReturnedId) {
+TEST_F(FolderStoreOperationsTest, FailedPersistenceAndCleanupRetainTheReturnedIdInEvents) {
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
         if (request.method == "DELETE") { FolderStoreHttpResponse response; response.status = 403; return response; }
         auto response = openai_transport()(request, cancel);
@@ -452,7 +455,11 @@ TEST_F(FolderStoreOperationsTest, FailedPersistenceAndCleanupExposeTheReturnedId
     (void)application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_TRUE(status.known_cleanup_remains);
-    EXPECT_NE(status.error.find("vs_1"), std::string::npos);
+    EXPECT_EQ(status.error.find("vs_1"), std::string::npos);
+    const auto events = application_->list_events(epoch_);
+    EXPECT_TRUE(std::any_of(events.begin(), events.end(), [](const auto& event) {
+        return event.message.find("vs_1") != std::string::npos;
+    }));
     const auto record = application_->folder_store_record(folder_.id, epoch_);
     ASSERT_TRUE(record);
     EXPECT_EQ(record->remote_store_id, "vs_1");
@@ -468,7 +475,15 @@ TEST_F(FolderStoreOperationsTest, CancellationLetsSentAllocationFinishThenCleans
     });
     const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
     ASSERT_TRUE(gate.wait_entered());
+    EXPECT_EQ(application_->folder_store_operation_status(folder_.id, epoch_).phase, "uploading");
     application_->cancel_folder_store_upload(operation.operation_id, epoch_);
+    // The allocation is still blocked, so the worker cannot have entered cleanup.
+    for (int poll = 0; poll < 3; ++poll) {
+        const auto cancelling = application_->folder_store_operation_status(folder_.id, epoch_);
+        EXPECT_EQ(cancelling.phase, "cleaning");
+        EXPECT_FALSE(cancelling.terminal);
+    }
+    EXPECT_THROW(application_->close_folder_store_operation(operation.operation_id, epoch_), ApplicationError);
     gate.release();
     EXPECT_EQ(wait_status(folder_.id).result, "cancelled");
     EXPECT_EQ(deleted, 1);
@@ -516,12 +531,14 @@ TEST_F(FolderStoreOperationsTest, CleanupAttemptsEveryFileAndRetryUsesOnlyRemain
     (void)application_->start_folder_store_remove(folder_.id, id, epoch_);
     const auto failed = wait_status(folder_.id);
     EXPECT_TRUE(failed.known_cleanup_remains);
-    EXPECT_NE(failed.error.find("file_1"), std::string::npos);
+    EXPECT_EQ(failed.error.find("file_1"), std::string::npos);
     EXPECT_EQ(failed.error.find("vs_1"), std::string::npos);
     EXPECT_EQ(failed.error.find("file_2"), std::string::npos);
     const auto events = application_->list_events(epoch_);
     ASSERT_FALSE(events.empty());
-    EXPECT_EQ(events.front().message, failed.error);
+    EXPECT_NE(events.front().message.find("file_1"), std::string::npos);
+    EXPECT_EQ(events.front().message.find("vs_1"), std::string::npos);
+    EXPECT_EQ(events.front().message.find("file_2"), std::string::npos);
     EXPECT_EQ(deletes.size(), 3U);
     auto record = application_->folder_store_record(folder_.id, epoch_);
     ASSERT_TRUE(record);
@@ -1069,5 +1086,74 @@ TEST_F(FolderStoreOperationsTest, SecondaryProcessCanReadStoresButCannotMutateOp
     EXPECT_TRUE(secondary->join_shutdown(2s));
 }
 
+TEST_F(FolderStoreOperationsTest, FailedIndexingKeepsNotFoundCleanupWarningInStatus) {
+    application_->set_folder_store_transport_for_tests(openai_transport(true, true));
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
+    const auto status = wait_status(folder_.id);
+    EXPECT_EQ(status.result, "error");
+    EXPECT_TRUE(status.terminal);
+    EXPECT_FALSE(status.known_cleanup_remains);
+    EXPECT_NE(status.error.find("Indexing did not complete."), std::string::npos);
+    EXPECT_NE(status.error.find("Some remote data could not be confirmed deleted."), std::string::npos);
+    EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
+}
+
+TEST_F(FolderStoreOperationsTest, FailedFileAllocationKeepsUncertaintyInStatusAfterKnownCleanup) {
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (!request.multipart.empty()) {
+            FolderStoreHttpResponse response;
+            response.status = 503;
+            return response;
+        }
+        return openai_transport()(request, cancel);
+    });
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
+    const auto status = wait_status(folder_.id);
+    EXPECT_EQ(status.result, "error");
+    EXPECT_FALSE(status.known_cleanup_remains);
+    EXPECT_NE(status.error.find("Some remote data could not be confirmed deleted."), std::string::npos);
+    EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
+}
+
+TEST_F(FolderStoreOperationsTest, RemoveFailureHasOneShortErrorAndKeepsResourceDiagnosticsInEvents) {
+    std::vector<std::string> files;
+    for (int i = 0; i < 100; ++i) files.push_back("file_" + std::to_string(i));
+    const auto id = seed_store(folder_.id, "vs_1", files);
+    application_->delete_api_key(key_, epoch_);
+    (void)application_->start_folder_store_remove(folder_.id, id, epoch_);
+    const auto status = wait_status(folder_.id);
+    EXPECT_EQ(status.error, "Could not remove “Research” from OpenAI: The saved API key is missing or empty.");
+    EXPECT_TRUE(status.known_cleanup_remains);
+    const auto events = application_->list_events(epoch_);
+    ASSERT_FALSE(events.empty());
+    EXPECT_NE(events.front().message.find("vs_1"), std::string::npos);
+    EXPECT_NE(events.front().message.find("file_0"), std::string::npos);
+    EXPECT_NE(events.front().message.find("file_99"), std::string::npos);
+    EXPECT_NE(events.front().message.find(key_), std::string::npos);
+    EXPECT_EQ(application_->folder_store_record(folder_.id, epoch_)->file_ids.size(), 100U);
+}
+
+TEST_F(FolderStoreOperationsTest, FailedFolderDeleteSummarizesActualCountsByService) {
+    const auto child = application_->create_note_item(folder_.id, NoteItemKind::folder, "Child", epoch_);
+    const auto google = application_->create_note_item(folder_.id, NoteItemKind::folder, "Google", epoch_);
+    seed_store(folder_.id);
+    seed_store(child.id);
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        storage::SqliteTransaction tx(db);
+        const auto id = folder_store_register(db, google.id, FolderStoreService::google, key_, 1);
+        folder_store_save_remote_id(db, id, "fileSearchStores/test");
+        tx.commit();
+    }
+    application_->delete_api_key(key_, epoch_);
+    (void)application_->start_folder_delete(folder_.id, 3, epoch_);
+    const auto status = wait_status(folder_.id);
+    EXPECT_EQ(status.error, "Could not remove 2 OpenAI stores and 1 Google store in “Research”: The saved API key is missing or empty.");
+    EXPECT_EQ(status.total, 3);
+    EXPECT_EQ(status.completed, 0);
+    EXPECT_FALSE(status.folder_deleted);
+    EXPECT_TRUE(status.known_cleanup_remains);
+    EXPECT_EQ(application_->folder_store_count_in_subtree(folder_.id, epoch_), 3);
+}
 } // namespace
 } // namespace cha::app

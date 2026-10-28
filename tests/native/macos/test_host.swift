@@ -132,6 +132,33 @@ private final class TerminationMessageReceiver: NSObject, WKScriptMessageHandler
     }
 }
 
+// Optional native screenshots for visual review of parity-script states.
+private final class SnapshotReceiver: NSObject, WKScriptMessageHandlerWithReply {
+    private let directory: URL
+    init(directory: String) { self.directory = URL(fileURLWithPath: directory) }
+
+    func userContentController(_ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        guard let name = message.body as? String, !name.isEmpty,
+              name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }), let view = message.webView else {
+            replyHandler(nil, "Invalid snapshot name")
+            return
+        }
+        view.takeSnapshot(with: nil) { image, error in
+            do {
+                guard let data = image?.tiffRepresentation,
+                      let png = NSBitmapImageRep(data: data)?.representation(using: .png, properties: [:]) else {
+                    replyHandler(nil, error?.localizedDescription ?? "Snapshot failed")
+                    return
+                }
+                try FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
+                try png.write(to: self.directory.appendingPathComponent(name + ".png"))
+                replyHandler(true, nil)
+            } catch { replyHandler(nil, error.localizedDescription) }
+        }
+    }
+}
+
 private let terminationProbeSource = """
 const original = window.__CHA_NATIVE_RECEIVE__;
 window.__CHA_NATIVE_RECEIVE__ = function(batch) {
@@ -223,6 +250,11 @@ private final class NativeTestHost: NSObject, NSApplicationDelegate, WKNavigatio
         if options.expectation == .terminate {
             view.configuration.userContentController.add(
                 TerminationMessageReceiver(probe: terminationProbe), name: "chaExperiment")
+        }
+        if options.expectation == .parity,
+           let directory = ProcessInfo.processInfo.environment["CHA_NATIVE_SCREENSHOT_DIR"] {
+            view.configuration.userContentController.addScriptMessageHandler(
+                SnapshotReceiver(directory: directory), contentWorld: .page, name: "chaTestSnapshot")
         }
         receiver.attach(to: view, mediaHandler: built.1)
         nativeBridge = receiver

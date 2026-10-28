@@ -3047,12 +3047,13 @@ TEST_F(BridgeRouterTest, CompressionReportsProviderSettingsAndEmptyNotes) {
         "This note has no text to compress.");
     application_->save_note(note.id, text_document("Original source" + std::string(4096, 'a')), epoch_);
     (void)application_->save_notes_settings({"test"}, epoch_);
-    for (const auto api : {"chat_completions", "responses"}) {
+    for (const auto& [api, model] : {std::pair{"chat_completions", "mistral-large-latest"},
+            std::pair{"responses", "gpt-4o"}, std::pair{"responses", "gpt-4.1-mini"}}) {
         nlohmann::json provider = application_->get_provider("test", epoch_);
         for (const char* key : {"id", "used_by", "writable"}) provider.erase(key);
         provider["api"] = api;
         provider["host"] = std::string_view(api) == "responses" ? "api.openai.com" : "api.mistral.ai";
-        provider["model"] = std::string_view(api) == "responses" ? "gpt-4o" : "mistral-large-latest";
+        provider["model"] = model;
         (void)application_->update_provider("test", provider, epoch_);
         expect_note_error(compress_and_wait({{"id", note.id}}), "invalid_argument",
             "This compression provider's model does not support high reasoning effort.");

@@ -5,11 +5,11 @@ async function nativeParity() {
   const check = (value, message) => { if (!value) throw new Error(message); };
   let step = 'startup';
   const completed = [];
-  const until = async (label, condition) => {
+  const until = async (label, condition, expectedError = false) => {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
       const error = document.querySelector('[role="alert"]');
-      check(!error, error?.textContent);
+      if (!expectedError) check(!error, error?.textContent);
       const value = condition();
       if (value) return value;
       await wait(25);
@@ -48,6 +48,9 @@ async function nativeParity() {
     Object.getOwnPropertyDescriptor(prototype, 'value').set.call(node, value);
     node.dispatchEvent(new Event(node.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
   };
+  const snapshot = async name => {
+    await window.webkit?.messageHandlers?.chaTestSnapshot?.postMessage(`${name}-${innerWidth}`);
+  };
   const bounds = (node) => node.getBoundingClientRect();
   const composerLayout = () => {
     const form = bounds(document.querySelector('.cha-composer'));
@@ -83,7 +86,7 @@ async function nativeParity() {
     ));
     setValue(field('Name', dialog), 'UI smoke note');
     await click('Create', dialog);
-    const note = await screen('Note');
+    let note = await screen('Note');
     const prompt = await until('Notes composer', () => note.querySelector('textarea[aria-label="Prompt"]'));
     await until('note editor', () => note.querySelector('.ProseMirror[contenteditable="true"]'));
     const notes = composerLayout();
@@ -107,6 +110,95 @@ async function nativeParity() {
     ));
     completed.push('Notes creation, prompt insertion and layout');
 
+    step = 'folder store menus, removal and upload choices';
+    await click('Actions for Test');
+    check(!button('Copy Ref ID', document.querySelector('[role="menu"]')), 'Synthetic root offers a ref');
+    document.querySelector('[role="menu"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await click('Actions for UI store empty');
+    await click('Remove from store');
+    let storeDialog = await until('Remove dialog', () => document.querySelector('dialog[aria-label="Remove folder from store"]'));
+    await until('Remove confirmation ready', () => button('Remove', storeDialog) && !button('Remove', storeDialog).disabled);
+    check(storeDialog.textContent.includes('OpenAI'), 'Removal omits provider');
+    await snapshot('store-remove');
+    await click('Remove', storeDialog);
+    await until('local association removed', () => !document.querySelector('dialog'));
+    check(document.querySelector('.ProseMirror') === note.querySelector('.ProseMirror'), 'Remove replaced the open editor');
+    await click('Actions for UI store empty');
+    await click('Upload to store');
+    storeDialog = await until('Upload choices', () => document.querySelector('dialog[aria-label="Upload folder to store"] select'), true);
+    storeDialog = storeDialog.closest('dialog');
+    await until('missing key error', () => storeDialog.querySelector('[role="alert"]'), true);
+    check(button('Upload', storeDialog).disabled, 'Upload allowed without a compatible key');
+    const box = bounds(storeDialog);
+    check(box.left >= 0 && box.right <= innerWidth + 1, 'Store dialog exceeds window');
+    check(box.top >= 0 && box.bottom <= innerHeight + 1, 'Store dialog exceeds height');
+    check(!storeDialog.querySelector('h1,h2,h3'), 'Store dialog has a visible panel title');
+    await snapshot('store-upload');
+    setValue(field('Provider', storeDialog), 'google');
+    check(field('API key', storeDialog).value === '', 'Provider retained an incompatible key');
+    storeDialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+    await until('Upload closed', () => !document.querySelector('dialog'), true);
+    check(document.activeElement?.getAttribute('aria-label') === 'UI store empty', 'Upload did not restore row focus');
+    completed.push('Folder store root exclusion, incomplete Remove, provider choices, missing keys, sizing and Escape focus');
+
+    step = 'folder store failed deletion and editor recovery';
+    const failureRow = Array.from(document.querySelectorAll('.cha-notes-row')).find(row => row.getAttribute('aria-label') === 'UI store failure');
+    failureRow.click();
+    await click('Actions for UI store note');
+    document.querySelector('[role="menu"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    const storeNoteRow = Array.from(document.querySelectorAll('.cha-notes-row')).find(row => row.getAttribute('aria-label') === 'UI store note');
+    storeNoteRow.click();
+    await until('store note editor', () => document.querySelector('.ProseMirror')?.textContent.includes('Native store editor fixture'));
+    const storeEditor = document.querySelector('.ProseMirror').chaEditor;
+    await click('Actions for UI store failure');
+    await click('Remove from store');
+    storeDialog = await until('failed Remove confirmation', () => document.querySelector('dialog[aria-label="Remove folder from store"]'));
+    await click('Remove', storeDialog);
+    await until('failed Remove', () => button('Close', storeDialog) && !button('Close', storeDialog).disabled, true);
+    check(storeDialog.textContent.includes('Could not remove “UI store failure” from OpenAI:'), 'Remove failure omits folder or provider');
+    check(!storeDialog.textContent.includes('Use Remove from store'), 'Remove repeats its own action as guidance');
+    check(!storeDialog.textContent.includes('vs_native') && !storeDialog.textContent.includes('store_record='), 'Remove exposes resource diagnostics');
+    check(storeDialog.scrollWidth <= storeDialog.clientWidth + 1, 'Remove failure scrolls horizontally');
+    await snapshot('store-remove-failed');
+    button('Close', storeDialog).click();
+    await until('failed Remove closed', () => !document.querySelector('dialog'), true);
+    const beginDelete = async () => {
+      await click('Actions for UI store failure');
+      await click('Delete');
+      const dialog = await until('store deletion confirmation', () => document.querySelector('dialog[aria-label="Delete “UI store failure”"]'));
+      await until('Delete confirmation ready', () => button('Delete', dialog) && !button('Delete', dialog).disabled);
+      check(dialog.textContent.includes('1 remote store will also be removed.'), 'Store count missing');
+      await click('Delete', dialog);
+      await until('failed deletion', () => button('Retry', dialog) && !button('Retry', dialog).disabled, true);
+      return dialog;
+    };
+    storeDialog = await beginDelete();
+    check(storeDialog.textContent.includes('Could not remove 1 OpenAI store in “UI store failure”:'), 'Delete failure omits actual store count');
+    check(!storeDialog.textContent.includes('vs_native') && !storeDialog.textContent.includes('store_record='), 'Delete exposes resource diagnostics');
+    check(storeDialog.scrollWidth <= storeDialog.clientWidth + 1, 'Delete failure scrolls horizontally');
+    await snapshot('store-delete-failed');
+    check(!storeEditor.isDestroyed && storeEditor.isEditable, 'Failed delete disposed or froze editor');
+    check(storeDialog.textContent.includes('Remote data and charges may remain.'), 'Delete anyway warning missing');
+    storeDialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+    await until('failed reservation released', () => !document.querySelector('dialog'), true);
+    storeEditor.commands.insertContent(' still editable');
+    storeDialog = await beginDelete();
+    // Expected errors stay visible through the explicit local-delete decision.
+    button('Delete anyway', storeDialog).click();
+    await until('warning after local deletion', () => storeDialog.textContent.includes('Some remote data could not be confirmed deleted.'), true);
+    await until('affected editor disposed', () => storeEditor.isDestroyed, true);
+    await snapshot('store-delete-warning');
+    check(!button('Retry', storeDialog), 'Warning offered a second local deletion');
+    button('Close', storeDialog).click();
+    await until('warning acknowledged', () => !document.querySelector('dialog'), true);
+    check(!document.querySelector('[aria-label="UI store failure"][role="treeitem"]'), 'Deleted folder remains');
+    check(document.activeElement?.getAttribute('role') === 'treeitem', 'Deletion did not restore tree focus');
+    completed.push('Folder store failed cleanup, editor preservation, Cancel release, Delete anyway, warning and focus');
+    // Restore the original editor for the existing toolbar tests.
+    Array.from(document.querySelectorAll('.cha-notes-row')).find(row => row.getAttribute('aria-label') === 'UI smoke note').click();
+    note = await screen('Note');
+    await until('original note reopened', () => note.querySelector('.ProseMirror')?.textContent.includes('Second line.'));
+
     step = 'Notes toolbar scroll position';
     const editor = note.querySelector('.ProseMirror').chaEditor;
     const original = editor.getJSON();
@@ -129,17 +221,18 @@ async function nativeParity() {
       const end = editor.state.doc.content.size - 1;
       editor.commands.setTextSelection(selectText ? { from: end - 7, to: end } : end);
       for (const focusControl of [false, true]) {
-        for (const name of [
-          'Increase editor font size', 'Decrease editor font size',
-          'Bold', 'Italic', 'Underline', 'Highlight', 'Code',
-          'Heading 1', 'Heading 2', 'Heading 3',
+        for (const [name, menu] of [
+          ['Increase font size', 'Font size'], ['Decrease font size', 'Font size'],
+          ['Bold', 'Edit'], ['Italic', 'Edit'], ['Underline', 'Edit'], ['Highlight', null], ['Code', 'Insert'],
+          ['Title', 'Headings'], ['Chapter', 'Headings'], ['Section', 'Headings'],
         ]) {
           editor.view.focus();
           documentHost.scrollTop = 400;
           await settle();
           const top = topText();
           const selection = editor.state.selection.toJSON();
-          const control = button(name, note);
+          if (menu) await click(menu, note);
+          const control = await until(name, () => button(name, note));
           if (focusControl) control.focus({ preventScroll: true });
           control.click();
           await settle();

@@ -906,13 +906,14 @@ export function App({
     }
   }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
 
-  const deleteNoteItem = useCallback<DeleteNoteItem>(async (sourceId, listing, refresh) => {
+  const deleteNoteItem = useCallback<DeleteNoteItem>(async (sourceId, listing, refresh, remove) => {
     if (!noteLeave.beginNoteAction()) return 'busy';
     const epoch = notesEpochRef.current;
     const noteId = activeNoteIdRef.current;
     const affected = noteInSubtree(listing, sourceId, noteId);
     const save = noteSaveRef.current;
     let canceledUncovered = false;
+    let deleted = false;
     const sameNote = () => (
       notesEpochRef.current === epoch && activeNoteIdRef.current === noteId
     );
@@ -922,7 +923,10 @@ export function App({
         await save.waitInFlight();
       }
       if (notesEpochRef.current !== epoch) return 'failed';
-      await client.deleteNoteItem(sourceId);
+      if (remove) {
+        if (!await remove()) return 'failed';
+      } else await client.deleteNoteItem(sourceId);
+      deleted = true;
       if (affected && sameNote()) {
         noteSaveRef.current?.dispose();
         disposeEditorRef.current();
@@ -935,14 +939,12 @@ export function App({
       } catch {
         return 'refresh-failed';
       }
-    } catch (error) {
-      if (affected && sameNote()) {
+    } finally {
+      if (!deleted && affected && sameNote()) {
         const current = noteSaveRef.current;
         current?.unfreeze();
         if (canceledUncovered) current?.submitNow();
       }
-      throw error;
-    } finally {
       noteLeave.endNoteAction();
     }
   }, [client, dispatch, noteLeave.beginNoteAction, noteLeave.endNoteAction]);

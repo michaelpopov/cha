@@ -58,7 +58,8 @@ bool provider_supports_reasoning_effort(const ModelBackendConfig& config, Provid
     if (api == ProviderApi::google || api == ProviderApi::anthropic) return true;
     if (api == ProviderApi::responses) {
         return !(is_direct_openai_host(config.host)
-            && (config.model == "gpt-4o" || config.model.starts_with("gpt-4o-")));
+            && (config.model == "gpt-4o" || config.model.starts_with("gpt-4o-")
+                || config.model == "gpt-4.1" || config.model.starts_with("gpt-4.1-")));
     }
     std::string_view host = config.host;
     if (host.ends_with('.')) host.remove_suffix(1);
