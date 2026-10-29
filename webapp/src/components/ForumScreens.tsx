@@ -65,7 +65,8 @@ export function NewForumScreen({
   state,
   navigate,
   client,
-}: RosterDetailProps) {
+  onForumsChanged,
+}: RosterDetailProps & { onForumsChanged?(): void }) {
   const personas = state.bootstrap?.personas ?? [];
   const [name, setName] = useState('');
   const [personaId, setPersonaId] = useState(personas[0]?.id ?? '');
@@ -83,6 +84,7 @@ export function NewForumScreen({
         display_name: trimmedName,
         persona_id: personaId,
       });
+      onForumsChanged?.();
       navigate({ type: 'forum-created', forum });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The forum could not be created.'));
@@ -167,7 +169,8 @@ export function ForumDetailScreen({
   navigate,
   client,
   onDelete,
-}: RosterDetailProps & { onDelete(forumId: string): Promise<void> }) {
+  onForumsChanged,
+}: RosterDetailProps & { onDelete(forumId: string): Promise<void>; onForumsChanged?(): void }) {
   const load = useCallback((forumId: string) => client.getForum(forumId), [client]);
   const onLoaded = useCallback((detail: ForumDetail, forumId: string) => {
     dispatch({ type: 'forum-detail-loaded', forumId, writable: detail.writable });
@@ -194,11 +197,12 @@ export function ForumDetailScreen({
               const saved = await client.updateForum(detail.id, { display_name });
               update(saved);
               dispatch({ type: 'forum-updated', forum: saved });
+              onForumsChanged?.();
             }}
           />
           {detail.writable && <DetailActions
             name={detail.display_name} subject="Forum"
-            deleteMessage={`Delete “${detail.display_name}”? This permanently removes the forum and all of its sessions. This cannot be undone.`}
+            deleteMessage={`Delete “${detail.display_name}”? This permanently removes the forum, all of its sessions, and its Notes folder and contents. This cannot be undone.`}
             onDelete={() => onDelete(detail.id)}
           />}
         </div>

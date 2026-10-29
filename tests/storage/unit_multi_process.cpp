@@ -1,5 +1,6 @@
 #include "support/test_workspace.h"
 #include "storage/session_repository.h"
+#include "storage/note_storage.h"
 #include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
 #include "workspace/workspace_config_store.h"
@@ -9,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <algorithm>
 #include <csignal>
 #include <fcntl.h>
 #include <poll.h>
@@ -214,6 +216,8 @@ TEST_F(MultiProcessTest, ConcurrentCompatibleSchemaInitializationIsSerialized) {
         db.execute("ALTER TABLE entries DROP COLUMN web_search_used");
         db.execute("ALTER TABLE sessions DROP COLUMN recent_pending");
         db.execute("ALTER TABLE sessions DROP COLUMN discardable");
+        db.execute("DROP INDEX note_items_forum_id");
+        db.execute("ALTER TABLE note_items DROP COLUMN forum_id");
     }
     VaultProcess a(database_);
     VaultProcess b(database_);
@@ -231,9 +235,18 @@ TEST_F(MultiProcessTest, ConcurrentCompatibleSchemaInitializationIsSerialized) {
     EXPECT_NE(first.at("main"), second.at("main"));
 
     storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_only);
-    auto journal_mode = db.prepare("PRAGMA journal_mode");
-    ASSERT_TRUE(journal_mode.step());
-    EXPECT_EQ(journal_mode.text(0), "wal");
+    {
+        auto journal_mode = db.prepare("PRAGMA journal_mode");
+        ASSERT_TRUE(journal_mode.step());
+        EXPECT_EQ(journal_mode.text(0), "wal");
+    }
+    const auto items = note_list(db);
+    ASSERT_EQ(items.size(), 2u);
+    EXPECT_EQ(std::ranges::count_if(items, [](const auto& item) { return item.forum_id == ""; }), 1);
+    EXPECT_EQ(std::ranges::count_if(items, [](const auto& item) { return item.forum_id == "lobby"; }), 1);
+    ASSERT_TRUE(b.call({{"action", "close"}}).at("ok"));
+    ASSERT_TRUE(b.call({{"action", "open"}}).at("ok"));
+    EXPECT_EQ(nlohmann::json(note_list(db)), nlohmann::json(items));
 }
 
 TEST_F(MultiProcessTest, NormalRepositoryShutdownDoesNotWaitForAnotherReadersSnapshot) {

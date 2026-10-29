@@ -6,7 +6,7 @@ import {
   ChaError,
   type NoteItem,
 } from '../api/client';
-import { bootstrapFixture, fixtureClient, snapshotFixture } from '../test/fixtures';
+import { bootstrapFixture, fixtureClient, forumDetailFixture, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
 
 const plan: NoteItem = { id: 4, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
@@ -1905,4 +1905,57 @@ describe('Folder deletion with remote cleanup', () => {
     expect(start).toHaveBeenCalledOnce();
   });
 
+});
+
+
+it('refreshes Notes whenever its tab or collapsed sidebar is reopened without an active note', async () => {
+  const listNoteItems = vi.fn(async () => [study]);
+  render(<App client={fixtureClient({ listNoteItems })} />);
+  await openNotes();
+  await screen.findByText('Study');
+  expect(listNoteItems).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+  await waitFor(() => expect(listNoteItems).toHaveBeenCalledTimes(2));
+  act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-sidebar'));
+  act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-sidebar'));
+  await waitFor(() => expect(listNoteItems).toHaveBeenCalledTimes(3));
+});
+
+it.each(['create', 'rename', 'delete'])('refreshes a visible Notes sidebar after local forum %s with no active note', async (operation) => {
+  let items: NoteItem[] = [{ ...study, name: 'Forums', forum_id: '' }];
+  const linked = { ...study, id: 2, parent_id: 1, name: 'Research', forum_id: 'research' };
+  const listNoteItems = vi.fn(async () => items);
+  const change = () => { items = [...items, linked]; };
+  render(<App client={fixtureClient({
+    listNoteItems,
+    createForum: async () => { change(); return { ...forumDetailFixture, id: 'research', display_name: 'Research' }; },
+    updateForum: async (_id, update) => { change(); return { ...forumDetailFixture, ...update }; },
+    deleteForum: async () => { change(); },
+  })} />);
+  await openNotes();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'Forums' }));
+  const settings = within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' });
+  await waitFor(() => expect(settings).toBeEnabled());
+  fireEvent.click(settings);
+  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
+  if (operation === 'create') {
+    fireEvent.click(await screen.findByRole('button', { name: 'New forum' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Research' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create forum' }));
+  } else {
+    fireEvent.click(await screen.findByRole('button', { name: 'The LobbyGuide' }));
+    fireEvent.click(within(await screen.findByLabelText('Forum sessions navigation')).getByRole('button', { name: 'The LobbyGuide' }));
+    if (operation === 'rename') {
+      fireEvent.click(await screen.findByRole('button', { name: 'Rename The Lobby' }));
+      fireEvent.change(screen.getByRole('textbox', { name: 'Forum name' }), { target: { value: 'Research' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save forum name' }));
+    } else {
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete The Lobby' }));
+      expect(screen.getByRole('dialog')).toHaveTextContent('and its Notes folder and contents');
+      fireEvent.click(screen.getByRole('button', { name: 'Delete forum' }));
+    }
+  }
+  await screen.findByRole('treeitem', { name: 'Research' });
+  expect(listNoteItems).toHaveBeenCalledTimes(2);
 });

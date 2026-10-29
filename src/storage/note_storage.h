@@ -8,6 +8,7 @@
 #include <functional>
 #include "storage/event_storage.h"
 #include <optional>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -55,6 +56,7 @@ struct NoteItem {
     bool has_compressed{};
     bool read_only{};
     std::optional<NoteStoreSummary> store;
+    std::optional<std::string> forum_id;
 };
 
 struct NoteContent {
@@ -80,6 +82,10 @@ void to_json(nlohmann::json& json, const NoteContent& content);
 
 // Caller owns the transaction. The statements are idempotent.
 void create_note_items_schema(storage::SqliteDatabase& database);
+
+// Caller owns the transaction; names come from a validated configured catalog.
+void note_sync_forums(storage::SqliteDatabase& database,
+    const std::map<std::string, std::string>& forum_names);
 
 // Markdown for chat context, retaining headings, lists, links, emphasis, and code blocks.
 [[nodiscard]] std::string note_document_markdown(const nlohmann::json& document);

@@ -1203,7 +1203,7 @@ TEST_F(NoteAudioBackground, PostCommitAudioReadFailureDoesNotRejectTheNoteChange
         EXPECT_NE(events[0].message.find("abandoned"), std::string::npos);
         EXPECT_EQ(completions.load(), 0);
     }
-    EXPECT_TRUE(application->list_note_items(epoch).empty());
+    EXPECT_EQ(application->list_note_items(epoch).size(), 2u);
     EXPECT_NE(log_text().find("after the note change committed"), std::string::npos);
 }
 
@@ -1329,6 +1329,8 @@ TEST(Application, CharacterTextAndPictureFilesUseTheirOwnReadAndEditPaths) {
     EXPECT_EQ(application->get_character_picture("guide", epoch)->filename, "PICTURE.png");
     application->update_character_picture(assistant_id, "assistant-portrait.png", "cG5n", epoch);
     EXPECT_EQ(application->get_character_picture(assistant_id, epoch, "assistant-portrait.png")->content_base64, "cG5n");
+    ASSERT_TRUE(application->get_character_picture(assistant_id, epoch));
+    EXPECT_EQ(application->get_character_picture(assistant_id, epoch)->filename, "assistant-portrait.png");
     application->delete_character_file(assistant_id, "assistant-portrait.png", epoch);
     EXPECT_FALSE(application->get_character_picture(assistant_id, epoch));
     EXPECT_THROW(application->delete_character_file("guide", "../PICTURE.png", epoch), ApplicationError);

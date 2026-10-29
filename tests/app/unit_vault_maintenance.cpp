@@ -150,7 +150,7 @@ TEST(ApplicationVault, SecondarySharesNotesAndSwitchesWithoutAcquiringMainRole) 
     EXPECT_EQ(secondary->get_note(note.id, epoch).document, document);
     main->delete_note_item(note.id, main->context_epoch());
     EXPECT_THROW(secondary->save_note(note.id, document, epoch), ApplicationError);
-    EXPECT_TRUE(secondary->list_note_items(epoch).empty());
+    EXPECT_EQ(secondary->list_note_items(epoch).size(), 2u);
 
     EXPECT_THROW((void)secondary->update_persona("alpha", {.display_name = "Refused"}, epoch),
         SecondaryProcessError);
@@ -194,6 +194,8 @@ TEST(ApplicationVault, SecondaryDoesNotWriteTheConfiguredMirror) {
 // Include opaque damaged content: whole-vault and configuration operations
 // must not start parsing every note as part of their validation.
 std::int64_t seed_notes(const std::filesystem::path& path, std::string_view name) {
+    // These copy/transfer fixtures represent vaults that have already been opened.
+    (void)WorkspaceConfigStore::open(path);
     storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
     const auto folder = note_create(database, {}, NoteItemKind::folder, name);
     const auto nested = note_create(database, folder.id, NoteItemKind::folder, "旅行 🌍");
@@ -439,9 +441,9 @@ TEST(ApplicationVault, DownloadReplacesNotesAndOverwritesOneBackupIncludingOlder
         set_r2(*application, server.port());
         (void)application->download_database(application->context_epoch());
         server.join();
-        EXPECT_TRUE(application->list_note_items(application->context_epoch()).empty());
+        EXPECT_EQ(application->list_note_items(application->context_epoch()).size(), 2u);
         EXPECT_EQ(stored_notes(backup, password), remote_notes);
-        EXPECT_TRUE(stored_notes(pair.database_a, password)["items"].empty());
+        EXPECT_EQ(stored_notes(pair.database_a, password)["items"].size(), 2u);
     }
 }
 
@@ -1111,6 +1113,32 @@ TEST(ApplicationVault, CreateListAndSameVaultSwitch) {
     const auto same = application->switch_vault("a", {}, application->context_epoch());
     EXPECT_EQ(same.context_epoch, epoch);
     EXPECT_EQ(application->current_vault().get().name, "A");
+}
+
+TEST(ApplicationVault, SelectingNewAndCopiedVaultsInitializesForumsBeforeNotesListing) {
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    const auto original = application->store().list_note_items();
+    for (const bool copy : {false, true}) {
+        const auto created = application->create_vault({
+            .display_name = copy ? "Copied forums" : "New forums",
+            .copy_from = copy ? std::optional<std::string>("A") : std::nullopt,
+        }, application->context_epoch());
+        (void)application->switch_vault(created.name, {}, application->context_epoch());
+        // Inspect persisted state before the first Notes API listing.
+        storage::SqliteDatabase db(application->store().database_path(), storage::SqliteDatabase::Mode::read_only);
+        const auto items = note_list(db);
+        const auto& workspace = *application->store().snapshot();
+        EXPECT_EQ(items.size(), workspace.forums().size()); // Entrance replaced by root.
+        EXPECT_EQ(std::ranges::count_if(items, [](const auto& item) { return item.forum_id == ""; }), 1);
+        for (const auto& forum : workspace.forums()) {
+            EXPECT_EQ(std::ranges::count_if(items, [&](const auto& item) { return item.forum_id == forum.id; }),
+                forum.id == workspace_entrance_id ? 0 : 1);
+        }
+        EXPECT_EQ(nlohmann::json(application->list_note_items(application->context_epoch())), nlohmann::json(items));
+    }
+    (void)application->switch_vault("A", {}, application->context_epoch());
+    EXPECT_EQ(nlohmann::json(application->store().list_note_items()), nlohmann::json(original));
 }
 
 TEST(ApplicationVault, NewVaultHasNoParentAndRenamingPreservesExistingParentReferences) {

@@ -3512,24 +3512,85 @@ describe('chat pictures', () => {
     return { promise, resolve, reject };
   }
 
-  it('selects a different random picture once per response and keeps it through streaming and completion', async () => {
-    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+  it('cycles on panel clicks and keyboard activation, then keeps the selection when reopened', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const getCharacterPicture = vi.fn(async (_id: string, filename?: string) => ({ ...portrait,
+      filename: filename!, content_base64: filename! }));
+    render(<App client={pictureClient({
+      getCharacter: async () => ({ ...characterDetailFixture,
+        markdown_files: ['portrait.jpg', 'happy.png', 'smiling.gif'] }),
+      getCharacterPicture,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
+    const next = await screen.findByRole('button', { name: 'Next character picture' });
+    const expectPicture = async (filename: string) => {
+      await waitFor(() => expect(screen.getByRole('img', { name: 'Assistant' }))
+        .toHaveAttribute('src', `data:image/png;base64,${filename}`));
+      expect(getCharacterPicture).toHaveBeenLastCalledWith('assistant', filename);
+    };
+    await expectPicture('portrait.jpg');
+    await user.click(next);
+    await expectPicture('happy.png');
+    await user.click(screen.getByRole('img', { name: 'Assistant' }));
+    await expectPicture('smiling.gif');
+    await user.click(next);
+    await expectPicture('portrait.jpg');
+    await user.keyboard('{Enter}');
+    await expectPicture('happy.png');
+    await user.keyboard(' ');
+    await expectPicture('smiling.gif');
+
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
+    await waitFor(() => expect(getCharacterPicture).toHaveBeenCalledTimes(7));
+    await expectPicture('smiling.gif');
+    act(() => events.handlers[0].onSnapshot({ ...members,
+      generation: { ...members.generation, active: true, character_id: 'assistant', request_id: 7 } }));
+    await expectPicture('portrait.jpg');
+  });
+
+  it('ignores an earlier click result when the next picture finishes first', async () => {
+    const events = drivableEvents();
+    const delayed = pendingPicture();
+    const getCharacterPicture = vi.fn(async (_id: string, filename?: string) => (
+      filename === 'delayed.png' ? delayed.promise : { ...portrait, filename: filename!, content_base64: filename! }
+    ));
+    render(<App client={pictureClient({
+      getCharacter: async () => ({ ...characterDetailFixture,
+        markdown_files: ['portrait.png', 'delayed.png', 'latest.png'] }),
+      getCharacterPicture,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
+    const next = await screen.findByRole('button', { name: 'Next character picture' });
+    fireEvent.click(next);
+    await waitFor(() => expect(getCharacterPicture).toHaveBeenLastCalledWith('assistant', 'delayed.png'));
+    fireEvent.click(next);
+    await waitFor(() => expect(screen.getByRole('img', { name: 'Assistant' }))
+      .toHaveAttribute('src', 'data:image/png;base64,latest.png'));
+    await act(async () => delayed.resolve({ ...portrait, content_base64: 'old-picture' }));
+    expect(screen.getByRole('img', { name: 'Assistant' })).toHaveAttribute('src', 'data:image/png;base64,latest.png');
+  });
+
+  it('cycles pictures in application order once per response and keeps them through streaming and completion', async () => {
     const events = drivableEvents();
     const getCharacterPicture = vi.fn(async (_id: string, filename?: string) => ({ ...portrait, filename: filename!, content_base64: filename! }));
     render(<App client={pictureClient({
       getCharacter: async () => ({ ...characterDetailFixture, markdown_files: [
-        'PICTURE.jpg', 'PICTURE_1.jpeg', 'PICTURE_2.png',
-        'portrait.png', 'PICTURES.png', 'PICTURE.txt', 'PICTURE_3.svg',
+        'portrait.jpg', 'Seneca happy.jpeg', 'PICTURE_2.png',
+        'PICTURE.txt', 'PICTURE_3.svg',
       ] }),
       getCharacterPicture,
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
     act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     const image = () => screen.getByRole('img', { name: 'Assistant' });
-    await waitFor(() => expect(image()).toHaveAttribute('src', 'data:image/png;base64,PICTURE.jpg'));
+    await waitFor(() => expect(image()).toHaveAttribute('src', 'data:image/png;base64,portrait.jpg'));
     const generation = { ...members.generation, active: true, character_id: 'assistant', request_id: 7 };
     act(() => events.handlers[0].onSnapshot({ ...members, generation }));
-    await waitFor(() => expect(image()).toHaveAttribute('src', 'data:image/png;base64,PICTURE_1.jpeg'));
+    await waitFor(() => expect(image()).toHaveAttribute('src', 'data:image/png;base64,Seneca happy.jpeg'));
     expect(getCharacterPicture).toHaveBeenCalledTimes(2);
 
     const entry = {
@@ -3542,17 +3603,26 @@ describe('chat pictures', () => {
     act(() => events.handlers[0].onSnapshot({ ...members, transcript: [{ ...entry, text: 'Hello there', status: 'complete' }] }));
     await act(async () => {});
     expect(getCharacterPicture).toHaveBeenCalledTimes(2);
-    expect(image()).toHaveAttribute('src', 'data:image/png;base64,PICTURE_1.jpeg');
+    expect(image()).toHaveAttribute('src', 'data:image/png;base64,Seneca happy.jpeg');
 
-    random.mockReturnValue(0.99);
     act(() => events.handlers[0].onSnapshot({ ...members, generation: { ...generation, request_id: 8 }, transcript: [entry] }));
     await waitFor(() => expect(image()).toHaveAttribute('src', 'data:image/png;base64,PICTURE_2.png'));
     expect(getCharacterPicture).toHaveBeenCalledTimes(3);
+
+    for (const [requestId, filename, calls] of [
+      [9, 'portrait.jpg', 4], [10, 'Seneca happy.jpeg', 5], [11, 'PICTURE_2.png', 6],
+    ] as const) {
+      act(() => events.handlers[0].onSnapshot({ ...members,
+        generation: { ...generation, request_id: requestId }, transcript: [entry] }));
+      await waitFor(() => expect(image()).toHaveAttribute('src', `data:image/png;base64,${filename}`));
+      expect(getCharacterPicture).toHaveBeenCalledTimes(calls);
+    }
   });
 
-  it.each(['jpg', 'jpeg', 'png', 'webp', 'gif', 'PNG'])('loads a single suffixed %s picture for consecutive responses', async (extension) => {
+  it.each([
+    'portrait.jpg', 'portrait.JPG', 'picture.jpeg', 'Picture.PNG', 'PICTURES.webp', 'Сенека.gif', 'portrait.final.png',
+  ])('loads %s for consecutive responses', async (filename) => {
     const events = drivableEvents();
-    const filename = `PICTURE_1.${extension}`;
     const getCharacterPicture = vi.fn().mockResolvedValue({ ...portrait, filename });
     render(<App client={pictureClient({
       getCharacter: async () => ({ ...characterDetailFixture, markdown_files: [filename] }),
@@ -3560,7 +3630,9 @@ describe('chat pictures', () => {
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
     act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
-    await screen.findByRole('img');
+    fireEvent.click(await screen.findByRole('img'));
+    expect(screen.queryByRole('button', { name: 'Next character picture' })).not.toBeInTheDocument();
+    expect(getCharacterPicture).toHaveBeenCalledTimes(1);
     for (const [requestId, calls] of [[7, 2], [8, 3]] as const) {
       act(() => events.handlers[0].onSnapshot({ ...members,
         generation: { ...members.generation, active: true, character_id: 'assistant', request_id: requestId } }));
@@ -3570,7 +3642,6 @@ describe('chat pictures', () => {
   });
 
   it('keeps the picture of the current response when the panel opens again', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0);
     const events = drivableEvents();
     const getCharacterPicture = vi.fn(async (_id: string, filename?: string) => ({ ...portrait, filename: filename!, content_base64: filename! }));
     render(<App client={pictureClient({
@@ -3609,10 +3680,30 @@ describe('chat pictures', () => {
     expect(screen.queryByText('Picture unavailable')).not.toBeInTheDocument();
   });
 
+  it.each(['request', 'decode'] as const)('shows the next picture on a click after a %s failure', async (failure) => {
+    const events = drivableEvents();
+    const getCharacterPicture = vi.fn(async (_id: string, filename?: string) => {
+      if (failure === 'request' && filename === 'broken.png') throw new Error('read failed');
+      return { ...portrait, filename: filename!, content_base64: filename! };
+    });
+    render(<App client={pictureClient({
+      getCharacter: async () => ({ ...characterDetailFixture, markdown_files: ['broken.png', 'next.png'] }),
+      getCharacterPicture,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
+    if (failure === 'decode') fireEvent.error(await screen.findByRole('img', { name: 'Assistant' }));
+    expect(await screen.findByText('Picture unavailable')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next character picture' }));
+    await waitFor(() => expect(screen.getByRole('img', { name: 'Assistant' }))
+      .toHaveAttribute('src', 'data:image/png;base64,next.png'));
+    expect(screen.queryByText('Picture unavailable')).not.toBeInTheDocument();
+  });
+
   it('leaves the panel empty when the character has no matching picture files', async () => {
     const events = drivableEvents();
     const getCharacter = vi.fn().mockResolvedValue({ ...characterDetailFixture,
-      markdown_files: ['CHARACTER.md', 'portrait.png', 'PICTURES.jpg', 'PICTURE_1.txt', 'picture.png', 'Picture_1.gif'] });
+      markdown_files: ['CHARACTER.md', 'portrait.png.txt', 'PICTURE_1.txt', 'portrait.svg', 'picture', 'Picture.gif.bak'] });
     const getCharacterPicture = vi.fn();
     render(<App client={pictureClient({ getCharacter, getCharacterPicture })} connectSessionEvents={events.connect} />);
     await attachInitial(events);

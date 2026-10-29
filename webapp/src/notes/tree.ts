@@ -9,6 +9,7 @@ export type NoteTreeItem = {
   kind: 'folder' | 'note' | 'annotation';
   name: string;
   has_compressed?: boolean;
+  forum_id?: string;
 };
 
 export function availableNoteName(
@@ -32,6 +33,7 @@ export type NoteTreeRow = NoteSibling & {
   parentId: number | null;
   parentKey: string | null;
   hasCompressed?: boolean;
+  forumId?: string;
 };
 
 // Display order only. Equal names stay distinct; this is not an identity check.
@@ -70,6 +72,7 @@ export function buildNoteIndex(items: readonly NoteTreeItem[]): {
       noteId: item.id,
       name: item.name,
       hasCompressed: item.has_compressed ?? false,
+      forumId: item.forum_id,
       kind: item.kind,
       parentId: item.parent_id,
       parentKey: item.parent_id === null ? 'root' : String(item.parent_id),

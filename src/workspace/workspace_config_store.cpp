@@ -48,6 +48,14 @@ namespace {
 
 using Database = storage::SqliteDatabase;
 
+std::map<std::string, std::string> forum_names(const Workspace& workspace) {
+    std::map<std::string, std::string> names;
+    for (const auto& forum : workspace.forums()) {
+        if (forum.id != workspace_entrance_id) names.emplace(forum.id, forum.display_name);
+    }
+    return names;
+}
+
 std::string allocate_character_id(
     const Workspace& workspace, const WorkspaceConfigEditor& editor) {
     for (std::size_t suffix = 1;; ++suffix) {
@@ -1445,11 +1453,15 @@ struct WorkspaceConfigStore::Impl {
     }
 
     void load_committed_workspace() {
+        storage::SqliteTransaction transaction(*database);
         const auto rows = read_workspace_config_files(*database);
         validate_config_rows(rows);
         TextFiles files;
         for (const auto& row : rows) files.emplace(row.name, row.content);
-        publish(Workspace::load(tree->workspace(), files));
+        auto workspace = Workspace::load(tree->workspace(), files);
+        note_sync_forums(*database, forum_names(workspace));
+        transaction.commit();
+        publish(std::move(workspace));
         ++revision;
         undo.reset();
     }
@@ -1489,6 +1501,9 @@ struct WorkspaceConfigStore::Impl {
             if (config_changed) {
                 apply_config_changes(*database, committed_rows, rows);
             }
+            const auto candidate_forums = forum_names(*candidate);
+            if (forum_names(*published_workspace) != candidate_forums)
+                note_sync_forums(*database, candidate_forums);
             if (!deleted_forum_id.empty()) {
                 storage::SqliteStatement delete_sessions = database->prepare(
                     "DELETE FROM sessions WHERE forum_key IN ("
@@ -2917,7 +2932,11 @@ std::optional<WorkspaceCharacterPicture> WorkspaceConfigStore::get_character_pic
     };
     if (!filename.empty()) return read_picture(filename, *picture_format(filename));
     for (const auto& format : picture_formats) {
-        if (auto picture = read_picture(format.filename, format)) return picture;
+        for (const auto& name : workspace->find_character(character_id)->filenames) {
+            if (picture_format(name) == &format) {
+                if (auto picture = read_picture(name, format)) return picture;
+            }
+        }
     }
     return std::nullopt;
 }

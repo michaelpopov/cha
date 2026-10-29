@@ -396,8 +396,9 @@ to their application; constructing a test workspace does not publish global
 process state.
 
 The schema-v2 `config` table stores `name` and `content`. Import collects regular
-`.toml` and `.md` workspace files and supported `PICTURE.*` files in character
-definition directories and `system/assistant/`, without following symlinks.
+`.toml` and `.md` workspace files and `.png`, `.webp`, `.jpg`, `.jpeg`, and
+`.gif` picture files with any name in character definition directories and
+`system/assistant/`, without following symlinks.
 Picture bytes are stored as base64 content and decoded during export. Import
 excludes root process-configuration files and other file types. Template
 includes must be `.md` or `.toml` files in the accepted row set.

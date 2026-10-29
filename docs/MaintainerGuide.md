@@ -344,11 +344,11 @@ For in-memory loading, directory structure comes from stored file paths rather
 than directories under the temporary runtime root.
 
 Import stores regular `.toml` and `.md` files and supported character pictures.
-Pictures must be named `PICTURE.png`, `PICTURE.webp`, `PICTURE.jpg`,
-`PICTURE.jpeg`, or `PICTURE.gif` in a character definition directory or
+A picture is any file with a `.png`, `.webp`, `.jpg`, `.jpeg`, or `.gif`
+extension, in any letter case, in a character definition directory or
 `system/assistant/`. Picture bytes are stored as base64 row content and decoded
-back into files during export. Unsupported picture names or locations warn and
-are ignored. Symlinks whose names would otherwise be imported are rejected;
+back into files during export. Pictures in other locations warn and are
+ignored. Symlinks whose names would otherwise be imported are rejected;
 symlinked directories are not followed. Other extensions are ignored. A prompt
 include must be a `.md` or `.toml` file if it must survive import. For example,
 `$$(notes.md)` can work, while `$$(notes.txt)` disappears from the imported

@@ -1276,7 +1276,7 @@ it('deletes a forum and removes its sessions from navigation after confirmation'
   await user.click(await screen.findByRole('button', { name: 'Delete The Lobby' }));
 
   expect(screen.getByRole('dialog')).toHaveTextContent(
-    'Delete “The Lobby”? This permanently removes the forum and all of its sessions.',
+    'Delete “The Lobby”? This permanently removes the forum, all of its sessions, and its Notes folder and contents.',
   );
   await user.click(screen.getByRole('button', { name: 'Delete forum' }));
 

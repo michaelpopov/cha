@@ -876,12 +876,21 @@ describe('notes native client', () => {
     }
   });
 
+  it('preserves forum ownership, including the empty root marker', async () => {
+    const items = [{ ...folder, forum_id: '' }, { ...folder, id: 2, parent_id: 1, forum_id: 'research' }, { ...folder, id: 3 }];
+    const client = clientFor({ 'notes.list': () => ({ items }) });
+    expect(await client.listNoteItems()).toEqual(items);
+  });
+
   it.each([
     ['notes.list', { items: [{ ...folder, extra: true }] }],
     ['notes.list', { items: [{ ...folder, id: 0 }] }],
     ['notes.list', { items: [{ ...folder, id: 1.5 }] }],
     ['notes.list', { items: [{ ...folder, parent_id: 0 }] }],
     ['notes.list', { items: [{ ...folder, kind: 'file' }] }],
+    ['notes.list', { items: [{ ...folder, forum_id: null }] }],
+    ['notes.list', { items: [{ ...folder, forum_id: 1 }] }],
+    ['notes.list', { items: [{ ...note, forum_id: '' }] }],
     ['notes.list', { item: [] }],
     ['notes.get', { id: 4, document: [] }],
     ['notes.get', { id: 4, document, compressed_text: null }],

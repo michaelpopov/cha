@@ -201,10 +201,11 @@ TEST_F(WorkspaceConfigStoreTest, PictureLookupUsesNestedDefinitionsAndCommittedR
 }
 
 TEST_F(WorkspaceConfigStoreTest, PictureLookupSelectsEveryFormatInPriorityOrder) {
+    const std::array names{"portrait.PNG", "happy.webp", "Seneca.JPG", "travel.jpeg", "animation.GIF"};
     for (std::size_t first = 0; first < picture_formats.size(); ++first) {
         SCOPED_TRACE(first);
         for (std::size_t index = 0; index < picture_formats.size(); ++index) {
-            const auto path = source() / "characters/guide" / picture_formats[index].filename;
+            const auto path = source() / "characters/guide" / names[index];
             if (index < first) std::filesystem::remove(path);
             else write_bytes(path, std::string("\0\xff", 2));
         }
@@ -212,7 +213,7 @@ TEST_F(WorkspaceConfigStoreTest, PictureLookupSelectsEveryFormatInPriorityOrder)
         auto store = WorkspaceConfigStore::open(database());
         const auto picture = store->get_character_picture("guide");
         ASSERT_TRUE(picture);
-        EXPECT_EQ(picture->filename, picture_formats[first].filename);
+        EXPECT_EQ(picture->filename, names[first]);
         EXPECT_EQ(picture->mime_type, picture_formats[first].mime_type);
         EXPECT_EQ(picture->content_base64, encode_base64(std::string("\0\xff", 2)));
     }
@@ -901,6 +902,108 @@ void write_key_next_id(
     write_bytes(
         root / "system" / "keys" / "config.toml",
         "next_id = " + std::to_string(next_id) + "\n");
+}
+
+NoteItem linked_folder(WorkspaceConfigStore& store, std::string_view forum_id) {
+    for (const auto& item : store.list_note_items()) {
+        if (item.forum_id && *item.forum_id == forum_id) return item;
+    }
+    ADD_FAILURE() << "Missing forum folder " << forum_id;
+    return {};
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFoldersFollowCommittedCatalogAndUndo) {
+    auto store = open_store();
+    const auto root = linked_folder(*store, "");
+    const auto lobby = linked_folder(*store, "lobby");
+    EXPECT_EQ(lobby.parent_id, root.id);
+    EXPECT_EQ(store->list_note_items().size(), 2u);
+    const auto id = store->create_forum("Research", "reader");
+    const auto folder = linked_folder(*store, id);
+    EXPECT_EQ(folder.parent_id, root.id);
+    store->apply_forum_update(id, "Renamed", "");
+    EXPECT_EQ(linked_folder(*store, id).id, folder.id);
+    EXPECT_EQ(linked_folder(*store, id).name, "Renamed");
+    const std::string path = "forums/" + id + "/config.toml";
+    const auto config = store->read_config(std::vector<std::string>{path}).files.front().content;
+    auto changed = config;
+    changed.replace(changed.find("Renamed"), 7, "Assistant");
+    const auto applied = store->apply_config(store->config_revision(), std::vector<WorkspaceConfigChange>{{
+        .path = path, .operation = WorkspaceConfigOperation::replace, .content = changed,
+    }});
+    ASSERT_TRUE(applied.committed) << applied.error_message;
+    EXPECT_EQ(linked_folder(*store, id).name, "Assistant");
+    EXPECT_EQ(linked_folder(*store, id).id, folder.id);
+    const auto undone = store->undo_config(applied.revision);
+    ASSERT_TRUE(undone.committed) << undone.error_message;
+    EXPECT_EQ(linked_folder(*store, id).name, "Renamed");
+    EXPECT_EQ(linked_folder(*store, id).id, folder.id);
+    store->apply_forum_delete(id);
+    EXPECT_EQ(store->list_note_items().size(), 2u);
+    const auto reused = store->create_forum("Renamed", "reader");
+    EXPECT_NE(linked_folder(*store, reused).id, folder.id);
+    EXPECT_EQ(linked_folder(*store, "").id, root.id);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFolderFailureRollsBackConfigurationAndSkipsUnrelatedEdits) {
+    auto store = open_store();
+    const auto before = nlohmann::json(store->list_note_items());
+    const auto config = config_contents(database());
+    for (const auto fault : {WorkspaceConfigFault::sqlite_begin, WorkspaceConfigFault::sqlite_write, WorkspaceConfigFault::sqlite_commit}) {
+        force_next_workspace_config_fault(fault);
+        EXPECT_THROW((void)store->create_forum("Research", "reader"), std::runtime_error);
+        EXPECT_EQ(nlohmann::json(store->list_note_items()), before);
+        EXPECT_EQ(config_contents(database()), config);
+    }
+    {
+        Database db(database(), Database::Mode::read_write);
+        db.execute("CREATE TRIGGER reject_forum_update BEFORE UPDATE ON note_items BEGIN SELECT RAISE(ABORT,'test folder failure'); END");
+    }
+    EXPECT_THROW(store->apply_forum_update("lobby", "Changed", ""), std::exception);
+    EXPECT_EQ(nlohmann::json(store->list_note_items()), before);
+    EXPECT_EQ(config_contents(database()), config);
+    // An unrelated edit never inspects a malformed managed root.
+    {
+        Database db(database(), Database::Mode::read_write);
+        db.execute("DROP TRIGGER reject_forum_update");
+        db.execute("UPDATE note_items SET name='Damaged' WHERE forum_id=''");
+    }
+    EXPECT_NO_THROW(store->apply_character_settings("guide", "second", std::nullopt));
+    EXPECT_THROW(store->apply_forum_update("lobby", "Changed", ""), std::runtime_error);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFoldersReconcileMergeAndOfflineRemovalOnReopen) {
+    auto store = open_store();
+    const auto lobby = linked_folder(*store, "lobby");
+    test::TestWorkspace other;
+    other.add_forum("lobby", "Source name", "guide");
+    const auto source_db = import_source_database(other);
+    merge_from(*store, source_db);
+    EXPECT_EQ(linked_folder(*store, "lobby").id, lobby.id);
+    EXPECT_EQ(linked_folder(*store, "lobby").name, "Source name");
+    EXPECT_TRUE(std::ranges::all_of(store->list_note_items(), [](const auto& item) {
+        return item.kind == NoteItemKind::folder && item.forum_id.has_value();
+    }));
+    store.reset();
+    std::filesystem::remove_all(other.root() / "forums");
+    (void)import_workspace_configuration(other.root(), database());
+    store = open_store();
+    ASSERT_EQ(store->list_note_items().size(), 1u);
+    EXPECT_EQ(linked_folder(*store, "").name, "Forums");
+}
+
+TEST_F(WorkspaceConfigStoreTest, IncompatibleForumCanBeExportedCorrectedAndImported) {
+    import_from_source();
+    {
+        Database db(database(), Database::Mode::read_write);
+        db.execute("UPDATE config SET content='display_name = \"ANNOTATIONS\"' WHERE name='forums/lobby/config.toml'");
+    }
+    EXPECT_THROW((void)WorkspaceConfigStore::open(database()), std::runtime_error);
+    EXPECT_NO_THROW((void)export_workspace_configuration(database(), export_));
+    write_bytes(export_ / "forums/lobby/config.toml", "display_name = \"Corrected\"\n");
+    EXPECT_NO_THROW((void)import_workspace_configuration(export_, database()));
+    auto store = WorkspaceConfigStore::open(database());
+    EXPECT_EQ(linked_folder(*store, "lobby").name, "Corrected");
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, OpensPrivateSessionStorageWithoutMaterializingConfiguration) {
@@ -3495,7 +3598,7 @@ TEST_F(WorkspaceConfigStoreTest, PictureUploadsPreserveOtherFormatsAndExportOrig
     std::filesystem::create_directories(source() / "characters/nested");
     std::filesystem::rename(source() / "characters/guide", source() / "characters/nested/guide");
     for (const auto& format : picture_formats) {
-        write_bytes(source() / "characters/nested/guide" / format.filename, "old picture");
+        write_bytes(source() / "characters/nested/guide" / ("PICTURE" + std::string(format.extension)), "old picture");
     }
     import_from_source();
     const auto before = config_contents(database());
@@ -3516,8 +3619,8 @@ TEST_F(WorkspaceConfigStoreTest, PictureUploadsPreserveOtherFormatsAndExportOrig
         if (!picture_format(name)) EXPECT_EQ(after.at(name), content) << name;
     }
     for (const auto& format : picture_formats) {
-        const auto name = "characters/nested/guide/" + std::string(format.filename);
-        EXPECT_EQ(after.at(name), format.filename == "PICTURE.jpg" ? encode_base64(bytes) : before.at(name));
+        const auto name = "characters/nested/guide/PICTURE" + std::string(format.extension);
+        EXPECT_EQ(after.at(name), format.extension == ".jpg" ? encode_base64(bytes) : before.at(name));
     }
     export_workspace_configuration(database(), export_);
     EXPECT_EQ(file_bytes(export_ / "characters/nested/guide/PICTURE.jpg"), bytes);
@@ -3584,9 +3687,12 @@ TEST_F(WorkspaceConfigStoreTest, NamedPicturesSurviveImportUploadReplacementExpo
     EXPECT_EQ(picture->filename, "Seneca.JPG");
     EXPECT_EQ(picture->mime_type, "image/jpeg");
     EXPECT_EQ(picture->content_base64, encode_base64(bytes));
+    ASSERT_TRUE(store->get_character_picture("guide"));
+    EXPECT_EQ(store->get_character_picture("guide")->filename, "Seneca.JPG");
     store->apply_character_picture("guide", "my-portrait.png", encode_base64(bytes));
     ASSERT_TRUE(store->get_character_picture("guide", "my-portrait.png"));
-    EXPECT_FALSE(store->get_character_picture("guide"));
+    ASSERT_TRUE(store->get_character_picture("guide"));
+    EXPECT_EQ(store->get_character_picture("guide")->filename, "my-portrait.png");
     store->apply_character_picture("guide", "my-portrait.webp", encode_base64(bytes), "my-portrait.png");
     EXPECT_FALSE(store->get_character_picture("guide", "my-portrait.png"));
     EXPECT_EQ(store->get_character_picture("guide", "my-portrait.webp")->mime_type, "image/webp");

@@ -8,7 +8,7 @@ import {
   type NoteItem,
   type NotesClient,
 } from '../api/client';
-import { NotesTree, type DeleteNoteItem } from './NotesTree';
+import { NotesTree, type DeleteNoteItem, type NoteActions } from './NotesTree';
 
 const study: NoteItem = { id: 1, read_only: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Study' };
 const aardvark: NoteItem = { id: 2, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Aardvark' };
@@ -1330,4 +1330,101 @@ it('recovers a failed folder-delete reservation from the store menu without a fr
   expect(start).not.toHaveBeenCalled();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   await waitFor(() => expect(close).toHaveBeenCalledExactlyOnceWith(8, 1));
+});
+
+
+it.each(['mouse', 'keyboard'])('shows only Copy Ref ID for both managed folders via %s', async (entry) => {
+  const items: NoteItem[] = [
+    { ...study, name: 'Forums', forum_id: '' },
+    { ...philosophy, name: 'Research', forum_id: 'research' },
+  ];
+  const compressionStatus = vi.fn(async () => ({ pending: false }));
+  const storeOperation = vi.fn(async () => ({ present: false as const }));
+  renderTree({ notes: client({ listNoteItems: async () => items, compressionStatus, storeOperation }) });
+  await screen.findByText('Forums');
+  fireEvent.click(screen.getByRole('treeitem', { name: /Forums/ }));
+  for (const name of ['Forums', 'Research']) {
+    const row = screen.getByRole('treeitem', { name: new RegExp(name) });
+    if (entry === 'keyboard') {
+      fireEvent.focus(row);
+      fireEvent.keyDown(row, { key: 'F10', code: 'F10', shiftKey: true });
+    } else fireEvent.click(within(row).getByRole('button', { name: `Actions for ${name}` }));
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Copy Ref ID']);
+    expect(within(menu).getByRole('menuitem')).toHaveFocus();
+    fireEvent.keyDown(menu, { key: 'Escape' });
+  }
+  expect(compressionStatus).not.toHaveBeenCalled();
+  expect(storeOperation).not.toHaveBeenCalled();
+});
+
+it('moves a menu up only as far as needed to show all of its commands', async () => {
+  // jsdom has no layout: rows end at y=500 and the window is 768 pixels high.
+  const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const height = this.getAttribute('role') === 'menu' ? this.childElementCount * 39 + 13 : 20;
+    const top = this.getAttribute('role') === 'menu' ? 0 : 480;
+    return { x: 0, y: top, top, left: 0, right: 160, bottom: top + height, width: 160, height, toJSON: () => ({}) };
+  });
+  try {
+    renderTree({ items: [study, { ...aardvark, name: 'Forums', kind: 'folder', forum_id: '' }] });
+    // Study has 8 commands: 768 - (8 * 39 + 13) - 8 = 435. Forums has 1 command and fits below its row.
+    for (const [name, top] of [['Study', '435px'], ['Forums', '500px']]) {
+      fireEvent.click(await screen.findByRole('button', { name: `Actions for ${name}` }));
+      expect(await screen.findByRole('menu')).toHaveStyle({ top });
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    }
+  } finally {
+    rect.mockRestore();
+  }
+});
+
+it('keeps ordinary folders named Forums editable', async () => {
+  renderTree({ items: [{ ...study, name: 'Forums' }] });
+  await screen.findByText('Forums');
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Forums' }));
+  const menu = await screen.findByRole('menu');
+  expect(within(menu).getByRole('menuitem', { name: 'New note' })).toBeInTheDocument();
+  expect(within(menu).getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+});
+
+it('refreshes on visibility and registered actions without an active note, deferring while a menu is open', async () => {
+  const listNoteItems = vi.fn(async () => [study]);
+  let actions: NoteActions | null = null;
+  const register = (next: NoteActions | null) => { actions = next; };
+  const props = {
+    activeNoteId: null, client: client({ listNoteItems }), vaultName: 'Personal',
+    onBeforeCreateNote: async () => true, onOpenNote: vi.fn(), onNoteItems: vi.fn(),
+    onCompressNote: vi.fn(), onSetNoteReadOnly: vi.fn(), onDeleteItem: vi.fn(),
+    getNoteLength: async () => 0, onRegisterNoteActions: register,
+  };
+  const view = render(<NotesTree {...props} browsing />);
+  await screen.findByText('Study');
+  expect(listNoteItems).toHaveBeenCalledTimes(1);
+  view.rerender(<NotesTree {...props} browsing={false} />);
+  view.rerender(<NotesTree {...props} browsing />);
+  await waitFor(() => expect(listNoteItems).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Actions for Study' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+  await screen.findByRole('menu');
+  act(() => actions!.refresh());
+  expect(listNoteItems).toHaveBeenCalledTimes(2);
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+  await waitFor(() => expect(listNoteItems).toHaveBeenCalledTimes(3));
+});
+
+it('moves tree focus to a surviving item when a background refresh removes the focused folder', async () => {
+  const root: NoteItem = { ...study, name: 'Forums', forum_id: '' };
+  let items: NoteItem[] = [root, { ...philosophy, name: 'Research', forum_id: 'research' }];
+  let actions: NoteActions | null = null;
+  render(<NotesTree activeNoteId={null} browsing client={client({ listNoteItems: async () => items })}
+    vaultName="Personal" onBeforeCreateNote={async () => true} onOpenNote={vi.fn()} onNoteItems={vi.fn()}
+    onCompressNote={vi.fn()} onSetNoteReadOnly={vi.fn()} onDeleteItem={vi.fn()} getNoteLength={async () => 0}
+    onRegisterNoteActions={(next) => { actions = next; }} />);
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'Forums' }));
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'Research' }));
+  expect(screen.getByRole('treeitem', { name: 'Research' })).toHaveAttribute('tabindex', '0');
+  items = [root];
+  act(() => actions!.refresh());
+  await waitFor(() => expect(screen.queryByRole('treeitem', { name: 'Research' })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole('treeitem', { name: 'Forums' })).toHaveAttribute('tabindex', '0'));
 });

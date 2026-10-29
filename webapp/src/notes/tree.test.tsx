@@ -45,6 +45,17 @@ describe('note sibling order', () => {
 });
 
 describe('note metadata index', () => {
+  it('preserves forum markers independently of the displayed name', () => {
+    const { rows } = buildNoteIndex([
+      { id: 1, parent_id: null, kind: 'folder', name: 'Forums', forum_id: '' },
+      { id: 2, parent_id: 1, kind: 'folder', name: 'Research', forum_id: 'research' },
+      { id: 3, parent_id: null, kind: 'folder', name: 'Forums' },
+    ]);
+    expect(rows['1'].forumId).toBe('');
+    expect(rows['2'].forumId).toBe('research');
+    expect(rows['3'].forumId).toBeUndefined();
+  });
+
   const items: NoteTreeItem[] = [
     { id: 2, parent_id: null, kind: 'note', name: 'Aardvark' },
     { id: 1, parent_id: null, kind: 'folder', name: 'Study' },

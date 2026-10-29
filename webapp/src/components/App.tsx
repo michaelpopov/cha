@@ -323,6 +323,7 @@ function ScreenContent({
     );
     case 'new-forum': return (
       <NewForumScreen
+        onForumsChanged={() => noteActions?.refresh()}
         client={client}
         dispatch={dispatch}
         navigate={navigate}
@@ -342,6 +343,7 @@ function ScreenContent({
     );
     case 'forum-detail': return (
       <ForumDetailScreen
+        onForumsChanged={() => noteActions?.refresh()}
         onDelete={onDeleteForum}
         client={client}
         dispatch={dispatch}
@@ -1193,13 +1195,14 @@ export function App({
 
   const deleteForum = useCallback(async (forumId: string) => {
     await client.deleteForum(forumId);
+    noteActions?.refresh();
     if (state.activeConversation?.forumId === forumId) {
       clearLiveSession();
       writeAppRoute('/', 'replace');
     }
     navigate({ type: 'forum-deleted', forumId });
     setCatalogRevision((revision) => revision + 1);
-  }, [clearLiveSession, client, navigate, state.activeConversation]);
+  }, [clearLiveSession, client, navigate, noteActions, state.activeConversation]);
 
   const title = navigationTitle(state);
   const ready = state.bootstrapStatus === 'ready';
@@ -1249,7 +1252,7 @@ export function App({
               <NotesTree
                 key={state.notesEpoch}
                 activeNoteId={state.activeNoteId}
-                browsing={state.sidebarTab === 'notes'}
+                browsing={state.sidebarTab === 'notes' && state.sidebarOpen}
                 client={client}
                 getNoteLength={getNoteLength}
                 onBeforeCreateNote={beforeCreateNote}

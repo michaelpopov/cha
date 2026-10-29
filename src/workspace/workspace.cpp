@@ -2,6 +2,7 @@
 #include "workspace/workspace_internal.h"
 
 #include "characters/model_context.h"
+#include "storage/session_label.h"
 #include "providers/voice_output_config.h"
 #include "util/curl.h"
 #include "util/crypto.h"
@@ -1190,7 +1191,13 @@ LoadedForumConfig load_forum_config(
             "Forum config '" + utf8_path(path) + "' default character '"
             + result.default_character_id + "' is not a member");
     }
-    validate_public_name(result.display_name, "Forum name", path);
+    try {
+        validate_display_label(result.display_name, "Forum name");
+        if (result.display_name == "ANNOTATIONS")
+            throw std::invalid_argument("The name ANNOTATIONS is reserved.");
+    } catch (const std::invalid_argument& error) {
+        throw std::runtime_error("Forum config '" + utf8_path(path) + "': " + error.what());
+    }
     if (result.description) validate_description(*result.description, "Forum", path);
     return result;
 }

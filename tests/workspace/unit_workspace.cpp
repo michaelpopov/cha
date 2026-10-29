@@ -76,6 +76,26 @@ Workspace workspace_with_characters(
     return Workspace::load(fixture.root());
 }
 
+TEST(Workspace, ForumNamesUseNotesDisplayLabelRules) {
+    test::TestWorkspace fixture;
+    std::string unicode;
+    for (int i = 0; i < 200; ++i) unicode += "é";
+    for (const auto& name : {std::string("Annotations"), std::string("Forums"), unicode}) {
+        fixture.add_forum("lobby", name, "guide");
+        EXPECT_NO_THROW((void)Workspace::load(fixture.root()));
+    }
+    for (const auto& name : {std::string("ANNOTATIONS"), unicode + "é"}) {
+        fixture.add_forum("lobby", name, "guide");
+        try {
+            (void)Workspace::load(fixture.root());
+            FAIL() << "Expected invalid forum name";
+        } catch (const std::runtime_error& error) {
+            EXPECT_NE(std::string(error.what()).find("forums/lobby/config.toml"), std::string::npos);
+            EXPECT_NE(std::string(error.what()).find(name == "ANNOTATIONS" ? "reserved" : "200"), std::string::npos);
+        }
+    }
+}
+
 TEST(Workspace, CharacterProfileAdditionsNormalizeBoundaryWhitespace) {
     struct Case {
         std::string prompt;

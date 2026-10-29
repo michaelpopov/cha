@@ -794,6 +794,30 @@ TEST(AssistantService, ReadMarksAFileTooLargeWhenItsEscapedTextDoesNotFit) {
     EXPECT_FALSE(read["files"][2].contains("content"));
 }
 
+TEST(AssistantService, ForumRenameAndUndoPreserveTheLinkedFolder) {
+    ServiceHarness harness;
+    const auto folder = [&] {
+        for (const auto& item : harness.store().list_note_items())
+            if (item.forum_id == "lobby") return item;
+        ADD_FAILURE() << "Missing forum folder";
+        return NoteItem{};
+    };
+    const auto original = folder();
+    const auto read = harness.run("vault_config_read", read_arguments("forums/lobby/config.toml"));
+    auto config = read["files"][0]["content"].get<std::string>();
+    const auto name = config.find(original.name);
+    ASSERT_NE(name, std::string::npos);
+    config.replace(name, original.name.size(), "Assistant renamed");
+    const auto changed = harness.run("vault_config_apply", replace_change("forums/lobby/config.toml", config, read["version"]));
+    ASSERT_EQ(changed["committed"], true) << changed;
+    EXPECT_EQ(folder().name, "Assistant renamed");
+    EXPECT_EQ(folder().id, original.id);
+    const auto undone = harness.run("vault_config_apply", {{"action", "undo"}, {"version", changed["version"]}, {"changes", nullptr}});
+    ASSERT_EQ(undone["committed"], true) << undone;
+    EXPECT_EQ(folder().name, original.name);
+    EXPECT_EQ(folder().id, original.id);
+}
+
 TEST(AssistantService, ExercisesTheFourMaintenanceRecipes) {
     ServiceHarness harness;
     const auto revision = [&] { return std::to_string(harness.store().config_revision()); };

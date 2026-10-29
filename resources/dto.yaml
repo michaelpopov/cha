@@ -1839,6 +1839,8 @@ components:
           maximum: 9007199254740991
         kind: {$ref: "#/components/schemas/NoteItemKind"}
         store: {$ref: "#/components/schemas/FolderStoreSummary"}
+        forum_id:
+          type: string
         has_compressed:
           type: boolean
         read_only:

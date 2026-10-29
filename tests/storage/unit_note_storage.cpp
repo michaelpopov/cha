@@ -135,6 +135,211 @@ protected:
 };
 
 
+TEST_F(NoteStorageTest, ForumSchemaIsAdditiveAndMarkersAreUnique) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Legacy");
+    const auto blob = raw_content(*database_, note.id);
+    database_->execute("DROP INDEX note_items_forum_id");
+    database_->execute("ALTER TABLE note_items DROP COLUMN forum_id");
+    const auto table_sql = [&] {
+        auto q = database_->prepare("SELECT sql FROM sqlite_master WHERE name='note_items'");
+        (void)q.step();
+        return q.text(0);
+    };
+    const auto before = table_sql();
+    {
+        storage::SqliteTransaction tx(*database_);
+        create_note_items_schema(*database_);
+        create_note_items_schema(*database_);
+        tx.commit();
+    }
+    // ADD COLUMN only inserts the column; the table and its CHECKs are not rebuilt.
+    const auto schema = table_sql();
+    auto without_column = schema;
+    const auto added = without_column.find(", forum_id TEXT");
+    ASSERT_NE(added, std::string::npos);
+    without_column.erase(added, std::string_view(", forum_id TEXT").size());
+    EXPECT_EQ(without_column, before);
+    EXPECT_EQ(raw_content(*database_, note.id), blob);
+    EXPECT_FALSE(note_find_item(*database_, note.id)->forum_id);
+    database_->execute("INSERT INTO note_items(kind,name,forum_id) VALUES('folder','Forums','')");
+    EXPECT_THROW(database_->execute("INSERT INTO note_items(kind,name,forum_id) VALUES('folder','Other','')"), std::runtime_error);
+    EXPECT_THROW(database_->execute("INSERT INTO note_items(kind,name) VALUES('folder','ANNOTATIONS')"), std::runtime_error);
+    EXPECT_NE(schema.find("name <> 'ANNOTATIONS'"), std::string::npos);
+    EXPECT_TRUE(has_schema_object(*database_, "index", "note_items_forum_id"));
+}
+
+TEST_F(NoteStorageTest, ForumsPreserveLegacyFoldersAndAreIdempotent) {
+    create_event_history_schema(*database_);
+    const auto legacy = note_create(*database_, {}, NoteItemKind::folder, "Forums");
+    const auto child = note_create(*database_, legacy.id, NoteItemKind::note, "Keep me");
+    (void)note_create(*database_, {}, NoteItemKind::note, "Forums (saved)");
+    (void)note_create(*database_, {}, NoteItemKind::folder, "Forums (saved) 1");
+    const auto blob = raw_content(*database_, child.id);
+    {
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {{"a", "Forums"}, {"b", "Research"}});
+        tx.commit();
+    }
+    const auto items = note_list(*database_);
+    EXPECT_EQ(note_find_item(*database_, legacy.id)->name, "Forums (saved) 2");
+    EXPECT_FALSE(note_find_item(*database_, legacy.id)->forum_id);
+    EXPECT_EQ(note_find_item(*database_, child.id)->parent_id, legacy.id);
+    EXPECT_EQ(raw_content(*database_, child.id), blob);
+    ASSERT_EQ(event_list(*database_).size(), 1u);
+    EXPECT_NE(event_list(*database_)[0].message.find("Forums (saved) 2"), std::string::npos);
+    {
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {{"a", "Forums"}, {"b", "Research"}});
+        tx.commit();
+    }
+    EXPECT_EQ(nlohmann::json(note_list(*database_)), nlohmann::json(items));
+    EXPECT_EQ(event_list(*database_).size(), 1u);
+}
+
+TEST_F(NoteStorageTest, ForumsPreserveLegacyNoteContentAndAnnotationsAtomically) {
+    create_event_history_schema(*database_);
+    const auto legacy = note_create(*database_, {}, NoteItemKind::note, "Forums");
+    (void)note_save(*database_, legacy.id, nlohmann::json::parse(R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Saved highlight","marks":[{"type":"highlight"}]}]}]})"));
+    note_save_compressed(*database_, legacy.id, "Compressed");
+    const auto blob = raw_content(*database_, legacy.id);
+    database_->execute("CREATE TRIGGER reject_forums BEFORE INSERT ON note_items WHEN NEW.forum_id='' BEGIN SELECT RAISE(ABORT,'test failure'); END");
+    EXPECT_THROW({
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {{"a", "Research"}});
+        tx.commit();
+    }, std::runtime_error);
+    EXPECT_EQ(note_find_item(*database_, legacy.id)->name, "Forums");
+    EXPECT_TRUE(event_list(*database_).empty());
+    database_->execute("DROP TRIGGER reject_forums");
+    {
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {});
+        tx.commit();
+    }
+    EXPECT_EQ(note_find_item(*database_, legacy.id)->name, "Forums (saved)");
+    EXPECT_EQ(raw_content(*database_, legacy.id), blob);
+    EXPECT_EQ(note_get(*database_, legacy.id).compressed_text, "Compressed");
+    const auto items = note_list(*database_);
+    const auto annotation = std::ranges::find_if(items, [](const auto& i) { return i.kind == NoteItemKind::annotation; });
+    ASSERT_NE(annotation, items.end());
+    EXPECT_NE(note_get(*database_, annotation->id).document.dump().find("Forums (saved)"), std::string::npos);
+}
+
+TEST_F(NoteStorageTest, ForumsPreserveLegacyStoreAndEmptyFolderIdentity) {
+    create_event_history_schema(*database_);
+    create_folder_store_schema(*database_);
+    const auto legacy = note_create(*database_, {}, NoteItemKind::folder, "Forums");
+    const auto child = note_create(*database_, legacy.id, NoteItemKind::note, "Chapter");
+    const auto store_id = folder_store_register(*database_, legacy.id, FolderStoreService::openai, "key", 1);
+    folder_store_save_remote_id(*database_, store_id, "vs_saved");
+    folder_store_add_file_id(*database_, store_id, "file_saved");
+    folder_store_mark_ready(*database_, store_id);
+    {
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {{"a", "Research"}});
+        tx.commit();
+    }
+    const auto saved = folder_store_get_by_folder(*database_, legacy.id);
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->id, store_id);
+    EXPECT_EQ(saved->remote_store_id, "vs_saved");
+    EXPECT_EQ(saved->file_ids, std::vector<std::string>{"file_saved"});
+    EXPECT_EQ(saved->state, FolderStoreState::ready);
+    EXPECT_EQ(note_find_item(*database_, child.id)->parent_id, legacy.id);
+    // An empty legacy folder is preserved, too, rather than adopted.
+    database_->execute("DELETE FROM note_items WHERE forum_id IS NOT NULL");
+    const auto empty = note_create(*database_, {}, NoteItemKind::folder, "Forums");
+    {
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {});
+        tx.commit();
+    }
+    EXPECT_EQ(note_find_item(*database_, empty.id)->name, "Forums (saved) 1");
+    EXPECT_FALSE(note_find_item(*database_, empty.id)->forum_id);
+}
+
+TEST_F(NoteStorageTest, ForumRemovalUsesSubtreeCleanupAndRollsBackFailedSwaps) {
+    create_event_history_schema(*database_);
+    std::int64_t folder = 0;
+    {
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {{"a", "Alpha"}, {"b", "Beta"}});
+        tx.commit();
+    }
+    for (const auto& item : note_list(*database_)) if (item.forum_id == "a") folder = item.id;
+    // Seed future generated content internally; user creation is forbidden.
+    auto insert = database_->prepare("INSERT INTO note_items(parent_id,kind,name,content_json,read_only) VALUES (?,'note','Generated',?,1)");
+    insert.bind(1, folder);
+    insert.bind_blob(2, compressed_content(empty_note_document));
+    insert.run();
+    const auto child = database_->last_insert_rowid();
+    (void)note_audio_accept(*database_, child, 1, "https://audio.test", "key", [](const auto&) {});
+    const auto before = nlohmann::json(note_list(*database_));
+    database_->execute("CREATE TRIGGER reject_final BEFORE UPDATE ON note_items WHEN NEW.name='Beta' BEGIN SELECT RAISE(ABORT,'test failure'); END");
+    EXPECT_THROW({
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {{"a", "Beta"}, {"b", "Alpha"}});
+        tx.commit();
+    }, std::runtime_error);
+    EXPECT_EQ(nlohmann::json(note_list(*database_)), before);
+    database_->execute("DROP TRIGGER reject_final");
+    {
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {{"b", "Beta"}});
+        tx.commit();
+    }
+    EXPECT_FALSE(note_find_item(*database_, folder));
+    EXPECT_FALSE(note_find_item(*database_, child));
+    EXPECT_TRUE(note_audio_attempts(*database_).empty());
+    EXPECT_EQ(event_list(*database_).size(), 1u);
+}
+
+TEST_F(NoteStorageTest, ForumFoldersRejectUserMutationsAndSupportSwapsAndReusedIds) {
+    {
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {{"a", "Alpha"}, {"b", "Beta"}});
+        tx.commit();
+    }
+    const auto original = note_list(*database_);
+    for (const auto& item : original) {
+        ASSERT_TRUE(item.forum_id);
+        EXPECT_EQ(nlohmann::json(item).at("forum_id"), *item.forum_id);
+        for (const auto kind : {NoteItemKind::folder, NoteItemKind::note}) {
+            expect_note_error(NoteFailure::invalid, "This folder is managed by CHA.", [&] {
+                (void)note_create(*database_, item.id, kind, "Child");
+            });
+        }
+        expect_note_error(NoteFailure::invalid, "This folder is managed by CHA.", [&] {
+            (void)note_import_book(*database_, item.id, "Book", {{"Chapter", nlohmann::json::object()}});
+        });
+        expect_note_error(NoteFailure::invalid, "This folder is managed by CHA.", [&] { (void)note_rename(*database_, item.id, item.name); });
+        expect_note_error(NoteFailure::invalid, "This folder is managed by CHA.", [&] { note_delete(*database_, item.id); });
+    }
+    {
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {{"a", "Beta"}, {"b", "Alpha"}});
+        tx.commit();
+    }
+    for (const auto& item : original) {
+        const auto now = *note_find_item(*database_, item.id);
+        EXPECT_EQ(now.forum_id, item.forum_id);
+        EXPECT_EQ(now.name, *item.forum_id == "a" ? "Beta" : *item.forum_id == "b" ? "Alpha" : "Forums");
+    }
+    {
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {});
+        note_sync_forums(*database_, {{"a", "Alpha"}});
+        tx.commit();
+    }
+    for (const auto& item : original) {
+        if (!item.forum_id->empty()) EXPECT_FALSE(note_find_item(*database_, item.id));
+    }
+    (void)note_create(*database_, {}, NoteItemKind::folder, "forums");
+    const auto ordinary = note_create(*database_, {}, NoteItemKind::folder, "Ordinary");
+    (void)note_create(*database_, ordinary.id, NoteItemKind::folder, "Forums");
+    EXPECT_FALSE(nlohmann::json(ordinary).contains("forum_id"));
+}
+
 TEST_F(NoteStorageTest, AudioReplacementIsAtomicPersistentAndCascadesWithNoteDeletion) {
     const auto note = note_create(*database_, {}, NoteItemKind::note, "Narration");
     (void)note_set_read_only(*database_, note.id, true);
@@ -1367,7 +1572,7 @@ TEST(NoteStorage, OlderVaultAndMaintenanceKeepIdentityWithoutConfigChanges) {
     }
 
     auto store = WorkspaceConfigStore::open(path);
-    EXPECT_TRUE(store->list_note_items().empty());
+    EXPECT_EQ(store->list_note_items().size(), 2u);
     const auto revision = store->config_revision();
     const auto snapshot = store->snapshot();
     const auto folder = store->create_note_item(
@@ -1378,7 +1583,7 @@ TEST(NoteStorage, OlderVaultAndMaintenanceKeepIdentityWithoutConfigChanges) {
     store->delete_note_item(folder.id);
     EXPECT_EQ(store->config_revision(), revision);
     EXPECT_EQ(store->snapshot().get(), snapshot.get());
-    EXPECT_EQ(store->list_note_items().size(), 1U);
+    EXPECT_EQ(store->list_note_items().size(), 3u);
 
     {
         auto maintenance = store->reserve_maintenance();
@@ -1389,7 +1594,7 @@ TEST(NoteStorage, OlderVaultAndMaintenanceKeepIdentityWithoutConfigChanges) {
         }
         maintenance.reopen();
     }
-    EXPECT_TRUE(store->list_note_items().empty());
+    EXPECT_EQ(store->list_note_items().size(), 2u);
     {
         Database database(path, Database::Mode::read_only);
         EXPECT_EQ(database.pragma_integer("application_id"), application_id);

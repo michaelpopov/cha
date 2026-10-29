@@ -8,17 +8,17 @@
 namespace cha {
 
 struct PictureFormat {
-    std::string_view filename;
+    std::string_view extension;
     std::string_view mime_type;
 };
 
 // Order also defines picture lookup priority.
 inline constexpr std::array picture_formats{
-    PictureFormat{"PICTURE.png", "image/png"},
-    PictureFormat{"PICTURE.webp", "image/webp"},
-    PictureFormat{"PICTURE.jpg", "image/jpeg"},
-    PictureFormat{"PICTURE.jpeg", "image/jpeg"},
-    PictureFormat{"PICTURE.gif", "image/gif"},
+    PictureFormat{".png", "image/png"},
+    PictureFormat{".webp", "image/webp"},
+    PictureFormat{".jpg", "image/jpeg"},
+    PictureFormat{".jpeg", "image/jpeg"},
+    PictureFormat{".gif", "image/gif"},
 };
 
 inline const PictureFormat* picture_format(std::string_view path) {
@@ -27,7 +27,7 @@ inline const PictureFormat* picture_format(std::string_view path) {
     const auto dot = name.find_last_of('.');
     if (dot == std::string_view::npos) return nullptr;
     for (const auto& format : picture_formats) {
-        if (ascii_iequals(name.substr(dot), format.filename.substr(format.filename.find_last_of('.')))) {
+        if (ascii_iequals(name.substr(dot), format.extension)) {
             return &format;
         }
     }
@@ -37,7 +37,7 @@ inline const PictureFormat* picture_format(std::string_view path) {
 // Ignores letter case.
 inline bool supported_picture_extension(std::string_view extension) {
     for (const auto& format : picture_formats) {
-        if (ascii_iequals(format.filename.substr(format.filename.find_last_of('.')), extension)) {
+        if (ascii_iequals(format.extension, extension)) {
             return true;
         }
     }

@@ -147,7 +147,6 @@ export function NotesTree({
   const [compressionSubmitting, setCompressionSubmitting] = useState(false);
   const generation = useRef(0);
   const alive = useRef(true);
-  const started = useRef(false);
   const busy = useRef(false);
   const compressionSubmittingRef = useRef(false);
   const submission = useRef(0);
@@ -195,7 +194,7 @@ export function NotesTree({
   for (const key of index.children.vault) index.rows[key].parentKey = 'vault';
   dataRef.current = index;
   const signature = vaultName + '\n' + items.map((item) => (
-    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}`
+    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}:${JSON.stringify(item.forum_id)}`
   )).join('\n');
 
   const tree = useTree<NoteTreeRow>({
@@ -249,9 +248,17 @@ export function NotesTree({
     };
   }, []);
 
+  // The menu height depends on its commands, so measure it to keep every command in the window.
+  useLayoutEffect(() => {
+    const element = menuRef.current;
+    if (!menu || !element) return;
+    const height = element.getBoundingClientRect().height;
+    element.style.top = `${Math.max(8, Math.min(menu.y, window.innerHeight - height - 8))}px`;
+  }, [menu]);
+
   useEffect(() => {
     if (!menu) return;
-    if (menu.sourceId !== 'vault' && dataRef.current.rows[menu.sourceId]?.kind === 'folder' && menu.storeStatus === null)
+    if (menu.sourceId !== 'vault' && dataRef.current.rows[menu.sourceId]?.kind === 'folder' && dataRef.current.rows[menu.sourceId]?.forumId === undefined && menu.storeStatus === null)
       menuRef.current?.focus();
     else menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
     const dismiss = (event: PointerEvent) => {
@@ -281,6 +288,13 @@ export function NotesTree({
     try {
       const next = await clientRef.current.listNoteItems();
       if (!alive.current || gen !== generation.current) return;
+      const focused = treeRef.current.getState().focusedItem;
+      if (focused && focused !== 'vault' && !next.some(item => String(item.id) === focused)) {
+        const survivors = new Set(next.map(item => item.id));
+        const target = focusAfterRemoval(itemsRef.current.filter(item =>
+          String(item.id) === focused || survivors.has(item.id)), Number(focused));
+        revealId.current = { id: target !== null && survivors.has(target) ? target : 'vault', expand: false };
+      }
       loadedRef.current = true;
       setItems(next);
       setLoaded(true);
@@ -302,15 +316,17 @@ export function NotesTree({
   }
 
   useEffect(() => {
-    if (!browsing || started.current) return;
-    started.current = true;
-    const gen = ++generation.current;
-    void runList(gen);
+    if (browsing) requestBackgroundRefresh();
   }, [browsing]);
 
   function retryList() {
     const gen = ++generation.current;
     void runList(gen);
+  }
+
+  function requestBackgroundRefresh() {
+    pendingRefresh.current = true;
+    flushBackgroundRefresh();
   }
 
   function flushBackgroundRefresh() {
@@ -534,6 +550,7 @@ export function NotesTree({
       audioPending: !!checkAudio, identity: ++menuIdentity.current, epoch, compressionPending: null, storeStatus: null };
     currentMenu.current = opened;
     setMenu(opened);
+    if (note?.forum_id !== undefined) return;
     if (note && note.kind !== 'annotation') void readCompressionStatus(opened);
     if (note?.kind === 'folder') {
       void clientRef.current.storeOperation(note.id, epoch).then(status => {
@@ -794,9 +811,9 @@ export function NotesTree({
   }
 
   const canMutate = loaded && !stale && !listing && dialog === null && storeRun === null && !busy.current;
-  const activeNoteAvailable = items.some((item) => item.id === activeNoteId && item.kind !== 'folder');
   const rows = tree.getItems();
   const menuIsNote = menu !== null && index.rows[menu.sourceId]?.kind !== 'folder';
+  const menuManaged = menu !== null && index.rows[menu.sourceId]?.forumId !== undefined;
   const menuFolderBusy = menu !== null && !menuIsNote && menu.sourceId !== 'vault'
     && (menu.storeStatus === null || menu.storeStatus.present && (!menu.storeStatus.terminal || menu.storeStatus.kind === 'folder_delete'));
   const menuParentId = menu?.sourceId === 'vault' ? null : Number(menu?.sourceId);
@@ -804,13 +821,12 @@ export function NotesTree({
 
   // Imports update the open note without reloading the tree.
   useEffect(() => {
-    if (!activeNoteAvailable) return;
     onRegisterNoteActions?.({
       updated: updateItem,
-      refresh: retryList,
+      refresh: requestBackgroundRefresh,
     });
     return () => onRegisterNoteActions?.(null);
-  }, [activeNoteAvailable, onRegisterNoteActions]);
+  }, [onRegisterNoteActions]);
 
   return (
     <div className="cha-notes-browser">
@@ -897,23 +913,23 @@ export function NotesTree({
           role="menu"
           style={{
             left: Math.max(8, Math.min(menu.x, window.innerWidth - 168)),
-            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menuIsNote ? 220 : menu.sourceId === 'vault' ? 140 : client.noteAudio ? 280 : 250))),
+            top: menu.y,
           }}
         >
-          {!menuIsNote && (
+          {!menuManaged && !menuIsNote && (
             <>
               <button disabled={menuFolderBusy} onClick={() => beginCreate('note', menuParentId)} role="menuitem" type="button">New note</button>
               <button disabled={menuFolderBusy} onClick={() => beginCreate('folder', menuParentId)} role="menuitem" type="button">New folder</button>
             </>
           )}
-          {!menuIsNote && (
+          {!menuManaged && !menuIsNote && (
             <button disabled={menuFolderBusy} onClick={() => {
               epubParentId.current = menuParentId;
               closeMenu(true);
               epubInput.current?.click();
             }} role="menuitem" type="button">Import EPUB…</button>
           )}
-          {menu.sourceId !== 'vault' && (
+          {!menuManaged && menu.sourceId !== 'vault' && (
             <>
               {index.rows[menu.sourceId]?.kind !== 'annotation' && <button disabled={menuFolderBusy} onClick={() => startRename()} role="menuitem" type="button">Rename</button>}
               {menuIsNote && index.rows[menu.sourceId]?.kind === 'note' && (
@@ -951,7 +967,7 @@ export function NotesTree({
           {menu.sourceId !== 'vault' && (
             <button onClick={() => void copyReference()} role="menuitem" type="button">Copy Ref ID</button>
           )}
-          {!menuIsNote && menu.sourceId !== 'vault' && <button role="menuitem" type="button"
+          {!menuManaged && !menuIsNote && menu.sourceId !== 'vault' && <button role="menuitem" type="button"
             disabled={menu.storeStatus === null}
             onClick={() => {
               const source = takeMenuSource();

@@ -30,6 +30,8 @@ constexpr std::string_view missing_item_message =
     "That note or folder was not found.";
 constexpr std::string_view not_note_message =
     "That item is not a note.";
+constexpr std::string_view managed_folder_message =
+    "This folder is managed by CHA.";
 constexpr std::string_view too_large_message =
     "Note exceeds 12 MiB. Remove content or use a smaller picture.";
 constexpr std::string_view opening_message =
@@ -97,6 +99,7 @@ NoteItem read_item(storage::SqliteStatement& statement) {
     item.name = statement.text(3);
     item.has_compressed = statement.integer(4) != 0;
     item.read_only = statement.integer(5) != 0;
+    if (!statement.is_null(6)) item.forum_id = statement.text(6);
     if (item.id <= 0 || item.id > note_id_limit) {
         throw std::runtime_error(
             "Note item " + std::to_string(item.id) + " has an invalid id");
@@ -122,17 +125,18 @@ void require_folder(
     storage::SqliteDatabase& database,
     std::int64_t parent_id) {
     storage::SqliteStatement statement = database.prepare(
-        "SELECT kind FROM note_items WHERE id = ?1");
+        "SELECT kind, forum_id FROM note_items WHERE id = ?1");
     statement.bind(1, parent_id);
     if (!statement.step()) fail(NoteFailure::invalid, missing_parent_message);
     if (statement.text(0) != "folder") fail(NoteFailure::invalid, parent_kind_message);
+    if (!statement.is_null(1)) fail(NoteFailure::invalid, managed_folder_message);
 }
 
 std::optional<NoteItem> find_item(
     storage::SqliteDatabase& database,
     std::int64_t id) {
     storage::SqliteStatement statement = database.prepare(
-        "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL, read_only "
+        "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL, read_only, forum_id "
         "FROM note_items WHERE id = ?1");
     statement.bind(1, id);
     if (!statement.step()) return std::nullopt;
@@ -611,6 +615,7 @@ void to_json(nlohmann::json& json, const NoteItem& item) {
         {"has_compressed", item.has_compressed},
         {"read_only", item.read_only},
     };
+    if (item.forum_id) json["forum_id"] = *item.forum_id;
     if (item.kind == NoteItemKind::folder && item.store) {
         json["store"] = {{"service", item.store->service}, {"id", item.store->id}, {"state", item.store->state}};
     }
@@ -650,6 +655,7 @@ CREATE TABLE IF NOT EXISTS note_items (
     parent_id INTEGER REFERENCES note_items(id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('folder', 'note', 'annotation')),
     name TEXT NOT NULL COLLATE BINARY,
+    forum_id TEXT,
     content_json BLOB,
     compressed_text TEXT,
     read_only INTEGER NOT NULL DEFAULT 0 CHECK (read_only IN (0, 1)),
@@ -703,6 +709,16 @@ CREATE TABLE IF NOT EXISTS session_files (
     PRIMARY KEY (session_key, name)
 ) STRICT;
 )sql");
+    bool has_forum_id = false;
+    {
+        auto columns = database.prepare("PRAGMA table_info(note_items)");
+        while (columns.step()) {
+            if (columns.text(1) == "forum_id") has_forum_id = true;
+        }
+    }
+    if (!has_forum_id) database.execute("ALTER TABLE note_items ADD COLUMN forum_id TEXT");
+    database.execute("CREATE UNIQUE INDEX IF NOT EXISTS note_items_forum_id "
+        "ON note_items(forum_id) WHERE forum_id IS NOT NULL");
 }
 
 std::optional<NoteItem> note_find_item(storage::SqliteDatabase& database, std::int64_t id) {
@@ -714,7 +730,7 @@ std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {
     try {
         storage::SqliteTransaction transaction(database);
         storage::SqliteStatement statement = database.prepare(
-            "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL, read_only "
+            "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL, read_only, forum_id "
             "FROM note_items ORDER BY id");
         std::vector<NoteItem> items;
         while (statement.step()) items.push_back(read_item(statement));
@@ -962,6 +978,7 @@ NoteItem note_rename(
         const std::optional<NoteItem> current = find_item(database, id);
         if (!current) fail(NoteFailure::not_found, missing_item_message);
         NoteItem item = *current;
+        if (item.forum_id) fail(NoteFailure::invalid, managed_folder_message);
         if (item.kind == NoteItemKind::annotation) fail(NoteFailure::invalid, not_note_message);
         if (item.name != name) {
             if (name_taken(database, item.parent_id, name, id)) {
@@ -982,7 +999,9 @@ NoteItem note_rename(
     }
 }
 
-void note_delete_in_transaction(storage::SqliteDatabase& database, std::int64_t id) {
+namespace {
+
+void delete_item(storage::SqliteDatabase& database, std::int64_t id) {
     const auto item = find_item(database, id);
     if (item && item->kind == NoteItemKind::annotation) fail(NoteFailure::invalid, not_note_message);
     if (folder_store_owns_subtree(database, id)) {
@@ -1010,6 +1029,97 @@ void note_delete_in_transaction(storage::SqliteDatabase& database, std::int64_t 
         fail(NoteFailure::not_found, missing_item_message);
     }
     if (item && item->kind == NoteItemKind::note) rebuild_folder_annotations(database, item->parent_id, false);
+}
+
+} // namespace
+
+void note_delete_in_transaction(storage::SqliteDatabase& database, std::int64_t id) {
+    const auto item = find_item(database, id);
+    if (item && item->forum_id) fail(NoteFailure::invalid, managed_folder_message);
+    delete_item(database, id);
+}
+
+void note_sync_forums(storage::SqliteDatabase& database,
+    const std::map<std::string, std::string>& forum_names) {
+    const auto rename = [&](const NoteItem& item, std::string_view name) {
+        database.prepare("UPDATE note_items SET name=? WHERE id=?", name, item.id).run();
+        if (item.kind == NoteItemKind::note)
+            rebuild_folder_annotations(database, item.parent_id, false);
+    };
+    const auto available_name = [&](std::optional<std::int64_t> parent,
+                                    const std::string& base) {
+        std::string name = base;
+        for (int suffix = 1; name_taken(database, parent, name, 0); ++suffix)
+            name = base + " " + std::to_string(suffix);
+        return name;
+    };
+    const auto insert = [&](std::optional<std::int64_t> parent, std::string_view name,
+                            std::string_view forum_id) {
+        auto statement = database.prepare("INSERT INTO note_items "
+            "(parent_id, kind, name, forum_id) VALUES (?, 'folder', ?, ?)");
+        if (parent) statement.bind(1, *parent);
+        else statement.bind_null(1);
+        statement.bind(2, name);
+        statement.bind(3, forum_id);
+        statement.run();
+        return database.last_insert_rowid();
+    };
+    std::optional<NoteItem> root;
+    {
+        auto statement = database.prepare("SELECT id FROM note_items WHERE forum_id=''");
+        if (statement.step()) root = find_item(database, statement.integer(0));
+    }
+    if (root && (root->kind != NoteItemKind::folder || root->parent_id || root->name != "Forums"))
+        throw std::runtime_error("The managed Forums root has an invalid kind, parent, or name.");
+    std::int64_t root_id;
+    if (root) root_id = root->id;
+    else {
+        std::optional<NoteItem> legacy;
+        {
+            auto statement = database.prepare("SELECT id FROM note_items WHERE parent_id IS NULL AND name='Forums'");
+            if (statement.step()) legacy = find_item(database, statement.integer(0));
+        }
+        if (legacy) {
+            if (legacy->forum_id) throw std::runtime_error("The legacy Forums item is already managed.");
+            const auto saved = available_name({}, "Forums (saved)");
+            rename(*legacy, saved);
+            event_append_in_transaction(database, EventSeverity::warning,
+                "Preserved legacy Notes item Forums as " + saved + ".");
+        }
+        root_id = insert({}, "Forums", "");
+    }
+    std::map<std::string, NoteItem> links;
+    {
+        auto statement = database.prepare("SELECT id FROM note_items WHERE forum_id <> ''");
+        while (statement.step()) {
+            auto item = *find_item(database, statement.integer(0));
+            if (item.kind != NoteItemKind::folder || item.parent_id != root_id)
+                throw std::runtime_error("A linked forum folder has an invalid kind or parent.");
+            links.emplace(*item.forum_id, std::move(item));
+        }
+    }
+    for (const auto& [forum_id, item] : links) {
+        if (!forum_names.contains(forum_id)) delete_item(database, item.id);
+    }
+    // Stage all renames before assigning final names, including for name swaps.
+    for (const auto& [forum_id, item] : links) {
+        const auto next = forum_names.find(forum_id);
+        if (next == forum_names.end() || next->second == item.name) continue;
+        const auto base = "Forum rename " + std::to_string(item.id);
+        auto temporary = base;
+        for (int suffix = 1;; ++suffix) {
+            const bool final_name = std::ranges::any_of(forum_names,
+                [&](const auto& entry) { return entry.second == temporary; });
+            if (!final_name && !name_taken(database, root_id, temporary, 0)) break;
+            temporary = base + " " + std::to_string(suffix);
+        }
+        rename(item, temporary);
+    }
+    for (const auto& [forum_id, name] : forum_names) {
+        const auto found = links.find(forum_id);
+        if (found == links.end()) insert(root_id, name, forum_id);
+        else if (found->second.name != name) rename(found->second, name);
+    }
 }
 
 void note_delete(storage::SqliteDatabase& database, std::int64_t id) {

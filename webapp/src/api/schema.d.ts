@@ -801,6 +801,7 @@ export interface components {
             parent_id: number | null;
             kind: components["schemas"]["NoteItemKind"];
             store?: components["schemas"]["FolderStoreSummary"];
+            forum_id?: string;
             has_compressed: boolean;
             read_only: boolean;
             name: string;

@@ -198,8 +198,10 @@ function isFolderStoreOperation(value: unknown): value is FolderStoreOperation {
 function isNoteItem(value: unknown): value is NoteItem {
   return isRecord(value)
     && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'read_only',
-      ...(Object.hasOwn(value, 'store') ? ['store'] : [])])
+      ...(Object.hasOwn(value, 'store') ? ['store'] : []),
+      ...(Object.hasOwn(value, 'forum_id') ? ['forum_id'] : [])])
     && (!Object.hasOwn(value, 'store') || (value.kind === 'folder' && isFolderStoreSummary(value.store)))
+    && (!Object.hasOwn(value, 'forum_id') || (value.kind === 'folder' && typeof value.forum_id === 'string'))
     && isNoteId(value.id)
     && isNoteParent(value.parent_id)
     && (value.kind === 'folder' || value.kind === 'note' || value.kind === 'annotation')

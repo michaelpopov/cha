@@ -126,6 +126,14 @@ nlohmann::json folder_store_wire_fixture() {
     return nlohmann::json::parse(file);
 }
 
+nlohmann::json ordinary_note_items(const nlohmann::json& items) {
+    auto ordinary = nlohmann::json::array();
+    for (const auto& item : items) {
+        if (!item.contains("forum_id")) ordinary.push_back(item);
+    }
+    return ordinary;
+}
+
 class BridgeRouterTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -243,7 +251,7 @@ TEST_F(BridgeRouterTest, NoteTextFileReadingUsesFullPathsAndValidatesTextWithout
     const auto reply = read();
     ASSERT_TRUE(reply["ok"]) << reply;
     EXPECT_EQ(reply["result"], (nlohmann::json{{"name", utf8_path(path)}, {"text", "# Title\n\nBody"}}));
-    EXPECT_TRUE(call("notes.list")["result"]["items"].empty());
+    EXPECT_EQ(call("notes.list")["result"]["items"].size(), 2u);
     for (const auto& [text, message] : std::vector<std::pair<std::string, std::string>>{
             {" \n\t", "The file is empty."},
             {std::string("a\0b", 3), "Choose a UTF-8 text file."},
@@ -295,7 +303,7 @@ TEST_F(BridgeRouterTest, NotePageReadingUsesConfiguredReaderAndKeepsLongArticles
     EXPECT_EQ(reply["result"]["title"], page["title"]);
     EXPECT_EQ(reply["result"]["markdown"], page["markdown"]);
     EXPECT_EQ(reply["result"].size(), 3u);
-    EXPECT_TRUE(call("notes.list")["result"]["items"].empty());
+    EXPECT_EQ(call("notes.list")["result"]["items"].size(), 2u);
     ASSERT_EQ(server.requests().size(), 1u);
     EXPECT_TRUE(server.requests()[0].starts_with("POST /extract HTTP/1.1\r\n"));
 }
@@ -445,6 +453,7 @@ TEST_F(BridgeRouterTest, CharacterFileRenameUpdatesListsAndPreservesTextAndPictu
     reply = call("character.file.rename", {{"character_id", "guide"}, {"filename", "portrait.png"}, {"new_filename", "Seneca.png"}});
     ASSERT_TRUE(reply["ok"]) << reply;
     EXPECT_EQ(call("character.picture.get", {{"character_id", "guide"}, {"filename", "Seneca.png"}})["result"]["content_base64"], "AP+A");
+    EXPECT_EQ(call("character.picture.get", {{"character_id", "guide"}})["result"]["filename"], "Seneca.png");
     const auto files = call("character.get", {{"character_id", "guide"}})["result"]["markdown_files"].get<std::vector<std::string>>();
     EXPECT_NE(std::find(files.begin(), files.end(), "Seneca.png"), files.end());
     EXPECT_EQ(std::find(files.begin(), files.end(), "portrait.png"), files.end());
@@ -653,7 +662,7 @@ TEST_F(BridgeRouterTest, AttachesTextFilesWithoutCreatingNotesOrClearingThePromp
     ASSERT_TRUE(snapshot["ok"]) << snapshot;
     EXPECT_FALSE(snapshot["result"]["generation"]["active"]);
     EXPECT_EQ(snapshot["result"]["transcript"].back()["text"], "Added file “plan.md” to this chat.");
-    EXPECT_TRUE(call("notes.list")["result"]["items"].empty());
+    EXPECT_EQ(call("notes.list")["result"]["items"].size(), 2u);
     auto malformed = file;
     malformed["text"] = 42;
     EXPECT_EQ(call("session.attachTextFile", malformed)["error"]["code"], "invalid_argument");
@@ -2667,7 +2676,7 @@ TEST_F(BridgeRouterTest, YoutubeNoteImportsUseTranscriptPromptAndCompressionSett
             EXPECT_EQ(application_->get_provider("test", epoch_).reasoning_effort, "low");
         }
     }
-    EXPECT_TRUE(call("notes.list")["result"]["items"].empty());
+    EXPECT_EQ(call("notes.list")["result"]["items"].size(), 2u);
 }
 
 TEST_F(BridgeRouterTest, YoutubeNoteImportsKeepTitlesThroughFormatting) {
@@ -3733,11 +3742,35 @@ TEST_F(BridgeRouterTest, CompressionHasNoTransferLimitButKeepsTheIdleTimeout) {
     EXPECT_EQ(stored_compression(database_, note.id), "Slow compression");
 }
 
+TEST_F(BridgeRouterTest, ManagedForumFoldersRoundTripAndRejectDirectMutations) {
+    bootstrap_epoch();
+    const auto reply = call("notes.list");
+    ASSERT_TRUE(reply["ok"]);
+    const auto items = reply["result"]["items"];
+    ASSERT_EQ(items.size(), 2u);
+    for (const auto& item : items) {
+        ASSERT_TRUE(item.contains("forum_id"));
+        EXPECT_TRUE(item["forum_id"].is_string());
+        EXPECT_EQ(item["kind"], "folder");
+        const auto id = item["id"];
+        expect_note_error(call("notes.create", {{"parent_id", id}, {"kind", "note"}, {"name", "Child"}}),
+            "invalid_argument", "This folder is managed by CHA.");
+        expect_note_error(call("notes.rename", {{"id", id}, {"name", item["name"]}}),
+            "invalid_argument", "This folder is managed by CHA.");
+        expect_note_error(call("notes.delete", {{"id", id}}),
+            "invalid_argument", "This folder is managed by CHA.");
+    }
+    EXPECT_EQ(items[0]["forum_id"], "");
+    EXPECT_EQ(items[1]["forum_id"], "lobby");
+    expect_note_error(call("notes.create", {{"parent_id", nullptr}, {"kind", "folder"}, {"name", "Fake"}, {"forum_id", "fake"}}),
+        "invalid_argument", "The request was not valid.");
+}
+
 TEST_F(BridgeRouterTest, NotesWireContract) {
     bootstrap_epoch();
     const auto empty = call("notes.list");
     ASSERT_TRUE(empty["ok"]);
-    EXPECT_TRUE(empty["result"]["items"].empty());
+    EXPECT_EQ(empty["result"]["items"].size(), 2u);
 
     const auto folder = call("notes.create", {
         {"parent_id", nullptr}, {"kind", "folder"}, {"name", "Plan"},
@@ -3922,7 +3955,7 @@ TEST_F(BridgeRouterTest, ReadOnlyNoteWireContractAndValidation) {
     const auto locked = call("notes.setReadOnly", {{"id", id}, {"read_only", true}});
     ASSERT_TRUE(locked["ok"]) << locked.dump();
     EXPECT_EQ(locked["result"]["read_only"], true);
-    EXPECT_EQ(call("notes.list")["result"]["items"][0]["read_only"], true);
+    EXPECT_EQ(ordinary_note_items(call("notes.list")["result"]["items"])[0]["read_only"], true);
     const nlohmann::json document = {{"type", "doc"}, {"changed", true}};
     expect_note_error(call("notes.save", {{"id", id}, {"document", document}}),
         "invalid_argument", "This note is read-only. Make it editable first.");
@@ -3973,7 +4006,7 @@ TEST_F(BridgeRouterTest, BookImportWireContractAndValidation) {
     ASSERT_TRUE(imported["ok"]) << imported.dump();
     EXPECT_EQ(imported["result"].size(), 1U);
     const auto folder = imported["result"]["id"].get<std::int64_t>();
-    const auto items = call("notes.list")["result"]["items"];
+    const auto items = ordinary_note_items(call("notes.list")["result"]["items"]);
     ASSERT_EQ(items.size(), 3U);
     EXPECT_EQ(items[0]["id"], folder);
     EXPECT_EQ(items[1]["parent_id"], folder);
@@ -3990,7 +4023,7 @@ TEST_F(BridgeRouterTest, BookImportWireContractAndValidation) {
         }) {
         EXPECT_FALSE(call("notes.importBook", invalid)["ok"]);
     }
-    EXPECT_EQ(call("notes.list")["result"]["items"].size(), 3U);
+    EXPECT_EQ(ordinary_note_items(call("notes.list")["result"]["items"]).size(), 3U);
 }
 
 TEST_F(BridgeRouterTest, BookImportUsesSelectedFolderAndRejectsInvalidParents) {
@@ -4004,7 +4037,7 @@ TEST_F(BridgeRouterTest, BookImportUsesSelectedFolderAndRejectsInvalidParents) {
     }}};
     const auto imported = call("notes.importBook", request);
     ASSERT_TRUE(imported["ok"]) << imported.dump();
-    const auto items = call("notes.list")["result"]["items"];
+    const auto items = ordinary_note_items(call("notes.list")["result"]["items"]);
     ASSERT_EQ(items.size(), 3U);
     EXPECT_EQ(items[1]["id"], imported["result"]["id"]);
     EXPECT_EQ(items[1]["parent_id"], folder);
@@ -4015,7 +4048,7 @@ TEST_F(BridgeRouterTest, BookImportUsesSelectedFolderAndRejectsInvalidParents) {
     }
     request.erase("parent_id");
     EXPECT_FALSE(call("notes.importBook", request)["ok"]);
-    EXPECT_EQ(call("notes.list")["result"]["items"], items);
+    EXPECT_EQ(ordinary_note_items(call("notes.list")["result"]["items"]), items);
 }
 
 
@@ -4027,7 +4060,7 @@ TEST_F(BridgeRouterTest, AnnotationWireContractGuardsAndChatText) {
     ASSERT_TRUE(saved["ok"]);
     EXPECT_EQ(saved["result"], nlohmann::json({{"annotation_created", true}}));
     EXPECT_EQ(call("notes.save", {{"id", source}, {"document", doc}})["result"], nlohmann::json({{"annotation_created", false}}));
-    const auto items = call("notes.list")["result"]["items"];
+    const auto items = ordinary_note_items(call("notes.list")["result"]["items"]);
     ASSERT_EQ(items.size(), 2u);
     const auto id = items[1]["id"];
     EXPECT_EQ(items[1]["kind"], "annotation");
@@ -4202,6 +4235,7 @@ TEST_F(BridgeRouterTest, StoreMethodsRejectMalformedInputsAndListOnlySafeSummari
     }
     EXPECT_EQ(call("notes.storeOperation", {{"folder_id", folder.id}})["result"], (nlohmann::json{{"present", false}}));
     auto listed = call("notes.list")["result"];
+    listed["items"] = ordinary_note_items(listed["items"]);
     ASSERT_EQ(listed["items"].size(), 2u);
     EXPECT_EQ(listed["items"][0]["store"], (nlohmann::json{{"service", "openai"}, {"id", store_id}, {"state", "ready"}}));
     EXPECT_EQ(listed["items"][1]["store"]["state"], "incomplete");
@@ -4230,7 +4264,7 @@ TEST_F(BridgeRouterTest, StoreMethodsRejectMalformedInputsAndListOnlySafeSummari
         EXPECT_EQ(reply["ok"], false);
         EXPECT_EQ(reply["error"]["code"], "invalid_argument");
     }
-    EXPECT_EQ(application_->list_note_items(epoch_).size(), 2u);
+    EXPECT_EQ(ordinary_note_items(nlohmann::json(application_->list_note_items(epoch_))).size(), 2u);
     const auto current_epoch = epoch_;
     epoch_ += 1;
     EXPECT_EQ(call("notes.storeChoices")["error"]["code"], "vault_changed");
@@ -4273,7 +4307,7 @@ TEST_F(BridgeRouterTest, StoreDeletionSurvivesDisconnectAndRetainsTerminalContro
     EXPECT_EQ(status["terminal"], true);
     EXPECT_EQ(status["folder_deleted"], true);
     EXPECT_EQ(status["result"], "folder_deleted");
-    EXPECT_TRUE(application_->list_note_items(epoch_).empty());
+    EXPECT_EQ(application_->list_note_items(epoch_).size(), 2u);
     EXPECT_EQ(calls.load(), 1);
     EXPECT_EQ(call("notes.storeClose", {{"operation_id", operation_id}})["ok"], true);
     EXPECT_EQ(call("notes.storeOperation", {{"folder_id", folder.id}})["result"], (nlohmann::json{{"present", false}}));

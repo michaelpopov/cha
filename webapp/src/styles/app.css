@@ -2191,6 +2191,21 @@ select.cha-form-control {
   object-fit: contain;
 }
 
+.cha-picture-next {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cha-picture-next:focus-visible { outline-offset: -2px; }
+
 .cha-picture-resize {
   position: absolute;
   z-index: 3;

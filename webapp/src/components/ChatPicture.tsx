@@ -12,26 +12,37 @@ function Picture({ client, characterId, displayName, requestId, previousPictures
   client: ChaClient; characterId: string; displayName: string;
   requestId: number | undefined; previousPictures: Map<string, PictureChoice>;
 }) {
+  const [selection, setSelection] = useState<(PictureChoice & { filenames: string[] }) | null>(null);
   // Build the data URL once: the chat renders again for every streamed token.
   const [source, setSource] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let current = true;
     async function load() {
-      const previous = previousPictures.get(characterId);
-      // The panel remounts when it opens again; keep this response's picture.
-      if (previous && previous.requestId === requestId) return client.getCharacterPicture(characterId, previous.filename);
       const character = await client.getCharacter(characterId);
-      if (!current) return null;
-      // Only the extension ignores letter case.
-      const filenames = character.markdown_files.filter((name) => (
-        name.startsWith('PICTURE') && /^PICTURE(?:_.+)?\.(png|jpe?g|webp|gif)$/i.test(name)));
-      const choices = filenames.length > 1 ? filenames.filter((name) => name !== previous?.filename) : filenames;
-      if (!choices.length) return null;
-      const filename = choices[Math.floor(Math.random() * choices.length)];
-      return client.getCharacterPicture(characterId, filename);
+      if (!current) return;
+      const filenames = character.markdown_files.filter((name) => /\.(png|jpe?g|webp|gif)$/i.test(name));
+      if (!filenames.length) {
+        setSelection(null);
+        setSource(null);
+        setFailed(false);
+        return;
+      }
+      const previous = previousPictures.get(characterId);
+      const previousIndex = previous ? filenames.indexOf(previous.filename) : -1;
+      // The panel remounts when it opens again; keep this response's picture.
+      const filename = previous && previous.requestId === requestId
+        ? previous.filename : filenames[(previousIndex + 1) % filenames.length];
+      setSelection({ requestId, filename, filenames });
     }
-    void load().then(
+    void load().catch(() => { if (current) setFailed(true); });
+    return () => { current = false; };
+  }, [client, characterId, requestId, previousPictures]);
+
+  useEffect(() => {
+    if (!selection || selection.requestId !== requestId) return;
+    let current = true;
+    void client.getCharacterPicture(characterId, selection.filename).then(
       (picture) => {
         if (!current) return;
         if (picture) previousPictures.set(characterId, { requestId, filename: picture.filename });
@@ -42,9 +53,18 @@ function Picture({ client, characterId, displayName, requestId, previousPictures
       () => { if (current) setFailed(true); },
     );
     return () => { current = false; };
-  }, [client, characterId, requestId, previousPictures]);
-  if (failed) return <span role="alert">Picture unavailable</span>;
-  return source && <img alt={displayName} src={source} onError={() => setFailed(true)} />;
+  }, [client, characterId, requestId, previousPictures, selection]);
+  const content = failed ? <span role="alert">Picture unavailable</span>
+    : source && <img alt={displayName} src={source} onError={() => setFailed(true)} />;
+  if (!selection || selection.filenames.length < 2 || !content) return content;
+  return <button type="button" className="cha-picture-next" aria-label="Next character picture"
+    onClick={() => setSelection((current) => {
+      if (!current) return current;
+      const index = current.filenames.indexOf(current.filename);
+      return { ...current, filename: current.filenames[(index + 1) % current.filenames.length] };
+    })}>
+    {content}
+  </button>;
 }
 
 export function ChatPictureLayout({ children, client, dispatch, state }: {
