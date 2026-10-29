@@ -380,6 +380,11 @@ make itest-local
 make itest
 ```
 
+On Linux, `make test` runs `make test-daemon`: shared backend and daemon tests,
+excluding the native bridge and host tests. Run this subset directly with
+`ctest --test-dir build/ninja -L daemon --output-on-failure` after building it.
+The unfiltered `ctest` command above still runs the full suite.
+
 The R2 integration case overwrites the dedicated
 `cha-r2-integration-test.sqlite3` object in the configured bucket. Run only
 that live round trip with:

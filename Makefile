@@ -1,4 +1,4 @@
-.PHONY: build package package-linux package-macos package-windows web-check web-stage test test-ui itest itest-local itest-daemon run-native-dev clean-san
+.PHONY: build package package-linux package-macos package-windows web-check web-stage test test-daemon test-ui itest itest-local itest-daemon run-native-dev clean-san
 
 ifeq ($(package),linux)
 .DEFAULT_GOAL := package-linux
@@ -46,8 +46,21 @@ web-check:
 web-stage:
 	npm --prefix webapp run stage
 
+ifneq ($(OS),Windows_NT)
+CHA_TEST_PLATFORM := $(shell uname -s)
+endif
+
+ifeq ($(CHA_TEST_PLATFORM),Linux)
+test: test-daemon
+else
 test: build
 	ctest --test-dir build/ninja --output-on-failure
+endif
+
+test-daemon:
+	cmake --preset ninja
+	cmake --build --preset ninja --target cha_tests cha_app_tests cha_daemon_tests
+	ctest --test-dir build/ninja -L daemon --output-on-failure
 
 test-ui:
 	./tests/native/macos/test-ui.sh

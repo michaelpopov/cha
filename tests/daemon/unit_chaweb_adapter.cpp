@@ -486,8 +486,8 @@ TEST_F(ChaWebAdapterTest, VoiceRuntimeDoesNotExposeCredentials) {
 }
 
 TEST_F(ChaWebAdapterTest, ListsSessionsAndRejectsUnknownForums) {
-    const std::string id = create_session();
     const auto epoch = application_->context_epoch();
+    const std::string id = application_->create_session("lobby", "Test session", epoch).id;
     const CgiResponse listed_response = get(sessions_path("lobby"));
     EXPECT_EQ(listed_response.status, 200);
     EXPECT_EQ(

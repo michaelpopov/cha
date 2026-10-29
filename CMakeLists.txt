@@ -803,12 +803,13 @@ if(BUILD_TESTING)
     endforeach()
 
     include(GoogleTest)
-    gtest_discover_tests(cha_tests)
-    gtest_discover_tests(cha_app_tests PROPERTIES TIMEOUT 60)
-    gtest_discover_tests(cha_bridge_tests)
-    gtest_discover_tests(cha_native_runtime_tests)
+    # The daemon uses the shared backend, but not the native bridge or host.
+    gtest_discover_tests(cha_tests PROPERTIES LABELS daemon)
+    gtest_discover_tests(cha_app_tests PROPERTIES TIMEOUT 60 LABELS daemon)
+    gtest_discover_tests(cha_bridge_tests PROPERTIES LABELS native)
+    gtest_discover_tests(cha_native_runtime_tests PROPERTIES LABELS native)
     if(TARGET cha_daemon_tests)
-        gtest_discover_tests(cha_daemon_tests PROPERTIES TIMEOUT 60)
+        gtest_discover_tests(cha_daemon_tests PROPERTIES TIMEOUT 60 LABELS daemon)
     endif()
 endif()
 
