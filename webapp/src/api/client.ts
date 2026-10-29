@@ -711,6 +711,7 @@ export function isSessionLabelResult(value: unknown): value is SessionLabelResul
 export function isCommandResult(value: unknown): value is CommandResult {
   return isRecord(value)
     && typeof value.clear_input === 'boolean'
+    && (value.save_summary === undefined || typeof value.save_summary === 'boolean')
     && (value.notice === undefined || typeof value.notice === 'string');
 }
 

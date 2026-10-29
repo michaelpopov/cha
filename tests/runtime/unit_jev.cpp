@@ -10,6 +10,7 @@
 #include "support/test_workspace.h"
 #include "support/test_transcript.h"
 #include "util/logging.h"
+#include "workspace/builtins.h"
 #include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
@@ -35,7 +36,7 @@ TEST(JevProtocol, SendsPromptContextAndQuestionsAndValidatesExactChoice) {
     EXPECT_TRUE(body["state"]["previous_turn"].is_null());
     EXPECT_EQ(body["state"]["prompt"], input.prompt);
     EXPECT_EQ(body["questions"]["recipient"]["criteria"].size(), 5u);
-    EXPECT_EQ(body["questions"].size(), 4u);
+    EXPECT_EQ(body["questions"].size(), 5u);
     const auto serialized = nlohmann::ordered_json::parse(body.dump());
     std::vector<std::string> names;
     for (const auto& [name, question] : serialized["questions"].items()) {
@@ -47,10 +48,12 @@ TEST(JevProtocol, SendsPromptContextAndQuestionsAndValidatesExactChoice) {
             choices.push_back(choice);
             EXPECT_TRUE(criterion.is_string());
         }
-        EXPECT_EQ(choices, (std::vector<std::string>{"yes", "no"}));
+        if (name == "save_conversation") {
+            EXPECT_EQ(choices, (std::vector<std::string>{"no", "save_only", "save_and_reply"}));
+        } else EXPECT_EQ(choices, (std::vector<std::string>{"yes", "no"}));
     }
     EXPECT_EQ(names, (std::vector<std::string>{"recipient", "search_required",
-        "page_read_required", "actual_data_required"}));
+        "page_read_required", "actual_data_required", "save_conversation"}));
     EXPECT_FALSE(body["questions"].contains("web_search"));
     const auto response = [](std::string recipient) {
         return nlohmann::json{{"answers", {
@@ -1145,7 +1148,7 @@ TEST_F(JevRouting, ConfiguredWebToolsDoNotRetrieveBeforeOrWithoutAModelCall) {
     (void)send(prompt);
     finish();
     ASSERT_EQ(classified.size(), 1u);
-    EXPECT_EQ(make_jev_body(classified.front())["questions"].size(), 4u);
+    EXPECT_EQ(make_jev_body(classified.front())["questions"].size(), 5u);
     ASSERT_EQ(requests.size(), 1u);
     EXPECT_EQ(requests.front().run.prompt_text, prompt);
     EXPECT_EQ(called_providers, (std::vector<std::string>{"test"}));
@@ -1298,6 +1301,102 @@ TEST_F(JevRouting, FailedClassificationKeepsTheNotesTarget) {
     EXPECT_FALSE(controller->is_generating());
     EXPECT_TRUE(workers.empty());
     EXPECT_TRUE(called_providers.empty());
+}
+
+TEST_F(JevRouting, ConversationSaveOnlyRecordsPromptWithoutChangingTheTargetOrReplying) {
+    for (const auto* target : {"guide", "marcus", "*", "-"}) {
+        (void)controller->set_default_character_by_id(target);
+        decision = {JevOutcome::success, "undefined", {}, {}, JevConversationSave::save_only};
+        (void)send("Save this conversation for later review.");
+        run_workers();
+        (void)controller->receive_events(100);
+        const auto result = controller->take_submission_result();
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
+        EXPECT_TRUE(result->save_summary);
+        EXPECT_FALSE(result->persist_default_character_id);
+        EXPECT_EQ(controller->view().default_character_id, target);
+        EXPECT_FALSE(controller->is_generating());
+        EXPECT_TRUE(workers.empty());
+        EXPECT_TRUE(called_providers.empty());
+        EXPECT_EQ(load_session_state(journal.path()).entries.back().text,
+            "Save this conversation for later review.");
+    }
+}
+
+TEST_F(JevRouting, ConversationSaveWithAQuestionAlsoStartsTheNormalReply) {
+    for (const auto* choice : {"undefined", "self_note"}) {
+        for (const auto* target : {"guide", "marcus", "*", "-"}) {
+            (void)controller->set_default_character_by_id(target);
+            decision = {JevOutcome::success, choice, {}, {}, JevConversationSave::save_and_reply};
+            (void)send("Save this conversation. Why did you recommend that?");
+            run_workers();
+            (void)controller->receive_events(100);
+            const auto result = controller->take_submission_result();
+            ASSERT_TRUE(result);
+            EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
+            EXPECT_TRUE(result->save_summary);
+            EXPECT_FALSE(result->persist_default_character_id);
+            EXPECT_TRUE(controller->is_generating());
+            EXPECT_EQ(workers.size(), std::string_view(target) == "*" ? 2u : 1u);
+            EXPECT_EQ(controller->view().default_character_id, target);
+            finish();
+        }
+    }
+}
+
+TEST_F(JevRouting, WelcomeDoesNotRequestAConversationSave) {
+    const FullSessionId welcome{std::string(workspace_entrance_id), std::string(welcome_id)};
+    test::TemporarySessionFile welcome_journal{"jev_welcome", welcome};
+    controller = SessionController::from_workspace_for_testing(
+        [this] { return store->snapshot(); }, std::string(workspace_assistant_id), "reader",
+        welcome_journal.path(), providers, notifier, {}, {}, welcome);
+    (void)controller->set_default_character_by_id("-");
+    decision = {JevOutcome::success, "undefined", {}, {}, JevConversationSave::save_only};
+    (void)send("Save this conversation.");
+    run_workers();
+    (void)controller->receive_events(100);
+    const auto result = controller->take_submission_result();
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
+    EXPECT_FALSE(result->save_summary);
+    controller.reset();
+}
+
+TEST_F(JevRouting, UncertainOrFailedClassificationDoesNotRequestAConversationSave) {
+    for (const auto outcome : {JevOutcome::success, JevOutcome::failure}) {
+        decision = {outcome, "undefined", {}, {}, outcome == JevOutcome::failure
+            ? JevConversationSave::save_only : JevConversationSave::none};
+        (void)send("That was interesting. Let's discuss it later.");
+        run_workers();
+        (void)controller->receive_events(100);
+        const auto result = controller->take_submission_result();
+        ASSERT_TRUE(result);
+        EXPECT_FALSE(result->save_summary);
+        EXPECT_TRUE(controller->is_generating());
+        finish();
+    }
+}
+
+TEST_F(JevRouting, RuntimeReturnsTheSaveRequestAfterPersistingThePrompt) {
+    use_runtime_providers({JevOutcome::success, "undefined", {}, {}, JevConversationSave::save_only});
+    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
+        return OpenedSession{.label = "Original", .controller = make_controller(wake)};
+    });
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open({"lobby", "session"}, 2s)));
+    const auto session = manager.lookup({"lobby", "session"});
+    const auto reply = session->submit(RawCommand{"Save this conversation."}, 2s);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(reply));
+    const auto& result = std::get<CommandResult>(reply);
+    EXPECT_TRUE(result.clear_input);
+    EXPECT_TRUE(result.save_summary);
+    EXPECT_EQ(nlohmann::json(result).at("save_summary"), true);
+    const auto stored = load_session_state(journal.path());
+    ASSERT_EQ(stored.entries.size(), 1u);
+    EXPECT_EQ(stored.entries.front().text, "Save this conversation.");
+    const auto snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
+    EXPECT_FALSE(snapshot.generation.active);
+    EXPECT_EQ(snapshot.default_character_id, "guide");
 }
 
 TEST_F(JevRouting, RuntimeAcceptsSelfNotesWithoutSavingADefaultCharacter) {
@@ -1701,7 +1800,8 @@ TEST_F(JevRouting, RuntimeDefersReplyAndStopSettlesItWithoutPersistingMarkers) {
     std::promise<void> started, release;
     auto released = release.get_future().share();
     providers = std::make_shared<Providers>(ProviderClientFactory{}, ProviderThreadLauncher{},
-        [&](const auto&, const auto&) { started.set_value(); released.wait(); return JevResult{JevOutcome::success, "all_characters"}; });
+        [&](const auto&, const auto&) { started.set_value(); released.wait();
+            return JevResult{JevOutcome::success, "all_characters", {}, {}, JevConversationSave::save_only}; });
     int saved = 0;
     LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
         return OpenedSession{.label = "Original", .controller = make_controller(wake),
@@ -1726,6 +1826,7 @@ TEST_F(JevRouting, RuntimeDefersReplyAndStopSettlesItWithoutPersistingMarkers) {
     auto completed = reply->wait_for(2s);
     ASSERT_TRUE(completed);
     EXPECT_FALSE(std::get<CommandResult>(*completed).clear_input);
+    EXPECT_FALSE(std::get<CommandResult>(*completed).save_summary);
     release.set_value();
     providers->shutdown();
     snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
@@ -1768,6 +1869,28 @@ TEST_F(JevRouting, NavigationKeepsPendingSessionAndCompletionWakesOwnerExactlyOn
     }), 1);
 }
 
+
+TEST(JevProtocol, ParsesConversationSaveDecisionsAndDefaultsToNoSave) {
+    auto response = nlohmann::json::parse(R"({"answers":{
+        "recipient":{"type":"choice","choice":"undefined"},
+        "save_conversation":{"type":"choice","choice":"save_only"}}})");
+    EXPECT_EQ(parse_jev_result(response, jev_input()).conversation_save, JevConversationSave::save_only);
+    response["answers"]["save_conversation"]["choice"] = "save_and_reply";
+    EXPECT_EQ(parse_jev_result(response, jev_input()).conversation_save, JevConversationSave::save_and_reply);
+    for (const auto& answer : {nlohmann::json(nullptr), nlohmann::json::object(),
+        nlohmann::json{{"type", "text"}, {"choice", "save_only"}},
+        nlohmann::json{{"type", "choice"}, {"choice", true}},
+        nlohmann::json{{"type", "choice"}, {"choice", "yes"}},
+        nlohmann::json{{"type", "choice"}, {"choice", "save_only "}},
+        nlohmann::json{{"type", "choice"}, {"choice", "no"}}}) {
+        response["answers"]["save_conversation"] = answer;
+        const auto result = parse_jev_result(response, jev_input());
+        EXPECT_EQ(result.outcome, JevOutcome::success);
+        EXPECT_EQ(result.conversation_save, JevConversationSave::none);
+    }
+    response["answers"].erase("save_conversation");
+    EXPECT_EQ(parse_jev_result(response, jev_input()).conversation_save, JevConversationSave::none);
+}
 
 TEST(JevProtocol, ParsesResearchAnswersIndependentlyAndLogsInvalidDecisions) {
     test::TestWorkspace fixture;

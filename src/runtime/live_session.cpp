@@ -377,7 +377,8 @@ void LiveSession::settle_submission(ControllerUpdate& update) {
         CommandResult outcome{
             .session = std::move(result->update),
             .clear_input = result->outcome == Outcome::accepted,
-            .persist_default_character_id = std::move(result->persist_default_character_id)};
+            .persist_default_character_id = std::move(result->persist_default_character_id),
+            .save_summary = result->save_summary};
         const auto notice = outcome.session.notice;
         persist_default_character(outcome);
         if (outcome.session.notice != notice) update.notice = outcome.session.notice;

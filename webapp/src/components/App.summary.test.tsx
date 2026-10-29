@@ -2,8 +2,8 @@ import type { Editor } from '@tiptap/core';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ChaError, type NoteItem, type SessionSummaryGenerated } from '../api/client';
-import { bootstrapFixture, fixtureClient } from '../test/fixtures';
+import { ChaError, type CommandResult, type NoteItem, type SessionSummaryGenerated } from '../api/client';
+import { bootstrapFixture, fixtureClient, snapshotFixture } from '../test/fixtures';
 import { noteSaveDelayMs } from '../notes/useNoteSave';
 import { App } from './App';
 
@@ -36,6 +36,109 @@ beforeEach(() => window.history.replaceState(null, '', '/'));
 afterEach(() => vi.useRealTimers());
 
 describe('saving session summaries', () => {
+  const snapshot = { ...snapshotFixture, forum: bootstrapFixture.forums[1],
+    session_id: 'planning', session_label: 'Planning', default_character_id: 'guide',
+    characters: [bootstrapFixture.characters[1]] };
+  // Waits for the live snapshot: a composer can show before the route opens the session.
+  async function renderPromptApp(overrides: Parameters<typeof fixtureClient>[0]) {
+    window.history.replaceState(null, '', '/#/s/lobby/planning/');
+    const client = fixtureClient({
+      getBootstrap: async () => ({ ...bootstrapFixture, initial_forum_id: 'lobby', initial_session_id: 'planning' }),
+      getSessionSnapshot: async () => snapshot,
+      ...overrides,
+    });
+    let opened = false;
+    render(<App client={client} connectSessionEvents={(_forumId, _sessionId, handlers) => {
+      queueMicrotask(() => { handlers.onSnapshot(snapshot); opened = true; });
+      return { close() {} };
+    }} />);
+    await waitFor(() => expect(opened).toBe(true));
+  }
+  async function submitPrompt(text: string) {
+    await screen.findByRole('button', { name: 'Send message' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: text } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+  }
+
+  it.each(['Save this conversation.', 'Save this conversation. Why did you recommend that?'])(
+    'uses the existing save procedure when JEV accepts "%s"', async text => {
+      const submitInput = vi.fn(async () => ({ clear_input: true, save_summary: true }));
+      const generateSessionSummary = vi.fn(async () => ({ ...generated, target_note_id: null }));
+      const commitSessionSummary = vi.fn(async () => ({ ...summary, read_only: true }));
+      await renderPromptApp({ submitInput, generateSessionSummary, commitSessionSummary });
+      await submitPrompt(text);
+      await waitFor(() => expect(commitSessionSummary).toHaveBeenCalledWith(1, documentFor('New summary')));
+      expect(submitInput).toHaveBeenCalledWith('lobby', 'planning', { text });
+      expect(generateSessionSummary).toHaveBeenCalledExactlyOnceWith('lobby', 'planning');
+      expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+      expect(screen.queryByRole('region', { name: 'Note' })).not.toBeInTheDocument();
+    },
+  );
+
+  it('saves after the reply to an accompanying question ends', async () => {
+    let replying = false;
+    const getSessionSnapshot = vi.fn(async () => ({ ...snapshot,
+      generation: { ...snapshot.generation, active: replying } }));
+    const generateSessionSummary = vi.fn(async () => ({ ...generated, target_note_id: null }));
+    const commitSessionSummary = vi.fn(async () => ({ ...summary, read_only: true }));
+    await renderPromptApp({ getSessionSnapshot, generateSessionSummary, commitSessionSummary,
+      submitInput: async () => { replying = true; return { clear_input: true, save_summary: true }; } });
+    const loads = getSessionSnapshot.mock.calls.length;
+    await submitPrompt('Save this conversation. Why did you recommend that?');
+    await waitFor(() => expect(getSessionSnapshot.mock.calls.length).toBeGreaterThan(loads));
+    await act(async () => { await Promise.resolve(); });
+    expect(generateSessionSummary).not.toHaveBeenCalled();
+    replying = false;
+    await waitFor(() => expect(commitSessionSummary).toHaveBeenCalledOnce(), { timeout: 3_000 });
+    expect(getSessionSnapshot).toHaveBeenLastCalledWith('lobby', 'planning');
+    expect(generateSessionSummary).toHaveBeenCalledExactlyOnceWith('lobby', 'planning');
+  });
+
+  it.each<CommandResult>([{ clear_input: true }, { clear_input: true, save_summary: false },
+    { clear_input: false, save_summary: true }])('does not save for an unaccepted save decision %j', async result => {
+    const submitInput = vi.fn(async () => result);
+    const generateSessionSummary = vi.fn();
+    await renderPromptApp({ submitInput, generateSessionSummary });
+    await submitPrompt('That was interesting.');
+    await waitFor(() => expect(submitInput).toHaveBeenCalledOnce());
+    await act(async () => { await Promise.resolve(); });
+    expect(generateSessionSummary).not.toHaveBeenCalled();
+  });
+
+  it('saves the submitted conversation if the user navigates before classification completes', async () => {
+    const submitted = deferred<CommandResult>();
+    const generateSessionSummary = vi.fn(async () => ({ ...generated, target_note_id: null }));
+    const commitSessionSummary = vi.fn(async () => ({ ...summary, read_only: true }));
+    await renderPromptApp({ submitInput: () => submitted.promise, generateSessionSummary, commitSessionSummary });
+    await submitPrompt('Save this conversation.');
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await act(async () => submitted.resolve({ clear_input: true, save_summary: true }));
+    await waitFor(() => expect(commitSessionSummary).toHaveBeenCalledOnce());
+    expect(generateSessionSummary).toHaveBeenCalledExactlyOnceWith('lobby', 'planning');
+  });
+
+  it('ignores a save decision that arrives after the vault context changes', async () => {
+    const submitted = deferred<CommandResult>();
+    const generateSessionSummary = vi.fn();
+    let epoch = 1;
+    await renderPromptApp({ contextEpoch: () => epoch,
+      submitInput: () => submitted.promise, generateSessionSummary });
+    await submitPrompt('Save this conversation.');
+    epoch++;
+    await act(async () => submitted.resolve({ clear_input: true, save_summary: true }));
+    expect(generateSessionSummary).not.toHaveBeenCalled();
+  });
+
+  it('reports a summary failure through the existing error path without restoring the accepted prompt', async () => {
+    await renderPromptApp({
+      submitInput: async () => ({ clear_input: true, save_summary: true }),
+      generateSessionSummary: async () => { throw new ChaError('invalid_argument', 'Notes provider is unavailable.'); },
+    });
+    await submitPrompt('Save this conversation.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Notes provider is unavailable.');
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+  });
+
   it('targets the clicked inactive session, closes the menu immediately and saves after navigation', async () => {
     const ready = deferred<SessionSummaryGenerated>();
     const generateSessionSummary = vi.fn(() => ready.promise);

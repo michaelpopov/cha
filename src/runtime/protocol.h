@@ -224,12 +224,13 @@ using WebCommand = std::variant<
 
 struct CommandResult {
     // Owner-thread effects stay in this in-process result. The JSON serializer
-    // exposes only clear_input and session.notice to the browser.
+    // exposes clear_input, save_summary, and session.notice to the browser.
     ControllerUpdate session;
     bool clear_input{};
     // A successful character selection also carries the canonical ID so
     // the session owner can update the forum configuration before publishing.
     std::optional<CharacterId> persist_default_character_id;
+    bool save_summary{};
 };
 
 struct CreateSessionSuccess {

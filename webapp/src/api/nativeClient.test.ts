@@ -390,6 +390,18 @@ describe('native CHA client', () => {
       .resolves.toEqual({ forum_id: 'lobby', session_id: 'planning' });
   });
 
+  it('accepts a summary save request only as a boolean command result field', async () => {
+    const bridge = createFakeNativeBridge({
+      'session.submit': () => ({ clear_input: true, save_summary: true }),
+    });
+    const client = createNativeChaClient(bridge);
+    await expect(client.submitInput('lobby', 'planning', { text: 'Save this conversation.' }))
+      .resolves.toEqual({ clear_input: true, save_summary: true });
+    for (const save_summary of ['true', 1, null, {}]) {
+      expect(isCommandResult({ clear_input: true, save_summary })).toBe(false);
+    }
+  });
+
   it('lists and switches vaults through native methods', async () => {
     const vault = {
       display_name: 'Personal',

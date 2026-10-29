@@ -972,6 +972,19 @@ export function App({
     }
   }, [client, reload, noteLeave.beginNoteAction, noteLeave.endNoteAction, noteLeave.whenIdle]);
 
+  // A save request with a question saves after its reply ends, so the summary
+  // includes the reply. The live stream follows one session, so check this one.
+  const saveSummaryAfterReply = useCallback(async (forumId: string, sessionId: string, epoch: number) => {
+    try {
+      while ((await client.getSessionSnapshot(forumId, sessionId)).generation.active) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+      }
+    } catch {
+      // A session that is no longer live has no reply. The save reports other failures.
+    }
+    if (client.contextEpoch() === epoch) await saveSummary(forumId, sessionId);
+  }, [client, saveSummary]);
+
   const beforeCreateNote = useCallback(async () => {
     const result = await noteLeave.leaveNoteThen(() => true);
     if (result === false) return false;
@@ -1204,8 +1217,13 @@ export function App({
       ?? state.bootstrap?.forums.find((forum) => forum.id === active.forumId)?.display_name
       ?? active.forumId;
     const sessionName = state.activeConversationLabel ?? active.sessionId;
+    const epoch = client.contextEpoch();
     try {
-      return await runMutation(active, 'submit', () => client.submitInput(active.forumId, active.sessionId, { text }));
+      const result = await runMutation(active, 'submit', () => client.submitInput(active.forumId, active.sessionId, { text }));
+      if (result.clear_input && result.save_summary && client.contextEpoch() === epoch) {
+        void saveSummaryAfterReply(active.forumId, active.sessionId, epoch);
+      }
+      return result;
     } catch (failure: unknown) {
       if (composerVisit.current !== visit) {
         const message = publicErrorMessage(failure, 'The message could not be sent.');
@@ -1216,7 +1234,7 @@ export function App({
       }
       throw failure;
     }
-  }, [client, noteWelcomeSubmission, retainSession, runMutation, state.activeConversation, state.activeConversationLabel, state.sessionSnapshot, state.bootstrap]);
+  }, [client, noteWelcomeSubmission, retainSession, runMutation, saveSummaryAfterReply, state.activeConversation, state.activeConversationLabel, state.sessionSnapshot, state.bootstrap]);
 
   const attachTextFile = useCallback((file: TextFileRequest) => {
     const active = state.activeConversation;

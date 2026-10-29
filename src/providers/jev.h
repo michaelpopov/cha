@@ -39,11 +39,13 @@ struct JevRequestInput {
     std::optional<JevPreviousTurn> previous_turn;
 };
 enum class JevOutcome { success, cancelled, failure };
+enum class JevConversationSave { none, save_only, save_and_reply };
 struct JevResult {
     JevOutcome outcome{JevOutcome::failure};
     std::string choice;
     std::string message;
     ResearchNeeds research_needs{};
+    JevConversationSave conversation_save{JevConversationSave::none};
 };
 using JevExecutor = std::function<JevResult(const JevRequestInput&, const std::atomic_bool&)>;
 

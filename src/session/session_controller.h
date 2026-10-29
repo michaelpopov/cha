@@ -146,6 +146,7 @@ public:
         SubmissionOutcome outcome;
         ControllerUpdate update;
         std::optional<CharacterId> persist_default_character_id;
+        bool save_summary{};
     };
     std::optional<SubmissionResult> take_submission_result();
 

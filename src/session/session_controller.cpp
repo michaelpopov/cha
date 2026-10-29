@@ -767,6 +767,9 @@ ControllerUpdate SessionController::finish_classification() {
         + " page_read=" + (result.research_needs.page_read ? "true" : "false")
         + " actual_data=" + (result.research_needs.actual_data ? "true" : "false"));
     log_debug_payload("Jev recipient decision", result.choice);
+    log_debug(std::string("Jev conversation save decision: ")
+        + (result.conversation_save == JevConversationSave::save_only ? "save_only"
+            : result.conversation_save == JevConversationSave::save_and_reply ? "save_and_reply" : "no"));
     log_debug_payload("Jev classification diagnostic", result.message);
     std::string target = input.fallback;
     bool failed = result.outcome == JevOutcome::failure;
@@ -786,6 +789,28 @@ ControllerUpdate SessionController::finish_classification() {
         return update;
     }
     if (failed) log_warn("Recipient detection failed; using captured fallback target: " + result.message);
+    // Welcome has no Notes folder for a summary.
+    const bool welcome = identity_.forum_id == workspace_entrance_id && identity_.session_id == welcome_id;
+    const bool save_summary = !failed && !welcome && result.conversation_save != JevConversationSave::none;
+    if (save_summary && result.conversation_save == JevConversationSave::save_only) {
+        record_monologue(input.author, std::move(input.text), update);
+        save_name_after_acceptance();
+        submission_result_ = SubmissionResult{
+            update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed,
+            update, {}, update.input_consumed};
+        if (!update.input_consumed) update.notice.reset();
+        return update;
+    }
+    // A question accompanying a save request still needs a character reply.
+    // A self-note decision keeps the active target, and a self-note target
+    // uses the forum default character.
+    if (save_summary && self_note) {
+        result.choice = "undefined";
+        target = input.fallback;
+    }
+    if (save_summary && target == null_agent_handle) {
+        target = workspace()->find_forum(identity_.forum_id)->default_character_id;
+    }
     // One owner-thread handoff: no idle publication and no classifier re-entry.
     const auto previous_target = default_character_id_;
     if (!failed && result.choice != "undefined") default_character_id_ = target;
@@ -810,7 +835,8 @@ ControllerUpdate SessionController::finish_classification() {
     merge(update, std::move(dispatched));
     save_name_after_acceptance();
     submission_result_ = SubmissionResult{
-        update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed, update};
+        update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed,
+        update, {}, update.input_consumed && save_summary};
     if (update.input_consumed && !failed && result.choice != "undefined"
         && target != all_characters_target && target != null_agent_handle) {
         submission_result_->persist_default_character_id = target;

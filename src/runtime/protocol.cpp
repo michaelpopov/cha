@@ -267,6 +267,7 @@ void to_json(nlohmann::json& json, const SessionSnapshot& value) {
 
 void to_json(nlohmann::json& json, const CommandResult& value) {
     json = {{"clear_input", value.clear_input}};
+    if (value.save_summary) json["save_summary"] = true;
     put_optional(json, "notice", value.session.notice);
 }
 
