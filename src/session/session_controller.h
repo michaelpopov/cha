@@ -277,6 +277,8 @@ private:
     std::optional<std::string> ready_name_;
     WorkspaceReader read_workspace_;
     Transcript transcript_;
+    SummaryTool summary_tool_;
+    std::function<std::string(const std::atomic_bool&)> summary_context_loader_;
     SessionJournal journal_;
     NoteReader read_note_;
     ItemReader read_item_;

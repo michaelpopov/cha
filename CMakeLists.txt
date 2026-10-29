@@ -318,6 +318,7 @@ add_library(cha_lib STATIC
     src/characters/character_config.cpp
     src/session/controller_update.cpp
     src/session/session_controller.cpp
+    src/session/summary_prompt_cache.cpp
     src/storage/session_database.cpp
     src/storage/note_storage.cpp
     src/storage/folder_store_storage.cpp
@@ -552,6 +553,7 @@ if(BUILD_TESTING)
         tests/providers/unit_sse_framer.cpp
         tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_session_controller.cpp
+        tests/session/unit_summary_prompt_cache.cpp
         tests/storage/unit_session_lease.cpp
         tests/storage/unit_note_storage.cpp
         tests/storage/unit_folder_store_storage.cpp

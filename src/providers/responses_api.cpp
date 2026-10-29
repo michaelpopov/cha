@@ -214,6 +214,7 @@ std::string build_responses_request_body(
     } else {
         if (input.web_search_tool) add_web_search_tool(body, config.api);
         if (input.web_read_tool) add_web_read_tool(body, config.api);
+        if (input.summary_tool) add_summary_tools(body, config.api);
         if (!subscription && input.folder_search
             && input.folder_search->service == FolderStoreService::openai
             && !input.folder_search->remote_store_ids.empty()) {
@@ -226,7 +227,7 @@ std::string build_responses_request_body(
             body["include"].push_back("file_search_call.results");
         }
     }
-    if (input.include_tool_instructions) update_tool_instructions(body, config.api, text_sizes);
+    if (input.include_tool_instructions) update_tool_instructions(body, config.api, text_sizes, input.summary_context);
     return dump_json(body, "Model request");
 }
 

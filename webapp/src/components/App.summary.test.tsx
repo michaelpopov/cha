@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChaError, type CommandResult, type NoteItem, type SessionSummaryGenerated } from '../api/client';
 import { bootstrapFixture, fixtureClient, snapshotFixture } from '../test/fixtures';
 import { noteSaveDelayMs } from '../notes/useNoteSave';
+import { summaryDocument } from '../notes/summaryImport';
 import { App } from './App';
 
 function deferred<T>() {
@@ -14,7 +15,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const documentFor = (text: string) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
-const generated: SessionSummaryGenerated = { run_id: 1, target_note_id: 4, parent_id: 10, markdown: 'New summary' };
+const generated: SessionSummaryGenerated = { run_id: 1, target_note_id: 4, parent_id: 10, markdown: '# Short summary\n\nOverview.\n\n**Keywords:** topic\n\n# Long summary\n\nNew summary' };
 const summary: NoteItem = { id: 4, parent_id: null, name: 'Plan', kind: 'note', is_summary: true,
   summary_linked: true, has_compressed: false, read_only: false };
 function editor(): Editor {
@@ -67,7 +68,7 @@ describe('saving session summaries', () => {
       const commitSessionSummary = vi.fn(async () => ({ ...summary, read_only: true }));
       await renderPromptApp({ submitInput, generateSessionSummary, commitSessionSummary });
       await submitPrompt(text);
-      await waitFor(() => expect(commitSessionSummary).toHaveBeenCalledWith(1, documentFor('New summary')));
+      await waitFor(() => expect(commitSessionSummary).toHaveBeenCalledWith(1, summaryDocument(generated.markdown)));
       expect(submitInput).toHaveBeenCalledWith('lobby', 'planning', { text });
       expect(generateSessionSummary).toHaveBeenCalledExactlyOnceWith('lobby', 'planning');
       expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
@@ -151,7 +152,7 @@ describe('saving session summaries', () => {
     expect(screen.getByLabelText('Actions for Planning')).toHaveFocus();
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     await act(async () => ready.resolve({ ...generated, target_note_id: null }));
-    await waitFor(() => expect(commitSessionSummary).toHaveBeenCalledWith(1, documentFor('New summary')));
+    await waitFor(() => expect(commitSessionSummary).toHaveBeenCalledWith(1, summaryDocument(generated.markdown)));
     expect(screen.queryByRole('region', { name: 'Note' })).not.toBeInTheDocument();
     expect(openSession).not.toHaveBeenCalledWith('lobby', 'planning');
   });

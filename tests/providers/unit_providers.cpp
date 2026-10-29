@@ -33,6 +33,7 @@ struct BackendState {
     std::condition_variable changed;
     int constructed{};
     int prepared{};
+    std::vector<std::string> summary_contexts;
     int performing{};
     int destroyed{};
     bool block{};
@@ -61,6 +62,7 @@ public:
     RequestPayload prepare(const GenerationRequest& input) override {
         std::lock_guard lock(state_->mutex);
         ++state_->prepared;
+        state_->summary_contexts.push_back(input.summary_context);
         state_->changed.notify_all();
         if (state_->throw_prepare) throw std::runtime_error("prepare failed");
         return {.bytes = input.run.prompt_text};
@@ -630,6 +632,91 @@ TEST(Providers, MakeRequestRacingWithShutdownLeavesEveryCallerWithATerminal) {
         EXPECT_EQ(events.size(), 1U);
         EXPECT_FALSE(std::holds_alternative<GenerationEventDelta>(events.back()));
     }
+}
+
+class SummaryCallbackBackend final : public ModelBackend {
+public:
+    RequestPayload prepare(const GenerationRequest& input) override { return {.summary_tool = input.summary_tool}; }
+    GenerationResult perform(RequestPayload payload, const GenerationDeltaSink& on_delta, const std::atomic_bool& cancellation) override {
+        (void)payload.summary_tool("summary_read", R"({"note_id":1})", cancellation);
+        if (cancellation.load()) return {GenerationOutcome::cancelled, {}};
+        on_delta({GenerationDeltaKind::answer, "Historical answer"});
+        return {};
+    }
+};
+
+TEST(Providers, SummaryCallbacksAreOwnedAndMustDrainBeforeDatabaseLifetimeOperations) {
+    for (const bool cancel : {false, true}) {
+        Providers providers([](auto) { return std::make_unique<SummaryCallbackBackend>(); });
+        std::promise<void> entered, resume;
+        auto started = entered.get_future();
+        auto released = resume.get_future().share();
+        auto request_input = input(definition(), 1);
+        request_input.generation.summary_tool = [&, released](auto, auto, const auto& cancellation) {
+            entered.set_value();
+            released.wait(); // Represents an in-progress read/decompression that must finish before rekey.
+            EXPECT_EQ(cancellation.load(), cancel);
+            return "{}";
+        };
+        auto request = providers.make_request(std::move(request_input), std::make_shared<test::NoopNotifier>());
+        const auto status = started.wait_for(1s);
+        if (status != std::future_status::ready) { resume.set_value(); FAIL() << "Summary callback was not reached"; }
+        if (cancel) EXPECT_FALSE(providers.cancel_active_until(std::chrono::steady_clock::now() + 10ms));
+        resume.set_value();
+        if (cancel) EXPECT_TRUE(providers.cancel_active_until(std::chrono::steady_clock::now() + 1s));
+        const auto events = receive_terminal(request);
+        ASSERT_FALSE(events.empty());
+        if (cancel) EXPECT_TRUE(std::holds_alternative<GenerationCancelled>(events.back()));
+        else EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(events.back()));
+        for (const auto& event : events) {
+            if (const auto* delta = std::get_if<GenerationEventDelta>(&event)) EXPECT_FALSE(delta->web_search_used);
+            EXPECT_FALSE(std::holds_alternative<GenerationToolProgress>(event));
+        }
+    }
+}
+
+
+TEST(Providers, SummaryContextLoadsOnceOnWorkerBeforePreparationWithoutToolOrWebEvents) {
+    const auto state = std::make_shared<BackendState>();
+    Providers providers(factory(state));
+    auto request_input = input(definition(), 1);
+    const auto caller = std::this_thread::get_id();
+    std::atomic_int reads{0};
+    request_input.summary_context_loader = [&](const auto&) {
+        EXPECT_NE(std::this_thread::get_id(), caller);
+        ++reads;
+        return "catalogue";
+    };
+    const auto request = providers.make_request(std::move(request_input), std::make_shared<test::TestNotifier>());
+    const auto events = receive_terminal(request);
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(events.back()));
+    EXPECT_EQ(reads, 1);
+    providers.shutdown();
+    EXPECT_EQ(state->summary_contexts, std::vector<std::string>{"catalogue"});
+}
+
+TEST(Providers, CancelActiveDrainsBlockedSummaryRefreshBeforePreparation) {
+    const auto state = std::make_shared<BackendState>();
+    Providers providers(factory(state));
+    auto request_input = input(definition(), 1);
+    std::promise<void> entered;
+    std::atomic_bool finished{false};
+    request_input.summary_context_loader = [&](const std::atomic_bool& cancellation) {
+        entered.set_value();
+        while (!cancellation.load()) std::this_thread::yield();
+        finished = true;
+        return "completed snapshot after cancellation";
+    };
+    const auto request = providers.make_request(std::move(request_input), std::make_shared<test::TestNotifier>());
+    ASSERT_EQ(entered.get_future().wait_for(1s), std::future_status::ready);
+    EXPECT_TRUE(providers.cancel_active_until(std::chrono::steady_clock::now() + 1s));
+    EXPECT_TRUE(finished.load());
+    const auto events = receive_terminal(request);
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<GenerationCancelled>(events.back()));
+    EXPECT_EQ(state->prepared, 0);
+    EXPECT_EQ(state->performing, 0);
 }
 
 } // namespace

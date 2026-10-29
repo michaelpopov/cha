@@ -7,9 +7,13 @@ function texts(node: Record<string, unknown>): string {
     : Array.isArray(node.content) ? node.content.map(child => texts(child)).join(node.type === 'doc' ? '\n' : '') : '';
 }
 
+function convertSummary(body: string) {
+  return summaryDocument('# Short summary\n\nOverview.\n\n**Keywords:** topic\n\n# Long summary\n\n' + body);
+}
+
 describe('summaryDocument', () => {
   it('preserves headings, nested lists, marks, explicit links, quotes and fenced code', () => {
-    const doc = summaryDocument('# Goal\n\n**Bold** and *emphasis* [source](https://example.org/a).\n\n- One\n  - Nested\n\n> Quote\n\n```typescript\nconst value = 1;\n```');
+    const doc = convertSummary('## Goal\n\n**Bold** and *emphasis* [source](https://example.org/a).\n\n- One\n  - Nested\n\n> Quote\n\n```typescript\nconst value = 1;\n```');
     const json = JSON.stringify(doc);
     for (const type of ['heading', 'bulletList', 'bold', 'italic', 'link', 'codeBlock']) expect(json).toContain(type);
     expect(json).toContain('https://example.org/a');
@@ -21,7 +25,7 @@ describe('summaryDocument', () => {
 
   it('keeps relative paths as text and strips image elements before DOM assignment', () => {
     const assignment = vi.spyOn(Element.prototype, 'innerHTML', 'set');
-    const doc = summaryDocument('[relative](../notes.md) [web](https://example.org) ![external](https://example.org/image.png)');
+    const doc = convertSummary('[relative](../notes.md) [web](https://example.org) ![external](https://example.org/image.png)');
     expect(JSON.stringify(doc)).not.toContain('image');
     expect(JSON.stringify(doc)).not.toContain('file:');
     expect(texts(doc)).toContain('relative');
@@ -32,28 +36,56 @@ describe('summaryDocument', () => {
   });
 
   it('flattens Markdown and simple HTML tables preserving caption, rows, marks and tabs', () => {
-    const markdown = summaryDocument('| Key | Value |\n| --- | --- |\n| **One** | Two |');
+    const markdown = convertSummary('| Key | Value |\n| --- | --- |\n| **One** | Two |');
     expect(texts(markdown)).toContain('Key\tValue');
     expect(texts(markdown)).toContain('One\tTwo');
     expect(JSON.stringify(markdown)).toContain('bold');
-    const html = summaryDocument('<table><caption>Results</caption><tbody><tr><td>A</td><td><em>B</em></td></tr><tr><td>C</td><td>D</td></tr></tbody></table>');
-    expect(texts(html)).toBe('Results\nA\tB\nC\tD');
+    const html = convertSummary('<table><caption>Results</caption><tbody><tr><td>A</td><td><em>B</em></td></tr><tr><td>C</td><td>D</td></tr></tbody></table>');
+    expect(texts(html)).toContain('Results\nA\tB\nC\tD');
     expect(JSON.stringify(html)).toContain('italic');
   });
 
   it('rejects merged cells but accepts table text in fenced code', () => {
-    expect(() => summaryDocument('<table><tr><td colspan="2">Merged</td></tr></table>')).toThrow();
-    expect(() => summaryDocument('<table><tr><td rowspan="0">Merged</td></tr></table>')).toThrow();
-    expect(texts(summaryDocument('```html\n<table><tr><td colspan="2">Example</td></tr></table>\n```'))).toContain('colspan="2"');
+    expect(() => convertSummary('<table><tr><td colspan="2">Merged</td></tr></table>')).toThrow();
+    expect(() => convertSummary('<table><tr><td rowspan="0">Merged</td></tr></table>')).toThrow();
+    expect(texts(convertSummary('```html\n<table><tr><td colspan="2">Example</td></tr></table>\n```'))).toContain('colspan="2"');
   });
 
   it.each(['', ' \n\t', '![](https://example.org/image.png)', '<script>alert(1)</script>'])('rejects unreadable content %s', (markdown) => {
+    expect(() => convertSummary(markdown)).toThrow();
+  });
+
+  it('stores the two chapters and keywords as editor nodes', () => {
+    const doc = convertSummary('Details.\n\n## Decision\n\nAccepted.');
+    const content = doc.content as Record<string, unknown>[];
+    const headings = content.filter(node => node.type === 'heading');
+    expect(headings.map(node => [node.attrs, texts(node)])).toEqual([
+      [{ level: 1 }, 'Short summary'], [{ level: 1 }, 'Long summary'], [{ level: 2 }, 'Decision'],
+    ]);
+    expect(texts(doc)).toContain('Keywords: topic');
+    expect(texts(doc)).toContain('Details.');
+  });
+
+  it('accepts chapter titles in any letter case', () => {
+    expect(() => summaryDocument('# SHORT Summary\n\nOverview.\n\n# long SUMMARY\n\nDetails.')).not.toThrow();
+  });
+
+  it.each([
+    'Plain text',
+    '# Short summary\n\nOverview.',
+    '# Long summary\n\nDetails.\n\n# Short summary\n\nOverview.',
+    '# Short summary\n\n# Long summary\n\nDetails.',
+    '# Short summary\n\nOverview.\n\n# Long summary',
+    '# Short summary\n\nOverview.\n\n# Long summary\n\n## Empty subsection',
+    'Preamble\n\n# Short summary\n\nOverview.\n\n# Long summary\n\nDetails.',
+    '# Short summary\n\nOverview.\n\n# Long summary\n\nDetails.\n\n# Extra\n\nExtra.',
+  ])('rejects invalid chapters: %s', markdown => {
     expect(() => summaryDocument(markdown)).toThrow();
   });
 
   it('checks both source and JSON encoded byte limits', () => {
     expect(() => summaryDocument('a'.repeat(noteDocumentByteLimit + 1))).toThrow();
     // Backslashes and quotes require JSON escaping and can cross the limit after parsing.
-    expect(() => summaryDocument('```\n' + '"'.repeat(noteDocumentByteLimit / 2) + '\n```')).toThrow();
+    expect(() => convertSummary('```\n' + '"'.repeat(noteDocumentByteLimit / 2) + '\n```')).toThrow();
   });
 });

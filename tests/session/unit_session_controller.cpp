@@ -2782,5 +2782,125 @@ TEST(SessionController, EveryGenerationTargetUsesItsOwnImmutableSessionSettings)
     EXPECT_EQ(load_session_state(temporary.path).character_settings.at("one").reasoning_effort, "high");
 }
 
+TEST(SessionController, SummaryAccessIsAutomaticForEveryTargetAndOwnsItsDatabaseBinding) {
+    test::TestWorkspace fixture;
+    fixture.write_character_config("display_name = 'Guide'\nprovider = 'test'\nweb_search_tool = false\n");
+    fixture.add_character("other", "Other");
+    std::filesystem::create_directories(fixture.root() / "forums/lobby/members/other");
+    std::ofstream(fixture.root() / "forums/lobby/members/other/character.toml") << "# member\n";
+    const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
+    TemporaryJournal journal;
+    auto backend = std::make_unique<ScriptedBackend>(GenerationResult{}, std::vector<std::string>{"Answer"});
+    auto* observed = backend.get();
+    auto slot = std::make_shared<test::RequestBackendFacade::Slot>(std::move(backend));
+    auto providers = std::make_shared<Providers>([slot](SharedCharacterDefinition) {
+        return std::make_unique<test::RequestBackendFacade>(slot);
+    });
+    auto controller = SessionController::from_workspace_for_testing(
+        [workspace] { return workspace; }, "guide", "reader", journal.path, providers,
+        std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}), {}, {}, {"lobby", "test"});
+    (void)controller->start_multicast("reader", "Recall", {"Guide", "Other"});
+    (void)receive_until_idle(*controller);
+    ASSERT_EQ(observed->inputs.size(), 2u);
+    SummaryTool saved;
+    for (const auto& input : observed->inputs) {
+        ASSERT_TRUE(input.summary_tool);
+        if (input.run.target.id == "guide") saved = input.summary_tool;
+    }
+    ASSERT_TRUE(saved);
+    controller.reset();
+    const auto output = nlohmann::json::parse(saved("summary_search", R"({"query":"","before_note_id":null})", std::atomic_bool{false}));
+    EXPECT_TRUE(output["items"].empty());
+    EXPECT_FALSE(output.contains("error"));
+    EXPECT_EQ(nlohmann::json::parse(saved("summary_read", R"({"note_id":1})", std::atomic_bool{false}))["error"], "not_found");
+}
+
+
+TEST(SessionController, NonemptyCatalogueCapturesDatabaseBeforeMovesAndRemainsSharedUntilControllerRetires) {
+    test::TestWorkspace fixture;
+    fixture.add_character("other", "Other");
+    std::filesystem::create_directories(fixture.root() / "forums/lobby/members/other");
+    std::ofstream(fixture.root() / "forums/lobby/members/other/character.toml") << "# member\n";
+    const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
+    TemporaryJournal journal;
+    const nlohmann::json document = {{"type", "doc"}, {"content", {
+        {{"type", "heading"}, {"attrs", {{"level", 1}}}, {"content", {{{"type", "text"}, {"text", "Short summary"}}}}},
+        {{"type", "paragraph"}, {"content", {{{"type", "text"}, {"text", "Distinctive project decision. Keywords: capture"}}}}},
+        {{"type", "heading"}, {"attrs", {{"level", 1}}}, {"content", {{{"type", "text"}, {"text", "Long summary"}}}}},
+        {{"type", "paragraph"}, {"content", {{{"type", "text"}, {"text", "Full decision detail"}}}}}
+    }}};
+    std::int64_t note_id;
+    {
+        storage::SqliteDatabase database(journal.path, storage::SqliteDatabase::Mode::read_write);
+        create_event_history_schema(database);
+        database.execute("UPDATE forums SET forum_id='lobby' WHERE forum_key=1");
+        database.execute("UPDATE sessions SET session_id='test' WHERE session_key=1");
+        database.execute("INSERT INTO sessions(forum_key,session_id,label,updated_at,history_epoch,next_entry_id,next_request_id) "
+            "VALUES(1,'other-session','Other discussion',0,1,1,1)");
+        note_sync_forums(database, {{"lobby", "Lobby"}});
+        note_id = note_commit_summary(database, {"lobby", "other-session"},
+            note_summary_target(database, {"lobby", "other-session"}), document).id;
+    }
+    auto backend = std::make_unique<ScriptedBackend>(GenerationResult{}, std::vector<std::string>{"Answer"});
+    auto* observed = backend.get();
+    auto slot = std::make_shared<test::RequestBackendFacade::Slot>(std::move(backend));
+    auto providers = std::make_shared<Providers>([slot](SharedCharacterDefinition) {
+        return std::make_unique<test::RequestBackendFacade>(slot);
+    });
+    auto controller = SessionController::from_workspace_for_testing(
+        [workspace] { return workspace; }, "guide", "reader", journal.path, providers,
+        std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}), {}, {}, {"lobby", "test"});
+    (void)controller->start_multicast("reader", "Recall", {"Guide", "Other"});
+    (void)receive_until_idle(*controller);
+    ASSERT_EQ(observed->inputs.size(), 2u);
+    const auto snapshot = observed->inputs[0].summary_context;
+    EXPECT_NE(snapshot.find("Distinctive project decision"), std::string::npos);
+    EXPECT_EQ(snapshot.find("Full decision detail"), std::string::npos);
+    EXPECT_EQ(snapshot, observed->inputs[1].summary_context);
+    const auto retained = observed->inputs[0].summary_tool;
+    {
+        storage::SqliteDatabase database(journal.path, storage::SqliteDatabase::Mode::read_write);
+        (void)note_set_read_only(database, note_id, false);
+        storage::SqliteTransaction transaction(database);
+        note_rename_summary_in_transaction(database, 2, "Renamed discussion");
+        transaction.commit();
+    }
+    (void)controller->submit_prompt("reader", "Recall again");
+    (void)receive_until_idle(*controller);
+    EXPECT_EQ(observed->inputs.back().summary_context, snapshot);
+    controller.reset();
+    EXPECT_EQ(nlohmann::json::parse(retained("summary_read", nlohmann::json{{"note_id", note_id}}.dump(),
+        std::atomic_bool{false}))["name"], "Renamed discussion");
+    auto reopened = SessionController::from_workspace_for_testing(
+        [workspace] { return workspace; }, "guide", "reader", journal.path, providers,
+        std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}), load_session_database(journal.path, {"lobby", "test"}).restore, {}, {"lobby", "test"});
+    (void)reopened->submit_prompt("reader", "Recall after reopening");
+    (void)receive_until_idle(*reopened);
+    EXPECT_NE(observed->inputs.back().summary_context.find("Renamed discussion"), std::string::npos);
+}
+
+TEST(SessionController, SummaryAccessExcludesWelcomeAndAllowsOrdinaryBuiltInAssistant) {
+    test::TestWorkspace fixture;
+    fixture.add_forum("helpdesk", "Helpdesk", workspace_assistant_id);
+    const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
+    for (const auto& identity : {FullSessionId{std::string(workspace_entrance_id), std::string(welcome_id)}, FullSessionId{"helpdesk", "ordinary"}}) {
+        TemporaryJournal journal;
+        auto backend = std::make_unique<ScriptedBackend>(GenerationResult{}, std::vector<std::string>{"Answer"});
+        auto* observed = backend.get();
+        auto slot = std::make_shared<test::RequestBackendFacade::Slot>(std::move(backend));
+        auto providers = std::make_shared<Providers>([slot](SharedCharacterDefinition) {
+            return std::make_unique<test::RequestBackendFacade>(slot);
+        });
+        auto controller = SessionController::from_workspace_for_testing(
+            [workspace] { return workspace; }, std::string(workspace_assistant_id), "reader", journal.path, providers,
+            std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}), {}, {}, identity);
+        (void)controller->submit_prompt("reader", "Recall");
+        (void)receive_until_idle(*controller);
+        ASSERT_EQ(observed->inputs.size(), 1u);
+        EXPECT_EQ(bool(observed->inputs.front().summary_tool), identity.forum_id == "helpdesk");
+        EXPECT_TRUE(observed->inputs.front().summary_context.empty());
+    }
+}
+
 } // namespace
 } // namespace cha

@@ -8,11 +8,13 @@
 
 namespace cha {
 
+void add_summary_tools(nlohmann::json& body, ProviderApi api);
+bool summary_tools_available(const nlohmann::json& body, ProviderApi api);
 void add_web_search_tool(nlohmann::json& body, ProviderApi api);
 void add_web_read_tool(nlohmann::json& body, ProviderApi api);
 void add_maintenance_tools(nlohmann::json& body, ProviderApi api);
 void update_tool_instructions(nlohmann::json& body, ProviderApi api,
-    RequestTextSizes* text_sizes = nullptr);
+    RequestTextSizes* text_sizes = nullptr, std::string_view summary_context = {});
 GenerationResult tool_call_result(const nlohmann::json& continuation,
     ProviderApi api, bool received_answer, GenerationTokenUsage usage, bool collect_tool_calls,
     std::string_view no_answer_message = "Response completed without answer content",

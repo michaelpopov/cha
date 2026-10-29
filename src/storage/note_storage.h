@@ -3,6 +3,7 @@
 #include "storage/sqlite_storage.h"
 #include "chat/session_identity.h"
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <exception>
@@ -102,6 +103,21 @@ struct NoteSummaryTarget {
 // Caller owns the session rename transaction; never starts a nested transaction.
 void note_rename_summary_in_transaction(storage::SqliteDatabase& database,
     std::int64_t session_key, std::string_view label);
+
+struct SummaryChapters {
+    std::string short_markdown;
+    std::string long_markdown;
+};
+[[nodiscard]] SummaryChapters note_summary_chapters(const nlohmann::json& document);
+// Owns a dedicated read-only connection and transaction for this call.
+[[nodiscard]] std::string note_summary_tool(const std::filesystem::path& path,
+    std::string_view password, std::string_view forum_id, std::string_view tool_name,
+    std::string_view arguments, const std::atomic_bool& cancellation);
+
+// Complete bounded snapshot, or nullopt on cancellation/database failure.
+[[nodiscard]] std::optional<nlohmann::json> note_short_summary_catalogue(
+    const std::filesystem::path& path, std::string_view password, std::string_view forum_id,
+    std::int64_t session_key, const std::atomic_bool& cancellation);
 
 // Markdown for chat context, retaining headings, lists, links, emphasis, and code blocks.
 [[nodiscard]] std::string note_document_markdown(const nlohmann::json& document);

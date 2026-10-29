@@ -514,6 +514,15 @@ provider value. Omitting `voice` uses the configured FishAudio default
 voice during playback. Tags must be nonempty strings after trimming, contain
 no control characters, and be unique case-insensitively.
 
+`summary_search` and `summary_read` are automatically available for saved summaries
+in the current persistent forum, independently of web settings. No character
+setting is required. This includes the built-in Assistant in ordinary forums.
+Welcome, maintenance, and auxiliary requests cannot use these tools. Required
+provider-hosted web search excludes summary tools for that generation; Gemini 2.5
+File Search-only requests also omit them. The selected model must support function
+calls; provider rejection is reported normally, without capability probing or an
+automatic retry. Select a compatible model if the endpoint rejects function tools.
+
 `CHARACTER.md` is the actual character prompt. A simple prompt may be entirely
 self-contained. A maintainable larger definition often uses a small wrapper:
 

@@ -24,6 +24,7 @@ struct ProviderRequestInput {
     std::optional<WorkspaceWebSearch> web_search_tool;
     std::optional<WorkspaceWebSearch> web_read_tool;
     std::optional<MaintenanceContext> maintenance;
+    std::function<std::string(const std::atomic_bool&)> summary_context_loader;
 };
 
 // Launches one detached provider worker. Tests can replace this only to make

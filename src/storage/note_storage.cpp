@@ -3,6 +3,8 @@
 #include "storage/folder_store_storage.h"
 #include "storage/session_label.h"
 #include "util/logging.h"
+#include "providers/web_search.h"
+#include "providers/maintenance.h"
 
 #include <zlib.h>
 
@@ -679,6 +681,296 @@ nlohmann::json note_parse_saved_document(std::string_view bytes, std::int64_t id
     return parse_document(bytes, id);
 }
 
+SummaryChapters note_summary_chapters(const nlohmann::json& document) {
+    constexpr std::string_view message =
+        "The summary must contain nonempty Short summary and Long summary chapters, in that order.";
+    if (!document.is_object() || document.value("type", "") != "doc"
+        || !document.contains("content") || !document["content"].is_array())
+        fail(NoteFailure::invalid, message);
+    auto clean = document;
+    std::vector<std::string> comments;
+    const auto remove_comments = [&](const auto& self, nlohmann::json& node) -> void {
+        auto content = node.find("content");
+        if (content == node.end()) return;
+        if (!content->is_array()) fail(NoteFailure::invalid, message);
+        for (auto it = content->begin(); it != content->end();) {
+            if (is_note_comment(*it)) {
+                comments.push_back(note_document_markdown(*it));
+                it = content->erase(it);
+            } else {
+                const auto count = comments.size();
+                self(self, *it);
+                // Drop containers emptied by comment removal, including a comment-only list.
+                if (comments.size() != count && it->contains("content") && (*it)["content"].empty())
+                    it = content->erase(it);
+                else ++it;
+            }
+        }
+    };
+    remove_comments(remove_comments, clean);
+    constexpr std::string_view titles[]{"short summary", "long summary"};
+    nlohmann::json chapters[]{
+        {{"type", "doc"}, {"content", nlohmann::json::array()}},
+        {{"type", "doc"}, {"content", nlohmann::json::array()}}};
+    unsigned chapter = 0;
+    bool readable = false;
+    for (const auto& node : clean["content"]) {
+        if (node.value("type", "") == "heading" && node.contains("attrs")
+            && node["attrs"].is_object() && node["attrs"].value("level", 0) == 1) {
+            std::string title;
+            if (node.contains("content")) for (const auto& part : node["content"])
+                title += part.value("text", "");
+            for (auto& c : title) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+            if (chapter == 2 || title != titles[chapter] || (chapter && !readable))
+                fail(NoteFailure::invalid, message);
+            ++chapter;
+            readable = false;
+        } else {
+            if (!chapter) fail(NoteFailure::invalid, message);
+            if (node.value("type", "") != "heading") readable = summary_text(node) || readable;
+            chapters[chapter - 1]["content"].push_back(node);
+        }
+    }
+    if (chapter != 2 || !readable) fail(NoteFailure::invalid, message);
+    SummaryChapters result{note_document_markdown(chapters[0]), note_document_markdown(chapters[1])};
+    if (!comments.empty()) {
+        result.long_markdown += "\n\n## User comments added to this note\n\n"
+            "These are later note annotations, not statements in the original conversation.";
+        for (const auto& comment : comments) result.long_markdown += "\n\nUser comment: " + comment;
+    }
+    return result;
+}
+
+namespace {
+struct SummaryCancelled {};
+void summary_check_cancelled(const std::atomic_bool& cancellation) {
+    if (cancellation.load()) throw SummaryCancelled{};
+}
+std::size_t summary_boundary(std::string_view text, std::size_t end) {
+    end = std::min(end, text.size());
+    while (end && end < text.size() && (static_cast<unsigned char>(text[end]) & 0xc0) == 0x80) --end;
+    return end;
+}
+// All supported folds preserve UTF-8 byte widths, including Ё and U+0400..040F.
+std::string summary_fold(std::string_view text) {
+    std::string result(text);
+    for (std::size_t i = 0; i < result.size(); ++i) {
+        auto c = static_cast<unsigned char>(result[i]);
+        if (c >= 'A' && c <= 'Z') result[i] += 'a' - 'A';
+        else if (c == 0xd0 && i + 1 < result.size()) {
+            auto next = static_cast<unsigned char>(result[i + 1]);
+            if (next >= 0x80 && next <= 0x8f) {
+                result[i] = char(0xd1); result[i + 1] = char(next + 0x10);
+            } else if (next >= 0x90 && next <= 0x9f) {
+                result[i + 1] = char(next + 0x20);
+            } else if (next >= 0xa0 && next <= 0xaf) {
+                result[i] = char(0xd1); result[i + 1] = char(next - 0x20);
+            }
+            ++i;
+        }
+    }
+    return result;
+}
+constexpr std::string_view summary_rows =
+    "SELECT n.id,n.name,n.content_json FROM note_items n "
+    "JOIN note_summaries s ON s.note_id=n.id "
+    "JOIN note_items f ON f.id=n.parent_id JOIN note_items r ON r.id=f.parent_id "
+    "WHERE n.kind='note' AND f.kind='folder' AND f.forum_id=?1 "
+    "AND r.kind='folder' AND r.forum_id='' AND r.parent_id IS NULL ";
+
+constexpr std::size_t summary_preview_bytes = 2048;
+constexpr std::size_t summary_search_bytes = 32 * 1024;
+constexpr std::size_t summary_catalogue_bytes = 16 * 1024;
+
+nlohmann::json summary_search_scan(storage::SqliteDatabase& database,
+    std::string_view forum_id, std::string_view raw_query,
+    std::optional<std::int64_t> before, std::optional<std::size_t> max_items,
+    std::size_t byte_budget, std::optional<std::int64_t> excluded_session,
+    const std::atomic_bool& cancellation) {
+    using Json = nlohmann::json;
+    summary_check_cancelled(cancellation);
+    std::string sql(summary_rows);
+    if (before) sql += "AND n.id<?2 ";
+    if (excluded_session) sql += "AND s.session_key IS NOT ?3 ";
+    sql += "ORDER BY n.id DESC";
+    auto rows = database.prepare(sql);
+    rows.bind(1, forum_id);
+    if (before) rows.bind(2, *before);
+    if (excluded_session) rows.bind(3, *excluded_session);
+    std::vector<std::string> terms;
+    {
+        auto query = summary_fold(raw_query);
+        std::size_t start = 0;
+        while (start < query.size()) {
+            start = query.find_first_not_of(" \t\r\n\v\f", start);
+            if (start == std::string::npos) break;
+            auto end = query.find_first_of(" \t\r\n\v\f", start);
+            if (end == std::string::npos) end = query.size();
+            auto term = query.substr(start, end - start);
+            if (std::find(terms.begin(), terms.end(), term) == terms.end()) terms.push_back(std::move(term));
+            start = end;
+        }
+    }
+    Json result = {{"items", Json::array()}, {"next_before_note_id", nullptr}, {"skipped_invalid_count", 0}};
+    std::optional<std::int64_t> consumed;
+    bool remaining = rows.step();
+    while (remaining) {
+        summary_check_cancelled(cancellation);
+        const auto id = rows.integer(0);
+        const auto name = rows.text(1);
+        SummaryChapters chapters;
+        try {
+            summary_check_cancelled(cancellation);
+            require_name(name); // Keep metadata bounded even for a damaged row.
+            auto document = note_parse_saved_document(rows.blob(2), id);
+            summary_check_cancelled(cancellation);
+            chapters = note_summary_chapters(document);
+        } catch (const SummaryCancelled&) { throw; }
+        catch (const std::exception&) {
+            result["skipped_invalid_count"] = result["skipped_invalid_count"].get<std::size_t>() + 1;
+            log_warn("Summary note " + std::to_string(id) + ": invalid content or chapters");
+            consumed = id;
+            remaining = rows.step();
+            continue;
+        }
+        const auto folded_name = summary_fold(name);
+        const auto short_text = summary_fold(chapters.short_markdown);
+        const auto long_text = summary_fold(chapters.long_markdown);
+        const bool matches = std::all_of(terms.begin(), terms.end(), [&](const auto& term) {
+            return folded_name.find(term) != std::string::npos || short_text.find(term) != std::string::npos
+                || long_text.find(term) != std::string::npos;
+        });
+        if (matches) {
+            Json excerpt = nullptr;
+            for (const auto* field : {&chapters.long_markdown, &chapters.short_markdown}) {
+                const auto folded = summary_fold(*field);
+                auto first = std::string::npos;
+                for (const auto& term : terms) first = std::min(first, folded.find(term));
+                if (first == std::string::npos) continue;
+                auto start = summary_boundary(*field, first > 128 ? first - 128 : 0);
+                auto end = summary_boundary(*field, start + 512);
+                excerpt = field->substr(start, end - start);
+                break;
+            }
+            Json item{{"note_id", id}, {"name", name},
+                {"short_summary", chapters.short_markdown.substr(0, summary_boundary(chapters.short_markdown, summary_preview_bytes))},
+                {"short_truncated", chapters.short_markdown.size() > summary_preview_bytes}, {"excerpt", excerpt}};
+            result["items"].push_back(std::move(item));
+            // Reserve the exact cursor before testing actual escaped JSON size.
+            result["next_before_note_id"] = id;
+            auto budget = result;
+            // Later invalid rows can increase the count after the last appended match.
+            budget["skipped_invalid_count"] = note_id_limit;
+            if (budget.dump().size() > byte_budget) {
+                result["items"].erase(result["items"].end() - 1);
+                break; // This matching row remains unconsumed.
+            }
+        }
+        consumed = id;
+        remaining = rows.step();
+        if (max_items && result["items"].size() == *max_items) break;
+    }
+    summary_check_cancelled(cancellation);
+    result["next_before_note_id"] = remaining && consumed ? Json(*consumed) : Json(nullptr);
+    return result;
+}
+
+}
+
+std::string note_summary_tool(const std::filesystem::path& path,
+    std::string_view password, std::string_view forum_id, std::string_view tool_name,
+    std::string_view arguments, const std::atomic_bool& cancellation) {
+    using Json = nlohmann::json;
+    const auto error = [&](const char* code, const char* message) {
+        if (cancellation.load()) { code = "cancelled"; message = "Summary retrieval was cancelled."; }
+        return Json{{"error", code}, {"message", message}}.dump();
+    };
+    try {
+        summary_check_cancelled(cancellation);
+        if (arguments.size() > ordinary_tool_argument_limit)
+            return error("invalid_argument", "Invalid summary tool arguments.");
+        const auto args = Json::parse(arguments, nullptr, false);
+        const bool search = tool_name == "summary_search";
+        const auto valid_id = [](const Json& value) {
+            return value.is_number_integer() && value >= 1 && value <= note_id_limit;
+        };
+        if (!args.is_object()
+            || (search ? args.size() != 2 || !args.contains("query") || !args["query"].is_string()
+                || args["query"].get_ref<const std::string&>().size() > 512
+                || !args.contains("before_note_id")
+                || (!args["before_note_id"].is_null() && !valid_id(args["before_note_id"]))
+                : tool_name != "summary_read" || args.size() != 1 || !args.contains("note_id")
+                    || !valid_id(args["note_id"])))
+            return error("invalid_argument", "Invalid summary tool arguments.");
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only, password);
+        summary_check_cancelled(cancellation);
+        storage::SqliteTransaction transaction(database, storage::SqliteTransaction::Mode::read);
+        if (search) {
+            const auto before = args["before_note_id"].is_null() ? std::optional<std::int64_t>{}
+                : std::optional<std::int64_t>{args["before_note_id"].get<std::int64_t>()};
+            return summary_search_scan(database, forum_id, args["query"].get_ref<const std::string&>(),
+                before, 10, summary_search_bytes, std::nullopt, cancellation).dump();
+        }
+        auto rows = database.prepare(std::string(summary_rows) + "AND n.id=?2 ORDER BY n.id DESC");
+        rows.bind(1, forum_id);
+        rows.bind(2, args["note_id"].get<std::int64_t>());
+        if (rows.step()) {
+            summary_check_cancelled(cancellation);
+            const auto id = rows.integer(0);
+            const auto name = rows.text(1);
+            SummaryChapters chapters;
+            try {
+                require_name(name);
+                auto document = note_parse_saved_document(rows.blob(2), id);
+                summary_check_cancelled(cancellation);
+                chapters = note_summary_chapters(document);
+            } catch (const SummaryCancelled&) { throw; }
+            catch (const std::exception&) {
+                return error("invalid_summary", "The saved summary is invalid.");
+            }
+            const auto prefix = summary_boundary(chapters.long_markdown, page_read_byte_limit);
+            Json output{{"note_id", id}, {"name", name}, {"text", chapters.long_markdown.substr(0, prefix)},
+                {"truncated", prefix < chapters.long_markdown.size()}};
+            if (output.dump().size() > page_read_byte_limit) {
+                output["truncated"] = true;
+                std::size_t low = 0, high = prefix;
+                while (low < high) {
+                    const auto mid = low + (high - low + 1) / 2;
+                    output["text"] = chapters.long_markdown.substr(0, summary_boundary(chapters.long_markdown, mid));
+                    if (output.dump().size() <= page_read_byte_limit) low = mid;
+                    else high = mid - 1;
+                }
+                output["text"] = chapters.long_markdown.substr(0, summary_boundary(chapters.long_markdown, low));
+            }
+            summary_check_cancelled(cancellation);
+            return output.dump();
+        }
+        summary_check_cancelled(cancellation);
+        return error("not_found", "The summary was not found.");
+    } catch (const SummaryCancelled&) {
+        return error("cancelled", "Summary retrieval was cancelled.");
+    } catch (const std::exception&) {
+        return error("unavailable", "Summary retrieval is unavailable.");
+    }
+}
+
+std::optional<nlohmann::json> note_short_summary_catalogue(const std::filesystem::path& path,
+    std::string_view password, std::string_view forum_id, std::int64_t session_key,
+    const std::atomic_bool& cancellation) {
+    try {
+        summary_check_cancelled(cancellation);
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only, password);
+        summary_check_cancelled(cancellation);
+        storage::SqliteTransaction transaction(database, storage::SqliteTransaction::Mode::read);
+        return summary_search_scan(database, forum_id, "", std::nullopt, std::nullopt,
+            summary_catalogue_bytes, session_key, cancellation);
+    } catch (const SummaryCancelled&) {
+        return std::nullopt;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
 void create_note_items_schema(storage::SqliteDatabase& database) {
     bool legacy_notes = false;
     {
@@ -1039,6 +1331,7 @@ NoteItem note_commit_summary(storage::SqliteDatabase& database, const FullSessio
     if (!document.contains("type") || document["type"] != "doc"
         || !document.contains("content") || !document["content"].is_array() || !summary_text(document))
         fail(NoteFailure::invalid, "The summary document has no readable text.");
+    (void)note_summary_chapters(document);
     const auto blob = compress_document(compact);
     try {
         storage::SqliteTransaction transaction(database);

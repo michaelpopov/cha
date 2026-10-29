@@ -1564,5 +1564,72 @@ TEST(ApplicationVault, SwitchPreservesFileLoggingAndDropsUndo) {
     EXPECT_EQ(undo.error, WorkspaceConfigApplyError::unavailable_undo);
 }
 
+TEST(ApplicationVault, SummaryProviderWorkersCancelBeforeSwitchOrRekey) {
+    for (const bool rekey : {false, true}) {
+        TwoVaults pair;
+        pair.command.test_shutdown_grace_ms = 2000;
+        auto application = Application::open(pair.command);
+        const auto epoch = application->context_epoch();
+        MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"}, true);
+        nlohmann::json provider = application->get_provider("test", epoch);
+        for (const char* field : {"id", "used_by", "writable"}) provider.erase(field);
+        provider["mode"] = "net"; provider["host"] = "127.0.0.1";
+        provider["port"] = server.port(); provider["https"] = false;
+        (void)application->update_provider("test", provider, epoch);
+        const auto source = application->create_session("lobby", "Catalogue source", epoch);
+        {
+            storage::SqliteDatabase database(pair.database_a, storage::SqliteDatabase::Mode::read_write);
+            const nlohmann::json document{{"type", "doc"}, {"content", {
+                {{"type", "heading"}, {"attrs", {{"level", 1}}}, {"content", {{{"type", "text"}, {"text", "Short summary"}}}}},
+                {{"type", "paragraph"}, {"content", {{{"type", "text"}, {"text", "VAULT-A-CATALOGUE-DECISION"}}}}},
+                {{"type", "heading"}, {"attrs", {{"level", 1}}}, {"content", {{{"type", "text"}, {"text", "Long summary"}}}}},
+                {{"type", "paragraph"}, {"content", {{{"type", "text"}, {"text", "Detailed decision"}}}}}
+            }}};
+            (void)note_commit_summary(database, {"lobby", source.id},
+                note_summary_target(database, {"lobby", source.id}), document);
+        }
+        const auto created = application->create_session("lobby", "Summary reader", epoch);
+        ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", created.id, epoch)));
+        server.start();
+        auto submitted = application->submit_async("lobby", created.id, RawCommand{"Recall our earlier decision"}, epoch);
+        ASSERT_TRUE(std::holds_alternative<std::shared_ptr<CommandReply>>(submitted));
+        ASSERT_TRUE(std::get<std::shared_ptr<CommandReply>>(submitted)->wait_for(2s));
+        ASSERT_TRUE(server.wait_for_requests(1, 2s));
+        if (rekey) {
+            (void)application->update_vault("A", {.display_name = "A", .password = "new-password"}, epoch);
+            storage::SqliteDatabase database(pair.database_a, storage::SqliteDatabase::Mode::read_only, "new-password");
+            EXPECT_GT(database.pragma_integer("user_version"), 0);
+        } else {
+            EXPECT_EQ(application->switch_vault("B", {}, epoch).state, ApplicationState::running);
+            EXPECT_EQ(application->current_vault().get().name, "B");
+        }
+        server.join(); // Cancellation closed the provider connection before maintenance returned.
+        ASSERT_EQ(server.requests().size(), 1u);
+        EXPECT_NE(server.requests().front().find("summary_search"), std::string::npos);
+        EXPECT_NE(server.requests().front().find("VAULT-A-CATALOGUE-DECISION"), std::string::npos);
+        if (!rekey) {
+            const auto current = application->context_epoch();
+            MockHttpServer next_server({"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"}, true);
+            nlohmann::json next_provider = application->get_provider("test", current);
+            for (const char* field : {"id", "used_by", "writable"}) next_provider.erase(field);
+            next_provider["mode"] = "net"; next_provider["host"] = "127.0.0.1";
+            next_provider["port"] = next_server.port(); next_provider["https"] = false;
+            (void)application->update_provider("test", next_provider, current);
+            const auto next = application->create_session("lobby", "New vault conversation", current);
+            ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", next.id, current)));
+            next_server.start();
+            auto result = application->submit_async("lobby", next.id, RawCommand{"Recall"}, current);
+            ASSERT_TRUE(std::holds_alternative<std::shared_ptr<CommandReply>>(result));
+            ASSERT_TRUE(std::get<std::shared_ptr<CommandReply>>(result)->wait_for(2s));
+            ASSERT_TRUE(next_server.wait_for_requests(1, 2s));
+            EXPECT_EQ(application->switch_vault("A", {}, current).state, ApplicationState::running);
+            next_server.join();
+            ASSERT_EQ(next_server.requests().size(), 1u);
+            EXPECT_EQ(next_server.requests().front().find("VAULT-A-CATALOGUE-DECISION"), std::string::npos);
+            EXPECT_EQ(next_server.requests().front().find("Saved conversation summaries for this forum"), std::string::npos);
+        }
+    }
+}
+
 } // namespace
 } // namespace cha::app

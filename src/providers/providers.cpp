@@ -165,6 +165,7 @@ void ProviderRequest::execute(
             + " tools_wall_ms=" + milliseconds(statistics.tools_wall_time)
             + operation_fields("web_search", statistics.web_search)
             + operation_fields("web_read", statistics.web_read)
+            + operation_fields("summary", statistics.summary)
             + operation_fields("maintenance", statistics.maintenance)
             + " tool_calls_requested=" + std::to_string(statistics.tool_calls_requested)
             + " tool_calls_rejected=" + std::to_string(statistics.tool_calls_rejected)
@@ -251,6 +252,16 @@ void ProviderRequest::execute(
                 }
                 return result;
             };
+        }
+        if (input_.summary_context_loader) {
+            generation.summary_context = input_.summary_context_loader(cancellation_);
+            if (cancellation_.load(std::memory_order_acquire)) {
+                log_info("Provider request cancelled during summary loading: " + fields);
+                outcome = "cancelled";
+                summarize();
+                close_with(GenerationCancelled{request_id});
+                return;
+            }
         }
         stage = "preparation";
         RequestPayload payload = backend->prepare(generation);

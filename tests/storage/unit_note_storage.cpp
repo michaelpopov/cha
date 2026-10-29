@@ -1,4 +1,5 @@
 #include "storage/note_storage.h"
+#include "session/summary_prompt_cache.h"
 #include "storage/folder_store_storage.h"
 #include "storage/session_label.h"
 #include "storage/session_database.h"
@@ -139,8 +140,16 @@ protected:
 nlohmann::json annotation_fixture();
 
 nlohmann::json summary_document(std::string text = "Summary body") {
-    return {{"type", "doc"}, {"content", {{{"type", "paragraph"},
-        {"content", {{{"type", "text"}, {"text", std::move(text)}}}}}}}};
+    const auto heading = [](std::string title) {
+        return nlohmann::json{{"type", "heading"}, {"attrs", {{"level", 1}}},
+            {"content", {{{"type", "text"}, {"text", std::move(title)}}}}};
+    };
+    const auto paragraph = [](std::string body) {
+        return nlohmann::json{{"type", "paragraph"},
+            {"content", {{{"type", "text"}, {"text", std::move(body)}}}}};
+    };
+    return {{"type", "doc"}, {"content", {heading("Short summary"), paragraph("Overview. Keywords: topic"),
+        heading("Long summary"), paragraph(std::move(text))}}};
 }
 
 void summary_source(Database& database, std::string_view id = "source", std::string_view label = "Topic") {
@@ -151,6 +160,49 @@ void summary_source(Database& database, std::string_view id = "source", std::str
     storage::SqliteTransaction transaction(database);
     note_sync_forums(database, {{"a", "Forum A"}});
     transaction.commit();
+}
+
+TEST_F(NoteStorageTest, SummaryChaptersRejectInvalidReplacementWithoutChangingStoredNote) {
+    summary_source(*database_);
+    const FullSessionId source{"a", "source"};
+    auto valid = summary_document("Full details");
+    valid["content"][0]["content"][0]["text"] = "SHORT Summary";
+    valid["content"][2]["content"][0]["text"] = "long SUMMARY";
+    valid["content"].push_back({{"type", "heading"}, {"attrs", {{"level", 2}}},
+        {"content", {{{"type", "text"}, {"text", "Decision"}}}}});
+    valid["content"].push_back(summary_document("Accepted")["content"][3]);
+    const auto saved = note_commit_summary(*database_, source, note_summary_target(*database_, source), valid);
+    EXPECT_EQ(note_get(*database_, saved.id).document, valid);
+    const auto count = note_list(*database_).size();
+    const auto events = event_list(*database_).size();
+    std::vector<nlohmann::json> invalid;
+    auto candidate = valid;
+    candidate["content"][0]["content"][0]["text"] = "Wrong title";
+    invalid.push_back(candidate);
+    candidate = valid;
+    std::swap(candidate["content"][0], candidate["content"][2]);
+    invalid.push_back(candidate);
+    candidate = valid;
+    candidate["content"].erase(candidate["content"].begin() + 2, candidate["content"].end());
+    invalid.push_back(candidate);
+    candidate = valid;
+    candidate["content"][1]["content"][0]["text"] = " \n\t";
+    invalid.push_back(candidate);
+    candidate = summary_document(" \n\t");
+    invalid.push_back(candidate);
+    candidate = valid;
+    candidate["content"].insert(candidate["content"].begin(), valid["content"][1]);
+    invalid.push_back(candidate);
+    candidate = valid;
+    candidate["content"].push_back(valid["content"][0]);
+    invalid.push_back(candidate);
+    for (const auto& document : invalid) {
+        SCOPED_TRACE(document.dump());
+        EXPECT_THROW((void)note_commit_summary(*database_, source, note_summary_target(*database_, source), document), NoteError);
+        EXPECT_EQ(note_get(*database_, saved.id).document, valid);
+        EXPECT_EQ(note_list(*database_).size(), count);
+        EXPECT_EQ(event_list(*database_).size(), events);
+    }
 }
 
 TEST_F(NoteStorageTest, SummaryReplacementKeepsIdentityAndClearsAudioCommentsAndCompression) {
@@ -1819,6 +1871,314 @@ TEST(NoteStorage, OlderVaultAndMaintenanceKeepIdentityWithoutConfigChanges) {
         EXPECT_TRUE(has_schema_object(database, "table", "session_files"));
         EXPECT_NO_THROW(validate_workspace_session_contents(database));
     }
+}
+
+nlohmann::json summary_tool_result(const std::filesystem::path& path, std::string_view name,
+    nlohmann::json arguments, std::string_view forum = "a", std::string_view password = {}) {
+    return nlohmann::json::parse(note_summary_tool(path, password, forum, name, arguments.dump(), std::atomic_bool{false}));
+}
+nlohmann::json summary_search_result(const std::filesystem::path& path, std::string query = "",
+    nlohmann::json before = nullptr) {
+    return summary_tool_result(path, "summary_search", {{"query", query}, {"before_note_id", before}});
+}
+nlohmann::json summary_comment(std::string text) {
+    auto paragraph = summary_document()["content"][3];
+    paragraph["content"][0]["text"] = std::move(text);
+    paragraph["content"][0]["marks"] = {{{"type", "highlight"}, {"attrs", {{"color", "#b3d9ff"}}}}};
+    return paragraph;
+}
+
+TEST_F(NoteStorageTest, SummaryRetrievalPreservesRichChaptersAndAttributesAllComments) {
+    summary_source(*database_);
+    auto document = summary_document("Original claim Москва ЁЖ Ѐ Ї П Р Я literal[+].");
+    document["content"][0]["content"][0]["text"] = "SHORT Summary";
+    document["content"][3]["content"][0]["marks"] = {{{"type", "highlight"}, {"attrs", {{"color", "#ffff00"}}}}};
+    document["content"].insert(document["content"].begin(), nlohmann::json{{"type", "bulletList"}, {"content", {{{"type", "listItem"},
+        {"content", {summary_comment("Comment-only list before chapters")}}}}}});
+    document["content"].insert(document["content"].begin(), summary_comment("Header correction"));
+    document["content"].insert(document["content"].begin() + 3, summary_comment("Middle annotation"));
+    document["content"].push_back({{"type", "bulletList"}, {"content", {{{"type", "listItem"},
+        {"content", {summary_document("Normal list text")["content"][3], summary_comment("Nested annotation")}}}}}});
+    document["content"].push_back({{"type", "codeBlock"}, {"attrs", {{"language", "md"}}},
+        {"content", {{{"type", "text"}, {"text", "# Short summary\nCode remains code"}}}}});
+    const auto note = note_commit_summary(*database_, {"a", "source"}, note_summary_target(*database_, {"a", "source"}), document);
+    const auto saved = raw_content(*database_, note.id);
+    const auto chapters = note_summary_chapters(document);
+    EXPECT_EQ(chapters.short_markdown, "Overview. Keywords: topic");
+    EXPECT_EQ(chapters.long_markdown.find("Original claim"), 0u);
+    EXPECT_NE(chapters.long_markdown.find("```md\n# Short summary"), std::string::npos);
+    const auto appendix = chapters.long_markdown.find("## User comments added to this note");
+    ASSERT_NE(appendix, std::string::npos);
+    EXPECT_GT(chapters.long_markdown.find("User comment: Header correction"), appendix);
+    EXPECT_LT(chapters.long_markdown.find("Header correction"), chapters.long_markdown.find("Middle annotation"));
+    EXPECT_LT(chapters.long_markdown.find("Middle annotation"), chapters.long_markdown.find("Nested annotation"));
+    for (const auto* query : {"москва ёж ѐ ї п р я", "HEADER overview Topic", "literal[+]", "nested annotation", "code remains"}) {
+        auto found = summary_search_result(path_, query);
+        ASSERT_EQ(found["items"].size(), 1u) << query << found;
+        EXPECT_EQ(found["skipped_invalid_count"], 0);
+        EXPECT_EQ(found["items"][0]["short_summary"], chapters.short_markdown);
+    }
+    const auto read = summary_tool_result(path_, "summary_read", {{"note_id", note.id}});
+    EXPECT_EQ(read["text"], chapters.long_markdown);
+    EXPECT_FALSE(read["truncated"].get<bool>());
+    EXPECT_EQ(raw_content(*database_, note.id), saved);
+    auto empty = summary_document();
+    empty["content"][1] = summary_comment("Not a substantive short chapter");
+    EXPECT_THROW((void)note_summary_chapters(empty), NoteError);
+    empty = summary_document();
+    empty["content"][3] = summary_comment("Not a substantive long chapter");
+    EXPECT_THROW((void)note_summary_chapters(empty), NoteError);
+}
+
+TEST_F(NoteStorageTest, SummaryRetrievalUsesOnlyManagedForumMembershipAndCurrentDetachedContent) {
+    summary_source(*database_);
+    const auto note = note_commit_summary(*database_, {"a", "source"}, note_summary_target(*database_, {"a", "source"}), summary_document());
+    const auto ordinary = note_create(*database_, {}, NoteItemKind::note, "Ordinary");
+    database_->execute("INSERT INTO forums(forum_key,forum_id) VALUES(2,'b')");
+    database_->execute("INSERT INTO sessions(forum_key,session_id,label,updated_at,history_epoch,next_entry_id,next_request_id) VALUES(2,'source','Foreign summary',0,1,1,1)");
+    {
+        storage::SqliteTransaction transaction(*database_);
+        note_sync_forums(*database_, {{"a", "Forum A"}, {"b", "Forum B"}});
+        transaction.commit();
+    }
+    const auto foreign = note_commit_summary(*database_, {"b", "source"}, note_summary_target(*database_, {"b", "source"}), summary_document("Private foreign detail"));
+    EXPECT_EQ(summary_tool_result(path_, "summary_read", {{"note_id", foreign.id}})["error"], "not_found");
+    EXPECT_EQ(summary_tool_result(path_, "summary_read", {{"note_id", foreign.id}}, "b")["text"], "Private foreign detail");
+
+    for (const auto id : {note.id, ordinary.id, note.id + 999}) {
+        EXPECT_EQ(summary_tool_result(path_, "summary_read", {{"note_id", id}}, "foreign")["error"], "not_found");
+    }
+    EXPECT_EQ(summary_tool_result(path_, "summary_read", {{"note_id", ordinary.id}})["error"], "not_found");
+    database_->execute("DELETE FROM sessions");
+    ASSERT_EQ(summary_search_result(path_)["items"].size(), 1u);
+    (void)note_set_read_only(*database_, note.id, false);
+    (void)note_save(*database_, note.id, summary_document("Saved latest content"));
+    EXPECT_EQ(summary_tool_result(path_, "summary_read", {{"note_id", note.id}})["text"], "Saved latest content");
+    // The summary note's forum_id is deliberately irrelevant.
+    database_->prepare("UPDATE note_items SET forum_id='foreign' WHERE id=?", note.id).run();
+    ASSERT_EQ(summary_search_result(path_)["items"].size(), 1u);
+    database_->prepare("UPDATE note_items SET parent_id=NULL WHERE id=?", *note.parent_id).run();
+    EXPECT_TRUE(summary_search_result(path_)["items"].empty());
+    EXPECT_EQ(summary_tool_result(path_, "summary_read", {{"note_id", note.id}})["error"], "not_found");
+    database_->prepare("UPDATE note_items SET parent_id=(SELECT id FROM note_items WHERE forum_id='') WHERE id=?", *note.parent_id).run();
+    database_->prepare("UPDATE note_items SET forum_id=NULL WHERE id=?", note.id).run();
+    note_delete(*database_, note.id);
+    EXPECT_EQ(summary_tool_result(path_, "summary_read", {{"note_id", note.id}})["error"], "not_found");
+}
+
+TEST_F(NoteStorageTest, SummarySearchPaginatesWithoutSkippingMatchesAndFindsEarliestPassage) {
+    std::vector<std::int64_t> ids;
+    for (int i = 0; i < 23; ++i) {
+        const auto source = "source" + std::to_string(i);
+        summary_source(*database_, source, "Name" + std::to_string(i));
+        ids.push_back(note_commit_summary(*database_, {"a", source}, note_summary_target(*database_, {"a", source}),
+            summary_document("early " + std::string(800, 'x') + " late")).id);
+    }
+    nlohmann::json cursor = nullptr;
+    std::vector<std::int64_t> found;
+    do {
+        const auto page = summary_search_result(path_, "  late early early\t", cursor);
+        EXPECT_LE(page.dump().size(), 32u * 1024);
+        EXPECT_LE(page["items"].size(), 10u);
+        for (const auto& item : page["items"]) {
+            found.push_back(item["note_id"].get<std::int64_t>());
+            EXPECT_TRUE(item["excerpt"].get<std::string>().starts_with("early "));
+        }
+        if (!cursor.is_null() && !page["next_before_note_id"].is_null()) EXPECT_LT(page["next_before_note_id"], cursor);
+        cursor = page["next_before_note_id"];
+    } while (!cursor.is_null());
+    std::reverse(ids.begin(), ids.end());
+    EXPECT_EQ(found, ids);
+    EXPECT_TRUE(summary_search_result(path_, "no-match")["items"].empty());
+    EXPECT_TRUE(summary_search_result(path_, "Name22")["items"][0]["excerpt"].is_null());
+    EXPECT_TRUE(summary_search_result(path_, " \t\v\f")["items"][0]["excerpt"].is_null());
+}
+
+TEST_F(NoteStorageTest, SummaryToolsBoundEscapedJsonAndSearchBeyondTheReadCap) {
+    std::string huge;
+    for (int i = 0; i < 26000; ++i) huge += "ё\"\\\n";
+    std::vector<std::int64_t> ids;
+    for (int i = 0; i < 23; ++i) {
+        auto source = "source" + std::to_string(i);
+        summary_source(*database_, source, "Escaped " + std::to_string(i));
+        auto document = summary_document(huge + " finalneedle");
+        document["content"][1]["content"][0]["text"] = std::string(2048, '\t') + "ё";
+        ids.push_back(note_commit_summary(*database_, {"a", source}, note_summary_target(*database_, {"a", source}), document).id);
+    }
+    const auto read = summary_tool_result(path_, "summary_read", {{"note_id", ids.back()}});
+    EXPECT_LE(read.dump().size(), 64u * 1024);
+    EXPECT_TRUE(read["truncated"].get<bool>());
+    EXPECT_EQ(read["text"].get<std::string>().find("finalneedle"), std::string::npos);
+    nlohmann::json cursor = nullptr;
+    std::vector<std::int64_t> found;
+    int pages = 0;
+    do {
+        auto page = summary_search_result(path_, "finalneedle", cursor);
+        EXPECT_LE(page.dump().size(), 32u * 1024);
+        for (const auto& item : page["items"]) {
+            EXPECT_TRUE(item["short_truncated"].get<bool>());
+            EXPECT_LE(item["short_summary"].get<std::string>().size(), 2048u);
+            EXPECT_LE(item["excerpt"].get<std::string>().size(), 512u);
+            EXPECT_NE(item["excerpt"].get<std::string>().find("finalneedle"), std::string::npos);
+            found.push_back(item["note_id"].get<std::int64_t>());
+        }
+        cursor = page["next_before_note_id"];
+        ASSERT_LT(++pages, 20);
+    } while (!cursor.is_null());
+    EXPECT_GT(pages, 2);
+    std::reverse(ids.begin(), ids.end());
+    EXPECT_EQ(found, ids);
+}
+
+TEST_F(NoteStorageTest, SummaryToolsReportInvalidContentArgumentsAndCancellationSafely) {
+    summary_source(*database_);
+    const auto note = note_commit_summary(*database_, {"a", "source"}, note_summary_target(*database_, {"a", "source"}), summary_document());
+    for (const auto& blob : {std::string("corrupt"), compressed_content(R"({"type":"doc","content":[]})")}) {
+        auto update = database_->prepare("UPDATE note_items SET content_json=? WHERE id=?");
+        update.bind_blob(1, blob); update.bind(2, note.id); update.run();
+        EXPECT_EQ(summary_tool_result(path_, "summary_read", {{"note_id", note.id}})["error"], "invalid_summary");
+        const auto search = summary_search_result(path_);
+        EXPECT_TRUE(search["items"].empty());
+        EXPECT_EQ(search["skipped_invalid_count"], 1);
+    }
+    for (const auto& args : {nlohmann::json{{"note_id", 0}}, {{"note_id", -1}}, {{"note_id", note_id_limit + 1}},
+            {{"note_id", 1.0}}, {{"note_id", "1"}}, {{"note_id", 1}, {"extra", true}}})
+        EXPECT_EQ(summary_tool_result(path_, "summary_read", args)["error"], "invalid_argument");
+    for (const auto& args : {nlohmann::json{{"query", ""}}, {{"query", 1}, {"before_note_id", nullptr}},
+            {{"query", std::string(513, 'x')}, {"before_note_id", nullptr}}, {{"query", ""}, {"before_note_id", 0}}})
+        EXPECT_EQ(summary_tool_result(path_, "summary_search", args)["error"], "invalid_argument");
+    EXPECT_EQ(summary_tool_result(path_, "unknown", {{"note_id", 1}})["error"], "invalid_argument");
+    const auto cancelled = nlohmann::json::parse(note_summary_tool("missing.sqlite", "secret", "a", "summary_search", "{}", std::atomic_bool{true}));
+    EXPECT_EQ(cancelled["error"], "cancelled");
+    const auto unavailable = summary_tool_result(path_.parent_path() / "missing.sqlite", "summary_read", {{"note_id", 1}});
+    EXPECT_EQ(unavailable["error"], "unavailable");
+    EXPECT_EQ(unavailable.dump().find(path_.parent_path().string()), std::string::npos);
+}
+
+TEST_F(NoteStorageTest, SummaryToolsReadEncryptedDatabaseWithCapturedPassword) {
+    const auto encrypted = workspace_.root() / "encrypted.sqlite3";
+    create_empty_workspace_session_database(encrypted, "secret");
+    std::int64_t id;
+    {
+        Database database(encrypted, Database::Mode::read_write, "secret");
+        summary_source(database);
+        id = note_commit_summary(database, {"a", "source"}, note_summary_target(database, {"a", "source"}), summary_document("Encrypted detail")).id;
+    }
+    EXPECT_EQ(summary_tool_result(encrypted, "summary_read", {{"note_id", id}}, "a", "secret")["text"], "Encrypted detail");
+    EXPECT_EQ(summary_tool_result(encrypted, "summary_read", {{"note_id", id}}, "a", "wrong")["error"], "unavailable");
+}
+
+
+TEST_F(NoteStorageTest, ShortCatalogueSharesScopeAndChaptersButExcludesOnlyCurrentSession) {
+    summary_source(*database_, "own", "Own summary");
+    const auto own = note_commit_summary(*database_, {"a", "own"}, note_summary_target(*database_, {"a", "own"}), summary_document());
+    summary_source(*database_, "other", "Other summary");
+    auto document = summary_document("Long-only secret");
+    document["content"].push_back(summary_comment("Later comment"));
+    const auto other = note_commit_summary(*database_, {"a", "other"}, note_summary_target(*database_, {"a", "other"}), document);
+    database_->prepare("DELETE FROM sessions WHERE session_id='other'").run();
+    auto key_row = database_->prepare("SELECT session_key FROM sessions WHERE session_id='own'");
+    ASSERT_TRUE(key_row.step());
+    const auto own_key = key_row.integer(0);
+    const auto catalogue = note_short_summary_catalogue(path_, "", "a", own_key, std::atomic_bool{false});
+    ASSERT_TRUE(catalogue);
+    ASSERT_EQ((*catalogue)["items"].size(), 1u);
+    EXPECT_EQ((*catalogue)["items"][0]["note_id"], other.id);
+    EXPECT_EQ((*catalogue)["items"][0]["short_summary"], note_summary_chapters(document).short_markdown);
+    EXPECT_EQ((*catalogue)["items"][0]["excerpt"], nullptr);
+    EXPECT_EQ(catalogue->dump().find("Later comment"), std::string::npos);
+    EXPECT_EQ(catalogue->dump().find("Long-only secret"), std::string::npos);
+    EXPECT_EQ(summary_search_result(path_)["items"].size(), 2u);
+    EXPECT_FALSE(summary_tool_result(path_, "summary_read", {{"note_id", own.id}}).contains("error"));
+    EXPECT_TRUE(note_short_summary_catalogue(path_, "", "b", own_key, std::atomic_bool{false})->at("items").empty());
+    (void)note_set_read_only(*database_, other.id, false);
+    (void)note_save(*database_, other.id, nlohmann::json::parse(empty_note_document));
+    const auto invalid = note_short_summary_catalogue(path_, "", "a", own_key, std::atomic_bool{false});
+    ASSERT_TRUE(invalid);
+    EXPECT_TRUE(invalid->at("items").empty());
+    EXPECT_EQ(invalid->at("skipped_invalid_count"), 1);
+    EXPECT_FALSE(note_short_summary_catalogue(path_, "", "a", own_key, std::atomic_bool{true}));
+    EXPECT_FALSE(note_short_summary_catalogue(path_.parent_path() / "missing.sqlite", "", "a", own_key, std::atomic_bool{false}));
+}
+
+TEST_F(NoteStorageTest, ShortCatalogueHasNoItemCapAndItsBudgetCursorContinuesThroughTool) {
+    std::vector<std::int64_t> ids;
+    for (int i = 0; i < 24; ++i) {
+        auto source = "source" + std::to_string(i);
+        summary_source(*database_, source, "Name" + std::to_string(i));
+        ids.push_back(note_commit_summary(*database_, {"a", source}, note_summary_target(*database_, {"a", source}), summary_document()).id);
+    }
+    auto catalogue = note_short_summary_catalogue(path_, "", "a", -1, std::atomic_bool{false});
+    ASSERT_TRUE(catalogue);
+    EXPECT_EQ(catalogue->at("items").size(), 24u);
+    EXPECT_EQ(catalogue->at("next_before_note_id"), nullptr);
+    EXPECT_EQ(summary_search_result(path_)["items"].size(), 10u);
+    // Worst-case JSON escaping still permits a whole valid preview in 16 KiB.
+    auto document = summary_document();
+    document["content"][1]["content"][0]["text"] = std::string(2200, '\x01');
+    for (auto id : ids) {
+        (void)note_set_read_only(*database_, id, false);
+        (void)note_save(*database_, id, document);
+    }
+    // Invalid candidate immediately after the first valid item is consumed, not counted ahead.
+    (void)note_save(*database_, ids[22], nlohmann::json::parse(empty_note_document));
+    catalogue = note_short_summary_catalogue(path_, "", "a", -1, std::atomic_bool{false});
+    ASSERT_TRUE(catalogue);
+    ASSERT_EQ(catalogue->at("items").size(), 1u);
+    EXPECT_LE(catalogue->dump().size(), 16u * 1024);
+    EXPECT_EQ(catalogue->at("items")[0]["short_summary"].get<std::string>().size(), 2048u);
+    EXPECT_TRUE(catalogue->at("items")[0]["short_truncated"].get<bool>());
+    EXPECT_EQ(catalogue->at("skipped_invalid_count"), 1);
+    EXPECT_EQ(catalogue->at("next_before_note_id"), ids[22]);
+    const auto next = summary_search_result(path_, "", catalogue->at("next_before_note_id"));
+    ASSERT_FALSE(next["items"].empty());
+    EXPECT_EQ(next["items"][0]["note_id"], ids[21]);
+}
+
+
+TEST_F(NoteStorageTest, ShortCatalogueCacheDefersEditsAdditionsRenamesAndDeletionsButToolsReadCurrentState) {
+    summary_source(*database_, "source", "Initial name");
+    const auto note = note_commit_summary(*database_, {"a", "source"},
+        note_summary_target(*database_, {"a", "source"}), summary_document("Initial detail"));
+    auto now = std::chrono::steady_clock::time_point{};
+    int reads = 0;
+    SummaryPromptCache cache([&](const auto& cancellation) -> std::optional<std::string> {
+        ++reads;
+        auto result = note_short_summary_catalogue(path_, "", "a", -1, cancellation);
+        return result ? std::optional<std::string>{result->dump()} : std::nullopt;
+    }, [&] { return now; });
+    std::atomic_bool cancelled{false};
+    const auto original = cache.load(cancelled);
+    (void)note_set_read_only(*database_, note.id, false);
+    auto changed = summary_document("Edited long detail");
+    changed["content"][1]["content"][0]["text"] = "Edited short decision";
+    (void)note_save(*database_, note.id, changed);
+    {
+        storage::SqliteTransaction transaction(*database_);
+        note_rename_summary_in_transaction(*database_, 1, "Renamed summary");
+        transaction.commit();
+    }
+    summary_source(*database_, "added", "Added summary");
+    const auto added = note_commit_summary(*database_, {"a", "added"},
+        note_summary_target(*database_, {"a", "added"}), summary_document());
+    EXPECT_EQ(cache.load(cancelled), original);
+    const auto tool = summary_tool_result(path_, "summary_read", {{"note_id", note.id}});
+    EXPECT_EQ(tool["text"], "Edited long detail");
+    EXPECT_EQ(tool["name"], "Renamed summary");
+    now += std::chrono::minutes{10};
+    const auto refreshed = cache.load(cancelled);
+    EXPECT_NE(refreshed, original);
+    EXPECT_NE(refreshed.find("Edited short decision"), std::string::npos);
+    EXPECT_NE(refreshed.find("Renamed summary"), std::string::npos);
+    EXPECT_NE(refreshed.find("Added summary"), std::string::npos);
+    now += std::chrono::minutes{10};
+    EXPECT_EQ(cache.load(cancelled), refreshed); // No timestamps or nondeterministic ordering.
+    (void)note_delete(*database_, added.id);
+    EXPECT_EQ(cache.load(cancelled), refreshed);
+    EXPECT_EQ(summary_tool_result(path_, "summary_read", {{"note_id", added.id}})["error"], "not_found");
+    now += std::chrono::minutes{10};
+    EXPECT_EQ(cache.load(cancelled).find("Added summary"), std::string::npos);
+    EXPECT_EQ(reads, 4);
 }
 
 } // namespace

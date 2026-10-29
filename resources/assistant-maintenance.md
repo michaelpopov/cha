@@ -91,6 +91,19 @@ explicit `false` also disables page reading in ordinary conversations.
 Firecrawl page reading can otherwise be available while on-demand search is
 off. Both need their corresponding saved keys.
 
+Short summaries from other saved conversations in the forum are supplied
+automatically, cached per conversation for ten minutes, with on-demand summary
+retrieval for detail.
+
+Saved conversation summary search and reading are automatically available in the
+current persistent forum, including ordinary built-in Assistant requests. There is
+no character setting for them. Web controls, including `web_search_tool = false`,
+do not disable summary access. Welcome, maintenance, and auxiliary requests cannot
+use these tools. Required effective provider-hosted web search excludes them
+throughout the generation, as does Gemini 2.5's File Search-only branch. The model
+must support function calls. Provider errors do not trigger capability guessing or
+retries; select a compatible model if the endpoint rejects function tools.
+
 An omitted forum `default_character` selects the first member ID in lexical
 order; an explicit default must be a member. An omitted `default_persona`
 selects built-in Guest (`builtin-guest`). Prefer omission when Guest is wanted;

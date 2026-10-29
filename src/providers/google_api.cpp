@@ -64,25 +64,26 @@ std::string build_google_request_body(
         // https://ai.google.dev/gemini-api/docs/generate-content/file-search
         // Unknown models keep requested functions and expose provider rejection.
         const bool file_search_only = stores && google_file_search_only_model(config.model);
-        if (file_search_only && (input.web_search_tool || input.web_read_tool))
-            log_warn("Omitting optional CHA web functions: " + config.model
+        if (file_search_only && (input.web_search_tool || input.web_read_tool || input.summary_tool))
+            log_warn("Omitting optional CHA custom functions: " + config.model
                 + " does not support mixing them with File Search.");
         if (!file_search_only) {
             if (input.web_search_tool) add_web_search_tool(body, ProviderApi::google);
             if (input.web_read_tool) add_web_read_tool(body, ProviderApi::google);
+            if (input.summary_tool) add_summary_tools(body, ProviderApi::google);
         }
         if (stores) {
             if (!body.contains("tools")) body["tools"] = Json::array();
             body["tools"].push_back({{"fileSearch", {
                 {"fileSearchStoreNames", input.folder_search->remote_store_ids}}}});
-            if (!file_search_only && (input.web_search_tool || input.web_read_tool)) {
+            if (!file_search_only && (input.web_search_tool || input.web_read_tool || input.summary_tool)) {
                 body["toolConfig"] = {{"includeServerSideToolInvocations", true},
                     {"functionCallingConfig", {{"mode", "VALIDATED"}}}};
             }
         }
     }
     if (input.include_tool_instructions) {
-        update_tool_instructions(body, ProviderApi::google, text_sizes);
+        update_tool_instructions(body, ProviderApi::google, text_sizes, input.summary_context);
     }
     return dump_json(body, "Model request");
 }

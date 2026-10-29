@@ -300,9 +300,12 @@ TEST_P(ChatPersistenceIntegration, SearchToolContinuesAndPersistsAnswerUsageAndI
         std::string::npos);
     ASSERT_EQ(model.requests().size(), 2U);
     const auto first = Json::parse(request_body(model.requests().front()));
-    ASSERT_EQ(first.at("tools").size(), 1U);
-    EXPECT_EQ(responses ? first.at("tools")[0].at("name")
-                        : first.at("tools")[0].at("function").at("name"), "web_search");
+    Json names = Json::array();
+    for (const auto& tool : first.at("tools")) {
+        EXPECT_EQ(tool.at("type"), "function");
+        names.push_back(responses ? tool.at("name") : tool.at("function").at("name"));
+    }
+    EXPECT_EQ(names, Json::array({"web_search", "summary_search", "summary_read"}));
     const auto continuation = Json::parse(request_body(model.requests().back()));
     const auto& result = continuation.at(responses ? "input" : "messages").back();
     EXPECT_EQ(result.at(responses ? "type" : "role"), responses ? "function_call_output" : "tool");

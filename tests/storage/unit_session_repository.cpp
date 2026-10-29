@@ -574,7 +574,11 @@ TEST_F(SessionRepositoryTest, LinkedSummaryFollowsClosedRenameAndAllSessionClean
             tx.commit();
         }
         return note_commit_summary(database, session.identity, note_summary_target(database, session.identity),
-            nlohmann::json::parse(R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Summary"}]}]})"));
+            nlohmann::json::parse(R"({"type":"doc","content":[)"
+                R"({"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Short summary"}]},)"
+                R"({"type":"paragraph","content":[{"type":"text","text":"Overview"}]},)"
+                R"({"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Long summary"}]},)"
+                R"({"type":"paragraph","content":[{"type":"text","text":"Summary"}]}]})"));
     };
     const auto session = repository.create("lobby", "Original");
     const auto note = create_summary(session);

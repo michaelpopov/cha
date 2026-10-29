@@ -86,6 +86,7 @@ struct GenerationStatistics {
     GenerationOperationStats web_search;
     GenerationOperationStats web_read;
     GenerationOperationStats maintenance;
+    GenerationOperationStats summary;
     // Elapsed tool time, including parallel calls (unlike summed call durations).
     std::chrono::nanoseconds tools_wall_time{};
     std::size_t tool_calls_requested{};
@@ -102,6 +103,7 @@ struct RequestPayload {
     std::optional<RequestTextSizes> text_sizes;
     std::function<std::string(std::string_view, const std::atomic_bool&)> web_search_tool;
     WebReadTool web_read_tool;
+    SummaryTool summary_tool;
     std::function<std::string(
         std::string_view, std::string_view, const std::atomic_bool&)> maintenance_tool;
     // Optional diagnostics owned by the caller, alive until perform() returns.

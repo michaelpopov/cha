@@ -3017,6 +3017,18 @@ nlohmann::json summary_identity(const FullSessionId& identity) {
     return {{"forum_id", identity.forum_id}, {"session_id", identity.session_id}};
 }
 
+nlohmann::json summary_document(std::string text) {
+    auto document = text_document("Overview. Keywords: topic");
+    const auto heading = [](std::string title) {
+        return nlohmann::json{{"type", "heading"}, {"attrs", {{"level", 1}}},
+            {"content", {{{"type", "text"}, {"text", std::move(title)}}}}};
+    };
+    document["content"].insert(document["content"].begin(), heading("Short summary"));
+    document["content"].push_back(heading("Long summary"));
+    document["content"].push_back(text_document(std::move(text))["content"][0]);
+    return document;
+}
+
 TEST_F(BridgeRouterTest, SummaryUsesSavedSourceAndNotesProviderAndReplacesOneReadOnlyNote) {
     bootstrap_epoch();
     const auto source = summary_source(*application_, database_, epoch_);
@@ -3029,25 +3041,25 @@ TEST_F(BridgeRouterTest, SummaryUsesSavedSourceAndNotesProviderAndReplacesOneRea
         ASSERT_TRUE(generated["ok"]) << generated;
         EXPECT_EQ(generated["result"]["markdown"], "# Useful summary");
         ASSERT_TRUE(call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]},
-            {"document", text_document("Useful summary")}})["ok"]);
+            {"document", summary_document("Useful summary")}})["ok"]);
         const auto items = application_->list_note_items(epoch_);
         const auto saved = *std::find_if(items.begin(), items.end(), [](const auto& item) { return item.is_summary; });
         EXPECT_TRUE(saved.read_only);
         EXPECT_TRUE(saved.summary_linked);
         (void)application_->set_note_read_only(saved.id, false, epoch_);
-        application_->save_note(saved.id, text_document("User edits must not enter the prompt"), epoch_);
+        application_->save_note(saved.id, summary_document("User edits must not enter the prompt"), epoch_);
         generated = call("sessionSummary.generate", summary_identity(source));
         ASSERT_TRUE(generated["ok"]) << generated;
         EXPECT_EQ(generated["result"]["target_note_id"], saved.id);
         // The latest session name is used even if it changes during conversion.
         ASSERT_TRUE(call("session.rename", {{"forum_id", source.forum_id}, {"session_id", source.session_id}, {"label", "Latest title"}})["ok"]);
         const auto committed = call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]},
-            {"document", text_document("Replacement summary")}});
+            {"document", summary_document("Replacement summary")}});
         ASSERT_TRUE(committed["ok"]) << committed;
         EXPECT_EQ(committed["result"]["item"]["id"], saved.id);
         EXPECT_EQ(committed["result"]["item"]["name"], "Latest title");
         EXPECT_EQ(committed["result"]["item"]["read_only"], true);
-        EXPECT_EQ(application_->get_note(saved.id, epoch_).document, text_document("Replacement summary"));
+        EXPECT_EQ(application_->get_note(saved.id, epoch_).document, summary_document("Replacement summary"));
         const auto events = application_->list_events(epoch_);
         EXPECT_NE(events.front().message.find("Summary saved"), std::string::npos);
         EXPECT_EQ(events.front().severity, EventSeverity::success);
@@ -3060,7 +3072,7 @@ TEST_F(BridgeRouterTest, SummaryUsesSavedSourceAndNotesProviderAndReplacesOneRea
             EXPECT_NE(text.find("Full saved goal"), std::string::npos);
             EXPECT_NE(text.find("Completed answer"), std::string::npos);
             EXPECT_NE(text.find("Unanswered goal"), std::string::npos);
-            EXPECT_NE(text.find("Summarize the supplied conversation"), std::string::npos);
+            EXPECT_NE(text.find("Generate a short summary and a long summary"), std::string::npos);
             for (const auto excluded : {"Cancelled answer", "Failed answer", "Hidden notice", "Hidden error", "User edits must not"})
                 EXPECT_EQ(text.find(excluded), std::string::npos);
         }
@@ -3079,11 +3091,11 @@ TEST_F(BridgeRouterTest, SummaryReservationSurvivesDeliveryAndChecksOwnerAndAban
     const auto id = generated["result"]["run_id"].get<std::int64_t>();
     expect_note_error(call("sessionSummary.generate", summary_identity(source)), "invalid_argument",
         "A summary is already being saved for this session.");
-    EXPECT_THROW((void)application_->commit_session_summary("other-window", id, text_document("Wrong owner"), epoch_), app::ApplicationError);
+    EXPECT_THROW((void)application_->commit_session_summary("other-window", id, summary_document("Wrong owner"), epoch_), app::ApplicationError);
     EXPECT_THROW(application_->abandon_session_summary("other-window", id, "conversion_failed", epoch_), app::ApplicationError);
     // A queued commit cannot write after abandon acknowledges removal of the run.
     const auto queued = queue_request(*router_, connection_, next_id_, epoch_, "sessionSummary.commit",
-        {{"run_id", id}, {"document", text_document("Too late")}});
+        {{"run_id", id}, {"document", summary_document("Too late")}});
     application_->abandon_session_summary(connection_, id, "commit_unknown", epoch_);
     router_->run_tasks();
     auto batch = wait_delivery(*router_, connection_);
@@ -3096,7 +3108,7 @@ TEST_F(BridgeRouterTest, SummaryReservationSurvivesDeliveryAndChecksOwnerAndAban
     EXPECT_GT(generated["result"]["run_id"].get<std::int64_t>(), id);
     const auto second = generated["result"]["run_id"];
     ASSERT_TRUE(call("sessionSummary.abandon", {{"run_id", second}, {"reason", "conversion_failed"}})["ok"]);
-    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", second}, {"document", text_document("Discarded")}})["ok"]);
+    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", second}, {"document", summary_document("Discarded")}})["ok"]);
     EXPECT_EQ(application_->list_note_items(epoch_).size(), 2U);
     server.join();
 }
@@ -3137,8 +3149,8 @@ TEST_F(BridgeRouterTest, SummaryDisconnectAfterMarkdownDeliveryReleasesReservati
     const auto next = generate_summary_after_cleanup(summary_identity(source));
     ASSERT_TRUE(next["ok"]) << next;
     EXPECT_NE(first["result"]["run_id"], next["result"]["run_id"]);
-    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", first["result"]["run_id"]}, {"document", text_document("Stale")}})["ok"]);
-    EXPECT_TRUE(call("sessionSummary.commit", {{"run_id", next["result"]["run_id"]}, {"document", text_document("Current")}})["ok"]);
+    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", first["result"]["run_id"]}, {"document", summary_document("Stale")}})["ok"]);
+    EXPECT_TRUE(call("sessionSummary.commit", {{"run_id", next["result"]["run_id"]}, {"document", summary_document("Current")}})["ok"]);
     server.join();
 }
 
@@ -3151,7 +3163,7 @@ TEST_F(BridgeRouterTest, SummaryDeletionDuringConversionAndCompressionAdmissionK
     configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
     auto generated = call("sessionSummary.generate", summary_identity(source));
     ASSERT_TRUE(generated["ok"]) << generated;
-    auto saved = call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]}, {"document", text_document("Summary")}});
+    auto saved = call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]}, {"document", summary_document("Summary")}});
     ASSERT_TRUE(saved["ok"]) << saved;
     const auto id = saved["result"]["item"]["id"];
     EXPECT_EQ(call("notes.compressStart", {{"id", id}, {"skip_ineligible", true}})["result"]["skipped"], true);
@@ -3159,7 +3171,7 @@ TEST_F(BridgeRouterTest, SummaryDeletionDuringConversionAndCompressionAdmissionK
     generated = call("sessionSummary.generate", summary_identity(source));
     ASSERT_TRUE(generated["ok"]) << generated;
     ASSERT_TRUE(call("session.delete", summary_identity(source))["ok"]);
-    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]}, {"document", text_document("Too late")}})["ok"]);
+    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]}, {"document", summary_document("Too late")}})["ok"]);
     const auto items = application_->list_note_items(epoch_);
     const auto item = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id; });
     ASSERT_NE(item, items.end());
@@ -3182,7 +3194,7 @@ TEST_F(BridgeRouterTest, SummaryCancellationRejectsReusedSourceIdentityAndVaultE
         database.prepare("INSERT INTO sessions(forum_key,session_id,label,updated_at,history_epoch,next_entry_id,next_request_id) "
             "SELECT forum_key,?,'Reused identity',0,1,1,1 FROM forums WHERE forum_id='lobby'", source.session_id).run();
     }
-    const auto late = call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]}, {"document", text_document("Old source")}});
+    const auto late = call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]}, {"document", summary_document("Old source")}});
     EXPECT_FALSE(late["ok"]);
     EXPECT_EQ(late["error"]["code"], "operation_cancelled");
     EXPECT_EQ(application_->list_note_items(epoch_).size(), 2U);
@@ -3192,8 +3204,8 @@ TEST_F(BridgeRouterTest, SummaryCancellationRejectsReusedSourceIdentityAndVaultE
     ASSERT_TRUE(generated["ok"]) << generated;
     const auto id = generated["result"]["run_id"].get<std::int64_t>();
     const auto switched = application_->switch_vault(other.name, {}, epoch_);
-    EXPECT_THROW((void)application_->commit_session_summary(connection_, id, text_document("Old vault"), epoch_), app::ApplicationError);
-    EXPECT_THROW((void)application_->commit_session_summary(connection_, id, text_document("Old vault"), switched.context_epoch), app::ApplicationError);
+    EXPECT_THROW((void)application_->commit_session_summary(connection_, id, summary_document("Old vault"), epoch_), app::ApplicationError);
+    EXPECT_THROW((void)application_->commit_session_summary(connection_, id, summary_document("Old vault"), switched.context_epoch), app::ApplicationError);
     EXPECT_EQ(application_->list_note_items(switched.context_epoch).size(), 2U);
     const auto back = application_->switch_vault("Test", {}, switched.context_epoch);
     EXPECT_EQ(application_->list_note_items(back.context_epoch).size(), 2U);
@@ -3269,7 +3281,7 @@ TEST_F(BridgeRouterTest, SummaryConnectionCloseDoesNotWaitForTheLifecycleLock) {
     connection_ = router_->open_connection();
     const auto next = generate_summary_after_cleanup(summary_identity(source));
     ASSERT_TRUE(next["ok"]) << next;
-    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", ready["result"]["run_id"]}, {"document", text_document("Stale")}})["ok"]);
+    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", ready["result"]["run_id"]}, {"document", summary_document("Stale")}})["ok"]);
     EXPECT_TRUE(call("sessionSummary.abandon", {{"run_id", next["result"]["run_id"]}, {"reason", "conversion_failed"}})["ok"]);
 }
 

@@ -591,9 +591,17 @@ void expect_request_messages(const Json& body, std::string_view system_prompt,
     ASSERT_FALSE(messages.empty());
     ASSERT_EQ(messages.front().at("role"), "system");
     const auto instructions = messages.front().at("content").get<std::string>();
-    // These local fixtures have no web tools. Request preparation appends their
-    // availability after the complete workspace prompt.
-    EXPECT_FALSE(body.contains("tools"));
+    // Ordinary forum requests retain summary tools even with web access disabled.
+    // These fixtures contain no saved summaries, so no catalogue precedes availability.
+    ASSERT_TRUE(body.contains("tools"));
+    Json names = Json::array();
+    for (const auto& tool : body.at("tools")) {
+        EXPECT_EQ(tool.at("type"), "function");
+        names.push_back(tool.at("function").at("name"));
+    }
+    EXPECT_EQ(names, Json::array({"summary_search", "summary_read"}));
+    EXPECT_NE(instructions.find("Summary search and reading are available for this forum."), std::string::npos);
+    EXPECT_EQ(instructions.find("Saved conversation summaries for this forum"), std::string::npos);
     EXPECT_TRUE(instructions.starts_with(std::string(system_prompt) + "\n\n<tool_availability>\n"));
     EXPECT_NE(instructions.find("Web search is unavailable for this request."), std::string::npos);
     EXPECT_NE(instructions.find("Web page reading is unavailable for this request."), std::string::npos);

@@ -521,9 +521,10 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
         return {.bytes = input.run.prompt_text};
     }
     RequestTextSizes text_sizes;
+    RequestPayload prepared;
     switch (config.api) {
     case ProviderApi::chat_completions:
-        return {
+        prepared = {
             .bytes = build_chat_completions_request_body(
                 input,
                 config,
@@ -534,24 +535,27 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
             .web_read_tool = input.web_read_tool,
             .maintenance_tool = input.maintenance_tool,
         };
+        break;
     case ProviderApi::anthropic:
-        return {
+        prepared = {
             .bytes = build_anthropic_request_body(input, config, definition_->system_prompt, &text_sizes),
             .text_sizes = text_sizes,
             .web_search_tool = input.web_search_tool,
             .web_read_tool = input.web_read_tool,
             .maintenance_tool = input.maintenance_tool,
         };
+        break;
     case ProviderApi::google:
-        return {
+        prepared = {
             .bytes = build_google_request_body(input, config, definition_->system_prompt, &text_sizes),
             .text_sizes = text_sizes,
             .web_search_tool = input.web_search_tool,
             .web_read_tool = input.web_read_tool,
             .maintenance_tool = input.maintenance_tool,
         };
+        break;
     case ProviderApi::responses:
-        return {
+        prepared = {
             .bytes = build_responses_request_body(
                 input,
                 config,
@@ -567,8 +571,13 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
             .web_read_tool = input.web_read_tool,
             .maintenance_tool = input.maintenance_tool,
         };
+        break;
+    default:
+        throw std::logic_error("Unknown provider API");
     }
-    throw std::logic_error("Unknown provider API");
+    if (input.summary_tool && summary_tools_available(Json::parse(prepared.bytes), config.api))
+        prepared.summary_tool = input.summary_tool;
+    return prepared;
 }
 
 GenerationResult ProviderClient::perform(
@@ -580,7 +589,9 @@ GenerationResult ProviderClient::perform(
     const bool maintenance = static_cast<bool>(payload.maintenance_tool);
     const int max_tool_calls = maintenance
         ? maintenance_call_limit
-        : (payload.web_read_tool ? 16 : 4);
+        : (payload.web_read_tool || payload.summary_tool ? 16 : 4);
+    const int max_web_calls = payload.web_read_tool ? 16 : 4;
+    int web_calls_used = 0;
     int tool_calls_used = 0;
     std::size_t maintenance_result_bytes = 0;
     int round = 0;
@@ -632,7 +643,7 @@ GenerationResult ProviderClient::perform(
             + " received_answer=" + (round_received_answer ? "true" : "false"));
         if (result.outcome != GenerationOutcome::completed || result.tool_calls.empty())
             return result;
-        if (!maintenance && !payload.web_search_tool && !payload.web_read_tool) {
+        if (!maintenance && !payload.web_search_tool && !payload.web_read_tool && !payload.summary_tool) {
             statistics.tool_calls_rejected += result.tool_calls.size();
             return {GenerationOutcome::protocol_error,
                 "Model requested a tool when tools were unavailable", total};
@@ -642,6 +653,7 @@ GenerationResult ProviderClient::perform(
             statistics.tool_calls_rejected += result.tool_calls.size();
             return {GenerationOutcome::protocol_error,
                 maintenance ? "Model kept requesting tools after the maintenance tool limit"
+                    : payload.summary_tool ? "Model kept requesting tools after the overall tool limit"
                     : payload.web_read_tool ? "Model kept requesting tools after the web tool limit"
                     : "Model kept requesting web search after the search limit", total};
         }
@@ -726,10 +738,39 @@ GenerationResult ProviderClient::perform(
                 if (tool_calls_used >= max_tool_calls) {
                     ++statistics.tool_limit_hits;
                     ++statistics.tool_calls_rejected;
-                    output = R"({"error":"Web tool limit reached. Answer using the available results."})";
+                    output = payload.summary_tool
+                        ? R"({"error":"limit","message":"Overall tool limit reached. Answer using the available results."})"
+                        : R"({"error":"Web tool limit reached. Answer using the available results."})";
                     continue;
                 }
                 ++tool_calls_used;
+                if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
+                if (call.name == "summary_search" || call.name == "summary_read") {
+                    if (!payload.summary_tool) {
+                        ++statistics.tool_calls_rejected;
+                        output = R"({"error":"unavailable","message":"Summary tools are unavailable for this request."})";
+                    } else {
+                        ++statistics.summary.calls;
+                        RecordDuration timing{statistics.summary.duration};
+                        try {
+                            output = payload.summary_tool(call.name, call.arguments, cancellation);
+                        } catch (const std::exception&) {
+                            output = R"({"error":"unavailable","message":"Summary retrieval is unavailable."})";
+                        }
+                        if (cancellation.load()) ++statistics.summary.cancelled;
+                        else if (tool_failed(output)) ++statistics.summary.failed;
+                        statistics.summary.result_bytes += output.size();
+                    }
+                    continue;
+                }
+                if (call.name == "web_search" || call.name == "web_read") {
+                    if (web_calls_used++ >= max_web_calls) {
+                        ++statistics.tool_limit_hits;
+                        ++statistics.tool_calls_rejected;
+                        output = R"({"error":"limit","message":"Web calls are unavailable for this answer: the web-call limit was reached. Summary tools may remain usable until the overall tool limit."})";
+                        continue;
+                    }
+                }
                 const bool read = call.name == "web_read";
                 const bool available = read ? static_cast<bool>(payload.web_read_tool)
                     : static_cast<bool>(payload.web_search_tool);
@@ -875,10 +916,10 @@ GenerationResult ProviderClient::perform(
                     "Answer the original request using the results already collected. "
                     "Earlier saved changes stay saved. Do not request more tools."
                 : folder_search
-                ? "CHA web functions are now unavailable because the tool limit was reached. "
+                ? "CHA ordinary tools are now unavailable because the tool limit was reached. "
                     "Answer using collected results and available folder search. "
                     "State any gaps in verification and do not invent missing facts."
-                : "Web tools are now unavailable because the tool limit was reached. "
+                : "Ordinary tools are now unavailable because the tool limit was reached. "
                     "Answer the original request using the results already collected. "
                     "State clearly if those results are insufficient to verify any requested information. "
                     "Do not invent missing facts or request more tools.";
@@ -939,7 +980,7 @@ GenerationResult ProviderClient::perform_once(
 
     const std::string& request_body = payload.bytes;
     const bool maintenance = static_cast<bool>(payload.maintenance_tool);
-    const bool collect_tool_calls = maintenance || payload.web_search_tool || payload.web_read_tool;
+    const bool collect_tool_calls = maintenance || payload.web_search_tool || payload.web_read_tool || payload.summary_tool;
     const std::size_t argument_limit = maintenance
         ? maintenance_argument_limit : ordinary_tool_argument_limit;
     std::unique_ptr<StreamingResponseDecoder> decoder;

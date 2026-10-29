@@ -3838,5 +3838,292 @@ TEST(ProviderClient, UnknownGoogleMixedModelFailureDoesNotRetryOrDropStoresOrFun
     EXPECT_EQ(request.folder_search->remote_store_ids, (std::vector<std::string>{"fileSearchStores/one"}));
 }
 
+Json summary_mock_call(ProviderApi api, std::string id, std::string name, Json args) {
+    if (api == ProviderApi::google) return {{"functionCall", {{"name", name}, {"id", id}, {"args", args}}}, {"thoughtSignature", "signed"}};
+    if (api == ProviderApi::anthropic) return {{"type", "tool_use"}, {"id", id}, {"name", name}, {"input", args}};
+    return search_call(api, id, args.dump(), name);
+}
+ProviderHttpResponse summary_mock_reply(ProviderApi api, bool stream, Json calls, std::string answer = {}) {
+    if (api == ProviderApi::chat_completions || api == ProviderApi::responses) return tool_reply(api, stream, calls, answer);
+    if (api == ProviderApi::google) {
+        if (!answer.empty()) calls.push_back({{"text", answer}});
+        auto response = google_response(calls);
+        response["usageMetadata"] = {{"promptTokenCount", 10}, {"candidatesTokenCount", 2}};
+        auto text = response.dump();
+        return {200, stream ? "text/event-stream" : "application/json", stream ? "data: " + text + "\n\n" : text};
+    }
+    if (!answer.empty()) calls.push_back({{"type", "text"}, {"text", answer}});
+    auto response = anthropic_response(calls, answer.empty() ? "tool_use" : "end_turn");
+    return {200, stream ? "text/event-stream" : "application/json", stream ? anthropic_stream(response) : response.dump()};
+}
+
+std::string summary_system_text(const Json& body, ProviderApi api) {
+    if (api == ProviderApi::responses) return body.at("instructions").get<std::string>();
+    if (api == ProviderApi::anthropic) return body.at("system").get<std::string>();
+    if (api == ProviderApi::google) return body.at("systemInstruction").at("parts").back().at("text").get<std::string>();
+    return body.at("messages").front().at("content").get<std::string>();
+}
+
+TEST(ProviderClientSummary, CatalogueUsesEffectiveToolsAndCountsFullSystemTextOnce) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses, ProviderApi::anthropic, ProviderApi::google}) {
+        auto definition = network_definition(80, false);
+        definition.provider.config.api = api;
+        ProviderClient client(shared_definition(definition));
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Recall");
+        input.summary_context = "Saved conversation summaries for this forum\nSummary catalogue JSON data:\n{\"items\":[{\"note_id\":42}]}";
+        input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
+        const auto payload = client.prepare(input);
+        const auto text = summary_system_text(Json::parse(payload.bytes), api);
+        const auto at = text.find(input.summary_context);
+        ASSERT_NE(at, std::string::npos);
+        EXPECT_EQ(text.find(input.summary_context, at + 1), std::string::npos);
+        EXPECT_LT(at, text.find("<tool_availability>"));
+        ASSERT_TRUE(payload.text_sizes);
+        EXPECT_EQ(payload.text_sizes->system_prompt_bytes, text.size());
+        input.summary_context.clear();
+        const auto empty = client.prepare(input);
+        EXPECT_EQ(summary_system_text(Json::parse(empty.bytes), api).find("Summary catalogue JSON data"), std::string::npos);
+        input.summary_context = "CATALOGUE-MARKER";
+        input.include_tool_instructions = false;
+        EXPECT_EQ(client.prepare(input).bytes.find(input.summary_context), std::string::npos);
+        input.include_tool_instructions = true;
+        input.summary_tool = {};
+        EXPECT_EQ(client.prepare(input).bytes.find(input.summary_context), std::string::npos);
+    }
+}
+
+TEST(ProviderClientSummary, SummaryOnlySearchReadAnswerAcrossAllApisAndStreamingModes) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses, ProviderApi::anthropic, ProviderApi::google}) {
+        for (bool stream : {false, true}) {
+            SCOPED_TRACE(std::to_string(static_cast<int>(api)) + (stream ? " stream" : " plain"));
+            auto definition = network_definition(80, stream);
+            definition.provider.config.api = api;
+            std::vector<Json> requests;
+            ProviderClient client(shared_definition(definition), nullptr, [&](const ProviderHttpRequest& request, const auto&) {
+                requests.push_back(Json::parse(request.body));
+                const auto round = requests.size();
+                if (round == 1) return summary_mock_reply(api, stream, Json::array({summary_mock_call(api, "search-id", "summary_search", {{"query", "preference"}, {"before_note_id", nullptr}})}));
+                if (round == 2) return summary_mock_reply(api, stream, Json::array({summary_mock_call(api, "read-id", "summary_read", {{"note_id", 42}})}));
+                return summary_mock_reply(api, stream, Json::array(), "Historical preference.");
+            });
+            Transcript transcript;
+            auto input = client_request(transcript, 1, "What did we decide?");
+            input.summary_context = "CATALOGUE-SNAPSHOT-42";
+            std::vector<std::string> calls;
+            input.summary_tool = [&](std::string_view name, std::string_view arguments, const auto&) {
+                calls.emplace_back(name);
+                const auto args = Json::parse(arguments);
+                if (name == "summary_search") {
+                    EXPECT_EQ(args["before_note_id"], nullptr);
+                    return std::string(R"({"items":[{"note_id":42,"name":"Preference"}],"next_before_note_id":null,"skipped_invalid_count":0})");
+                }
+                EXPECT_EQ(args["note_id"], 42);
+                return std::string(R"({"note_id":42,"name":"Preference","text":"Saved preference","truncated":false})");
+            };
+            auto payload = client.prepare(input);
+            ASSERT_TRUE(payload.summary_tool);
+            const auto first = Json::parse(payload.bytes);
+            EXPECT_NE(first.dump().find("Do not retrieve unrelated material"), std::string::npos);
+            EXPECT_NE(first.dump().find("Summary search and reading are available"), std::string::npos);
+            GenerationStatistics stats;
+            payload.statistics = &stats;
+            payload.tool_progress = [](auto) { ADD_FAILURE() << "Summary calls must not emit web progress"; };
+            std::string answer;
+            const auto result = client.perform(std::move(payload), [&](GenerationDelta delta) {
+                if (delta.kind == GenerationDeltaKind::answer) answer += delta.text;
+            }, std::atomic_bool{false});
+            EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(answer, "Historical preference.");
+            EXPECT_EQ(calls, (std::vector<std::string>{"summary_search", "summary_read"}));
+            ASSERT_EQ(requests.size(), 3u);
+            for (const auto& request : requests) {
+                const auto text = summary_system_text(request, api);
+                const auto at = text.find(input.summary_context);
+                ASSERT_NE(at, std::string::npos);
+                EXPECT_EQ(text.find(input.summary_context, at + 1), std::string::npos);
+            }
+            EXPECT_NE(requests.back().dump().find("Saved preference"), std::string::npos);
+            EXPECT_NE(requests.back().dump().find("read-id"), std::string::npos);
+            EXPECT_EQ(stats.summary.calls, 2u);
+            EXPECT_EQ(stats.summary.failed, 0u);
+            EXPECT_GT(stats.summary.duration.count(), 0);
+            EXPECT_GT(stats.summary.result_bytes, 0u);
+            EXPECT_EQ(stats.web_search.calls, 0u);
+            EXPECT_EQ(stats.web_read.calls, 0u);
+            EXPECT_EQ(stats.tool_calls_requested, 2u);
+            EXPECT_EQ(result.usage.input_tokens, api == ProviderApi::anthropic ? 12u : 30u);
+        }
+    }
+}
+
+TEST(ProviderClientSummary, SeparateWebAllowanceAndOverallLimitPreserveMixedCallIdsAndSignedPrefixes) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses, ProviderApi::anthropic, ProviderApi::google}) {
+        auto definition = network_definition(80, false);
+        definition.provider.config.api = api;
+        std::vector<Json> sent;
+        int searches = 0, summaries = 0;
+        ProviderClient client(shared_definition(definition), nullptr, [&](const ProviderHttpRequest& request, const auto&) {
+            sent.push_back(Json::parse(request.body));
+            if (sent.size() == 1) {
+                Json calls = Json::array();
+                calls.push_back(summary_mock_call(api, "summary-first", "summary_read", {{"note_id", 1}}));
+                for (int i = 0; i < 5; ++i) calls.push_back(summary_mock_call(api, "web" + std::to_string(i), "web_search", {{"query", "paid"}}));
+                calls.push_back(summary_mock_call(api, "summary-last", "summary_read", {{"note_id", 2}}));
+                return summary_mock_reply(api, false, calls);
+            }
+            if (sent.size() == 2) {
+                const auto text = sent.back().dump();
+                EXPECT_NE(text.find("web-call limit was reached"), std::string::npos);
+                EXPECT_NE(text.find("summary-first"), std::string::npos);
+                EXPECT_NE(text.find("summary-last"), std::string::npos);
+                Json calls = Json::array();
+                for (int i = 0; i < 10; ++i) calls.push_back(summary_mock_call(api, "more" + std::to_string(i), "summary_read", {{"note_id", 3}}));
+                return summary_mock_reply(api, false, calls);
+            }
+            const auto& final = sent.back();
+            if (api == ProviderApi::anthropic) {
+                EXPECT_EQ(final["tool_choice"]["type"], "none");
+                EXPECT_EQ(final["system"], sent.front()["system"]);
+                EXPECT_EQ(final["tools"], sent.front()["tools"]);
+            } else if (api == ProviderApi::google) {
+                EXPECT_EQ(final["toolConfig"]["functionCallingConfig"]["mode"], "NONE");
+                EXPECT_NE(final["systemInstruction"].dump().find("Summary search and reading are unavailable"), std::string::npos);
+            } else EXPECT_FALSE(final.contains("tools"));
+            return summary_mock_reply(api, false, Json::array(), "Done.");
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Recall and verify");
+        input.summary_context = "CATALOGUE-SNAPSHOT-FINAL";
+        input.web_search_tool = [&](auto, const auto&) { ++searches; return "{}"; };
+        input.summary_tool = [&](auto, auto, const auto&) { ++summaries; return R"({"error":"invalid_summary","message":"invalid"})"; };
+        GenerationStatistics stats;
+        auto payload = client.prepare(input); payload.statistics = &stats;
+        const auto result = client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false});
+        EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(searches, 4);
+        EXPECT_EQ(summaries, 11); // 16 total attempts minus 5 web attempts, including the denied fifth.
+        EXPECT_EQ(stats.summary.failed, 11u);
+        EXPECT_EQ(stats.web_search.calls, 4u);
+        EXPECT_EQ(stats.tool_calls_rejected, 2u);
+        EXPECT_EQ(sent.size(), 3u);
+        for (const auto& request : sent) {
+            const auto text = summary_system_text(request, api);
+            const auto at = text.find(input.summary_context);
+            ASSERT_NE(at, std::string::npos);
+            EXPECT_EQ(text.find(input.summary_context, at + 1), std::string::npos);
+        }
+    }
+}
+
+TEST(ProviderClientSummary, CallbackCancellationPreventsModelContinuation) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses, ProviderApi::anthropic, ProviderApi::google}) {
+        auto definition = network_definition(80, false); definition.provider.config.api = api;
+        int requests = 0;
+        ProviderClient client(shared_definition(definition), nullptr, [&](const auto&, const auto&) {
+            ++requests;
+            return summary_mock_reply(api, false, Json::array({summary_mock_call(api, "cancel", "summary_read", {{"note_id", 1}})}));
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Recall");
+        std::atomic_bool cancellation{false};
+        input.summary_tool = [&](auto, auto, const auto&) {
+            cancellation.store(true);
+            return R"({"error":"cancelled","message":"cancelled"})";
+        };
+        GenerationStatistics stats;
+        auto payload = client.prepare(input); payload.statistics = &stats;
+        EXPECT_EQ(client.perform(std::move(payload), [](auto) {}, cancellation).outcome, GenerationOutcome::cancelled);
+        EXPECT_EQ(requests, 1);
+        EXPECT_EQ(stats.summary.cancelled, 1u);
+    }
+}
+
+TEST(ProviderClientSummary, RequiredHostedSearchExcludesSummariesForTheWholeGeneration) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        auto definition = network_definition(443, false);
+        definition.provider.config.api = api;
+        definition.provider.config.host = "openrouter.ai";
+        definition.provider.config.web_search = WebSearchMode::required;
+        std::vector<Json> requests;
+        ProviderClient client(shared_definition(definition), nullptr, [&](const ProviderHttpRequest& request, const auto&) {
+            const auto body = Json::parse(request.body);
+            requests.push_back(body);
+            EXPECT_EQ(body.dump().find("\"name\":\"summary_search\""), std::string::npos);
+            EXPECT_NE(body.dump().find("Summary search and reading are unavailable"), std::string::npos);
+            if (requests.size() <= 2) return summary_mock_reply(api, false, Json::array({
+                summary_mock_call(api, "forged" + std::to_string(requests.size()), "summary_read", {{"note_id", 42}})}));
+            return summary_mock_reply(api, false, Json::array(), "Done.");
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Research");
+        input.web_search_tool = [](auto, const auto&) { return "{}"; };
+        input.summary_context = "CATALOGUE-MARKER";
+        input.summary_tool = [](auto, auto, const auto&) -> std::string { ADD_FAILURE(); return "{}"; };
+        auto payload = client.prepare(input);
+        EXPECT_FALSE(payload.summary_tool);
+        EXPECT_EQ(payload.bytes.find("CATALOGUE-MARKER"), std::string::npos);
+        EXPECT_EQ(client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false}).outcome, GenerationOutcome::completed);
+        ASSERT_EQ(requests.size(), 3u);
+        EXPECT_NE(requests[1].dump().find("Summary tools are unavailable"), std::string::npos);
+        EXPECT_EQ(requests.front()["tool_choice"], "required");
+        EXPECT_EQ(requests.back()["tool_choice"], "auto");
+    }
+}
+
+TEST(ProviderClientSummary, GoogleFileSearchCompatibilityAndRequestsWithoutSummaryAccessOmitCallbacks) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses, ProviderApi::anthropic, ProviderApi::google}) {
+        auto definition = network_definition(80, false); definition.provider.config.api = api;
+        ProviderClient client(shared_definition(definition));
+        Transcript transcript;
+        const auto payload = client.prepare(client_request(transcript, 1, "Self-contained"));
+        EXPECT_FALSE(payload.summary_tool);
+        EXPECT_EQ(payload.bytes.find("CATALOGUE-MARKER"), std::string::npos);
+        EXPECT_FALSE(Json::parse(payload.bytes).contains("tools"));
+    }
+    for (const auto* model : {"gemini-2.5-flash", "gemini-3-flash"}) {
+        auto definition = network_definition(80, false);
+        definition.provider.config.api = ProviderApi::google; definition.provider.config.model = model;
+        ProviderClient client(shared_definition(definition));
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Recall");
+        input.folder_search = FolderSearchAccess{FolderStoreService::google, {"fileSearchStores/one"}};
+        input.summary_context = "CATALOGUE-MARKER";
+        input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
+        const auto payload = client.prepare(input);
+        const auto body = Json::parse(payload.bytes);
+        const bool available = std::string_view(model) != "gemini-2.5-flash";
+        EXPECT_EQ(bool(payload.summary_tool), available);
+        EXPECT_EQ(payload.bytes.find("CATALOGUE-MARKER") != std::string::npos, available);
+        EXPECT_EQ(body["tools"].size(), available ? 2u : 1u);
+        if (available) EXPECT_EQ(body["toolConfig"]["functionCallingConfig"]["mode"], "VALIDATED");
+    }
+    // Anthropic ignores the obsolete hosted-search setting; it must not hide effective summary tools.
+    auto definition = network_definition(80, false);
+    definition.provider.config.api = ProviderApi::anthropic;
+    definition.provider.config.web_search = WebSearchMode::required;
+    ProviderClient client(shared_definition(definition));
+    Transcript transcript;
+    auto input = client_request(transcript, 1, "Recall");
+    input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
+    EXPECT_TRUE(client.prepare(input).summary_tool);
+}
+
+
+TEST(ProviderClientSummary, IgnoredSubscriptionHostedSearchSettingDoesNotSuppressSummaryFunctions) {
+    SubscriptionOwner owner;
+    OpenAiOAuth oauth = owner.make_connected();
+    auto definition = subscription_definition();
+    definition.provider.config.web_search = WebSearchMode::required;
+    ProviderClient client(shared_definition(definition), &oauth);
+    Transcript transcript;
+    auto input = client_request(transcript, 1, "Recall");
+    input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
+    const auto payload = client.prepare(input);
+    EXPECT_TRUE(payload.summary_tool);
+    EXPECT_NE(payload.bytes.find("summary_search"), std::string::npos);
+    EXPECT_EQ(payload.bytes.find("\"type\":\"web_search\""), std::string::npos);
+}
+
 } // namespace
 } // namespace cha
