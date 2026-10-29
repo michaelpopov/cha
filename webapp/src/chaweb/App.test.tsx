@@ -302,24 +302,6 @@ it('opens the current session again and ignores a duplicate history event', asyn
   expect(api.getSession).toHaveBeenLastCalledWith('lobby', 'older');
 });
 
-it('keeps a forum draft, returns to it, and does not create a session', async () => {
-  const user = userEvent.setup();
-  const api = await showList();
-  await user.click(screen.getByRole('button', { name: 'New Session' }));
-  const box = await screen.findByRole('textbox', { name: 'Message' });
-  expect(window.location.hash).toBe('');
-  await user.type(box, 'Local note');
-  box.focus();
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
-  expect(screen.getByRole('button', { name: 'Forum' })).toHaveTextContent('The Lobby');
-  expect(box).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'New Session' }));
-  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Local note');
-  expect(api.createSession).not.toHaveBeenCalled();
-  expect(api.getSession).not.toHaveBeenCalled();
-  expect(api.submitInput).not.toHaveBeenCalled();
-});
-
 it('changes the list when the forum changes and does not open a session', async () => {
   const user = userEvent.setup();
   const api = await showList();

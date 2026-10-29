@@ -1,6 +1,9 @@
 #include "app/application_internal.h"
+#include "app/workspace_operations.h"
 
 #include "providers/web_search.h"
+#include "session/session_markdown.h"
+#include "storage/not_found_error.h"
 #include "storage/note_storage.h"
 #include "util/base64.h"
 #include "util/curl.h"
@@ -13,6 +16,7 @@
 
 namespace cha {
 std::string_view embedded_compression_prompt();
+std::string_view embedded_session_summary_prompt();
 std::string_view embedded_youtube_transcript_prompt();
 std::string_view embedded_page_formatting_prompt();
 }
@@ -31,13 +35,49 @@ ProviderSelection note_editing_provider(const Workspace& workspace) {
     const auto& effort = workspace.notes().compression_reasoning_effort;
     if (effort != "none"
         && !provider_supports_reasoning_effort(provider->config, provider->config.api)) {
-        throw ApplicationError(ErrorCode::invalid_argument,
-            "This compression provider's model does not support " + effort + " reasoning effort.");
+        if (provider->config.mode == Mode::net)
+            throw ApplicationError(ErrorCode::invalid_argument,
+                "This compression provider's model does not support " + effort + " reasoning effort.");
+        log_warn("Ignoring unsupported Notes provider reasoning effort.");
     }
     auto config = provider->config;
-    config.reasoning_effort = effort;
+    config.reasoning_effort = provider_supports_reasoning_effort(config, config.api) ? effort : "none";
     config.web_search = WebSearchMode::off;
     return {provider->id, std::move(config)};
+}
+
+SharedCharacterDefinition prepare_note_provider(const Workspace& workspace, OpenAiOAuth* oauth, ApiKeyStore* api_keys,
+    std::string_view id, std::string_view name, std::string_view prompt) {
+    auto provider = note_editing_provider(workspace);
+    provider.config.timeout_s = 0;
+    // Bind legacy names to a stable reference, so deleting a key cannot make a
+    // waiting job select a different key later created with that name.
+    const bool uses_key = provider.config.mode == Mode::net && provider.config.auth == ProviderAuth::none;
+    if (!uses_key) {
+        if (!provider.config.api_key_id.empty() || !provider.config.api_key_env.empty())
+            log_warn("Ignoring unused Notes provider API key settings.");
+        provider.config.api_key_id.clear();
+        provider.config.api_key_env.clear();
+        if (provider.config.mode != Mode::net) provider.config.auth = ProviderAuth::none;
+    }
+    if (uses_key && provider.config.api_key_id.empty() && !provider.config.api_key_env.empty()) {
+        const auto key = api_keys->find_by_name(provider.config.api_key_env);
+        if (!key) throw ApplicationError(ErrorCode::invalid_argument, "Select an existing compression API key in Settings.");
+        provider.config.api_key_id = key->id;
+        provider.config.api_key_env.clear();
+    }
+    if (provider.config.mode == Mode::net && provider.config.auth == ProviderAuth::openai_subscription
+        && oauth->status().state != OpenAiOAuthState::connected)
+        throw ApplicationError(ErrorCode::invalid_argument, "Connect your OpenAI account in Settings before compressing notes.");
+    const auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
+        .character = {std::string(id), std::string(name)}, .provider = std::move(provider),
+        .system_prompt = std::string(prompt),
+    });
+    // Validate before acceptance; the worker resolves the same key reference
+    // again under the lifecycle lock before every actual request.
+    try { ProviderClient validate(definition, oauth, api_keys); }
+    catch (const std::exception& error) { throw ApplicationError(ErrorCode::invalid_argument, error.what()); }
+    return definition;
 }
 
 struct NotePromptAnswer {
@@ -264,9 +304,11 @@ nlohmann::json Application::compress_note(std::int64_t id, std::uint64_t epoch, 
         const auto items = impl_->store->list_note_items();
         const auto item = std::find_if(items.begin(), items.end(), [id](const auto& item) { return item.id == id; });
         if (skip_ineligible && (item == items.end() || item->kind != NoteItemKind::note
-            || item->has_compressed || impl_->compressions.contains(id))) return {{"skipped", true}};
+            || item->is_summary || item->has_compressed || impl_->compressions.contains(id))) return {{"skipped", true}};
         if (item != items.end() && item->kind != NoteItemKind::note)
             throw NoteError(NoteFailure::invalid, "That item is not a note.");
+        if (item != items.end() && item->is_summary)
+            throw NoteError(NoteFailure::invalid, "Session summaries cannot be compressed.");
         if (impl_->compressions.contains(id))
             throw ApplicationError(ErrorCode::invalid_argument, "Compression is already running for this note.");
         note = impl_->store->get_note_text(id);
@@ -279,27 +321,8 @@ nlohmann::json Application::compress_note(std::int64_t id, std::uint64_t epoch, 
         if (skip_ineligible) return {{"skipped", true}};
         throw ApplicationError(ErrorCode::invalid_argument, "This note has no text to compress.");
     }
-    auto provider = note_editing_provider(*impl_->store->snapshot());
-    provider.config.timeout_s = 0;
-    // Bind legacy names to a stable reference, so deleting a key cannot make a
-    // waiting job select a different key later created with that name.
-    if (provider.config.api_key_id.empty() && !provider.config.api_key_env.empty()) {
-        const auto key = impl_->api_keys->find_by_name(provider.config.api_key_env);
-        if (!key) throw ApplicationError(ErrorCode::invalid_argument, "Select an existing compression API key in Settings.");
-        provider.config.api_key_id = key->id;
-        provider.config.api_key_env.clear();
-    }
-    if (provider.config.mode == Mode::net && provider.config.auth == ProviderAuth::openai_subscription
-        && impl_->openai_auth->status().state != OpenAiOAuthState::connected)
-        throw ApplicationError(ErrorCode::invalid_argument, "Connect your OpenAI account in Settings before compressing notes.");
-    const auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
-        .character = {"note-compression", "Note compression"}, .provider = std::move(provider),
-        .system_prompt = std::string(embedded_compression_prompt()),
-    });
-    // Validate before acceptance; the worker resolves the same key reference
-    // again under the lifecycle lock before every actual request.
-    try { ProviderClient validate(definition, impl_->openai_auth.get(), impl_->api_keys.get()); }
-    catch (const std::exception& error) { throw ApplicationError(ErrorCode::invalid_argument, error.what()); }
+    const auto definition = prepare_note_provider(*impl_->store->snapshot(), impl_->openai_auth.get(), impl_->api_keys.get(),
+        "note-compression", "Note compression", embedded_compression_prompt());
     const auto control = std::make_shared<Impl::CompressionControl>();
     control->name = note.name;
     impl_->compressions[id] = control;
@@ -386,6 +409,213 @@ nlohmann::json Application::compress_note(std::int64_t id, std::uint64_t epoch, 
     }
     impl_->notify_compression(id, epoch);
     return {{"accepted", true}};
+}
+
+namespace {
+std::string summary_target_label(const FullSessionId& identity, std::string_view label) {
+    return "“" + std::string(label) + "” (" + identity.forum_id + "/" + identity.session_id + ")";
+}
+
+void require_summary_answer(const NotePromptAnswer& answer, const std::atomic_bool& cancel) {
+    const auto& result = answer.result;
+    if (cancel.load() || result.outcome == GenerationOutcome::cancelled)
+        throw ApplicationError(ErrorCode::operation_cancelled, "Summary generation was cancelled.");
+    if (result.refused) throw ApplicationError(ErrorCode::internal_error, "The provider refused to summarize this session.");
+    if (result.outcome != GenerationOutcome::completed) {
+        if (result.message == "Prompt exceeds the model's context window.")
+            throw ApplicationError(ErrorCode::invalid_argument,
+                "The conversation exceeds the model's context window. Select a model with a larger context window in Settings → Notes and try again.");
+        const std::initializer_list<std::string_view> safe_reasons{
+            "HTTP request failed: idle timeout reached", "HTTP request failed: Timeout was reached",
+            "Provider quota or billing limit exceeded.", "Provider authentication or permission was rejected.",
+            "Provider rate limit exceeded.",
+        };
+        const bool safe = std::find(safe_reasons.begin(), safe_reasons.end(), result.message) != safe_reasons.end();
+        throw ApplicationError(ErrorCode::internal_error, safe ? result.message
+            : "The provider request failed. Check the connection and provider settings, then try again.");
+    }
+    if (!result.finish_reason.empty() && result.finish_reason != "stop" && result.finish_reason != "end_turn")
+        throw ApplicationError(ErrorCode::internal_error, "The provider returned an incomplete summary.");
+    if (trim_view(answer.text).empty()) throw ApplicationError(ErrorCode::internal_error, "The provider returned no summary text.");
+    if (answer.text.size() > note_document_byte_limit)
+        throw ApplicationError(ErrorCode::body_too_large, "The generated summary exceeds 12 MiB.");
+}
+}
+
+void Application::Impl::retire_summary(const FullSessionId& identity, const std::shared_ptr<SummaryRun>& run,
+    EventSeverity severity, std::string_view message, std::string_view reason) noexcept {
+    const auto found = summaries.find(identity);
+    if (found == summaries.end() || found->second != run) return;
+    run->cancel->store(true);
+    summaries.erase(found);
+    if (published_epoch.load() != run->epoch || message.empty()) return;
+    try {
+        store->append_event(severity, std::string(message) + " for " + summary_target_label(identity, run->label)
+            + (reason.empty() ? "." : ": " + std::string(reason)));
+    } catch (...) { log_warn("Could not record summary outcome."); }
+}
+
+void Application::Impl::cancel_summaries(std::optional<std::string_view> connection_id) {
+    for (auto it = summaries.begin(); it != summaries.end();) {
+        const auto [identity, run] = *it++;
+        if (!connection_id || run->connection_id == *connection_id)
+            retire_summary(identity, run, EventSeverity::info, "Summary save cancelled");
+    }
+}
+
+std::shared_ptr<OperationReply> Application::generate_session_summary(
+    std::string connection_id, const FullSessionId& identity, std::uint64_t epoch) {
+    auto reply = std::make_shared<OperationReply>();
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    if (connection_id.empty()) throw ApplicationError(ErrorCode::invalid_argument);
+    // Welcome uses a separate temporary database and has no Notes folder.
+    const bool welcome = workspace::is_welcome_session(identity.forum_id, identity.session_id);
+    const auto workspace = impl_->store->snapshot();
+    if (welcome || !workspace->find_forum(identity.forum_id))
+        throw ApplicationError(ErrorCode::invalid_argument, "Save summary is only available for configured forums.");
+    if (impl_->summaries.contains(identity)) throw ApplicationError(ErrorCode::invalid_argument,
+        "A summary is already being saved for this session.");
+    std::string source, label;
+    NoteSummaryTarget target;
+    try {
+        const auto sessions = impl_->sessions->list(identity.forum_id);
+        const auto stored = std::ranges::find(sessions, identity, &StoredSession::identity);
+        if (stored == sessions.end()) throw ApplicationError(ErrorCode::not_found, "The source session was not found.");
+        label = stored->label;
+        auto entries = impl_->sessions->history(identity);
+        std::erase_if(entries, [](const TranscriptEntry& entry) {
+            return trim_view(entry.text).empty() || (entry.kind != EntryKind::human
+                && !(entry.kind == EntryKind::character && entry.status == EntryStatus::complete));
+        });
+        if (entries.empty()) throw ApplicationError(ErrorCode::invalid_argument, "This session has no saved messages to summarize.");
+        source = session_markdown(label, entries);
+        target = impl_->store->summary_target(identity);
+    } catch (const NoteError& error) { rethrow_note(error); }
+    catch (const SessionNotFoundError&) { throw ApplicationError(ErrorCode::not_found); }
+    catch (const ForumNotFoundError&) { throw ApplicationError(ErrorCode::not_found); }
+    const auto definition = prepare_note_provider(*workspace, impl_->openai_auth.get(), impl_->api_keys.get(),
+        "session-summary", "Session summary", embedded_session_summary_prompt());
+    if (impl_->next_summary_run > note_id_limit) throw ApplicationError(ErrorCode::internal_error);
+    const auto run = std::make_shared<Impl::SummaryRun>();
+    run->run_id = impl_->next_summary_run++;
+    run->connection_id = std::move(connection_id);
+    run->epoch = epoch;
+    run->target = target;
+    run->label = std::move(label);
+    impl_->summaries.emplace(identity, run);
+    try {
+        impl_->store->append_event(EventSeverity::info, "Summary save started for " + summary_target_label(identity, run->label) + ".");
+        if (!impl_->background_jobs.launch(
+            [owner = impl_.get(), identity, run, definition, reply, source = std::move(source)](std::atomic_bool& cancel) mutable {
+                nlohmann::json result;
+                ErrorCode code = ErrorCode::internal_error;
+                std::string failure;
+                try {
+                    NotePromptAnswer answer;
+                    for (unsigned retries = 0;; ++retries) {
+                        std::unique_ptr<ProviderClient> client;
+                        {
+                            const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                            const auto found = owner->summaries.find(identity);
+                            // A retired run still settles its reply, so the request does not stay outstanding.
+                            if (found == owner->summaries.end() || found->second != run || cancel.load())
+                                throw ApplicationError(ErrorCode::operation_cancelled, "Summary generation was cancelled.");
+                            owner->require_admitted(run->epoch);
+                            client = std::make_unique<ProviderClient>(definition, owner->openai_auth.get(), owner->api_keys.get());
+                        }
+                        answer = collect_note_prompt(*client, definition, source, cancel);
+                        if (!answer.result.retryable || cancel.load() || retries == 3) break;
+                        const auto seconds = 10 << retries;
+                        if (owner->settings.note_compression_wait) owner->settings.note_compression_wait(seconds);
+                        else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    source.clear();
+                    require_summary_answer(answer, cancel);
+                    {
+                        const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                        const auto found = owner->summaries.find(identity);
+                        if (found == owner->summaries.end() || found->second != run || cancel.load())
+                            throw ApplicationError(ErrorCode::operation_cancelled, "Summary generation was cancelled.");
+                        owner->require_admitted(run->epoch);
+                        run->ready = true;
+                        result = {{"run_id", run->run_id}, {"parent_id", run->target.parent_id},
+                            {"target_note_id", run->target.target_note_id ? nlohmann::json(*run->target.target_note_id) : nlohmann::json(nullptr)},
+                            {"markdown", std::move(answer.text)}};
+                    }
+                } catch (const ApplicationError& error) { code = error.code; failure = error.what(); }
+                catch (...) { failure = "Check the Notes provider settings and try again."; }
+                // Delivery callbacks can acquire the router mutex. Never invoke them with the lifecycle lock held.
+                if (failure.empty()) {
+                    if (reply->complete(std::move(result))) return;
+                    const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                    owner->retire_summary(identity, run, EventSeverity::info, "Summary save cancelled");
+                } else {
+                    {
+                        const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                        if (code == ErrorCode::operation_cancelled)
+                            owner->retire_summary(identity, run, EventSeverity::info, "Summary save cancelled");
+                        else owner->retire_summary(identity, run, EventSeverity::error, "Summary save failed", failure);
+                    }
+                    reply->fail(code, failure);
+                }
+            }, run->cancel)) throw std::runtime_error("Worker unavailable");
+    } catch (...) {
+        impl_->retire_summary(identity, run, EventSeverity::error, "Summary save could not start");
+        throw ApplicationError(ErrorCode::command_queue_full, "Could not start summary generation. Try again.");
+    }
+    return reply;
+}
+
+NoteItem Application::commit_session_summary(std::string_view connection_id, std::int64_t run_id,
+    const nlohmann::json& document, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    const auto found = std::find_if(impl_->summaries.begin(), impl_->summaries.end(),
+        [run_id](const auto& entry) { return entry.second->run_id == run_id; });
+    if (found == impl_->summaries.end()) throw ApplicationError(ErrorCode::not_found, "The summary run is no longer available.");
+    const auto [identity, run] = *found;
+    if (run->connection_id != connection_id || run->epoch != epoch)
+        throw ApplicationError(ErrorCode::invalid_argument, "The summary run belongs to another window or vault.");
+    try {
+        if (run->cancel->load()) throw ApplicationError(ErrorCode::operation_cancelled, "Summary save was cancelled.");
+        if (!run->ready) throw ApplicationError(ErrorCode::invalid_argument, "The summary is not ready to save.");
+        if (!impl_->store->snapshot()->find_forum(identity.forum_id))
+            throw ApplicationError(ErrorCode::not_found, "The source forum no longer exists.");
+        auto item = impl_->store->commit_summary(identity, run->target, document);
+        impl_->retire_summary(identity, run, EventSeverity::success, "");
+        // The transaction has committed. Notification failures must not change the save result.
+        try {
+            impl_->interrupt_abandoned_audio();
+            if (impl_->note_audio_changed) impl_->note_audio_changed(item.id, epoch);
+        } catch (...) { log_warn("Could not deliver summary audio notification."); }
+        return item;
+    } catch (const NoteError& error) {
+        impl_->retire_summary(identity, run, EventSeverity::error, "Summary save failed");
+        rethrow_note(error);
+    } catch (...) {
+        impl_->retire_summary(identity, run, run->cancel->load() ? EventSeverity::info : EventSeverity::error,
+            run->cancel->load() ? "Summary save cancelled" : "Summary save failed");
+        throw;
+    }
+}
+
+void Application::abandon_session_summary(std::string_view connection_id, std::int64_t run_id,
+    std::string_view reason, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    if (reason != "conversion_failed" && reason != "commit_unknown") throw ApplicationError(ErrorCode::invalid_argument);
+    const auto found = std::find_if(impl_->summaries.begin(), impl_->summaries.end(),
+        [run_id](const auto& entry) { return entry.second->run_id == run_id; });
+    if (found == impl_->summaries.end()) return;
+    const auto [identity, run] = *found;
+    if (run->connection_id != connection_id || run->epoch != epoch)
+        throw ApplicationError(ErrorCode::invalid_argument, "The summary run belongs to another window or vault.");
+    if (reason == "conversion_failed")
+        impl_->retire_summary(identity, run, EventSeverity::error, "Summary save failed",
+            "The generated summary could not be converted to a note.");
+    else impl_->retire_summary(identity, run, EventSeverity::info, "Summary save abandoned after an unknown commit outcome");
 }
 
 nlohmann::json Application::note_compression_status(std::int64_t id, std::uint64_t epoch) {

@@ -2658,6 +2658,17 @@ std::vector<NoteItem> WorkspaceConfigStore::list_note_items() const {
     return note_list(*impl_->database);
 }
 
+NoteSummaryTarget WorkspaceConfigStore::summary_target(const FullSessionId& identity) const {
+    const std::lock_guard lock(impl_->mutex);
+    return note_summary_target(*impl_->database, identity);
+}
+
+NoteItem WorkspaceConfigStore::commit_summary(const FullSessionId& identity,
+    const NoteSummaryTarget& target, const nlohmann::json& document) {
+    const std::lock_guard lock(impl_->mutex);
+    return note_commit_summary(*impl_->database, identity, target, document);
+}
+
 NoteItem WorkspaceConfigStore::create_note_item(
     std::optional<std::int64_t> parent_id,
     NoteItemKind kind,

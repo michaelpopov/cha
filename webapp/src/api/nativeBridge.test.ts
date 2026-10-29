@@ -26,9 +26,8 @@ const methodPolicies = loadFixture('native-method-policies.json') as Record<stri
 }>;
 
 describe('native bridge', () => {
-  it.each(Object.entries(methodPolicies))(
-    'applies the shared reply epoch requirement for %s',
-    async (method, policy) => {
+  it('applies the shared reply epoch requirement for every method', async () => {
+    for (const [method, policy] of Object.entries(methodPolicies)) {
       const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post: () => {} });
       bridge.setContextEpoch(7);
       const resolved = vi.fn();
@@ -38,25 +37,24 @@ describe('native bridge', () => {
         { ...reply, context_epoch: 6 },
       ] });
       await Promise.resolve();
-      expect(resolved).toHaveBeenCalledTimes(policy.requires_context_epoch ? 0 : 1);
+      expect(resolved, method).toHaveBeenCalledTimes(policy.requires_context_epoch ? 0 : 1);
       bridge.receive({ connection_id: 'current', delivery_id: 2, messages: [
         { ...reply, context_epoch: 7 },
       ] });
       await pending;
-      expect(resolved).toHaveBeenCalledExactlyOnceWith('completed');
+      expect(resolved, method).toHaveBeenCalledExactlyOnceWith('completed');
       bridge.dispose();
-    },
-  );
+    }
+  });
 
-  it.each(Object.entries(methodPolicies))(
-    'honors the shared context policy for %s',
-    async (method, policy) => {
+  it('honors the shared context policy for every method', async () => {
+    for (const [method, policy] of Object.entries(methodPolicies)) {
       const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post: () => {} });
       bridge.setContextEpoch(7);
       const pending = bridge.invoke(method);
       const completed = policy.requires_context_epoch && !policy.changes_context
-        ? expect(pending).rejects.toMatchObject({ code: 'vault_changed' })
-        : expect(pending).resolves.toEqual('completed');
+        ? expect(pending, method).rejects.toMatchObject({ code: 'vault_changed' })
+        : expect(pending, method).resolves.toEqual('completed');
 
       bridge.receive({ connection_id: 'current', delivery_id: 1, messages: [
         { connection_id: 'current', event: 'app.contextChanged', context_epoch: 8, state: 'running' },
@@ -67,8 +65,8 @@ describe('native bridge', () => {
       } finally {
         bridge.dispose();
       }
-    },
-  );
+    }
+  });
 
   it('does not post an invocation that was already aborted', async () => {
     const posts: unknown[] = [];

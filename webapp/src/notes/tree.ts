@@ -9,6 +9,8 @@ export type NoteTreeItem = {
   kind: 'folder' | 'note' | 'annotation';
   name: string;
   has_compressed?: boolean;
+  is_summary?: boolean;
+  summary_linked?: boolean;
   forum_id?: string;
 };
 
@@ -23,7 +25,10 @@ export function availableNoteName(
     .map((item) => item.name));
   names.add('ANNOTATIONS');
   let name = base;
-  for (let suffix = 1; names.has(name); suffix++) name = `${base} ${suffix}`;
+  for (let suffix = 1; names.has(name); suffix++) {
+    const tail = ` ${suffix}`;
+    name = `${Array.from(base).slice(0, 200 - tail.length).join('')}${tail}`;
+  }
   return name;
 }
 
@@ -33,6 +38,8 @@ export type NoteTreeRow = NoteSibling & {
   parentId: number | null;
   parentKey: string | null;
   hasCompressed?: boolean;
+  isSummary?: boolean;
+  summaryLinked?: boolean;
   forumId?: string;
 };
 
@@ -72,6 +79,8 @@ export function buildNoteIndex(items: readonly NoteTreeItem[]): {
       noteId: item.id,
       name: item.name,
       hasCompressed: item.has_compressed ?? false,
+      isSummary: item.is_summary ?? false,
+      summaryLinked: item.summary_linked ?? false,
       forumId: item.forum_id,
       kind: item.kind,
       parentId: item.parent_id,

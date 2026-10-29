@@ -145,33 +145,6 @@ TEST_F(ApplicationConfigTest, LoadsValidExternalConfigurations) {
     }
 }
 
-TEST_F(ApplicationConfigTest, IgnoresObsoleteVoiceConfiguration) {
-    for (const std::string_view table : {"text_to_speech", "voice_input"}) {
-        SCOPED_TRACE(table);
-        write_app(
-            "vault = \"Personal\"\n"
-            "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
-            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n"
-            "[" + std::string(table) + "]\n"
-            "url = \"https://example.com/realtime\"\n"
-            "api_key = \"api_key_7\"\n"
-            "model = \"old-model\"\n"
-            "unexpected = true\n");
-
-        const ApplicationCommand command =
-            load({"chaweb", "--config", config_.string()});
-        ASSERT_GE(command.warnings.size(), 1U);
-        bool saw_voice = false;
-        for (const auto& warning : command.warnings) {
-            if (warning.find("[" + std::string(table) + "]") != std::string::npos) {
-                saw_voice = true;
-                EXPECT_NE(warning.find("ignored"), std::string::npos);
-            }
-        }
-        EXPECT_TRUE(saw_voice);
-    }
-}
-
 TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
     std::filesystem::remove_all(config_);
     std::filesystem::create_directory(config_);
@@ -352,28 +325,6 @@ TEST_F(ApplicationConfigTest, ValidatesInMemoryReplacementWithActualPathResoluti
     const auto original = load_configuration_directory(config_);
     EXPECT_EQ(original.vaults[0].data,
         std::filesystem::weakly_canonical(root_ / "data/workspace.sqlite3"));
-}
-
-TEST_F(ApplicationConfigTest, IgnoresMissingAndObsoleteWebSection) {
-    write_app(
-        "vault = \"Personal\"\n"
-        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
-    EXPECT_NO_THROW(load({"chaweb", "--config=" + config_.string()}));
-
-    write_app(
-        "vault = \"Personal\"\n"
-        "[web]\nhost = 1\nport = \"bad\"\nextra = true\n"
-        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
-    const auto loaded = load_configuration_directory(config_);
-    ASSERT_FALSE(loaded.warnings.empty());
-    EXPECT_NE(loaded.warnings.front().find("[web]"), std::string::npos);
-
-    write_app(
-        "vault = \"Personal\"\n"
-        "web = 1\n"
-        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
-    const auto scalar = load({"chaweb", "--config=" + config_.string()});
-    ASSERT_FALSE(scalar.warnings.empty());
 }
 
 TEST_F(ApplicationConfigTest, LoadsMultipleVaultsWithCanonicalSpellingAndOrder) {

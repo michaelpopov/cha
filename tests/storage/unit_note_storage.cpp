@@ -1,6 +1,7 @@
 #include "storage/note_storage.h"
 #include "storage/folder_store_storage.h"
 #include "storage/session_label.h"
+#include "storage/session_database.h"
 #include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
 #include "support/test_workspace.h"
@@ -134,6 +135,218 @@ protected:
     std::unique_ptr<Database> database_;
 };
 
+
+nlohmann::json annotation_fixture();
+
+nlohmann::json summary_document(std::string text = "Summary body") {
+    return {{"type", "doc"}, {"content", {{{"type", "paragraph"},
+        {"content", {{{"type", "text"}, {"text", std::move(text)}}}}}}}};
+}
+
+void summary_source(Database& database, std::string_view id = "source", std::string_view label = "Topic") {
+    create_event_history_schema(database);
+    database.execute("INSERT OR IGNORE INTO forums(forum_key,forum_id) VALUES(1,'a')");
+    database.prepare("INSERT INTO sessions(forum_key,session_id,label,updated_at,history_epoch,next_entry_id,next_request_id) "
+        "VALUES(1,?,?,0,1,1,1)", id, label).run();
+    storage::SqliteTransaction transaction(database);
+    note_sync_forums(database, {{"a", "Forum A"}});
+    transaction.commit();
+}
+
+TEST_F(NoteStorageTest, SummaryReplacementKeepsIdentityAndClearsAudioCommentsAndCompression) {
+    summary_source(*database_);
+    const FullSessionId source{"a", "source"};
+    const auto first = note_commit_summary(*database_, source, note_summary_target(*database_, source), summary_document());
+    EXPECT_TRUE(first.is_summary);
+    EXPECT_TRUE(first.summary_linked);
+    EXPECT_TRUE(first.read_only);
+    EXPECT_EQ(first.name, "Topic");
+    auto wire = nlohmann::json(first);
+    EXPECT_EQ(wire["is_summary"], true);
+    EXPECT_EQ(wire["summary_linked"], true);
+    EXPECT_THROW((void)note_rename(*database_, first.id, "Topic"), NoteError);
+    (void)note_set_read_only(*database_, first.id, false);
+    (void)note_save(*database_, first.id, summary_document("User edits"));
+    note_save_compressed(*database_, first.id, "Old compressed text");
+    note_save_scroll_position(*database_, first.id, 100);
+    database_->prepare("INSERT INTO note_audio VALUES(?,0,'audio/mpeg',X'0102')", first.id).run();
+    (void)note_set_read_only(*database_, first.id, true);
+    const auto attempt = note_audio_accept(*database_, first.id, 1, "http://localhost", "key", [](const auto&) {});
+    ASSERT_TRUE(attempt);
+    const auto saved = note_commit_summary(*database_, source, note_summary_target(*database_, source), summary_document("Replacement"));
+    EXPECT_EQ(saved.id, first.id);
+    EXPECT_EQ(saved.name, first.name);
+    EXPECT_TRUE(saved.read_only);
+    EXPECT_FALSE(saved.has_compressed);
+    EXPECT_EQ(note_get(*database_, saved.id).scroll_top, 0);
+    EXPECT_EQ(note_get(*database_, saved.id).document, summary_document("Replacement"));
+    EXPECT_EQ(note_audio_info(*database_, saved.id)["count"], 0);
+    EXPECT_FALSE(note_audio_attempt_for_note(*database_, saved.id));
+    EXPECT_FALSE(note_audio_finish(*database_, attempt->id, {}));
+    EXPECT_EQ(note_list(*database_).size(), 3U); // No empty ANNOTATIONS.
+}
+
+TEST_F(NoteStorageTest, SummaryReplacementRebuildsOnlyItsAnnotationsAndPreservesChatCopies) {
+    summary_source(*database_, "first", "First source");
+    summary_source(*database_, "second", "Second source");
+    const auto first = note_commit_summary(*database_, {"a", "first"}, note_summary_target(*database_, {"a", "first"}), summary_document());
+    const auto second = note_commit_summary(*database_, {"a", "second"}, note_summary_target(*database_, {"a", "second"}), summary_document());
+    auto other_document = annotation_fixture()["document"];
+    other_document["content"][2]["content"][1]["text"] = "Other note comment";
+    (void)note_set_read_only(*database_, first.id, false);
+    (void)note_set_read_only(*database_, second.id, false);
+    EXPECT_TRUE(note_save(*database_, first.id, annotation_fixture()["document"]));
+    EXPECT_FALSE(note_save(*database_, second.id, other_document));
+    const auto items = note_list(*database_);
+    const auto annotation = std::find_if(items.begin(), items.end(), [&](const auto& item) {
+        return item.parent_id == first.parent_id && item.kind == NoteItemKind::annotation;
+    });
+    ASSERT_NE(annotation, items.end());
+    SessionJournal journal(path_, 1);
+    const auto copy = note_get_text(*database_, first.id);
+    (void)journal.add_note(copy, 1);
+    journal.rename("Renamed source");
+    EXPECT_NE(note_get_text(*database_, annotation->id).text.find("Renamed source"), std::string::npos);
+    (void)note_commit_summary(*database_, {"a", "first"}, note_summary_target(*database_, {"a", "first"}), summary_document("Regenerated"));
+    const auto annotated = note_get_text(*database_, annotation->id).text;
+    EXPECT_EQ(annotated.find("Renamed source"), std::string::npos);
+    EXPECT_NE(annotated.find("Other note comment"), std::string::npos);
+    note_delete(*database_, first.id);
+    auto saved_copy = database_->prepare("SELECT text FROM session_notes WHERE note_id=?", first.id);
+    ASSERT_TRUE(saved_copy.step());
+    EXPECT_EQ(saved_copy.text(0), copy.text);
+    EXPECT_NE(note_get_text(*database_, annotation->id).text.find("Other note comment"), std::string::npos);
+}
+
+TEST_F(NoteStorageTest, SummaryCommitRollsBackDocumentAudioAndEventOnFailure) {
+    summary_source(*database_);
+    const FullSessionId source{"a", "source"};
+    const auto first = note_commit_summary(*database_, source, note_summary_target(*database_, source), summary_document());
+    database_->prepare("INSERT INTO note_audio VALUES(?,0,'audio/mpeg',X'0102')", first.id).run();
+    const auto attempt = note_audio_accept(*database_, first.id, 1, "http://localhost", "key", [](const auto&) {});
+    ASSERT_TRUE(attempt);
+    database_->prepare("UPDATE note_items SET read_only=0 WHERE id=?", first.id).run();
+    const auto events = event_list(*database_).size();
+    database_->execute("CREATE TRIGGER fail_summary BEFORE INSERT ON event_history "
+        "WHEN NEW.severity='success' BEGIN SELECT RAISE(ABORT,'injected summary failure'); END");
+    EXPECT_THROW((void)note_commit_summary(*database_, source, note_summary_target(*database_, source), summary_document("New")), NoteError);
+    EXPECT_EQ(note_get(*database_, first.id).document, summary_document());
+    EXPECT_FALSE(note_find_item(*database_, first.id)->read_only);
+    EXPECT_TRUE(note_audio_attempt_for_note(*database_, first.id));
+    EXPECT_EQ(note_audio_info(*database_, first.id)["count"], 1);
+    EXPECT_EQ(event_list(*database_).size(), events);
+}
+
+TEST_F(NoteStorageTest, SummaryDeletionDetachesBeforeSessionKeyReuseAndNeverRecreatesDeletedTarget) {
+    summary_source(*database_);
+    const FullSessionId source{"a", "source"};
+    const auto saved = note_commit_summary(*database_, source, note_summary_target(*database_, source), summary_document());
+    database_->execute("DELETE FROM sessions");
+    const auto detached = *note_find_item(*database_, saved.id);
+    EXPECT_TRUE(detached.is_summary);
+    EXPECT_FALSE(detached.summary_linked);
+    EXPECT_EQ(note_rename(*database_, saved.id, "Retained").name, "Retained");
+    summary_source(*database_, "new", "Topic"); // Reuses integer session key 1.
+    EXPECT_FALSE(note_summary_target(*database_, {"a", "new"}).target_note_id);
+    EXPECT_THROW((void)note_commit_summary(*database_, source, { *saved.parent_id, {} }, summary_document()), NoteError);
+    const auto second = note_commit_summary(*database_, {"a", "new"}, note_summary_target(*database_, {"a", "new"}), summary_document());
+    const auto target = note_summary_target(*database_, {"a", "new"});
+    note_delete(*database_, second.id);
+    EXPECT_THROW((void)note_commit_summary(*database_, {"a", "new"}, target, summary_document()), NoteError);
+    const auto third = note_commit_summary(*database_, {"a", "new"}, note_summary_target(*database_, {"a", "new"}), summary_document());
+    EXPECT_GT(third.id, second.id);
+    EXPECT_FALSE(database_->prepare("PRAGMA foreign_key_check").step());
+}
+
+TEST_F(NoteStorageTest, SummaryNamesKeepDigitsCaseAndUnicodeAndPreserveSuffixes) {
+    summary_source(*database_, "first", "Topic 1");
+    summary_source(*database_, "second", "Topic 1");
+    const auto first = note_commit_summary(*database_, {"a", "first"}, note_summary_target(*database_, {"a", "first"}), summary_document());
+    const auto second = note_commit_summary(*database_, {"a", "second"}, note_summary_target(*database_, {"a", "second"}), summary_document());
+    EXPECT_EQ(first.name, "Topic 1");
+    EXPECT_EQ(second.name, "Topic 1 1");
+    note_delete(*database_, first.id);
+    const auto again = note_commit_summary(*database_, {"a", "second"}, note_summary_target(*database_, {"a", "second"}), summary_document());
+    EXPECT_EQ(again.name, "Topic 1 1");
+    summary_source(*database_, "reserved", "ANNOTATIONS");
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "reserved"}, note_summary_target(*database_, {"a", "reserved"}), summary_document()).name, "ANNOTATIONS 1");
+    summary_source(*database_, "case", "topic 1");
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "case"}, note_summary_target(*database_, {"a", "case"}), summary_document()).name, "topic 1");
+    const auto long_label = repeated_code_point(200);
+    summary_source(*database_, "long1", long_label);
+    summary_source(*database_, "long2", long_label);
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "long1"}, note_summary_target(*database_, {"a", "long1"}), summary_document()).name, long_label);
+    const auto suffixed = note_commit_summary(*database_, {"a", "long2"}, note_summary_target(*database_, {"a", "long2"}), summary_document()).name;
+    EXPECT_EQ(suffixed, repeated_code_point(198) + " 1");
+    EXPECT_NO_THROW(validate_display_label(suffixed, "Name"));
+}
+
+TEST_F(NoteStorageTest, SummaryRenameIsTransactionalAndNoOpKeepsCollisionSuffix) {
+    summary_source(*database_, "first", "Topic");
+    summary_source(*database_, "second", "Topic");
+    const auto first = note_commit_summary(*database_, {"a", "first"}, note_summary_target(*database_, {"a", "first"}), summary_document());
+    const auto second = note_commit_summary(*database_, {"a", "second"}, note_summary_target(*database_, {"a", "second"}), summary_document());
+    note_delete(*database_, first.id);
+    SessionJournal journal(path_, 2);
+    journal.rename("Topic");
+    EXPECT_EQ(note_find_item(*database_, second.id)->name, "Topic 1");
+    journal.rename("New title");
+    EXPECT_EQ(note_find_item(*database_, second.id)->name, "New title");
+    database_->execute("CREATE TRIGGER fail_summary_rename BEFORE UPDATE OF name ON note_items "
+        "BEGIN SELECT RAISE(ABORT,'injected failure'); END");
+    EXPECT_THROW(journal.rename("Failed title"), std::exception);
+    auto label = database_->prepare("SELECT label FROM sessions WHERE session_key=2");
+    ASSERT_TRUE(label.step());
+    EXPECT_EQ(label.text(0), "New title");
+    EXPECT_EQ(note_find_item(*database_, second.id)->name, "New title");
+}
+
+TEST_F(NoteStorageTest, SummaryUpgradeOfBlobNotesIsAdditiveIdempotentAndUsable) {
+    summary_source(*database_);
+    const auto legacy = note_create(*database_, {}, NoteItemKind::note, "Existing note");
+    (void)note_save(*database_, legacy.id, annotation_fixture()["document"]);
+    database_->prepare("INSERT INTO note_audio VALUES(?,0,'audio/mpeg',X'0102')", legacy.id).run();
+    database_->prepare("INSERT INTO session_notes VALUES(1,?,'Existing note','Saved chat copy')", legacy.id).run();
+    const auto blob = raw_content(*database_, legacy.id);
+    database_->execute("DROP TABLE note_summaries");
+    for (int reopen = 0; reopen < 2; ++reopen) {
+        database_.reset();
+        database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+        storage::SqliteTransaction tx(*database_);
+        create_note_items_schema(*database_);
+        tx.commit();
+        EXPECT_EQ(raw_content(*database_, legacy.id), blob);
+        EXPECT_EQ(note_audio_info(*database_, legacy.id)["count"], 1);
+        EXPECT_FALSE(note_find_item(*database_, legacy.id)->is_summary);
+        EXPECT_FALSE(database_->prepare("PRAGMA foreign_key_check").step());
+    }
+    const auto summary = note_commit_summary(*database_, {"a", "source"}, note_summary_target(*database_, {"a", "source"}), summary_document());
+    EXPECT_TRUE(summary.summary_linked);
+    auto copy = database_->prepare("SELECT text FROM session_notes WHERE note_id=?", legacy.id);
+    ASSERT_TRUE(copy.step());
+    EXPECT_EQ(copy.text(0), "Saved chat copy");
+}
+
+TEST_F(NoteStorageTest, SummaryValidationAndForumRemovalAndManagedStoreAdmission) {
+    summary_source(*database_);
+    const FullSessionId source{"a", "source"};
+    const auto target = note_summary_target(*database_, source);
+    for (const auto& invalid : {nlohmann::json::object(), nlohmann::json{{"type", "doc"}, {"content", "bad"}},
+        nlohmann::json{{"type", "doc"}, {"content", {1}}}, summary_document(" \n\t ")}) {
+        EXPECT_THROW((void)note_commit_summary(*database_, source, target, invalid), NoteError);
+    }
+    EXPECT_THROW((void)note_create(*database_, target.parent_id, NoteItemKind::note, "Ordinary"), NoteError);
+    EXPECT_THROW((void)folder_store_register(*database_, target.parent_id, FolderStoreService::openai, "key", 1), FolderStoreError);
+    const auto saved = note_commit_summary(*database_, source, target, summary_document());
+    {
+        storage::SqliteTransaction tx(*database_);
+        note_sync_forums(*database_, {});
+        tx.commit();
+    }
+    EXPECT_FALSE(note_find_item(*database_, saved.id));
+    EXPECT_FALSE(database_->prepare("SELECT 1 FROM note_summaries").step());
+    EXPECT_FALSE(database_->prepare("PRAGMA foreign_key_check").step());
+}
 
 TEST_F(NoteStorageTest, ForumSchemaIsAdditiveAndMarkersAreUnique) {
     const auto note = note_create(*database_, {}, NoteItemKind::note, "Legacy");

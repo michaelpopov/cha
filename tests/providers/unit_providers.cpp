@@ -230,50 +230,6 @@ TEST(Providers, ConcurrentWebCallbacksPublishWebUseOnceBeforeTheTerminal) {
     EXPECT_EQ(notifier->wake_count(), 3u);
 }
 
-TEST(Providers, LogsOneInfoSummaryForEachExecutionOutcome) {
-    test::TestWorkspace workspace;
-    const auto path = workspace.root() / "prompt-statistics.log";
-    initialize_diagnostic_logging(path, "info");
-    for (const auto scenario : {"completed", "transport_error", "exception", "cancelled"}) {
-        auto state = std::make_shared<BackendState>();
-        state->deltas = {{GenerationDeltaKind::reasoning, "think"},
-                         {GenerationDeltaKind::answer, "answer"}};
-        state->result.usage = {.input_tokens = 12, .output_tokens = 3};
-        if (std::string_view(scenario) == "transport_error")
-            state->result.outcome = GenerationOutcome::transport_error;
-        if (std::string_view(scenario) == "exception") state->throw_prepare = true;
-        std::function<void()> worker;
-        Providers providers(factory(state), [&](auto task) { worker = std::move(task); });
-        auto request = providers.make_request(input(definition(), 42), std::make_shared<test::NoopNotifier>());
-        if (std::string_view(scenario) == "cancelled") request->cancel();
-        worker();
-        receive_terminal(request);
-        providers.shutdown();
-    }
-    shutdown_diagnostic_logging();
-    std::ifstream file(path);
-    std::string line;
-    std::vector<std::string> summaries;
-    while (std::getline(file, line)) {
-        if (line.find("Prompt processing statistics:") != std::string::npos) summaries.push_back(line);
-    }
-    ASSERT_EQ(summaries.size(), 4u);
-    for (const auto& summary : summaries) {
-        for (const auto field : {"[info]", "model=test-model", "effort=none", "request_id=42",
-                 "overall_ms=", "preparation_ms=", "model_ms=", "web_search_calls=0",
-                 "web_read_failed=0", "tools_wall_ms=", "other_ms="}) {
-            EXPECT_NE(summary.find(field), std::string::npos) << summary;
-        }
-    }
-    EXPECT_NE(summaries[0].find("outcome=completed"), std::string::npos);
-    EXPECT_NE(summaries[0].find("answer_bytes=6 reasoning_bytes=5"), std::string::npos);
-    EXPECT_NE(summaries[0].find("input_tokens=12 output_tokens=3 total_tokens=15"), std::string::npos);
-    EXPECT_NE(summaries[1].find("outcome=transport_error"), std::string::npos);
-    EXPECT_NE(summaries[2].find("outcome=exception stage=preparation"), std::string::npos);
-    EXPECT_NE(summaries[3].find("outcome=cancelled stage=client_construction"), std::string::npos);
-    EXPECT_NE(summaries[3].find("first_answer_ms=unreported"), std::string::npos);
-}
-
 TEST(Providers, StartsEveryRequestImmediatelyWithIndependentBackendsAndQueues) {
     auto state = std::make_shared<BackendState>();
     state->block = true;

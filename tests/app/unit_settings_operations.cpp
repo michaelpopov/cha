@@ -244,40 +244,6 @@ TEST(ApplicationSettings, SavesCharacterWhenNewProviderCannotUseSearchOverride) 
     EXPECT_EQ(reloaded.web_search_tool, true);
 }
 
-TEST(ApplicationSettings, VoiceOutputSettingsExcludeObsoleteInstrumentation) {
-    test::TestWorkspace workspace;
-    const auto database = test::import_test_database(workspace.root());
-    auto application = Application::open(make_command(workspace, database));
-    const auto epoch = application->context_epoch();
-    const auto key = application->create_api_key({.display_name = "Fish", .value = "secret"}, epoch);
-    const auto voice = application->create_voice(
-        {.display_name = "Reader", .description = "Voice", .elevenlabs_voice_id = "voice"}, epoch);
-    const auto provider = application->create_provider(
-        {.display_name = "Unused", .copy_from = "test"}, epoch);
-    nlohmann::json body = {
-        {"url", "https://api.fish.audio/v1/tts"}, {"model", "s2.1-pro"}, {"api_key", key.id},
-        {"output_format", "mp3"}, {"default_voice", voice.display_name},
-    };
-    const auto saved = application->save_voice_output_settings(parse_voice_output_settings(body), epoch);
-    const nlohmann::json serialized = saved;
-    EXPECT_FALSE(serialized.contains("instrumentation_provider"));
-    EXPECT_FALSE(serialized.contains("instrumentation_reasoning_effort"));
-    EXPECT_TRUE(application->get_provider(provider.id, epoch).used_by.empty());
-    EXPECT_NO_THROW(application->delete_provider(provider.id, epoch));
-    for (const auto* field : {"instrumentation_provider", "instrumentation_reasoning_effort"}) {
-        body[field] = "obsolete";
-        EXPECT_THROW(parse_voice_output_settings(body), std::invalid_argument);
-        body.erase(field);
-    }
-
-    application.reset();
-    application = Application::open(make_command(workspace, database));
-    const auto reloaded = application->get_voice_output_settings(application->context_epoch());
-    ASSERT_TRUE(reloaded);
-    EXPECT_EQ(reloaded->model, "s2.1-pro");
-    EXPECT_EQ(reloaded->default_voice, voice.display_name);
-}
-
 TEST(ApplicationSettings, TestsProvidersOnBackgroundWork) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =

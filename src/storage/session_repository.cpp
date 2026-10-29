@@ -1,6 +1,7 @@
 #include "storage/session_repository.h"
 
 #include "storage/not_found_error.h"
+#include "storage/note_storage.h"
 #include "storage/session_label.h"
 #include "storage/session_timestamp.h"
 #include "storage/sqlite_storage.h"
@@ -460,6 +461,11 @@ StoredSession SessionRepository::rename(
         database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);
     Transaction transaction(database);
+    auto previous = database.prepare("SELECT s.session_key, s.label FROM sessions s JOIN forums f USING(forum_key) "
+        "WHERE f.forum_id=? AND s.session_id=? AND s.archived_at IS NULL", identity.forum_id, identity.session_id);
+    if (!previous.step()) throw missing_session_error(identity.session_id);
+    const auto session_key = previous.integer(0);
+    const auto old_label = previous.text(1);
     const std::int64_t updated_at = session_timestamp();
     Statement update = database.prepare(
         "UPDATE sessions SET label = ?1, updated_at = ?2, recent_pending = 0, discardable = 0 "
@@ -474,6 +480,7 @@ StoredSession SessionRepository::rename(
     if (database.changes() != 1) {
         throw missing_session_error(identity.session_id);
     }
+    if (old_label != label) note_rename_summary_in_transaction(database, session_key, label);
     transaction.commit();
     return {
         .identity = identity,

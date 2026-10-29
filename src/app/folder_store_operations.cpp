@@ -698,6 +698,7 @@ Application::FolderStoreStart Application::start_folder_store_upload(std::int64_
     if (folder_id <= 0 || folder_id > note_id_limit) throw ApplicationError(ErrorCode::invalid_argument, "A store can only belong to a real folder.");
     const auto folder = impl_->store->folder_store_folder(folder_id);
     if (!folder) throw ApplicationError(ErrorCode::invalid_argument, "A store can only belong to a real folder.");
+    if (folder->forum_id) throw ApplicationError(ErrorCode::invalid_argument, "This folder is managed by CHA.");
     if (impl_->store->get_folder_store_by_folder(folder_id)) throw ApplicationError(ErrorCode::invalid_argument, "This folder already has a store.");
     if (impl_->folder_store_reserved(folder_id) || impl_->folder_in_delete_subtree(folder_id)) throw ApplicationError(ErrorCode::invalid_argument, "A store operation is already running for this folder.");
     auto control = std::make_shared<Impl::FolderStoreControl>();

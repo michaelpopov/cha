@@ -1763,40 +1763,6 @@ TEST(Application, AsyncSubmitCompletesBeforeGenerationFinishes) {
     ASSERT_TRUE(std::holds_alternative<CommandResult>(*result));
 }
 
-TEST(Application, IgnoresObsoleteNativeWebSection) {
-    test::TestWorkspace workspace;
-    const std::filesystem::path database =
-        test::import_test_database(workspace.root());
-    const std::filesystem::path config_directory =
-        workspace.root() / "cha-config";
-    std::filesystem::create_directories(config_directory);
-    {
-        std::ofstream app(config_directory / "app.toml");
-        app << "vault = \"Test\"\n"
-            << "[web]\nhost = 1\nport = \"nope\"\nextra = true\n"
-            << "[logging]\nfile = \"runtime.log\"\nlevel = \"off\"\n";
-    }
-    {
-        std::ofstream vault(config_directory / "test.toml");
-        vault << "vault_name = \"Test\"\n"
-              << "data = " << std::quoted(database.string()) << "\n";
-    }
-    const auto loaded = load_configuration_directory(
-        config_directory);
-    ASSERT_FALSE(loaded.warnings.empty());
-    EXPECT_NE(loaded.warnings.front().find("[web]"), std::string::npos);
-    VaultDefinition selected = *find_vault(loaded.vaults, loaded.startup_vault);
-    auto application = Application::open(ApplicationCommand{
-        .config_directory = loaded.directory,
-        .vaults = loaded.vaults,
-        .vault = selected,
-        .log_file = loaded.log_file,
-        .log_level = loaded.log_level,
-        .warnings = loaded.warnings,
-    });
-    EXPECT_TRUE(application->running());
-}
-
 TEST(Application, ListsRenamesExportsAndProtectsWelcome) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =

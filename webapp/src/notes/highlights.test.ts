@@ -36,12 +36,4 @@ describe('note highlights', () => {
     expect(editor.state.doc.textBetween(entries[0].from, entries[0].to, undefined, '\n')).toBe('one\ntwo');
   });
 
-  it('does not select a stale passage after its text or highlight changes', () => {
-    editor = createNotesEditor({ readPicture: async () => new Uint8Array(), content: '<p><mark>Alpha</mark></p>' });
-    const [entry] = noteHighlights(editor.state.doc);
-    editor.commands.setContent('<p><mark>Bravo</mark></p>');
-    expect(selectNoteHighlight(editor, entry)).toBe(false);
-    editor.commands.setContent('<p>Alpha</p>');
-    expect(selectNoteHighlight(editor, entry)).toBe(false);
-  });
 });

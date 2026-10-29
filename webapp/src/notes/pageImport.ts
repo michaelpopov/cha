@@ -17,15 +17,16 @@ export function notePageName(title: string): string {
 
 const markdown = new Marked({ async: false });
 
-export function notePageHtml(page: NotePage): string {
+export function notePageHtml(page: NotePage, options?: { summary: boolean }): string {
   const rendered = markdown.parse(page.markdown);
   if (typeof rendered !== 'string') throw new TypeError('Expected synchronous Markdown.');
   const body = document.createElement('div');
   body.innerHTML = DOMPurify.sanitize(rendered, {
     ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'strong', 'b', 'em', 'i',
-      'u', 'ul', 'ol', 'li', 'br', 'a', 'pre', 'code', 'blockquote', 'img'],
+      'u', 'ul', 'ol', 'li', 'br', 'a', 'pre', 'code', 'blockquote',
+      ...(options?.summary ? ['table', 'caption', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td'] : ['img'])],
     // The code block reads its language from the class of <code>.
-    ALLOWED_ATTR: ['href', 'start', 'class', 'src', 'alt', 'title'],
+    ALLOWED_ATTR: ['href', 'start', 'class', 'src', 'alt', 'title', ...(options?.summary ? ['rowspan', 'colspan'] : [])],
     ALLOW_DATA_ATTR: false,
   });
   for (const link of body.querySelectorAll('a')) {

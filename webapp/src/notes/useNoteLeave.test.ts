@@ -974,3 +974,24 @@ describe('captured leave URLs', () => {
     expect(rememberedAppUrl()).toBe(window.location.href);
   });
 });
+
+it('waits for the note action guard and supports cancellation and unmount', async () => {
+  const view = renderHook(() => useNoteLeave(() => null));
+  act(() => { expect(view.result.current.beginNoteAction()).toBe(true); });
+  const signal = new AbortController();
+  const ready = vi.fn();
+  const waiting = view.result.current.whenIdle(signal.signal).then(ready);
+  await act(async () => { await Promise.resolve(); });
+  expect(ready).not.toHaveBeenCalled();
+  await act(async () => { view.result.current.endNoteAction(); await waiting; });
+  expect(ready).toHaveBeenCalledOnce();
+  act(() => { view.result.current.beginNoteAction(); });
+  const cancelled = view.result.current.whenIdle(signal.signal);
+  const rejected = expect(cancelled).rejects.toHaveProperty('name', 'AbortError');
+  act(() => signal.abort());
+  await rejected;
+  const unmounted = view.result.current.whenIdle(new AbortController().signal);
+  const onUnmount = expect(unmounted).rejects.toHaveProperty('name', 'AbortError');
+  view.unmount();
+  await onUnmount;
+});

@@ -194,7 +194,7 @@ export function NotesTree({
   for (const key of index.children.vault) index.rows[key].parentKey = 'vault';
   dataRef.current = index;
   const signature = vaultName + '\n' + items.map((item) => (
-    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}:${JSON.stringify(item.forum_id)}`
+    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}:${item.is_summary}:${item.summary_linked}:${JSON.stringify(item.forum_id)}`
   )).join('\n');
 
   const tree = useTree<NoteTreeRow>({
@@ -931,7 +931,7 @@ export function NotesTree({
           )}
           {!menuManaged && menu.sourceId !== 'vault' && (
             <>
-              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button disabled={menuFolderBusy} onClick={() => startRename()} role="menuitem" type="button">Rename</button>}
+              {index.rows[menu.sourceId]?.kind !== 'annotation' && !index.rows[menu.sourceId]?.summaryLinked && <button disabled={menuFolderBusy} onClick={() => startRename()} role="menuitem" type="button">Rename</button>}
               {menuIsNote && index.rows[menu.sourceId]?.kind === 'note' && (
                 <button onClick={() => void toggleReadOnly()} role="menuitem" type="button">
                   {items.find((item) => String(item.id) === menu.sourceId)?.read_only
@@ -952,12 +952,12 @@ export function NotesTree({
                   try { setAudioRun({ targets, folderMode, epoch: client.noteAudio!.contextEpoch() }); }
                   catch (failure) { setError(publicErrorMessage(failure, 'The connection to CHA ended.')); }
                 }} role="menuitem" type="button">Generate audio</button>}
-              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button
+              {index.rows[menu.sourceId]?.kind !== 'annotation' && !index.rows[menu.sourceId]?.isSummary && <button
                 disabled={menuFolderBusy || menu.compressionPending === null || (!menuIsNote && menu.compressionPending)
                   || (compressionSubmitting && !(menuIsNote && menu.compressionPending))}
                 onClick={() => void (menuIsNote && menu.compressionPending ? cancelCompression() : startCompress())}
                 role="menuitem" type="button">{menuIsNote && menu.compressionPending ? 'Cancel compression' : 'Compress'}</button>}
-              {menuIsNote && (
+              {menuIsNote && !index.rows[menu.sourceId]?.isSummary && (
                 <button disabled={!index.rows[menu.sourceId]?.hasCompressed}
                   onClick={showCompressed} role="menuitem" type="button">Show compressed</button>
               )}

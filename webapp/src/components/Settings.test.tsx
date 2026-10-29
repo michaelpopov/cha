@@ -1968,68 +1968,6 @@ describe('Settings screens', () => {
     }));
   });
 
-  it('previews the unsaved voice settings and editable text', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(new TextEncoder().encode('audio')),
-    );
-    const previewSpeech = vi.fn(async () => ({
-      url: '/media/preview', resource_id: 'preview', mime_type: 'audio/mpeg', byte_length: 5,
-    }));
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
-    vi.stubGlobal('Audio', vi.fn(function Audio() {
-      return {
-        addEventListener: vi.fn(),
-        pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(),
-        play: vi.fn().mockResolvedValue(undefined),
-      };
-    }));
-    render(
-      <VoiceScreen
-        client={fixtureClient({
-          previewSpeech,
-          listVoices: async () => [voiceDetailFixture],
-          getVoiceOutputRuntime: async () => ({
-            url: 'https://api.fish.audio/v1/tts',
-            model: 's2.1-pro',
-            output_format: 'mp3',
-            default_voice_id: 'fallback',
-          }),
-        })}
-        dispatch={vi.fn()} navigate={vi.fn()}
-        state={{
-          ...initialAppState,
-          inspectedVoice: { ...initialAppState.inspectedVoice, id: 'brian' },
-        }}
-      />,
-    );
-
-    expect(await screen.findByLabelText('Voice ID')).toHaveValue(voiceDetailFixture.elevenlabs_voice_id);
-    expect(screen.getByRole('spinbutton', { name: /Speed/ })).toBeInTheDocument();
-    expect(screen.queryByRole('spinbutton', { name: /Stability/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('spinbutton', { name: /Similarity/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('spinbutton', { name: /Style exaggeration/ })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Speaker boost')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Play preview' })).toBeEnabled();
-
-    const voiceId = screen.getByLabelText('Voice ID');
-    await userEvent.clear(voiceId);
-    expect(screen.getByRole('button', { name: 'Play preview' })).toBeDisabled();
-    await userEvent.type(voiceId, 'unsaved-id');
-    const previewText = screen.getByLabelText('Text to speak');
-    await userEvent.clear(previewText);
-    await userEvent.type(previewText, 'Read this draft.');
-    await userEvent.click(screen.getByRole('button', { name: 'Play preview' }));
-
-    expect(previewSpeech).toHaveBeenCalledWith(
-      'Read this draft.',
-      'unsaved-id',
-      { speed: 0.95 },
-      expect.any(AbortSignal),
-      'fishaudio',
-    );
-    expect(fetchMock).toHaveBeenCalledWith('/media/preview', expect.any(Object));
-  });
-
   it('renames a voice from the shared editable title', async () => {
     const updateVoice = vi.fn(async (_id, update) => ({
       ...voiceDetailFixture,

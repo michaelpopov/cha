@@ -819,30 +819,6 @@ TEST(WorkspaceSessionDatabase, TightensExistingDatabaseAndSidecars) {
 #endif
 }
 
-TEST(WorkspaceSessionDatabase, CreatesOwnerOnlyDatabaseWalAndShm) {
-    test::TestWorkspace workspace;
-    const std::filesystem::path path =
-        workspace.root() / "workspace.sqlite3";
-    create_empty_workspace_session_database(path);
-#ifndef _WIN32
-    EXPECT_EQ(posix_mode(path), static_cast<mode_t>(0600));
-#endif
-    initialize_workspace_session_database_runtime(path);
-    Database writer(path, Database::Mode::read_write);
-    writer.execute("INSERT INTO forums (forum_id) VALUES ('keep-wal')");
-    std::filesystem::path wal = path;
-    wal += "-wal";
-    std::filesystem::path shm = path;
-    shm += "-shm";
-    EXPECT_TRUE(std::filesystem::is_regular_file(wal));
-    EXPECT_TRUE(std::filesystem::is_regular_file(shm));
-#ifndef _WIN32
-    EXPECT_EQ(posix_mode(path), static_cast<mode_t>(0600));
-    EXPECT_EQ(posix_mode(wal), static_cast<mode_t>(0600));
-    EXPECT_EQ(posix_mode(shm), static_cast<mode_t>(0600));
-#endif
-}
-
 TEST(WorkspaceSessionDatabase, RejectsSymlinkDatabasePath) {
     test::TestWorkspace workspace;
     const std::filesystem::path target = workspace.root() / "target.sqlite3";

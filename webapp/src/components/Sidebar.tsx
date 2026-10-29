@@ -23,6 +23,7 @@ interface SidebarProps {
   navigate: Dispatch<NavigationAction>;
   onCreateSession(forumId: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
+  onSaveSummary?(forumId: string, sessionId: string): Promise<void>;
   onDownloadSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onRenameSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onDeleteSession(forumId: string, sessionId: string): Promise<void>;
@@ -197,6 +198,7 @@ export function Sidebar({
   navigate,
   onCreateSession,
   onDownloadSession,
+  onSaveSummary,
   onOpenSession,
   onRenameSession,
   onDeleteSession,
@@ -519,7 +521,7 @@ export function Sidebar({
           style={{
             width: menu.kind === 'forum' ? '12rem' : undefined,
             left: Math.max(8, Math.min(menu.x, window.innerWidth - (menu.kind === 'forum' ? 200 : 168))),
-            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menu.kind === 'forum' ? 60 : 180))),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menu.kind === 'forum' ? 60 : 220))),
           }}
         >
           {menu.kind === 'forum' ? (
@@ -551,6 +553,13 @@ export function Sidebar({
                 role="menuitem"
                 type="button"
               >Download</button>
+              {onSaveSummary && <button onClick={() => {
+                const selected = menu;
+                closeMenu(true);
+                void onSaveSummary(selected.forumId, selected.sessionId).catch((failure: unknown) => {
+                  setActionError(publicErrorMessage(failure, 'The summary could not be saved.'));
+                });
+              }} role="menuitem" type="button">Save summary</button>}
               <button
                 onClick={() => {
                   const selected = menu;

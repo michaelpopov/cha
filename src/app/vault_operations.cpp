@@ -248,6 +248,7 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         throw std::runtime_error("CHA application is unavailable");
     }
     app.cancel_compressions();
+    app.cancel_summaries();
     app.interrupt_folder_stores();
     app.state.store(ApplicationState::maintenance);
     GlobalMaintenanceResult reserved = [&] {

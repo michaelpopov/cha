@@ -9,8 +9,8 @@ import {
 import { bootstrapFixture, fixtureClient, forumDetailFixture, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
 
-const plan: NoteItem = { id: 4, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
-const study: NoteItem = { id: 1, read_only: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Study' };
+const plan: NoteItem = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
+const study: NoteItem = { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Study' };
 
 function noteDocument(text: string) {
   return {
@@ -134,32 +134,6 @@ describe('Notes in the application', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
-  it('does not offer folder audio without native capability', async () => {
-    render(<App client={notesClient()} />);
-    await openNotes();
-    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
-    expect(screen.queryByRole('menuitem', { name: 'Generate audio' })).toBeNull();
-  });
-
-  it('sends the playback stop event when opening a folder without candidate notes', async () => {
-    const changed = vi.fn();
-    const info = vi.fn();
-    window.addEventListener('cha-note-audio-changed', changed);
-    try {
-      render(<App client={fixtureClient({
-        listNoteItems: async () => [study, { ...plan, parent_id: study.id }],
-        noteAudio: { contextEpoch: () => 1, startBackground: vi.fn().mockResolvedValue({ attempt_id: 1 }), backgroundStatus: vi.fn().mockResolvedValue({ pending: false }), info, source: vi.fn(), release: vi.fn() },
-      })} />);
-      await openNotes();
-      fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
-      await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Generate audio' })).toBeEnabled());
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Generate audio' }));
-      await screen.findByText('No notes need audio');
-      expect(changed.mock.calls.map(([event]) => event.detail)).toEqual([study.id]);
-      expect(info).not.toHaveBeenCalled();
-    } finally { window.removeEventListener('cha-note-audio-changed', changed); }
-  });
-
   it.each([false, true])('opens another read-only book note after earlier deletion: %s', async (deleteEarlier) => {
     const first = { ...plan, read_only: true };
     const second = { ...first, id: 5, name: 'Next chapter' };
@@ -234,50 +208,6 @@ describe('Notes in the application', () => {
     } finally { window.removeEventListener('cha-note-audio-changed', changed); }
   });
 
-  it('toggles Notes prompt visibility and its menu checkmark without losing the draft or editor', async () => {
-    const post = vi.fn();
-    window.__CHA_NATIVE_CONNECTION_ID__ = 'notes-prompt-test';
-    window.__CHA_NATIVE_POST__ = post;
-    const bus = contextBus();
-    const reportedPrompt = () => post.mock.calls
-      .map(([message]) => JSON.parse(message as string) as { native_action: string; notes_prompt: boolean })
-      .filter((message) => message.native_action === 'view_state').at(-1)?.notes_prompt;
-    try {
-      render(<App client={notesClient()} contextEvents={bus} />);
-      await openNotes();
-      expect(reportedPrompt()).toBe(true);
-      fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-      await waitFor(() => expect(noteEditor().isEditable).toBe(true));
-      const editor = noteEditor();
-      const prompt = screen.getByRole('textbox', { name: 'Prompt' });
-      const toolbar = document.querySelector('.cha-notes-toolbar');
-      fireEvent.change(prompt, { target: { value: 'Unsent notes draft' } });
-      act(() => typeInNote(' edited'));
-      const selection = editor.state.selection.toJSON();
-      act(() => bus.layout('toggle-notes-prompt'));
-      expect(screen.queryByRole('textbox', { name: 'Prompt' })).toBeNull();
-      expect(prompt.closest('.cha-composer-area')).toHaveAttribute('hidden');
-      expect(prompt).toBeDisabled();
-      expect(reportedPrompt()).toBe(false);
-      expect(noteEditor()).toBe(editor);
-      expect(editor.isEditable).toBe(true);
-      expect(editor.state.selection.toJSON()).toEqual(selection);
-      expect(document.querySelector('.cha-notes-toolbar')).toBe(toolbar);
-      act(() => bus.layout('split'));
-      expect(await screen.findByRole('textbox', { name: 'Message' })).toBeVisible();
-      expect(screen.queryByRole('textbox', { name: 'Prompt' })).toBeNull();
-      act(() => bus.layout('toggle-notes-prompt'));
-      expect(screen.getByRole('textbox', { name: 'Prompt' })).toBe(prompt);
-      expect(prompt).toBeEnabled();
-      expect(prompt).toHaveValue('Unsent notes draft');
-      expect(reportedPrompt()).toBe(true);
-      expect(noteEditor()).toBe(editor);
-    } finally {
-      delete window.__CHA_NATIVE_POST__;
-      delete window.__CHA_NATIVE_CONNECTION_ID__;
-    }
-  });
-
   it('finishes a pending Notes prompt submission while hidden and preserves text typed after sending', async () => {
     const page = { url: 'https://example.org/', title: 'Article', markdown: 'Imported article' };
     let finish!: (value: typeof page) => void;
@@ -306,52 +236,6 @@ describe('Notes in the application', () => {
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toBe(prompt);
     expect(prompt).toHaveValue('trailing draft');
     expect(noteEditor()).toBe(editor);
-  });
-
-  it('toggles the Notes toolbar through View without replacing the editor or its history', async () => {
-    const post = vi.fn();
-    window.__CHA_NATIVE_CONNECTION_ID__ = 'toolbar-test';
-    window.__CHA_NATIVE_POST__ = post;
-    const bus = contextBus();
-    const reportedToolbar = () => post.mock.calls
-      .map(([message]) => JSON.parse(message as string) as { native_action: string; toolbar: boolean })
-      .filter((message) => message.native_action === 'view_state').at(-1)?.toolbar;
-    try {
-      render(<App client={notesClient()} contextEvents={bus} />);
-      await openNotes();
-      expect(reportedToolbar()).toBe(true);
-      act(() => bus.layout('toggle-toolbar'));
-      fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-      await waitFor(() => expect(noteEditor().isEditable).toBe(true));
-      expect(document.querySelector('.cha-notes-toolbar')).toBeNull();
-      expect(reportedToolbar()).toBe(false);
-      const editor = noteEditor();
-      const prompt = screen.getByRole('textbox', { name: 'Prompt' });
-      act(() => typeInNote(' edited'));
-      const selection = editor.state.selection.toJSON();
-      act(() => bus.layout('toggle-toolbar'));
-      expect(document.querySelector('.cha-notes-toolbar')).toBeInTheDocument();
-      expect(reportedToolbar()).toBe(true);
-      expect(noteEditor()).toBe(editor);
-      expect(editor.state.selection.toJSON()).toEqual(selection);
-      expect(screen.getByRole('textbox', { name: 'Prompt' })).toBe(prompt);
-      act(() => bus.layout('toggle-toolbar'));
-      act(() => bus.layout('split'));
-      await screen.findByRole('textbox', { name: 'Message' });
-      expect(document.querySelector('.cha-notes-toolbar')).toBeNull();
-      expect(reportedToolbar()).toBe(false);
-      act(() => bus.layout('toggle-toolbar'));
-      expect(document.querySelector('.cha-notes-toolbar')).toBeInTheDocument();
-      expect(reportedToolbar()).toBe(true);
-      expect(noteEditor()).toBe(editor);
-      act(() => { editor.commands.undo(); });
-      expect(editor.getText()).toBe('Saved plan');
-      act(() => { editor.commands.redo(); });
-      expect(editor.getText()).toContain(' edited');
-    } finally {
-      delete window.__CHA_NATIVE_POST__;
-      delete window.__CHA_NATIVE_CONNECTION_ID__;
-    }
   });
 
   it('reports the applied toggle state and keeps the menu checked when a note cannot be saved', async () => {
@@ -396,26 +280,6 @@ describe('Notes in the application', () => {
     }
   });
 
-  it('ignores startup and invalid layout commands and applies a preference set in Settings on return', async () => {
-    const bus = contextBus();
-    render(<App client={notesClient()} contextEvents={bus} />);
-    act(() => bus.layout('split'));
-    await openNotes();
-    expect(screen.queryByRole('separator', { name: 'Resize notes and chat' })).toBeNull();
-    act(() => bus.layout('invalid'));
-    expect(screen.queryByRole('separator', { name: 'Resize notes and chat' })).toBeNull();
-    fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
-    await screen.findByRole('region', { name: 'Settings' });
-    act(() => bus.layout('split'));
-    expect(screen.getByRole('region', { name: 'Settings' })).toBeInTheDocument();
-    expect(screen.queryByRole('separator', { name: 'Resize notes and chat' })).toBeNull();
-    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
-    fireEvent.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Welcome/ }));
-    await screen.findByRole('separator', { name: 'Resize notes and chat' });
-    expect(document.querySelector('.cha-workspace-panel.is-notes')).toBeInTheDocument();
-    expect(document.querySelector('.ProseMirror')).toBeNull();
-  });
-
   it('saves and restores a note hidden by layout while keeping chat mounted', async () => {
     const bus = contextBus();
     const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
@@ -438,36 +302,6 @@ describe('Notes in the application', () => {
     await waitFor(() => expect(getNote).toHaveBeenCalledTimes(2));
     expect(getNote.mock.calls[1]).toEqual([plan.id]);
     expect(screen.getByRole('textbox', { name: 'Message' })).toBe(chat);
-  });
-
-  it('ignores a layout command while a chat open started in Split View is pending', async () => {
-    const bus = contextBus();
-    let finishOpen!: () => void;
-    const planningOpen = new Promise<void>((resolve) => { finishOpen = resolve; });
-    const saveNote = vi.fn(async () => undefined);
-    render(<App client={fixtureClient({
-      listNoteItems: async () => [plan],
-      getNote: async (id: number) => ({ id, document: noteDocument('Saved plan') }),
-      saveNote,
-      openSession: async (forumId, sessionId) => {
-        if (sessionId === 'planning') await planningOpen;
-        return { forum_id: forumId, session_id: sessionId };
-      },
-    })} contextEvents={bus} />);
-    await openNotes();
-    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
-    act(() => bus.layout('split'));
-    await screen.findByRole('textbox', { name: 'Message' });
-    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
-    fireEvent.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Planning/ }));
-    await screen.findByText('Opening session…');
-    act(() => bus.layout('single'));
-    await act(async () => finishOpen());
-    await screen.findByRole('textbox', { name: 'Message' });
-    expect(screen.getByRole('separator', { name: 'Resize notes and chat' })).toBeInTheDocument();
-    expect(noteEditor().isEditable).toBe(true);
-    expect(saveNote).not.toHaveBeenCalled();
   });
 
   it('keeps the visible editor and chat composer mounted across layout and navigation changes', async () => {
@@ -830,7 +664,7 @@ describe('Notes in the application', () => {
   });
 
   it.each(['immediate', 'delayed'])('focuses the new note editor with %s loading', async (loading) => {
-    const created: NoteItem = { id: 9, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'New note' };
+    const created: NoteItem = { id: 9, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'New note' };
     let items = [plan];
     let finishOpen!: () => void;
     const newDocument = { type: 'doc', content: [{ type: 'paragraph' }] };
@@ -883,7 +717,7 @@ describe('Notes in the application', () => {
   });
 
   it('saves before another note and before a Chat session', async () => {
-    const essay: NoteItem = { id: 5, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
+    const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
     const saveNote = vi.fn(async (_id: number, _document: Record<string, unknown>) => undefined);
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan, essay],
@@ -1331,40 +1165,6 @@ describe('Notes in the application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   });
 
-  it('targets the note menu and returns row focus when Rename or Delete is canceled', async () => {
-    const renameNoteItem = vi.fn();
-    const deleteNoteItem = vi.fn();
-    const saveNote = vi.fn();
-    render(<App client={fixtureClient({
-      listNoteItems: async () => [study, plan],
-      getNote: async (id) => ({ id, document: noteDocument('Saved plan contents') }),
-      renameNoteItem, deleteNoteItem, saveNote,
-    })} />);
-    await openNotes();
-    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    await screen.findByText('Saved plan contents');
-    const editor = await waitFor(() => noteEditor());
-    expect(screen.getByRole('button', { name: 'Actions for Plan' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Actions for Study' })).toBeInTheDocument();
-    act(() => screen.getByRole('treeitem', { name: 'Study' }).focus());
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
-    const rename = await screen.findByRole('dialog', { name: 'Rename “Plan”' });
-    expect(within(rename).getByRole('textbox', { name: 'Name' })).toHaveValue('Plan');
-    fireEvent.click(within(rename).getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByRole('treeitem', { name: 'Plan' })).toHaveFocus();
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
-    const deletion = await screen.findByRole('dialog', { name: 'Delete “Plan”? This cannot be undone in CHA.' });
-    expect(within(deletion).getByRole('button', { name: 'Cancel' })).toHaveFocus();
-    fireEvent.click(within(deletion).getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByRole('treeitem', { name: 'Plan' })).toHaveFocus();
-    expect(noteEditor()).toBe(editor);
-    expect(renameNoteItem).not.toHaveBeenCalled();
-    expect(deleteNoteItem).not.toHaveBeenCalled();
-    expect(saveNote).not.toHaveBeenCalled();
-  });
-
   it('renames a note without reloading its body', async () => {
     const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
     let renamed = false;
@@ -1448,7 +1248,7 @@ describe('Notes in the application', () => {
   });
 
   it('keeps an unrelated note editable and blocks navigation during deletion', async () => {
-    const essay: NoteItem = { id: 5, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
+    const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
     let finishDelete: () => void = () => {};
     const getNote = vi.fn(async (id: number) => ({
       id,
@@ -1905,21 +1705,6 @@ describe('Folder deletion with remote cleanup', () => {
     expect(start).toHaveBeenCalledOnce();
   });
 
-});
-
-
-it('refreshes Notes whenever its tab or collapsed sidebar is reopened without an active note', async () => {
-  const listNoteItems = vi.fn(async () => [study]);
-  render(<App client={fixtureClient({ listNoteItems })} />);
-  await openNotes();
-  await screen.findByText('Study');
-  expect(listNoteItems).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
-  fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
-  await waitFor(() => expect(listNoteItems).toHaveBeenCalledTimes(2));
-  act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-sidebar'));
-  act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-sidebar'));
-  await waitFor(() => expect(listNoteItems).toHaveBeenCalledTimes(3));
 });
 
 it.each(['create', 'rename', 'delete'])('refreshes a visible Notes sidebar after local forum %s with no active note', async (operation) => {

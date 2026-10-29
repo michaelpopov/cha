@@ -754,6 +754,16 @@ void Application::release_request_resources(
 void Application::release_connection_resources(std::string_view connection_id) {
     impl_->pending_media.cancel_connection(connection_id);
     impl_->xai_voice.cancel_connection(connection_id);
+    // Callers include the UI thread and the router lock. Vault maintenance can
+    // hold the lifecycle lock for a whole transfer, so do not wait for it here.
+    try {
+        (void)impl_->background_jobs.launch([owner = impl_.get(), id = std::string(connection_id)](std::atomic_bool&) {
+            const std::lock_guard lifecycle(owner->lifecycle_mutex);
+            owner->cancel_summaries(id);
+        });
+    } catch (...) {
+        log_warn("Could not start summary cleanup for a closed connection.");
+    }
 }
 
 void Application::set_speech_url_override(std::string url) {

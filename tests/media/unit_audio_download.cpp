@@ -163,35 +163,6 @@ TEST_F(AudioDownloads, ReadsBoundedChunksFromCachedAudioAndRejectsInvalidOffsets
     EXPECT_FALSE(downloads->audio_chunk(session, 99, "Test", 0));
 }
 
-TEST_F(AudioDownloads, BatchAcceptanceQueuesThreeWorkersAndDeduplicatesExistingJobs) {
-    std::atomic_int started{}, attempts{};
-    std::atomic_bool release{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto& cancel, const AudioChunkCallback&) -> std::optional<EntryAudio> {
-        ++attempts; ++started;
-        while (!release && !cancel()) std::this_thread::sleep_for(2ms);
-        return cancel() ? std::nullopt : std::optional<EntryAudio>{{"audio", "audio/mpeg"}};
-    });
-    ReleaseOnExit cleanup{release};
-    AudioDownloadBatchRequest batch{"Test", {}};
-    for (EntryId id = 1; id <= 4; ++id) batch.entries.push_back({id, {.reference_id = "voice"}});
-    const auto accepted = downloads->submit_batch(session, batch);
-    EXPECT_EQ(accepted.size(), 4);
-    ASSERT_TRUE(eventually([&] { return started == 3; }));
-    EXPECT_EQ(downloads->status(session, "Test").downloads.back().state, AudioJobState::queued);
-    EXPECT_EQ(downloads->submit_batch(session, batch).size(), 4);
-    EXPECT_EQ(downloads->status(session, "Test").downloads.size(), 4);
-    release = true;
-    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).size() == 4; }));
-    EXPECT_EQ(attempts, 4);
-    // The cache write becomes visible before workers remove their active jobs.
-    ASSERT_TRUE(eventually([&] {
-        const auto cached = downloads->submit_batch(session, batch);
-        return std::all_of(cached.begin(), cached.end(), [](const auto& item) {
-            return item.kind == AudioAcceptanceKind::cached;
-        });
-    }));
-}
-
 TEST_F(AudioDownloads, InvalidBatchAdmitsNoNewJobs) {
     std::atomic_int attempts{};
     auto downloads = make([&](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
@@ -324,8 +295,10 @@ TEST_F(AudioDownloads, ThreeWorkersQueueFourthAndDeduplicate) {
     std::condition_variable cv;
     std::set<std::string> started;
     std::set<std::string> released;
+    std::atomic_int attempts{};
     auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         const auto text = request.body.at("text").template get<std::string>();
+        ++attempts;
         std::unique_lock lock(mutex);
         started.insert(text); cv.notify_all();
         while (!released.contains(text) && !cancel()) cv.wait_for(lock, 5ms);
@@ -333,6 +306,7 @@ TEST_F(AudioDownloads, ThreeWorkersQueueFourthAndDeduplicate) {
     });
     downloads->submit_batch(session, input({1, 2, 3, 4}));
     ASSERT_TRUE(eventually([&] { std::lock_guard lock(mutex); return started.size() == 3; }));
+    EXPECT_EQ(downloads->status(session, "Test").downloads.back().state, AudioJobState::queued);
     const auto duplicate = downloads->submit_batch(session, {"Test", {{4, {}}}}).at(0); // Existing job wins over new inputs.
     EXPECT_EQ(duplicate.kind, AudioAcceptanceKind::queued);
     {
@@ -347,6 +321,7 @@ TEST_F(AudioDownloads, ThreeWorkersQueueFourthAndDeduplicate) {
         released = {"1", "2", "3", "4"}; cv.notify_all();
     }
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).size() == 4; }));
+    EXPECT_EQ(attempts, 4);
     EXPECT_EQ(downloads->submit_batch(session, input({1})).at(0).kind, AudioAcceptanceKind::cached);
 }
 TEST_F(AudioDownloads, PlaybackSharesTheDownloadBeforeItIsCached) {

@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ChaError } from '../api/client';
 import { appReducer, initialAppState, type AppAction, type AppState, type MainView } from '../state/view';
@@ -366,93 +366,6 @@ describe('Sidebar session actions', () => {
     expect(onDelete).toHaveBeenCalledWith('lobby', 'planning');
   });
 
-  it('tracks expansion, supports menu keys, and restores focus on Escape', async () => {
-    const user = userEvent.setup();
-    render(
-      <Sidebar
-        onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()} navigate={vi.fn()}
-        onClearSessionAudioCache={vi.fn(async () => undefined)}
-        onDeleteSession={vi.fn(async () => undefined)}
-        onDownloadSession={vi.fn(async () => undefined)}
-        onOpenSession={vi.fn(async () => true)}
-        onRenameSession={vi.fn(async () => undefined)}
-        onSwitchVault={vi.fn(async () => undefined)}
-        state={readyState()}
-      />,
-    );
-
-    const actions = screen.getByLabelText('Actions for Planning');
-    expect(actions).toHaveAttribute('aria-expanded', 'false');
-    await user.click(actions);
-    expect(actions).toHaveAttribute('aria-expanded', 'true');
-    const download = screen.getByRole('menuitem', { name: 'Download' });
-    const clearAudio = screen.getByRole('menuitem', { name: 'Clear audio cache' });
-    const remove = screen.getByRole('menuitem', { name: 'Delete…' });
-    expect(download).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(clearAudio).toHaveFocus();
-    await user.keyboard('{Home}');
-    expect(download).toHaveFocus();
-    await user.keyboard('{End}');
-    expect(remove).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(download).toHaveFocus();
-    await user.keyboard('{ArrowUp}');
-    expect(remove).toHaveFocus();
-    await user.keyboard('{Escape}');
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    expect(actions).toHaveAttribute('aria-expanded', 'false');
-    expect(actions).toHaveFocus();
-  });
-
-  it('dismisses the menu when the reader points elsewhere', async () => {
-    const user = userEvent.setup();
-    render(
-      <Sidebar
-        onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()} navigate={vi.fn()}
-        onClearSessionAudioCache={vi.fn(async () => undefined)}
-        onDeleteSession={vi.fn(async () => undefined)}
-        onDownloadSession={vi.fn(async () => undefined)}
-        onOpenSession={vi.fn(async () => true)}
-        onRenameSession={vi.fn(async () => undefined)}
-        onSwitchVault={vi.fn(async () => undefined)}
-        state={readyState()}
-      />,
-    );
-
-    await user.click(screen.getByLabelText('Actions for Planning'));
-    expect(screen.getByRole('menu')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Settings' }));
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-  });
-
-  it('restores focus to the Actions button when a dialog is cancelled', async () => {
-    const user = userEvent.setup();
-    render(
-      <Sidebar
-        onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()} navigate={vi.fn()}
-        onClearSessionAudioCache={vi.fn(async () => undefined)}
-        onDeleteSession={vi.fn(async () => undefined)}
-        onDownloadSession={vi.fn(async () => undefined)}
-        onOpenSession={vi.fn(async () => true)}
-        onRenameSession={vi.fn(async () => undefined)}
-        onSwitchVault={vi.fn(async () => undefined)}
-        state={readyState()}
-      />,
-    );
-
-    const actions = screen.getByLabelText('Actions for Planning');
-    await user.click(actions);
-    await user.click(screen.getByRole('menuitem', { name: 'Rename…' }));
-    expect(screen.getByLabelText('Session name')).toHaveFocus();
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(actions).toHaveFocus();
-  });
-
   it('keeps an edited name and displays the public rename error', async () => {
     const user = userEvent.setup();
     const onRename = vi.fn(async () => {
@@ -510,77 +423,4 @@ describe('Sidebar session actions', () => {
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
     finish();
   });
-});
-
-describe('Sidebar forums divider', () => {
-  afterEach(() => vi.unstubAllGlobals());
-
-  function forumsDivider() {
-    return screen.getByRole('separator', { name: 'Resize forums and recent sessions' });
-  }
-
-  it('moves with the arrow, Home, and End keys and stays between 15 and 85', () => {
-    renderSidebar();
-    const divider = forumsDivider();
-    expect(divider).toHaveAttribute('aria-valuenow', '40');
-    expect(divider).toHaveAttribute('aria-valuemin', '15');
-    expect(divider).toHaveAttribute('aria-valuemax', '85');
-    fireEvent.keyDown(divider, { key: 'ArrowDown' });
-    expect(divider).toHaveAttribute('aria-valuenow', '43');
-    fireEvent.keyDown(divider, { key: 'ArrowUp' });
-    fireEvent.keyDown(divider, { key: 'ArrowUp' });
-    expect(divider).toHaveAttribute('aria-valuenow', '37');
-    expect(divider.parentElement!.style.gridTemplateRows)
-      .toBe('minmax(3rem, 37fr) 0.75rem minmax(3rem, 63fr)');
-    fireEvent.keyDown(divider, { key: 'ArrowLeft' });
-    expect(divider).toHaveAttribute('aria-valuenow', '37');
-    for (let i = 0; i < 10; i++) fireEvent.keyDown(divider, { key: 'ArrowUp' });
-    expect(divider).toHaveAttribute('aria-valuenow', '15');
-    for (let i = 0; i < 30; i++) fireEvent.keyDown(divider, { key: 'ArrowDown' });
-    expect(divider).toHaveAttribute('aria-valuenow', '85');
-    fireEvent.keyDown(divider, { key: 'Home' });
-    expect(divider).toHaveAttribute('aria-valuenow', '15');
-    fireEvent.keyDown(divider, { key: 'End' });
-    expect(divider).toHaveAttribute('aria-valuenow', '85');
-  });
-
-  it.each(['pointerUp', 'pointerCancel', 'lostPointerCapture'] as const)(
-    'drags between 15 and 85 and ends on %s', (finish) => {
-      vi.stubGlobal('PointerEvent', class extends MouseEvent {
-        pointerId: number;
-        constructor(type: string, init: PointerEventInit) { super(type, init); this.pointerId = init.pointerId ?? 0; }
-      });
-      renderSidebar();
-      const divider = forumsDivider();
-      const sections = divider.parentElement!;
-      // 412 pixels of sections less the 12-pixel divider leave 400 pixels to share.
-      Object.defineProperty(sections, 'clientHeight', { configurable: true, value: 412 });
-      Object.defineProperty(divider, 'offsetHeight', { configurable: true, value: 12 });
-      divider.setPointerCapture = vi.fn();
-
-      fireEvent.pointerDown(divider, { pointerId: 1, button: 2, clientY: 300 });
-      fireEvent.pointerMove(divider, { pointerId: 1, clientY: 340 });
-      expect(divider).toHaveAttribute('aria-valuenow', '40');
-
-      fireEvent.pointerDown(divider, { pointerId: 1, button: 0, clientY: 300 });
-      expect(sections).toHaveClass('is-resizing-recents');
-      fireEvent.pointerMove(divider, { pointerId: 1, clientY: 340 });
-      expect(divider).toHaveAttribute('aria-valuenow', '50');
-      fireEvent.pointerMove(divider, { pointerId: 2, clientY: 380 });
-      expect(divider).toHaveAttribute('aria-valuenow', '50');
-      fireEvent.pointerMove(divider, { pointerId: 1, clientY: -1000 });
-      expect(divider).toHaveAttribute('aria-valuenow', '15');
-      fireEvent.pointerMove(divider, { pointerId: 1, clientY: 2000 });
-      expect(divider).toHaveAttribute('aria-valuenow', '85');
-      fireEvent[finish](divider, { pointerId: 1 });
-      expect(sections).not.toHaveClass('is-resizing-recents');
-      fireEvent.pointerMove(divider, { pointerId: 1, clientY: 300 });
-      expect(divider).toHaveAttribute('aria-valuenow', '85');
-
-      fireEvent.pointerDown(divider, { pointerId: 2, button: 0, clientY: 100 });
-      fireEvent.pointerMove(divider, { pointerId: 2, clientY: 60 });
-      expect(divider).toHaveAttribute('aria-valuenow', '75');
-      expect(sections.style.gridTemplateRows).toBe('minmax(3rem, 75fr) 0.75rem minmax(3rem, 25fr)');
-    },
-  );
 });

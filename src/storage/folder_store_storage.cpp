@@ -250,22 +250,8 @@ bool folder_store_tables_exist(storage::SqliteDatabase& database) {
 std::optional<NoteItem> folder_store_require_folder(
     storage::SqliteDatabase& database, std::int64_t folder_id) {
     require_positive_id(folder_id, "Folder ID");
-    auto row = database.prepare(
-        "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL, read_only "
-        "FROM note_items WHERE id = ?1",
-        folder_id);
-    if (!row.step()) return std::nullopt;
-    NoteItem item;
-    item.id = row.integer(0);
-    if (!row.is_null(1)) item.parent_id = row.integer(1);
-    const auto kind = row.text(2);
-    if (kind == "folder") item.kind = NoteItemKind::folder;
-    else if (kind == "note") item.kind = NoteItemKind::note;
-    else item.kind = NoteItemKind::annotation;
-    item.name = row.text(3);
-    item.has_compressed = row.integer(4) != 0;
-    item.read_only = row.integer(5) != 0;
-    if (item.kind != NoteItemKind::folder) return std::nullopt;
+    auto item = note_find_item(database, folder_id);
+    if (!item || item->kind != NoteItemKind::folder) return std::nullopt;
     return item;
 }
 
@@ -398,6 +384,7 @@ std::int64_t folder_store_register(
     std::int64_t note_count) {
     const auto folder = folder_store_require_folder(database, folder_id);
     if (!folder) fail_store(not_folder);
+    if (folder->forum_id) fail_store("This folder is managed by CHA.");
     if (api_key_id.empty()) fail_store("A saved API key is required.");
     if (note_count <= 0) fail_store("A store needs at least one note.");
     auto insert = database.prepare(

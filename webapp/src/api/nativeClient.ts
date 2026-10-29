@@ -4,6 +4,7 @@ import { readFileBytes } from '../notes/pictures';
 import {
   backgroundAudioStartRejected,
   type NoteItem,
+  type SessionSummaryGenerated,
   type FolderStoreSummary,
   type FolderStoreChoices,
   type FolderStoreStart,
@@ -197,7 +198,7 @@ function isFolderStoreOperation(value: unknown): value is FolderStoreOperation {
 
 function isNoteItem(value: unknown): value is NoteItem {
   return isRecord(value)
-    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'read_only',
+    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'read_only', 'is_summary', 'summary_linked',
       ...(Object.hasOwn(value, 'store') ? ['store'] : []),
       ...(Object.hasOwn(value, 'forum_id') ? ['forum_id'] : [])])
     && (!Object.hasOwn(value, 'store') || (value.kind === 'folder' && isFolderStoreSummary(value.store)))
@@ -207,7 +208,9 @@ function isNoteItem(value: unknown): value is NoteItem {
     && (value.kind === 'folder' || value.kind === 'note' || value.kind === 'annotation')
     && typeof value.name === 'string'
     && typeof value.has_compressed === 'boolean'
-    && typeof value.read_only === 'boolean';
+    && typeof value.read_only === 'boolean'
+    && typeof value.is_summary === 'boolean' && typeof value.summary_linked === 'boolean'
+    && (!value.is_summary || value.kind === 'note') && (!value.summary_linked || value.is_summary);
 }
 
 function isNoteItemList(value: unknown): value is { items: NoteItem[] } {
@@ -981,6 +984,19 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
         isRecord(value) && Object.keys(value).length === 1 && typeof value.base64 === 'string'
       ));
       return Uint8Array.from(atob(result.base64), (character) => character.charCodeAt(0));
+    },
+    generateSessionSummary: (forumId, sessionId) => call('sessionSummary.generate',
+      { forum_id: forumId, session_id: sessionId }, (value): value is SessionSummaryGenerated => (
+        isRecord(value) && hasExactKeys(value, ['run_id', 'target_note_id', 'parent_id', 'markdown'])
+        && isNoteId(value.run_id) && isNoteParent(value.target_note_id) && isNoteId(value.parent_id)
+        && typeof value.markdown === 'string'
+      )),
+    commitSessionSummary: async (runId, document) => (await call('sessionSummary.commit',
+      { run_id: runId, document }, (value): value is { item: NoteItem } => (
+        isRecord(value) && hasExactKeys(value, ['item']) && isNoteItem(value.item)
+      ))).item,
+    abandonSessionSummary: async (runId, reason) => {
+      await call('sessionSummary.abandon', { run_id: runId, reason }, isEmptyResult);
     },
     readNotePage: (url) => call('notes.readPage', { url }, (value): value is NotePage => (
       isRecord(value)

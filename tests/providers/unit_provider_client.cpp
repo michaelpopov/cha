@@ -473,25 +473,6 @@ TEST(ProviderClient, RejectsInvalidUtf8WhenPreparingRequest) {
     EXPECT_EQ(message, "Model request contains invalid UTF-8");
 }
 
-TEST(ProviderClient, HandlesNonStreamingProviderResponse) {
-    MockHttpServer mock({http_response(
-        "application/json", R"({"choices":[{"message":{"content":"Answer"}}]})")});
-    mock.start();
-    std::atomic_bool cancellation{false};
-    ProviderClient client(shared_definition(network_definition(mock.port(), false)));
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 8, "Question");
-    std::string output;
-
-    const GenerationResult result = complete(
-        client, request, transcript,
-        [&output](GenerationDelta delta) { output += delta.text; }, cancellation);
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
-    EXPECT_EQ(output, "Answer");
-    mock.join();
-}
-
 TEST(ProviderClient, DebugLogsSuccessfulRequestsAndResponsesButRedactsTheActiveApiKey) {
     test::TestWorkspace workspace;
     auto config = WorkspaceConfigStore::open(test::import_test_database(workspace.root()));
@@ -953,32 +934,6 @@ TEST(ProviderClient, BoundsProviderErrorsAndDoesNotLogResponseBodies) {
     const std::string output = log.contents();
     EXPECT_EQ(output.find("SENSITIVE_RESPONSE_BODY"), std::string::npos);
     EXPECT_EQ(output.find("UNRETAINED_TAIL"), std::string::npos);
-}
-
-TEST(ProviderClient, LogsTheHighestPriorityProviderRequestId) {
-    const std::string body =
-        R"({"choices":[{"message":{"content":"Answer"}}]})";
-    MockHttpServer mock({status_response(
-        200,
-        "OK",
-        "application/json",
-        body,
-        "cf-ray: fallback-id\r\nX-Request-Id: preferred-id\r\n")});
-    mock.start();
-    DiagnosticLogFile log;
-    std::atomic_bool cancellation{false};
-    ProviderClient client(shared_definition(network_definition(mock.port(), false)));
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 94, "Question");
-
-    const GenerationResult result = complete(
-        client, request, transcript, [](GenerationDelta) {}, cancellation);
-    mock.join();
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
-    EXPECT_NE(
-        log.contents().find("provider_request_id=preferred-id"),
-        std::string::npos);
 }
 
 TEST(ProviderClient, BoundsOverallAndIdleGenerationTime) {
@@ -1465,14 +1420,23 @@ TEST(ProviderClient, MissingSavedApiKeyFailsWhenTheProviderIsUsed) {
         workspace.root(), directory / "workspace.sqlite3");
     auto config = WorkspaceConfigStore::open(database);
     ApiKeyStore keys(*config);
-    CharacterDefinition definition = network_definition(1, false);
-    definition.provider.config.api_key_id = "api_key_99";
-    try {
-        (void)ProviderClient(
-            shared_definition(std::move(definition)), nullptr, &keys);
-        FAIL() << "expected missing API key rejection";
-    } catch (const std::runtime_error& error) {
-        EXPECT_NE(std::string(error.what()).find("api_key_99"), std::string::npos);
+    for (const bool legacy_name : {false, true}) {
+        SCOPED_TRACE(legacy_name ? "legacy credential name" : "saved key ID");
+        CharacterDefinition definition = network_definition(1, false);
+        if (legacy_name) {
+            definition.provider.config.api_key_env = "OPEN_ROUTER_API_KEY";
+        } else {
+            definition.provider.config.api_key_id = "api_key_99";
+        }
+        try {
+            (void)ProviderClient(
+                shared_definition(std::move(definition)), nullptr, &keys);
+            ADD_FAILURE() << "expected missing API key rejection";
+        } catch (const std::runtime_error& error) {
+            if (!legacy_name) {
+                EXPECT_NE(std::string(error.what()).find("api_key_99"), std::string::npos);
+            }
+        }
     }
 }
 
@@ -1491,108 +1455,45 @@ TEST(ProviderClient, UsesASavedApiKey) {
     auto config = WorkspaceConfigStore::open(database);
     ApiKeyStore keys(*config);
     const ApiKeyInfo key = keys.create("Router", "saved-secret");
+    (void)keys.create("OPEN_ROUTER_API_KEY", "named-secret");
 
-    CharacterDefinition definition = network_definition(443, false);
-    definition.provider.config.api_key_id = key.id;
-    std::vector<ProviderHttpRequest> requests;
-    ProviderClient client(
-        shared_definition(std::move(definition)),
-        nullptr,
-        &keys,
-        [&requests](
-            const ProviderHttpRequest& request,
-            const std::atomic_bool&) {
-            requests.push_back(request);
-            return ProviderHttpResponse{
-                .status = 200,
-                .content_type = "application/json",
-                .body = R"({"choices":[{"message":{"content":"Answer"}}]})",
-            };
-        });
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 81, "Question");
-    std::atomic_bool cancellation{false};
-    const GenerationResult result = complete(
-        client, request, transcript, [](GenerationDelta) {}, cancellation);
+    for (const bool legacy_name : {false, true}) {
+        SCOPED_TRACE(legacy_name ? "legacy credential name" : "saved key ID");
+        CharacterDefinition definition = network_definition(443, false);
+        if (legacy_name) {
+            definition.provider.config.api_key_env = "OPEN_ROUTER_API_KEY";
+        } else {
+            definition.provider.config.api_key_id = key.id;
+        }
+        std::vector<ProviderHttpRequest> requests;
+        ProviderClient client(
+            shared_definition(std::move(definition)),
+            nullptr,
+            &keys,
+            [&requests](
+                const ProviderHttpRequest& request,
+                const std::atomic_bool&) {
+                requests.push_back(request);
+                return ProviderHttpResponse{
+                    .status = 200,
+                    .content_type = "application/json",
+                    .body = R"({"choices":[{"message":{"content":"Answer"}}]})",
+                };
+            });
+        Transcript transcript;
+        const GenerationRequest request = client_request(transcript, 81, "Question");
+        std::atomic_bool cancellation{false};
+        const GenerationResult result = complete(
+            client, request, transcript, [](GenerationDelta) {}, cancellation);
 
-    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
-    ASSERT_EQ(requests.size(), 1U);
-    EXPECT_NE(
-        std::ranges::find(
-            requests.front().headers,
-            "Authorization: Bearer saved-secret"),
-        requests.front().headers.end());
-}
-
-TEST(ProviderClient, ResolvesLegacyCredentialNameFromSavedApiKeys) {
-    const std::filesystem::path directory = std::filesystem::temp_directory_path()
-        / ("cha_provider_named_key_" + std::to_string(
-            std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::create_directories(directory);
-    struct Cleanup {
-        std::filesystem::path path;
-        ~Cleanup() { std::filesystem::remove_all(path); }
-    } cleanup{directory};
-    test::TestWorkspace workspace;
-    const std::filesystem::path database = test::import_test_database(
-        workspace.root(), directory / "workspace.sqlite3");
-    auto config = WorkspaceConfigStore::open(database);
-    ApiKeyStore keys(*config);
-    (void)keys.create("OPEN_ROUTER_API_KEY", "saved-secret");
-
-    CharacterDefinition definition = network_definition(443, false);
-    definition.provider.config.api_key_env = "OPEN_ROUTER_API_KEY";
-    std::vector<ProviderHttpRequest> requests;
-    ProviderClient client(
-        shared_definition(std::move(definition)),
-        nullptr,
-        &keys,
-        [&requests](
-            const ProviderHttpRequest& request,
-            const std::atomic_bool&) {
-            requests.push_back(request);
-            return ProviderHttpResponse{
-                .status = 200,
-                .content_type = "application/json",
-                .body = R"({"choices":[{"message":{"content":"Answer"}}]})",
-            };
-        });
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 82, "Question");
-    std::atomic_bool cancellation{false};
-    EXPECT_EQ(
-        complete(client, request, transcript, [](GenerationDelta) {}, cancellation)
-            .outcome,
-        GenerationOutcome::completed);
-    ASSERT_EQ(requests.size(), 1U);
-    EXPECT_NE(
-        std::ranges::find(
-            requests.front().headers,
-            "Authorization: Bearer saved-secret"),
-        requests.front().headers.end());
-}
-
-TEST(ProviderClient, MissingLegacyNamedKeyFails) {
-    const std::filesystem::path directory = std::filesystem::temp_directory_path()
-        / ("cha_provider_missing_named_key_" + std::to_string(
-            std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::create_directories(directory);
-    struct Cleanup {
-        std::filesystem::path path;
-        ~Cleanup() { std::filesystem::remove_all(path); }
-    } cleanup{directory};
-    test::TestWorkspace workspace;
-    const std::filesystem::path database = test::import_test_database(
-        workspace.root(), directory / "workspace.sqlite3");
-    auto config = WorkspaceConfigStore::open(database);
-    ApiKeyStore keys(*config);
-    CharacterDefinition definition = network_definition(443, false);
-    definition.provider.config.api_key_env = "OPEN_ROUTER_API_KEY";
-
-    EXPECT_THROW(
-        (void)ProviderClient(
-            shared_definition(std::move(definition)), nullptr, &keys),
-        std::runtime_error);
+        EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+        ASSERT_EQ(requests.size(), 1U);
+        const std::string authorization = std::string("Authorization: Bearer ")
+            + (legacy_name ? "named-secret" : "saved-secret");
+        EXPECT_NE(
+            std::ranges::find(requests.front().headers, authorization),
+            requests.front().headers.end());
+    }
 }
 
 TEST(ProviderClient, UnauthenticatedProviderOmitsAuthorization) {

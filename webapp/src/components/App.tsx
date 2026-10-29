@@ -37,6 +37,7 @@ import {
 import { saveMarkdownDownload } from '../download';
 import { noteInSubtree } from '../notes/tree';
 import { notesExtensions } from '../notes/editor';
+import { summaryDocument, summaryConversionError } from '../notes/summaryImport';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import type { NoteSaveHandle } from '../notes/useNoteSave';
 import { reloadApplication, writeAppRoute } from '../state/route';
@@ -702,6 +703,8 @@ export function App({
   const activeNoteIdRef = useRef(state.activeNoteId);
   notesEpochRef.current = state.notesEpoch;
   activeNoteIdRef.current = state.activeNoteId;
+  const notesVisibleRef = useRef(false);
+  notesVisibleRef.current = workspaceVisibility(state).notesVisible;
   const noteLeave = useNoteLeave(() => noteSaveRef.current, {
     disposeEditor: () => {
       disposeEditorRef.current();
@@ -831,6 +834,134 @@ export function App({
       navigate({ type: 'open-note', noteId: active.id });
     }
   }, [navigate, noteItems]);
+
+  const summaryViewRef = useRef({ noteActions, sourceChanged });
+  summaryViewRef.current = { noteActions, sourceChanged };
+  const summaryCancellation = useRef(new AbortController());
+  useEffect(() => {
+    const controller = new AbortController();
+    summaryCancellation.current = controller;
+    return () => controller.abort();
+  }, [state.notesEpoch]);
+
+  const saveSummary = useCallback(async (forumId: string, sessionId: string) => {
+    const epoch = client.contextEpoch();
+    const editorEpoch = notesEpochRef.current;
+    const signal = summaryCancellation.current.signal;
+    const current = () => {
+      try { return !signal.aborted && notesEpochRef.current === editorEpoch && client.contextEpoch() === epoch; }
+      catch { return false; }
+    };
+    let generated: Awaited<ReturnType<NotesClient['generateSessionSummary']>> | undefined;
+    let guarded = false;
+    let submitted = false;
+    let replaced = false;
+    let cancelledSave = false;
+    let save: NoteSaveHandle | null = null;
+    let targetWasOpen = false;
+    const sameTarget = () => generated?.target_note_id != null && activeNoteIdRef.current === generated.target_note_id;
+    const discardBuffer = () => {
+      if (!targetWasOpen || notesEpochRef.current !== editorEpoch || !sameTarget()) return;
+      save?.dispose();
+      disposeEditorRef.current();
+    };
+    // A hidden Notes panel loads saved content when it opens again, so do not switch screens.
+    const reloadTarget = () => {
+      if (targetWasOpen && sameTarget() && notesVisibleRef.current) dispatch({ type: 'open-note', noteId: generated!.target_note_id! });
+    };
+    const reloadAnnotations = () => {
+      if (notesVisibleRef.current) summaryViewRef.current.sourceChanged(generated!.parent_id);
+    };
+    try {
+      generated = await client.generateSessionSummary(forumId, sessionId);
+      if (!current()) return;
+      let document: Record<string, unknown>;
+      try { document = summaryDocument(generated.markdown); }
+      catch { throw new ChaError('invalid_argument', summaryConversionError); }
+      while (!noteLeave.beginNoteAction()) {
+        await noteLeave.whenIdle(signal);
+        if (!current()) return;
+      }
+      guarded = true;
+      if (!current()) return;
+      targetWasOpen = sameTarget();
+      if (targetWasOpen) {
+        save = noteSaveRef.current;
+        if (save?.isOpen) {
+          cancelledSave = save.freeze();
+          await save.waitInFlight();
+          if (!current() || !sameTarget() || noteSaveRef.current?.waitInFlight !== save.waitInFlight) return;
+        } else {
+          // Cancel a pending pre-commit getNote reply before it can create a stale editor.
+          disposeEditorRef.current();
+        }
+      }
+      submitted = true;
+      let item: NoteItem;
+      try {
+        item = await client.commitSessionSummary(generated.run_id, document);
+      } catch (failure) {
+        const definite = failure instanceof ChaError
+          && !['command_timeout', 'application_unavailable', 'server_stopping'].includes(failure.code);
+        if (!definite && !current()) {
+          discardBuffer();
+          replaced = true;
+        } else if (!definite) {
+          // This acknowledgement orders the reload after a queued commit or revokes its token.
+          // If disconnected, dispose the buffer but do not reopen until authoritative reads are possible.
+          try { await client.abandonSessionSummary(generated.run_id, 'commit_unknown'); }
+          catch (barrierFailure) {
+            discardBuffer();
+            replaced = true;
+            throw barrierFailure;
+          }
+          discardBuffer();
+          replaced = true;
+          if (current()) {
+            // A lost reply has no returned metadata. Read it before reopening controls.
+            const items = await client.listNoteItems();
+            if (!current()) return;
+            setNoteItems(items);
+            const item = items.find(note => note.id === generated!.target_note_id);
+            if (item) summaryViewRef.current.noteActions?.updated(item);
+            reloadTarget();
+            summaryViewRef.current.noteActions?.refresh();
+            noteLeave.endNoteAction();
+            guarded = false;
+            reloadAnnotations();
+          }
+        } else if (targetWasOpen && !save?.isOpen && current()) reloadTarget();
+        throw failure;
+      }
+      replaced = true;
+      if (!current()) return;
+      discardBuffer();
+      setNoteItems(items => items.some(note => note.id === item.id)
+        ? items.map(note => note.id === item.id ? item : note) : [...items, item]);
+      summaryViewRef.current.noteActions?.updated(item);
+      reloadTarget();
+      summaryViewRef.current.noteActions?.refresh();
+      noteLeave.endNoteAction();
+      guarded = false;
+      reloadAnnotations();
+      window.dispatchEvent(new CustomEvent('cha-note-audio-changed', { detail: { id: item.id, affectedNoteOnly: true } }));
+    } catch (failure) {
+      if (!signal.aborted) setSubmissionErrors(errors => [...errors, {
+        id: ++nextSubmissionError.current,
+        message: publicErrorMessage(failure, 'The summary could not be saved. Check Settings → Events and try again.'),
+      }]);
+    } finally {
+      if (generated && !submitted) {
+        try { await client.abandonSessionSummary(generated.run_id, 'conversion_failed'); }
+        catch { /* Connection and vault cleanup also retire uncommitted runs. */ }
+      }
+      if (!replaced && save?.isOpen && sameTarget() && notesEpochRef.current === editorEpoch) {
+        save.unfreeze();
+        if (cancelledSave) save.submitNow();
+      }
+      if (guarded) noteLeave.endNoteAction();
+    }
+  }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction, noteLeave.whenIdle]);
 
   const beforeCreateNote = useCallback(async () => {
     const result = await noteLeave.leaveNoteThen(() => true);
@@ -1151,9 +1282,10 @@ export function App({
     await runMutation({ forumId, sessionId }, 'catalog', () => (
       client.renameSession(forumId, sessionId, label)
     ));
+    noteActions?.refresh();
     await refreshBootstrap();
     setCatalogRevision((revision) => revision + 1);
-  }, [client, refreshBootstrap, runMutation]);
+  }, [client, noteActions, refreshBootstrap, runMutation]);
 
   const downloadSession = useCallback(async (
     forumId: string,
@@ -1178,6 +1310,7 @@ export function App({
     await runMutation({ forumId, sessionId }, 'catalog', () => (
       client.deleteSession(forumId, sessionId)
     ));
+    noteActions?.refresh();
     dispatch({ type: 'session-deleted', forumId, sessionId });
     await refreshBootstrap();
     const active = state.activeConversation?.forumId === forumId
@@ -1190,7 +1323,7 @@ export function App({
       writeAppRoute('/', 'replace');
     }
     setCatalogRevision((revision) => revision + 1);
-  }, [clearLiveSession, client, navigate, refreshBootstrap, runMutation,
+  }, [clearLiveSession, client, navigate, noteActions, refreshBootstrap, runMutation,
     state.activeConversation, state.mainView, state.layoutMode]);
 
   const deleteForum = useCallback(async (forumId: string) => {
@@ -1246,6 +1379,7 @@ export function App({
             navigate={navigate}
             onDeleteSession={deleteSession}
             onDownloadSession={downloadSession}
+            onSaveSummary={saveSummary}
             onOpenSession={openConversation}
             onRenameSession={renameSession}
             notesTree={(

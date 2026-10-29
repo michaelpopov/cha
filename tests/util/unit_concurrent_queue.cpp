@@ -48,24 +48,28 @@ TEST(ConcurrentQueue, PushWakesABlockedConsumer) {
     EXPECT_EQ(result.get(), std::optional<int>{7});
 }
 
-TEST(ConcurrentQueue, CloseWakesABlockedConsumerAndIsIdempotent) {
+TEST(ConcurrentQueue, CloseWakesEveryBlockedConsumerAndIsIdempotent) {
     using namespace std::chrono_literals;
 
     ConcurrentQueue<int> queue;
-    std::future<std::optional<int>> result = std::async(
-        std::launch::async,
-        [&queue] { return queue.get(); });
-    EXPECT_EQ(result.wait_for(20ms), std::future_status::timeout);
+    std::vector<std::future<std::optional<int>>> consumers;
+    consumers.reserve(4);
+    for (int index = 0; index < 4; ++index) {
+        consumers.push_back(std::async(
+            std::launch::async,
+            [&queue] { return queue.get(); }));
+    }
+    for (auto& consumer : consumers) {
+        EXPECT_EQ(consumer.wait_for(20ms), std::future_status::timeout);
+    }
 
     queue.close();
     queue.close();
-    if (result.wait_for(1s) != std::future_status::ready) {
-        queue.close();
-        result.wait();
-        FAIL() << "Timed out waiting for closed queue";
-        return;
+
+    for (auto& consumer : consumers) {
+        ASSERT_EQ(consumer.wait_for(1s), std::future_status::ready);
+        EXPECT_EQ(consumer.get(), std::nullopt);
     }
-    EXPECT_EQ(result.get(), std::nullopt);
     EXPECT_EQ(queue.get(), std::nullopt);
     EXPECT_FALSE(queue.push(7));
 }
@@ -88,29 +92,6 @@ TEST(ConcurrentQueue, CloseWithDeliversOneFinalValueAfterQueuedValues) {
     EXPECT_EQ(value, "terminal");
     EXPECT_EQ(queue.try_get(value), ChannelReadStatus::closed);
     EXPECT_FALSE(queue.push("late"));
-}
-
-TEST(ConcurrentQueue, CloseWakesEveryBlockedConsumer) {
-    using namespace std::chrono_literals;
-
-    ConcurrentQueue<int> queue;
-    std::vector<std::future<std::optional<int>>> consumers;
-    consumers.reserve(4);
-    for (int index = 0; index < 4; ++index) {
-        consumers.push_back(std::async(
-            std::launch::async,
-            [&queue] { return queue.get(); }));
-    }
-    for (auto& consumer : consumers) {
-        EXPECT_EQ(consumer.wait_for(20ms), std::future_status::timeout);
-    }
-
-    queue.close();
-
-    for (auto& consumer : consumers) {
-        ASSERT_EQ(consumer.wait_for(1s), std::future_status::ready);
-        EXPECT_EQ(consumer.get(), std::nullopt);
-    }
 }
 
 TEST(ConcurrentQueue, CloseDrainsQueuedValuesBeforeConsumersObserveClosure) {

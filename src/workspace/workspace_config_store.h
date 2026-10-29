@@ -360,6 +360,9 @@ public:
     [[nodiscard]] std::vector<ActivityEvent> list_events() const;
 
     [[nodiscard]] std::vector<NoteItem> list_note_items() const;
+    [[nodiscard]] NoteSummaryTarget summary_target(const FullSessionId& identity) const;
+    [[nodiscard]] NoteItem commit_summary(const FullSessionId& identity,
+        const NoteSummaryTarget& target, const nlohmann::json& document);
     [[nodiscard]] std::int64_t import_note_book(
         std::optional<std::int64_t> parent_id,
         std::string_view name, const std::vector<NoteImportEntry>& notes);

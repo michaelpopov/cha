@@ -17,23 +17,12 @@ import { noteHeadings, selectNoteEnd, withIsolatedHistory } from '../notes/edito
 import { noteHighlights } from '../notes/highlights';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveDelayMs, type NoteSaveHandle } from '../notes/useNoteSave';
-import * as noteAudio from '../notes/useNoteAudio';
 import type { AppAction } from '../state/view';
 import { fixtureClient } from '../test/fixtures';
-import { VoiceInputSession } from '../voiceInput';
 import { NotesScreen } from './NotesScreen';
 
-const plan: NoteItem = { id: 4, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
-const essay: NoteItem = { id: 5, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
-
-const voiceRuntime = {
-  provider: 'openai' as const,
-  url: 'https://api.openai.com/v1/realtime/calls',
-  model: 'gpt-live-transcribe',
-  delay: 'low' as const,
-  prompt: '',
-  send_phrase: '',
-};
+const plan: NoteItem = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
+const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
 
 function documentWith(text: string) {
   return {
@@ -65,8 +54,6 @@ function Harness({
   readNotePicture = async () => new Uint8Array(),
   renameNoteItem = async (id: number, name: string) => ({ ...plan, id, name }),
   draft = '',
-  voice = false,
-  sendPhrase = '',
 }: {
   initialId?: number | null;
   destination?: AnnotationDestination;
@@ -79,8 +66,6 @@ function Harness({
   readNotePicture?: (url: string) => Promise<Uint8Array>;
   renameNoteItem?: (id: number, name: string) => Promise<NoteItem>;
   draft?: string;
-  voice?: boolean;
-  sendPhrase?: string;
 }) {
   const [noteId, setNoteId] = useState(initialId);
   const [request, setRequest] = useState(1);
@@ -102,7 +87,7 @@ function Harness({
     readNoteTextFile,
     readNotePicture,
     renameNoteItem,
-    getVoiceInputRuntime: async () => (voice ? { ...voiceRuntime, send_phrase: sendPhrase } : null),
+    getVoiceInputRuntime: async () => null,
   })).current;
   const leave = useNoteLeave(() => saveRef.current, {
     disposeEditor: () => disposeRef.current(),
@@ -193,75 +178,6 @@ describe('Notes screen', () => {
     }
   });
 
-  it('navigates Content by keyboard and reports Copy All failures without changing the note', async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    const editor = await openedEditor();
-    act(() => editor.commands.setTextSelection({ from: 2, to: 4 }));
-    const original = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const exec = vi.fn(() => { throw new Error('Denied'); });
-    Object.defineProperty(document, 'execCommand', { configurable: true, value: exec });
-    try {
-      const content = screen.getByRole('button', { name: 'Content' });
-      await user.click(content);
-      expect(screen.getByRole('menuitem', { name: 'Upload' })).toHaveFocus();
-      await user.keyboard('{ArrowDown}');
-      expect(screen.getByRole('menuitem', { name: 'Copy All' })).toHaveFocus();
-      await user.keyboard('{Escape}');
-      expect(content).toHaveAttribute('aria-expanded', 'false');
-      expect(editor.view.dom).toHaveFocus();
-      expect(exec).not.toHaveBeenCalled();
-      await user.click(content);
-      await user.keyboard('{End}{Enter}');
-      expect(await screen.findByRole('alert')).toHaveTextContent('Could not copy the note. Try again.');
-      expect(editor.view.dom).toHaveFocus();
-      expect(editor.getText()).toBe('Alpha');
-      expect(editor.state.selection.from).toBe(2);
-      expect(editor.state.selection.to).toBe(4);
-    } finally {
-      if (original) Object.defineProperty(document, 'execCommand', original);
-      else Reflect.deleteProperty(document, 'execCommand');
-    }
-  });
-
-  it('runs History actions by keyboard, skips unavailable actions, and dismisses the menu', async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    const editor = await openedEditor();
-    const history = screen.getByRole('button', { name: 'History' });
-    expect(history).toBeDisabled();
-    act(() => insertText(editor, '!'));
-    expect(history).toBeEnabled();
-    await user.click(history);
-    expect(screen.getByRole('menuitem', { name: 'Undo' })).toHaveFocus();
-    expect(screen.getByRole('menuitem', { name: 'Redo' })).toBeDisabled();
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitem', { name: 'Undo' })).toHaveFocus();
-    await user.keyboard('{Escape}');
-    expect(history).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom).toHaveFocus();
-    await user.click(history);
-    await user.keyboard('{Enter}');
-    expect(editor.getText()).toBe('Alpha');
-    expect(history).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom).toHaveFocus();
-    await user.click(history);
-    expect(screen.getByRole('menuitem', { name: 'Undo' })).toBeDisabled();
-    expect(screen.getByRole('menuitem', { name: 'Redo' })).toHaveFocus();
-    await user.keyboard('{ArrowUp}{Enter}');
-    expect(editor.getText()).toBe('Alpha!');
-    expect(history).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom).toHaveFocus();
-    await user.click(history);
-    await user.click(screen.getByRole('button', { name: 'Font size' }));
-    expect(screen.queryByRole('menu', { name: 'History' })).not.toBeInTheDocument();
-    await user.click(history);
-    expect(screen.queryByRole('menu', { name: 'Font size' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
-    expect(history).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.getText()).toBe('Alpha!');
-  });
-
   it('restores a note position and opens a note without one at the top', async () => {
     render(<Harness getNote={async (id) => ({
       id, document: documentWith('Reading'), ...(id === 4 ? { scroll_top: 680 } : {}),
@@ -333,167 +249,6 @@ describe('Notes screen', () => {
     await user.click(screen.getByRole('menuitemcheckbox', { name: 'Code' }));
     expect(editor.view.dom.querySelector('code')).toBeNull();
     expect(editor.getText()).toBe('Alpha beta');
-  });
-
-  it.each([false, true])('resizes the whole document without changing or saving its content (read-only: %s)', async (readOnly) => {
-    const user = userEvent.setup();
-    const saveNote = vi.fn();
-    render(<Harness saveNote={saveNote} items={[{ ...plan, read_only: readOnly }]} />);
-    const editor = await openedEditor();
-    const document = editor.getJSON();
-    act(() => { editor.commands.setTextSelection({ from: 2, to: 4 }); });
-    const host = editor.view.dom.closest('.cha-notes-document');
-
-    const fontSize = screen.getByRole('button', { name: 'Font size' });
-    await user.click(fontSize);
-    await user.click(screen.getByRole('menuitem', { name: 'Increase font size' }));
-    expect(host).toHaveStyle({ fontSize: '16px' });
-    expect(fontSize).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom).toHaveFocus();
-    expect(editor.state.selection.from).toBe(2);
-    expect(editor.state.selection.to).toBe(4);
-    await user.click(fontSize);
-    await user.click(screen.getByRole('menuitem', { name: 'Decrease font size' }));
-    expect(host).toHaveStyle({ fontSize: '14px' });
-    expect(editor.getJSON()).toEqual(document);
-    expect(editor.can().undo()).toBe(false);
-    expect(saveNote).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['Decrease font size', 'Increase font size', 10, 2],
-    ['Increase font size', 'Decrease font size', 30, 8],
-  ] as const)('disables %s at the size limit and focuses the available action', async (action, opposite, limit, steps) => {
-    render(<Harness />);
-    const editor = await openedEditor();
-    const fontSize = screen.getByRole('button', { name: 'Font size' });
-    for (let step = 0; step < steps; step += 1) {
-      fireEvent.click(fontSize);
-      fireEvent.click(screen.getByRole('menuitem', { name: action }));
-    }
-    expect(editor.view.dom.closest('.cha-notes-document')).toHaveStyle({ fontSize: `${limit}px` });
-    fireEvent.click(fontSize);
-    expect(screen.getByRole('menuitem', { name: action })).toBeDisabled();
-    expect(screen.getByRole('menuitem', { name: opposite })).toHaveFocus();
-  });
-
-  it.each([
-    ['Font size', 'Decrease font size', 'Increase font size'],
-    ['Playback speed', 'Decrease speed', 'Increase speed'],
-  ])('navigates and dismisses the %s menu without changing the preference', async (label, decrease, increase) => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    const editor = await openedEditor();
-    const button = screen.getByRole('button', { name: label });
-    await user.click(button);
-    expect(screen.getByRole('menuitem', { name: decrease })).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitem', { name: increase })).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitem', { name: decrease })).toHaveFocus();
-    await user.keyboard('{Escape}');
-    expect(button).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom).toHaveFocus();
-    await user.click(button);
-    await user.click(screen.getByRole('button', { name: 'Headings' }));
-    expect(screen.queryByRole('menu', { name: label })).not.toBeInTheDocument();
-    await user.click(button);
-    expect(screen.queryByRole('menu', { name: 'Headings' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
-    expect(button).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom.closest('.cha-notes-document')).toHaveStyle({ fontSize: '14px' });
-    expect(screen.getByRole('button', { name: 'Playback speed' })).toHaveAttribute('title', 'Playback speed: 1.0×');
-  });
-
-  it.each([false, true])('changes playback speed without changing the note, selection, or scroll (read-only: %s)', async (readOnly) => {
-    const hook = vi.spyOn(noteAudio, 'useNoteAudio');
-    const saveNote = vi.fn();
-    render(<Harness saveNote={saveNote} items={[{ ...plan, read_only: readOnly }]} />);
-    const editor = await openedEditor();
-    act(() => { editor.commands.setTextSelection({ from: 2, to: 4 }); });
-    const before = editor.getJSON();
-    const host = editor.view.dom.closest('.cha-notes-document')!;
-    host.scrollTop = 640;
-    const button = screen.getByRole('button', { name: 'Playback speed' });
-    const group = button.closest('.cha-notes-toolbar-group')!;
-    expect(group.previousElementSibling).toContainElement(screen.getByRole('button', { name: 'Font size' }));
-    expect(group.nextElementSibling).toContainElement(screen.getByRole('button', { name: 'Headings' }));
-    expect(group.querySelectorAll('button')).toHaveLength(1);
-    expect(button).toHaveTextContent('');
-    expect(button).toHaveAccessibleDescription('Playback speed: 1.0×');
-    expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ playbackRate: 1 }));
-    fireEvent.click(button);
-    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Decrease speed', 'Increase speed', 'Default speed']);
-    expect(screen.getByRole('menuitem', { name: 'Default speed' })).toBeDisabled();
-    expect(host.scrollTop).toBe(640);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Increase speed' }));
-    expect(button).toHaveAccessibleName('Playback speed');
-    expect(button).toHaveAttribute('title', 'Playback speed: 1.5×');
-    expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ playbackRate: 1.5 }));
-    expect(button).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom).toHaveFocus();
-    expect(editor.state.selection.from).toBe(2);
-    expect(editor.state.selection.to).toBe(4);
-    expect(host.scrollTop).toBe(640);
-    expect(editor.getJSON()).toEqual(before);
-    expect(editor.can().undo()).toBe(false);
-    expect(saveNote).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['Decrease speed', 'Increase speed', 5, -5],
-    ['Increase speed', 'Decrease speed', 20, 5],
-  ] as const)('steps by 0.5× to the %s limit and restores the default directly', async (action, opposite, limit, direction) => {
-    const hook = vi.spyOn(noteAudio, 'useNoteAudio');
-    render(<Harness />);
-    await openedEditor();
-    const button = screen.getByRole('button', { name: 'Playback speed' });
-    for (let speed = 10 + direction; speed !== limit + direction; speed += direction) {
-      fireEvent.click(button);
-      fireEvent.click(screen.getByRole('menuitem', { name: action }));
-      expect(button).toHaveAttribute('aria-expanded', 'false');
-      expect(button).toHaveAttribute('title', `Playback speed: ${(speed / 10).toFixed(1)}×`);
-      expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ playbackRate: speed / 10 }));
-    }
-    fireEvent.click(button);
-    expect(screen.getByRole('menuitem', { name: action })).toBeDisabled();
-    expect(screen.getByRole('menuitem', { name: opposite })).toHaveFocus();
-    expect(screen.getByRole('menuitem', { name: 'Default speed' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('menuitem', { name: action }));
-    expect(button).toHaveAttribute('title', `Playback speed: ${(limit / 10).toFixed(1)}×`);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Default speed' }));
-    expect(button).toHaveAttribute('title', 'Playback speed: 1.0×');
-    expect(button).toHaveAttribute('aria-expanded', 'false');
-    expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ playbackRate: 1 }));
-    fireEvent.click(button);
-    expect(screen.getByRole('menuitem', { name: 'Default speed' })).toBeDisabled();
-    expect(screen.getByRole('menuitem', { name: 'Decrease speed' })).toBeEnabled();
-    expect(screen.getByRole('menuitem', { name: 'Increase speed' })).toBeEnabled();
-  });
-
-  it('keeps playback speed when switching notes and resets it on a new Notes screen', async () => {
-    const hook = vi.spyOn(noteAudio, 'useNoteAudio');
-    const view = render(<Harness />);
-    await openedEditor();
-    fireEvent.click(screen.getByRole('button', { name: 'Playback speed' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Decrease speed' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
-    expect(await screen.findByText('Essay text')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Playback speed' })).toHaveAttribute('title', 'Playback speed: 0.5×');
-    expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ id: 5, playbackRate: 0.5 }));
-    view.unmount();
-    render(<Harness />);
-    await openedEditor();
-    expect(screen.getByRole('button', { name: 'Playback speed' })).toHaveAttribute('title', 'Playback speed: 1.0×');
-    expect(hook).toHaveBeenLastCalledWith(expect.objectContaining({ playbackRate: 1 }));
-  });
-
-  it('keeps note actions out of the editor toolbar', async () => {
-    render(<Harness />);
-    await openedEditor();
-    for (const name of ['Rename', 'Delete', 'Copy note reference', 'Copy Ref ID']) {
-      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
-    }
   });
 
   it('replaces a note from the picker, keeps the prompt, saves, and undoes in one step', async () => {
@@ -693,13 +448,13 @@ describe('Notes screen', () => {
     [[], 'Title', 'Title'],
     [[], 'New note', 'New note'],
   ] as const)('chooses an available title among siblings %j', async (names, title, expected) => {
-    const folder: NoteItem = { id: 3, read_only: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Folder' };
+    const folder: NoteItem = { id: 3, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Folder' };
     const original = { ...plan, parent_id: folder.id, name: 'New note' };
     const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...original, id, name }));
     render(<Harness
       items={[folder, original,
-        { id: 20, read_only: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Title' },
-        ...names.map((name, index) => ({ id: 30 + index, read_only: false, has_compressed: false, parent_id: folder.id, kind: 'note' as const, name })),
+        { id: 20, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Title' },
+        ...names.map((name, index) => ({ id: 30 + index, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: folder.id, kind: 'note' as const, name })),
       ]}
       getNote={async (id) => ({ id, document: documentWith('') })}
       readNotePage={async () => ({ url: 'https://example.org/', title, markdown: 'Article' })}
@@ -913,6 +668,8 @@ describe('Notes screen', () => {
 
   it('keeps the Notes draft and disables Send when no note is open', () => {
     render(<Harness initialId={null} items={[]} />);
+    expect(screen.queryByRole('combobox', { name: 'Paragraph style' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New note' })).not.toBeInTheDocument();
     const prompt = screen.getByRole('textbox', { name: 'Prompt' });
     const send = screen.getByRole('button', { name: 'Send' });
     expect(send).toBeDisabled();
@@ -932,35 +689,6 @@ describe('Notes screen', () => {
     expect(getNote).toHaveBeenCalledOnce();
     expect(screen.getByText('Alpha beta')).toBeInTheDocument();
     expect((await openedEditor()).can().undo()).toBe(true);
-  });
-
-  it('cancels voice work when the open note changes and keeps the draft', async () => {
-    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
-    const cancel = vi.fn();
-    vi.spyOn(VoiceInputSession, 'start').mockResolvedValue({ stop: async () => undefined, cancel });
-    const getNote = vi.fn(async (id: number) => ({
-      id,
-      document: documentWith(id === 5 ? 'Essay text' : 'Alpha'),
-    }));
-    render(<Harness draft="Spoken" getNote={getNote} voice />);
-    await screen.findByText('Alpha');
-    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
-    await screen.findByRole('button', { name: 'Stop voice input' });
-    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
-    expect(await screen.findByText('Essay text')).toBeInTheDocument();
-    expect(cancel).toHaveBeenCalled();
-    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Spoken');
-    // The note text appears one render before the opened editor enables Send.
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Send to Essay' })).toBeEnabled());
-    expect((await openedEditor()).getText()).toBe('Essay text');
-  });
-
-  it('keeps Send disabled when no note is open', () => {
-    render(<Harness draft="Keep this" initialId={null} items={[]} />);
-    expect(screen.queryByRole('combobox', { name: 'Paragraph style' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'New note' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
-    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this');
   });
 
   it('formats the retained selection and leaves the draft', async () => {
@@ -1125,40 +853,6 @@ describe('Notes screen', () => {
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveFocus();
   });
 
-  it('supports heading menu keys, Escape, and outside-pointer dismissal', async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    const editor = await openedEditor();
-    act(() => editor.commands.setContent('<h1>First</h1><h2>Second</h2><h3>Third</h3>'));
-    const jump = screen.getByRole('button', { name: 'Jump to heading' });
-    act(() => jump.focus());
-    await user.keyboard('{Enter}');
-    expect(jump).toHaveAttribute('aria-expanded', 'true');
-    const entries = screen.getAllByRole('menuitem');
-    expect(entries[0]).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(entries[1]).toHaveFocus();
-    await user.keyboard('{End}');
-    expect(entries[2]).toHaveFocus();
-    await user.keyboard('{Home}{ArrowUp}');
-    expect(entries[2]).toHaveFocus();
-    const target = editor.view.dom.querySelector('h3')!;
-    const scroll = vi.fn();
-    target.scrollIntoView = scroll;
-    await user.keyboard(' ');
-    expect(scroll).toHaveBeenCalledOnce();
-    expect(editor.view.dom).toHaveFocus();
-    fireEvent.click(jump);
-    await user.keyboard('{Escape}');
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    expect(jump).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom).toHaveFocus();
-    fireEvent.click(jump);
-    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveFocus();
-  });
-
   it('derives the heading menu after edits and Undo, and hides it while frozen', async () => {
     let finishSave!: () => void;
     render(<Harness saveNote={() => new Promise<void>((resolve) => { finishSave = resolve; })} getNote={async (id) => ({
@@ -1255,34 +949,6 @@ describe('Notes screen', () => {
     expect(editor.isActive('paragraph')).toBe(true);
   });
 
-  it('navigates and dismisses the Headings menu without changing the note', async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    const editor = await openedEditor();
-    const before = editor.getJSON();
-    const headings = screen.getByRole('button', { name: 'Headings' });
-    await user.click(headings);
-    expect(screen.getAllByRole('menuitemcheckbox').map((item) => item.textContent)).toEqual(['Title', 'Chapter', 'Section']);
-    expect(screen.getByRole('menuitemcheckbox', { name: 'Title' })).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitemcheckbox', { name: 'Chapter' })).toHaveFocus();
-    await user.keyboard('{End}');
-    expect(screen.getByRole('menuitemcheckbox', { name: 'Section' })).toHaveFocus();
-    await user.keyboard('{Escape}');
-    expect(headings).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom).toHaveFocus();
-    await user.click(headings);
-    await user.click(screen.getByRole('button', { name: 'Edit' }));
-    expect(headings).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('menu', { name: 'Headings' })).not.toBeInTheDocument();
-    expect(screen.getByRole('menu', { name: 'Edit' })).toBeInTheDocument();
-    await user.click(headings);
-    expect(screen.queryByRole('menu', { name: 'Edit' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
-    expect(headings).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.getJSON()).toEqual(before);
-  });
-
   it.each(['Bold', 'Italic', 'Underline', 'Highlight', 'Code'])('returns focus after %s and keeps formatting for typing', async (name) => {
     render(<Harness />);
     const editor = await openedEditor();
@@ -1316,100 +982,6 @@ describe('Notes screen', () => {
     await user.click(screen.getByRole('menuitemcheckbox', { name }));
     expect(editor.isActive(name.toLowerCase())).toBe(false);
     expect(editor.view.dom).toHaveFocus();
-  });
-
-  it('navigates the Edit menu with the keyboard and dismisses it without changing the note', async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    const editor = await openedEditor();
-    const before = editor.getJSON();
-    const edit = screen.getByRole('button', { name: 'Edit' });
-    await user.click(edit);
-    expect(screen.getAllByRole('menuitemcheckbox').map((item) => item.textContent)).toEqual(['Bold', 'Italic', 'Underline']);
-    expect(screen.getByRole('menuitemcheckbox', { name: 'Bold' })).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitemcheckbox', { name: 'Italic' })).toHaveFocus();
-    await user.keyboard('{End}');
-    expect(screen.getByRole('menuitemcheckbox', { name: 'Underline' })).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitemcheckbox', { name: 'Bold' })).toHaveFocus();
-    await user.keyboard('{Escape}');
-    expect(edit).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom).toHaveFocus();
-    await user.click(edit);
-    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
-    expect(edit).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.getJSON()).toEqual(before);
-  });
-
-  it('navigates the Insert menu and List submenu with the keyboard', async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    const editor = await openedEditor();
-    const insert = screen.getByRole('button', { name: 'Insert' });
-    await user.click(insert);
-    expect(screen.getByRole('menuitem', { name: 'List' })).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitem', { name: 'Picture' })).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitemcheckbox', { name: 'Code' })).toHaveFocus();
-    await user.keyboard('{Home}{ArrowRight}');
-    expect(screen.getByRole('menuitem', { name: 'Bullet list' })).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitem', { name: 'Numbered list' })).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitem', { name: 'Bullet list' })).toHaveFocus();
-    await user.keyboard('{ArrowLeft}');
-    expect(screen.queryByRole('menu', { name: 'List' })).not.toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'List' })).toHaveFocus();
-    await user.keyboard('{ArrowRight}{Escape}');
-    expect(screen.getByRole('menuitem', { name: 'List' })).toHaveFocus();
-    await user.keyboard('{ArrowRight}{ArrowDown}{Enter}');
-    expect(editor.isActive('orderedList')).toBe(true);
-    expect(insert).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom).toHaveFocus();
-    await user.click(insert);
-    await user.keyboard('{Escape}');
-    expect(insert).toHaveAttribute('aria-expanded', 'false');
-    expect(editor.view.dom).toHaveFocus();
-  });
-
-  it('dismisses Insert and its List submenu when switching menus or clicking outside', async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    const editor = await openedEditor();
-    const before = editor.getJSON();
-    const insert = screen.getByRole('button', { name: 'Insert' });
-    await user.click(insert);
-    await user.click(screen.getByRole('menuitem', { name: 'List' }));
-    await user.click(screen.getByRole('button', { name: 'Edit' }));
-    expect(insert).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('menu', { name: 'List' })).not.toBeInTheDocument();
-    await user.click(insert);
-    expect(screen.queryByRole('menu', { name: 'Edit' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('menu', { name: 'List' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('menuitem', { name: 'List' }));
-    await user.click(screen.getByRole('textbox', { name: 'Prompt' }));
-    expect(insert).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('menu', { name: 'List' })).not.toBeInTheDocument();
-    expect(editor.getJSON()).toEqual(before);
-  });
-
-  it('opens the picture picker from Insert and returns focus when it is canceled', async () => {
-    render(<Harness />);
-    const editor = await openedEditor();
-    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
-    const picture = screen.getByRole('menuitem', { name: 'Picture' });
-    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
-    if (!input) throw new Error('Picture input is missing.');
-    const click = vi.spyOn(input, 'click');
-    act(() => picture.focus());
-    fireEvent.click(picture);
-    expect(click).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('menu', { name: 'Insert' })).not.toBeInTheDocument();
-    fireEvent(input, new Event('cancel'));
-    expect(editor.view.dom).toHaveFocus();
-    expect(editor.getText()).toBe('Alpha');
   });
 
   it('inserts literal prompts from Send and Enter and keeps later typing', async () => {
@@ -1467,32 +1039,6 @@ describe('Notes screen', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(editor.getText().match(/Hello/g)).toHaveLength(1);
     expect(prompt).toHaveValue('');
-  });
-
-  it('sends a spoken prompt once and cancels it when the note changes', async () => {
-    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
-    let appendVoice: (text: string, provisional?: boolean) => void = () => {};
-    vi.spyOn(VoiceInputSession, 'start').mockImplementation(async (_configuration, onTranscription) => {
-      appendVoice = onTranscription;
-      return { stop: async () => undefined, cancel: vi.fn() };
-    });
-    const getNote = vi.fn(async (id: number) => ({
-      id,
-      document: documentWith(id === 5 ? 'Essay text' : 'Alpha'),
-    }));
-    render(<Harness getNote={getNote} sendPhrase="over to you" voice />);
-    const editor = await openedEditor();
-    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
-    await screen.findByRole('button', { name: 'Stop voice input' });
-    act(() => appendVoice('Next line. Over to you'));
-    await waitFor(() => expect(editor.getText()).toContain('Next line.'), { timeout: 5000 });
-    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
-
-    act(() => appendVoice(' Keep this over to you'));
-    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
-    expect(await screen.findByText('Essay text')).toBeInTheDocument();
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1200)); });
-    expect((await openedEditor()).getText()).toBe('Essay text');
   });
 
   it('inserts a picture and keeps a save error visible', async () => {

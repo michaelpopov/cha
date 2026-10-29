@@ -802,9 +802,33 @@ export interface components {
             kind: components["schemas"]["NoteItemKind"];
             store?: components["schemas"]["FolderStoreSummary"];
             forum_id?: string;
+            is_summary: boolean;
+            summary_linked: boolean;
             has_compressed: boolean;
             read_only: boolean;
             name: string;
+        };
+        SessionSummaryGenerated: {
+            run_id: components["schemas"]["NoteId"];
+            target_note_id: number | null;
+            parent_id: components["schemas"]["NoteId"];
+            markdown: string;
+        };
+        SessionSummaryGenerateRequest: {
+            forum_id: string;
+            session_id: string;
+        };
+        SessionSummaryCommitRequest: {
+            run_id: components["schemas"]["NoteId"];
+            document: components["schemas"]["NoteDocument"];
+        };
+        SessionSummaryCommitResult: {
+            item: components["schemas"]["NoteItem"];
+        };
+        SessionSummaryAbandonRequest: {
+            run_id: components["schemas"]["NoteId"];
+            /** @enum {string} */
+            reason: "conversion_failed" | "commit_unknown";
         };
         NoteItemList: {
             items: components["schemas"]["NoteItem"][];

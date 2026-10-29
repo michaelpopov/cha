@@ -170,6 +170,20 @@ struct Application::Impl {
         std::uint64_t epoch, EventSeverity severity, const std::string& message) noexcept;
     void cancel_compressions();
     nlohmann::json note_compression_status(std::int64_t id); // Caller holds lifecycle_mutex.
+    struct SummaryRun {
+        std::int64_t run_id{};
+        std::string connection_id;
+        std::uint64_t epoch{};
+        NoteSummaryTarget target;
+        std::shared_ptr<std::atomic_bool> cancel = std::make_shared<std::atomic_bool>(false);
+        bool ready{};
+        std::string label;
+    };
+    std::int64_t next_summary_run = 1;
+    std::map<FullSessionId, std::shared_ptr<SummaryRun>> summaries;
+    void retire_summary(const FullSessionId& identity, const std::shared_ptr<SummaryRun>& run,
+        EventSeverity severity, std::string_view message, std::string_view reason = {}) noexcept;
+    void cancel_summaries(std::optional<std::string_view> connection_id = {});
     std::mutex background_audio_mutex;
     std::map<std::int64_t, std::shared_ptr<std::atomic_bool>> background_audio;
     // Guarded by lifecycle_mutex; retained across worker replacement.

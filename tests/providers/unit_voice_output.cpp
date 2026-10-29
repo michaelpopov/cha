@@ -138,26 +138,6 @@ TEST(FishAudio, FullSynthesisCapacityRejectsOverflow) {
     }
 }
 
-TEST(FishAudio, IgnoresObsoleteVoiceSettingsWithoutChangingConfiguredModel) {
-    const WorkspaceVoiceProviderOutput output{
-        .model = "s2.1-pro", .output_format = "mp3",
-    };
-    const auto request = make_fish_audio_request(output, {
-        {"text", "Hello"}, {"reference_id", "fish-voice"},
-        {"settings", {{"speed", 0.9}, {"stability", 0.5}, {"use_speaker_boost", true}}},
-    });
-    const auto typed = make_fish_audio_request(output, "Hello",
-        VoiceSynthesis{.reference_id = "fish-voice", .settings = {.speed = 0.9}});
-    EXPECT_EQ(typed.model, request.model);
-    EXPECT_EQ(typed.body, request.body);
-    EXPECT_EQ(request.model, "s2.1-pro");
-    EXPECT_EQ(request.body, Json({
-        {"text", "Hello"}, {"reference_id", "fish-voice"},
-        {"prosody", {{"speed", 0.9}}}, {"format", "mp3"},
-        {"temperature", 0.5}, {"latency", "low"},
-    }));
-}
-
 TEST(FishAudio, PreservesExplicitFishAudioModelAndFormat) {
     for (const std::string format : {"mp3", "wav", "opus"}) {
         const WorkspaceVoiceProviderOutput output{

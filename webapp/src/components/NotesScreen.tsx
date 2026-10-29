@@ -903,6 +903,7 @@ export function NotesScreen({
   const [matchCase, setMatchCase] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
   const [useRegex, setUseRegex] = useState(false);
+  const cancelNoteLoadRef = useRef<() => void>(() => undefined);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; position: number } | null>(null);
   const noteAudio = useNoteAudio({ client: client.noteAudio, id: activeNoteId, editor,
@@ -963,6 +964,7 @@ export function NotesScreen({
     const noteId = activeNoteId;
     const noteName = itemsRef.current.find((item) => item.id === noteId)?.name ?? 'note';
     let cancelled = false;
+    cancelNoteLoadRef.current = () => { cancelled = true; };
     setPhase('loading');
     setOpenError(null);
     void (async () => {
@@ -1082,7 +1084,7 @@ export function NotesScreen({
 
   useEffect(() => {
     if (phase !== 'ready' || !editor || editor.isDestroyed) return;
-    editor.setEditable(!readOnly, false);
+    editor.setEditable(!readOnly && !save.frozen, false);
     setEditing(true);
     editorLiveRef.current = editor;
     const dom = editor.view.dom as HTMLElement & { chaEditor?: Editor };
@@ -1373,6 +1375,7 @@ export function NotesScreen({
 
   useEffect(() => {
     onRegisterDispose(() => {
+      cancelNoteLoadRef.current();
       if (editorLiveRef.current && editorLiveRef.current === editorRef.current) {
         editorLiveRef.current = null;
       }

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { replyNativeClose, requestNativeClose } from '../api/nativeClose';
 import { restoreAppUrl } from '../state/route';
@@ -61,10 +61,34 @@ export function useNoteLeave(
   const [pendingKind, setPendingKind] = useState<PendingOperationKind>(null);
   const [decisionOpen, setDecisionOpen] = useState(false);
 
+  const idleWaiters = useRef(new Map<() => void, () => void>());
+  const idle = () => !intentRef.current && pendingKindRef.current === null
+    && !runningAction.current && deferredCloseAttemptId.current === null;
+  const wakeIdle = useCallback(() => {
+    if (idle()) for (const wake of [...idleWaiters.current.keys()]) wake();
+  }, []);
+  const whenIdle = useCallback((signal: AbortSignal): Promise<void> => {
+    if (signal.aborted) return Promise.reject(new DOMException('Cancelled', 'AbortError'));
+    if (idle()) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const cleanup = () => { idleWaiters.current.delete(wake); signal.removeEventListener('abort', abort); };
+      const wake = () => { cleanup(); resolve(); };
+      const abort = () => { cleanup(); reject(new DOMException('Cancelled', 'AbortError')); };
+      idleWaiters.current.set(wake, abort);
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+      else wakeIdle();
+    });
+  }, [wakeIdle]);
+  useEffect(() => () => {
+    for (const abort of [...idleWaiters.current.values()]) abort();
+  }, []);
+
   const setSlot = useCallback((kind: PendingOperationKind) => {
     pendingKindRef.current = kind;
     setPendingKind(kind);
-  }, []);
+    queueMicrotask(wakeIdle);
+  }, [wakeIdle]);
 
   const setDecision = useCallback((open: boolean) => {
     decisionOpenRef.current = open;
@@ -96,8 +120,9 @@ export function useNoteLeave(
       return action();
     } finally {
       runningAction.current = false;
+      queueMicrotask(wakeIdle);
     }
-  }, []);
+  }, [wakeIdle]);
 
   const finish = useCallback(async (
     intent: LeaveIntent,
@@ -418,6 +443,7 @@ export function useNoteLeave(
     leaveNoteThen,
     beginNoteAction,
     endNoteAction,
+    whenIdle,
     retry,
     stay,
     discard,

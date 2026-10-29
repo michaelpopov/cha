@@ -16,14 +16,11 @@ TEST(Utf8Path, PreservesUtf8PathBytes) {
         "workspace/na\xc3\xafve/\xe6\x9d\xb1\xe4\xba\xac.sqlite3");
 }
 
-TEST(Utf8Path, ConstructsNativePathsFromUtf8Text) {
+TEST(Utf8Path, ConvertsUtf8TextToNativeAndPortablePaths) {
     EXPECT_EQ(
         utf8_path(path_from_utf8(
             "workspace/na\xc3\xafve/\xe6\x9d\xb1\xe4\xba\xac.sqlite3")),
         "workspace/na\xc3\xafve/\xe6\x9d\xb1\xe4\xba\xac.sqlite3");
-}
-
-TEST(Utf8Path, ProducesPortableUtf8Separators) {
     EXPECT_EQ(
         generic_utf8_path(path_from_utf8(
             "workspace/na\xc3\xafve/\xe6\x9d\xb1\xe4\xba\xac.sqlite3")),

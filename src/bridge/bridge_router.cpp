@@ -84,6 +84,7 @@ bool deadline_exempt(Method method) noexcept {
     case Method::vault_import:
     case Method::vault_export:
     case Method::vault_r2_download:
+    case Method::session_summary_generate:
     case Method::notes_read_page:
         return true;
     default:
@@ -676,7 +677,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     void start_background(
         std::string connection_id,
         std::uint64_t id,
-        std::shared_ptr<app::OperationReply> reply) {
+        std::shared_ptr<app::OperationReply> reply, bool summary = false) {
         {
             std::lock_guard lock(mutex);
             auto connection = find_connection(connection_id);
@@ -685,6 +686,8 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             } else {
                 reply->abandon();
                 application.release_request_resources(connection_id, id);
+                // Connection cleanup can run before the summary run is registered.
+                if (summary) application.release_connection_resources(connection_id);
                 return;
             }
         }
@@ -1377,6 +1380,24 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             case Method::notes_compress_cancel:
                 require_only_keys(params, {"id"});
                 application.cancel_note_compression(static_cast<std::int64_t>(require_safe_id(params, "id")), epoch);
+                break;
+            case Method::session_summary_generate: {
+                const auto identity = parse_session_identity(params);
+                start_background(connection_id, id, application.generate_session_summary(connection_id, {identity.forum_id, identity.session_id}, epoch), true);
+                return;
+            }
+            case Method::session_summary_commit:
+                require_only_keys(params, {"run_id", "document"});
+                if (!params.contains("document") || !params.at("document").is_object())
+                    throw std::invalid_argument("The summary document must be an object.");
+                result = {{"item", application.commit_session_summary(connection_id,
+                    static_cast<std::int64_t>(require_safe_id(params, "run_id")), params.at("document"), epoch)}};
+                break;
+            case Method::session_summary_abandon:
+                require_only_keys(params, {"run_id", "reason"});
+                application.abandon_session_summary(connection_id,
+                    static_cast<std::int64_t>(require_safe_id(params, "run_id")), require_string(params, "reason"), epoch);
+                result = nlohmann::json::object();
                 break;
             case Method::notes_read_page:
                 require_only_keys(params, {"url"});

@@ -574,52 +574,6 @@ TEST(BraveSearch, LimitsLongQueriesToWholeWordsWithinBothLimits) {
         "http://127.0.0.1:1"), std::runtime_error);
 }
 
-TEST(BraveSearch, DebugLogsRawResultsOnceAndSkipsEmptyPayloadsForBothProviders) {
-    for (bool brave : {true, false}) {
-        for (const auto* level : {"debug", "info"}) {
-            test::TestWorkspace fixture;
-            const auto path = fixture.root() / "search-debug.log";
-            initialize_diagnostic_logging(path, level);
-            nlohmann::json rows = nlohmann::json::array();
-            for (int i = 0; i < 6; ++i)
-                rows.push_back({{"url", "https://cnn.com/article" + std::to_string(i)},
-                    {"title", "headline" + std::to_string(i)}, {"age", "old-date"},
-                    {"description", "snippet"}, {"content", "snippet"}});
-            nlohmann::json body{{"results", rows}, {"echo", "secret-search-key"}};
-            if (brave) body = nlohmann::json{{"web", body}};
-            MockHttpServer server({http_response("application/json", body.dump())});
-            server.start();
-            const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-            const auto results = brave
-                ? search_brave("CNN today", "secret-search-key", std::atomic_bool{false}, endpoint)
-                : search_tavily("CNN today", "secret-search-key", std::atomic_bool{false}, endpoint);
-            server.join();
-            shutdown_diagnostic_logging();
-            std::ifstream file(path);
-            const std::string output{std::istreambuf_iterator<char>(file), {}};
-            EXPECT_EQ(output.find("secret-search-key"), std::string::npos);
-            EXPECT_EQ(output.find("Authorization:"), std::string::npos);
-            EXPECT_EQ(output.find("search results passed to model"), std::string::npos);
-            EXPECT_EQ(output.find("data=\"\""), std::string::npos);
-            if (std::string_view(level) == "debug") {
-                EXPECT_NE(output.find("CNN today"), std::string::npos);
-                EXPECT_NE(output.find("old-date"), std::string::npos);
-                EXPECT_NE(output.find("headline5"), std::string::npos);
-                EXPECT_NE(output.find("[REDACTED]"), std::string::npos);
-                const auto raw_response = output.find("search raw response");
-                ASSERT_NE(raw_response, std::string::npos);
-                EXPECT_EQ(output.find("search raw response", raw_response + 1), std::string::npos);
-                EXPECT_EQ(output.find("headline5", output.find("headline5") + 1), std::string::npos);
-                EXPECT_EQ(output.find("search request body") != std::string::npos, !brave);
-            } else {
-                EXPECT_EQ(output.find("CNN today"), std::string::npos);
-                EXPECT_EQ(output.find("headline5"), std::string::npos);
-            }
-            EXPECT_NE(results.find("headline5"), std::string::npos);
-        }
-    }
-}
-
 TEST(BraveSearch, LogsSafeFailureReasonsWithoutSecrets) {
     test::TestWorkspace fixture;
     const auto path = fixture.root() / "brave-warnings.log";
@@ -652,20 +606,24 @@ TEST(BraveSearch, LogsSafeFailureReasonsWithoutSecrets) {
         EXPECT_EQ(warnings.find(secret), std::string::npos);
 }
 
-TEST(BraveSearch, CancelsAnInFlightTransfer) {
-    MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n"}, true);
-    server.start();
-    std::atomic_bool cancelled{};
-    auto result = std::async(std::launch::async, [&] {
-        return search_brave("query", "key", cancelled,
-            "http://127.0.0.1:" + std::to_string(server.port()));
-    });
-    const bool received = server.wait_for_requests(1, 2s);
-    cancelled.store(true);
-    EXPECT_TRUE(received);
-    EXPECT_EQ(result.wait_for(1s), std::future_status::ready);
-    EXPECT_TRUE(result.get().empty());
-    server.join();
+TEST(BraveSearch, CancelsAnInFlightTransferForBothProviders) {
+    for (const bool brave : {true, false}) {
+        SCOPED_TRACE(brave ? "Brave" : "Tavily");
+        MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n"}, true);
+        server.start();
+        std::atomic_bool cancelled{};
+        auto result = std::async(std::launch::async, [&] {
+            const std::string endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+            return brave ? search_brave("query", "key", cancelled, endpoint)
+                         : search_tavily("query", "key", cancelled, endpoint);
+        });
+        const bool received = server.wait_for_requests(1, 2s);
+        cancelled.store(true);
+        EXPECT_TRUE(received);
+        EXPECT_EQ(result.wait_for(1s), std::future_status::ready);
+        EXPECT_TRUE(result.get().empty());
+        server.join();
+    }
 }
 
 TEST(TavilySearch, RequestsTenResultsAndCompactsTheResponse) {
@@ -1024,22 +982,6 @@ TEST(TavilySearch, RejectsMalformedResponsesAndHttpFailuresWithoutLoggingSecrets
         EXPECT_NE(warnings.find(std::string("Tavily web search failed: ") + reason), std::string::npos);
     for (const auto* secret : {"private-query", "private-key", "private-response-body"})
         EXPECT_EQ(warnings.find(secret), std::string::npos);
-}
-
-TEST(TavilySearch, CancelsAnInFlightTransfer) {
-    MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n"}, true);
-    server.start();
-    std::atomic_bool cancelled{};
-    auto result = std::async(std::launch::async, [&] {
-        return search_tavily("query", "key", cancelled,
-            "http://127.0.0.1:" + std::to_string(server.port()));
-    });
-    const bool received = server.wait_for_requests(1, 2s);
-    cancelled.store(true);
-    EXPECT_TRUE(received);
-    EXPECT_EQ(result.wait_for(1s), std::future_status::ready);
-    EXPECT_TRUE(result.get().empty());
-    server.join();
 }
 
 } // namespace

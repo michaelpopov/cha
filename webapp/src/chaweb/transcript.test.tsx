@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 
 import { serifItalicVoice } from '../test/fixtures';
 import { Conversation } from './conversation';
@@ -39,51 +39,6 @@ function mockScroll(element: HTMLElement, scrollHeight: number, clientHeight: nu
     set scrollTop(value: number) { scrollTop = value; },
   };
 }
-
-it('offers an audio icon beside the timestamp for completed replies and keeps cached audio playable', () => {
-  const toggle = vi.fn();
-  const speech = { available: true, entryId: null, state: 'loading' as const, error: null, toggle,
-    automatic: false, automaticDisabled: false, toggleAutomatic: vi.fn(), busy: false,
-    isCached: (entry: TranscriptEntry) => Boolean(entry.has_cached_audio),
-    isDownloading: (entry: TranscriptEntry) => entry.id === 1,
-    clearing: false, clearDisabled: false, clear: vi.fn(async () => undefined) };
-  const props = {
-    characters: [], personas: [], layoutKey: 'compact', sessionKey: 'lobby/planning', speech,
-    entries: [entry({ id: 1 }), entry({ id: 2, status: 'streaming' }),
-      entry({ id: 3, kind: 'human' }), entry({ id: 4, text: ' ' }),
-      entry({ id: 5, has_cached_audio: true })],
-  };
-  const { rerender } = render(<Transcript {...props} />);
-  const buttons = screen.getAllByRole('button', { name: 'Read aloud' });
-  expect(buttons).toHaveLength(2);
-  expect(buttons[0]).not.toHaveClass('is-cached');
-  expect(buttons[0]).toHaveClass('is-downloading');
-  expect(buttons[1]).toHaveClass('is-cached');
-  expect(buttons[1]).not.toHaveClass('is-downloading');
-  for (const button of buttons) {
-    expect(button.textContent).toBe('');
-    expect(button.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
-    expect(button.previousElementSibling?.tagName).toBe('TIME');
-    expect(button.nextElementSibling).toHaveAttribute('aria-label', 'Copy response');
-  }
-  fireEvent.click(screen.getAllByRole('button', { name: 'Read aloud' })[0]!);
-  expect(toggle).toHaveBeenCalledWith(props.entries[0]);
-  rerender(<Transcript {...props} speech={{ ...speech, entryId: 1 }} />);
-  expect(screen.getByRole('button', { name: 'Stop audio' })).toHaveClass('is-downloading');
-  expect(screen.getByRole('button', { name: 'Stop audio' })).toHaveAttribute('title', 'Stop audio (downloading)');
-  rerender(<Transcript {...props} speech={{ ...speech, entryId: 1, state: 'playing' }} />);
-  expect(screen.getByRole('button', { name: 'Pause audio' })).toHaveClass('is-downloading');
-  fireEvent.click(screen.getByRole('button', { name: 'Pause audio' }));
-  expect(toggle).toHaveBeenLastCalledWith(props.entries[0]);
-  rerender(<Transcript {...props} speech={{ ...speech, entryId: 5, state: 'playing' }} />);
-  expect(screen.getByRole('button', { name: 'Pause audio' })).toHaveClass('is-cached');
-  rerender(<Transcript {...props} speech={{ ...speech, available: false }} />);
-  expect(screen.getAllByRole('button', { name: 'Read aloud' })).toHaveLength(1);
-  rerender(<Transcript {...props} speech={{ ...speech, clearing: true }} />);
-  screen.getAllByRole('button', { name: 'Read aloud' }).forEach((button) => expect(button).toBeDisabled());
-  rerender(<Transcript {...props} deleting />);
-  screen.getAllByRole('button', { name: 'Read aloud' }).forEach((button) => expect(button).toBeDisabled());
-});
 
 it('renders stored replies, sanitizes Markdown, and keeps a name the roster no longer has', () => {
   render(

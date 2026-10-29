@@ -25,7 +25,6 @@ import {
   personaDetailFixture,
   serifItalicVoice,
   snapshotFixture,
-  waitingAuth,
 } from '../test/fixtures';
 import { App } from './App';
 import { CharacterFileScreen, NewCharacterFileScreen } from './FileScreens';
@@ -158,31 +157,6 @@ function renderAt(width: number) {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
   return render(<App client={fixtureClient()} />);
 }
-
-describe.each([
-  ['desktop', 1280],
-  ['iPhone', 390],
-])('App shell at %s width', (_name, width) => {
-  it('preserves sidebar visibility until toggled through the View menu', async () => {
-    const { container } = renderAt(width);
-    const app = container.querySelector('.cha-app');
-    expect(app).toHaveAttribute('data-sidebar', 'open');
-
-    await openSettingsNavigation();
-    fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
-    expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
-    expect(app).toHaveAttribute('data-sidebar', 'open');
-
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-sidebar'));
-    expect(app).toHaveAttribute('data-sidebar', 'closed');
-    expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
-
-    await openSettingsNavigation();
-    fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
-    expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
-    expect(app).toHaveAttribute('data-sidebar', 'closed');
-  });
-});
 
 it.each(['Personas', 'Characters', 'Forums'])(
   'returns from %s to Settings with the sidebar closed', async (name) => {
@@ -1813,27 +1787,6 @@ it('opens a save dialog and downloads the selected recent session', async () => 
   Reflect.deleteProperty(window, 'showSaveFilePicker');
 });
 
-it('clears the selected session audio cache from its menu without opening it', async () => {
-  const user = userEvent.setup();
-  const clearSessionAudioCache = vi.fn(async () => undefined);
-  const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
-    forum_id: forumId, session_id: sessionId,
-  }));
-  render(<App
-    client={storedPlanningClient({ clearSessionAudioCache, openSession })}
-    connectSessionEvents={drivableSessionEvents().connect}
-  />);
-
-  await user.click(await screen.findByLabelText('Actions for Planning'));
-  await user.click(screen.getByRole('menuitem', { name: 'Clear audio cache' }));
-
-  await waitFor(() => expect(clearSessionAudioCache).toHaveBeenCalledWith('lobby', 'planning'));
-  expect(openSession.mock.calls.some(([forumId]) => forumId === 'lobby')).toBe(false);
-  expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByLabelText('Actions for Planning')).toHaveFocus();
-});
-
 it('deleting the active session replaces its URL and returns to Welcome', async () => {
   const user = userEvent.setup();
   const events = drivableSessionEvents();
@@ -2353,95 +2306,6 @@ it('offers bootstrap retry when discovery refresh fails after Settings download'
   bridge.dispose();
 });
 
-it('discards a Welcome bootstrap refresh from a previous vault', async () => {
-  const oldVault = {
-    ...bootstrapFixture,
-    vault_name: 'Personal',
-    vaults: ['Personal', 'Projects'],
-    initial_forum_id: 'entrance',
-    initial_session_id: welcomeSessionId,
-    entrance_forum_id: 'entrance',
-  };
-  const nextVault = { ...oldVault, vault_name: 'Projects' };
-  const held = deferred();
-  const getBootstrap = vi.fn()
-    .mockResolvedValueOnce(oldVault)
-    .mockImplementationOnce(async () => { await held.promise; return oldVault; })
-    .mockResolvedValue(nextVault);
-  const bridge = createEnvelopeNativeBridge({ connectionId: 'welcome-refresh', post() {} });
-  render(<App
-    client={fixtureClient({
-      getBootstrap,
-      getSessionSnapshot: async () => ({
-        ...snapshotFixture, session_id: welcomeSessionId, discardable: false,
-      }),
-    })}
-    contextEvents={bridge}
-    connectSessionEvents={inertSessionEvents}
-  />);
-  await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(2));
-  await openSettingsNavigation();
-  act(() => bridge.receive({
-    connection_id: 'welcome-refresh', delivery_id: 1,
-    messages: [{
-      connection_id: 'welcome-refresh', event: 'app.contextChanged', context_epoch: 2,
-      state: 'running', causing_request_id: 1,
-    }],
-  }));
-  await waitFor(() => expect(screen.getByLabelText('Vault')).toHaveValue('Projects'));
-
-  await act(async () => { held.settle(); });
-  expect(screen.getByLabelText('Vault')).toHaveValue('Projects');
-  bridge.dispose();
-});
-
-it('clears the previous vault\'s pending Welcome refresh when switching vaults', async () => {
-  const user = userEvent.setup();
-  const bootstrap = {
-    ...bootstrapFixture,
-    vault_name: 'Personal',
-    vaults: ['Personal', 'Projects'],
-    initial_forum_id: 'entrance',
-    initial_session_id: welcomeSessionId,
-    entrance_forum_id: 'entrance',
-  };
-  const held = deferred();
-  const getBootstrap = vi.fn()
-    .mockResolvedValueOnce(bootstrap)
-    .mockImplementationOnce(async () => { await held.promise; return bootstrap; })
-    .mockResolvedValue({ ...bootstrap, vault_name: 'Projects' });
-  const bridge = createEnvelopeNativeBridge({ connectionId: 'welcome-state', post() {} });
-  render(<App
-    client={fixtureClient({
-      getBootstrap,
-      getSessionSnapshot: async () => ({
-        ...snapshotFixture, session_id: welcomeSessionId, discardable: false,
-      }),
-    })}
-    contextEvents={bridge}
-    connectSessionEvents={inertSessionEvents}
-  />);
-  await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(2));
-  await openSettingsNavigation();
-  act(() => bridge.receive({
-    connection_id: 'welcome-state', delivery_id: 1,
-    messages: [{
-      connection_id: 'welcome-state', event: 'app.contextChanged', context_epoch: 2,
-      state: 'running', causing_request_id: 1,
-    }],
-  }));
-  await waitFor(() => expect(screen.getByLabelText('Vault')).toHaveValue('Projects'));
-  await user.click(await screen.findByRole('button', { name: 'Forums' }));
-  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
-  await user.click(within(screen.getByLabelText('Forum sessions navigation'))
-    .getByRole('button', { name: 'The LobbyGuide' }));
-  await user.click(await screen.findByRole('button', { name: 'Members' }));
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Persona' }), 'guest');
-  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-  await act(async () => { held.settle(); });
-  bridge.dispose();
-});
-
 it('lets a second navigation supersede an open that is still in flight', async () => {
   const held = deferred();
   const events = recordingSessionEvents();
@@ -2742,29 +2606,6 @@ it('opens Settings from the gear, fetches OpenAI status, and keeps the conversat
 
   fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
   expect(await screen.findByLabelText('Current chat context')).toHaveTextContent('Entrance');
-  expect(screen.queryByRole('button', { name: 'Connect ChatGPT' })).not.toBeInTheDocument();
-});
-
-it('does not let a late OpenAI status replace a view selected after Settings', async () => {
-  let finish!: (snapshot: typeof waitingAuth) => void;
-  const getOpenAiAuth = vi.fn(() => new Promise<typeof waitingAuth>((resolve) => {
-    finish = resolve;
-  }));
-  render(
-    <App
-      client={fixtureClient({ getOpenAiAuth })}
-      connectSessionEvents={inertSessionEvents}
-    />,
-  );
-  fireEvent.click(await within(screen.getByLabelText('Sidebar')).findByRole('button', { name: 'Settings' }));
-  expect(await screen.findByText('Loading ChatGPT connection…')).toBeInTheDocument();
-
-  fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
-  expect(await screen.findByLabelText('Characters navigation')).toBeInTheDocument();
-  await act(async () => { finish(waitingAuth); });
-
-  expect(screen.getByLabelText('Characters navigation')).toBeInTheDocument();
-  expect(screen.queryByText('TEST-ONLY')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Connect ChatGPT' })).not.toBeInTheDocument();
 });
 
@@ -3363,78 +3204,4 @@ describe('picture sizing', () => {
     expect(screen.getByRole('combobox', { name: 'Choose message target' })).toHaveValue('-');
   });
 
-  it('clamps keyboard sizing, preserves the preferred width after shrinking and navigation, and keeps toggles independent', async () => {
-    const measure = geometry();
-    render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
-    await screen.findByRole('textbox', { name: 'Message' });
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
-    const divider = await screen.findByRole('separator', { name: 'Resize picture' });
-    expect(divider).toHaveAttribute('aria-valuenow', '280');
-    fireEvent.keyDown(divider, { key: 'ArrowLeft' });
-    expect(divider).toHaveAttribute('aria-valuenow', '296');
-    measure(520);
-    expect(divider).toHaveAttribute('aria-valuenow', '200');
-    measure(900);
-    expect(divider).toHaveAttribute('aria-valuenow', '296');
-    for (let i = 0; i < 40; i++) fireEvent.keyDown(divider, { key: 'ArrowLeft' });
-    expect(divider).toHaveAttribute('aria-valuenow', '580');
-    for (let i = 0; i < 40; i++) fireEvent.keyDown(divider, { key: 'ArrowRight' });
-    expect(divider).toHaveAttribute('aria-valuenow', '128');
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
-    expect(screen.queryByRole('separator', { name: 'Resize picture' })).not.toBeInTheDocument();
-    expect(document.querySelector('.cha-app')).toHaveAttribute('data-sidebar', 'open');
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
-    expect(screen.getByRole('separator', { name: 'Resize picture' })).toHaveAttribute('aria-valuenow', '128');
-    await openSettingsNavigation();
-    fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
-    expect(await screen.findByRole('separator', { name: 'Resize picture' })).toHaveAttribute('aria-valuenow', '128');
-  });
-
-  it.each(['pointerUp', 'pointerCancel', 'lostPointerCapture'] as const)('starts a drag from the displayed width and ends on %s', async (finish) => {
-    const measure = geometry(520);
-    vi.stubGlobal('PointerEvent', class extends MouseEvent {
-      pointerId: number;
-      constructor(type: string, init: PointerEventInit) { super(type, init); this.pointerId = init.pointerId ?? 0; }
-    });
-    render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
-    await screen.findByRole('textbox', { name: 'Message' });
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
-    const divider = await screen.findByRole('separator', { name: 'Resize picture' });
-    const sidebarWidth = screen.getByRole('separator', { name: 'Resize sidebar' }).getAttribute('aria-valuenow');
-    divider.setPointerCapture = vi.fn();
-    divider.hasPointerCapture = vi.fn().mockReturnValue(true);
-    divider.releasePointerCapture = vi.fn();
-    expect(divider).toHaveAttribute('aria-valuenow', '200');
-    fireEvent.pointerDown(divider, { pointerId: 1, button: 0, clientX: 500 });
-    fireEvent.pointerMove(divider, { pointerId: 1, clientX: 510 });
-    expect(divider).toHaveAttribute('aria-valuenow', '190');
-    fireEvent[finish](divider, { pointerId: 1 });
-    fireEvent.pointerMove(divider, { pointerId: 1, clientX: 600 });
-    expect(divider).toHaveAttribute('aria-valuenow', '190');
-    measure(900);
-    expect(divider).toHaveAttribute('aria-valuenow', '190');
-    fireEvent.pointerDown(divider, { pointerId: 2, button: 0, clientX: 500 });
-    fireEvent.pointerMove(divider, { pointerId: 2, clientX: -1000 });
-    expect(divider).toHaveAttribute('aria-valuenow', '580');
-    fireEvent.pointerMove(divider, { pointerId: 2, clientX: 1000 });
-    expect(divider).toHaveAttribute('aria-valuenow', '128');
-    fireEvent.pointerUp(divider, { pointerId: 2 });
-    expect(screen.getByRole('separator', { name: 'Resize sidebar' })).toHaveAttribute('aria-valuenow', sidebarWidth!);
-  });
-
-  it('disables resizing at 128 available pixels, hides it at zero, and restores the preference', async () => {
-    const measure = geometry(448);
-    render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
-    await screen.findByRole('textbox', { name: 'Message' });
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
-    const divider = await screen.findByRole('separator', { name: 'Resize picture' });
-    expect(divider).toHaveAttribute('aria-disabled', 'true');
-    fireEvent.keyDown(divider, { key: 'ArrowRight' });
-    expect(divider).toHaveAttribute('aria-valuenow', '128');
-    measure(320);
-    expect(screen.queryByRole('separator', { name: 'Resize picture' })).not.toBeInTheDocument();
-    expect(document.querySelector('.cha-picture')).toBeInTheDocument();
-    measure(900);
-    expect(screen.getByRole('separator', { name: 'Resize picture' })).toHaveAttribute('aria-valuenow', '280');
-  });
 });

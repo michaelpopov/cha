@@ -6,7 +6,7 @@ import { FolderStoreDialog } from './FolderStoreDialog';
 import type { DeleteNoteItem } from './NotesTree';
 
 type Operation = Extract<FolderStoreOperation, { present: true }>;
-const source: NoteItem = { id: 11, parent_id: null, kind: 'folder', name: 'Research', has_compressed: false, read_only: false };
+const source: NoteItem = { id: 11, parent_id: null, kind: 'folder', name: 'Research', is_summary: false, summary_linked: false, has_compressed: false, read_only: false };
 const stored: NoteItem = { ...source, store: { service: 'openai', id: 77, state: 'incomplete' } };
 const choices = [
   { service: 'openai' as const, api_key_id: 'key1', api_key_name: 'Personal OpenAI' },

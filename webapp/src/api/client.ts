@@ -77,6 +77,7 @@ export type VaultUploadCheck = {
   status: 'match' | 'mismatch' | 'missing';
   context_epoch: number;
 };
+export type SessionSummaryGenerated = components['schemas']['SessionSummaryGenerated'];
 export type NoteItem = components['schemas']['NoteItem'];
 export type FolderStoreService = components['schemas']['FolderStoreService'];
 export type FolderStoreSummary = components['schemas']['FolderStoreSummary'];
@@ -153,6 +154,9 @@ export interface NoteAudioClient {
 }
 
 export interface NotesClient {
+  generateSessionSummary(forumId: string, sessionId: string): Promise<SessionSummaryGenerated>;
+  commitSessionSummary(runId: number, document: Record<string, unknown>): Promise<NoteItem>;
+  abandonSessionSummary(runId: number, reason: 'conversion_failed' | 'commit_unknown'): Promise<void>;
   contextEpoch(): number;
   noteAudio?: NoteAudioClient;
   importEpub: (file: File, items: readonly NoteItem[], parentId: number | null) => Promise<number>;

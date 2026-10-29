@@ -698,11 +698,16 @@ std::optional<ErrorCode> Application::delete_session(
     if (workspace::is_welcome_session(key.forum_id, key.session_id)) {
         return ErrorCode::not_found;
     }
+    const auto cancel_summary = [&] {
+        const auto found = impl_->summaries.find(key);
+        if (found != impl_->summaries.end()) found->second->cancel->store(true);
+    };
     if (only_if_unused) {
         try {
             // Submission clears discardable before starting any processing.
             // The conditional delete and that write are serialized by SQLite.
             if (impl_->sessions->discard_unused(key)) {
+                cancel_summary();
                 impl_->live_sessions->close_session(key, epoch);
                 impl_->media_resources.revoke_session(key);
             }
@@ -727,6 +732,7 @@ std::optional<ErrorCode> Application::delete_session(
     } catch (const ForumNotFoundError&) {
         return ErrorCode::not_found;
     }
+    cancel_summary();
     impl_->media_resources.revoke_session(key);
     return std::nullopt;
 }
@@ -1590,6 +1596,7 @@ bool Application::join_shutdown(std::chrono::milliseconds grace) {
         impl_->preserve_on_destroy.store(true);
         return false;
     }
+    impl_->cancel_summaries();
     bool joined = true;
     if (impl_->audio_downloads) {
         impl_->audio_downloads->request_stop();

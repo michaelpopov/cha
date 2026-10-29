@@ -348,7 +348,7 @@ TEST(ModelContext, ProjectsNullAgentMonologueAsConsecutiveSharedHistory) {
         }));
 }
 
-TEST(ModelContext, ProjectsTheSharedTranscriptForTheAddressedCharacter) {
+TEST(ModelContext, ProjectsTheSharedTranscriptForEachCharacter) {
     EXPECT_EQ(
         context(lobby_transcript(), "Cheburashka system", "cheburashka"),
         (std::vector<ModelMessage>{
@@ -362,9 +362,6 @@ TEST(ModelContext, ProjectsTheSharedTranscriptForTheAddressedCharacter) {
              R"({"kind":"character","speaker":"Ismael","text":"Call me Ismael."})"},
             human("What did he say?"),
         }));
-}
-
-TEST(ModelContext, ProjectsTheSameTranscriptFromTheOtherCharactersPointOfView) {
     EXPECT_EQ(
         context(lobby_transcript(), "Ismael system", "ismael"),
         (std::vector<ModelMessage>{

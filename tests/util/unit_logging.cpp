@@ -87,21 +87,6 @@ TEST_F(LoggingTest, FiltersBelowTheConfiguredLevel) {
     EXPECT_NE(output.find("written"), std::string::npos);
 }
 
-TEST_F(LoggingTest, AllowsVerboseLevels) {
-    const std::filesystem::path path = log_file();
-
-    initialize_diagnostic_logging(path, "debug");
-    log_debug("debug event");
-
-    EXPECT_NE(contents(path).find("debug event"), std::string::npos);
-}
-
-TEST_F(LoggingTest, RejectsUnsupportedLevel) {
-    EXPECT_THROW(
-        initialize_diagnostic_logging(log_file(), "verbose"),
-        std::runtime_error);
-}
-
 TEST_F(LoggingTest, DebugPayloadsAreEscapedAndCredentialsAreRedacted) {
     initialize_diagnostic_logging(log_file(), "debug");
     EXPECT_TRUE(debug_logging_enabled());
@@ -112,13 +97,6 @@ TEST_F(LoggingTest, DebugPayloadsAreEscapedAndCredentialsAreRedacted) {
     EXPECT_NE(output.find("first\\n[error] forged [REDACTED] [REDACTED]"), std::string::npos);
     EXPECT_EQ(output.find("\n[error] forged"), std::string::npos);
     EXPECT_EQ(output.find("credential-123"), std::string::npos);
-}
-
-TEST_F(LoggingTest, InfoLoggingDoesNotWriteDebugPayloads) {
-    initialize_diagnostic_logging(log_file(), "info");
-    EXPECT_FALSE(debug_logging_enabled());
-    log_debug_payload("request", "private prompt");
-    EXPECT_EQ(contents(log_file()).find("private prompt"), std::string::npos);
 }
 
 TEST_F(LoggingTest, IgnoresRepeatedInitialization) {

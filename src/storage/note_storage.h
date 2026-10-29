@@ -1,6 +1,7 @@
 #pragma once
 
 #include "storage/sqlite_storage.h"
+#include "chat/session_identity.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -57,6 +58,8 @@ struct NoteItem {
     bool read_only{};
     std::optional<NoteStoreSummary> store;
     std::optional<std::string> forum_id;
+    bool is_summary{};
+    bool summary_linked{};
 };
 
 struct NoteContent {
@@ -86,6 +89,19 @@ void create_note_items_schema(storage::SqliteDatabase& database);
 // Caller owns the transaction; names come from a validated configured catalog.
 void note_sync_forums(storage::SqliteDatabase& database,
     const std::map<std::string, std::string>& forum_names);
+
+struct NoteSummaryTarget {
+    std::int64_t parent_id{};
+    std::optional<std::int64_t> target_note_id;
+};
+[[nodiscard]] NoteSummaryTarget note_summary_target(
+    storage::SqliteDatabase& database, const FullSessionId& identity);
+[[nodiscard]] NoteItem note_commit_summary(storage::SqliteDatabase& database,
+    const FullSessionId& identity, const NoteSummaryTarget& target,
+    const nlohmann::json& document);
+// Caller owns the session rename transaction; never starts a nested transaction.
+void note_rename_summary_in_transaction(storage::SqliteDatabase& database,
+    std::int64_t session_key, std::string_view label);
 
 // Markdown for chat context, retaining headings, lists, links, emphasis, and code blocks.
 [[nodiscard]] std::string note_document_markdown(const nlohmann::json& document);

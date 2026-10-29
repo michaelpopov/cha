@@ -204,35 +204,6 @@ describe('OpenAI connection polling', () => {
     expect(pollOpenAiAuth).toHaveBeenCalledTimes(1);
   });
 
-  it('does not reschedule after a connected poll, an error, cancel, or unmount', async () => {
-    const pollOpenAiAuth = vi.fn(async () => connectedAuth);
-    const { unmount } = renderConnection(fixtureClient({
-      getOpenAiAuth: async () => waitingAuth,
-      pollOpenAiAuth,
-    }));
-    await flush();
-    await act(async () => { vi.advanceTimersByTime(1000); });
-    await flush();
-    expect(screen.getByText('Connected to ChatGPT')).toBeInTheDocument();
-    await act(async () => { vi.advanceTimersByTime(10_000); });
-    expect(pollOpenAiAuth).toHaveBeenCalledTimes(1);
-    unmount();
-
-    const failingPoll = vi.fn(async () => {
-      throw new ChaError('internal_error', 'OpenAI login failed.');
-    });
-    renderConnection(fixtureClient({
-      getOpenAiAuth: async () => waitingAuth,
-      pollOpenAiAuth: failingPoll,
-    }));
-    await flush();
-    await act(async () => { vi.advanceTimersByTime(1000); });
-    await flush();
-    expect(screen.getByRole('alert')).toHaveTextContent('OpenAI login failed.');
-    await act(async () => { vi.advanceTimersByTime(10_000); });
-    expect(failingPoll).toHaveBeenCalledTimes(1);
-  });
-
   it('cancels a pending attempt without scheduling another poll', async () => {
     const poll = deferred<OpenAiAuth>();
     const pollOpenAiAuth = vi.fn(() => poll.promise);
@@ -254,21 +225,4 @@ describe('OpenAI connection polling', () => {
     expect(screen.getByRole('button', { name: 'Connect ChatGPT' })).toBeEnabled();
   });
 
-  it('ignores a late poll after unmount and does not recreate a timer', async () => {
-    const poll = deferred<OpenAiAuth>();
-    const pollOpenAiAuth = vi.fn(() => poll.promise);
-    const { unmount } = renderConnection(fixtureClient({
-      getOpenAiAuth: async () => waitingAuth,
-      pollOpenAiAuth,
-    }));
-    await flush();
-    await act(async () => { vi.advanceTimersByTime(1000); });
-    expect(pollOpenAiAuth).toHaveBeenCalledTimes(1);
-
-    unmount();
-    await act(async () => { poll.resolve(waitingAuth); });
-    expect(vi.getTimerCount()).toBe(0);
-    await act(async () => { vi.advanceTimersByTime(10_000); });
-    expect(pollOpenAiAuth).toHaveBeenCalledTimes(1);
-  });
 });

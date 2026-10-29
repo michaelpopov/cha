@@ -1,6 +1,7 @@
 #include "storage/session_repository.h"
 
 #include "storage/not_found_error.h"
+#include "storage/note_storage.h"
 #include "storage/session_database.h"
 #include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
@@ -560,6 +561,60 @@ TEST_F(SessionRepositoryTest, RecoversPendingSessionsOnStartupByWhetherTheyHaveE
     EXPECT_EQ(recovered->label, "New session");
     EXPECT_NO_THROW(repository.validate(named));
     EXPECT_NO_THROW(repository.validate(visible));
+}
+
+TEST_F(SessionRepositoryTest, LinkedSummaryFollowsClosedRenameAndAllSessionCleanupPathsDetach) {
+    auto repository = make_repository();
+    const auto create_summary = [&](const StoredSession& session) {
+        storage::SqliteDatabase database(database_path(), storage::SqliteDatabase::Mode::read_write);
+        {
+            storage::SqliteTransaction tx(database);
+            create_event_history_schema(database);
+            note_sync_forums(database, {{"lobby", "Lobby"}});
+            tx.commit();
+        }
+        return note_commit_summary(database, session.identity, note_summary_target(database, session.identity),
+            nlohmann::json::parse(R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Summary"}]}]})"));
+    };
+    const auto session = repository.create("lobby", "Original");
+    const auto note = create_summary(session);
+    EXPECT_EQ(repository.rename(session.identity, "Renamed").label, "Renamed");
+    {
+        storage::SqliteDatabase database(database_path(), storage::SqliteDatabase::Mode::read_write);
+        EXPECT_EQ(note_find_item(database, note.id)->name, "Renamed");
+        database.execute("CREATE TRIGGER fail_summary_name BEFORE UPDATE OF name ON note_items "
+            "BEGIN SELECT RAISE(ABORT,'injected failure'); END");
+        EXPECT_THROW((void)repository.rename(session.identity, "Failed"), std::exception);
+        EXPECT_EQ(repository.prepare(session.identity).label, "Renamed");
+        EXPECT_EQ(note_find_item(database, note.id)->name, "Renamed");
+        database.execute("DROP TRIGGER fail_summary_name");
+    }
+    repository.delete_session(session.identity);
+    const auto unused = repository.create("lobby", "");
+    const auto unused_note = create_summary(unused);
+    EXPECT_TRUE(repository.discard_unused(unused.identity));
+    const auto archived = repository.create("lobby", "Archived");
+    const auto archived_note = create_summary(archived);
+    const auto pending = repository.create("lobby", "");
+    const auto pending_note = create_summary(pending);
+    {
+        storage::SqliteDatabase database(database_path(), storage::SqliteDatabase::Mode::read_write);
+        database.prepare("UPDATE sessions SET archived_at=1 WHERE session_id=?", archived.identity.session_id).run();
+    }
+    repository.release_pending();
+    // Use the real startup recovery path for archived and unpublished empty sessions.
+    const auto restarted_welcome = fixture_.root() / "summary-restarted-welcome";
+    create_private_directory(restarted_welcome);
+    const SessionRepository restarted([this] { return workspace_; }, database_path(), fixture_.root(),
+        restarted_welcome, {temporary_identity(), "Welcome"});
+    storage::SqliteDatabase database(database_path(), storage::SqliteDatabase::Mode::read_write);
+    for (const auto id : {note.id, unused_note.id, archived_note.id, pending_note.id}) {
+        const auto retained = note_find_item(database, id);
+        ASSERT_TRUE(retained);
+        EXPECT_TRUE(retained->is_summary);
+        EXPECT_FALSE(retained->summary_linked);
+    }
+    EXPECT_FALSE(database.prepare("PRAGMA foreign_key_check").step());
 }
 
 TEST_F(SessionRepositoryTest, CreatesRenamesAndDeletesRowsTransactionally) {

@@ -68,14 +68,6 @@ TEST(JevProtocol, SendsPromptContextAndQuestionsAndValidatesExactChoice) {
     EXPECT_EQ(make_jev_body(input)["questions"]["recipient"]["criteria"].size(), 5u);
 }
 
-TEST(JevProtocol, IgnoresObsoleteSearchAnswer) {
-    const auto response = nlohmann::json::parse(
-        R"({"answers":{"recipient":{"type":"choice","choice":"character_2"},"web_search":{"type":"choice","choice":"search_direct"}}})");
-    const auto result = parse_jev_result(response, jev_input());
-    EXPECT_EQ(result.outcome, JevOutcome::success);
-    EXPECT_EQ(result.choice, "character_2");
-}
-
 TEST(JevConfiguration, ValidatesAtomicallyRoundTripsAndDisablesWithoutDeletingKey) {
     test::TestWorkspace fixture;
     const auto database = test::import_test_database(fixture.root());

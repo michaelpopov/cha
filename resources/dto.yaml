@@ -1830,7 +1830,7 @@ components:
     NoteItem:
       type: object
       additionalProperties: false
-      required: [id, parent_id, kind, name, has_compressed, read_only]
+      required: [id, parent_id, kind, name, has_compressed, read_only, is_summary, summary_linked]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
         parent_id:
@@ -1841,6 +1841,8 @@ components:
         store: {$ref: "#/components/schemas/FolderStoreSummary"}
         forum_id:
           type: string
+        is_summary: {type: boolean}
+        summary_linked: {type: boolean}
         has_compressed:
           type: boolean
         read_only:
@@ -1848,6 +1850,50 @@ components:
         name:
           type: string
           minLength: 1
+
+    SessionSummaryGenerated:
+      type: object
+      additionalProperties: false
+      required: [run_id, target_note_id, parent_id, markdown]
+      properties:
+        run_id: {$ref: "#/components/schemas/NoteId"}
+        target_note_id:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 9007199254740991
+        parent_id: {$ref: "#/components/schemas/NoteId"}
+        markdown: {type: string}
+
+    SessionSummaryGenerateRequest:
+      type: object
+      additionalProperties: false
+      required: [forum_id, session_id]
+      properties:
+        forum_id: {type: string, minLength: 1}
+        session_id: {type: string, minLength: 1}
+
+    SessionSummaryCommitRequest:
+      type: object
+      additionalProperties: false
+      required: [run_id, document]
+      properties:
+        run_id: {$ref: "#/components/schemas/NoteId"}
+        document: {$ref: "#/components/schemas/NoteDocument"}
+
+    SessionSummaryCommitResult:
+      type: object
+      additionalProperties: false
+      required: [item]
+      properties:
+        item: {$ref: "#/components/schemas/NoteItem"}
+
+    SessionSummaryAbandonRequest:
+      type: object
+      additionalProperties: false
+      required: [run_id, reason]
+      properties:
+        run_id: {$ref: "#/components/schemas/NoteId"}
+        reason: {type: string, enum: [conversion_failed, commit_unknown]}
 
     NoteItemList:
       type: object

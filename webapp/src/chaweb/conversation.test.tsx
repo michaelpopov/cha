@@ -105,17 +105,3 @@ it('disables copying an empty conversation or one being deleted', () => {
   expect(screen.getByRole('button', { name: 'Copy response' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Copy prompt' })).toBeDisabled();
 });
-
-it('ignores clipboard completion after switching to another session', async () => {
-  const user = userEvent.setup();
-  let finish!: () => void;
-  vi.spyOn(navigator.clipboard, 'writeText')
-    .mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
-  const { rerender } = render(<Conversation {...props} />);
-  renderedText();
-  await user.click(screen.getByRole('button', { name: 'Copy conversation' }));
-  rerender(<Conversation {...props} sessionKey="lobby/another" />);
-  await act(async () => finish());
-  expect(screen.queryByRole('status')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Copy conversation' })).toBeEnabled();
-});

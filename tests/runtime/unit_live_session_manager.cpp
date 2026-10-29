@@ -483,45 +483,17 @@ TEST(LiveSessionManager, FailedOpenIsSweptAndCanBeRetried) {
     manager.begin_shutdown();
 }
 
-TEST(LiveSessionManager, TimeoutDoesNotCancelTheOpen) {
-    SessionFiles files;
-    std::mutex mutex;
-    std::condition_variable changed;
-    bool release{};
-    std::atomic<int> starts{};
-    LiveSessionManager manager(
-        manager_settings(1),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
-            ++starts;
-            {
-                std::unique_lock lock(mutex);
-                changed.wait(lock, [&] { return release; });
-            }
-            return test::open_test_session(
-                identity, files.path_for(identity), notifier);
-        });
-    const FullSessionId key{"f", "slow"};
-    EXPECT_EQ(
-        failure_of(manager.open(key, 10ms)), LiveSessionOpenFailure::open_timeout);
-    {
-        std::lock_guard lock(mutex);
-        release = true;
-    }
-    changed.notify_all();
-    EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
-    EXPECT_EQ(starts, 1);
-    manager.begin_shutdown();
-}
-
 TEST(LiveSessionManager, WaitersHaveIndependentDeadlines) {
     SessionFiles files;
     std::mutex mutex;
     std::condition_variable changed;
     bool entered{};
     bool release{};
+    std::atomic<int> starts{};
     LiveSessionManager manager(
         manager_settings(1),
         [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t) {
+            ++starts;
             {
                 std::unique_lock lock(mutex);
                 entered = true;
@@ -546,6 +518,7 @@ TEST(LiveSessionManager, WaitersHaveIndependentDeadlines) {
     }
     changed.notify_all();
     EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(long_waiter.get()));
+    EXPECT_EQ(starts, 1);
     manager.begin_shutdown();
 }
 

@@ -577,6 +577,12 @@ public:
         std::string name,
         std::uint64_t epoch);
     [[nodiscard]] NoteContent get_note(std::int64_t id, std::uint64_t epoch);
+    [[nodiscard]] std::shared_ptr<OperationReply> generate_session_summary(
+        std::string connection_id, const FullSessionId& identity, std::uint64_t epoch);
+    [[nodiscard]] NoteItem commit_session_summary(std::string_view connection_id,
+        std::int64_t run_id, const nlohmann::json& document, std::uint64_t epoch);
+    void abandon_session_summary(std::string_view connection_id,
+        std::int64_t run_id, std::string_view reason, std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> read_note_page(
         std::string url, std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> read_note_picture(

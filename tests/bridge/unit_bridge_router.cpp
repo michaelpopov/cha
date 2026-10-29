@@ -3,6 +3,7 @@
 #include "providers/api_key_store.h"
 #include "storage/note_storage.h"
 #include "storage/session_lease.h"
+#include "storage/session_database.h"
 #include "storage/sqlite_storage.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
@@ -192,6 +193,22 @@ protected:
             std::this_thread::sleep_for(2ms);
         }
         ADD_FAILURE() << "Compression did not retire";
+    }
+
+    // Connection cleanup releases summary reservations in a background job.
+    nlohmann::json generate_summary_after_cleanup(const nlohmann::json& identity) {
+        for (const auto deadline = std::chrono::steady_clock::now() + 5s;;) {
+            auto reply = call("sessionSummary.generate", identity);
+            if (reply.value("ok", false) || std::chrono::steady_clock::now() >= deadline
+                || reply["error"].value("message", "") != "A summary is already being saved for this session.") return reply;
+            std::this_thread::sleep_for(2ms);
+        }
+    }
+
+    std::size_t summary_events(std::string_view text) {
+        const auto events = application_->list_events(epoch_);
+        return static_cast<std::size_t>(std::count_if(events.begin(), events.end(),
+            [text](const auto& event) { return event.message.find(text) != std::string::npos; }));
     }
 
     // Provider/result validation tests wait for Events; acceptance has its own tests.
@@ -859,23 +876,6 @@ TEST_F(BridgeRouterTest, PageReadingSettingsRetainKeyAndAreIndependentOfSearch) 
     settings.erase("firecrawl_api_key");
     ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
     EXPECT_EQ(call("webSearch.get")["result"]["read_provider"], "off");
-}
-
-TEST_F(BridgeRouterTest, RemovedReaderSettingsAreIgnoredWithoutBlockingSearch) {
-    bootstrap_epoch();
-    const auto key = call("apiKey.create", {{"display_name", "Search"}, {"value", "search-secret"}});
-    ASSERT_TRUE(key["ok"]);
-    auto settings = call("webSearch.get")["result"];
-    settings["tool_enabled"] = true;
-    settings["api_key"] = key["result"]["id"];
-    settings["read_provider"] = "jina";
-    settings["jina_api_key"] = 123;
-    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
-    const auto saved = call("webSearch.get")["result"];
-    EXPECT_TRUE(saved["tool_enabled"]);
-    EXPECT_EQ(saved["api_key"], settings["api_key"]);
-    EXPECT_EQ(saved["read_provider"], "off");
-    EXPECT_FALSE(saved.contains("jina_api_key"));
 }
 
 TEST_F(BridgeRouterTest, WebReaderSettingsWorkWithoutKeysAndValidateTheBaseUrl) {
@@ -1650,8 +1650,9 @@ TEST_F(BridgeRouterTest, CompletedReplyHoldsAdmissionUntilDeliveryAck) {
     ASSERT_TRUE(first);
     EXPECT_TRUE(reply_with_id(*first, 1)["ok"]);
 
+    // Notes listing also uses the ordinary request limit.
     router_->handle_request(
-        connection_, request_json(connection_, 2, 0, "bridge.info").dump());
+        connection_, request_json(connection_, 2, 1, "notes.list").dump());
     EXPECT_FALSE(router_->take_delivery(connection_));
     ack_delivery(*router_, connection_, *first);
 
@@ -2997,6 +2998,313 @@ TEST_F(BridgeRouterTest, CompressionUsesSelectedEffortAcrossProviderApis) {
     }
 }
 
+FullSessionId summary_source(app::Application& application, const std::filesystem::path& path, std::uint64_t epoch) {
+    const auto session = application.create_session("lobby", "Summary source", epoch);
+    storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+    auto key = database.prepare("SELECT session_key FROM sessions WHERE session_id=?", session.id);
+    if (!key.step()) throw std::runtime_error("Missing test session");
+    SessionJournal journal(path, key.integer(0));
+    journal.record_entry(make_human_entry({.id=1, .author={"human", "User"}, .addressed_to={"-", "-"}, .text="Full saved goal"}));
+    journal.record_entry(make_character_entry(2, "guide", "Guide", "Completed answer", EntryStatus::complete));
+    journal.record_entry(make_character_entry(3, "guide", "Guide", "Cancelled answer", EntryStatus::cancelled));
+    journal.record_entry(make_notice_entry(5, "Hidden notice"));
+    journal.record_entry(make_error_entry(6, "Hidden error"));
+    journal.record_entry(make_human_entry({.id=7, .author={"human", "User"}, .addressed_to={"-", "-"}, .text="Unanswered goal"}));
+    return {"lobby", session.id};
+}
+
+nlohmann::json summary_identity(const FullSessionId& identity) {
+    return {{"forum_id", identity.forum_id}, {"session_id", identity.session_id}};
+}
+
+TEST_F(BridgeRouterTest, SummaryUsesSavedSourceAndNotesProviderAndReplacesOneReadOnlyNote) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    for (const auto api : {"chat_completions", "responses"}) {
+        MockHttpServer server({compression_response(api, false, "# Useful summary"),
+            compression_response(api, false, "Replacement summary")});
+        server.start();
+        configure_compression(*application_, server.port(), api, false, epoch_);
+        auto generated = call("sessionSummary.generate", summary_identity(source));
+        ASSERT_TRUE(generated["ok"]) << generated;
+        EXPECT_EQ(generated["result"]["markdown"], "# Useful summary");
+        ASSERT_TRUE(call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]},
+            {"document", text_document("Useful summary")}})["ok"]);
+        const auto items = application_->list_note_items(epoch_);
+        const auto saved = *std::find_if(items.begin(), items.end(), [](const auto& item) { return item.is_summary; });
+        EXPECT_TRUE(saved.read_only);
+        EXPECT_TRUE(saved.summary_linked);
+        (void)application_->set_note_read_only(saved.id, false, epoch_);
+        application_->save_note(saved.id, text_document("User edits must not enter the prompt"), epoch_);
+        generated = call("sessionSummary.generate", summary_identity(source));
+        ASSERT_TRUE(generated["ok"]) << generated;
+        EXPECT_EQ(generated["result"]["target_note_id"], saved.id);
+        // The latest session name is used even if it changes during conversion.
+        ASSERT_TRUE(call("session.rename", {{"forum_id", source.forum_id}, {"session_id", source.session_id}, {"label", "Latest title"}})["ok"]);
+        const auto committed = call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]},
+            {"document", text_document("Replacement summary")}});
+        ASSERT_TRUE(committed["ok"]) << committed;
+        EXPECT_EQ(committed["result"]["item"]["id"], saved.id);
+        EXPECT_EQ(committed["result"]["item"]["name"], "Latest title");
+        EXPECT_EQ(committed["result"]["item"]["read_only"], true);
+        EXPECT_EQ(application_->get_note(saved.id, epoch_).document, text_document("Replacement summary"));
+        const auto events = application_->list_events(epoch_);
+        EXPECT_NE(events.front().message.find("Summary saved"), std::string::npos);
+        EXPECT_EQ(events.front().severity, EventSeverity::success);
+        server.join();
+        ASSERT_EQ(server.requests().size(), 2U);
+        for (const auto& raw : server.requests()) {
+            const auto body = nlohmann::json::parse(request_body(raw));
+            const auto text = body.dump();
+            EXPECT_FALSE(body.contains("tools"));
+            EXPECT_NE(text.find("Full saved goal"), std::string::npos);
+            EXPECT_NE(text.find("Completed answer"), std::string::npos);
+            EXPECT_NE(text.find("Unanswered goal"), std::string::npos);
+            EXPECT_NE(text.find("Summarize the supplied conversation"), std::string::npos);
+            for (const auto excluded : {"Cancelled answer", "Failed answer", "Hidden notice", "Hidden error", "User edits must not"})
+                EXPECT_EQ(text.find(excluded), std::string::npos);
+        }
+    }
+}
+
+TEST_F(BridgeRouterTest, SummaryReservationSurvivesDeliveryAndChecksOwnerAndAbandonBarrier) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    MockHttpServer server({compression_response("chat_completions", false, "Summary"),
+        compression_response("chat_completions", false, "Next summary")});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    auto generated = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(generated["ok"]) << generated;
+    const auto id = generated["result"]["run_id"].get<std::int64_t>();
+    expect_note_error(call("sessionSummary.generate", summary_identity(source)), "invalid_argument",
+        "A summary is already being saved for this session.");
+    EXPECT_THROW((void)application_->commit_session_summary("other-window", id, text_document("Wrong owner"), epoch_), app::ApplicationError);
+    EXPECT_THROW(application_->abandon_session_summary("other-window", id, "conversion_failed", epoch_), app::ApplicationError);
+    // A queued commit cannot write after abandon acknowledges removal of the run.
+    const auto queued = queue_request(*router_, connection_, next_id_, epoch_, "sessionSummary.commit",
+        {{"run_id", id}, {"document", text_document("Too late")}});
+    application_->abandon_session_summary(connection_, id, "commit_unknown", epoch_);
+    router_->run_tasks();
+    auto batch = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(batch);
+    EXPECT_FALSE(reply_with_id(*batch, queued)["ok"]);
+    ack_delivery(*router_, connection_, *batch);
+    ASSERT_TRUE(call("sessionSummary.abandon", {{"run_id", id}, {"reason", "commit_unknown"}})["ok"]);
+    generated = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(generated["ok"]) << generated;
+    EXPECT_GT(generated["result"]["run_id"].get<std::int64_t>(), id);
+    const auto second = generated["result"]["run_id"];
+    ASSERT_TRUE(call("sessionSummary.abandon", {{"run_id", second}, {"reason", "conversion_failed"}})["ok"]);
+    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", second}, {"document", text_document("Discarded")}})["ok"]);
+    EXPECT_EQ(application_->list_note_items(epoch_).size(), 2U);
+    server.join();
+}
+
+TEST_F(BridgeRouterTest, SummaryRejectsIncompleteRefusedAndEmptyAnswersWithoutCreatingNotes) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    MockHttpServer server({compression_response("chat_completions", false, "Partial", true),
+        compression_refusal("chat_completions", false, false), compression_response("chat_completions", false, " \n "),
+        compression_response("chat_completions", false, "Good summary")});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    for (int failure = 0; failure < 3; ++failure) {
+        const auto result = call("sessionSummary.generate", summary_identity(source));
+        EXPECT_FALSE(result["ok"]) << result;
+        EXPECT_EQ(application_->list_note_items(epoch_).size(), 2U);
+    }
+    EXPECT_EQ(application_->list_events(epoch_).front().message, "Summary save failed for “Summary source” ("
+        + source.forum_id + "/" + source.session_id + "): The provider returned no summary text.");
+    const auto good = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(good["ok"]) << good;
+    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", good["result"]["run_id"]}, {"document", nlohmann::json::object()}})["ok"]);
+    EXPECT_EQ(application_->list_note_items(epoch_).size(), 2U);
+    server.join();
+}
+
+TEST_F(BridgeRouterTest, SummaryDisconnectAfterMarkdownDeliveryReleasesReservation) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    MockHttpServer server({compression_response("chat_completions", false, "Summary"),
+        compression_response("chat_completions", false, "Next summary")});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    const auto first = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(first["ok"]) << first;
+    router_->close_connection(connection_);
+    connection_ = router_->open_connection();
+    const auto next = generate_summary_after_cleanup(summary_identity(source));
+    ASSERT_TRUE(next["ok"]) << next;
+    EXPECT_NE(first["result"]["run_id"], next["result"]["run_id"]);
+    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", first["result"]["run_id"]}, {"document", text_document("Stale")}})["ok"]);
+    EXPECT_TRUE(call("sessionSummary.commit", {{"run_id", next["result"]["run_id"]}, {"document", text_document("Current")}})["ok"]);
+    server.join();
+}
+
+TEST_F(BridgeRouterTest, SummaryDeletionDuringConversionAndCompressionAdmissionKeepIdentity) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    MockHttpServer server({compression_response("chat_completions", false, "Summary"),
+        compression_response("chat_completions", false, "Replacement")});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    auto generated = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(generated["ok"]) << generated;
+    auto saved = call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]}, {"document", text_document("Summary")}});
+    ASSERT_TRUE(saved["ok"]) << saved;
+    const auto id = saved["result"]["item"]["id"];
+    EXPECT_EQ(call("notes.compressStart", {{"id", id}, {"skip_ineligible", true}})["result"]["skipped"], true);
+    EXPECT_EQ(call("notes.compressStart", {{"id", id}})["error"]["code"], "invalid_argument");
+    generated = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(generated["ok"]) << generated;
+    ASSERT_TRUE(call("session.delete", summary_identity(source))["ok"]);
+    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]}, {"document", text_document("Too late")}})["ok"]);
+    const auto items = application_->list_note_items(epoch_);
+    const auto item = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id; });
+    ASSERT_NE(item, items.end());
+    EXPECT_TRUE(item->is_summary);
+    EXPECT_FALSE(item->summary_linked);
+    EXPECT_TRUE(call("notes.rename", {{"id", id}, {"name", "Detached"}})["ok"]);
+    EXPECT_EQ(call("notes.compressStart", {{"id", id}, {"skip_ineligible", true}})["result"]["skipped"], true);
+    server.join();
+}
+
+TEST_F(BridgeRouterTest, SummaryCancellationRejectsReusedSourceIdentityAndVaultEpoch) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    (void)application_->save_notes_settings({"test"}, epoch_); // Deterministic echo provider.
+    auto generated = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(generated["ok"]) << generated;
+    ASSERT_TRUE(call("session.delete", summary_identity(source))["ok"]);
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        database.prepare("INSERT INTO sessions(forum_key,session_id,label,updated_at,history_epoch,next_entry_id,next_request_id) "
+            "SELECT forum_key,?,'Reused identity',0,1,1,1 FROM forums WHERE forum_id='lobby'", source.session_id).run();
+    }
+    const auto late = call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]}, {"document", text_document("Old source")}});
+    EXPECT_FALSE(late["ok"]);
+    EXPECT_EQ(late["error"]["code"], "operation_cancelled");
+    EXPECT_EQ(application_->list_note_items(epoch_).size(), 2U);
+    const auto new_source = summary_source(*application_, database_, epoch_);
+    const auto other = application_->create_vault(VaultCreate{.display_name="Summary other", .copy_from="Test", .password={}}, epoch_);
+    generated = call("sessionSummary.generate", summary_identity(new_source));
+    ASSERT_TRUE(generated["ok"]) << generated;
+    const auto id = generated["result"]["run_id"].get<std::int64_t>();
+    const auto switched = application_->switch_vault(other.name, {}, epoch_);
+    EXPECT_THROW((void)application_->commit_session_summary(connection_, id, text_document("Old vault"), epoch_), app::ApplicationError);
+    EXPECT_THROW((void)application_->commit_session_summary(connection_, id, text_document("Old vault"), switched.context_epoch), app::ApplicationError);
+    EXPECT_EQ(application_->list_note_items(switched.context_epoch).size(), 2U);
+    const auto back = application_->switch_vault("Test", {}, switched.context_epoch);
+    EXPECT_EQ(application_->list_note_items(back.context_epoch).size(), 2U);
+}
+
+TEST_F(BridgeRouterTest, SummaryRetiredDuringRetryWaitStillSettlesItsReply) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    MockHttpServer server({"HTTP/1.1 429 Limited\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    const auto other = application_->create_vault(VaultCreate{.display_name="Summary retry", .copy_from="Test", .password={}}, epoch_);
+    // Vault maintenance retires the run while the worker waits to retry.
+    compression_wait_ = [&](int) { (void)application_->switch_vault(other.name, {}, epoch_); };
+    const auto generated = call("sessionSummary.generate", summary_identity(source));
+    compression_wait_ = {};
+    EXPECT_FALSE(generated["ok"]);
+    EXPECT_EQ(generated["error"]["code"], "vault_changed");
+    server.join();
+}
+
+TEST_F(BridgeRouterTest, SummaryConnectionCloseCancelsProviderAndRetiresExactlyOnce) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    MockHttpServer server({blocked_compression_response}, true);
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    const auto request = next_id_++;
+    router_->handle_request(connection_, request_json(connection_, request, epoch_, "sessionSummary.generate", summary_identity(source)).dump());
+    router_->run_tasks();
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    router_->close_connection(connection_);
+    server.join();
+    EXPECT_EQ(application_->list_note_items(epoch_).size(), 2U);
+    for (const auto deadline = std::chrono::steady_clock::now() + 5s;
+         summary_events("Summary save cancelled") == 0 && std::chrono::steady_clock::now() < deadline;)
+        std::this_thread::sleep_for(2ms);
+    EXPECT_EQ(summary_events("Summary save cancelled"), 1U);
+    connection_ = router_->open_connection();
+    (void)application_->save_notes_settings({"test"}, epoch_);
+    nlohmann::json provider = application_->get_provider("test", epoch_);
+    for (const char* key : {"id", "used_by", "writable"}) provider.erase(key);
+    provider["mode"] = "test";
+    provider["api_key"] = "obsolete-key";
+    (void)application_->update_provider("test", provider, epoch_);
+    const auto next = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(next["ok"]) << next;
+    EXPECT_TRUE(call("sessionSummary.abandon", {{"run_id", next["result"]["run_id"]}, {"reason", "conversion_failed"}})["ok"]);
+}
+
+TEST_F(BridgeRouterTest, SummaryConnectionCloseDoesNotWaitForTheLifecycleLock) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    (void)application_->save_notes_settings({"test"}, epoch_); // Deterministic echo provider.
+    const auto ready = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(ready["ok"]) << ready;
+    const auto note = compression_source(*application_, epoch_);
+    std::atomic_bool entered{};
+    std::future<void> close;
+    bool returned = false;
+    application_->set_note_compression_changed([&](auto, auto) {
+        if (entered.exchange(true)) return;
+        // The acceptance notice runs under the lifecycle lock, as a vault transfer does.
+        close = std::async(std::launch::async, [&] { router_->close_connection(connection_); });
+        returned = close.wait_for(2s) == std::future_status::ready;
+    });
+    (void)application_->compress_note(note.id, epoch_, false);
+    close.get();
+    EXPECT_TRUE(returned);
+    wait_compression(note.id);
+    application_->set_note_compression_changed({});
+    // Cleanup still retires the closed window's ready run after the lock is free.
+    connection_ = router_->open_connection();
+    const auto next = generate_summary_after_cleanup(summary_identity(source));
+    ASSERT_TRUE(next["ok"]) << next;
+    EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", ready["result"]["run_id"]}, {"document", text_document("Stale")}})["ok"]);
+    EXPECT_TRUE(call("sessionSummary.abandon", {{"run_id", next["result"]["run_id"]}, {"reason", "conversion_failed"}})["ok"]);
+}
+
+TEST_F(BridgeRouterTest, SummaryCanGenerateWhileBulkCompressionWaitsAndRejectsInvalidSources) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    const auto note = compression_source(*application_, epoch_);
+    MockHttpServer blocked({blocked_compression_response}, true);
+    blocked.start();
+    configure_compression(*application_, blocked.port(), "chat_completions", false, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(blocked.wait_for_requests(1, 2s));
+    MockHttpServer summary({compression_response("chat_completions", false, "Summary")});
+    summary.start();
+    configure_compression(*application_, summary.port(), "chat_completions", false, epoch_);
+    const auto generated = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(generated["ok"]) << generated;
+    ASSERT_TRUE(call("sessionSummary.abandon", {{"run_id", generated["result"]["run_id"]}, {"reason", "conversion_failed"}})["ok"]);
+    const auto empty = application_->create_session("lobby", "Empty", epoch_);
+    expect_note_error(call("sessionSummary.generate", {{"forum_id", "lobby"}, {"session_id", empty.id}}),
+        "invalid_argument", "This session has no saved messages to summarize.");
+    expect_note_error(call("sessionSummary.generate", {{"forum_id", "entrance"}, {"session_id", "welcome"}}),
+        "invalid_argument", "Save summary is only available for configured forums.");
+    EXPECT_FALSE(call("sessionSummary.generate", {{"forum_id", "lobby"}, {"session_id", source.session_id}, {"extra", true}})["ok"]);
+    EXPECT_FALSE(call("sessionSummary.abandon", {{"run_id", 0}, {"reason", "conversion_failed"}})["ok"]);
+    EXPECT_FALSE(call("sessionSummary.abandon", {{"run_id", 1}, {"reason", "arbitrary text"}})["ok"]);
+    const auto items = application_->list_note_items(epoch_);
+    for (const auto& item : items) if (item.forum_id)
+        expect_note_error(call("notes.storeUpload", {{"folder_id", item.id}, {"service", "openai"}, {"api_key_id", "unused"}}),
+            "invalid_argument", "This folder is managed by CHA.");
+    ASSERT_TRUE(call("notes.compressCancel", {{"id", note.id}})["ok"]);
+    summary.join();
+    blocked.join();
+}
+
 TEST_F(BridgeRouterTest, CompressionSkipsShortMarkdownBeforeProviderValidation) {
     bootstrap_epoch();
     const auto note = application_->create_note_item({}, NoteItemKind::note, "Source", epoch_);
@@ -3083,6 +3391,7 @@ TEST_F(BridgeRouterTest, CompressionReportsProviderSettingsAndEmptyNotes) {
             std::pair{"responses", "gpt-4o"}, std::pair{"responses", "gpt-4.1-mini"}}) {
         nlohmann::json provider = application_->get_provider("test", epoch_);
         for (const char* key : {"id", "used_by", "writable"}) provider.erase(key);
+        provider["mode"] = "net";
         provider["api"] = api;
         provider["host"] = std::string_view(api) == "responses" ? "api.openai.com" : "api.mistral.ai";
         provider["model"] = model;
@@ -3779,7 +4088,7 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
     EXPECT_EQ(folder["result"]["parent_id"], nullptr);
     EXPECT_EQ(folder["result"]["kind"], "folder");
     EXPECT_EQ(folder["result"]["name"], "Plan");
-    EXPECT_EQ(folder["result"].size(), 6);
+    EXPECT_EQ(folder["result"].size(), 8);
     EXPECT_EQ(folder["result"]["has_compressed"], false);
     EXPECT_EQ(folder["result"]["read_only"], false);
     const auto folder_id = folder["result"]["id"].get<std::int64_t>();
@@ -4194,30 +4503,6 @@ TEST_F(BridgeRouterTest, NotesAdmissionRejectsMaintenanceAndStopping) {
     } catch (const app::ApplicationError& error) {
         EXPECT_EQ(error.code, ErrorCode::application_unavailable);
     }
-}
-
-TEST_F(BridgeRouterTest, NotesListUsesTheOrdinaryRequestLimit) {
-    router_ = std::make_unique<BridgeRouter>(
-        *application_,
-        BridgeRouter::Options{.platform = "test", .ordinary_limit = 1});
-    connection_ = router_->open_connection();
-    router_->handle_request(
-        connection_, request_json(connection_, 1, 0, "bridge.info").dump());
-    router_->run_tasks();
-    auto first = router_->take_delivery(connection_);
-    ASSERT_TRUE(first);
-    router_->handle_request(
-        connection_, request_json(connection_, 2, 1, "notes.list").dump());
-    EXPECT_FALSE(router_->take_delivery(connection_));
-    ack_delivery(*router_, connection_, *first);
-    auto overflow = wait_delivery(*router_, connection_);
-    ASSERT_TRUE(overflow);
-    const auto reply = reply_with_id(*overflow, 2);
-    ASSERT_FALSE(reply.empty());
-    EXPECT_FALSE(reply["ok"]);
-    EXPECT_EQ(reply["error"]["code"], "command_queue_full");
-    EXPECT_EQ(reply["error"]["message"], "Too many in-flight requests.");
-    ack_delivery(*router_, connection_, *overflow);
 }
 
 

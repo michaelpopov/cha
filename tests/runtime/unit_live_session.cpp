@@ -824,38 +824,33 @@ TEST(LiveSession, PublishesAnOpenedSessionNoticeOnTheFirstSnapshot) {
         std::string::npos);
 }
 
-TEST(LiveSession, DefaultShutdownPublishesSessionClosed) {
-    test::TemporarySessionFile file("live_session_closed");
-    auto controls = std::make_shared<test::BackendControls>();
-    LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
-    subscribe(*host);
-    ASSERT_TRUE(next_output(*host));
-    host->acknowledge_output();
+TEST(LiveSession, ShutdownPublishesItsReasonOnTheFinalSnapshot) {
+    for (const bool reloading : {false, true}) {
+        SCOPED_TRACE(reloading ? "reloading" : "default");
+        test::TemporarySessionFile file(
+            reloading ? "live_session_reloading" : "live_session_closed");
+        auto controls = std::make_shared<test::BackendControls>();
+        LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
+        subscribe(*host);
+        ASSERT_TRUE(next_output(*host));
+        host->acknowledge_output();
 
-    host->request_shutdown();
-    const auto terminal = next_output(*host);
-    ASSERT_TRUE(terminal);
-    EXPECT_EQ(terminal->kind, app::SessionOutputItem::Kind::snapshot);
-    ASSERT_EQ(terminal->snapshot.shutdown_reason, ShutdownReason::session_closed);
-    EXPECT_EQ(to_string(*terminal->snapshot.shutdown_reason), "session_closed");
-    EXPECT_TRUE(wait_for_finished(host.handle()));
-}
-
-TEST(LiveSession, ReloadingOutranksSessionClosedOnTheFinalSnapshot) {
-    test::TemporarySessionFile file("live_session_reloading");
-    auto controls = std::make_shared<test::BackendControls>();
-    LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
-    subscribe(*host);
-    ASSERT_TRUE(next_output(*host));
-    host->acknowledge_output();
-
-    host->request_shutdown(ShutdownReason::reloading);
-    auto final_payload = next_output(*host);
-    ASSERT_TRUE(final_payload);
-    EXPECT_EQ(final_payload->kind, app::SessionOutputItem::Kind::snapshot);
-    EXPECT_EQ(
-        final_payload->snapshot.shutdown_reason, ShutdownReason::reloading);
-    EXPECT_TRUE(wait_for_finished(host.handle()));
+        if (reloading) {
+            host->request_shutdown(ShutdownReason::reloading);
+        } else {
+            host->request_shutdown();
+        }
+        const auto terminal = next_output(*host);
+        ASSERT_TRUE(terminal);
+        EXPECT_EQ(terminal->kind, app::SessionOutputItem::Kind::snapshot);
+        ASSERT_EQ(
+            terminal->snapshot.shutdown_reason,
+            reloading ? ShutdownReason::reloading : ShutdownReason::session_closed);
+        if (!reloading) {
+            EXPECT_EQ(to_string(*terminal->snapshot.shutdown_reason), "session_closed");
+        }
+        EXPECT_TRUE(wait_for_finished(host.handle()));
+    }
 }
 
 TEST(LiveSession, FinalSnapshotIncludesReasonsRaisedDuringSnapshotConstruction) {

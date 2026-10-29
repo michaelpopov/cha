@@ -276,6 +276,7 @@ target_link_libraries(cha_sqlite3 PUBLIC OpenSSL::Crypto)
 
 add_library(cha_lib STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/session_summary_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/compression_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/youtube_transcript_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/page_formatting_prompt.cpp
@@ -377,6 +378,13 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
     COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/application-guide.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp -DSYMBOL=embedded_application_guide -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
     DEPENDS resources/application-guide.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/session_summary_prompt.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/session-summary-prompt.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/session_summary_prompt.cpp -DSYMBOL=embedded_session_summary_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/session-summary-prompt.md cmake/embed_text.cmake
     VERBATIM)
 
 add_custom_command(

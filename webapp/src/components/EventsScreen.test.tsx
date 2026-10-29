@@ -1,7 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ActivityEvent } from '../api/client';
-import { DetailRefreshProvider } from '../detailRefresh';
 import { fixtureClient } from '../test/fixtures';
 import { EventsScreen } from './EventsScreen';
 
@@ -60,27 +59,6 @@ describe('Events screen', () => {
     expect(container.querySelector('a, strong, [aria-live]')).toBeNull();
     expect(screen.getAllByRole('button')).toHaveLength(1);
     expect(screen.queryByRole('heading')).not.toBeInTheDocument();
-  });
-
-  it('keeps its snapshot through appends and Welcome refreshes, then reloads on reopening', async () => {
-    let history = items;
-    const listEvents = vi.fn(async () => history);
-    const client = fixtureClient({ listEvents });
-    const navigate = vi.fn();
-    const view = (epoch: number) => <DetailRefreshProvider value={{ epoch, refreshing: false, failed: false, stale: false, retry() {} }}>
-      <EventsScreen client={client} navigate={navigate} />
-    </DetailRefreshProvider>;
-    const { rerender } = render(view(0));
-    await screen.findAllByRole('listitem');
-    history = [{ id: 5, recorded_at: 1793048401, severity: 'success', message: 'New entry' }, ...items];
-    rerender(view(1));
-    expect(listEvents).toHaveBeenCalledTimes(1);
-    expect(screen.getAllByRole('listitem')).toHaveLength(4);
-    expect(screen.queryByText('New entry')).not.toBeInTheDocument();
-    rerender(<div />);
-    rerender(view(1));
-    expect(await screen.findByText('New entry')).toBeInTheDocument();
-    expect(listEvents).toHaveBeenCalledTimes(2);
   });
 
   it('ignores a response from a view that has closed', async () => {

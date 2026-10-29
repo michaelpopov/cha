@@ -100,6 +100,8 @@ NoteItem read_item(storage::SqliteStatement& statement) {
     item.has_compressed = statement.integer(4) != 0;
     item.read_only = statement.integer(5) != 0;
     if (!statement.is_null(6)) item.forum_id = statement.text(6);
+    item.is_summary = statement.integer(7) != 0;
+    item.summary_linked = statement.integer(8) != 0;
     if (item.id <= 0 || item.id > note_id_limit) {
         throw std::runtime_error(
             "Note item " + std::to_string(item.id) + " has an invalid id");
@@ -121,6 +123,42 @@ bool name_taken(
     return statement.step();
 }
 
+std::string summary_name(storage::SqliteDatabase& database, std::int64_t parent,
+    std::string_view label, std::int64_t except_id = 0) {
+    validate_display_label(label, "Session label");
+    std::string candidate(label);
+    for (std::int64_t suffix = 1;
+         candidate == "ANNOTATIONS" || name_taken(database, parent, candidate, except_id); ++suffix) {
+        const auto tail = " " + std::to_string(suffix);
+        std::size_t offset = 0, points = 0;
+        while (offset < label.size() && points < 200 - tail.size()) {
+            ++offset;
+            while (offset < label.size() && (static_cast<unsigned char>(label[offset]) & 0xc0) == 0x80) ++offset;
+            ++points;
+        }
+        candidate = std::string(label.substr(0, offset)) + tail;
+    }
+    require_name(candidate);
+    return candidate;
+}
+
+// Narrow content validation, independent of the window's ProseMirror schema.
+bool summary_text(const nlohmann::json& node) {
+    if (!node.is_object() || !node.contains("type") || !node["type"].is_string())
+        fail(NoteFailure::invalid, "The summary document is invalid.");
+    bool readable = false;
+    if (node["type"] == "text") {
+        if (!node.contains("text") || !node["text"].is_string())
+            fail(NoteFailure::invalid, "The summary document is invalid.");
+        readable = node["text"].get_ref<const std::string&>().find_first_not_of(" \t\r\n") != std::string::npos;
+    }
+    if (node.contains("content")) {
+        if (!node["content"].is_array()) fail(NoteFailure::invalid, "The summary document is invalid.");
+        for (const auto& child : node["content"]) readable = summary_text(child) || readable;
+    }
+    return readable;
+}
+
 void require_folder(
     storage::SqliteDatabase& database,
     std::int64_t parent_id) {
@@ -136,8 +174,9 @@ std::optional<NoteItem> find_item(
     storage::SqliteDatabase& database,
     std::int64_t id) {
     storage::SqliteStatement statement = database.prepare(
-        "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL, read_only, forum_id "
-        "FROM note_items WHERE id = ?1");
+        "SELECT n.id, n.parent_id, n.kind, n.name, n.compressed_text IS NOT NULL, n.read_only, n.forum_id, "
+        "s.note_id IS NOT NULL, s.session_key IS NOT NULL "
+        "FROM note_items n LEFT JOIN note_summaries s ON s.note_id=n.id WHERE n.id = ?1");
     statement.bind(1, id);
     if (!statement.step()) return std::nullopt;
     return read_item(statement);
@@ -614,6 +653,8 @@ void to_json(nlohmann::json& json, const NoteItem& item) {
         {"name", item.name},
         {"has_compressed", item.has_compressed},
         {"read_only", item.read_only},
+        {"is_summary", item.is_summary},
+        {"summary_linked", item.summary_linked},
     };
     if (item.forum_id) json["forum_id"] = *item.forum_id;
     if (item.kind == NoteItemKind::folder && item.store) {
@@ -674,6 +715,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS note_items_sibling_name
 CREATE INDEX IF NOT EXISTS note_items_parent
     ON note_items(parent_id);
 
+CREATE TABLE IF NOT EXISTS note_summaries (
+    note_id INTEGER PRIMARY KEY REFERENCES note_items(id) ON DELETE CASCADE,
+    session_key INTEGER UNIQUE REFERENCES sessions(session_key) ON DELETE SET NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS note_audio_attempts (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id > 0 AND id <= 9007199254740991),
     note_id INTEGER NOT NULL REFERENCES note_items(id) ON DELETE RESTRICT,
@@ -730,8 +776,9 @@ std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {
     try {
         storage::SqliteTransaction transaction(database);
         storage::SqliteStatement statement = database.prepare(
-            "SELECT id, parent_id, kind, name, compressed_text IS NOT NULL, read_only, forum_id "
-            "FROM note_items ORDER BY id");
+            "SELECT n.id, n.parent_id, n.kind, n.name, n.compressed_text IS NOT NULL, n.read_only, n.forum_id, "
+            "s.note_id IS NOT NULL, s.session_key IS NOT NULL "
+            "FROM note_items n LEFT JOIN note_summaries s ON s.note_id=n.id ORDER BY n.id");
         std::vector<NoteItem> items;
         while (statement.step()) items.push_back(read_item(statement));
         transaction.commit();
@@ -968,6 +1015,87 @@ bool note_commit_compressed(storage::SqliteDatabase& database, std::int64_t id,
     }
 }
 
+NoteSummaryTarget note_summary_target(storage::SqliteDatabase& database, const FullSessionId& identity) {
+    auto folder = database.prepare("SELECT n.id FROM note_items n JOIN note_items r ON r.id=n.parent_id "
+        "WHERE n.forum_id=? AND n.kind='folder' AND r.forum_id='' AND r.kind='folder' AND r.parent_id IS NULL",
+        identity.forum_id);
+    if (!folder.step()) fail(NoteFailure::not_found, "The session's managed Notes folder was not found.");
+    NoteSummaryTarget target{folder.integer(0), {}};
+    auto linked = database.prepare("SELECT ns.note_id FROM note_summaries ns JOIN sessions s USING(session_key) "
+        "JOIN forums f USING(forum_key) WHERE f.forum_id=? AND s.session_id=? AND s.archived_at IS NULL",
+        identity.forum_id, identity.session_id);
+    if (linked.step()) {
+        target.target_note_id = linked.integer(0);
+        const auto item = find_item(database, *target.target_note_id);
+        if (!item || item->kind != NoteItemKind::note || item->parent_id != target.parent_id)
+            fail(NoteFailure::invalid, "The session's summary association is invalid.");
+    }
+    return target;
+}
+
+NoteItem note_commit_summary(storage::SqliteDatabase& database, const FullSessionId& identity,
+    const NoteSummaryTarget& target, const nlohmann::json& document) {
+    const auto compact = compact_document(document, target.target_note_id.value_or(0), true);
+    if (!document.contains("type") || document["type"] != "doc"
+        || !document.contains("content") || !document["content"].is_array() || !summary_text(document))
+        fail(NoteFailure::invalid, "The summary document has no readable text.");
+    const auto blob = compress_document(compact);
+    try {
+        storage::SqliteTransaction transaction(database);
+        auto source = database.prepare("SELECT s.session_key, s.label FROM sessions s JOIN forums f USING(forum_key) "
+            "WHERE f.forum_id=? AND s.session_id=? AND s.archived_at IS NULL", identity.forum_id, identity.session_id);
+        if (!source.step()) fail(NoteFailure::not_found, "The source session no longer exists.");
+        const auto key = source.integer(0);
+        const auto label = source.text(1);
+        const auto current = note_summary_target(database, identity);
+        if (current.parent_id != target.parent_id || current.target_note_id != target.target_note_id)
+            fail(NoteFailure::invalid, "The summary target changed. Save summary again.");
+        std::int64_t id;
+        if (target.target_note_id) {
+            id = *target.target_note_id;
+            if (const auto attempt = note_audio_attempt_for_note(database, id)) {
+                event_append_in_transaction(database, EventSeverity::warning,
+                    "Audio generation abandoned for " + note_audio_target(*attempt) + ": summary replaced.");
+                database.prepare("DELETE FROM note_audio_attempts WHERE id=?", attempt->id).run();
+            }
+            database.prepare("DELETE FROM note_audio WHERE note_id=?", id).run();
+            auto update = database.prepare("UPDATE note_items SET content_json=?, read_only=1, compressed_text=NULL, scroll_top=0 WHERE id=?");
+            update.bind_blob(1, blob);
+            update.bind(2, id);
+            update.run();
+        } else {
+            const auto name = summary_name(database, target.parent_id, label);
+            auto insert = database.prepare("INSERT INTO note_items(parent_id, kind, name, content_json, read_only) VALUES (?, 'note', ?, ?, 1)");
+            insert.bind(1, target.parent_id);
+            insert.bind(2, name);
+            insert.bind_blob(3, blob);
+            insert.run();
+            id = database.last_insert_rowid();
+            database.prepare("INSERT INTO note_summaries(note_id, session_key) VALUES (?, ?)", id, key).run();
+        }
+        rebuild_folder_annotations(database, target.parent_id, false);
+        event_append_in_transaction(database, EventSeverity::success, "Summary saved for “" + label + "” ("
+            + identity.forum_id + "/" + identity.session_id + ", note " + std::to_string(id) + ").");
+        const auto item = *find_item(database, id);
+        transaction.commit();
+        return item;
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, NoteFailure::saving, saving_message);
+    }
+}
+
+void note_rename_summary_in_transaction(storage::SqliteDatabase& database,
+    std::int64_t session_key, std::string_view label) {
+    auto linked = database.prepare("SELECT note_id FROM note_summaries WHERE session_key=?", session_key);
+    if (!linked.step()) return;
+    const auto item = find_item(database, linked.integer(0));
+    if (!item || item->kind != NoteItemKind::note || !item->parent_id)
+        fail(NoteFailure::invalid, "The session's summary association is invalid.");
+    const auto name = summary_name(database, *item->parent_id, label, item->id);
+    database.prepare("UPDATE note_items SET name=? WHERE id=?", name, item->id).run();
+    rebuild_folder_annotations(database, item->parent_id, false);
+}
+
 NoteItem note_rename(
     storage::SqliteDatabase& database,
     std::int64_t id,
@@ -979,6 +1107,7 @@ NoteItem note_rename(
         if (!current) fail(NoteFailure::not_found, missing_item_message);
         NoteItem item = *current;
         if (item.forum_id) fail(NoteFailure::invalid, managed_folder_message);
+        if (item.summary_linked) fail(NoteFailure::invalid, "Rename the source session to rename this summary.");
         if (item.kind == NoteItemKind::annotation) fail(NoteFailure::invalid, not_note_message);
         if (item.name != name) {
             if (name_taken(database, item.parent_id, name, id)) {

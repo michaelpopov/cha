@@ -7,8 +7,8 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: './src/test/setup.ts',
-    // Voice tests wait for the real 1-second spoken-send delay. A loaded
-    // machine can pause a test worker for more than a second.
+    // Some tests, such as the large EPUB import, take several seconds. A
+    // loaded machine can pause a test worker for more than a second.
     testTimeout: 15_000,
   },
 });

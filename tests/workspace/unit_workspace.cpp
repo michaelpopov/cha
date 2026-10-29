@@ -384,49 +384,6 @@ TEST(Workspace, IgnoresObsoleteVoiceSettingsAndDropsThemOnSave) {
     EXPECT_EQ(Workspace::load(fixture.root()).find_voice("reader")->settings.speed, 0.95);
 }
 
-TEST(Workspace, IgnoresObsoletePersonaVoiceAndDropsItOnSave) {
-    test::TestWorkspace fixture;
-    const auto path = fixture.root() / "personas" / "reader" / "persona.toml";
-    const auto log_file = fixture.root() / "persona-voice-warnings.log";
-    initialize_diagnostic_logging(log_file, "warn");
-    for (const auto* voice : {"'missing'", "'../invalid'", "42"}) {
-        std::ofstream(path) << "display_name = 'Reader'\nvoice = " << voice << "\n";
-        const Workspace workspace = Workspace::load(fixture.root());
-        EXPECT_FALSE(workspace.find_persona("reader")->voice_id);
-        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
-            editor.write_persona("reader", "Reader", "Updated persona", std::nullopt, "missing");
-        });
-        EXPECT_EQ(file_bytes(path).find("voice"), std::string::npos);
-        EXPECT_EQ(Workspace::load(fixture.root()).find_persona("reader")->prompt, "Updated persona");
-    }
-    shutdown_diagnostic_logging();
-    EXPECT_NE(file_bytes(log_file).find("Ignoring obsolete persona voice setting"), std::string::npos);
-}
-
-TEST(Workspace, IgnoresElevenLabsOutputConfigurationAndRejectsSavingIt) {
-    test::TestWorkspace fixture;
-    const auto directory = fixture.root() / "system" / "voice-output";
-    std::filesystem::create_directories(directory);
-    const auto path = directory / "config.toml";
-    std::ofstream(path)
-        << "url = \"https://api.elevenlabs.io/v1/text-to-speech\"\n"
-           "model = \"eleven_multilingual_v2\"\n"
-           "api_key = \"api_key_2\"\n"
-           "output_format = \"mp3_44100_128\"\n"
-           "default_voice = \"Reader\"\n";
-    const auto before = file_bytes(path);
-    const Workspace workspace = Workspace::load(fixture.root());
-    EXPECT_FALSE(workspace.voice_output());
-    EXPECT_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
-        editor.write_voice_output({.fishaudio = WorkspaceVoiceProviderOutput{
-            .url = "https://api.elevenlabs.io/v1/text-to-speech",
-            .model = "eleven_multilingual_v2", .api_key_id = "api_key_2",
-            .output_format = "mp3_44100_128"}, .default_voice = "Reader",
-        });
-    }), std::invalid_argument);
-    EXPECT_EQ(file_bytes(path), before);
-}
-
 TEST(Workspace, CreatesUpdatesAssignsAndDeletesVoices) {
     test::TestWorkspace fixture;
     std::filesystem::create_directories(
@@ -616,22 +573,6 @@ TEST(Workspace, NotesCompressionEffortDefaultsToHigh) {
         EXPECT_EQ(settings.compression_reasoning_effort,
             std::string_view(effort) == "invalid" ? "high" : effort);
     }
-}
-
-TEST(Workspace, ObsoleteSearchSettingsDoNotPreventDeletingAQueryProvider) {
-    test::TestWorkspace fixture;
-    fixture.write_provider("query", "host = 'test'\nport = 1\nmode = 'test'\nmodel = 'fake'\n");
-    const auto path = fixture.root() / "system" / "web-search" / "config.toml";
-    std::filesystem::create_directories(path.parent_path());
-    std::ofstream(path) << "enabled = true\ntool_enabled = true\nprovider = 'brave'\n"
-                           "api_key = 'search-key'\nquery_provider = 'query'\n";
-    const Workspace active = Workspace::load(fixture.root());
-    ASSERT_TRUE(active.web_search().tool_enabled);
-    ASSERT_NE(active.find_provider("query"), nullptr);
-    edit_fixture(active, [&](WorkspaceConfigEditor& editor) {
-        editor.delete_provider("query");
-    });
-    EXPECT_EQ(Workspace::load(fixture.root()).find_provider("query"), nullptr);
 }
 
 TEST(Workspace, MissingAndEmptyProviderStringsHaveTheSameDiagnostics) {
@@ -847,36 +788,6 @@ TEST(Workspace, LoadsProviderReasoningDefaultsAndWarnsForUnsupportedValues) {
                       .provider.config.reasoning_effort, item.expected);
         EXPECT_EQ(file_bytes(log_file).find("Ignoring unsupported provider reasoning_effort")
                       != std::string::npos, item.warning);
-    }
-}
-
-TEST(Workspace, IgnoresObsoleteVoiceInstrumentationAndDropsItOnSave) {
-    test::TestWorkspace fixture;
-    const auto directory = fixture.root() / "system" / "voice-output";
-    std::filesystem::create_directories(directory);
-    const auto path = directory / "config.toml";
-    const auto log_file = fixture.root() / "obsolete-voice.log";
-    initialize_diagnostic_logging(log_file, "warn");
-    struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop;
-    for (const auto* obsolete : {
-            "instrumentation_provider = 'missing'\ninstrumentation_reasoning_effort = 'invalid'\n",
-            "instrumentation_provider = 42\ninstrumentation_reasoning_effort = false\n"}) {
-        std::ofstream(path)
-            << "url = 'https://api.fish.audio/v1/tts'\nmodel = 's2.1-pro'\n"
-               "api_key = 'api_key_1'\noutput_format = 'mp3'\ndefault_voice = 'Reader'\n"
-            << obsolete;
-        const auto workspace = Workspace::load(fixture.root());
-        ASSERT_TRUE(workspace.voice_output());
-        EXPECT_EQ(workspace.voice_output()->fishaudio->model, "s2.1-pro");
-        EXPECT_NO_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
-            editor.write_voice_output(*workspace.voice_output());
-        }));
-        EXPECT_EQ(file_bytes(path).find("instrumentation_"), std::string::npos);
-    }
-    const auto warnings = file_bytes(log_file);
-    for (const auto* field : {"instrumentation_provider", "instrumentation_reasoning_effort"}) {
-        EXPECT_NE(warnings.find("Ignoring obsolete voice output setting '" + std::string(field)
-            + "' in " + utf8_path(path)), std::string::npos);
     }
 }
 

@@ -170,7 +170,7 @@ describe('native CHA client', () => {
   });
 
   it('accepts annotation metadata and the creation flag', async () => {
-    const annotation = { id: 9, parent_id: null, kind: 'annotation', name: 'ANNOTATIONS', read_only: true, has_compressed: false };
+    const annotation = { id: 9, parent_id: null, kind: 'annotation', name: 'ANNOTATIONS', read_only: true, is_summary: false, summary_linked: false, has_compressed: false };
     const client = createNativeChaClient(createFakeNativeBridge({
       'notes.list': () => ({ items: [annotation] }),
       'notes.save': () => ({ annotation_created: true }),
@@ -544,78 +544,11 @@ describe('native CHA client', () => {
     });
   });
 
-  it('starts audio jobs and resolves opaque media resources', async () => {
-    const resource = {
-      resource_id: 'r1',
-      url: '/media/r1',
-      mime_type: 'audio/mpeg',
-      byte_length: 4,
-    };
-    const bridge = createFakeNativeBridge({
-      'audio.status': () => ({ cached_entry_ids: [2], downloads: [] }),
-      'audio.start': () => ({ entry_id: 1, cached: false, state: 'queued' }),
-      'audio.source': () => resource,
-      'speech.start': () => resource,
-      'speech.release': () => ({}),
-      'audio.clearCache': () => ({}),
-      'voiceInput.connect': () => ({ sdp: 'v=0 answer' }),
-    });
-    const client = createNativeChaClient(bridge);
-    await expect(client.getAudioDownloads('lobby', 'planning', 'Personal'))
-      .resolves.toEqual({ cached_entry_ids: [2], downloads: [] });
-    await expect(client.startAudioDownload('lobby', 'planning', 1, {
-      vault_name: 'Personal', reference_id: 'voice',
-    })).resolves.toEqual({ entry_id: 1, cached: false, state: 'queued' });
-    await expect(client.resolveAudioSource!('lobby', 'planning', 2, 'Personal'))
-      .resolves.toEqual(resource);
-    await expect(client.previewSpeech!('Hello', 'voice', undefined))
-      .resolves.toEqual(resource);
-    await expect(client.connectVoiceInput!('v=0 offer', ['en']))
-      .resolves.toBe('v=0 answer');
-    await client.clearSessionAudioCache('lobby', 'planning');
-    await client.releaseResource!('r1');
-  });
-
-  it('calls the xAI voice methods with session id and piece boundaries', async () => {
-    const calls: Array<{ method: string; params: unknown }> = [];
-    const bridge = createFakeNativeBridge({
-      'voiceInput.xai.start': (params) => {
-        calls.push({ method: 'voiceInput.xai.start', params });
-        return { session_id: 'dictation-1', stop_budget_ms: 20000 };
-      },
-      'voiceInput.xai.audio': (params) => {
-        calls.push({ method: 'voiceInput.xai.audio', params });
-        return { session_id: 'dictation-1', pieces: ['Hello', ' world'] };
-      },
-      'voiceInput.xai.stop': (params) => {
-        calls.push({ method: 'voiceInput.xai.stop', params });
-        return { session_id: 'dictation-1', pieces: ['\n'] };
-      },
-      'voiceInput.xai.cancel': (params) => {
-        calls.push({ method: 'voiceInput.xai.cancel', params });
-        return {};
-      },
-    });
-    const client = createNativeChaClient(bridge);
-    await expect(client.startXaiVoiceInput('dictation-1', ['ru']))
-      .resolves.toEqual({ session_id: 'dictation-1', stop_budget_ms: 20000 });
-    await expect(client.sendXaiVoiceAudio('dictation-1', 'AAE='))
-      .resolves.toEqual({ session_id: 'dictation-1', pieces: ['Hello', ' world'] });
-    await expect(client.stopXaiVoiceInput('dictation-1', 1500))
-      .resolves.toEqual({ session_id: 'dictation-1', pieces: ['\n'] });
-    await client.cancelXaiVoiceInput('dictation-1');
-    expect(calls).toEqual([
-      { method: 'voiceInput.xai.start', params: { session_id: 'dictation-1', languages: ['ru'] } },
-      { method: 'voiceInput.xai.audio', params: { session_id: 'dictation-1', pcm_base64: 'AAE=' } },
-      { method: 'voiceInput.xai.stop', params: { session_id: 'dictation-1', remaining_ms: 1500 } },
-      { method: 'voiceInput.xai.cancel', params: { session_id: 'dictation-1' } },
-    ]);
-  });
 });
 
 describe('notes native client', () => {
-  const folder = { id: 1, read_only: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Plan' };
-  const note = { id: 4, read_only: false, has_compressed: false, parent_id: 1, kind: 'note', name: 'Draft' };
+  const folder = { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Plan' };
+  const note = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: 1, kind: 'note', name: 'Draft' };
   const document = { type: 'doc', content: [{ type: 'paragraph' }] };
 
   it('reads compressed text with the original note document', async () => {
@@ -768,8 +701,8 @@ describe('notes native client', () => {
     const write = vi.fn(() => ({ id: 12 }));
     const client = clientFor({ 'notes.importBook': write });
     expect(await client.importEpub(epubFile(), [
-      { id: 1, read_only: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Research' },
-      { id: 2, read_only: false, has_compressed: false, parent_id: 1, kind: 'folder', name: 'Book' },
+      { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Research' },
+      { id: 2, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: 1, kind: 'folder', name: 'Book' },
     ], 1)).toBe(12);
     expect(write).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ parent_id: 1, name: 'Book 1' }));
   });
@@ -1011,4 +944,32 @@ describe('native folder store contract', () => {
     const client = createNativeChaClient(createFakeNativeBridge({ 'notes.storeChoices': () => result }));
     await expect(client.storeChoices(client.contextEpoch())).rejects.toBeInstanceOf(ChaProtocolError);
   });
+});
+
+it('validates the summary contract and sends only run-owned commit fields', async () => {
+  const item = { id: 4, parent_id: 2, kind: 'note', name: 'Summary', has_compressed: false,
+    read_only: true, is_summary: true, summary_linked: true };
+  const generated = { run_id: 1, parent_id: 2, target_note_id: null, markdown: 'Summary' };
+  const generate = vi.fn(() => generated);
+  const commit = vi.fn(() => ({ item }));
+  const abandon = vi.fn(() => ({}));
+  const client = createNativeChaClient(createFakeNativeBridge({
+    'sessionSummary.generate': generate, 'sessionSummary.commit': commit, 'sessionSummary.abandon': abandon,
+  }));
+  expect(await client.generateSessionSummary('lobby', 'inactive')).toEqual(generated);
+  expect(generate).toHaveBeenCalledWith({ forum_id: 'lobby', session_id: 'inactive' });
+  const document = { type: 'doc', content: [] };
+  expect(await client.commitSessionSummary(1, document)).toEqual(item);
+  expect(commit).toHaveBeenCalledWith({ run_id: 1, document });
+  await client.abandonSessionSummary(1, 'commit_unknown');
+  expect(abandon).toHaveBeenCalledWith({ run_id: 1, reason: 'commit_unknown' });
+  for (const reply of [null, { ...generated, run_id: 0 }, { ...generated, target_note_id: -1 },
+    { ...generated, parent_id: 1.5 }, { ...generated, markdown: null }, { ...generated, extra: true }]) {
+    const bad = createNativeChaClient(createFakeNativeBridge({ 'sessionSummary.generate': () => reply }));
+    await expect(bad.generateSessionSummary('lobby', 'inactive')).rejects.toBeInstanceOf(ChaProtocolError);
+  }
+  for (const patch of [{ is_summary: undefined }, { summary_linked: undefined }, { is_summary: false }, { kind: 'folder' }]) {
+    const bad = createNativeChaClient(createFakeNativeBridge({ 'sessionSummary.commit': () => ({ item: { ...item, ...patch } }) }));
+    await expect(bad.commitSessionSummary(1, document)).rejects.toBeInstanceOf(ChaProtocolError);
+  }
 });

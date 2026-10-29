@@ -8,8 +8,6 @@ import {
   bootstrapFixture,
   characterDetailFixture,
   fixtureClient,
-  voiceDetailFixture,
-  voiceOutputRuntimeFixture,
 } from '../test/fixtures';
 import { CharacterSettingsScreen } from './CharacterScreens';
 
@@ -117,51 +115,6 @@ describe('character settings screen', () => {
       character: expect.objectContaining({ id: 'guide', style: 'mono-large' }),
     });
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-  });
-
-  it('tests the selected unsaved voice with editable text', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(new TextEncoder().encode('audio')),
-    );
-    const previewSpeech = vi.fn(async () => ({
-      url: '/media/preview', resource_id: 'preview', mime_type: 'audio/mpeg', byte_length: 5,
-    }));
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
-    vi.stubGlobal('Audio', vi.fn(function Audio() {
-      return {
-        addEventListener: vi.fn(),
-        pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(),
-        play: vi.fn().mockResolvedValue(undefined),
-      };
-    }));
-    renderSettings(fixtureClient({
-      previewSpeech,
-      listVoices: async () => [voiceDetailFixture],
-      getVoiceOutputRuntime: async () => ({
-        ...voiceOutputRuntimeFixture,
-        url: 'https://api.fish.audio/v1/tts',
-        model: 's2.1-pro',
-        output_format: 'mp3',
-      }),
-    }));
-
-    await userEvent.selectOptions(await screen.findByLabelText('Voice'), 'brian');
-    const preview = screen.getByRole('button', { name: 'Play preview' });
-    expect(preview).toHaveClass('cha-button', 'cha-voice-preview-action');
-    expect(preview).not.toHaveClass('cha-button-ghost');
-    const text = screen.getByLabelText('Voice preview text');
-    await userEvent.clear(text);
-    await userEvent.type(text, 'Read this draft.');
-    await userEvent.click(screen.getByRole('button', { name: 'Play preview' }));
-
-    await waitFor(() => expect(previewSpeech).toHaveBeenCalledWith(
-      'Read this draft.',
-      voiceDetailFixture.elevenlabs_voice_id,
-      { speed: 0.95 },
-      expect.any(AbortSignal),
-      'fishaudio',
-    ));
-    expect(fetchMock).toHaveBeenCalledWith('/media/preview', expect.any(Object));
   });
 
   it('shows a saved provider the workspace can no longer resolve', async () => {

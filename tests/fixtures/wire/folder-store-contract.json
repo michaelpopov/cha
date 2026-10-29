@@ -4,6 +4,8 @@
     "parent_id": null,
     "kind": "folder",
     "name": "Research",
+    "is_summary": false,
+    "summary_linked": false,
     "has_compressed": false,
     "read_only": false,
     "store": {
