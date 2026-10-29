@@ -1021,6 +1021,68 @@ TEST(SessionController, AttachesMaintenanceToolsOnlyToAssistantInWelcome) {
     EXPECT_FALSE(maintenance_attached({"helpdesk", "helpdesk-session"}));
 }
 
+TEST(SessionController, WelcomeUsesConfiguredWebToolsAndAssistantOverrides) {
+    struct Case {
+        bool search_enabled;
+        bool key;
+        bool reader_enabled;
+        bool firecrawl;
+        std::string override;
+        bool expect_search;
+        bool expect_read;
+    };
+    for (const auto& item : std::vector<Case>{
+            {true, true, true, false, "", true, true},
+            {true, false, true, false, "", false, true},
+            {false, true, false, true, "", false, true},
+            {false, false, false, true, "", false, false},
+            {false, true, false, false, "", false, false},
+            {true, true, true, false, "false", false, false},
+            {false, true, true, false, "true", true, true},
+        }) {
+        SCOPED_TRACE(item.override + " search=" + std::to_string(item.search_enabled)
+            + " key=" + std::to_string(item.key) + " reader=" + std::to_string(item.reader_enabled)
+            + " firecrawl=" + std::to_string(item.firecrawl));
+        test::TestWorkspace fixture;
+        const auto web_path = fixture.root() / "system/web-search";
+        std::filesystem::create_directories(web_path);
+        std::ofstream(web_path / "config.toml")
+            << "tool_enabled = " << (item.search_enabled ? "true" : "false")
+            << "\napi_key = 'api_key_1'\nweb_reader_url = 'http://reader.example'\nweb_reader_enabled = "
+            << (item.reader_enabled ? "true" : "false")
+            << "\nread_provider = '" << (item.firecrawl ? "firecrawl" : "off")
+            << "'\nfirecrawl_api_key = 'api_key_1'\n";
+        if (item.key) {
+            const auto key_path = fixture.root() / "system/keys/api_key_1";
+            std::filesystem::create_directories(key_path);
+            std::ofstream(key_path / "config.toml") << "type = 'models'\ndisplay_name = 'Web'\nvalue = 'test-key'\n";
+        }
+        if (!item.override.empty()) {
+            std::ofstream(fixture.root() / "system/assistant/character.toml", std::ios::app)
+                << "web_search_tool = " << item.override << '\n';
+        }
+        const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
+        TemporaryJournal journal;
+        auto backend = std::make_unique<ScriptedBackend>(GenerationResult{}, std::vector<std::string>{"Answer"});
+        auto* observed = backend.get();
+        auto slot = std::make_shared<test::RequestBackendFacade::Slot>(std::move(backend));
+        const auto execute = [](const auto&, auto, const auto&, const auto&...) { return "result"; };
+        auto providers = std::make_shared<Providers>([slot](SharedCharacterDefinition) {
+            return std::make_unique<test::RequestBackendFacade>(slot);
+        }, ProviderThreadLauncher{}, JevExecutor{}, execute, execute);
+        auto controller = SessionController::from_workspace_for_testing(
+            [workspace] { return workspace; }, std::string(workspace_assistant_id), "reader",
+            journal.path, providers, std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
+            {}, {}, {std::string(workspace_entrance_id), std::string(welcome_id)});
+        (void)controller->submit_prompt("reader", "Read the public documentation");
+        (void)receive_until_idle(*controller);
+        ASSERT_EQ(observed->inputs.size(), 1u);
+        EXPECT_TRUE(observed->inputs[0].maintenance_tool);
+        EXPECT_EQ(static_cast<bool>(observed->inputs[0].web_search_tool), item.expect_search);
+        EXPECT_EQ(static_cast<bool>(observed->inputs[0].web_read_tool), item.expect_read);
+    }
+}
+
 TEST(SessionController, PersistsDisplayedCreationTimeForTerminalOutcomes) {
     for (const auto outcome : {GenerationOutcome::completed, GenerationOutcome::cancelled}) {
         SCOPED_TRACE(static_cast<int>(outcome));

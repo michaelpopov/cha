@@ -197,39 +197,43 @@ public:
 };
 
 TEST(Providers, ConcurrentWebCallbacksPublishWebUseOnceBeforeTheTerminal) {
-    std::mutex mutex;
-    std::condition_variable changed;
-    int started = 0;
-    std::atomic_int completed{0};
-    const auto execute = [&](const auto&, auto, const auto&, const auto&... ) {
-        std::unique_lock lock(mutex);
-        ++started;
-        changed.notify_all();
-        EXPECT_TRUE(changed.wait_for(lock, 1s, [&] { return started == 4; }));
-        ++completed;
-        return "results";
-    };
-    Providers providers(
-        [](auto) { return std::make_unique<ConcurrentWebBackend>(); },
-        [](auto worker) { worker(); }, {}, execute, execute);
-    auto request_input = input(definition(), 7);
-    request_input.web_search_tool = WorkspaceWebSearch{};
-    request_input.web_read_tool = WorkspaceWebSearch{};
-    auto notifier = std::make_shared<test::TestNotifier>();
-    auto request = providers.make_request(std::move(request_input), notifier);
-    const auto events = receive_terminal(request);
-    ASSERT_EQ(events.size(), 3u);
-    ASSERT_TRUE(std::holds_alternative<GenerationEventDelta>(events[0]));
-    const auto& web_use = std::get<GenerationEventDelta>(events[0]);
-    EXPECT_TRUE(web_use.web_search_used);
-    EXPECT_TRUE(web_use.text.empty());
-    ASSERT_TRUE(std::holds_alternative<GenerationEventDelta>(events[1]));
-    const auto& answer = std::get<GenerationEventDelta>(events[1]);
-    EXPECT_TRUE(answer.web_search_used);
-    EXPECT_EQ(answer.text, "Answer");
-    EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(events[2]));
-    EXPECT_EQ(completed, 4);
-    EXPECT_EQ(notifier->wake_count(), 3u);
+    for (bool maintenance : {false, true}) {
+        SCOPED_TRACE(maintenance);
+        std::mutex mutex;
+        std::condition_variable changed;
+        int started = 0;
+        std::atomic_int completed{0};
+        const auto execute = [&](const auto&, auto, const auto&, const auto&... ) {
+            std::unique_lock lock(mutex);
+            ++started;
+            changed.notify_all();
+            EXPECT_TRUE(changed.wait_for(lock, 1s, [&] { return started == 4; }));
+            ++completed;
+            return "results";
+        };
+        Providers providers(
+            [](auto) { return std::make_unique<ConcurrentWebBackend>(); },
+            [](auto worker) { worker(); }, {}, execute, execute);
+        auto request_input = input(definition(), 7);
+        request_input.web_search_tool = WorkspaceWebSearch{};
+        request_input.web_read_tool = WorkspaceWebSearch{};
+        if (maintenance) request_input.maintenance = MaintenanceContext{};
+        auto notifier = std::make_shared<test::TestNotifier>();
+        auto request = providers.make_request(std::move(request_input), notifier);
+        const auto events = receive_terminal(request);
+        ASSERT_EQ(events.size(), 3u);
+        ASSERT_TRUE(std::holds_alternative<GenerationEventDelta>(events[0]));
+        const auto& web_use = std::get<GenerationEventDelta>(events[0]);
+        EXPECT_TRUE(web_use.web_search_used);
+        EXPECT_TRUE(web_use.text.empty());
+        ASSERT_TRUE(std::holds_alternative<GenerationEventDelta>(events[1]));
+        const auto& answer = std::get<GenerationEventDelta>(events[1]);
+        EXPECT_TRUE(answer.web_search_used);
+        EXPECT_EQ(answer.text, "Answer");
+        EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(events[2]));
+        EXPECT_EQ(completed, 4);
+        EXPECT_EQ(notifier->wake_count(), 3u);
+    }
 }
 
 TEST(Providers, StartsEveryRequestImmediatelyWithIndependentBackendsAndQueues) {

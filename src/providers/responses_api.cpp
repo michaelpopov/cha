@@ -209,11 +209,10 @@ std::string build_responses_request_body(
         }
     }
 
-    if (input.maintenance_tool) {
-        add_maintenance_tools(body, config.api);
-    } else {
-        if (input.web_search_tool) add_web_search_tool(body, config.api);
-        if (input.web_read_tool) add_web_read_tool(body, config.api);
+    if (input.maintenance_tool) add_maintenance_tools(body, config.api);
+    if (input.web_search_tool) add_web_search_tool(body, config.api);
+    if (input.web_read_tool) add_web_read_tool(body, config.api);
+    if (!input.maintenance_tool) {
         if (input.summary_tool) add_summary_tools(body, config.api);
         if (!subscription && input.folder_search
             && input.folder_search->service == FolderStoreService::openai

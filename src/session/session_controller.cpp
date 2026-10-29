@@ -902,7 +902,7 @@ void SessionController::start_generation(
         const bool summaries = identity_.forum_id != workspace_entrance_id
             && current->find_forum(identity_.forum_id);
         const auto* character = current->find_character(target.id);
-        const bool tool_requested = !maintenance && character && character->web_search_tool.value_or(
+        const bool tool_requested = character && character->web_search_tool.value_or(
             current->web_search().tool_enabled);
         const bool tool_enabled = tool_requested
             && current->find_api_key(current->web_search().api_key_id) != nullptr;
@@ -910,7 +910,7 @@ void SessionController::start_generation(
             log_warn("On-demand web search is unavailable: no search API key is configured");
         }
         const auto& web = current->web_search();
-        const bool web_tools_allowed = !maintenance && character
+        const bool web_tools_allowed = character
             && character->web_search_tool.value_or(true);
         const bool read_requested = web_tools_allowed
             && (web.web_reader_enabled || web.read_provider == "firecrawl");

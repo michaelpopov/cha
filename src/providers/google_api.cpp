@@ -56,6 +56,8 @@ std::string build_google_request_body(
     body["generationConfig"] = std::move(generation);
     if (input.maintenance_tool) {
         add_maintenance_tools(body, ProviderApi::google);
+        if (input.web_search_tool) add_web_search_tool(body, ProviderApi::google);
+        if (input.web_read_tool) add_web_read_tool(body, ProviderApi::google);
     } else {
         const bool stores = input.folder_search
             && input.folder_search->service == FolderStoreService::google

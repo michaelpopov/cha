@@ -227,7 +227,8 @@ void ProviderRequest::execute(
                         R"({"error":"unavailable","message":"Maintenance tools are not available.","committed":false})");
                 };
             }
-        } else if (input_.web_search_tool && web_search_executor) {
+        }
+        if (input_.web_search_tool && web_search_executor) {
             generation.web_search_tool = [&, config = *input_.web_search_tool](
                 std::string_view query, const std::atomic_bool& cancelled) {
                 log_info("Web search initiated: trigger=model_tool query_bytes=" + std::to_string(query.size()));
@@ -240,7 +241,7 @@ void ProviderRequest::execute(
                 return results;
             };
         }
-        if (!input_.maintenance && input_.web_read_tool && web_read_executor) {
+        if (input_.web_read_tool && web_read_executor) {
             generation.web_read_tool = [&, config = *input_.web_read_tool](
                 std::string_view url, const std::atomic_bool& cancelled, const std::function<void()>& on_fallback) {
                 log_info("Page reading initiated: trigger=model_tool provider="

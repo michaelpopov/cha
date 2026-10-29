@@ -2541,56 +2541,60 @@ TEST(ProviderClientTools, RemovesToolsAndRequestsAnAnswerWhenSearchLimitIsReache
 }
 
 TEST(ProviderClientTools, CancellationDuringSearchStopsTheLoop) {
-    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
-        auto definition = network_definition(80, false);
-        definition.provider.config.api = api;
-        int requests = 0;
-        ProviderClient client(shared_definition(definition), nullptr,
-            [&](const auto&, const auto&) {
-                ++requests;
-                auto calls = Json::array();
-                for (int index = 0; index < 8; ++index)
-                    calls.push_back(search_call(api, std::to_string(index)));
-                return tool_reply(api, false, calls);
+    for (bool maintenance : {false, true}) {
+        SCOPED_TRACE(maintenance);
+        for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+            auto definition = network_definition(80, false);
+            definition.provider.config.api = api;
+            int requests = 0;
+            ProviderClient client(shared_definition(definition), nullptr,
+                [&](const auto&, const auto&) {
+                    ++requests;
+                    auto calls = Json::array();
+                    for (int index = 0; index < 8; ++index)
+                        calls.push_back(search_call(api, std::to_string(index)));
+                    return tool_reply(api, false, calls);
+                });
+            Transcript transcript;
+            auto input = client_request(transcript, 1, "Search");
+            if (maintenance) input.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
+            std::atomic_bool cancelled{false};
+            std::mutex mutex;
+            std::condition_variable changed;
+            int started = 0, finished = 0;
+            bool release = false;
+            input.web_search_tool = [&](auto, const auto& cancellation) {
+                std::unique_lock lock(mutex);
+                ++started;
+                changed.notify_all();
+                EXPECT_TRUE(changed.wait_for(lock, std::chrono::seconds(2), [&] { return release; }));
+                EXPECT_TRUE(cancellation.load());
+                ++finished;
+                return "";
+            };
+            // Reading raises the shared budget so the response contains a later group.
+            input.web_read_tool = [](auto, const auto&, const auto&) { return "unused"; };
+            auto worker = std::async(std::launch::async, [&] {
+                auto result = client.perform(client.prepare(input), [](auto) {}, cancelled);
+                std::lock_guard lock(mutex);
+                EXPECT_EQ(finished, 4);
+                return result;
             });
-        Transcript transcript;
-        auto input = client_request(transcript, 1, "Search");
-        std::atomic_bool cancelled{false};
-        std::mutex mutex;
-        std::condition_variable changed;
-        int started = 0, finished = 0;
-        bool release = false;
-        input.web_search_tool = [&](auto, const auto& cancellation) {
-            std::unique_lock lock(mutex);
-            ++started;
+            {
+                std::unique_lock lock(mutex);
+                EXPECT_TRUE(changed.wait_for(lock, std::chrono::seconds(2), [&] { return started == 4; }));
+                cancelled.store(true);
+                release = true;
+            }
             changed.notify_all();
-            EXPECT_TRUE(changed.wait_for(lock, std::chrono::seconds(2), [&] { return release; }));
-            EXPECT_TRUE(cancellation.load());
-            ++finished;
-            return "";
-        };
-        // Reading raises the shared budget so the response contains a later group.
-        input.web_read_tool = [](auto, const auto&, const auto&) { return "unused"; };
-        auto worker = std::async(std::launch::async, [&] {
-            auto result = client.perform(client.prepare(input), [](auto) {}, cancelled);
-            std::lock_guard lock(mutex);
+            const auto result = worker.get();
+            EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
+            EXPECT_EQ(started, 4);
             EXPECT_EQ(finished, 4);
-            return result;
-        });
-        {
-            std::unique_lock lock(mutex);
-            EXPECT_TRUE(changed.wait_for(lock, std::chrono::seconds(2), [&] { return started == 4; }));
-            cancelled.store(true);
-            release = true;
+            EXPECT_EQ(requests, 1);
+            EXPECT_EQ(result.usage.input_tokens, 10u);
+            EXPECT_EQ(result.usage.output_tokens, 2u);
         }
-        changed.notify_all();
-        const auto result = worker.get();
-        EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
-        EXPECT_EQ(started, 4);
-        EXPECT_EQ(finished, 4);
-        EXPECT_EQ(requests, 1);
-        EXPECT_EQ(result.usage.input_tokens, 10u);
-        EXPECT_EQ(result.usage.output_tokens, 2u);
     }
 }
 
@@ -3046,39 +3050,49 @@ TEST(ProviderClientTools, MaintenanceRejectsOversizedAndMalformedCalls) {
 }
 
 TEST(ProviderClientTools, MaintenanceDisablesToolsAfterTwentyFourCalls) {
-    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
-        int calls = 0;
-        std::vector<Json> requests;
-        ProviderClient client(shared_definition([&] {
-            auto definition = network_definition(80, false);
-            definition.provider.config.api = api;
-            return definition;
-        }()), nullptr, [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
-            requests.push_back(Json::parse(request.body));
-            if (requests.size() == 1) {
-                Json batch = Json::array();
-                for (int index = 0; index < maintenance_call_limit; ++index) {
-                    batch.push_back(search_call(
-                        api, "call" + std::to_string(index),
-                        maintenance_arguments().dump(), "vault_config_list"));
+    for (bool web : {false, true}) {
+        SCOPED_TRACE(web);
+        for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+            int calls = 0;
+            std::atomic_int web_calls{0};
+            std::vector<Json> requests;
+            ProviderClient client(shared_definition([&] {
+                auto definition = network_definition(80, false);
+                definition.provider.config.api = api;
+                return definition;
+            }()), nullptr, [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
+                requests.push_back(Json::parse(request.body));
+                if (requests.size() == 1) {
+                    Json batch = Json::array();
+                    for (int index = 0; index < maintenance_call_limit; ++index) {
+                        batch.push_back(search_call(
+                            api, "call" + std::to_string(index),
+                            web && index % 4 != 0 ? R"({"url":"https://example.org"})" : maintenance_arguments().dump(),
+                            web && index % 4 != 0 ? "web_read" : "vault_config_list"));
+                    }
+                    return tool_reply(api, false, batch);
                 }
-                return tool_reply(api, false, batch);
-            }
-            return tool_reply(api, false, Json::array(), "Finished from the results.");
-        });
-        Transcript transcript;
-        auto input = client_request(transcript, 3, "Repair");
-        input.maintenance_tool = [&](auto, auto, const auto&) {
-            ++calls;
-            return R"({"version":"1","entries":[]})";
-        };
-        const auto result = client.perform(
-            client.prepare(input), [](auto) {}, std::atomic_bool{false});
-        EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
-        EXPECT_EQ(calls, maintenance_call_limit);
-        ASSERT_EQ(requests.size(), 2u);
-        EXPECT_FALSE(requests.back().contains("tools"));
-        EXPECT_NE(requests.back().dump().find("Earlier saved changes stay saved."), std::string::npos);
+                return tool_reply(api, false, Json::array(), "Finished from the results.");
+            });
+            Transcript transcript;
+            auto input = client_request(transcript, 3, "Repair");
+            input.maintenance_tool = [&](auto, auto, const auto&) {
+                ++calls;
+                return R"({"version":"1","entries":[]})";
+            };
+            if (web) input.web_read_tool = [&](auto, const auto&, const auto&) { ++web_calls; return "page"; };
+            const auto result = client.perform(
+                client.prepare(input), [](auto) {}, std::atomic_bool{false});
+            EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(calls, web ? maintenance_call_limit / 4 : maintenance_call_limit);
+            EXPECT_EQ(web_calls, web ? 16 : 0);
+            ASSERT_EQ(requests.size(), 2u);
+            EXPECT_FALSE(requests.back().contains("tools"));
+            const auto text = requests.back().dump();
+            EXPECT_NE(text.find("Earlier saved changes stay saved."), std::string::npos);
+            EXPECT_EQ(text.find("web-call limit was reached. Maintenance tools may remain usable") != std::string::npos, web);
+            EXPECT_EQ(text.find("Summary tools may remain usable"), std::string::npos);
+        }
     }
 }
 
@@ -3237,68 +3251,6 @@ TEST(ProviderClientTools, MaintenanceAnswerBudgetStopsCallsInLaterRounds) {
         ASSERT_EQ(requests.size(), 2u);
         EXPECT_FALSE(requests.back().contains("tools"));
         EXPECT_FALSE(requests.back().contains("tool_choice"));
-    }
-}
-
-TEST(ProviderClientTools, MaintenanceOmitsRequiredWebSearch) {
-    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
-        int web_calls = 0;
-        int maintenance_calls = 0;
-        std::vector<Json> requests;
-        ProviderClient client(shared_definition([&] {
-            auto definition = network_definition(80, false);
-            definition.provider.config.api = api;
-            definition.provider.config.host = "openrouter.ai";
-            definition.provider.config.web_search = WebSearchMode::required;
-            return definition;
-        }()), nullptr, [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
-            requests.push_back(Json::parse(request.body));
-            if (requests.size() == 1) {
-                return tool_reply(api, false, Json::array({
-                    search_call(api, "search"),
-                    search_call(api, "read", R"({"url":"https://example.org"})", "web_read"),
-                    search_call(api, "list", maintenance_arguments().dump(), "vault_config_list"),
-                }));
-            }
-            return tool_reply(api, false, Json::array(), "Local evidence only.");
-        });
-        Transcript transcript;
-        auto input = client_request(transcript, 4, "Repair");
-        input.web_search_tool = [&](auto, const auto&) -> std::string {
-            ++web_calls;
-            throw std::runtime_error("web search must not run");
-        };
-        input.web_read_tool = [&](auto, const auto&, const auto&) -> std::string {
-            ++web_calls;
-            throw std::runtime_error("web read must not run");
-        };
-        input.maintenance_tool = [&](std::string_view name, auto, const auto&) {
-            ++maintenance_calls;
-            EXPECT_EQ(name, "vault_config_list");
-            return R"({"version":"1","entries":[]})";
-        };
-        GenerationStatistics statistics;
-        auto payload = client.prepare(input);
-        payload.statistics = &statistics;
-        const auto result = client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false});
-        EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
-        EXPECT_EQ(statistics.maintenance.calls, 1u);
-        EXPECT_EQ(statistics.maintenance.failed, 0u);
-        EXPECT_EQ(statistics.tool_calls_rejected, 2u);
-        EXPECT_GT(statistics.maintenance.duration.count(), 0);
-        EXPECT_EQ(web_calls, 0);
-        EXPECT_EQ(maintenance_calls, 1);
-        expect_maintenance_tools(requests.front());
-        const auto& messages = requests.back()[api == ProviderApi::responses ? "input" : "messages"];
-        int unavailable = 0;
-        for (const Json& message : messages) {
-            const auto field = api == ProviderApi::responses ? "output" : "content";
-            if (!message.contains(field) || !message[field].is_string()) continue;
-            if (message[field].get<std::string>().find("Web tools are not available") != std::string::npos) {
-                ++unavailable;
-            }
-        }
-        EXPECT_EQ(unavailable, 2);
     }
 }
 
@@ -3862,6 +3814,72 @@ std::string summary_system_text(const Json& body, ProviderApi api) {
     if (api == ProviderApi::anthropic) return body.at("system").get<std::string>();
     if (api == ProviderApi::google) return body.at("systemInstruction").at("parts").back().at("text").get<std::string>();
     return body.at("messages").front().at("content").get<std::string>();
+}
+
+TEST(ProviderClientTools, MaintenanceCombinesWebAndInternalToolsAcrossAllApis) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses, ProviderApi::anthropic, ProviderApi::google}) {
+        for (bool stream : {false, true}) {
+            SCOPED_TRACE(std::string(to_string(api)) + (stream ? " streaming" : " buffered"));
+            auto definition = network_definition(80, stream);
+            definition.provider.config.api = api;
+            definition.provider.config.host = "openrouter.ai";
+            definition.provider.config.web_search = WebSearchMode::required;
+            int rounds = 0, internal_calls = 0;
+            ProviderClient client(shared_definition(definition), nullptr,
+                [&](const ProviderHttpRequest& request, const auto&) {
+                    const auto body = Json::parse(request.body);
+                    const auto text = body.dump();
+                    EXPECT_NE(text.find("\"name\":\"vault_config_list\""), std::string::npos);
+                    EXPECT_NE(text.find("\"name\":\"web_search\""), std::string::npos);
+                    EXPECT_NE(text.find("\"name\":\"web_read\""), std::string::npos);
+                    EXPECT_EQ(text.find("\"type\":\"web_search\""), std::string::npos);
+                    EXPECT_EQ(text.find("\"type\":\"openrouter:web_search\""), std::string::npos);
+                    EXPECT_NE(summary_system_text(body, api).find("Web search is available"), std::string::npos);
+                    EXPECT_NE(summary_system_text(body, api).find("Web page reading is available"), std::string::npos);
+                    if (++rounds == 1) return summary_mock_reply(api, stream, Json::array({
+                        summary_mock_call(api, "search", "web_search", {{"query", "public documentation"}}),
+                        summary_mock_call(api, "list", "vault_config_list", maintenance_arguments()),
+                    }));
+                    EXPECT_NE(text.find("Search results"), std::string::npos);
+                    EXPECT_NE(text.find("internal evidence"), std::string::npos);
+                    if (rounds == 2) return summary_mock_reply(api, stream, Json::array({
+                        summary_mock_call(api, "read", "web_read", {{"url", "https://example.org/guide"}}),
+                    }));
+                    EXPECT_NE(text.find("Page text"), std::string::npos);
+                    return summary_mock_reply(api, stream, Json::array(), "Verified answer");
+                });
+            Transcript transcript;
+            auto input = client_request(transcript, 4, "Check the public documentation and local configuration");
+            input.web_search_tool = [](std::string_view query, const auto&) {
+                EXPECT_EQ(query, "public documentation");
+                return "Search results";
+            };
+            input.web_read_tool = [](std::string_view url, const auto&, const auto&) {
+                EXPECT_EQ(url, "https://example.org/guide");
+                return "Page text";
+            };
+            input.maintenance_tool = [&](std::string_view name, auto, const auto&) {
+                ++internal_calls;
+                EXPECT_EQ(name, "vault_config_list");
+                return R"({"version":"1","entries":["internal evidence"]})";
+            };
+            GenerationStatistics statistics;
+            auto payload = client.prepare(input);
+            payload.statistics = &statistics;
+            std::string answer;
+            const auto result = client.perform(std::move(payload),
+                [&](GenerationDelta delta) { if (delta.kind == GenerationDeltaKind::answer) answer += delta.text; },
+                std::atomic_bool{false});
+            EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(answer, "Verified answer");
+            EXPECT_EQ(rounds, 3);
+            EXPECT_EQ(internal_calls, 1);
+            EXPECT_EQ(statistics.maintenance.calls, 1u);
+            EXPECT_EQ(statistics.web_search.calls, 1u);
+            EXPECT_EQ(statistics.web_read.calls, 1u);
+            EXPECT_EQ(statistics.tool_calls_rejected, 0u);
+        }
+    }
 }
 
 TEST(ProviderClientSummary, CatalogueUsesEffectiveToolsAndCountsFullSystemTextOnce) {
