@@ -2044,8 +2044,11 @@ TEST_F(NoteStorageTest, SummaryToolsReportInvalidContentArgumentsAndCancellation
     for (const auto& args : {nlohmann::json{{"note_id", 0}}, {{"note_id", -1}}, {{"note_id", note_id_limit + 1}},
             {{"note_id", 1.0}}, {{"note_id", "1"}}, {{"note_id", 1}, {"extra", true}}})
         EXPECT_EQ(summary_tool_result(path_, "summary_read", args)["error"], "invalid_argument");
-    for (const auto& args : {nlohmann::json{{"query", ""}}, {{"query", 1}, {"before_note_id", nullptr}},
-            {{"query", std::string(513, 'x')}, {"before_note_id", nullptr}}, {{"query", ""}, {"before_note_id", 0}}})
+    for (const auto& args : {nlohmann::json::object(), {{"before_note_id", nullptr}},
+            {{"query", 1}, {"before_note_id", nullptr}}, {{"query", std::string(513, 'x')}, {"before_note_id", nullptr}},
+            {{"query", ""}, {"before_note_id", 0}}, {{"query", ""}, {"before_note_id", 1.0}},
+            {{"query", ""}, {"before_note_id", "1"}}, {{"query", ""}, {"before_note_id", true}},
+            {{"query", ""}, {"extra", true}}, {{"query", ""}, {"before_note_id", nullptr}, {"extra", true}}})
         EXPECT_EQ(summary_tool_result(path_, "summary_search", args)["error"], "invalid_argument");
     EXPECT_EQ(summary_tool_result(path_, "unknown", {{"note_id", 1}})["error"], "invalid_argument");
     const auto cancelled = nlohmann::json::parse(note_summary_tool("missing.sqlite", "secret", "a", "summary_search", "{}", std::atomic_bool{true}));
@@ -2053,6 +2056,16 @@ TEST_F(NoteStorageTest, SummaryToolsReportInvalidContentArgumentsAndCancellation
     const auto unavailable = summary_tool_result(path_.parent_path() / "missing.sqlite", "summary_read", {{"note_id", 1}});
     EXPECT_EQ(unavailable["error"], "unavailable");
     EXPECT_EQ(unavailable.dump().find(path_.parent_path().string()), std::string::npos);
+}
+
+TEST_F(NoteStorageTest, SummarySearchDefaultsOmittedCursorToFirstPage) {
+    summary_source(*database_);
+    const auto note = note_commit_summary(*database_, {"a", "source"}, note_summary_target(*database_, {"a", "source"}), summary_document());
+    const auto result = summary_tool_result(path_, "summary_search", {{"query", "topic"}});
+    ASSERT_TRUE(result.contains("items")) << result;
+    ASSERT_EQ(result["items"].size(), 1u);
+    EXPECT_EQ(result["items"][0]["note_id"], note.id);
+    EXPECT_EQ(result, summary_search_result(path_, "topic"));
 }
 
 TEST_F(NoteStorageTest, SummaryToolsReadEncryptedDatabaseWithCapturedPassword) {

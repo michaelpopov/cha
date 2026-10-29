@@ -894,11 +894,13 @@ std::string note_summary_tool(const std::filesystem::path& path,
         const auto valid_id = [](const Json& value) {
             return value.is_number_integer() && value >= 1 && value <= note_id_limit;
         };
+        // Gemini can omit nullable arguments. An absent cursor starts the first page.
         if (!args.is_object()
-            || (search ? args.size() != 2 || !args.contains("query") || !args["query"].is_string()
+            || (search ? args.size() != (args.contains("before_note_id") ? 2u : 1u)
+                || !args.contains("query") || !args["query"].is_string()
                 || args["query"].get_ref<const std::string&>().size() > 512
-                || !args.contains("before_note_id")
-                || (!args["before_note_id"].is_null() && !valid_id(args["before_note_id"]))
+                || (args.contains("before_note_id") && !args["before_note_id"].is_null()
+                    && !valid_id(args["before_note_id"]))
                 : tool_name != "summary_read" || args.size() != 1 || !args.contains("note_id")
                     || !valid_id(args["note_id"])))
             return error("invalid_argument", "Invalid summary tool arguments.");
@@ -906,7 +908,8 @@ std::string note_summary_tool(const std::filesystem::path& path,
         summary_check_cancelled(cancellation);
         storage::SqliteTransaction transaction(database, storage::SqliteTransaction::Mode::read);
         if (search) {
-            const auto before = args["before_note_id"].is_null() ? std::optional<std::int64_t>{}
+            const auto before = !args.contains("before_note_id") || args["before_note_id"].is_null()
+                ? std::optional<std::int64_t>{}
                 : std::optional<std::int64_t>{args["before_note_id"].get<std::int64_t>()};
             return summary_search_scan(database, forum_id, args["query"].get_ref<const std::string&>(),
                 before, 10, summary_search_bytes, std::nullopt, cancellation).dump();
