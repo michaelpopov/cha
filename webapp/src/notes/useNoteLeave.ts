@@ -63,7 +63,7 @@ export function useNoteLeave(
 
   const idleWaiters = useRef(new Map<() => void, () => void>());
   const idle = () => !intentRef.current && pendingKindRef.current === null
-    && !runningAction.current && deferredCloseAttemptId.current === null;
+    && !runningAction.current && deferredCloseAttemptId.current === null && closeAttempt.current === null;
   const wakeIdle = useCallback(() => {
     if (idle()) for (const wake of [...idleWaiters.current.keys()]) wake();
   }, []);
@@ -218,7 +218,7 @@ export function useNoteLeave(
   }, [finish, stayIntent, waitForChoice]);
 
   const beginNoteAction = useCallback(() => {
-    if (intentRef.current || pendingKindRef.current !== null || runningAction.current) return false;
+    if (!idle()) return false;
     setSlot('action');
     return true;
   }, [setSlot]);
@@ -352,6 +352,9 @@ export function useNoteLeave(
   const startClose = useCallback((attemptId: number) => {
     const save = getSaveRef.current();
     if (noCloseWork(save)) {
+      // Retain ownership until the window closes or the host aborts. A summary
+      // waiting for another action must not start committing after close is ready.
+      closeAttempt.current = attemptId;
       replyNativeClose(attemptId, 'ready');
       return;
     }
@@ -427,7 +430,11 @@ export function useNoteLeave(
       deferredCloseAttemptId.current = null;
     }
     const intent = intentRef.current;
-    if (intent?.kind !== 'close') return;
+    if (intent?.kind !== 'close') {
+      if (closeAttempt.current === attemptId) closeAttempt.current = null;
+      queueMicrotask(wakeIdle);
+      return;
+    }
     if (closeAttempt.current === attemptId) {
       abortOwnedClose(intent);
       return;
@@ -437,7 +444,7 @@ export function useNoteLeave(
     if (waitingForNextAttempt && newerAttempt) {
       abortOwnedClose(intent);
     }
-  }, [abortOwnedClose]);
+  }, [abortOwnedClose, wakeIdle]);
 
   return {
     leaveNoteThen,

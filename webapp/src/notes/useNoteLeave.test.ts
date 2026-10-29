@@ -496,6 +496,24 @@ describe('native close', () => {
     expect(view.result.current.pendingKind).toBeNull();
   });
 
+  it('keeps waiting summaries behind a ready close even when no editor is open', async () => {
+    host();
+    const view = renderHook(() => useNoteLeave(() => null));
+    act(() => {
+      expect(view.result.current.beginNoteAction()).toBe(true);
+      view.result.current.prepareClose(1);
+    });
+    const ready = vi.fn();
+    const waiting = view.result.current.whenIdle(new AbortController().signal).then(ready);
+    await act(async () => view.result.current.endNoteAction());
+    expect(closePosts()[0].result).toBe('ready');
+    expect(ready).not.toHaveBeenCalled();
+    expect(view.result.current.beginNoteAction()).toBe(false);
+    await act(async () => { view.result.current.closeAborted(1); await waiting; });
+    expect(ready).toHaveBeenCalledOnce();
+    act(() => { expect(view.result.current.beginNoteAction()).toBe(true); });
+  });
+
   it('ignores a prepare delivered after its abort and accepts the next attempt', async () => {
     host();
     const save = openSave({ hasUnsaved: () => false });

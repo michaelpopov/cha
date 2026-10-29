@@ -856,6 +856,7 @@ export function App({
     let guarded = false;
     let submitted = false;
     let replaced = false;
+    let recovering = false;
     let cancelledSave = false;
     let save: NoteSaveHandle | null = null;
     let targetWasOpen = false;
@@ -913,6 +914,13 @@ export function App({
           catch (barrierFailure) {
             discardBuffer();
             replaced = true;
+            // No ordering acknowledgement means a queued commit may still run.
+            // Keep note actions blocked while the existing reload path replaces
+            // the connection and retires its outstanding work.
+            if (current()) {
+              recovering = true;
+              reload();
+            }
             throw barrierFailure;
           }
           discardBuffer();
@@ -955,13 +963,14 @@ export function App({
         try { await client.abandonSessionSummary(generated.run_id, 'conversion_failed'); }
         catch { /* Connection and vault cleanup also retire uncommitted runs. */ }
       }
-      if (!replaced && save?.isOpen && sameTarget() && notesEpochRef.current === editorEpoch) {
+      if (!current()) discardBuffer();
+      else if (!replaced && save?.isOpen && sameTarget()) {
         save.unfreeze();
         if (cancelledSave) save.submitNow();
       }
-      if (guarded) noteLeave.endNoteAction();
+      if (guarded && !recovering) noteLeave.endNoteAction();
     }
-  }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction, noteLeave.whenIdle]);
+  }, [client, reload, noteLeave.beginNoteAction, noteLeave.endNoteAction, noteLeave.whenIdle]);
 
   const beforeCreateNote = useCallback(async () => {
     const result = await noteLeave.leaveNoteThen(() => true);

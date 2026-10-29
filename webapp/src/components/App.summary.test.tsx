@@ -144,6 +144,71 @@ describe('saving session summaries', () => {
     expect(saveNote).not.toHaveBeenCalled();
   });
 
+  it('discards the old buffer when the vault changes before a failed commit reply', async () => {
+    const ready = deferred<SessionSummaryGenerated>();
+    let epoch = 1;
+    const saveNote = vi.fn(async () => undefined);
+    render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise,
+      contextEpoch: () => epoch,
+      commitSessionSummary: async () => {
+        epoch = 2; // The bridge sees the new epoch before App has rendered the new vault.
+        throw new ChaError('vault_changed', 'The active vault changed.');
+      },
+      listNoteItems: async () => [summary], getNote: async id => ({ id, document: documentFor('Old body') }), saveNote })} />);
+    await startSummary();
+    await openTarget();
+    const oldEditor = editor();
+    act(() => { oldEditor.commands.insertContent(' Unsaved old-vault edits'); });
+    await act(async () => ready.resolve(generated));
+    expect(saveNote).not.toHaveBeenCalled();
+    expect(oldEditor.isDestroyed).toBe(true);
+  });
+
+  it('does not resume autosave if the vault changes while settling the old write', async () => {
+    const ready = deferred<SessionSummaryGenerated>();
+    const oldWrite = deferred<void>();
+    let epoch = 1;
+    const saveNote = vi.fn(() => oldWrite.promise);
+    const commitSessionSummary = vi.fn(async () => ({ ...summary, read_only: true }));
+    render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise, commitSessionSummary,
+      contextEpoch: () => epoch,
+      listNoteItems: async () => [summary], getNote: async id => ({ id, document: documentFor('Old body') }), saveNote })} />);
+    await startSummary();
+    await openTarget();
+    const oldEditor = editor();
+    vi.useFakeTimers();
+    act(() => { oldEditor.commands.insertContent(' First edit'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    act(() => { oldEditor.commands.insertContent(' Second edit'); });
+    vi.useRealTimers();
+    await act(async () => ready.resolve(generated));
+    expect(oldEditor.isEditable).toBe(false);
+    epoch = 2;
+    await act(async () => oldWrite.resolve());
+    expect(commitSessionSummary).not.toHaveBeenCalled();
+    expect(saveNote).toHaveBeenCalledOnce();
+    expect(oldEditor.isDestroyed).toBe(true);
+  });
+
+  it('recovers the connection if the unknown-commit barrier also fails', async () => {
+    const ready = deferred<SessionSummaryGenerated>();
+    const reload = vi.fn();
+    const getNote = vi.fn(async id => ({ id, document: documentFor('Old body') }));
+    render(<App reload={reload} client={fixtureClient({ generateSessionSummary: () => ready.promise,
+      commitSessionSummary: async () => { throw new ChaError('command_timeout', 'Commit timed out.'); },
+      abandonSessionSummary: async () => { throw new ChaError('command_timeout', 'Barrier timed out.'); },
+      listNoteItems: async () => [summary], getNote })} />);
+    await startSummary();
+    await openTarget();
+    const oldEditor = editor();
+    await act(async () => ready.resolve(generated));
+    expect(oldEditor.isDestroyed).toBe(true);
+    expect(reload).toHaveBeenCalledOnce();
+    // Reopening before the new connection is ready could load pre-commit content.
+    await act(async () => { fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' })); });
+    expect(getNote).toHaveBeenCalledOnce();
+  });
+
   it('cancels a slow pre-commit note load so its late reply cannot construct an editor', async () => {
     const ready = deferred<SessionSummaryGenerated>();
     const staleLoad = deferred<{ id: number; document: ReturnType<typeof documentFor> }>();
