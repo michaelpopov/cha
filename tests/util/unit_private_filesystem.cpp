@@ -13,7 +13,10 @@
 #include <system_error>
 
 #ifndef _WIN32
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 namespace cha {
@@ -155,6 +158,39 @@ TEST_F(PrivateFilesystemTest, TightensAnExistingRegularFile) {
     EXPECT_EQ(posix_mode(path), static_cast<mode_t>(0600));
 #endif
 }
+
+#ifndef _WIN32
+TEST_F(PrivateFilesystemTest, TighteningPreservesExistingPosixLocks) {
+    const auto path = directory_ / "locked";
+    create_private_file(path, "data");
+    const int fd = ::open(path.c_str(), O_RDWR);
+    ASSERT_GE(fd, 0);
+    struct CloseFile {
+        int fd;
+        ~CloseFile() { ::close(fd); }
+    } file{fd};
+    struct flock lock {};
+    lock.l_type = F_WRLCK;
+    lock.l_whence = SEEK_SET;
+    lock.l_len = 1;
+    ASSERT_EQ(::fcntl(fd, F_SETLK, &lock), 0);
+
+    tighten_private_file(path);
+
+    // F_GETLK ignores the calling process's locks, so inspect from a child.
+    const pid_t owner = ::getpid();
+    const pid_t child = ::fork();
+    ASSERT_GE(child, 0);
+    if (child == 0) {
+        const int result = ::fcntl(fd, F_GETLK, &lock);
+        ::_exit(result == 0 && lock.l_type == F_WRLCK && lock.l_pid == owner ? 0 : 1);
+    }
+    int status = 0;
+    ASSERT_EQ(::waitpid(child, &status, 0), child);
+    ASSERT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 0) << "Tightening released another descriptor's lock";
+}
+#endif
 
 TEST_F(PrivateFilesystemTest, RejectsSymlinkWhenTightening) {
     const std::filesystem::path target = directory_ / "target";

@@ -10,6 +10,7 @@
 #include <cctype>
 #include <charconv>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -712,12 +713,76 @@ FolderStoreRemoteResult FolderStoreClient::google_inspect_store(
 FolderStoreRemoteResult FolderStoreClient::google_delete_store(
     std::string_view store_name, std::string_view key, const std::atomic_bool& cancel) {
     if (!google_store_valid(store_name)) return invalid_response("The remote store name is invalid.");
+    const auto store_url = std::string(google_origin) + "/v1beta/" + std::string(store_name);
+    const auto document_prefix = std::string(store_name) + "/documents/";
     FolderStoreHttpRequest request;
-    request.method = "DELETE";
-    request.url = std::string(google_origin) + "/v1beta/" + std::string(store_name)
-        + "?force=true";
+    request.method = "GET";
     request.headers.push_back({"x-goog-api-key", std::string(key)});
-    return classify(transport_(request, cancel), false, "name");
+    const auto send = [&] {
+        if (cancel.load()) return FolderStoreHttpResponse{.cancelled = true};
+        return transport_(request, cancel);
+    };
+
+    // Google's force-delete can remove the store while leaving its Documents
+    // readable. List even when the parent was deleted by an earlier attempt.
+    // Finish pagination before deleting anything so removals cannot shift pages.
+    std::vector<std::string> documents;
+    std::set<std::string> page_tokens;
+    std::string page_token;
+    do {
+        request.url = store_url + "/documents?pageSize=20";
+        if (!page_token.empty()) {
+            const std::unique_ptr<char, decltype(&curl_free)> encoded(
+                curl_easy_escape(nullptr, page_token.data(), static_cast<int>(page_token.size())), curl_free);
+            if (!encoded) return invalid_response("The document page token could not be encoded.");
+            request.url += "&pageToken=" + std::string(encoded.get());
+        }
+        const auto response = send();
+        auto result = classify(response, false, "name");
+        if (result.kind == FolderStoreRemoteKind::not_found && page_token.empty()) break;
+        if (result.kind != FolderStoreRemoteKind::ok) {
+            if (result.kind == FolderStoreRemoteKind::not_found)
+                return invalid_response("The provider's document listing disappeared during cleanup.");
+            return result;
+        }
+        if (result.operation_error) {
+            result.kind = FolderStoreRemoteKind::failed;
+            return result;
+        }
+        const auto body = Json::parse(response.body, nullptr, false);
+        if (body.contains("documents")) {
+            if (!body["documents"].is_array()) return invalid_response("The provider returned an invalid document listing.");
+            for (const auto& document : body["documents"]) {
+                if (!document.is_object() || !document.contains("name") || !document["name"].is_string())
+                    return invalid_response("The provider returned an invalid document name.");
+                const auto& name = document["name"].get_ref<const std::string&>();
+                if (!name.starts_with(document_prefix) || !safe_component(std::string_view(name).substr(document_prefix.size())))
+                    return invalid_response("The provider returned an invalid document name.");
+                documents.push_back(name);
+            }
+        }
+        page_token.clear();
+        if (body.contains("nextPageToken")) {
+            if (!body["nextPageToken"].is_string()) return invalid_response("The provider returned an invalid document page token.");
+            page_token = body["nextPageToken"].get<std::string>();
+            if (!page_token.empty() && !page_tokens.insert(page_token).second)
+                return invalid_response("The provider returned an invalid document page token.");
+        }
+    } while (!page_token.empty());
+
+    request.method = "DELETE";
+    for (const auto& document : documents) {
+        request.url = std::string(google_origin) + "/v1beta/" + document + "?force=true";
+        auto result = classify(send(), false, "name");
+        if (result.operation_error) result.kind = FolderStoreRemoteKind::failed;
+        if (result.kind != FolderStoreRemoteKind::ok && result.kind != FolderStoreRemoteKind::not_found) return result;
+    }
+    // Keep the known parent ID until all document deletions succeed. An explicit
+    // retry can discover the remaining documents without another persistent list.
+    request.url = store_url + "?force=true";
+    auto result = classify(send(), false, "name");
+    if (result.operation_error) result.kind = FolderStoreRemoteKind::failed;
+    return result;
 }
 
 } // namespace cha

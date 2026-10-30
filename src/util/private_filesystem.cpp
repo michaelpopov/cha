@@ -432,38 +432,12 @@ void tighten_private_file(const std::filesystem::path& path) {
     security.apply(path);
     security.verify(path);
 #else
-    const int fd = ::open(
-        path.c_str(),
-        O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (fd < 0) fail_posix("establish owner-only permissions on", path);
-    struct stat info {};
-    if (::fstat(fd, &info) != 0) {
-        const int error = errno;
-        ::close(fd);
-        errno = error;
+    // Closing any descriptor for a file releases this process's POSIX locks
+    // on it, including SQLite's database and WAL shared-memory locks.
+    if (::fchmodat(AT_FDCWD, path.c_str(), 0600, AT_SYMLINK_NOFOLLOW) != 0) {
         fail_posix("establish owner-only permissions on", path);
     }
-    if (!S_ISREG(info.st_mode)) {
-        ::close(fd);
-        throw std::runtime_error(
-            "Path '" + utf8_path(path) + "' is not a regular file");
-    }
-    if (::fchmod(fd, 0600) != 0) {
-        const int error = errno;
-        ::close(fd);
-        errno = error;
-        fail_posix("establish owner-only permissions on", path);
-    }
-    if (::fstat(fd, &info) != 0) {
-        const int error = errno;
-        ::close(fd);
-        errno = error;
-        fail_posix("establish owner-only permissions on", path);
-    }
-    ::close(fd);
-    if ((info.st_mode & 0777) != 0600) {
-        fail_path("establish owner-only permissions on", path);
-    }
+    verify_posix_mode(path, S_IFREG, 0600);
 #endif
 }
 

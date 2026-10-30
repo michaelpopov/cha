@@ -203,6 +203,8 @@ TEST(FolderStoreHttp, GoogleUploadValidatesOperationAndCounts) {
                 R"({"name":"fileSearchStores/store1/upload/operations/op1"})";
         } else if (request.url.find("/upload/operations/op1") != std::string::npos) {
             response.body = R"({"name":"fileSearchStores/store1/upload/operations/op1","done":true})";
+        } else if (request.url.find("/documents?") != std::string::npos) {
+            response.body = "{}";
         } else if (request.method == "GET") {
             ++inspect;
             response.body = inspect < 2
@@ -228,6 +230,124 @@ TEST(FolderStoreHttp, GoogleUploadValidatesOperationAndCounts) {
     EXPECT_EQ(ready.active, 1);
     EXPECT_EQ(ready.pending, 0);
     EXPECT_EQ(client.google_delete_store(created.id, "key", cancel).kind, FolderStoreRemoteKind::ok);
+}
+
+TEST(FolderStoreHttp, GoogleDeletesAllDocumentPagesBeforeDeletingStore) {
+    std::vector<std::string> requests;
+    FolderStoreClient client([&](const FolderStoreHttpRequest& request, const std::atomic_bool&) {
+        requests.push_back(request.method + " " + request.url);
+        EXPECT_EQ(request.headers.size(), 1u);
+        EXPECT_EQ(request.headers.front().name, "x-goog-api-key");
+        EXPECT_EQ(request.headers.front().value, "key");
+        if (request.method == "GET") {
+            return FolderStoreHttpResponse{.status = 200, .body = requests.size() == 1
+                ? R"({"documents":[{"name":"fileSearchStores/store1/documents/one"}],"nextPageToken":"next+/=&"})"
+                : R"({"documents":[{"name":"fileSearchStores/store1/documents/two"}]})"};
+        }
+        return FolderStoreHttpResponse{.status = 200, .body = "{}"};
+    });
+    std::atomic_bool cancel{false};
+    EXPECT_EQ(client.google_delete_store("fileSearchStores/store1", "key", cancel).kind, FolderStoreRemoteKind::ok);
+    EXPECT_EQ(requests, (std::vector<std::string>{
+        "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores/store1/documents?pageSize=20",
+        "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores/store1/documents?pageSize=20&pageToken=next%2B%2F%3D%26",
+        "DELETE https://generativelanguage.googleapis.com/v1beta/fileSearchStores/store1/documents/one?force=true",
+        "DELETE https://generativelanguage.googleapis.com/v1beta/fileSearchStores/store1/documents/two?force=true",
+        "DELETE https://generativelanguage.googleapis.com/v1beta/fileSearchStores/store1?force=true"}));
+}
+
+TEST(FolderStoreHttp, GoogleCleanupRejectsUnsafeOrIncompleteListingsBeforeDeleting) {
+    const std::vector<std::string> bodies{
+        R"({"documents":{}})", R"({"documents":[{}]})", R"({"documents":[{"name":1}]})",
+        R"({"documents":[{"name":"fileSearchStores/other/documents/one"}]})",
+        R"({"documents":[{"name":"fileSearchStores/store1/documents/../other"}]})",
+        R"({"documents":[{"name":"fileSearchStores/store1/documents/one?key=private"}]})",
+        R"({"nextPageToken":12})", R"({"nextPageToken":"repeated"})",
+        R"({"error":{"code":13,"message":"private"}})"};
+    std::atomic_bool cancel{false};
+    for (const auto& body : bodies) {
+        SCOPED_TRACE(body);
+        int requests = 0;
+        FolderStoreClient client([&](const FolderStoreHttpRequest& request, const std::atomic_bool&) {
+            ++requests;
+            EXPECT_EQ(request.method, "GET");
+            EXPECT_LE(requests, 2);
+            return FolderStoreHttpResponse{.status = 200, .body = body};
+        });
+        const auto result = client.google_delete_store("fileSearchStores/store1", "key", cancel);
+        EXPECT_EQ(result.kind, FolderStoreRemoteKind::failed);
+        EXPECT_EQ(result.message.find("private"), std::string::npos);
+    }
+    int requests = 0;
+    FolderStoreClient client([&](const FolderStoreHttpRequest& request, const std::atomic_bool&) {
+        EXPECT_EQ(request.method, "GET");
+        if (++requests == 1) return FolderStoreHttpResponse{.status = 200,
+            .body = R"({"documents":[{"name":"fileSearchStores/store1/documents/one"}],"nextPageToken":"next"})"};
+        return FolderStoreHttpResponse{.status = 503, .body = R"({"error":{"status":"UNAVAILABLE"}})"};
+    });
+    EXPECT_EQ(client.google_delete_store("fileSearchStores/store1", "key", cancel).kind, FolderStoreRemoteKind::failed);
+    EXPECT_EQ(requests, 2);
+}
+
+TEST(FolderStoreHttp, GoogleCleanupHandlesAlreadyDeletedDocumentsAndMissingParent) {
+    std::vector<std::string> requests;
+    FolderStoreClient client([&](const FolderStoreHttpRequest& request, const std::atomic_bool&) {
+        requests.push_back(request.method + " " + request.url);
+        if (request.method == "GET") return FolderStoreHttpResponse{.status = 200,
+            .body = R"({"documents":[{"name":"fileSearchStores/store1/documents/orphan"}]})"};
+        return FolderStoreHttpResponse{.status = 404,
+            .body = R"({"error":{"code":404,"status":"NOT_FOUND"}})"};
+    });
+    std::atomic_bool cancel{false};
+    EXPECT_EQ(client.google_delete_store("fileSearchStores/store1", "key", cancel).kind, FolderStoreRemoteKind::not_found);
+    ASSERT_EQ(requests.size(), 3u);
+    EXPECT_NE(requests[1].find("/documents/orphan?force=true"), std::string::npos);
+    EXPECT_TRUE(requests[2].ends_with("/store1?force=true"));
+}
+
+TEST(FolderStoreHttp, GoogleCleanupHandlesMissingDocumentListing) {
+    const FolderStoreHttpResponse missing{.status = 404, .body = R"({"error":{"code":404,"status":"NOT_FOUND"}})"};
+    std::atomic_bool cancel{false};
+    std::vector<std::string> requests;
+    FolderStoreClient first_page([&](const FolderStoreHttpRequest& request, const std::atomic_bool&) {
+        requests.push_back(request.method + " " + request.url);
+        return request.method == "GET" ? missing : FolderStoreHttpResponse{.status = 200, .body = "{}"};
+    });
+    EXPECT_EQ(first_page.google_delete_store("fileSearchStores/store1", "key", cancel).kind, FolderStoreRemoteKind::ok);
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_EQ(requests[1], "DELETE https://generativelanguage.googleapis.com/v1beta/fileSearchStores/store1?force=true");
+
+    requests.clear();
+    FolderStoreClient later_page([&](const FolderStoreHttpRequest& request, const std::atomic_bool&) {
+        requests.push_back(request.method + " " + request.url);
+        if (requests.size() > 1) return missing;
+        return FolderStoreHttpResponse{.status = 200,
+            .body = R"({"documents":[{"name":"fileSearchStores/store1/documents/one"}],"nextPageToken":"next"})"};
+    });
+    EXPECT_EQ(later_page.google_delete_store("fileSearchStores/store1", "key", cancel).kind, FolderStoreRemoteKind::failed);
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_TRUE(requests[1].starts_with("GET "));
+}
+
+TEST(FolderStoreHttp, GoogleCleanupStopsBeforeParentOnDocumentFailureOrCancellation) {
+    for (const bool cancelled : {false, true}) {
+        std::atomic_bool cancel{false};
+        int requests = 0;
+        FolderStoreClient client([&](const FolderStoreHttpRequest& request, const std::atomic_bool&) {
+            ++requests;
+            if (request.method == "GET") return FolderStoreHttpResponse{.status = 200,
+                .body = R"({"documents":[{"name":"fileSearchStores/store1/documents/one"},{"name":"fileSearchStores/store1/documents/two"}]})"};
+            EXPECT_TRUE(request.url.ends_with("/documents/one?force=true"));
+            if (cancelled) {
+                cancel = true;
+                return FolderStoreHttpResponse{.status = 200, .body = "{}"};
+            }
+            return FolderStoreHttpResponse{.status = 403, .body = R"({"error":{"status":"PERMISSION_DENIED"}})"};
+        });
+        const auto result = client.google_delete_store("fileSearchStores/store1", "key", cancel);
+        EXPECT_EQ(result.kind, cancelled ? FolderStoreRemoteKind::cancelled : FolderStoreRemoteKind::failed);
+        EXPECT_EQ(requests, 2);
+    }
 }
 
 TEST(FolderStoreHttp, RejectsForeignUploadUrlAndMalformedCounts) {

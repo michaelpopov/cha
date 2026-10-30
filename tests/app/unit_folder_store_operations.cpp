@@ -643,6 +643,54 @@ TEST_F(FolderStoreOperationsTest, LaunchFailureReleasesAdmissionWithoutRemoteEff
     application_->delete_note_item(folder_.id, epoch_);
 }
 
+TEST_F(FolderStoreOperationsTest, GoogleDocumentCleanupFailureKeepsParentForRetry) {
+    std::int64_t id;
+    {
+        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
+        storage::SqliteTransaction tx(db);
+        id = folder_store_register(db, folder_.id, FolderStoreService::google, key_, 2);
+        folder_store_save_remote_id(db, id, "fileSearchStores/test");
+        tx.commit();
+    }
+    bool first_deleted = false, fail_second = true, parent_deleted = false;
+    int first_deletes = 0;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        if (request.method == "GET") {
+            auto documents = nlohmann::json::array();
+            if (!first_deleted) documents.push_back({{"name", "fileSearchStores/test/documents/one"}});
+            documents.push_back({{"name", "fileSearchStores/test/documents/two"}});
+            return json_ok(nlohmann::json{{"documents", documents}}.dump());
+        }
+        EXPECT_EQ(request.method, "DELETE");
+        if (request.url.ends_with("/documents/one?force=true")) {
+            first_deleted = true;
+            ++first_deletes;
+        } else if (request.url.ends_with("/documents/two?force=true")) {
+            if (fail_second) return FolderStoreHttpResponse{.status = 503, .body = R"({"error":{"status":"UNAVAILABLE"}})"};
+        } else {
+            EXPECT_TRUE(first_deleted);
+            EXPECT_FALSE(fail_second);
+            EXPECT_TRUE(request.url.ends_with("/fileSearchStores/test?force=true"));
+            parent_deleted = true;
+        }
+        return json_ok("{}");
+    });
+    const auto first = application_->start_folder_store_remove(folder_.id, id, epoch_);
+    EXPECT_EQ(wait_status(folder_.id).result, "error");
+    EXPECT_TRUE(application_->folder_store_operation_status(folder_.id, epoch_).known_cleanup_remains);
+    ASSERT_TRUE(application_->folder_store_record(folder_.id, epoch_));
+    EXPECT_EQ(application_->folder_store_record(folder_.id, epoch_)->remote_store_id, "fileSearchStores/test");
+    EXPECT_FALSE(parent_deleted);
+    application_->close_folder_store_operation(first.operation_id, epoch_);
+
+    fail_second = false;
+    (void)application_->start_folder_store_remove(folder_.id, id, epoch_);
+    EXPECT_EQ(wait_status(folder_.id).result, "success");
+    EXPECT_EQ(first_deletes, 1);
+    EXPECT_TRUE(parent_deleted);
+    EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
+}
+
 TEST_F(FolderStoreOperationsTest, GoogleTransfersBeforePollingAndWaitsForLaggingCounts) {
     auto provider = application_->get_provider("test", epoch_);
     nlohmann::json body = provider;
@@ -656,6 +704,7 @@ TEST_F(FolderStoreOperationsTest, GoogleTransfersBeforePollingAndWaitsForLagging
     int uploads = 0, counts = 0, polls = 0;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
         if (request.method == "DELETE") return json_ok("{}");
+        if (request.url.find("/documents?") != std::string::npos) return json_ok("{}");
         if (request.url.ends_with("/v1beta/fileSearchStores")) return json_ok(R"({"name":"fileSearchStores/store1"})");
         if (request.url.ends_with(":uploadToFileSearchStore")) return json_ok("", {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}});
         if (request.url.ends_with("/upload/session")) {
@@ -690,6 +739,7 @@ TEST_F(FolderStoreOperationsTest, GoogleCancelDuringResumableStartDoesNotUploadN
     (void)application_->update_provider("test", body, epoch_);
     int finalized = 0, deleted = 0;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        if (request.url.find("/documents?") != std::string::npos) return json_ok("{}");
         if (request.method == "DELETE") {
             ++deleted;
             EXPECT_TRUE(request.url.ends_with("/fileSearchStores/test?force=true"));
@@ -726,11 +776,13 @@ TEST_F(FolderStoreOperationsTest, GoogleCancelDuringFinalizeWaitsForResponseAndC
     body["api"] = "google";
     body["base_path"] = "/v1beta";
     (void)application_->update_provider("test", body, epoch_);
-    int finalized = 0, deleted = 0;
+    int finalized = 0;
+    std::vector<std::string> deleted;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (request.url.find("/documents?") != std::string::npos)
+            return json_ok(R"({"documents":[{"name":"fileSearchStores/test/documents/doc1"}]})");
         if (request.method == "DELETE") {
-            ++deleted;
-            EXPECT_TRUE(request.url.ends_with("/fileSearchStores/test?force=true"));
+            deleted.push_back(request.url);
             EXPECT_FALSE(cancel.load());
             const auto record = application_->folder_store_record(folder_.id, epoch_);
             EXPECT_TRUE(record && record->state == FolderStoreState::incomplete);
@@ -754,7 +806,9 @@ TEST_F(FolderStoreOperationsTest, GoogleCancelDuringFinalizeWaitsForResponseAndC
     const auto done = wait_status(folder_.id);
     EXPECT_EQ(done.result, "cancelled");
     EXPECT_EQ(finalized, 1);
-    EXPECT_EQ(deleted, 1);
+    EXPECT_EQ(deleted, (std::vector<std::string>{
+        "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/test/documents/doc1?force=true",
+        "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/test?force=true"}));
     EXPECT_FALSE(application_->folder_store_record(folder_.id, epoch_));
 }
 
