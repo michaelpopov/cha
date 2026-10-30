@@ -587,6 +587,10 @@ NoteItem Application::commit_session_summary(std::string_view connection_id, std
         impl_->retire_summary(identity, run, EventSeverity::success, "");
         // The transaction has committed. Notification failures must not change the save result.
         try {
+            if (!impl_->live_sessions->post_session_notice(epoch, identity, "“" + item.name + "” is stored in Notes."))
+                log_warn("Could not deliver summary confirmation.");
+        } catch (...) { log_warn("Could not deliver summary confirmation."); }
+        try {
             impl_->interrupt_abandoned_audio();
             if (impl_->note_audio_changed) impl_->note_audio_changed(item.id, epoch);
         } catch (...) { log_warn("Could not deliver summary audio notification."); }

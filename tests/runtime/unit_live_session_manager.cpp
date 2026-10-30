@@ -19,8 +19,10 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <variant>
@@ -912,6 +914,56 @@ TEST(LiveSessionManager, MaintenanceResultIgnoresAnOldEpochAndKeepsWelcomeOpen) 
     EXPECT_NE(welcome_session->lifecycle(), LiveSessionState::finished);
 
     manager.begin_shutdown();
+}
+
+TEST(LiveSessionManager, SessionNoticeStaysWithItsConversationAcrossUnloading) {
+    test::TestWorkspace fixture;
+    const test::WebGraph graph(fixture.root());
+    std::mutex mirror_mutex;
+    std::vector<TranscriptEntry> mirrored;
+    SessionOpener opener = [inner = graph.opener(), &mirror_mutex, &mirrored](
+        const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t epoch) {
+        OpenedSession opened = inner(identity, std::move(notifier), epoch);
+        opened.mirror = [&mirror_mutex, &mirrored](std::string_view, std::span<const TranscriptEntry> entries) {
+            const std::lock_guard lock(mirror_mutex);
+            mirrored.assign(entries.begin(), entries.end());
+        };
+        return opened;
+    };
+    LiveSessionManager manager(manager_settings(3), std::move(opener));
+    const auto source = graph.sessions()->create("lobby", "Planning").identity;
+    const auto other = graph.sessions()->create("lobby", "Other").identity;
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(source, 5s)));
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(other, 5s)));
+    const auto session = manager.lookup(source);
+    const auto unrelated = manager.lookup(other);
+    ASSERT_TRUE(session);
+    ASSERT_TRUE(unrelated);
+    const auto epoch = manager.context_epoch();
+    EXPECT_FALSE(manager.post_session_notice(epoch + 1, source, "Wrong vault."));
+    EXPECT_TRUE(manager.post_session_notice(epoch, source, "First save."));
+    auto result = session->snapshot(5s);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(result));
+    ASSERT_EQ(std::get<SessionSnapshot>(result).transcript.size(), 1u);
+    EXPECT_EQ(std::get<SessionSnapshot>(result).transcript.back().text, "First save.");
+    manager.close_session(source, epoch);
+    ASSERT_TRUE(wait_for_finished(session));
+    EXPECT_TRUE(manager.post_session_notice(epoch, source, "Saved while unloaded."));
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(source, 5s)));
+    result = manager.lookup(source)->snapshot(5s);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(result));
+    const auto& transcript = std::get<SessionSnapshot>(result).transcript;
+    ASSERT_EQ(transcript.size(), 2u);
+    EXPECT_EQ(transcript.back().kind, EntryKind::notice);
+    EXPECT_EQ(transcript.back().text, "Saved while unloaded.");
+    {
+        const std::lock_guard lock(mirror_mutex);
+        ASSERT_EQ(mirrored.size(), 2u);
+        EXPECT_EQ(mirrored.back().text, "Saved while unloaded.");
+    }
+    result = unrelated->snapshot(5s);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(result));
+    EXPECT_TRUE(std::get<SessionSnapshot>(result).transcript.empty());
 }
 
 TEST(LiveSessionManager, ReloadReopensWelcomeWithTheCurrentEpoch) {

@@ -759,6 +759,31 @@ bool LiveSessionManager::post_maintenance_result(
         std::chrono::steady_clock::now() + queue_wait);
 }
 
+bool LiveSessionManager::post_session_notice(
+    std::uint64_t epoch, FullSessionId identity, std::string notice) {
+    auto& impl = *runtime_->impl_;
+    if (epoch == 0 || epoch != impl.context_epoch.load()) return false;
+    return impl.enqueue_control_until(
+        [&impl, epoch, identity = std::move(identity), notice = std::move(notice)] {
+            try {
+                if (impl.stopping_requested.load() || epoch != impl.context_epoch.load()
+                    || impl.global_maintenance || impl.maintenance.contains(identity)) return;
+                if (const auto found = impl.sessions.find(identity); found != impl.sessions.end()) {
+                    found->second->record_configuration_notice(notice);
+                } else {
+                    auto temporary = impl.create_session(identity, epoch);
+                    temporary->record_configuration_notice(notice);
+                    temporary->finalize(ShutdownReason::retired);
+                }
+            } catch (const std::exception& error) {
+                log_warn(std::string("Could not store session notice: ") + error.what());
+            } catch (...) {
+                log_warn("Could not store session notice.");
+            }
+        },
+        std::chrono::steady_clock::now() + std::chrono::seconds(1));
+}
+
 bool LiveSessionManager::post_welcome_folder_prune(
     std::uint64_t epoch, std::vector<std::int64_t> folder_ids) {
     auto& impl = *runtime_->impl_;

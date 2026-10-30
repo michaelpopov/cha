@@ -3042,8 +3042,13 @@ TEST_F(BridgeRouterTest, SummaryUsesSavedSourceAndNotesProviderAndReplacesOneRea
         EXPECT_EQ(generated["result"]["markdown"], "# Useful summary");
         ASSERT_TRUE(call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]},
             {"document", summary_document("Useful summary")}})["ok"]);
+        ASSERT_TRUE(call("session.open", summary_identity(source))["ok"]);
+        auto snapshot = call("session.snapshot", summary_identity(source));
+        ASSERT_TRUE(snapshot["ok"]) << snapshot;
+        EXPECT_EQ(snapshot["result"]["transcript"].back()["kind"], "notice");
         const auto items = application_->list_note_items(epoch_);
         const auto saved = *std::find_if(items.begin(), items.end(), [](const auto& item) { return item.is_summary; });
+        EXPECT_EQ(snapshot["result"]["transcript"].back()["text"], "“" + saved.name + "” is stored in Notes.");
         EXPECT_TRUE(saved.read_only);
         EXPECT_TRUE(saved.summary_linked);
         (void)application_->set_note_read_only(saved.id, false, epoch_);
@@ -3058,6 +3063,9 @@ TEST_F(BridgeRouterTest, SummaryUsesSavedSourceAndNotesProviderAndReplacesOneRea
         ASSERT_TRUE(committed["ok"]) << committed;
         EXPECT_EQ(committed["result"]["item"]["id"], saved.id);
         EXPECT_EQ(committed["result"]["item"]["name"], "Latest title");
+        snapshot = call("session.snapshot", summary_identity(source));
+        ASSERT_TRUE(snapshot["ok"]) << snapshot;
+        EXPECT_EQ(snapshot["result"]["transcript"].back()["text"], "“Latest title” is stored in Notes.");
         EXPECT_EQ(committed["result"]["item"]["read_only"], true);
         EXPECT_EQ(application_->get_note(saved.id, epoch_).document, summary_document("Replacement summary"));
         const auto events = application_->list_events(epoch_);
@@ -3073,7 +3081,7 @@ TEST_F(BridgeRouterTest, SummaryUsesSavedSourceAndNotesProviderAndReplacesOneRea
             EXPECT_NE(text.find("Completed answer"), std::string::npos);
             EXPECT_NE(text.find("Unanswered goal"), std::string::npos);
             EXPECT_NE(text.find("Generate a short summary and a long summary"), std::string::npos);
-            for (const auto excluded : {"Cancelled answer", "Failed answer", "Hidden notice", "Hidden error", "User edits must not"})
+            for (const auto excluded : {"Cancelled answer", "Failed answer", "Hidden notice", "Hidden error", "User edits must not", "is stored in Notes"})
                 EXPECT_EQ(text.find(excluded), std::string::npos);
         }
     }
@@ -3132,6 +3140,11 @@ TEST_F(BridgeRouterTest, SummaryRejectsIncompleteRefusedAndEmptyAnswersWithoutCr
     ASSERT_TRUE(good["ok"]) << good;
     EXPECT_FALSE(call("sessionSummary.commit", {{"run_id", good["result"]["run_id"]}, {"document", nlohmann::json::object()}})["ok"]);
     EXPECT_EQ(application_->list_note_items(epoch_).size(), 2U);
+    ASSERT_TRUE(call("session.open", summary_identity(source))["ok"]);
+    const auto snapshot = call("session.snapshot", summary_identity(source));
+    ASSERT_TRUE(snapshot["ok"]) << snapshot;
+    for (const auto& entry : snapshot["result"]["transcript"])
+        EXPECT_EQ(entry["text"].get<std::string>().find("is stored in Notes"), std::string::npos);
     server.join();
 }
 

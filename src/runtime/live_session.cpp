@@ -194,6 +194,8 @@ void LiveSession::record_configuration_notice(std::string text) {
     if (!controller_) return;
     if (controller_->record_configuration_notice(std::move(text))) {
         publish_current_snapshot();
+        // A temporary session closes before the runtime loop can mirror it.
+        mirror_if_changed();
     }
 }
 
