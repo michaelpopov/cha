@@ -288,6 +288,7 @@ add_library(cha_lib STATIC
     src/util/base64.cpp
     src/util/crypto.cpp
     src/util/curl.cpp
+    src/util/item_reference.cpp
     src/util/private_filesystem.cpp
     src/util/logging.cpp
     src/util/owner_wake_signal.cpp

@@ -3837,5 +3837,111 @@ TEST(WorkspaceConfigStore, AddsSessionCharacterSettingsToAnExistingSchemaTwoVaul
     EXPECT_EQ(database.pragma_integer("user_version"), 2);
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, FileReferencesCaptureNamesAndSurviveSourceAndOwnerChanges) {
+    auto store = open_store();
+    const auto note = store->create_note_item({}, NoteItemKind::note, "A / Introduction");
+    const auto ref = note_item_ref_id(note.id);
+    const auto captured = store->create_file_reference(FileReferenceOwner::character,
+        "guide", FileReferenceKind::note, " \n" + ref + " ");
+    EXPECT_EQ(captured.name, note.name);
+    EXPECT_EQ(captured.ref_id, ref);
+    EXPECT_THROW(store->create_file_reference(FileReferenceOwner::character,
+        "guide", FileReferenceKind::note, ref), std::invalid_argument);
+    (void)store->create_file_reference(FileReferenceOwner::character,
+        workspace_assistant_id, FileReferenceKind::note, ref);
+    (void)store->create_file_reference(FileReferenceOwner::forum,
+        "lobby", FileReferenceKind::note, ref);
+    (void)store->rename_note_item(note.id, "Changed");
+    store->delete_note_item(note.id);
+    (void)store->apply_character_definition("guide", "Mentor");
+    (void)store->apply_forum_update("lobby", "Research", "");
+    EXPECT_EQ(store->snapshot()->find_character("guide")->file_references,
+        (std::vector<FileReference>{captured}));
+    EXPECT_EQ(store->snapshot()->find_forum("lobby")->file_references[0], captured);
+    store.reset();
+    store = open_store();
+    EXPECT_EQ(store->snapshot()->find_character(workspace_assistant_id)->file_references[0], captured);
+    for (const auto owner : {FileReferenceOwner::character, FileReferenceOwner::forum}) {
+        store->delete_file_reference(owner, owner == FileReferenceOwner::character ? "guide" : "lobby",
+            FileReferenceKind::note, ref);
+    }
+    EXPECT_TRUE(store->snapshot()->find_character("guide")->file_references.empty());
+    EXPECT_TRUE(store->snapshot()->find_forum("lobby")->file_references.empty());
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, FolderFileReferencesRequireTheExactReadyStoreOnlyAtCreation) {
+    const auto store = open_store();
+    for (const auto service : {FolderStoreService::openai, FolderStoreService::google}) {
+        const auto folder = store->create_note_item({}, NoteItemKind::folder,
+            std::string(folder_store_service_name(service)));
+        const auto child = store->create_note_item(folder.id, NoteItemKind::folder, "Child");
+        const auto ref = note_item_ref_id(folder.id);
+        EXPECT_THROW(store->create_file_reference(FileReferenceOwner::forum,
+            "lobby", FileReferenceKind::folder, ref), std::invalid_argument);
+        const auto id = store->register_folder_store(folder.id, service, "test-key", 1);
+        store->save_folder_store_remote_id(id, "remote-store");
+        EXPECT_THROW(store->create_file_reference(FileReferenceOwner::forum,
+            "lobby", FileReferenceKind::folder, ref), std::invalid_argument);
+        store->mark_folder_store_ready(id, "Ready");
+        EXPECT_NO_THROW((void)store->create_file_reference(FileReferenceOwner::forum,
+            "lobby", FileReferenceKind::folder, ref));
+        EXPECT_THROW(store->create_file_reference(FileReferenceOwner::forum,
+            "lobby", FileReferenceKind::folder, note_item_ref_id(child.id)), std::invalid_argument);
+        store->mark_folder_store_incomplete(id);
+        EXPECT_NO_THROW(store->delete_file_reference(FileReferenceOwner::forum,
+            "lobby", FileReferenceKind::folder, ref));
+        EXPECT_TRUE(store->get_folder_store(id).has_value());
+    }
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, FileReferenceFailuresPreserveCommittedMetadata) {
+    const auto store = open_store();
+    const auto note = store->create_note_item({}, NoteItemKind::note, "Introduction");
+    const auto ref = note_item_ref_id(note.id);
+    const auto before = config_contents(database());
+    for (const auto fault : {WorkspaceConfigFault::validation, WorkspaceConfigFault::sqlite_commit}) {
+        force_next_workspace_config_fault(fault);
+        EXPECT_THROW((void)store->create_file_reference(FileReferenceOwner::character,
+            "guide", FileReferenceKind::note, ref), std::runtime_error);
+        EXPECT_EQ(config_contents(database()), before);
+        EXPECT_TRUE(store->snapshot()->find_character("guide")->file_references.empty());
+    }
+    for (const auto invalid : {"123", "##00000A extra", "##00000!"}) {
+        EXPECT_THROW((void)store->create_file_reference(FileReferenceOwner::character,
+            "guide", FileReferenceKind::note, invalid), std::invalid_argument);
+    }
+    EXPECT_THROW((void)store->create_file_reference(FileReferenceOwner::character,
+        "guide", FileReferenceKind::note, "##000000"), std::out_of_range);
+    EXPECT_THROW((void)store->create_file_reference(FileReferenceOwner::forum,
+        workspace_entrance_id, FileReferenceKind::note, ref), std::out_of_range);
+    EXPECT_THROW((void)store->create_file_reference(FileReferenceOwner::character,
+        "missing", FileReferenceKind::note, ref), std::out_of_range);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, FileReferencesPermitSameNamesAndReadOnlyAnnotationItems) {
+    const auto store = open_store();
+    std::vector<std::int64_t> annotations;
+    for (const auto name : {"First", "Second"}) {
+        const auto folder = store->create_note_item({}, NoteItemKind::folder, name);
+        const auto note = store->create_note_item(folder.id, NoteItemKind::note, "Same name");
+        (void)store->save_note(note.id, nlohmann::json::parse(R"({"type":"doc","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"Comment",
+             "marks":[{"type":"highlight","attrs":{"color":"#b3d9ff"}}]}]}]})"));
+        (void)store->set_note_read_only(note.id, true);
+        (void)store->create_file_reference(FileReferenceOwner::character,
+            "guide", FileReferenceKind::note, note_item_ref_id(note.id));
+        for (const auto& item : store->list_note_items()) {
+            if (item.parent_id == folder.id && item.kind == NoteItemKind::annotation) annotations.push_back(item.id);
+        }
+    }
+    ASSERT_EQ(annotations.size(), 2u);
+    for (const auto id : annotations) {
+        const auto saved = store->create_file_reference(FileReferenceOwner::character,
+            "guide", FileReferenceKind::note, note_item_ref_id(id));
+        EXPECT_EQ(saved.name, "ANNOTATIONS");
+    }
+    ASSERT_EQ(store->snapshot()->find_character("guide")->file_references.size(), 4u);
+}
+
 } // namespace
 } // namespace cha

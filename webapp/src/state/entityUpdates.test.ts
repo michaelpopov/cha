@@ -9,6 +9,18 @@ import {
 } from '../test/fixtures';
 import { appReducer, initialAppState, type AppState } from './view';
 
+it('keeps file reference metadata out of created and updated forum summaries', () => {
+  const forum = { ...forumDetailFixture, file_references: [
+    { kind: 'note' as const, ref_id: '##00000A', name: 'Captured name' },
+  ] };
+  const before = stateWithConversation(1);
+  const created = appReducer(before, { type: 'forum-created', forum: { ...forum, id: 'new-forum' } });
+  expect(created.bootstrap!.forums.find(entry => entry.id === 'new-forum')).not.toHaveProperty('file_references');
+  const updated = appReducer(before, { type: 'forum-updated', forum });
+  expect(updated.bootstrap!.forums.find(entry => entry.id === forum.id)).not.toHaveProperty('file_references');
+  expect(updated.sessionSnapshot!.forum).not.toHaveProperty('file_references');
+});
+
 function stateWithConversation(forumIndex: number | null): AppState {
   const state = appReducer(initialAppState, {
     type: 'bootstrap-loaded', bootstrap: structuredClone(bootstrapFixture),

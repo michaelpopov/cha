@@ -23,6 +23,8 @@ inline bool is_temporary_session_label(std::string_view label) {
 // in each error, such as "Session label" or "Name".
 void validate_display_label(std::string_view label, std::string_view field);
 void validate_session_label(std::string_view label);
+// Returns at most count code points of a valid label, without trailing whitespace.
+[[nodiscard]] std::string display_label_prefix(std::string_view label, std::size_t count);
 
 // Local timestamp shared by generated session labels and session IDs.
 [[nodiscard]] std::string session_timestamp_name(std::time_t now);

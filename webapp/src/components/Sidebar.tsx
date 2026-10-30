@@ -55,6 +55,7 @@ const forumViews: MainView[] = [
   'sessions',
   'forum-detail',
   'forum-file',
+  'forum-file-reference',
   'new-forum-file',
   'forum-members',
 ];
@@ -77,6 +78,7 @@ const settingsViews: MainView[] = [
   'character-detail',
   'character-files',
   'character-file',
+  'character-file-reference',
   'new-character-file',
   'character-settings',
   'forums',

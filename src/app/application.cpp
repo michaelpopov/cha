@@ -41,6 +41,45 @@ ApplicationError::ApplicationError(ErrorCode code, std::string message)
           message.empty() ? "The application operation failed" : std::move(message)),
       code(code) {}
 
+namespace {
+template<typename Fn>
+auto edit_file_reference(Fn&& edit, std::string_view failure) {
+    try { return edit(); }
+    catch (const SecondaryProcessError&) { throw; }
+    catch (const WorkspaceRestartRequiredError&) { throw; }
+    catch (const WorkspaceConfigValidationError& error) {
+        throw ApplicationError(ErrorCode::invalid_argument, error.what());
+    } catch (const std::invalid_argument& error) {
+        throw ApplicationError(ErrorCode::invalid_argument, error.what());
+    } catch (const std::out_of_range& error) {
+        throw ApplicationError(ErrorCode::not_found, error.what());
+    } catch (const std::runtime_error& error) {
+        log_error(std::string("File reference edit failed: ") + error.what());
+        throw ApplicationError(ErrorCode::internal_error, std::string(failure));
+    }
+}
+} // namespace
+
+FileReference Application::create_file_reference(
+    FileReferenceOwner owner, std::string_view owner_id,
+    FileReferenceKind kind, std::string_view ref_id, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return edit_file_reference([&] {
+        return impl_->store->create_file_reference(owner, owner_id, kind, ref_id);
+    }, "The reference could not be added. Try again.");
+}
+
+void Application::delete_file_reference(
+    FileReferenceOwner owner, std::string_view owner_id,
+    FileReferenceKind kind, std::string_view ref_id, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    edit_file_reference([&] {
+        impl_->store->delete_file_reference(owner, owner_id, kind, ref_id);
+    }, "The reference could not be deleted. Try again.");
+}
+
 bool OperationReply::complete(nlohmann::json result) {
     std::function<void()> callback;
     {

@@ -456,6 +456,20 @@ export interface components {
             mime_type: "image/png" | "image/webp" | "image/jpeg" | "image/gif";
             content_base64: string;
         };
+        FileReference: {
+            /** @enum {string} */
+            kind: "note" | "folder";
+            ref_id: string;
+            name: string;
+        };
+        FileReferenceRequest: {
+            /** @enum {string} */
+            owner_type: "character" | "forum";
+            owner_id: components["schemas"]["Identifier"];
+            /** @enum {string} */
+            kind: "note" | "folder";
+            ref_id: string;
+        };
         CharacterDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;
@@ -466,6 +480,7 @@ export interface components {
             character_markdown: string;
             /** @description Verbatim Markdown accepted by the definition editor. */
             editable_markdown: string;
+            file_references: components["schemas"]["FileReference"][];
             /** @description Sorted filenames directly in the character directory, without content. */
             markdown_files: string[];
             provider: string | null;
@@ -549,6 +564,7 @@ export interface components {
             default_persona_display_name: string;
             members: components["schemas"]["CharacterSummary"][];
             forum_markdown: string;
+            file_references: components["schemas"]["FileReference"][];
             markdown_files: string[];
             writable: boolean;
         };

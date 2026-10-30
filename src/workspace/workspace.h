@@ -7,6 +7,7 @@
 #include "chat/session_identity.h"
 #include "chat/session_character_settings.h"
 #include "providers/credentials.h"
+#include "workspace/file_reference.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -156,6 +157,7 @@ struct WorkspaceCharacter {
     std::map<std::string, std::string, std::less<>> markdown_files;
     // All direct files for the character file list, without binary content.
     std::vector<std::string> filenames;
+    std::vector<FileReference> file_references;
 };
 
 struct WorkspaceForumMember {
@@ -174,6 +176,7 @@ struct WorkspaceForum {
     std::string prompt_template;
     std::map<std::string, std::string, std::less<>> markdown_files;
     std::vector<WorkspaceForumMember> members;
+    std::vector<FileReference> file_references;
 };
 
 enum class HandleMatch { resolved, unknown, ambiguous };

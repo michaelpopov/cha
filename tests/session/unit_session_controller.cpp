@@ -2923,22 +2923,23 @@ TEST(SessionController, NonemptyCatalogueCapturesDatabaseBeforeMovesAndRemainsSh
     {
         storage::SqliteDatabase database(journal.path, storage::SqliteDatabase::Mode::read_write);
         (void)note_set_read_only(database, note_id, false);
-        storage::SqliteTransaction transaction(database);
-        note_rename_summary_in_transaction(database, 2, "Renamed discussion");
-        transaction.commit();
+        auto changed = document;
+        changed["content"][1]["content"][0]["text"] = "Updated project decision";
+        changed["content"][3]["content"][0]["text"] = "Updated decision detail";
+        (void)note_save(database, note_id, changed);
     }
     (void)controller->submit_prompt("reader", "Recall again");
     (void)receive_until_idle(*controller);
     EXPECT_EQ(observed->inputs.back().summary_context, snapshot);
     controller.reset();
     EXPECT_EQ(nlohmann::json::parse(retained("summary_read", nlohmann::json{{"note_id", note_id}}.dump(),
-        std::atomic_bool{false}))["name"], "Renamed discussion");
+        std::atomic_bool{false}))["text"], "Updated decision detail");
     auto reopened = SessionController::from_workspace_for_testing(
         [workspace] { return workspace; }, "guide", "reader", journal.path, providers,
         std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}), load_session_database(journal.path, {"lobby", "test"}).restore, {}, {"lobby", "test"});
     (void)reopened->submit_prompt("reader", "Recall after reopening");
     (void)receive_until_idle(*reopened);
-    EXPECT_NE(observed->inputs.back().summary_context.find("Renamed discussion"), std::string::npos);
+    EXPECT_NE(observed->inputs.back().summary_context.find("Updated project decision"), std::string::npos);
 }
 
 TEST(SessionController, SummaryAccessExcludesWelcomeAndAllowsOrdinaryBuiltInAssistant) {

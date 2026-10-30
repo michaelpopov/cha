@@ -74,6 +74,54 @@ void WorkspaceConfigEditor::rewrite_toml(
     write_toml(path, table);
 }
 
+std::filesystem::path WorkspaceConfigEditor::reference_config_path(
+    FileReferenceOwner owner, std::string_view owner_id) const {
+    if (owner == FileReferenceOwner::character) {
+        if (!workspace_.character_settings_are_writable(owner_id))
+            throw std::out_of_range("That character was not found.");
+        if (owner_id == workspace_assistant_id)
+            return workspace_.root_ / "system" / "assistant" / "character.toml";
+        return workspace_.character_config_paths_.at(std::string(owner_id));
+    }
+    if (!workspace_.forum_is_writable(owner_id))
+        throw std::out_of_range("That forum was not found.");
+    return workspace_.forum_config_paths_.at(std::string(owner_id));
+}
+
+void WorkspaceConfigEditor::create_file_reference(
+    FileReferenceOwner owner, std::string_view owner_id, const FileReference& reference) {
+    rewrite_toml(reference_config_path(owner, owner_id), [&](toml::table& table) {
+        if (!table.contains("file_references")) table.insert("file_references", toml::array{});
+        auto* entries = table["file_references"].as_array();
+        if (!entries) throw std::invalid_argument("file_references must be an array.");
+        entries->push_back(toml::table{
+            {"kind", std::string(to_string(reference.kind))},
+            {"ref_id", reference.ref_id}, {"name", reference.name}});
+    });
+}
+
+void WorkspaceConfigEditor::delete_file_reference(
+    FileReferenceOwner owner, std::string_view owner_id,
+    FileReferenceKind kind, std::string_view ref_id) {
+    rewrite_toml(reference_config_path(owner, owner_id), [&](toml::table& table) {
+        auto* entries = table["file_references"].as_array();
+        if (entries) {
+            for (auto it = entries->begin(); it != entries->end(); ++it) {
+                const auto* entry_table = it->as_table();
+                if (!entry_table) throw std::invalid_argument("file_references must contain tables.");
+                const auto& entry = *entry_table;
+                if (entry["kind"].value<std::string>() == to_string(kind)
+                    && entry["ref_id"].value<std::string>() == ref_id) {
+                    entries->erase(it);
+                    if (entries->empty()) table.erase("file_references");
+                    return;
+                }
+            }
+        }
+        throw std::out_of_range("That reference was not found.");
+    });
+}
+
 void WorkspaceConfigEditor::remove_directory(const std::filesystem::path& path) {
     const std::string prefix = source_.name(path) + "/";
     std::erase_if(files_, [&](const auto& file) { return file.first.starts_with(prefix); });

@@ -28,7 +28,7 @@ it('refreshes a manually saved file when Assistant restores its initial contents
   const state = {
     ...initialAppState,
     inspectedCharacter: {
-      id: 'guide', file: 'PROFILE.md', settingsWritable: true, writable: true,
+      id: 'guide', file: 'PROFILE.md', reference: null, settingsWritable: true, writable: true,
     },
   };
   const dispatch = vi.fn();

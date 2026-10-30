@@ -28,4 +28,8 @@ for width in 1200 430; do
     export CHA_NATIVE_TEST_CONFIG="$temporary/vault-$width"
     "$repository/build/ninja/cha_prepare_test_vault" --folder-stores "$CHA_NATIVE_TEST_CONFIG"
     CHA_NATIVE_TEST_WIDTH="$width" ./tests/native/macos/run.sh parity
+    export CHA_NATIVE_TEST_CONFIG="$temporary/references-$width"
+    "$repository/build/ninja/cha_prepare_test_vault" --file-references "$CHA_NATIVE_TEST_CONFIG"
+    CHA_NATIVE_PARITY_SCRIPT="$repository/tests/native/file-references.js" \
+        CHA_NATIVE_TEST_WIDTH="$width" ./tests/native/macos/run.sh parity
 done

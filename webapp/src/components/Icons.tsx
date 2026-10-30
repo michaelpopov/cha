@@ -315,6 +315,18 @@ export function FileUpIcon(props: IconProps) {
   );
 }
 
+export function NoteReferenceIcon(props: IconProps) {
+  return <Icon {...props}>
+    <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9ZM14 3v6h6M8 14h7m-3-3 3 3-3 3" {...stroke} />
+  </Icon>;
+}
+
+export function FolderReferenceIcon(props: IconProps) {
+  return <Icon {...props}>
+    <path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2ZM7 13h9m-3-3 3 3-3 3" {...stroke} />
+  </Icon>;
+}
+
 export function ContentIcon(props: IconProps) {
   return (
     <Icon {...props}>

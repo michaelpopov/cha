@@ -98,6 +98,7 @@ export const characterDetailFixture: CharacterDetail = {
   appearance: serifItalicVoice,
   character_markdown: '# Guide dossier\n\nA **careful** guide.\n\n- Listen\n- Respond',
   markdown_files: ['CHARACTER.md'],
+  file_references: [],
   editable_markdown: '# Guide dossier\n\nA **careful** guide.\n\n- Listen\n- Respond',
   provider: 'terra',
   style: 'serif-italic',
@@ -140,6 +141,7 @@ export const personaDetailFixture: PersonaDetail = {
 // name the topbar already shows, so a test asserting the rendered FORUM.md
 // cannot pass on the title alone.
 export const forumDetailFixture: ForumDetail = {
+  file_references: [],
   markdown_files: ['FORUM.md'],
   id: 'lobby',
   display_name: 'The Lobby',
@@ -213,6 +215,8 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     deleteCharacter: async () => undefined,
     getCharacterInstructions: async () => ({ filename: 'character-voice.md', content: '# Shared instructions', writable: true }),
     updateCharacterInstructions: async (content) => ({ filename: 'character-voice.md', content, writable: true }),
+    createFileReference: async ({ kind, ref_id }) => ({ kind, ref_id, name: 'Reference' }),
+    deleteFileReference: async () => undefined,
     getCharacterFile: async (characterId, filename) => {
       const detail = await client.getCharacter(characterId);
       return { filename, content: detail.editable_markdown, writable: detail.writable };

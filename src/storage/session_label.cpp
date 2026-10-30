@@ -104,6 +104,15 @@ void validate_session_label(std::string_view label) {
     validate_display_label(label, "Session label");
 }
 
+std::string display_label_prefix(std::string_view label, std::size_t count) {
+    std::size_t offset{};
+    std::size_t end{};
+    for (std::size_t points{}; offset < label.size() && points < count; ++points) {
+        if (!whitespace(next_code_point(label, offset, "Label"))) end = offset;
+    }
+    return std::string(label.substr(0, end));
+}
+
 std::string session_timestamp_name(std::time_t now) {
     std::tm local{};
     if (!local_time(now, local)) {

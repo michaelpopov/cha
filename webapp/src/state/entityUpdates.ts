@@ -12,7 +12,8 @@ export function rosterSummary(detail: CharacterDetail | PersonaDetail) {
 }
 
 export function forumSummary(detail: ForumDetail) {
-  const { forum_markdown: _markdown, markdown_files: _files, writable: _writable, ...summary } = detail;
+  const { forum_markdown: _markdown, markdown_files: _files, file_references: _references,
+    writable: _writable, ...summary } = detail;
   return summary;
 }
 

@@ -29,6 +29,19 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
     std::uint64_t epoch) {
     nlohmann::json result = nlohmann::json::object();
     switch (method) {
+    case Method::file_reference_create:
+    case Method::file_reference_delete: {
+        require_only_keys(params, {"owner_type", "owner_id", "kind", "ref_id"});
+        const auto owner = parse_file_reference_owner(require_string(params, "owner_type"));
+        const auto kind = parse_file_reference_kind(require_string(params, "kind"));
+        if (!owner || !kind) throw std::invalid_argument("The request was not valid.");
+        const auto owner_id = require_identifier(params, "owner_id");
+        const auto ref_id = require_string(params, "ref_id");
+        if (method == Method::file_reference_create)
+            result = application.create_file_reference(*owner, owner_id, *kind, ref_id, epoch);
+        else application.delete_file_reference(*owner, owner_id, *kind, ref_id, epoch);
+        break;
+    }
     case Method::character_get: {
         require_only_keys(params, {"character_id"});
         result = application.get_character(

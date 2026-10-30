@@ -170,9 +170,9 @@ describe('Sidebar navigation', () => {
 
   it.each([
     'personas', 'new-persona', 'persona-detail', 'persona-settings',
-    'characters', 'character-instructions', 'new-character', 'character-detail', 'character-file',
+    'characters', 'character-instructions', 'new-character', 'character-detail', 'character-file', 'character-file-reference',
     'new-character-file', 'character-files', 'character-settings', 'forums', 'new-forum',
-    'sessions', 'forum-detail', 'forum-file', 'new-forum-file',
+    'sessions', 'forum-detail', 'forum-file', 'forum-file-reference', 'new-forum-file',
     'forum-members', 'settings', 'settings-vaults', 'settings-events',
     'settings-provider', 'settings-style', 'settings-voice', 'settings-api-key',
   ] satisfies MainView[])('keeps Settings current on %s', (mainView) => {
@@ -183,7 +183,7 @@ describe('Sidebar navigation', () => {
   });
 
   it.each([
-    'sessions', 'forum-detail', 'forum-members', 'forum-file', 'new-forum-file',
+    'sessions', 'forum-detail', 'forum-members', 'forum-file', 'forum-file-reference', 'new-forum-file',
   ] satisfies MainView[])('keeps only the selected forum current on %s', (mainView) => {
     const lobby = bootstrapFixture.forums[1];
     renderSidebar({

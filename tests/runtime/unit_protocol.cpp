@@ -86,7 +86,8 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             true}),
         nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"}, {"default_persona_id", "reader"}, {"default_persona_display_name", "Reader"},
             {"members", {{{"id", "guide"}, {"display_name", "Guide"}, {"appearance", default_appearance()}}}},
-            {"forum_markdown", "# House rules"}, {"markdown_files", {"FORUM.md"}}, {"writable", true}}));
+            {"forum_markdown", "# House rules"}, {"markdown_files", {"FORUM.md"}},
+            {"file_references", nlohmann::json::array()}, {"writable", true}}));
     EXPECT_EQ(
         nlohmann::json(PersonaSummary{"reader", "Reader"}),
         nlohmann::json({{"display_name", "Reader"}, {"id", "reader"},
@@ -164,6 +165,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             {"character_markdown", "Prompt"},
             {"editable_markdown", "Source"},
             {"markdown_files", nlohmann::json::array()},
+            {"file_references", nlohmann::json::array()},
             {"provider", "terra"},
             {"style", nullptr},
             {"voice_id", "brian"},

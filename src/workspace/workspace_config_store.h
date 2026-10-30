@@ -237,6 +237,10 @@ public:
         std::string_view character_id,
         std::string_view filename,
         std::string_view content_base64, std::string_view previous_filename = {});
+    FileReference create_file_reference(FileReferenceOwner owner, std::string_view owner_id,
+        FileReferenceKind kind, std::string_view ref_id);
+    void delete_file_reference(FileReferenceOwner owner, std::string_view owner_id,
+        FileReferenceKind kind, std::string_view ref_id);
     WorkspaceConfigEditResult apply_character_settings(
         std::string_view character_id,
         std::string_view provider_id,

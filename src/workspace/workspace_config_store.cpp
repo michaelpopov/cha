@@ -8,6 +8,7 @@
 #include "storage/workspace_session_database.h"
 #include "util/base64.h"
 #include "util/curl.h"
+#include "util/item_reference.h"
 #include "util/logging.h"
 #include "util/path_name.h"
 #include "util/picture.h"
@@ -2108,6 +2109,55 @@ void WorkspaceConfigStore::apply_character_picture(
     std::string_view content_base64, std::string_view previous_filename) {
     (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
         editor.write_character_picture(character_id, filename, content_base64, previous_filename);
+        return std::vector<std::string>{};
+    });
+}
+
+FileReference WorkspaceConfigStore::create_file_reference(
+    FileReferenceOwner owner, std::string_view owner_id,
+    FileReferenceKind kind, std::string_view ref_id) {
+    FileReference result{kind, std::string(trim_view(ref_id)), {}};
+    (void)impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
+        const std::vector<FileReference>* references;
+        if (owner == FileReferenceOwner::character) {
+            const auto* character = workspace.find_character(owner_id);
+            if (!character || !workspace.character_settings_are_writable(owner_id))
+                throw std::out_of_range("That character was not found.");
+            references = &character->file_references;
+        } else {
+            const auto* forum = workspace.find_forum(owner_id);
+            if (!forum || !workspace.forum_is_writable(owner_id))
+                throw std::out_of_range("That forum was not found.");
+            references = &forum->file_references;
+        }
+        const auto id = parse_item_reference(result.ref_id);
+        if (!id) throw std::invalid_argument("Enter one valid CHA Ref ID.");
+        if (std::ranges::any_of(*references, [&](const auto& saved) {
+                return saved.kind == kind && saved.ref_id == result.ref_id;
+            })) throw std::invalid_argument("This reference is already in this file list.");
+        const auto item = note_find_item(*impl_->database, *id);
+        if (!item) throw std::out_of_range("No item with this Ref ID exists in this vault.");
+        const bool folder = item->kind == NoteItemKind::folder;
+        if (folder && kind == FileReferenceKind::note)
+            throw std::invalid_argument("This Ref ID belongs to a folder. Select Folder reference.");
+        if (!folder && kind == FileReferenceKind::folder)
+            throw std::invalid_argument("This Ref ID belongs to a note. Select Note reference.");
+        if (folder && !folder_store_folder_is_ready(*impl_->database, *id))
+            throw std::invalid_argument("Upload this folder to a store before adding its reference.");
+        result.name = item->name;
+        editor.create_file_reference(owner, owner_id, result);
+        return std::vector<std::string>{};
+    });
+    return result;
+}
+
+void WorkspaceConfigStore::delete_file_reference(
+    FileReferenceOwner owner, std::string_view owner_id,
+    FileReferenceKind kind, std::string_view ref_id) {
+    if (ref_id != trim_view(ref_id) || !parse_item_reference(ref_id))
+        throw std::invalid_argument("Enter one valid CHA Ref ID.");
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.delete_file_reference(owner, owner_id, kind, ref_id);
         return std::vector<std::string>{};
     });
 }

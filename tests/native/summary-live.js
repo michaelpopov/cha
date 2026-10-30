@@ -60,7 +60,7 @@ async function nativeParity() {
       const folder = await until(name + ' folder', () => row(name));
       if (folder.getAttribute('aria-expanded') !== 'true') folder.click();
     }
-    const target = await until('summary note', () => row(summaryLive.title), 180000);
+    const target = await until('summary note', () => row('001 ' + summaryLive.title), 180000);
     const previous = editor();
     const alreadyOpen = target.getAttribute('aria-current') === 'true';
     target.click();

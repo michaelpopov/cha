@@ -16,6 +16,28 @@ function readyState(): AppState {
 }
 
 describe('application navigation reducer', () => {
+  it('keeps reference selection with its owner and clears it on file navigation and vault reset', () => {
+    const reference = { kind: 'note' as const, ref_id: '##00000A' };
+    let state = appReducer(readyState(), { type: 'inspect-character', characterId: 'guide' });
+    state = appReducer(state, { type: 'inspect-character-file-reference', characterId: 'guide', reference });
+    expect(state.mainView).toBe('character-file-reference');
+    expect(state.inspectedCharacter.reference).toEqual(reference);
+    expect(state.inspectedCharacter.file).toBeNull();
+    expect(navigationTitle(state)).toBeNull();
+    expect(appReducer(state, { type: 'inspect-character-file-reference', characterId: 'other', reference })).toEqual(state);
+    const file = appReducer(state, { type: 'inspect-character-file', characterId: 'guide', filename: 'NOTES.md' });
+    expect(file.inspectedCharacter.reference).toBeNull();
+    expect(appReducer(state, { type: 'show-character-files' }).inspectedCharacter.reference).toBeNull();
+    state = appReducer(state, { type: 'select-forum', forumId: 'lobby' });
+    state = appReducer(state, { type: 'inspect-forum-file-reference', forumId: 'lobby', reference });
+    expect(state.mainView).toBe('forum-file-reference');
+    expect(state.inspectedForum.reference).toEqual(reference);
+    expect(navigationTitle(state)).toBeNull();
+    expect(appReducer(state, { type: 'show-forum-detail' }).inspectedForum.reference).toBeNull();
+    state = appReducer(state, { type: 'vault-context-reset' });
+    expect(state.inspectedCharacter.reference).toBeNull();
+    expect(state.inspectedForum.reference).toBeNull();
+  });
   it('retains a hidden note across unrelated actions but clears it on leaving the workspace', () => {
     let state = appReducer(readyState(), { type: 'set-layout', mode: 'split' });
     state = appReducer(state, { type: 'open-note', noteId: 42 });
@@ -332,6 +354,7 @@ describe('application navigation reducer', () => {
   it('adds a created draft character and opens its detail', () => {
     const character = {
       ...bootstrapFixture.characters[1],
+      file_references: [],
       markdown_files: ['CHARACTER.md', 'PROFILE.md'],
       character_markdown: '',
       editable_markdown: '',

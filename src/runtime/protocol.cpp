@@ -331,6 +331,7 @@ void to_json(nlohmann::json& json, const CharacterDetail& value) {
     json["character_markdown"] = value.character_markdown;
     json["editable_markdown"] = value.editable_markdown;
     json["markdown_files"] = value.markdown_files;
+    json["file_references"] = value.file_references;
     json["provider"] = value.provider ? nlohmann::json(*value.provider) : nlohmann::json(nullptr);
     json["style"] = value.style ? nlohmann::json(*value.style) : nlohmann::json(nullptr);
     json["voice_id"] = value.voice
@@ -364,6 +365,7 @@ void to_json(nlohmann::json& json, const ForumDetail& value) {
     json = nlohmann::json(value.summary);
     json["forum_markdown"] = value.forum_markdown;
     json["markdown_files"] = value.markdown_files;
+    json["file_references"] = value.file_references;
     json["writable"] = value.writable;
 }
 
@@ -373,6 +375,10 @@ void to_json(nlohmann::json& json, const MarkdownFile& value) {
         {"content", value.content},
         {"writable", value.writable},
     };
+}
+
+void to_json(nlohmann::json& json, const FileReference& value) {
+    json = {{"kind", to_string(value.kind)}, {"ref_id", value.ref_id}, {"name", value.name}};
 }
 
 void to_json(nlohmann::json& json, const SessionExport& value) {

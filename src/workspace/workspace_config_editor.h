@@ -17,6 +17,11 @@ public:
     }
     TextFiles& files() { return files_; }
 
+    void create_file_reference(FileReferenceOwner owner, std::string_view owner_id,
+        const FileReference& reference);
+    void delete_file_reference(FileReferenceOwner owner, std::string_view owner_id,
+        FileReferenceKind kind, std::string_view ref_id);
+
     void write_provider(
         std::string_view provider_id,
         std::string_view display_name,
@@ -135,6 +140,8 @@ public:
         std::string_view persona_id);
 
 private:
+    std::filesystem::path reference_config_path(
+        FileReferenceOwner owner, std::string_view owner_id) const;
     void write_file(const std::filesystem::path& path, std::string_view content);
     void write_toml(const std::filesystem::path& path, const toml::table& table);
     void rewrite_toml(const std::filesystem::path& path,

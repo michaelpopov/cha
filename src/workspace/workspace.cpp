@@ -6,6 +6,7 @@
 #include "providers/voice_output_config.h"
 #include "util/curl.h"
 #include "util/crypto.h"
+#include "util/item_reference.h"
 #include "util/path_name.h"
 #include "util/logging.h"
 #include "util/public_name.h"
@@ -869,6 +870,43 @@ std::vector<std::string> load_tags(
     return result;
 }
 
+std::vector<FileReference> load_file_references(
+    const toml::table& table, const std::filesystem::path& path,
+    const LoadWarnings& warnings) {
+    if (!table.contains("file_references")) return {};
+    const auto fail = [&](std::string_view message) {
+        throw std::runtime_error("Config file '" + utf8_path(path)
+            + "': invalid file_references: " + std::string(message));
+    };
+    const auto* entries = table["file_references"].as_array();
+    if (!entries) fail("expected an array of tables");
+    std::vector<FileReference> result;
+    for (const auto& node : *entries) {
+        const auto* entry = node.as_table();
+        if (!entry) fail("expected a table");
+        static constexpr std::string_view fields[]{"kind", "ref_id", "name"};
+        warn_unknown_fields(*entry, path, fields, "File reference", warnings);
+        const auto kind = parse_file_reference_kind(required_string(*entry, path, "kind"));
+        if (!kind) fail("kind must be note or folder");
+        auto ref_id = required_string(*entry, path, "ref_id");
+        if (ref_id != trim_view(ref_id) || !parse_item_reference(ref_id))
+            fail("expected a trimmed CHA Ref ID");
+        auto name = required_string(*entry, path, "name");
+        try { validate_display_label(name, "Reference name"); }
+        catch (const std::invalid_argument& error) { fail(error.what()); }
+        if (std::ranges::any_of(result, [&](const auto& saved) {
+                return saved.kind == *kind && saved.ref_id == ref_id;
+            })) fail("duplicate reference");
+        result.push_back({*kind, std::move(ref_id), std::move(name)});
+    }
+    std::ranges::sort(result, [](const auto& left, const auto& right) {
+        if (left.name != right.name) return left.name < right.name;
+        if (left.kind != right.kind) return to_string(left.kind) < to_string(right.kind);
+        return left.ref_id < right.ref_id;
+    });
+    return result;
+}
+
 struct CharacterConfig {
     std::optional<std::string> display_name;
     std::optional<std::string> description;
@@ -880,6 +918,7 @@ struct CharacterConfig {
     std::optional<bool> web_search_tool;
     std::vector<std::string> tags;
     WorkspacePromptVariables prompt_variables;
+    std::vector<FileReference> file_references;
 };
 
 CharacterConfig load_character_config(
@@ -893,7 +932,7 @@ CharacterConfig load_character_config(
     const toml::table table = read_toml(source, path, "character config");
     static constexpr std::string_view definition_fields[]{
         "display_name", "description", "provider", "style", "voice",
-        "reasoning_effort", "web_search", "web_search_tool", "tags", "prompt"};
+        "reasoning_effort", "web_search", "web_search_tool", "tags", "prompt", "file_references"};
     static constexpr std::string_view override_fields[]{"prompt"};
     warn_unknown_fields(
         table, path,
@@ -933,6 +972,7 @@ CharacterConfig load_character_config(
         .web_search_tool = optional_value<bool>(table, path, "web_search_tool", "a boolean"),
         .tags = definition ? load_tags(table, path) : std::vector<std::string>{},
         .prompt_variables = template_scope_from_toml(table, "prompt", utf8_path(path)),
+        .file_references = load_file_references(table, path, warnings),
     };
     if (result.reasoning_effort) {
         normalize_legacy_reasoning_effort(*result.reasoning_effort, path, warnings);
@@ -1155,6 +1195,7 @@ struct LoadedForumConfig {
     std::optional<std::string> description;
     std::string default_character_id;
     std::string default_persona_id;
+    std::vector<FileReference> file_references;
 };
 
 LoadedForumConfig load_forum_config(
@@ -1165,7 +1206,7 @@ LoadedForumConfig load_forum_config(
     const toml::table table = read_toml(source, path, "forum config");
     static constexpr std::string_view fields[]{
         "display_name", "description", "default_character", "default_agent",
-        "default_persona"};
+        "default_persona", "file_references"};
     warn_unknown_fields(table, path, fields, "Forum config", warnings);
     if (table.contains("default_character") && table.contains("default_agent")) {
         throw std::runtime_error(
@@ -1180,6 +1221,7 @@ LoadedForumConfig load_forum_config(
         .default_persona_id = optional_value<std::string>(
             table, path, "default_persona", "a string")
                                   .value_or(std::string(workspace_guest_id)),
+        .file_references = load_file_references(table, path, warnings),
     };
     const std::string_view default_key = table.contains("default_character")
         ? "default_character" : "default_agent";
@@ -1811,6 +1853,7 @@ LoadedCharacters load_characters(
             .editable_markdown = editable_markdown,
             .markdown_files = std::move(markdown_files),
             .filenames = direct_filenames(source, directory),
+            .file_references = config.file_references,
         });
     }
     return result;
@@ -1846,6 +1889,7 @@ WorkspaceCharacter load_assistant(
         .markdown = std::string(embedded_application_guide()),
         .editable_markdown = std::string(embedded_application_guide()),
         .filenames = direct_filenames(source, assistant_path.parent_path()),
+        .file_references = std::move(assistant.file_references),
     };
 }
 
@@ -1944,6 +1988,7 @@ LoadedForums load_forums(
             .default_character_id = config.default_character_id,
             .default_persona_id = config.default_persona_id,
             .prompt_template = read_text(source, forum_prompt_path, "forum prompt"),
+            .file_references = config.file_references,
         };
         for (const auto& entry : source.entries(directory)) {
             if (source.is_regular_file(entry) && !source.is_symlink(entry)

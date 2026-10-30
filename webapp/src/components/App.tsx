@@ -66,6 +66,7 @@ import {
 import {
   CharacterFileScreen,
   CharacterFilesScreen,
+  FileReferenceScreen,
   NewCharacterFileScreen,
   ForumFileScreen,
   NewForumFileScreen,
@@ -292,6 +293,10 @@ function ScreenContent({
         state={state}
       />
     );
+    case 'character-file-reference':
+      return <FileReferenceScreen kind="character" client={client} dispatch={dispatch} navigate={navigate} state={state} />;
+    case 'forum-file-reference':
+      return <FileReferenceScreen kind="forum" client={client} dispatch={dispatch} navigate={navigate} state={state} />;
     case 'character-file': return (
       <CharacterFileScreen
         client={client}
@@ -1309,10 +1314,9 @@ export function App({
     await runMutation({ forumId, sessionId }, 'catalog', () => (
       client.renameSession(forumId, sessionId, label)
     ));
-    noteActions?.refresh();
     await refreshBootstrap();
     setCatalogRevision((revision) => revision + 1);
-  }, [client, noteActions, refreshBootstrap, runMutation]);
+  }, [client, refreshBootstrap, runMutation]);
 
   const downloadSession = useCallback(async (
     forumId: string,

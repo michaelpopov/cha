@@ -3,6 +3,7 @@ import type {
   Bootstrap,
   CharacterDetail,
   ForumDetail,
+  FileReference,
   PersonaDetail,
   SessionSnapshot,
   VaultDetail,
@@ -30,6 +31,7 @@ export type MainView =
   | 'character-detail'
   | 'character-files'
   | 'character-file'
+  | 'character-file-reference'
   | 'new-character-file'
   | 'character-settings'
   | 'forums'
@@ -37,6 +39,7 @@ export type MainView =
   | 'sessions'
   | 'forum-detail'
   | 'forum-file'
+  | 'forum-file-reference'
   | 'new-forum-file'
   | 'forum-members'
   | 'settings'
@@ -98,6 +101,8 @@ export interface SessionActivity {
   status: 'generating' | 'finished';
 }
 
+export type FileReferenceSelection = Pick<FileReference, 'kind' | 'ref_id'>;
+
 export interface AppState {
   sessionActivity: readonly SessionActivity[];
   sidebarOpen: boolean;
@@ -122,12 +127,13 @@ export interface AppState {
   inspectedCharacter: {
     id: string | null;
     file: string | null;
+    reference: FileReferenceSelection | null;
     settingsWritable: boolean;
     writable: boolean;
   };
   inspectedPersona: { id: string | null; writable: boolean };
   // Forum inspection describes currentForumId, also used by session browsing.
-  inspectedForum: { file: string | null; writable: boolean };
+  inspectedForum: { file: string | null; reference: FileReferenceSelection | null; writable: boolean };
   inspectedVaultName: string | null;
   inspectedProvider: EditableInspection;
   inspectedStyle: EditableInspection;
@@ -164,9 +170,9 @@ export const initialAppState: AppState = {
   bootstrapMessage: null,
   currentForumId: null,
   activeConversation: null,
-  inspectedCharacter: { id: null, file: null, settingsWritable: false, writable: false },
+  inspectedCharacter: { id: null, file: null, reference: null, settingsWritable: false, writable: false },
   inspectedPersona: { id: null, writable: false },
-  inspectedForum: { file: null, writable: false },
+  inspectedForum: { file: null, reference: null, writable: false },
   inspectedVaultName: null,
   inspectedProvider: { id: null, name: null, writable: false },
   inspectedStyle: { id: null, name: null, writable: false },
@@ -215,6 +221,7 @@ export type AppAction =
   | { type: 'show-new-character' }
   | { type: 'inspect-character'; characterId: string }
   | { type: 'inspect-character-file'; characterId: string; filename: string }
+  | { type: 'inspect-character-file-reference'; characterId: string; reference: FileReferenceSelection }
   | { type: 'show-new-character-file' }
   | { type: 'character-detail-loaded'; characterId: string; settingsWritable: boolean; writable: boolean }
   | { type: 'character-created'; character: CharacterDetail }
@@ -229,6 +236,7 @@ export type AppAction =
   | { type: 'show-sessions' }
   | { type: 'show-forum-detail' }
   | { type: 'inspect-forum-file'; forumId: string; filename: string }
+  | { type: 'inspect-forum-file-reference'; forumId: string; reference: FileReferenceSelection }
   | { type: 'show-new-forum-file' }
   | { type: 'show-forum-members' }
   | { type: 'forum-detail-loaded'; forumId: string; writable: boolean }
@@ -308,6 +316,7 @@ export type NavigationAction = Extract<AppAction, {
     | 'show-new-character'
     | 'inspect-character'
     | 'inspect-character-file'
+    | 'inspect-character-file-reference'
     | 'show-new-character-file'
     | 'character-created'
     | 'character-deleted'
@@ -320,6 +329,7 @@ export type NavigationAction = Extract<AppAction, {
     | 'show-sessions'
     | 'show-forum-detail'
     | 'inspect-forum-file'
+    | 'inspect-forum-file-reference'
     | 'show-new-forum-file'
     | 'show-forum-members'
     | 'forum-deleted'
@@ -468,6 +478,8 @@ function reduceApp(state: AppState, action: AppAction): AppState {
     case 'vault-context-reset':
       return {
         ...state,
+        inspectedCharacter: { ...state.inspectedCharacter, reference: null },
+        inspectedForum: { ...state.inspectedForum, reference: null },
         activeConversation: null,
         activeConversationLabel: null,
         currentForumId: null,
@@ -593,7 +605,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         mainView: 'characters',
         inspectedCharacter: {
           id: null,
-          file: null,
+          file: null, reference: null,
           settingsWritable: false,
           writable: false,
         },
@@ -609,7 +621,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         mainView: 'character-detail',
         inspectedCharacter: {
           id: action.characterId,
-          file: null,
+          file: null, reference: null,
           settingsWritable: action.characterId === state.inspectedCharacter.id
             ? state.inspectedCharacter.settingsWritable
             : false,
@@ -624,9 +636,16 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         ? {
           ...state,
           mainView: 'character-file',
-          inspectedCharacter: { ...state.inspectedCharacter, file: action.filename },
+          inspectedCharacter: { ...state.inspectedCharacter, file: action.filename, reference: null },
           ...idleSessionOperation(),
         }
+        : state;
+    case 'inspect-character-file-reference':
+      return state.inspectedCharacter.id === action.characterId
+        ? { ...state, mainView: 'character-file-reference',
+          inspectedCharacter: { ...state.inspectedCharacter, file: null,
+            reference: { kind: action.reference.kind, ref_id: action.reference.ref_id } },
+          ...idleSessionOperation() }
         : state;
     case 'show-new-character-file':
       return state.inspectedCharacter.id && state.inspectedCharacter.settingsWritable
@@ -657,7 +676,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         bootstrap: { ...state.bootstrap, characters },
         inspectedCharacter: {
           id: character.id,
-          file: null,
+          file: null, reference: null,
           settingsWritable: character.settings_writable,
           writable: character.writable,
         },
@@ -678,7 +697,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         } : null,
         inspectedCharacter: {
           id: null,
-          file: null,
+          file: null, reference: null,
           settingsWritable: false,
           writable: false,
         },
@@ -688,7 +707,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, mainView: 'character-settings', ...idleSessionOperation() };
     case 'show-character-files':
       return state.inspectedCharacter.id
-        ? { ...state, mainView: 'character-files', inspectedCharacter: { ...state.inspectedCharacter, file: null }, ...idleSessionOperation() }
+        ? { ...state, mainView: 'character-files', inspectedCharacter: { ...state.inspectedCharacter, file: null, reference: null }, ...idleSessionOperation() }
         : state;
     case 'show-forums':
       return { ...state, mainView: 'forums', ...idleSessionOperation() };
@@ -705,7 +724,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         mainView: 'forum-detail',
         bootstrap: { ...state.bootstrap, forums },
         currentForumId: summary.id,
-        inspectedForum: { file: null, writable: action.forum.writable },
+        inspectedForum: { file: null, reference: null, writable: action.forum.writable },
         ...idleSessionOperation(),
       };
     }
@@ -715,7 +734,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         mainView: 'sessions',
         currentForumId: action.forumId,
         inspectedForum: {
-          file: null,
+          file: null, reference: null,
           writable: action.forumId === state.currentForumId
             ? state.inspectedForum.writable
             : false,
@@ -730,7 +749,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         mainView: 'forum-detail',
-        inspectedForum: { ...state.inspectedForum, file: null },
+        inspectedForum: { ...state.inspectedForum, file: null, reference: null },
         ...idleSessionOperation(),
       };
     case 'inspect-forum-file':
@@ -738,9 +757,16 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         ? {
           ...state,
           mainView: 'forum-file',
-          inspectedForum: { ...state.inspectedForum, file: action.filename },
+          inspectedForum: { ...state.inspectedForum, file: action.filename, reference: null },
           ...idleSessionOperation(),
         }
+        : state;
+    case 'inspect-forum-file-reference':
+      return state.currentForumId === action.forumId
+        ? { ...state, mainView: 'forum-file-reference',
+          inspectedForum: { ...state.inspectedForum, file: null,
+            reference: { kind: action.reference.kind, ref_id: action.reference.ref_id } },
+          ...idleSessionOperation() }
         : state;
     case 'show-new-forum-file':
       return state.currentForumId && state.inspectedForum.writable
@@ -769,7 +795,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
           ),
         } : null,
         currentForumId: null,
-        inspectedForum: { file: null, writable: false },
+        inspectedForum: { file: null, reference: null, writable: false },
         ...(activeDeleted ? {
           activeConversation: null,
           activeConversationLabel: null,
@@ -1024,7 +1050,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: action.navigate === false ? state.mainView : 'chat',
         currentForumId: action.snapshot.forum.id,
-        inspectedForum: { ...state.inspectedForum, file: null },
+        inspectedForum: { ...state.inspectedForum, file: null, reference: null },
         activeConversation: {
           forumId: action.snapshot.forum.id,
           sessionId: action.snapshot.session_id,
@@ -1207,6 +1233,8 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-api-keys': return 'API Keys';
     case 'settings-new-api-key': return 'New API key';
     case 'settings-r2-storage': return 'R2 storage';
+    case 'character-file-reference':
+    case 'forum-file-reference':
     case 'persona-detail':
     case 'character-detail':
     case 'forum-detail':

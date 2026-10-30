@@ -100,10 +100,6 @@ struct NoteSummaryTarget {
 [[nodiscard]] NoteItem note_commit_summary(storage::SqliteDatabase& database,
     const FullSessionId& identity, const NoteSummaryTarget& target,
     const nlohmann::json& document);
-// Caller owns the session rename transaction; never starts a nested transaction.
-void note_rename_summary_in_transaction(storage::SqliteDatabase& database,
-    std::int64_t session_key, std::string_view label);
-
 struct SummaryChapters {
     std::string short_markdown;
     std::string long_markdown;

@@ -143,6 +143,7 @@ CharacterDetail character_detail(
     detail.writable = workspace.character_is_writable(character.character.id);
     // Keep the existing wire field; the UI list now includes every file type.
     detail.markdown_files = character.filenames;
+    detail.file_references = character.file_references;
     if (!detail.writable && std::ranges::find(detail.markdown_files, "CHARACTER.md")
         == detail.markdown_files.end()) {
         detail.markdown_files.push_back("CHARACTER.md");
@@ -243,6 +244,7 @@ ForumDetail forum_detail(
     for (const auto& [filename, content] : forum.markdown_files) {
         detail.markdown_files.push_back(filename);
     }
+    detail.file_references = forum.file_references;
     if (!detail.writable && detail.markdown_files.empty()) {
         detail.markdown_files.push_back("FORUM.md");
     }

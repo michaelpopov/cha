@@ -920,9 +920,6 @@ void SessionJournal::clear_history() {
 
 void SessionJournal::rename(std::string_view label) {
     Transaction transaction(impl_->database);
-    auto previous = impl_->database.prepare("SELECT label FROM sessions WHERE session_key=?", impl_->session_key);
-    if (!previous.step()) throw std::runtime_error("Failed to rename live session");
-    const auto old_label = previous.text(0);
     Statement update = impl_->database.prepare(
         "UPDATE sessions SET label = ?1, updated_at = ?2, recent_pending = 0, discardable = 0 "
         "WHERE session_key = ?3 AND archived_at IS NULL",
@@ -931,7 +928,6 @@ void SessionJournal::rename(std::string_view label) {
     if (impl_->database.changes() != 1) {
         throw std::runtime_error("Failed to rename live session");
     }
-    if (old_label != label) note_rename_summary_in_transaction(impl_->database, impl_->session_key, label);
     transaction.commit();
 }
 

@@ -27,11 +27,77 @@ import {
   snapshotFixture,
 } from '../test/fixtures';
 import { App } from './App';
-import { CharacterFileScreen, NewCharacterFileScreen } from './FileScreens';
+import { CharacterFileScreen, NewCharacterFileScreen, NewForumFileScreen, FileReferenceScreen, FileList } from './FileScreens';
 import { welcomeSessionId } from '../state/route';
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
+});
+
+it.each(['character', 'forum'] as const)('adds a %s reference without looking up the source in the client', async kind => {
+  const user = userEvent.setup();
+  const createFileReference = vi.fn(async request => ({ kind: request.kind, ref_id: request.ref_id, name: 'Research' }));
+  const getNote = vi.fn();
+  const client = fixtureClient({ createFileReference, getNote });
+  const navigate = vi.fn();
+  const props = { client, navigate, dispatch: vi.fn(), state: {
+    ...initialAppState, bootstrap: bootstrapFixture, currentForumId: 'lobby',
+    inspectedCharacter: { ...initialAppState.inspectedCharacter, id: 'guide', settingsWritable: true, writable: true },
+  } };
+  render(kind === 'character' ? <NewCharacterFileScreen {...props} /> : <NewForumFileScreen {...props} />);
+  await user.click(screen.getByRole('button', { name: 'Note reference' }));
+  expect(screen.queryByRole('textbox', { name: 'Filename' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Add file' })).toBeDisabled();
+  await user.type(screen.getByRole('textbox', { name: 'Ref ID' }), '##00000A');
+  await user.click(screen.getByRole('button', { name: 'Folder reference' }));
+  expect(screen.getByRole('textbox', { name: 'Ref ID' })).toHaveValue('##00000A');
+  await user.click(screen.getByRole('button', { name: 'Upload file' }));
+  fireEvent.change(screen.getByLabelText('File to upload'), { target: { files: [] } });
+  expect(screen.getByRole('button', { name: 'Folder reference' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('textbox', { name: 'Ref ID' })).toHaveValue('##00000A');
+  await user.click(screen.getByRole('button', { name: 'Add file' }));
+  expect(createFileReference).toHaveBeenCalledExactlyOnceWith({ owner_type: kind,
+    owner_id: kind === 'character' ? 'guide' : 'lobby', kind: 'folder', ref_id: '##00000A' });
+  expect(getNote).not.toHaveBeenCalled();
+  await waitFor(() => expect(navigate).toHaveBeenCalledWith({ type: kind === 'character' ? 'show-character-files' : 'show-forum-detail' }));
+});
+
+it.each(['character', 'forum'] as const)('shows and deletes saved %s reference metadata without a source', async kind => {
+  const user = userEvent.setup();
+  const reference = { kind: 'note' as const, ref_id: '##00000A', name: 'Captured name' };
+  const deleteFileReference = vi.fn(async () => undefined);
+  const getNote = vi.fn();
+  const client = fixtureClient({ deleteFileReference, getNote,
+    getCharacter: async () => ({ ...characterDetailFixture, file_references: [reference] }),
+    getForum: async () => ({ ...forumDetailFixture, file_references: [reference] }) });
+  const navigate = vi.fn();
+  render(<FileReferenceScreen kind={kind} client={client} navigate={navigate} dispatch={vi.fn()}
+    state={{ ...initialAppState, currentForumId: 'lobby',
+      inspectedCharacter: { ...initialAppState.inspectedCharacter, id: 'guide', reference },
+      inspectedForum: { ...initialAppState.inspectedForum, reference } }} />);
+  expect(await screen.findByText('Captured name')).toBeInTheDocument();
+  expect(screen.getByText('##00000A')).toBeInTheDocument();
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  const dialog = screen.getByRole('dialog');
+  expect(dialog).toHaveTextContent('Delete the reference to “Captured name”?');
+  await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(navigate).toHaveBeenCalled());
+  expect(deleteFileReference).toHaveBeenCalledExactlyOnceWith({ owner_type: kind,
+    owner_id: kind === 'character' ? 'guide' : 'lobby', kind: 'note', ref_id: '##00000A' });
+  expect(getNote).not.toHaveBeenCalled();
+});
+
+it('keeps identical reference names separate from actual filenames', async () => {
+  const selected = vi.fn();
+  const refs = [{ kind: 'folder' as const, ref_id: '##00000B', name: 'Shared.md' },
+    { kind: 'note' as const, ref_id: '##00000A', name: 'Shared.md' }];
+  render(<FileList filenames={['Shared.md']} references={refs} writable
+    onNew={vi.fn()} onSelect={vi.fn()} onSelectReference={selected} />);
+  expect(screen.getAllByRole('button').map(button => button.textContent))
+    .toEqual(['New file', 'Shared.md', 'Shared.md', 'Shared.md']);
+  await userEvent.click(screen.getByRole('button', { name: 'Shared.md (note reference)' }));
+  expect(selected).toHaveBeenCalledExactlyOnceWith(refs[1]);
 });
 
 function lobbySnapshot(sessionId = 'planning', sessionLabel = 'Planning') {
@@ -549,7 +615,7 @@ function renderCharacterFile(client: ChaClient, filename: string | null, charact
       ...initialAppState,
       bootstrap: bootstrapFixture,
       inspectedCharacter: {
-        id: characterId, file: filename,
+        id: characterId, file: filename, reference: null,
         writable: characterId !== 'assistant', settingsWritable: true,
       },
     },

@@ -237,6 +237,12 @@ public:
         std::string filename,
         std::string content,
         std::uint64_t epoch);
+    [[nodiscard]] FileReference create_file_reference(
+        FileReferenceOwner owner, std::string_view owner_id,
+        FileReferenceKind kind, std::string_view ref_id, std::uint64_t epoch);
+    void delete_file_reference(
+        FileReferenceOwner owner, std::string_view owner_id,
+        FileReferenceKind kind, std::string_view ref_id, std::uint64_t epoch);
     [[nodiscard]] MarkdownFile update_character_file(
         std::string_view character_id,
         std::string filename,

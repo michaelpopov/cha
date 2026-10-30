@@ -57,6 +57,8 @@ enum class Method {
     character_file_update,
     character_file_delete,
     character_file_rename,
+    file_reference_create,
+    file_reference_delete,
     persona_get,
     persona_create,
     persona_update,

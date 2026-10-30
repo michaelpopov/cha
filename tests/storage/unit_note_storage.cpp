@@ -212,7 +212,7 @@ TEST_F(NoteStorageTest, SummaryReplacementKeepsIdentityAndClearsAudioCommentsAnd
     EXPECT_TRUE(first.is_summary);
     EXPECT_TRUE(first.summary_linked);
     EXPECT_TRUE(first.read_only);
-    EXPECT_EQ(first.name, "Topic");
+    EXPECT_EQ(first.name, "001 Topic");
     auto wire = nlohmann::json(first);
     EXPECT_EQ(wire["is_summary"], true);
     EXPECT_EQ(wire["summary_linked"], true);
@@ -258,10 +258,11 @@ TEST_F(NoteStorageTest, SummaryReplacementRebuildsOnlyItsAnnotationsAndPreserves
     const auto copy = note_get_text(*database_, first.id);
     (void)journal.add_note(copy, 1);
     journal.rename("Renamed source");
-    EXPECT_NE(note_get_text(*database_, annotation->id).text.find("Renamed source"), std::string::npos);
+    EXPECT_EQ(note_find_item(*database_, first.id)->name, first.name);
+    EXPECT_NE(note_get_text(*database_, annotation->id).text.find(first.name), std::string::npos);
     (void)note_commit_summary(*database_, {"a", "first"}, note_summary_target(*database_, {"a", "first"}), summary_document("Regenerated"));
     const auto annotated = note_get_text(*database_, annotation->id).text;
-    EXPECT_EQ(annotated.find("Renamed source"), std::string::npos);
+    EXPECT_EQ(annotated.find(first.name), std::string::npos);
     EXPECT_NE(annotated.find("Other note comment"), std::string::npos);
     note_delete(*database_, first.id);
     auto saved_copy = database_->prepare("SELECT text FROM session_notes WHERE note_id=?", first.id);
@@ -310,30 +311,34 @@ TEST_F(NoteStorageTest, SummaryDeletionDetachesBeforeSessionKeyReuseAndNeverRecr
     EXPECT_FALSE(database_->prepare("PRAGMA foreign_key_check").step());
 }
 
-TEST_F(NoteStorageTest, SummaryNamesKeepDigitsCaseAndUnicodeAndPreserveSuffixes) {
+TEST_F(NoteStorageTest, SummaryNamesKeepDigitsCaseAndUnicodeAndPreserveNumbers) {
     summary_source(*database_, "first", "Topic 1");
     summary_source(*database_, "second", "Topic 1");
     const auto first = note_commit_summary(*database_, {"a", "first"}, note_summary_target(*database_, {"a", "first"}), summary_document());
     const auto second = note_commit_summary(*database_, {"a", "second"}, note_summary_target(*database_, {"a", "second"}), summary_document());
-    EXPECT_EQ(first.name, "Topic 1");
-    EXPECT_EQ(second.name, "Topic 1 1");
+    EXPECT_EQ(first.name, "001 Topic 1");
+    EXPECT_EQ(second.name, "002 Topic 1");
     note_delete(*database_, first.id);
     const auto again = note_commit_summary(*database_, {"a", "second"}, note_summary_target(*database_, {"a", "second"}), summary_document());
-    EXPECT_EQ(again.name, "Topic 1 1");
+    EXPECT_EQ(again.name, "002 Topic 1");
     summary_source(*database_, "reserved", "ANNOTATIONS");
-    EXPECT_EQ(note_commit_summary(*database_, {"a", "reserved"}, note_summary_target(*database_, {"a", "reserved"}), summary_document()).name, "ANNOTATIONS 1");
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "reserved"}, note_summary_target(*database_, {"a", "reserved"}), summary_document()).name, "003 ANNOTATIONS");
     summary_source(*database_, "case", "topic 1");
-    EXPECT_EQ(note_commit_summary(*database_, {"a", "case"}, note_summary_target(*database_, {"a", "case"}), summary_document()).name, "topic 1");
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "case"}, note_summary_target(*database_, {"a", "case"}), summary_document()).name, "004 topic 1");
     const auto long_label = repeated_code_point(200);
     summary_source(*database_, "long1", long_label);
     summary_source(*database_, "long2", long_label);
-    EXPECT_EQ(note_commit_summary(*database_, {"a", "long1"}, note_summary_target(*database_, {"a", "long1"}), summary_document()).name, long_label);
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "long1"}, note_summary_target(*database_, {"a", "long1"}), summary_document()).name, "005 " + repeated_code_point(196));
     const auto suffixed = note_commit_summary(*database_, {"a", "long2"}, note_summary_target(*database_, {"a", "long2"}), summary_document()).name;
-    EXPECT_EQ(suffixed, repeated_code_point(198) + " 1");
+    EXPECT_EQ(suffixed, "006 " + repeated_code_point(196));
     EXPECT_NO_THROW(validate_display_label(suffixed, "Name"));
+    summary_source(*database_, "long-space", std::string(195, 'x') + " tail");
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "long-space"}, note_summary_target(*database_, {"a", "long-space"}), summary_document()).name, "007 " + std::string(195, 'x'));
+    summary_source(*database_, "long-wide-space", std::string(195, 'x') + "\xe3\x80\x80tail");
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "long-wide-space"}, note_summary_target(*database_, {"a", "long-wide-space"}), summary_document()).name, "008 " + std::string(195, 'x'));
 }
 
-TEST_F(NoteStorageTest, SummaryRenameIsTransactionalAndNoOpKeepsCollisionSuffix) {
+TEST_F(NoteStorageTest, SessionRenameLeavesSummaryNameAndReplacementUnchanged) {
     summary_source(*database_, "first", "Topic");
     summary_source(*database_, "second", "Topic");
     const auto first = note_commit_summary(*database_, {"a", "first"}, note_summary_target(*database_, {"a", "first"}), summary_document());
@@ -341,16 +346,90 @@ TEST_F(NoteStorageTest, SummaryRenameIsTransactionalAndNoOpKeepsCollisionSuffix)
     note_delete(*database_, first.id);
     SessionJournal journal(path_, 2);
     journal.rename("Topic");
-    EXPECT_EQ(note_find_item(*database_, second.id)->name, "Topic 1");
+    EXPECT_EQ(note_find_item(*database_, second.id)->name, "002 Topic");
     journal.rename("New title");
-    EXPECT_EQ(note_find_item(*database_, second.id)->name, "New title");
-    database_->execute("CREATE TRIGGER fail_summary_rename BEFORE UPDATE OF name ON note_items "
-        "BEGIN SELECT RAISE(ABORT,'injected failure'); END");
-    EXPECT_THROW(journal.rename("Failed title"), std::exception);
+    EXPECT_EQ(note_find_item(*database_, second.id)->name, "002 Topic");
     auto label = database_->prepare("SELECT label FROM sessions WHERE session_key=2");
     ASSERT_TRUE(label.step());
     EXPECT_EQ(label.text(0), "New title");
-    EXPECT_EQ(note_find_item(*database_, second.id)->name, "New title");
+    const auto replaced = note_commit_summary(*database_, {"a", "second"}, note_summary_target(*database_, {"a", "second"}), summary_document("Replacement"));
+    EXPECT_EQ(replaced.name, second.name);
+}
+
+TEST_F(NoteStorageTest, SummaryNumberingLeavesLegacyNotesUnchangedAndRestartsInEachFolder) {
+    summary_source(*database_, "legacy", "2024 Existing summary");
+    const FullSessionId legacy_source{"a", "legacy"};
+    const auto legacy = note_commit_summary(*database_, legacy_source, note_summary_target(*database_, legacy_source), summary_document());
+    database_->prepare("UPDATE note_items SET name='2024 Existing summary' WHERE id=?", legacy.id).run();
+    database_->prepare("UPDATE note_summaries SET number=NULL WHERE note_id=?", legacy.id).run();
+    summary_source(*database_, "first", "First");
+    summary_source(*database_, "second", "Second");
+    summary_source(*database_, "third", "Third");
+    const auto first = note_commit_summary(*database_, {"a", "first"}, note_summary_target(*database_, {"a", "first"}), summary_document());
+    const auto second = note_commit_summary(*database_, {"a", "second"}, note_summary_target(*database_, {"a", "second"}), summary_document());
+    EXPECT_EQ(first.name, "001 First");
+    EXPECT_EQ(second.name, "002 Second");
+    EXPECT_EQ(note_find_item(*database_, legacy.id)->name, "2024 Existing summary");
+    EXPECT_EQ(note_get(*database_, legacy.id).document, summary_document());
+    EXPECT_EQ(note_commit_summary(*database_, legacy_source, note_summary_target(*database_, legacy_source), summary_document("Replacement")).name, "2024 Existing summary");
+    note_delete(*database_, first.id);
+    database_.reset();
+    database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "third"}, note_summary_target(*database_, {"a", "third"}), summary_document()).name, "003 Third");
+
+    database_->execute("INSERT INTO forums(forum_key,forum_id) VALUES(2,'b')");
+    database_->execute("INSERT INTO sessions(forum_key,session_id,label,updated_at,history_epoch,next_entry_id,next_request_id) VALUES(2,'first','Other forum',0,1,1,1)");
+    {
+        storage::SqliteTransaction transaction(*database_);
+        note_sync_forums(*database_, {{"a", "Forum A"}, {"b", "Forum B"}});
+        transaction.commit();
+    }
+    EXPECT_EQ(note_commit_summary(*database_, {"b", "first"}, note_summary_target(*database_, {"b", "first"}), summary_document()).name, "001 Other forum");
+}
+
+TEST_F(NoteStorageTest, SummaryNumberingUsesNumericOrderAcrossDigitBoundaries) {
+    summary_source(*database_, "first", "First");
+    summary_source(*database_, "second", "Second");
+    summary_source(*database_, "third", "Third");
+    const auto first = note_commit_summary(*database_, {"a", "first"}, note_summary_target(*database_, {"a", "first"}), summary_document());
+    database_->prepare("UPDATE note_summaries SET number=9 WHERE note_id=?", first.id).run();
+    const auto second = note_commit_summary(*database_, {"a", "second"}, note_summary_target(*database_, {"a", "second"}), summary_document());
+    EXPECT_EQ(second.name, "010 Second");
+    database_->prepare("UPDATE note_summaries SET number=999 WHERE note_id=?", second.id).run();
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "third"}, note_summary_target(*database_, {"a", "third"}), summary_document()).name, "1000 Third");
+}
+
+TEST_F(NoteStorageTest, SummaryNumberingSkipsANameThatAnOlderNoteUses) {
+    summary_source(*database_, "legacy", "Legacy");
+    summary_source(*database_, "first", "First");
+    const FullSessionId legacy_source{"a", "legacy"};
+    const auto legacy = note_commit_summary(*database_, legacy_source, note_summary_target(*database_, legacy_source), summary_document());
+    database_->prepare("UPDATE note_items SET name='001 First' WHERE id=?", legacy.id).run();
+    database_->prepare("UPDATE note_summaries SET number=NULL WHERE note_id=?", legacy.id).run();
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "first"}, note_summary_target(*database_, {"a", "first"}), summary_document()).name, "002 First");
+}
+
+TEST_F(NoteStorageTest, SummaryNumberUpgradeIsAdditiveIdempotentAndKeepsOldSummaries) {
+    summary_source(*database_, "legacy", "2024 Budget");
+    summary_source(*database_, "first", "First");
+    const FullSessionId legacy_source{"a", "legacy"};
+    const auto legacy = note_commit_summary(*database_, legacy_source, note_summary_target(*database_, legacy_source), summary_document());
+    database_->prepare("UPDATE note_items SET name='2024 Budget' WHERE id=?", legacy.id).run();
+    database_->execute("ALTER TABLE note_summaries DROP COLUMN number");
+    for (int reopen = 0; reopen < 2; ++reopen) {
+        database_.reset();
+        database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+        storage::SqliteTransaction tx(*database_);
+        create_note_items_schema(*database_);
+        tx.commit();
+        EXPECT_TRUE(note_find_item(*database_, legacy.id)->summary_linked);
+        EXPECT_FALSE(database_->prepare("PRAGMA foreign_key_check").step());
+    }
+    auto number = database_->prepare("SELECT number IS NULL FROM note_summaries WHERE note_id=?", legacy.id);
+    ASSERT_TRUE(number.step());
+    EXPECT_TRUE(number.integer(0));
+    EXPECT_EQ(note_commit_summary(*database_, {"a", "first"}, note_summary_target(*database_, {"a", "first"}), summary_document()).name, "001 First");
+    EXPECT_EQ(note_commit_summary(*database_, legacy_source, note_summary_target(*database_, legacy_source), summary_document("Replacement")).name, "2024 Budget");
 }
 
 TEST_F(NoteStorageTest, SummaryUpgradeOfBlobNotesIsAdditiveIdempotentAndUsable) {
@@ -2149,7 +2228,7 @@ TEST_F(NoteStorageTest, ShortCatalogueHasNoItemCapAndItsBudgetCursorContinuesThr
 }
 
 
-TEST_F(NoteStorageTest, ShortCatalogueCacheDefersEditsAdditionsRenamesAndDeletionsButToolsReadCurrentState) {
+TEST_F(NoteStorageTest, ShortCatalogueCacheDefersEditsAdditionsAndDeletionsButToolsReadCurrentState) {
     summary_source(*database_, "source", "Initial name");
     const auto note = note_commit_summary(*database_, {"a", "source"},
         note_summary_target(*database_, {"a", "source"}), summary_document("Initial detail"));
@@ -2166,23 +2245,18 @@ TEST_F(NoteStorageTest, ShortCatalogueCacheDefersEditsAdditionsRenamesAndDeletio
     auto changed = summary_document("Edited long detail");
     changed["content"][1]["content"][0]["text"] = "Edited short decision";
     (void)note_save(*database_, note.id, changed);
-    {
-        storage::SqliteTransaction transaction(*database_);
-        note_rename_summary_in_transaction(*database_, 1, "Renamed summary");
-        transaction.commit();
-    }
     summary_source(*database_, "added", "Added summary");
     const auto added = note_commit_summary(*database_, {"a", "added"},
         note_summary_target(*database_, {"a", "added"}), summary_document());
     EXPECT_EQ(cache.load(cancelled), original);
     const auto tool = summary_tool_result(path_, "summary_read", {{"note_id", note.id}});
     EXPECT_EQ(tool["text"], "Edited long detail");
-    EXPECT_EQ(tool["name"], "Renamed summary");
+    EXPECT_EQ(tool["name"], note.name);
     now += std::chrono::minutes{10};
     const auto refreshed = cache.load(cancelled);
     EXPECT_NE(refreshed, original);
     EXPECT_NE(refreshed.find("Edited short decision"), std::string::npos);
-    EXPECT_NE(refreshed.find("Renamed summary"), std::string::npos);
+    EXPECT_NE(refreshed.find(note.name), std::string::npos);
     EXPECT_NE(refreshed.find("Added summary"), std::string::npos);
     now += std::chrono::minutes{10};
     EXPECT_EQ(cache.load(cancelled), refreshed); // No timestamps or nondeterministic ordering.

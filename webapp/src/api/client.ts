@@ -14,6 +14,8 @@ export type Bootstrap = components['schemas']['Bootstrap'] & {
 export type CharacterPicture = components['schemas']['CharacterPicture'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
 export type MarkdownFile = components['schemas']['MarkdownFile'];
+export type FileReference = components['schemas']['FileReference'];
+export type FileReferenceRequest = components['schemas']['FileReferenceRequest'];
 export type CreateCharacterRequest = components['schemas']['CreateCharacterRequest'];
 export type UpdateCharacterRequest = components['schemas']['UpdateCharacterRequest'];
 export type UpdateCharacterDefinitionRequest =
@@ -194,6 +196,8 @@ export interface ChaClient {
   getCharacterPicture(characterId: string, filename?: string): Promise<CharacterPicture | null>;
   updateCharacterPicture(characterId: string, file: File, previousFilename?: string): Promise<void>;
   getCharacter(characterId: string): Promise<CharacterDetail>;
+  createFileReference(request: FileReferenceRequest): Promise<FileReference>;
+  deleteFileReference(request: FileReferenceRequest): Promise<void>;
   createCharacter(request: CreateCharacterRequest): Promise<CharacterDetail>;
   updateCharacter(characterId: string, settings: UpdateCharacterRequest): Promise<CharacterDetail>;
   updateCharacterDefinition(
@@ -423,6 +427,11 @@ export function isCharacterPicture(value: unknown): value is CharacterPicture {
   }
 }
 
+export function isFileReference(value: unknown): value is FileReference {
+  return isRecord(value) && (value.kind === 'note' || value.kind === 'folder')
+    && typeof value.ref_id === 'string' && typeof value.name === 'string';
+}
+
 export function isCharacterDetail(value: unknown): value is CharacterDetail {
   return isRosterSummary(value)
     && isRecord(value)
@@ -430,6 +439,7 @@ export function isCharacterDetail(value: unknown): value is CharacterDetail {
     && typeof value.editable_markdown === 'string'
     && Array.isArray(value.markdown_files)
     && value.markdown_files.every((filename) => typeof filename === 'string')
+    && Array.isArray(value.file_references) && value.file_references.every(isFileReference)
     && (value.provider === null || typeof value.provider === 'string')
     && (value.style === null || typeof value.style === 'string')
     && (value.voice_id === null || typeof value.voice_id === 'string')
@@ -486,6 +496,7 @@ export function isForumDetail(value: unknown): value is ForumDetail {
     && typeof value.forum_markdown === 'string'
     && Array.isArray(value.markdown_files)
     && value.markdown_files.every((filename) => typeof filename === 'string')
+    && Array.isArray(value.file_references) && value.file_references.every(isFileReference)
     && typeof value.writable === 'boolean';
 }
 

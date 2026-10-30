@@ -563,7 +563,7 @@ TEST_F(SessionRepositoryTest, RecoversPendingSessionsOnStartupByWhetherTheyHaveE
     EXPECT_NO_THROW(repository.validate(visible));
 }
 
-TEST_F(SessionRepositoryTest, LinkedSummaryFollowsClosedRenameAndAllSessionCleanupPathsDetach) {
+TEST_F(SessionRepositoryTest, LinkedSummaryKeepsNameOnClosedRenameAndAllSessionCleanupPathsDetach) {
     auto repository = make_repository();
     const auto create_summary = [&](const StoredSession& session) {
         storage::SqliteDatabase database(database_path(), storage::SqliteDatabase::Mode::read_write);
@@ -585,13 +585,7 @@ TEST_F(SessionRepositoryTest, LinkedSummaryFollowsClosedRenameAndAllSessionClean
     EXPECT_EQ(repository.rename(session.identity, "Renamed").label, "Renamed");
     {
         storage::SqliteDatabase database(database_path(), storage::SqliteDatabase::Mode::read_write);
-        EXPECT_EQ(note_find_item(database, note.id)->name, "Renamed");
-        database.execute("CREATE TRIGGER fail_summary_name BEFORE UPDATE OF name ON note_items "
-            "BEGIN SELECT RAISE(ABORT,'injected failure'); END");
-        EXPECT_THROW((void)repository.rename(session.identity, "Failed"), std::exception);
-        EXPECT_EQ(repository.prepare(session.identity).label, "Renamed");
-        EXPECT_EQ(note_find_item(database, note.id)->name, "Renamed");
-        database.execute("DROP TRIGGER fail_summary_name");
+        EXPECT_EQ(note_find_item(database, note.id)->name, "001 Original");
     }
     repository.delete_session(session.identity);
     const auto unused = repository.create("lobby", "");

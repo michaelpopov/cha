@@ -208,6 +208,9 @@ export function ForumDetailScreen({
         </div>
         <FileList
           filenames={detail.markdown_files}
+          references={detail.file_references}
+          onSelectReference={reference => navigate({ type: 'inspect-forum-file-reference',
+            forumId: detail.id, reference })}
           writable={detail.writable}
           onNew={() => navigate({ type: 'show-new-forum-file' })}
           onSelect={(filename) => navigate({ type: 'inspect-forum-file', forumId: state.currentForumId!, filename })}

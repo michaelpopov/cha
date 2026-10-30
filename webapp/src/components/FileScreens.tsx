@@ -6,12 +6,17 @@ import {
   type ChangeEvent,
   type FormEvent,
 } from 'react';
-import { ChaError, publicErrorMessage, type CharacterDetail } from '../api/client';
+import { ChaError, publicErrorMessage, type CharacterDetail, type FileReference,
+  type FileReferenceRequest } from '../api/client';
+import { useDetailRefresh } from '../detailRefresh';
+import { ConfirmDialog } from './ConfirmDialog';
 import { DetailActions, EditableTitle } from './DetailActions';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
   FileUpIcon,
+  NoteReferenceIcon,
+  FolderReferenceIcon,
   PlusIcon,
   PictureIcon,
   TextLinesIcon,
@@ -56,17 +61,96 @@ export function CharacterFilesScreen({ state, dispatch, navigate, client }: Rost
           <span className="cha-list-copy"><span className="cha-primary-line">{filename}</span></span>
           <ChevronRightIcon className="cha-chevron" />
         </button>)}
-        {filenames.length === 0 && <p className="cha-state-message">No files.</p>}
+        <FileReferenceRows references={detail.file_references} onSelect={reference =>
+          navigate({ type: 'inspect-character-file-reference', characterId: detail.id, reference })} />
+        {filenames.length === 0 && detail.file_references.length === 0 && <p className="cha-state-message">No files.</p>}
       </div>;
     }}
   />;
 }
 
-export function FileList({ filenames, writable, onNew, onSelect }: {
+function FileReferenceRows({ references, onSelect }: {
+  references: FileReference[];
+  onSelect(reference: FileReference): void;
+}) {
+  return references.map(reference => <button className="cha-list-action"
+    key={`${reference.kind}/${reference.ref_id}`} type="button"
+    aria-label={`${reference.name} (${reference.kind} reference)`}
+    onClick={() => onSelect(reference)}>
+    <span className="cha-list-icon">{reference.kind === 'note' ? <NoteReferenceIcon /> : <FolderReferenceIcon />}</span>
+    <span className="cha-list-copy"><span className="cha-primary-line">{reference.name}</span></span>
+    <ChevronRightIcon className="cha-chevron" />
+  </button>);
+}
+
+export function FileReferenceScreen({ kind, state, client, navigate }: RosterDetailProps & {
+  kind: 'character' | 'forum';
+}) {
+  const ownerId = kind === 'character' ? state.inspectedCharacter.id : state.currentForumId;
+  const selected = kind === 'character' ? state.inspectedCharacter.reference : state.inspectedForum.reference;
+  const load = useCallback(async (id: string) => kind === 'character'
+    ? client.getCharacter(id) : client.getForum(id), [client, kind]);
+  const back = () => navigate(kind === 'character'
+    ? { type: 'show-character-files' } : { type: 'show-forum-detail' });
+  const forumName = state.bootstrap?.forums.find(forum => forum.id === ownerId)?.display_name;
+  return <RosterDetailScreen key={`${kind}/${ownerId}/${selected?.kind}/${selected?.ref_id}`}
+    ariaLabel={`${kind === 'character' ? 'Character' : 'Forum'} reference navigation`}
+    backLabel={kind === 'character' ? 'Files' : (forumName ?? 'Forum')}
+    subjectId={selected ? ownerId : null} load={load} onBack={back}
+    copy={{ absent: 'No reference is selected.', loading: 'Loading reference…', failed: 'The reference could not be loaded.' }}
+    render={detail => {
+      const reference = detail.file_references.find(entry =>
+        entry.kind === selected?.kind && entry.ref_id === selected?.ref_id);
+      if (!reference) return <p className="cha-state-message" role="alert">That reference was not found.</p>;
+      return <FileReferenceDetails reference={reference}
+        writable={'settings_writable' in detail ? detail.settings_writable : detail.writable}
+        onDelete={async () => {
+          const request: FileReferenceRequest = { owner_type: kind, owner_id: ownerId!,
+            kind: reference.kind, ref_id: reference.ref_id };
+          await client.deleteFileReference(request);
+          back();
+        }} />;
+    }} />;
+}
+
+function FileReferenceDetails({ reference, writable, onDelete }: {
+  reference: FileReference; writable: boolean; onDelete(): Promise<void>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const refresh = useDetailRefresh();
+  async function remove() {
+    if (deleting || !writable || refresh.refreshing || refresh.failed || refresh.stale) return;
+    setConfirming(false);
+    setDeleting(true);
+    setError(null);
+    try { await onDelete(); }
+    catch (failure) { setError(publicErrorMessage(failure, 'The reference could not be deleted. Try again.')); }
+    finally { setDeleting(false); }
+  }
+  return <>
+    <div className="cha-detail-actions"><h1>{reference.name}</h1></div>
+    <div className="cha-settings-form"><div className="cha-reference-id"><span>Ref ID</span><p>{reference.ref_id}</p></div>
+      {error && <p className="cha-error-message" role="alert">{error}</p>}
+      {writable && <div className="cha-settings-form-actions"><button
+        className="cha-button cha-button-ghost" type="button"
+        disabled={deleting || refresh.refreshing || refresh.failed || refresh.stale}
+        onClick={() => setConfirming(true)}>{deleting ? 'Deleting…' : 'Delete'}</button></div>}
+    </div>
+    {confirming && <ConfirmDialog title="Delete reference?" confirmLabel="Delete"
+      message={`Delete the reference to “${reference.name}”?`}
+      onCancel={() => setConfirming(false)} onConfirm={() => void remove()} />}
+  </>;
+}
+
+export function FileList({ filenames, references, writable, onNew, onSelect, onSelectReference }: {
   filenames: string[];
+  references: FileReference[];
   writable: boolean;
   onNew(): void;
   onSelect(filename: string): void;
+  onSelectReference(reference: FileReference): void;
 }) {
   return (
     <div className="cha-roster">
@@ -90,7 +174,8 @@ export function FileList({ filenames, writable, onNew, onSelect }: {
           onSelect={filename.endsWith('.md') ? () => onSelect(filename) : undefined}
         />
       ))}
-      {filenames.length === 0 && (
+      <FileReferenceRows references={references} onSelect={onSelectReference} />
+      {filenames.length === 0 && references.length === 0 && (
         <p className="cha-state-message">No files.</p>
       )}
     </div>
@@ -229,11 +314,11 @@ function CharacterPictureFileScreen({ state, navigate, client }: RosterDetailPro
 }
 
 export function NewCharacterFileScreen(props: RosterDetailProps) {
-  return <NewMarkdownFileScreen {...props} kind="character" />;
+  return <NewMarkdownFileScreen key={props.state.inspectedCharacter.id} {...props} kind="character" />;
 }
 
 export function NewForumFileScreen(props: RosterDetailProps) {
-  return <NewMarkdownFileScreen {...props} kind="forum" />;
+  return <NewMarkdownFileScreen key={props.state.currentForumId} {...props} kind="forum" />;
 }
 
 function normalizeMarkdownFilename(filename: string, allowText = false) {
@@ -249,7 +334,8 @@ function NewMarkdownFileScreen({
   navigate,
   client,
 }: RosterDetailProps & { kind: 'character' | 'forum' }) {
-  const [mode, setMode] = useState<'upload' | 'text'>('upload');
+  const [mode, setMode] = useState<'upload' | 'text' | 'note-reference' | 'folder-reference'>('upload');
+  const [refId, setRefId] = useState('');
   const [filename, setFilename] = useState('');
   const [content, setContent] = useState('');
   const [picture, setPicture] = useState<{ file: File; preview: string } | null>(null);
@@ -263,6 +349,9 @@ function NewMarkdownFileScreen({
   const subjectName = (kind === 'character' ? state.bootstrap?.characters : state.bootstrap?.forums)
     ?.find(({ id }) => id === subjectId)?.display_name;
   const busy = saving || reading;
+  const referenceMode = mode === 'note-reference' || mode === 'folder-reference';
+  const canSubmit = referenceMode ? !!refId.trim()
+    : !!filename.trim() && (mode !== 'upload' || (!!picture && !pictureSaved));
   const textWritable = kind === 'forum' || state.inspectedCharacter.writable;
 
   useEffect(() => {
@@ -318,11 +407,15 @@ function NewMarkdownFileScreen({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || !filename.trim() || (mode === 'upload' && (!picture || pictureSaved))) return;
+    if (busy || !canSubmit) return;
     setSaving(true);
     setError(null);
     try {
-      if (mode === 'upload' && picture) {
+      if (referenceMode) {
+        await client.createFileReference({ owner_type: kind, owner_id: subjectId,
+          kind: mode === 'note-reference' ? 'note' : 'folder', ref_id: refId });
+        if (mounted.current) back();
+      } else if (mode === 'upload' && picture) {
         await client.updateCharacterPicture(subjectId,
           new File([picture.file], filename.trim(), { type: picture.file.type }));
         if (mounted.current) setPictureSaved(true);
@@ -352,22 +445,37 @@ function NewMarkdownFileScreen({
         <span>{kind === 'character' ? 'Files' : (subjectName ?? 'Forum')}</span>
       </button>
       <form className="cha-settings-form" onSubmit={(event) => void submit(event)}>
-        <label>Filename<input className="cha-form-control" value={filename}
-          onChange={(event) => { setFilename(event.target.value); setPictureSaved(false); }} disabled={busy} required /></label>
-        <div className="cha-file-actions">
-          <button className="cha-button cha-button-primary" disabled={busy}
-            onClick={() => input.current?.click()} type="button">
-            <FileUpIcon />Upload file
-          </button>
-          {textWritable && <button className="cha-button" disabled={busy} onClick={() => { setMode('text'); setError(null); }} type="button">
-            <TextLinesIcon />Write text
-          </button>}
+        <div className="cha-file-actions" role="group" aria-label="File source">
+          <div className="cha-file-action-row">
+            <button className={`cha-button${mode === 'upload' ? ' cha-button-primary' : ''}`} disabled={busy}
+              aria-pressed={mode === 'upload'}
+              onClick={() => input.current?.click()} type="button">
+              <FileUpIcon />Upload file
+            </button>
+            {textWritable && <button className={`cha-button${mode === 'text' ? ' cha-button-primary' : ''}`}
+              aria-pressed={mode === 'text'} disabled={busy} onClick={() => { setMode('text'); setError(null); }} type="button">
+              <TextLinesIcon />Write text
+            </button>}
+          </div>
+          <div className="cha-file-action-row">
+            <button className={`cha-button${mode === 'note-reference' ? ' cha-button-primary' : ''}`}
+              aria-pressed={mode === 'note-reference'} disabled={busy} type="button"
+              onClick={() => { setMode('note-reference'); setError(null); }}><NoteReferenceIcon />Note reference</button>
+            <button className={`cha-button${mode === 'folder-reference' ? ' cha-button-primary' : ''}`}
+              aria-pressed={mode === 'folder-reference'} disabled={busy} type="button"
+              onClick={() => { setMode('folder-reference'); setError(null); }}><FolderReferenceIcon />Folder reference</button>
+          </div>
           <input accept={kind === 'character'
             ? '.png,.jpg,.jpeg,.webp,.gif' + (textWritable ? ',.md,.txt,text/markdown,text/plain' : '')
             : '.md,.txt,text/markdown,text/plain'}
             aria-label="File to upload" className="cha-file-input" disabled={busy}
             onChange={(event) => void upload(event)} ref={input} type="file" />
         </div>
+        {referenceMode ? <label>Ref ID<input className="cha-form-control" value={refId}
+          onChange={event => { setRefId(event.target.value); setError(null); }} disabled={busy}
+          autoComplete="off" spellCheck={false} required /></label>
+          : <label>Filename<input className="cha-form-control" value={filename}
+            onChange={(event) => { setFilename(event.target.value); setPictureSaved(false); }} disabled={busy} required /></label>}
         {mode === 'upload' && picture && <>
           <div className="cha-uploaded-picture">
             <img alt={`Preview of ${picture.file.name}`} src={picture.preview}
@@ -383,7 +491,7 @@ function NewMarkdownFileScreen({
         <div className="cha-settings-form-actions">
           <button className="cha-button cha-button-ghost" disabled={busy} onClick={back} type="button">Cancel</button>
           <button className="cha-button cha-button-primary"
-            disabled={busy || !filename.trim() || (mode === 'upload' && (!picture || pictureSaved))}
+            disabled={busy || !canSubmit}
             type="submit">{saving ? 'Adding…' : 'Add file'}</button>
         </div>
       </form>
