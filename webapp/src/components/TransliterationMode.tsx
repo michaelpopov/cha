@@ -69,6 +69,7 @@ export function useTransliteration<T extends TextField>(value: string): Translit
   const [localEnabled, setLocalEnabled] = useState(false);
   const field = useRef<T | null>(null);
   const pendingSelection = useRef<number | null>(null);
+  const pasteEnd = useRef<number | null>(null);
   const enabled = mode?.enabled ?? localEnabled;
 
   useLayoutEffect(() => {
@@ -92,8 +93,12 @@ export function useTransliteration<T extends TextField>(value: string): Translit
       const next = event.target.value;
       const composing = 'isComposing' in event.nativeEvent
         && event.nativeEvent.isComposing === true;
-      if (!enabled || composing) {
+      const pasting = 'inputType' in event.nativeEvent
+        && (event.nativeEvent.inputType === 'insertFromPaste'
+          || event.nativeEvent.inputType === 'insertFromDrop');
+      if (!enabled || composing || pasting) {
         pendingSelection.current = null;
+        pasteEnd.current = pasting ? event.target.selectionStart : null;
         return next;
       }
 
@@ -101,7 +106,9 @@ export function useTransliteration<T extends TextField>(value: string): Translit
         current,
         next,
         event.target.selectionStart ?? next.length,
+        pasteEnd.current ?? undefined,
       );
+      pasteEnd.current = null;
       pendingSelection.current = change.selection;
       return change.value;
     },

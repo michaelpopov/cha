@@ -75,7 +75,7 @@ function transcriptSnapshot(): SessionSnapshot {
 }
 
 describe('live chat', () => {
-  it('does not attach a pending file read after switching conversations', async () => {
+  it('does not attach a pending dropped file after switching conversations', async () => {
     let finishRead!: (text: string) => void;
     vi.spyOn(textFiles, 'readTextFile').mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
     const events = drivableEvents();
@@ -87,8 +87,9 @@ describe('live chat', () => {
       } : snapshotFixture,
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    fireEvent.change(screen.getByLabelText('Text file'), {
-      target: { files: [new File(['File text'], 'plan.md')] },
+    const file = new File(['File text'], 'plan.md');
+    fireEvent.drop(screen.getByRole('textbox', { name: 'Message' }), {
+      dataTransfer: { types: ['Files'], files: [file] },
     });
     expect(textFiles.readTextFile).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: 'PlanningThe Lobby' }));
@@ -97,30 +98,58 @@ describe('live chat', () => {
     expect(attachTextFile).not.toHaveBeenCalled();
   });
 
-  it('uploads text with the standard icon before the speaker and keeps the draft', async () => {
+  it('attaches dropped text without upload controls, keeps the draft, and rejects binary files', async () => {
     const events = drivableEvents();
     const attachTextFile = vi.fn(async () => ({ clear_input: false }));
     const submitInput = vi.fn(async () => ({ clear_input: true }));
     render(<App client={fixtureClient({
-      attachTextFile, submitInput, getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      attachTextFile, submitInput,
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    const upload = screen.getByRole('button', { name: 'Attach text file' });
-    const speaker = await screen.findByRole('button', { name: 'Auto audio response' });
-    expect(upload.nextElementSibling?.nextElementSibling).toBe(speaker);
+    expect(screen.queryByRole('button', { name: 'Attach text file' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Text file')).not.toBeInTheDocument();
     const draft = screen.getByRole('textbox', { name: 'Message' });
     fireEvent.change(draft, { target: { value: 'Keep my question' } });
-    const input = screen.getByLabelText('Text file');
-    fireEvent.change(input, { target: { files: [new File(['# Plan\n\nПривет'], 'plan.md')] } });
+    function addFile(file: File) {
+      fireEvent.drop(draft, { dataTransfer: { types: ['Files'], files: [file] } });
+    }
+    addFile(new File(['# Plan\n\nПривет'], 'plan.md'));
     await waitFor(() => expect(attachTextFile).toHaveBeenCalledWith(
       'entrance', 'welcome', { name: 'plan.md', text: '# Plan\n\nПривет' },
     ));
     expect(draft).toHaveValue('Keep my question');
     expect(submitInput).not.toHaveBeenCalled();
-    await waitFor(() => expect(upload).toBeEnabled());
-    fireEvent.change(input, { target: { files: [new File(['a\0b'], 'binary.txt')] } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
+    addFile(new File(['a\0b'], 'binary.txt'));
     expect(await screen.findByRole('alert')).toHaveTextContent('Choose a UTF-8 text file.');
     expect(attachTextFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks file drops during generation and while another upload is pending', async () => {
+    const events = drivableEvents();
+    let finishUpload!: (result: { clear_input: boolean }) => void;
+    const attachTextFile = vi.fn(() => new Promise<{ clear_input: boolean }>((resolve) => {
+      finishUpload = resolve;
+    }));
+    render(<App client={fixtureClient({ attachTextFile })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, transcriptSnapshot());
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    const dataTransfer = { types: ['Files'], files: [new File(['text'], 'notes.txt')], dropEffect: 'copy' };
+    fireEvent.dragOver(input, { dataTransfer });
+    expect(dataTransfer.dropEffect).toBe('none');
+    fireEvent.drop(input, { dataTransfer });
+    expect(attachTextFile).not.toHaveBeenCalled();
+
+    act(() => events.handlers[0].onSnapshot(snapshotFixture));
+    fireEvent.drop(input, { dataTransfer });
+    await waitFor(() => expect(attachTextFile).toHaveBeenCalledTimes(1));
+    fireEvent.dragOver(input, { dataTransfer });
+    expect(dataTransfer.dropEffect).toBe('none');
+    fireEvent.drop(input, { dataTransfer });
+    expect(attachTextFile).toHaveBeenCalledTimes(1);
+    await act(async () => finishUpload({ clear_input: false }));
+    fireEvent.dragOver(input, { dataTransfer });
+    expect(dataTransfer.dropEffect).toBe('copy');
   });
 
   it('opens and attaches the initial conversation on plain startup and Return to start', async () => {

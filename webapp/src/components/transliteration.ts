@@ -69,7 +69,7 @@ function preserveInitialCase(value: string, source: string): string {
   return first && first !== first.toLowerCase() ? value.toUpperCase() : value;
 }
 
-/** Convert a pasted or newly inserted Latin fragment to Russian. */
+/** Convert a Latin fragment to Russian. */
 export function transliterateRussian(text: string): string {
   let result = '';
 
@@ -112,11 +112,13 @@ export interface TransliterationChange {
 /**
  * Transliterate only the fragment inserted by one browser edit. Existing text
  * is left alone, which lets the mode be enabled in the middle of a draft.
+ * A fragment inserted at `pasteEnd` does not join the pasted text before it.
  */
 export function transliterateRussianChange(
   previous: string,
   next: string,
   selection: number,
+  pasteEnd?: number,
 ): TransliterationChange {
   let start = 0;
   while (start < previous.length && start < next.length && previous[start] === next[start]) {
@@ -141,10 +143,12 @@ export function transliterateRussianChange(
   const suffix = next.slice(nextEnd);
   let converted: string;
 
-  // A plus remains visible until the user types the character it separates.
-  // At that point it is removed and prevents the new character from combining
-  // with the Cyrillic letter before it.
-  if (prefix.endsWith('+')) {
+  if (start === pasteEnd) {
+    converted = transliterateRussian(inserted);
+  } else if (prefix.endsWith('+')) {
+    // A plus remains visible until the user types the character it separates.
+    // At that point it is removed and prevents the new character from
+    // combining with the Cyrillic letter before it.
     prefix = prefix.slice(0, -1);
     converted = transliterateRussian(inserted);
   } else {

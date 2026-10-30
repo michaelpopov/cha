@@ -47,10 +47,15 @@ describe('Russian transliteration', () => {
       .toEqual({ value: 'домай', selection: 4 });
   });
 
-  it('converts a pasted fragment and puts the caret at its end', () => {
+  it('does not join a fragment typed at the end of pasted text', () => {
+    expect(transliterateRussianChange('C+', 'C+h', 3, 2)).toEqual({ value: 'C+х', selection: 3 });
+    expect(transliterateRussianChange('мой', 'мойa', 4, 3)).toEqual({ value: 'мойа', selection: 4 });
+  });
+
+  it('converts an inserted fragment and puts the caret at its end', () => {
     expect(transliterateRussianChange('', 'shhuka', 6))
       .toEqual({ value: 'щука', selection: 4 });
-    // A paste that lands before existing text keeps that text and still reports
+    // An insertion before existing text keeps that text and still reports
     // the caret at the end of what was converted, not at the end of the value.
     expect(transliterateRussianChange('мир', 'privet мир', 7))
       .toEqual({ value: 'привет мир', selection: 7 });

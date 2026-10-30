@@ -397,7 +397,7 @@ it('edits persona Markdown as pasted text and cancels without saving', async () 
   expect(getPersona).toHaveBeenCalledOnce();
 });
 
-it('deletes a persona from the skull action beside upload after confirmation', async () => {
+it('deletes a persona from the trash action beside upload after confirmation', async () => {
   const user = userEvent.setup();
   const deletePersona = vi.fn(async () => undefined);
   render(<App client={fixtureClient({ deletePersona })} />);

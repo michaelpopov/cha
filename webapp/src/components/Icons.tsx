@@ -364,18 +364,6 @@ export function FontSizeIcon(props: IconProps) {
   );
 }
 
-export function SkullBonesIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M8.2 14.5 4 18.7M15.8 14.5l4.2 4.2M5.3 14l4.7 4.7M18.7 14 14 18.7" {...stroke} />
-      <path d="M7 10.5V9a5 5 0 0 1 10 0v1.5c0 1.8-.9 3-2.4 3.7V17H9.4v-2.8C7.9 13.5 7 12.3 7 10.5Z" fill="var(--background)" {...stroke} />
-      <circle cx="10" cy="10" r="1" fill="currentColor" />
-      <circle cx="14" cy="10" r="1" fill="currentColor" />
-      <path d="M12 12.2v1.2M11 17v-1.4M13 17v-1.4" {...stroke} />
-    </Icon>
-  );
-}
-
 export function PictureIcon(props: IconProps) {
   return (
     <Icon {...props}>

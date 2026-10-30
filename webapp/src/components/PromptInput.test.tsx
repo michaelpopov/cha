@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -47,6 +48,53 @@ describe('PromptInput', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith('Hello'));
     expect(input).toHaveValue('');
+  });
+
+  it.each([
+    { initial: '', start: 0, end: 0, pasted: 'shhuka + hello\nПривет' },
+    { initial: 'с', start: 1, end: 1, pasted: 'h' },
+    { initial: 'до мир после', start: 3, end: 6, pasted: 'https://example.com/a+b' },
+  ])('preserves pasted text with transliteration enabled: $pasted', async ({ initial, start, end, pasted }) => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(async () => ({ clear_input: true }));
+    render(<Harness initial={initial} onSubmit={onSubmit} statusRow={({ transliteration }) => transliteration} />);
+    await user.click(screen.getByRole('button', { name: 'Latin to Russian transliteration' }));
+    const input = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+    input.setSelectionRange(start, end);
+
+    await user.paste(pasted);
+
+    const prefix = initial.slice(0, start) + pasted;
+    const suffix = initial.slice(end);
+    expect(input).toHaveValue(prefix + suffix);
+    expect(input.selectionStart).toBe(prefix.length);
+    expect(input.selectionEnd).toBe(prefix.length);
+
+    await user.keyboard('privet');
+    expect(input).toHaveValue(`${prefix}привет${suffix}`);
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith(`${prefix}привет${suffix}`));
+  });
+
+  it.each([
+    { pasted: 'C++', typed: ' is', expected: 'C++ ис' },
+    { pasted: 'мой', typed: 'a', expected: 'мойа' },
+  ])('does not join typed text to the end of pasted text: $pasted', async ({ pasted, typed, expected }) => {
+    const user = userEvent.setup();
+    render(<Harness statusRow={({ transliteration }) => transliteration} />);
+    await user.click(screen.getByRole('button', { name: 'Latin to Russian transliteration' }));
+    await user.paste(pasted);
+    await user.keyboard(typed);
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(expected);
+  });
+
+  it('preserves dropped text with transliteration enabled', async () => {
+    const user = userEvent.setup();
+    render(<Harness statusRow={({ transliteration }) => transliteration} />);
+    await user.click(screen.getByRole('button', { name: 'Latin to Russian transliteration' }));
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.input(input, { target: { value: 'https://example.com' }, inputType: 'insertFromDrop' });
+    expect(input).toHaveValue('https://example.com');
   });
 
   it('submits on Enter, inserts a line on Ctrl+Enter, and ignores IME Enter', async () => {

@@ -1453,6 +1453,11 @@ select:disabled {
   background: var(--secondary);
 }
 
+.cha-composer.is-file-dragging {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+
 .cha-composer-controls,
 .cha-composer-actions {
   display: flex;

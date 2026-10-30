@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
   type PointerEvent,
@@ -53,6 +54,7 @@ export interface PromptInputProps {
   hidden?: boolean;
   value: string;
   onChange(next: string): void;
+  onFileDrop?(file: File): void;
   enabled: boolean;
   submitEnabled: boolean;
   microphoneEnabled: boolean;
@@ -101,6 +103,7 @@ export function PromptInput({
   hidden = false,
   value,
   onChange,
+  onFileDrop,
   enabled,
   submitEnabled,
   microphoneEnabled,
@@ -139,6 +142,16 @@ export function PromptInput({
 
   const transliteration = useTransliteration<HTMLTextAreaElement>(value);
   const [submitting, setSubmitting] = useState(false);
+  const [fileDragging, setFileDragging] = useState(false);
+  const canDropFile = enabled && !hidden && onFileDrop !== undefined;
+
+  function dragFile(event: DragEvent<HTMLFormElement>) {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = canDropFile ? 'copy' : 'none';
+    setFileDragging(canDropFile);
+  }
+
   const sending = useRef(false);
   const composerEpoch = useRef(0);
   const [voiceInputState, setVoiceInputState] = useState<
@@ -571,7 +584,22 @@ export function PromptInput({
         tabIndex={0}
         title="Drag to resize; double-click to reset"
       />
-      <form className="cha-composer" onSubmit={submit}>
+      <form
+        className={`cha-composer${fileDragging && canDropFile ? ' is-file-dragging' : ''}`}
+        onDragEnter={dragFile}
+        onDragOver={dragFile}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFileDragging(false);
+        }}
+        onDrop={(event) => {
+          setFileDragging(false);
+          if (!event.dataTransfer.types.includes('Files')) return;
+          event.preventDefault();
+          const file = event.dataTransfer.files[0];
+          if (canDropFile && file) onFileDrop?.(file);
+        }}
+        onSubmit={submit}
+      >
         <textarea
           aria-label={inputLabel}
           autoComplete="off"

@@ -21,7 +21,7 @@ import {
   type TextFileRequest,
 } from '../api/client';
 import { useAudioDownloads } from '../audioDownloads';
-import { readTextFile, textFileAccept } from '../textFile';
+import { readTextFile } from '../textFile';
 import { ChatPictureLayout } from './ChatPicture';
 import type { AppState, DataAction, NavigationAction } from '../state/view';
 import {
@@ -37,7 +37,6 @@ import {
   CopyIcon,
   EyeIcon,
   EyeOffIcon,
-  FileUpIcon,
   GlobeIcon,
   SpeakerIcon,
   StopIcon,
@@ -342,7 +341,6 @@ export function ChatScreen({
   const [stopPending, setStopPending] = useState(false);
   const stopping = useRef(false);
   const composerEpoch = useRef(0);
-  const fileInput = useRef<HTMLInputElement | null>(null);
   const actionPending = pendingAction !== null || sendPending || stopPending;
   const transcriptArea = useRef<HTMLDivElement | null>(null);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
@@ -913,6 +911,8 @@ export function ChatScreen({
         microphoneEnabled={microphoneEnabled}
         onChange={onDraftChange}
         onError={setActionError}
+        onFileDrop={connected && !generationActive && !actionPending
+          ? (file) => void attachTextFile(file) : undefined}
         onSubmit={onSubmitInput}
         onSubmittingChange={setSendPending}
         placeholder={sendToAll
@@ -929,29 +929,6 @@ export function ChatScreen({
               : recordingTarget
                 ? 'Self-notes'
                 : (character?.display_name ?? 'Unknown character')}</span>
-            <button
-              aria-label="Attach text file"
-              aria-busy={pendingAction === 'upload'}
-              className="cha-speech-cache-toggle"
-              disabled={!connected || generationActive || actionPending}
-              onClick={() => fileInput.current?.click()}
-              title="Attach text file"
-              type="button"
-            >
-              <FileUpIcon />
-            </button>
-            <input
-              accept={textFileAccept}
-              aria-label="Text file"
-              className="cha-file-input"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = '';
-                if (file) void attachTextFile(file);
-              }}
-              ref={fileInput}
-              type="file"
-            />
             {textToSpeechConfiguration && (
               <button
                 aria-label="Auto audio response"

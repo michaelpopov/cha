@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'r
 import { publicErrorMessage } from '../api/client';
 import { useDetailRefresh } from '../detailRefresh';
 import { ConfirmDialog } from './ConfirmDialog';
-import { CheckIcon, CloseIcon, EditIcon, FileUpIcon, SkullBonesIcon, TextLinesIcon } from './Icons';
+import { CheckIcon, CloseIcon, EditIcon, FileUpIcon, TextLinesIcon, TrashIcon } from './Icons';
 import { TextEditorDialog } from './TextEditorDialog';
 import { TransliterationToggle, useTransliteration } from './TransliterationMode';
 
@@ -303,7 +303,7 @@ export function DetailActions({ name, subject, deleteMessage, onDelete, editor }
         onClick={() => setConfirming(true)}
         title={`Delete ${name}`}
         type="button"
-      ><SkullBonesIcon /></button>}
+      ><TrashIcon /></button>}
       {deleteError && <span className="cha-definition-upload-error" role="alert">{deleteError}</span>}
       {confirming && onDelete && deleteMessage && <ConfirmDialog
         confirmLabel={`Delete ${subject.toLowerCase()}`}
