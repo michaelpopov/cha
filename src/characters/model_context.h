@@ -4,7 +4,7 @@
 #include "chat/research_needs.h"
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
-#include "storage/folder_store_storage.h"
+#include "providers/folder_store_types.h"
 
 #include <atomic>
 #include <functional>

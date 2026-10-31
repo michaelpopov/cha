@@ -1,5 +1,6 @@
 #pragma once
 
+#include "runtime/error_code.h"
 #include "characters/character_config.h"
 #include "chat/character_metadata.h"
 #include "session/controller_update.h"
@@ -21,8 +22,6 @@
 
 namespace cha {
 
-class LiveSession;
-
 enum class SessionLifecycle { starting, running, stopping };
 enum class ShutdownReason {
     session_closed,
@@ -32,16 +31,6 @@ enum class ShutdownReason {
     server_stopping,
     retired,
 };
-enum class ErrorCode {
-    not_found, body_too_large, prompt_too_large,
-    internal_error, speech_busy, vault_changed, session_stopping,
-    session_limit_reached, session_open_timeout, server_stopping,
-    session_not_live, command_timeout,
-    command_queue_full, vault_password_required,
-    source_vault_password_required,
-    invalid_argument, operation_cancelled, application_unavailable,
-};
-
 struct SessionListing {
     SessionId id;
     std::string label;
@@ -199,16 +188,6 @@ struct UnsubscribeCommand {
     std::uint64_t context_epoch{};
     std::string subscription_id;
 };
-struct SubscribeResult {
-    std::string connection_id;
-    std::uint64_t context_epoch{};
-    std::string subscription_id;
-    // In-process only. Subscription completion carries the immutable endpoint
-    // it just attached so an inline ready callback never reenters the runtime
-    // to look the session up again. Protocol serialization ignores this field.
-    std::shared_ptr<LiveSession> session;
-};
-
 using WebCommand = std::variant<
     RawCommand,
     AttachTextFileCommand,
@@ -605,7 +584,6 @@ std::string_view to_string(EntryStatus value);
 std::string_view to_string(ResponsePhase value);
 std::string_view to_string(SessionLifecycle value);
 std::string_view to_string(ShutdownReason value);
-std::string_view to_string(ErrorCode value);
 
 void to_json(nlohmann::json& json, const ForumSummary& value);
 void to_json(nlohmann::json& json, const PersonaSummary& value);

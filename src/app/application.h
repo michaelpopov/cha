@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/application_result.h"
+#include "notes/notes_types.h"
 #include "media/media_resources.h"
 #include "media/xai_socket.h"
 #include "runtime/runtime_settings.h"
@@ -16,12 +18,10 @@
 #include "workspace/workspace_config_store.h"
 
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -84,38 +84,6 @@ struct ResourceHooks {
 
 using ContextChanged = std::function<
     void(std::uint64_t context_epoch, ApplicationState state)>;
-
-class ApplicationError : public std::runtime_error {
-public:
-    explicit ApplicationError(
-        ErrorCode code,
-        std::string message = {});
-    ErrorCode code;
-};
-
-// Terminal result for provider tests and OAuth network work. Abandoned replies
-// ignore a later completion; the work itself is not rolled back.
-class OperationReply {
-public:
-    struct Failure {
-        ErrorCode code{ErrorCode::internal_error};
-        std::string message;
-    };
-    using Result = std::variant<nlohmann::json, Failure>;
-
-    bool complete(nlohmann::json result);
-    bool fail(ErrorCode code, std::string message);
-    void set_ready_callback(std::function<void()> callback);
-    [[nodiscard]] std::optional<Result> peek() const;
-    void abandon() const;
-
-private:
-    mutable std::mutex mutex_;
-    mutable std::condition_variable ready_;
-    mutable bool abandoned_{};
-    std::optional<Result> result_;
-    mutable std::function<void()> ready_callback_;
-};
 
 [[nodiscard]] std::string_view application_state_name(
     ApplicationState state) noexcept;
@@ -358,7 +326,7 @@ public:
     [[nodiscard]] SessionNamingSettings get_session_naming_settings(std::uint64_t epoch);
     [[nodiscard]] SessionNamingSettings save_session_naming_settings(
         SessionNamingSettings settings, std::uint64_t epoch);
-    using NoteAudioChanged = std::function<void(std::int64_t, std::uint64_t)>;
+    using NoteAudioChanged = cha::app::NoteAudioChanged;
     void set_note_audio_changed(NoteAudioChanged callback);
     nlohmann::json start_background_note_audio(std::int64_t id, std::string voice,
         std::vector<std::string> blocks, std::uint64_t epoch, bool only_if_missing = false);
@@ -605,27 +573,9 @@ public:
         std::uint64_t epoch);
     void delete_note_item(std::int64_t id, std::uint64_t epoch);
 
-    struct FolderStoreChoiceView {
-        std::string service;
-        std::string api_key_id;
-        std::string api_key_name;
-    };
-    struct FolderStoreStart {
-        std::int64_t operation_id{};
-    };
-    struct FolderStoreOperationStatus {
-        bool present{};
-        std::int64_t operation_id{};
-        std::string kind;
-        std::string phase;
-        std::int64_t completed{};
-        std::int64_t total{};
-        std::string error;
-        std::string result;
-        bool known_cleanup_remains{};
-        bool folder_deleted{};
-        bool terminal{};
-    };
+    using FolderStoreChoiceView = cha::app::FolderStoreChoiceView;
+    using FolderStoreStart = cha::app::FolderStoreStart;
+    using FolderStoreOperationStatus = cha::app::FolderStoreOperationStatus;
     [[nodiscard]] std::vector<FolderStoreChoiceView> folder_store_choices(std::uint64_t epoch);
     [[nodiscard]] FolderStoreStart start_folder_store_upload(
         std::int64_t folder_id,

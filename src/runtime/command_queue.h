@@ -15,6 +15,18 @@
 
 namespace cha {
 
+class LiveSession;
+
+struct SubscribeResult {
+    std::string connection_id;
+    std::uint64_t context_epoch{};
+    std::string subscription_id;
+    // In-process only. Subscription completion carries the immutable endpoint
+    // it just attached so an inline ready callback never reenters the runtime
+    // to look the session up again. Protocol serialization ignores this field.
+    std::shared_ptr<LiveSession> session;
+};
+
 struct CommandFailure {
     ErrorCode code;
     std::string message;

@@ -11,6 +11,7 @@
 #include "session/generation_status.h"
 #include "storage/session_database.h"
 #include "storage/note_storage.h"
+#include "storage/folder_store_storage.h"
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
 #include "util/text.h"

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "storage/session_repository.h"
+#include "chat/audio_data.h"
 #include "workspace/workspace.h"
 #include <atomic>
 #include <chrono>
@@ -14,6 +14,8 @@
 #include <nlohmann/json.hpp>
 
 namespace cha {
+
+struct EntryAudioLookup;
 
 inline constexpr std::size_t voice_output_concurrency = 4;
 

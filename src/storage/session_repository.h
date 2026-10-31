@@ -1,6 +1,7 @@
 #pragma once
 
 #include "workspace/workspace.h"
+#include "chat/audio_data.h"
 
 #include "chat/session_identity.h"
 #include "storage/session_database.h"
@@ -21,11 +22,6 @@
 namespace cha {
 
 class Workspace;
-
-struct EntryAudio {
-    std::string audio;
-    std::string content_type;
-};
 
 // Identifies the original database and entry for a later, short cache write.
 struct EntryAudioLookup {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "runtime/protocol.h"
+#include "runtime/error_code.h"
 
 #include <chrono>
 #include <functional>

@@ -1,6 +1,6 @@
 #include "app/workspace_operations.h"
 
-#include "app/application.h"
+#include "app/application_result.h"
 #include "util/logging.h"
 #include "util/text.h"
 #include "util/picture.h"

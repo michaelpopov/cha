@@ -1,7 +1,7 @@
 #pragma once
 
 #include "providers/maintenance.h"
-#include "runtime/protocol.h"
+#include "runtime/error_code.h"
 
 #include <nlohmann/json_fwd.hpp>
 

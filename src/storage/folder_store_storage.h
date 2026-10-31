@@ -1,5 +1,6 @@
 #pragma once
 
+#include "providers/folder_store_types.h"
 #include "storage/note_storage.h"
 #include "storage/session_database.h"
 #include "storage/sqlite_storage.h"
@@ -20,7 +21,6 @@ inline constexpr std::size_t folder_store_openai_file_byte_limit =
 inline constexpr std::size_t folder_store_google_document_byte_limit =
     104857600ull;
 
-enum class FolderStoreService { openai, google };
 enum class FolderStoreState { incomplete, ready };
 
 class FolderStoreError : public std::runtime_error {

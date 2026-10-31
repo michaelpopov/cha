@@ -283,8 +283,8 @@ Application::Impl::Impl(
               auto pending = nlohmann::json::array();
               for (const auto& note : store->list_note_items()) {
                   if (note.kind != NoteItemKind::note) continue;
-                  auto audio = background_note_audio_status(note.id);
-                  auto compression = note_compression_status(note.id);
+                  auto audio = notes->background_audio_status_locked(note.id);
+                  auto compression = notes->compression_status_locked(note.id);
                   if (audio.at("pending") == true || compression.at("pending") == true)
                       pending.push_back({{"note_id", note.id}, {"name", note.name},
                           {"audio", std::move(audio)}, {"compression", std::move(compression)}});
@@ -376,6 +376,11 @@ Application::Impl::Impl(
     audio_downloads = std::make_unique<AudioDownloadManager>(
         *sessions, [this] { return current_vault_.get().name; }, true);
     live_sessions = std::make_unique<LiveSessionManager>(settings, opener);
+    notes = std::make_unique<NotesService>(*store, *api_keys, *openai_auth, *sessions, *live_sessions,
+        background_jobs, settings, lifecycle_mutex, published_epoch,
+        [this](std::uint64_t epoch) { return admit_locked(epoch); },
+        [this] { return state.load() == ApplicationState::running && !stopping_flag; },
+        !command.chaweb_host, [this] { return current_vault_.get().name; });
     assistant->bind_runtime(*live_sessions, *sessions);
     publish_capabilities_locked();
     running = true;
@@ -428,7 +433,7 @@ void Application::Impl::require_admitted(std::uint64_t epoch) const {
 }
 
 void Application::Impl::pause_resources(bool cancel) {
-    interrupt_note_audio();
+    notes->interrupt_note_audio();
     pending_media.cancel_all();
     xai_voice.cancel_all();
     media_resources.revoke_all();
@@ -440,7 +445,7 @@ void Application::Impl::resume_resources() {
     if (unusable) return;
     if (audio_downloads) audio_downloads->resume();
     if (resource_hooks.resume) resource_hooks.resume();
-    resume_note_audio();
+    notes->resume_note_audio_locked();
 }
 
 void Application::Impl::take_context_notice(PendingContextNotice& notice) {
@@ -738,8 +743,7 @@ std::optional<ErrorCode> Application::delete_session(
         return ErrorCode::not_found;
     }
     const auto cancel_summary = [&] {
-        const auto found = impl_->summaries.find(key);
-        if (found != impl_->summaries.end()) found->second->cancel->store(true);
+        impl_->notes->cancel_session_summary_locked(key);
     };
     if (only_if_unused) {
         try {
@@ -1635,7 +1639,7 @@ bool Application::join_shutdown(std::chrono::milliseconds grace) {
         impl_->preserve_on_destroy.store(true);
         return false;
     }
-    impl_->cancel_summaries();
+    impl_->notes->cancel_summaries_locked();
     bool joined = true;
     if (impl_->audio_downloads) {
         impl_->audio_downloads->request_stop();

@@ -348,6 +348,10 @@ add_library(cha_lib STATIC
     src/runtime/session_output.cpp
     src/media/audio_download.cpp
     src/app/media_operations.cpp
+    src/notes/notes_operations.cpp
+    src/notes/note_audio_operations.cpp
+    src/notes/folder_store_operations.cpp
+    src/notes/notes_service.cpp
     src/app/notes_operations.cpp
     src/app/folder_store_operations.cpp
     src/app/events_operations.cpp
@@ -629,6 +633,7 @@ if(BUILD_TESTING)
 
     add_executable(
         cha_app_tests
+        tests/notes/unit_notes_service.cpp
         tests/app/unit_application.cpp
         tests/app/unit_assistant_service.cpp
         tests/app/unit_background_jobs.cpp

@@ -9,7 +9,7 @@ through the common bridge. There is no application HTTP listener.
 ```text
 cha_macos / cha_windows -> cha_lib
 
-cha_lib -> app / bridge / runtime / media / workspace / session / storage / providers / characters / chat / util
+cha_lib -> app / bridge / runtime / media / notes / workspace / session / storage / providers / characters / chat / util
 cha_lib -> curl / sqlite / libuv / threads / toml++ / spdlog / nlohmann-json
 ```
 
@@ -39,6 +39,7 @@ diagnostic logging remains available until teardown finishes.
 | --- | --- |
 | `app/` | Application composition root, domain operations, configuration, and R2 database transfer. |
 | `media/` | Audio downloads and streams, xAI dictation, transient media resources, and cleanup. |
+| `notes/` | `NotesService`: note editing and imports, compression, session summaries, folder-store operations, and durable note-audio orchestration. |
 | `bridge/` | Native request envelopes and the operation dispatcher. |
 | `runtime/` | Live-session runtime, chat-input grammar, wire DTOs, and projection. |
 | `workspace/` | The loaded workspace model and built-ins. |
