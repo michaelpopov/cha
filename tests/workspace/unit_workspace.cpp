@@ -90,7 +90,7 @@ TEST(Workspace, ForumNamesUseNotesDisplayLabelRules) {
             (void)Workspace::load(fixture.root());
             FAIL() << "Expected invalid forum name";
         } catch (const std::runtime_error& error) {
-            EXPECT_NE(std::string(error.what()).find("forums/lobby/config.toml"), std::string::npos);
+            EXPECT_NE(std::string(error.what()).find(utf8_path(fixture.root() / "forums" / "lobby" / "config.toml")), std::string::npos);
             EXPECT_NE(std::string(error.what()).find(name == "ANNOTATIONS" ? "reserved" : "200"), std::string::npos);
         }
     }

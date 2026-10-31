@@ -70,7 +70,7 @@ std::string_view safe_error_reason(const Json& error) {
     const auto status = error.find("status");
     const auto google_error = [&](int number, std::string_view name) {
         return (code != error.end() && *code == number)
-            || (status != error.end() && *status == name);
+            || (status != error.end() && *status == std::string(name));
     };
     if (google_error(3, "INVALID_ARGUMENT")) return "The provider rejected the file or request parameters. Check the note content and configuration.";
     if (google_error(7, "PERMISSION_DENIED")) return "The saved API key cannot access this resource. Check its project and permissions.";
@@ -562,7 +562,7 @@ FolderStoreRemoteResult FolderStoreClient::openai_delete_store(
     if (result.kind == FolderStoreRemoteKind::ok) {
         const auto body = Json::parse(response.body, nullptr, false);
         if (!body.contains("deleted") || body["deleted"] != true
-            || (body.contains("id") && body["id"] != store_id)) return invalid_response("The provider did not confirm resource deletion.");
+            || (body.contains("id") && body["id"] != std::string(store_id))) return invalid_response("The provider did not confirm resource deletion.");
     }
     return result;
 }
@@ -579,7 +579,7 @@ FolderStoreRemoteResult FolderStoreClient::openai_delete_file(
     if (result.kind == FolderStoreRemoteKind::ok) {
         const auto body = Json::parse(response.body, nullptr, false);
         if (!body.contains("deleted") || body["deleted"] != true
-            || (body.contains("id") && body["id"] != file_id)) return invalid_response("The provider did not confirm resource deletion.");
+            || (body.contains("id") && body["id"] != std::string(file_id))) return invalid_response("The provider did not confirm resource deletion.");
     }
     return result;
 }
