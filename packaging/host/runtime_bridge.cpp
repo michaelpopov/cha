@@ -187,7 +187,8 @@ void run_pump(ChaRuntime* runtime) {
                 continue;
             }
             if (!batch) continue;
-            const std::string json = batch->dump();
+            const std::string json = batch->dump(
+                -1, ' ', false, nlohmann::json::error_handler_t::replace);
             std::lock_guard lock(runtime->callback_mutex);
             if (runtime->delivery_callback) {
                 runtime->delivery_callback(

@@ -388,10 +388,7 @@ ProviderDetail update_provider(
     }
     return with_settings_edit([&] {
         try {
-            const WorkspaceConfigEditResult edited = store.apply_provider_update(
-                id, update.display_name, update.config);
-            workspace::invalidate_affected_sessions(
-                live_sessions, edited.affected_forum_ids);
+            store.apply_provider_update(id, update.display_name, update.config);
             workspace::refresh_all_sessions(live_sessions);
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid provider settings.");

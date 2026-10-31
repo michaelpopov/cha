@@ -301,7 +301,7 @@ public:
     WorkspaceConfigEditResult apply_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id);
-    WorkspaceConfigEditResult apply_provider_update(
+    void apply_provider_update(
         std::string_view provider_id,
         std::string_view display_name,
         const ModelBackendConfig& config);

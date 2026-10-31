@@ -25,6 +25,18 @@ namespace {
     throw ApplicationError(code, std::move(message));
 }
 
+void invalidate_affected_sessions(
+    LiveSessionManager& live_sessions,
+    std::span<const std::string> forum_ids) {
+    for (const auto& live : live_sessions.active_sessions()) {
+        const FullSessionId& key = live->identity();
+        if (std::ranges::find(forum_ids, key.forum_id) == forum_ids.end()) {
+            continue;
+        }
+        live->request_shutdown(ShutdownReason::reloading);
+    }
+}
+
 void apply_edit(
     LiveSessionManager& live_sessions,
     const WorkspaceConfigEditResult& edited,
@@ -277,18 +289,6 @@ std::vector<SessionListing> sessions_for(
     return result;
 }
 
-void invalidate_affected_sessions(
-    LiveSessionManager& live_sessions,
-    std::span<const std::string> forum_ids) {
-    for (const auto& live : live_sessions.active_sessions()) {
-        const FullSessionId& key = live->identity();
-        if (std::ranges::find(forum_ids, key.forum_id) == forum_ids.end()) {
-            continue;
-        }
-        live->request_shutdown(ShutdownReason::reloading);
-    }
-}
-
 void refresh_all_sessions(LiveSessionManager& live_sessions) {
     for (const auto& live : live_sessions.active_sessions()) live->refresh_presentation();
 }
@@ -375,11 +375,11 @@ CharacterDetail update_character_settings(
         || !workspace->character_settings_are_writable(id)) {
         fail(ErrorCode::not_found, "That character was not found.");
     }
-    const bool restart = !character->provider_id
+    const bool changed = !character->provider_id
         || update.provider != *character->provider_id
         || update.reasoning_effort != character->reasoning_effort
-        || update.web_search != character->web_search;
-    const bool changed = restart || update.style != character->style_id
+        || update.web_search != character->web_search
+        || update.style != character->style_id
         || update.voice != character->voice_id
         || update.web_search_tool != character->web_search_tool;
     return with_workspace_edit([&] {
@@ -399,7 +399,7 @@ CharacterDetail update_character_settings(
                     live_sessions,
                     store.apply_character_settings(
                         id, update.provider, style, voice,
-                        reasoning_effort, update.web_search, update.web_search_tool), restart);
+                        reasoning_effort, update.web_search, update.web_search_tool), false);
             }
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid character settings.");

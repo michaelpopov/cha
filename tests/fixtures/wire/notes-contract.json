@@ -1,0 +1,13 @@
+{
+  "items": [
+    { "id": 1, "parent_id": null, "kind": "folder", "name": "Plan", "has_compressed": false, "read_only": false, "is_summary": false, "summary_linked": false },
+    { "id": 4, "parent_id": 1, "kind": "note", "name": "Draft", "has_compressed": true, "read_only": false, "is_summary": false, "summary_linked": false },
+    { "id": 5, "parent_id": 1, "kind": "annotation", "name": "Annotation", "has_compressed": false, "read_only": true, "is_summary": false, "summary_linked": false },
+    { "id": 6, "parent_id": 1, "kind": "note", "name": "Summary", "has_compressed": false, "read_only": true, "is_summary": true, "summary_linked": true },
+    { "id": 7, "parent_id": null, "kind": "folder", "name": "Forum", "has_compressed": false, "read_only": false, "is_summary": false, "summary_linked": false, "forum_id": "research" }
+  ],
+  "contents": [
+    { "id": 4, "document": { "type": "doc", "content": [{ "type": "paragraph" }] }, "scroll_top": 1200 },
+    { "id": 6, "document": { "type": "doc", "content": [] }, "compressed_text": "Stored summary\nSecond line", "scroll_top": 0 }
+  ]
+}

@@ -65,6 +65,13 @@ describe('native CHA client', () => {
     return { bridge, audio: client.noteAudio! };
   }
 
+  it('accepts audio info only with the count key', async () => {
+    const info = vi.fn().mockReturnValueOnce({ count: 0 }).mockReturnValueOnce({ count: 0, extra: true });
+    const { audio } = await audioClient({ 'noteAudio.info': info });
+    await expect(audio.info(4)).resolves.toEqual({ count: 0 });
+    await expect(audio.info(4)).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it('sends missing-only only when requested and accepts its skip result', async () => {
     const start = vi.fn().mockReturnValueOnce({ attempt_id: 1 }).mockReturnValueOnce({ skipped: true });
     const { audio } = await audioClient({ 'noteAudio.startBackground': start });
@@ -824,13 +831,15 @@ describe('notes native client', () => {
     ]);
   });
 
-  it('accepts a saved position with or without compressed text', async () => {
-    for (const result of [
-      { id: 4, document, scroll_top: 1200 },
-      { id: 4, document, scroll_top: 0, compressed_text: 'Summary' },
-    ]) {
-      const client = clientFor({ 'notes.get': () => result });
-      expect(await client.getNote(4)).toEqual(result);
+  it('accepts the shared notes wire contract', async () => {
+    const contract = loadFixture('notes-contract.json') as { items: unknown[]; contents: { id: number }[] };
+    const client = clientFor({
+      'notes.list': () => ({ items: contract.items }),
+      'notes.get': params => contract.contents.find(content => content.id === (params as { id: number }).id),
+    });
+    expect(await client.listNoteItems()).toEqual(contract.items);
+    for (const content of contract.contents) {
+      expect(await client.getNote(content.id)).toEqual(content);
     }
   });
 
@@ -846,6 +855,7 @@ describe('notes native client', () => {
     ['notes.list', { items: [{ ...folder, id: 1.5 }] }],
     ['notes.list', { items: [{ ...folder, parent_id: 0 }] }],
     ['notes.list', { items: [{ ...folder, kind: 'file' }] }],
+    ['notes.list', { items: [folder, { ...note, name: '' }] }],
     ['notes.list', { items: [{ ...folder, forum_id: null }] }],
     ['notes.list', { items: [{ ...folder, forum_id: 1 }] }],
     ['notes.list', { items: [{ ...note, forum_id: '' }] }],

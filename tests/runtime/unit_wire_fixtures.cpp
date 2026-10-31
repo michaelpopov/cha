@@ -1,4 +1,5 @@
 #include "runtime/protocol.h"
+#include "storage/note_storage.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -6,6 +7,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace cha {
 namespace {
@@ -165,6 +167,25 @@ TEST(WebWireFixtures, SerializesBootstrapSnapshotCommandsErrorsAndAppends) {
             .has_secret_key = true,
         }),
         load_fixture("r2-storage-detail.json"));
+}
+
+TEST(WebWireFixtures, SerializesNotesContract) {
+    const auto fixture = load_fixture("notes-contract.json");
+    const nlohmann::json items = std::vector<NoteItem>{
+        {.id = 1, .kind = NoteItemKind::folder, .name = "Plan"},
+        {.id = 4, .parent_id = 1, .kind = NoteItemKind::note, .name = "Draft", .has_compressed = true},
+        {.id = 5, .parent_id = 1, .kind = NoteItemKind::annotation, .name = "Annotation", .read_only = true},
+        {.id = 6, .parent_id = 1, .kind = NoteItemKind::note, .name = "Summary", .read_only = true,
+         .is_summary = true, .summary_linked = true},
+        {.id = 7, .kind = NoteItemKind::folder, .name = "Forum", .forum_id = "research"},
+    };
+    const nlohmann::json contents = std::vector<NoteContent>{
+        {.id = 4, .document = {{"type", "doc"}, {"content", {{{"type", "paragraph"}}}}}, .scroll_top = 1200},
+        {.id = 6, .document = {{"type", "doc"}, {"content", nlohmann::json::array()}},
+         .compressed_text = "Stored summary\nSecond line"},
+    };
+    EXPECT_EQ(items, fixture.at("items"));
+    EXPECT_EQ(contents, fixture.at("contents"));
 }
 
 } // namespace

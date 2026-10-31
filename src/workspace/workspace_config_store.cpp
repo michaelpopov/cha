@@ -548,24 +548,6 @@ std::vector<std::string> forums_using_persona(
     return result;
 }
 
-std::vector<std::string> forums_using_provider(
-    const Workspace& workspace,
-    std::string_view provider_id) {
-    std::vector<std::string> result;
-    for (const WorkspaceForum& forum : workspace.forums()) {
-        const bool used = std::ranges::any_of(
-            forum.members,
-            [&](const WorkspaceForumMember& member) {
-                const WorkspaceCharacter* character =
-                    workspace.find_character(member.character_id);
-                return character != nullptr && character->provider_id
-                    && *character->provider_id == provider_id;
-            });
-        if (used) result.push_back(forum.id);
-    }
-    return result;
-}
-
 std::vector<std::string> forums_using_style(
     const Workspace& workspace,
     std::string_view style_id) {
@@ -2398,15 +2380,13 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_default_character(
     });
 }
 
-WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_update(
+void WorkspaceConfigStore::apply_provider_update(
     std::string_view provider_id,
     std::string_view display_name,
     const ModelBackendConfig& config) {
-    return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
-        std::vector<std::string> affected =
-            forums_using_provider(workspace, provider_id);
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
         editor.write_provider(provider_id, display_name, config);
-        return affected;
+        return std::vector<std::string>{};
     });
 }
 

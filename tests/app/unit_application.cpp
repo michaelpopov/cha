@@ -13,6 +13,7 @@
 
 #include "util/logging.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -1699,6 +1700,116 @@ TEST(Application, AppearanceAndToolEditsRefreshTheSubscriptionWithoutCancellingG
     ASSERT_FALSE(final.transcript.empty());
     EXPECT_EQ(final.transcript.back().text, "Finished");
     EXPECT_EQ(final.transcript.back().status, EntryStatus::complete);
+}
+
+TEST(Application, SettingsEditsPreserveActiveAnswerAndUpdateNextRequest) {
+    for (const bool edit_provider : {true, false}) {
+        SCOPED_TRACE(edit_provider ? "provider edit" : "character edit");
+        test::TestWorkspace workspace;
+        const auto response = http_response(
+            "application/json", R"({"choices":[{"message":{"content":"Finished"}}]})");
+        MockHttpServer server({response, response});
+        const std::string config =
+            "host = \"127.0.0.1\"\nport = " + std::to_string(server.port())
+            + "\nhttps = false\nmode = \"net\"\n"
+              "api = \"chat_completions\"\nstream = false\ntimeout_s = 20\n";
+        workspace.write_provider("test", config + "model = \"old-model\"\n");
+        workspace.write_provider("new", config + "model = \"new-model\"\n");
+        auto application = Application::open(make_command(
+            workspace, test::import_test_database(workspace.root())));
+        struct ResumeOnExit {
+            MockHttpServer& server;
+            ~ResumeOnExit() { server.resume_responses(); }
+        } resume{server};
+        const auto epoch = application->context_epoch();
+        const auto created = application->create_session("lobby", "Settings", epoch);
+        ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+            application->open_session("lobby", created.id, epoch)));
+        const auto subscribed = application->subscribe("lobby", created.id,
+            SubscribeCommand{"view-1", epoch, "sub-1"}, epoch);
+        ASSERT_TRUE(std::holds_alternative<SubscribeResult>(subscribed));
+        auto session = std::get<SubscribeResult>(subscribed).session;
+        ASSERT_TRUE(session);
+        ASSERT_TRUE(next_output(*session));
+        session->acknowledge_output();
+
+        server.pause_before_response(1);
+        server.start();
+        ASSERT_TRUE(std::holds_alternative<CommandResult>(application->submit(
+            "lobby", created.id, RawCommand{"Hello"}, epoch)));
+        ASSERT_TRUE(server.wait_for_requests(1, 2s));
+        const auto generating = next_output(*session);
+        ASSERT_TRUE(generating);
+        ASSERT_TRUE(generating->snapshot.generation.active);
+        const auto request_id = generating->snapshot.generation.request_id;
+        ASSERT_TRUE(request_id);
+        session->acknowledge_output();
+
+        if (edit_provider) {
+            nlohmann::json body = application->get_provider("test", epoch);
+            body.erase("id");
+            body.erase("used_by");
+            body.erase("writable");
+            body["model"] = "new-model";
+            (void)application->update_provider("test", body, epoch);
+        } else {
+            (void)application->update_character("guide", {.provider = "new"}, epoch);
+        }
+        const auto refreshed = next_output(*session);
+        ASSERT_TRUE(refreshed);
+        EXPECT_EQ(refreshed->kind, SessionOutputItem::Kind::snapshot);
+        EXPECT_EQ(refreshed->snapshot.lifecycle, SessionLifecycle::running);
+        EXPECT_TRUE(refreshed->snapshot.generation.active);
+        EXPECT_EQ(refreshed->snapshot.generation.request_id, request_id);
+        EXPECT_EQ(application->subscription_handle("lobby", created.id), session);
+        EXPECT_EQ(session->lifecycle(), LiveSessionState::running);
+        session->acknowledge_output();
+        server.resume_responses();
+
+        const auto wait_for_answer = [&]() -> std::optional<SessionSnapshot> {
+            const auto deadline = std::chrono::steady_clock::now() + 2s;
+            while (std::chrono::steady_clock::now() < deadline) {
+                if (auto item = session->take_output()) {
+                    session->acknowledge_output();
+                    if (item->kind == SessionOutputItem::Kind::snapshot
+                        && !item->snapshot.generation.active) return item->snapshot;
+                }
+                std::this_thread::sleep_for(1ms);
+            }
+            return std::nullopt;
+        };
+        const auto first = wait_for_answer();
+        ASSERT_TRUE(first);
+        EXPECT_EQ(first->lifecycle, SessionLifecycle::running);
+        ASSERT_FALSE(first->transcript.empty());
+        EXPECT_EQ(std::count_if(first->transcript.begin(), first->transcript.end(),
+            [](const auto& entry) { return entry.kind == EntryKind::character; }), 1);
+        EXPECT_EQ(first->transcript.back().request_id, request_id);
+        EXPECT_EQ(first->transcript.back().text, "Finished");
+        EXPECT_EQ(first->transcript.back().status, EntryStatus::complete);
+        EXPECT_EQ(application->subscription_handle("lobby", created.id), session);
+
+        ASSERT_TRUE(std::holds_alternative<CommandResult>(application->submit(
+            "lobby", created.id, RawCommand{"Again"}, epoch)));
+        ASSERT_TRUE(server.wait_for_requests(2, 2s));
+        const auto second = wait_for_answer();
+        ASSERT_TRUE(second);
+        ASSERT_FALSE(second->transcript.empty());
+        EXPECT_EQ(std::count_if(second->transcript.begin(), second->transcript.end(),
+            [](const auto& entry) { return entry.kind == EntryKind::character; }), 2);
+        EXPECT_TRUE(std::all_of(second->transcript.begin(), second->transcript.end(),
+            [](const auto& entry) { return entry.status == EntryStatus::complete; }));
+        EXPECT_EQ(second->transcript.back().text, "Finished");
+        EXPECT_EQ(second->transcript.back().status, EntryStatus::complete);
+        EXPECT_EQ(second->lifecycle, SessionLifecycle::running);
+        server.join();
+        ASSERT_EQ(server.requests().size(), 2u);
+        for (std::size_t i = 0; i < 2; ++i) {
+            const auto& wire = server.requests()[i];
+            const auto body = nlohmann::json::parse(wire.substr(wire.find("\r\n\r\n") + 4));
+            EXPECT_EQ(body.at("model"), i == 0 ? "old-model" : "new-model");
+        }
+    }
 }
 
 TEST(Application, RejectedConfigurationLeavesApplicationAvailable) {

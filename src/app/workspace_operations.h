@@ -48,9 +48,6 @@ namespace cha::app::workspace {
     const LiveSessionManagerSnapshot& snapshot,
     std::string_view forum_id);
 
-void invalidate_affected_sessions(
-    LiveSessionManager& live_sessions,
-    std::span<const std::string> forum_ids);
 void refresh_all_sessions(LiveSessionManager& live_sessions);
 void refresh_affected_sessions(
     LiveSessionManager& live_sessions,

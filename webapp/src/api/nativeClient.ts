@@ -207,7 +207,7 @@ function isNoteItem(value: unknown): value is NoteItem {
     && isNoteId(value.id)
     && isNoteParent(value.parent_id)
     && (value.kind === 'folder' || value.kind === 'note' || value.kind === 'annotation')
-    && typeof value.name === 'string'
+    && typeof value.name === 'string' && value.name.length > 0
     && typeof value.has_compressed === 'boolean'
     && typeof value.read_only === 'boolean'
     && typeof value.is_summary === 'boolean' && typeof value.summary_linked === 'boolean'
@@ -367,7 +367,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     backgroundStatus,
     startBackground,
     info: (id: number) => call('noteAudio.info', { id }, (value): value is NoteAudioInfo =>
-      isRecord(value) && Number.isSafeInteger(value.count) && (value.count as number) >= 0),
+      isRecord(value) && hasExactKeys(value, ['count']) && Number.isSafeInteger(value.count) && (value.count as number) >= 0),
     source: (id: number, ordinal: number) => call('noteAudio.source', { id, ordinal }, isMediaResource),
     release: async (resourceId: string) => { await call('speech.release', { resource_id: resourceId }, isRecord); },
   };
