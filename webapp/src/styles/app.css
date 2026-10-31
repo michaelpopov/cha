@@ -1394,6 +1394,7 @@ select:disabled {
   color: var(--muted-foreground);
   font-size: 0.82rem;
   text-align: center;
+  white-space: pre-line;
 }
 
 .cha-live-state,
