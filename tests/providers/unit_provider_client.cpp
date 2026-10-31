@@ -3352,7 +3352,8 @@ TEST(ProviderClient, GoogleKeepsParallelAndSequentialToolPartsInOrderThroughLimi
                         } else EXPECT_EQ(responses[0]["functionResponse"]["response"], (Json{{"result", "plain result"}}));
                     }
                     if (with_stores) {
-                        EXPECT_EQ(body["tools"].back(), (Json{{"fileSearch", {{"fileSearchStoreNames", {"fileSearchStores/one"}}}}}));
+                        EXPECT_EQ(body["tools"].back(), (Json{{"fileSearch", {{"fileSearchStoreNames",
+                            {"fileSearchStores/one", "fileSearchStores/two", "fileSearchStores/three"}}}}}));
                         EXPECT_EQ(body["toolConfig"]["includeServerSideToolInvocations"], true);
                         EXPECT_EQ(body["toolConfig"]["functionCallingConfig"]["mode"], requests < 3 ? "VALIDATED" : "NONE");
                     }
@@ -3380,7 +3381,8 @@ TEST(ProviderClient, GoogleKeepsParallelAndSequentialToolPartsInOrderThroughLimi
                 });
             Transcript transcript;
             auto request = client_request(transcript, 1, "Question");
-            if (with_stores) request.folder_search = FolderSearchAccess{FolderStoreService::google, {"fileSearchStores/one"}};
+            if (with_stores) request.folder_search = FolderSearchAccess{FolderStoreService::google,
+                {"fileSearchStores/one", "fileSearchStores/two", "fileSearchStores/three"}};
             std::atomic_int executions{0};
             request.web_search_tool = [&](std::string_view query, const auto&) {
                 ++executions;
@@ -3728,6 +3730,7 @@ TEST(ProviderClientTools, ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetR
                 const auto body = Json::parse(request.body);
                 EXPECT_EQ(body["store"], false);
                 EXPECT_EQ(body["include"], Json::array({"reasoning.encrypted_content", "file_search_call.results"}));
+                EXPECT_EQ(body["tools"].back(), (Json{{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}));
                 if (++requests == 1) {
                     EXPECT_EQ(body["tool_choice"], "required");
                     auto calls = Json::array({{{"type", "file_search_call"}, {"id", "hosted"}, {"status", "completed"}, {"queries", {"fact"}},
@@ -3736,7 +3739,7 @@ TEST(ProviderClientTools, ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetR
                     first_output = calls;
                     return tool_reply(ProviderApi::responses, stream, calls);
                 }
-                EXPECT_EQ(body["tools"], (Json::array({{{"type", "file_search"}, {"vector_store_ids", {"vs_one"}}}})));
+                EXPECT_EQ(body["tools"], (Json::array({{{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}})));
                 EXPECT_EQ(body["tool_choice"], "auto");
                 EXPECT_EQ(body["input"][2], first_output[0]);
                 EXPECT_EQ(body["input"][2]["results"][0]["text"], "retrieved fact");
@@ -3752,7 +3755,7 @@ TEST(ProviderClientTools, ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetR
             });
         Transcript transcript;
         auto request = client_request(transcript, 1, "Question");
-        request.folder_search = FolderSearchAccess{FolderStoreService::openai, {"vs_one"}};
+        request.folder_search = FolderSearchAccess{FolderStoreService::openai, {"vs_one", "vs_two"}};
         std::atomic_int executions{0};
         request.web_search_tool = [&](auto, const auto&) { ++executions; return "[]"; };
         std::string answer;

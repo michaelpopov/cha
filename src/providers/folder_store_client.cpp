@@ -238,6 +238,15 @@ std::string resolve_key_id(
 
 } // namespace
 
+std::optional<FolderStoreService> folder_store_endpoint_service(const ModelBackendConfig& config) {
+    if (config.mode != Mode::net || !config.https || config.port != 443) return {};
+    if (config.api == ProviderApi::responses && ascii_iequals(config.host, "api.openai.com")
+        && config.base_path.empty()) return FolderStoreService::openai;
+    if (config.api == ProviderApi::google && ascii_iequals(config.host, google_host)
+        && config.base_path == "/v1beta") return FolderStoreService::google;
+    return {};
+}
+
 FolderStoreEligibility folder_store_match(
     const ModelBackendConfig& config, const ApiKeyStore& keys) {
     const auto saved = keys.list();
@@ -263,27 +272,17 @@ FolderStoreEligibility folder_store_match(
         result.reason = "Store access requires port 443.";
         return result;
     }
-    const auto& host = config.host;
-    if (config.api == ProviderApi::responses
-        && ascii_iequals(host, "api.openai.com")
-        && config.base_path.empty()) {
-        result.api_key_id = resolve_key_id(config, keys, result.reason);
-        if (result.api_key_id.empty()) return result;
-        if (!config.openrouter_targets.empty()) {
-            log_warn("Ignoring unused OpenRouter targets for folder store access.");
-        }
-        result.service = FolderStoreService::openai;
+    const auto service = folder_store_endpoint_service(config);
+    if (!service) {
+        result.reason = "This provider is not a supported OpenAI or Google store endpoint.";
         return result;
     }
-    if (config.api == ProviderApi::google
-        && ascii_iequals(host, google_host)
-        && config.base_path == "/v1beta") {
-        result.api_key_id = resolve_key_id(config, keys, result.reason);
-        if (result.api_key_id.empty()) return result;
-        result.service = FolderStoreService::google;
-        return result;
+    result.api_key_id = resolve_key_id(config, keys, result.reason);
+    if (result.api_key_id.empty()) return result;
+    if (*service == FolderStoreService::openai && !config.openrouter_targets.empty()) {
+        log_warn("Ignoring unused OpenRouter targets for folder store access.");
     }
-    result.reason = "This provider is not a supported OpenAI or Google store endpoint.";
+    result.service = service;
     return result;
 }
 

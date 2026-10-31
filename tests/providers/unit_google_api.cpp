@@ -288,7 +288,9 @@ TEST(GoogleApi, FolderSearchCapabilitiesAndDeclarationOrderAreIndependent) {
         GenerationRequest request;
         request.history = std::make_shared<const ModelHistory>();
         request.run.prompt_text = "Question";
-        request.folder_search = FolderSearchAccess{FolderStoreService::google, {"fileSearchStores/one"}};
+        request.folder_search = FolderSearchAccess{FolderStoreService::google,
+            {"fileSearchStores/one", "fileSearchStores/two", "fileSearchStores/three"}};
+        request.folder_search_context = "Research; sources: Forum Lobby Files, Guide Files";
         request.web_search_tool = [](auto, const auto&) { return "[]"; };
         request.web_read_tool = [](auto, const auto&, const auto&) { return "page"; };
         ModelBackendConfig config;
@@ -296,7 +298,9 @@ TEST(GoogleApi, FolderSearchCapabilitiesAndDeclarationOrderAreIndependent) {
         const bool only = google_file_search_only_model(model);
         auto body = Json::parse(build_google_request_body(request, config, "System"));
         EXPECT_EQ(body["tools"].size(), only ? 1u : 2u);
-        EXPECT_EQ(body["tools"].back(), (Json{{"fileSearch", {{"fileSearchStoreNames", {"fileSearchStores/one"}}}}}));
+        EXPECT_EQ(body["tools"].back(), (Json{{"fileSearch", {{"fileSearchStoreNames",
+            {"fileSearchStores/one", "fileSearchStores/two", "fileSearchStores/three"}}}}}));
+        EXPECT_EQ(body.dump().find("Research"), std::string::npos);
         if (!only) {
             EXPECT_EQ(body["toolConfig"], (Json{{"includeServerSideToolInvocations", true},
                 {"functionCallingConfig", {{"mode", "VALIDATED"}}}}));
@@ -323,6 +327,20 @@ TEST(GoogleApi, FolderSearchCapabilitiesAndDeclarationOrderAreIndependent) {
         EXPECT_NE(instruction.find("Web search is unavailable"), std::string::npos);
         EXPECT_NE(instruction.find("Web page reading is unavailable"), std::string::npos);
         EXPECT_NE(instruction.find("Folder search is available"), std::string::npos);
+    }
+}
+
+TEST(GoogleApi, EmptyAndForeignFolderAccessDoNotAdvertiseOrSerializeFileSearch) {
+    for (const auto& access : {FolderSearchAccess{FolderStoreService::google, {}},
+                             FolderSearchAccess{FolderStoreService::openai, {"vs_foreign"}}}) {
+        GenerationRequest request;
+        request.history = std::make_shared<const ModelHistory>();
+        request.run.prompt_text = "Question";
+        request.folder_search = access;
+        const auto body = Json::parse(build_google_request_body(request, {}, "System"));
+        EXPECT_FALSE(body.contains("tools"));
+        EXPECT_EQ(body.dump().find("vs_foreign"), std::string::npos);
+        EXPECT_EQ(body.dump().find("Folder search is available"), std::string::npos);
     }
 }
 

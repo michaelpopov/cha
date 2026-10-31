@@ -8,6 +8,7 @@
 
 #include "storage/session_label.h"
 #include "util/crypto.h"
+#include "util/item_reference.h"
 #include "util/logging.h"
 #include "util/text.h"
 #include "workspace/workspace.h"
@@ -18,6 +19,7 @@
 #include <ctime>
 #include <exception>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
@@ -873,6 +875,251 @@ ControllerUpdate SessionController::finish_classification() {
     return update;
 }
 
+void SessionController::materialize_note_references(
+    std::span<const FileReference> references,
+    std::string_view owner,
+    std::string_view character_id,
+    std::string& omissions) {
+    for (const auto& reference : references) {
+        if (reference.kind != FileReferenceKind::note) continue;
+        const auto warn = [&](std::string_view reason) {
+            log_warn("Note context omitted in " + identity_.forum_id + "/" + identity_.session_id
+                + ": " + std::string(owner) + " (" + reference.ref_id + "): " + std::string(reason));
+            if (!omissions.empty()) omissions += "; ";
+            omissions += std::string(owner) + " — " + reference.name + " (" + reference.ref_id
+                + "): " + std::string(reason);
+        };
+        const auto id = parse_item_reference(reference.ref_id);
+        if (!id) {
+            warn("note unavailable");
+            continue;
+        }
+        if (journal_.add_note_scope(*id, character_id)) continue;
+        NoteText note;
+        try {
+            note = read_note_(*id);
+        } catch (const NoteError& error) {
+            warn(error.failure == NoteFailure::not_found ? "note unavailable" : "could not read note");
+            continue;
+        } catch (const std::runtime_error&) {
+            warn("could not read note");
+            continue;
+        }
+        if (note.name != reference.name) {
+            log_warn("Note reference name changed in " + identity_.forum_id + "/" + identity_.session_id
+                + ": " + std::string(owner) + " (" + reference.ref_id + "): captured “"
+                + reference.name + "”, current “" + note.name + "”");
+        }
+        if (note.text.size() > 256 * 1024) {
+            warn("exceeds 256 KiB");
+            continue;
+        }
+        journal_.save_note_reference(note, character_id);
+    }
+}
+
+std::optional<FolderSearchAccess> SessionController::resolve_folder_search(
+    const Workspace& workspace,
+    const CharacterMetadata& target,
+    const ModelBackendConfig& config,
+    std::string& context,
+    std::string& omissions) {
+    struct Source {
+        std::string owner;
+        std::string captured_name;
+    };
+    struct Folder {
+        std::int64_t id{};
+        std::string name;
+        std::vector<Source> sources;
+        bool character{};
+        bool chat{};
+
+        std::string label() const {
+            const auto ref = note_item_ref_id(id);
+            return name.empty() ? ref : name + " (" + ref + ")";
+        }
+        std::string source_labels() const {
+            std::string result;
+            for (const auto& source : sources) {
+                if (!result.empty()) result += ", ";
+                result += source.owner;
+            }
+            if (chat) {
+                if (!result.empty()) result += ", ";
+                result += "chat (/detach " + note_item_ref_id(id) + ")";
+            }
+            return result;
+        }
+        int priority() const { return chat ? 0 : character ? 1 : 2; }
+    };
+    std::map<std::int64_t, Folder> folders;
+    const auto collect = [&](std::span<const FileReference> references, const std::string& owner,
+                             bool character) {
+        for (const auto& reference : references) {
+            if (reference.kind != FileReferenceKind::folder) continue;
+            const auto id = parse_item_reference(reference.ref_id);
+            if (!id) continue;
+            auto& folder = folders[*id];
+            folder.id = *id;
+            if (folder.name.empty()) folder.name = reference.name;
+            folder.sources.push_back({owner, reference.name});
+            folder.character |= character;
+        }
+    };
+    if (const auto* forum = workspace.find_forum(identity_.forum_id))
+        collect(forum->file_references, "Forum " + forum->display_name + " Files", false);
+    if (const auto* character = workspace.find_character(target.id))
+        collect(character->file_references, target.display_name + " Files", true);
+    for (const auto id : journal_.folder_ids()) {
+        auto& folder = folders[id];
+        folder.id = id;
+        folder.chat = true;
+    }
+    if (folders.empty()) return {};
+
+    const auto log_prefix = "Folder access in " + identity_.forum_id + "/" + identity_.session_id
+        + ": " + target.display_name + " (" + target.id + "): ";
+    const auto warn = [&](const Folder& folder, std::string_view reason) {
+        log_warn(log_prefix + folder.label() + ": " + std::string(reason)
+            + "; sources: " + folder.source_labels());
+    };
+    const auto read_item = [&](Folder& folder) {
+        auto item = read_item_(folder.id);
+        if (item) {
+            folder.name = item->name;
+            for (const auto& source : folder.sources) {
+                if (item->name != source.captured_name) {
+                    log_warn("Folder reference name changed in " + identity_.forum_id + "/" + identity_.session_id
+                        + ": " + target.display_name + " (" + target.id + "), " + source.owner
+                        + " (" + note_item_ref_id(folder.id) + "): captured “" + source.captured_name
+                        + "”, current “" + item->name + "”");
+                }
+            }
+        }
+        return item;
+    };
+    std::vector<ApiKeyInfo> keys;
+    for (const auto& key : workspace.api_keys())
+        keys.push_back({key.id, key.display_name, !key.value.empty()});
+    const auto service = folder_store_endpoint_service(config);
+    const auto match = folder_store_match(config, keys);
+    if (!match.service) {
+        std::string reason = service && config.auth == ProviderAuth::none
+            ? match.reason : "this connection does not support folder search";
+        if (reason.ends_with('.')) reason.pop_back();
+        std::string deliberate, forum_only;
+        for (auto& [id, folder] : folders) {
+            if (!folder.character && !folder.chat) {
+                if (!forum_only.empty()) forum_only += "; ";
+                forum_only += folder.label() + ": " + folder.source_labels();
+                continue;
+            }
+            try {
+                if (service) {
+                    const auto record = read_store_(id);
+                    if (record && record->service != *service) continue;
+                }
+                (void)read_item(folder);
+            } catch (const std::exception&) {
+                warn(folder, "could not read folder store");
+            }
+            if (!deliberate.empty()) deliberate += "; ";
+            deliberate += folder.label() + ": " + folder.source_labels();
+            warn(folder, reason);
+        }
+        if (!forum_only.empty()) log_warn(log_prefix + reason + "; " + forum_only);
+        if (!deliberate.empty())
+            append_line(omissions, target.display_name + " — " + reason + "; " + deliberate + ".");
+        return {};
+    }
+
+    struct Store {
+        std::string remote_id;
+        std::vector<const Folder*> folders;
+        int priority;
+        bool selected{true};
+    };
+    std::vector<Store> stores;
+    std::string omitted;
+    const auto omit = [&](const Folder& folder, std::string_view reason) {
+        if (!omitted.empty()) omitted += "; ";
+        omitted += folder.label() + ": " + std::string(reason) + "; sources: " + folder.source_labels();
+        warn(folder, reason);
+    };
+    for (auto& [id, folder] : folders) {
+        std::optional<NoteItem> item;
+        try {
+            item = read_item(folder);
+        } catch (const std::exception&) {
+            omit(folder, "could not read folder store");
+            continue;
+        }
+        if (!item || item->kind != NoteItemKind::folder) {
+            omit(folder, "folder unavailable");
+            continue;
+        }
+        std::optional<FolderStoreRecord> record;
+        try {
+            record = read_store_(id);
+        } catch (const std::exception&) {
+            omit(folder, "could not read folder store");
+            continue;
+        }
+        // Other-service folders are normal selection, even if their upload or key is unavailable.
+        if (record && record->service != *match.service) continue;
+        if (!record || record->state != FolderStoreState::ready
+            || !record->remote_store_id || record->remote_store_id->empty()) {
+            omit(folder, "no ready store");
+            continue;
+        }
+        if (match.api_key_id != record->api_key_id) {
+            omit(folder, "different saved API key");
+            continue;
+        }
+        const auto found = std::find_if(stores.begin(), stores.end(), [&](const Store& store) {
+            return store.remote_id == *record->remote_store_id;
+        });
+        if (found == stores.end()) {
+            stores.push_back({*record->remote_store_id, {&folder}, folder.priority()});
+        } else {
+            found->folders.push_back(&folder);
+            found->priority = std::min(found->priority, folder.priority());
+        }
+    }
+    if (*match.service == FolderStoreService::openai && stores.size() > 2) {
+        std::vector<Store*> ranked;
+        for (auto& store : stores) ranked.push_back(&store);
+        std::sort(ranked.begin(), ranked.end(), [](const Store* a, const Store* b) {
+            if (a->priority != b->priority) return a->priority < b->priority;
+            return a->folders.front()->id < b->folders.front()->id;
+        });
+        for (std::size_t i = 2; i < ranked.size(); ++i) ranked[i]->selected = false;
+        for (const auto& store : stores) {
+            if (!store.selected) continue;
+            for (const auto* folder : store.folders)
+                log_info(log_prefix + folder->label() + ": selected for two-store OpenAI limit; sources: "
+                    + folder->source_labels());
+        }
+    }
+    std::vector<std::string> remote_ids;
+    // Stores were discovered in numeric folder order; priority never reorders the payload.
+    for (const auto& store : stores) {
+        if (!store.selected) {
+            for (const auto* folder : store.folders) omit(*folder, "two-store OpenAI limit");
+            continue;
+        }
+        remote_ids.push_back(store.remote_id);
+        for (const auto* folder : store.folders) {
+            if (!context.empty()) context += "; ";
+            context += folder->label() + "; sources: " + folder->source_labels();
+        }
+    }
+    if (!omitted.empty()) append_line(omissions, target.display_name + " — " + omitted + ".");
+    if (remote_ids.empty()) return {};
+    return FolderSearchAccess{*match.service, std::move(remote_ids)};
+}
+
 void SessionController::start_generation(
     EntryIdentity author,
     std::string text,
@@ -884,9 +1131,17 @@ void SessionController::start_generation(
         throw std::invalid_argument(
             "Generation requires history and at least one target");
     }
-    std::string notes;
-    persist(request_action("load notes for", next_request_id_, targets.front().display_name),
-        [this, &notes] { notes = journal_.notes_prompt(); });
+    const auto current = workspace();
+    std::string note_omissions;
+    persist(request_action("prepare notes for", next_request_id_, targets.front().display_name), [&] {
+        const auto* forum = current->find_forum(identity_.forum_id);
+        materialize_note_references(forum->file_references, "Forum " + forum->display_name, "", note_omissions);
+        for (const auto& target : targets) {
+            if (const auto* character = current->find_character(target.id)) {
+                materialize_note_references(character->file_references, target.display_name, target.id, note_omissions);
+            }
+        }
+    });
     std::vector<ProviderRequestInput> inputs;
     inputs.reserve(targets.size());
     std::string folder_omissions;
@@ -895,7 +1150,9 @@ void SessionController::start_generation(
         if (!definition) {
             throw std::logic_error("Generation target has no character definition");
         }
-        const auto current = workspace();
+        std::string notes;
+        persist(request_action("load notes for", next_request_id_, target.display_name),
+            [&] { notes = journal_.notes_prompt(target.id); });
         const bool maintenance = identity_.forum_id == workspace_entrance_id
             && identity_.session_id == welcome_id
             && target.id == workspace_assistant_id;
@@ -938,39 +1195,8 @@ void SessionController::start_generation(
         std::optional<FolderSearchAccess> folder_search;
         std::string folder_context;
         if (!maintenance) {
-            const auto folder_ids = journal_.folder_ids();
-            if (!folder_ids.empty()) {
-                std::vector<ApiKeyInfo> keys;
-                for (const auto& key : current->api_keys())
-                    keys.push_back({key.id, key.display_name, !key.value.empty()});
-                const auto match = folder_store_match(definition->provider.config, keys);
-                std::vector<std::string> ids;
-                std::string omitted;
-                for (const auto id : folder_ids) {
-                    const auto item = read_item_(id);
-                    const auto record = read_store_(id);
-                    const auto ref = note_item_ref_id(id);
-                    const auto label = item ? "“" + item->name + "” (" + ref + ")" : ref;
-                    std::string reason;
-                    if (!item) reason = "folder unavailable";
-                    else if (!record || record->state != FolderStoreState::ready || !record->remote_store_id)
-                        reason = "no ready store";
-                    else if (!match.service) reason = match.reason;
-                    else if (*match.service != record->service) reason = "different service";
-                    else if (match.api_key_id != record->api_key_id) reason = "different saved API key";
-                    if (!reason.empty()) {
-                        if (!omitted.empty()) omitted += "; ";
-                        omitted += label + ": " + reason + " (/detach " + ref + ")";
-                        continue;
-                    }
-                    if (std::find(ids.begin(), ids.end(), *record->remote_store_id) == ids.end())
-                        ids.push_back(*record->remote_store_id);
-                    if (!folder_context.empty()) folder_context += "; ";
-                    folder_context += label + " (/detach " + ref + ")";
-                }
-                if (!ids.empty()) folder_search = FolderSearchAccess{*match.service, std::move(ids)};
-                if (!omitted.empty()) append_line(folder_omissions, target.display_name + ": " + omitted);
-            }
+            folder_search = resolve_folder_search(*current, target, definition->provider.config,
+                folder_context, folder_omissions);
         }
         const RequestId request_id = next_request_id_++;
         const std::string cache_key = prompt_cache_key(identity_, target.id);
@@ -1026,9 +1252,11 @@ void SessionController::start_generation(
         generation_->requests.push_back(
             providers_.make_request(std::move(input), notifier_));
     }
-    if (!folder_omissions.empty()) {
-        update.notice = "Folder access omitted: " + folder_omissions;
-    }
+    if (!note_omissions.empty())
+        append_line(generation_->terminal_notices, "Note context omitted: " + note_omissions + ".");
+    if (!folder_omissions.empty())
+        append_line(generation_->terminal_notices, "Folder access omitted: " + folder_omissions);
+    if (!generation_->terminal_notices.empty()) update.notice = generation_->terminal_notices;
     // Sessions without Jev start naming alongside the reply.
     start_session_name(update);
 }
@@ -1084,7 +1312,7 @@ void SessionController::activate_run(
     }
     active_ = std::move(response);
     require_snapshot(update);
-    update.notice = "";
+    update.notice = generation_->terminal_notices;
 }
 
 void SessionController::finish_generation_run(ControllerUpdate& update) {
@@ -1194,10 +1422,11 @@ ControllerUpdate SessionController::clear_conversation() {
     if (is_generating()) {
         return busy_notice();
     }
+    // Request preparation can save reference copies before a turn is recorded.
+    persist("clear session history", [this] { journal_.clear_history(); });
     if (transcript_.view().entries.empty()) {
         return {.input_consumed = true, .notice = ""};
     }
-    persist("clear session history", [this] { journal_.clear_history(); });
     transcript_.replace_entries({});
     cancel_session_name();
     ControllerUpdate update{

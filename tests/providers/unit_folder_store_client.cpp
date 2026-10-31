@@ -122,6 +122,37 @@ TEST_F(FolderStoreClientTest, ResolvesLegacyNamesAndDeduplicatesById) {
     ASSERT_EQ(choices.size(), 3U);
 }
 
+TEST_F(FolderStoreClientTest, ClassifiesEndpointsBeforeAuthenticationAndKeyValidation) {
+    for (auto config : {openai_config("missing"), google_config("missing")}) {
+        const auto expected = config.api == ProviderApi::responses
+            ? FolderStoreService::openai : FolderStoreService::google;
+        EXPECT_EQ(folder_store_endpoint_service(config), expected);
+        EXPECT_FALSE(folder_store_match(config, *keys_).service);
+        config.auth = ProviderAuth::openai_subscription;
+        EXPECT_EQ(folder_store_endpoint_service(config), expected);
+        EXPECT_FALSE(folder_store_match(config, *keys_).service);
+        config.https = false;
+        EXPECT_FALSE(folder_store_endpoint_service(config));
+        config.https = true;
+        config.port = 8443;
+        EXPECT_FALSE(folder_store_endpoint_service(config));
+        config.port = 443;
+        config.base_path = "/proxy";
+        EXPECT_FALSE(folder_store_endpoint_service(config));
+    }
+    auto config = openai_config(openai_key_);
+    config.host = "API.OpenAI.COM";
+    EXPECT_EQ(folder_store_endpoint_service(config), FolderStoreService::openai);
+    config.api = ProviderApi::chat_completions;
+    EXPECT_FALSE(folder_store_endpoint_service(config));
+    config = google_config(google_key_);
+    config.host = "proxy.example.com";
+    EXPECT_FALSE(folder_store_endpoint_service(config));
+    config = openai_config(openai_key_);
+    config.mode = Mode::test;
+    EXPECT_FALSE(folder_store_endpoint_service(config));
+}
+
 TEST_F(FolderStoreClientTest, DistinctIdsDoNotMatchOnEqualValues) {
     const auto other = keys_->create("OpenAI 2", "sk-test").id;
     const std::vector<ModelBackendConfig> configs{

@@ -93,6 +93,10 @@ public:
     void record_entry(const TranscriptEntry& entry);
     // Stores the note copy and its notice in one transaction.
     [[nodiscard]] TranscriptEntry add_note(const NoteText& note, EntryId entry_id);
+    // Adds scope without loading the saved text; false means no copy exists.
+    [[nodiscard]] bool add_note_scope(std::int64_t note_id, std::string_view character_id);
+    // Saves the first copy and scope together, preserving any existing copy.
+    void save_note_reference(const NoteText& note, std::string_view character_id);
     [[nodiscard]] TranscriptEntry add_text_file(
         std::string_view name, std::string_view text, EntryId entry_id);
     // Persistent attach rechecks readiness on this journal connection when
@@ -108,9 +112,10 @@ public:
         EntryId entry_id);
     [[nodiscard]] std::vector<std::int64_t> folder_ids() const;
     void prune_folders(std::span<const std::int64_t> folder_ids);
-    void clear_folder_associations();
-    // Returns the note copies and the file copies for the system prompt.
-    [[nodiscard]] std::string notes_prompt() const;
+    void clear_vault_context();
+    // No target: explicit additions only (including text files).
+    [[nodiscard]] std::string notes_prompt(
+        std::optional<std::string_view> character_id = std::nullopt) const;
     void complete_turn(RequestId request_id, const TranscriptEntry& response);
     void cancel_turn(RequestId request_id, std::optional<TranscriptEntry> response);
     void fail_turn(RequestId request_id, const TranscriptEntry& error);

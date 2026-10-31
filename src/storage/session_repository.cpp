@@ -163,7 +163,7 @@ void SessionRepository::MaintenanceGuard::retarget(
     repository_->release_pending();
     if (path_changed) {
         SessionJournal welcome(repository_->temporary_database_path_);
-        welcome.clear_folder_associations();
+        welcome.clear_vault_context();
     }
     repository_->database_path_ = std::move(database_path);
     repository_->database_password_ = std::move(database_password);

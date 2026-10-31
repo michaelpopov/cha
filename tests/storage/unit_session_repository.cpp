@@ -145,6 +145,9 @@ TEST_F(SessionRepositoryTest, WelcomeFolderRefsFollowVaultPathButKeepTranscriptA
         SessionJournal journal(prepared.database_path, prepared.session_key);
         (void)journal.add_folder(11, "Research", 1, [](auto) { return true; });
         (void)journal.add_text_file("Notes", "copied text", 2);
+        (void)journal.add_note({21, "Explicit", "explicit vault text"}, 3);
+        journal.save_note_reference({22, "Automatic", "automatic vault text"}, "guide");
+        ASSERT_TRUE(journal.add_note_scope(21, ""));
     }
     {
         auto maintenance = repository.reserve_maintenance();
@@ -153,6 +156,8 @@ TEST_F(SessionRepositoryTest, WelcomeFolderRefsFollowVaultPathButKeepTranscriptA
     {
         SessionJournal journal(prepared.database_path, prepared.session_key);
         EXPECT_EQ(journal.folder_ids(), std::vector<std::int64_t>({11}));
+        EXPECT_NE(journal.notes_prompt("guide").find("explicit vault text"), std::string::npos);
+        EXPECT_NE(journal.notes_prompt("guide").find("automatic vault text"), std::string::npos);
     }
     const auto target = fixture_.root() / "other.sqlite3";
     copy_workspace_session_database(database_path(), target);
@@ -163,7 +168,63 @@ TEST_F(SessionRepositoryTest, WelcomeFolderRefsFollowVaultPathButKeepTranscriptA
     SessionJournal journal(prepared.database_path, prepared.session_key);
     EXPECT_TRUE(journal.folder_ids().empty());
     EXPECT_NE(journal.notes_prompt().find("copied text"), std::string::npos);
-    EXPECT_EQ(repository.history(temporary_identity()).size(), 2U);
+    EXPECT_EQ(journal.notes_prompt("guide"), "# File: Notes\n\ncopied text");
+    EXPECT_EQ(scalar(prepared.database_path, "SELECT count(*) FROM session_note_scopes"), 0);
+    EXPECT_EQ(repository.history(temporary_identity()).size(), 3U);
+}
+
+TEST_F(SessionRepositoryTest, NoteScopesShareCopiesKeepOrderAndPromoteExplicitAdditions) {
+    auto repository = make_repository();
+    const auto stored = repository.create("lobby", "Notes");
+    const auto prepared = repository.prepare(stored.identity);
+    const std::string guide = "# Note: Same\n\nA\n\n# Note: Same\n\nB\n\n# Note: C\n\nC";
+    {
+        SessionJournal journal(prepared.database_path, prepared.session_key);
+        EXPECT_FALSE(journal.add_note_scope(10, "guide"));
+        journal.save_note_reference({30, "C", "C"}, "");
+        journal.save_note_reference({20, "Same", "B"}, "guide");
+        journal.save_note_reference({10, "Same", "A"}, "");
+        EXPECT_EQ(journal.notes_prompt("guide"), guide);
+        EXPECT_EQ(journal.notes_prompt("other"), "# Note: Same\n\nA\n\n# Note: C\n\nC");
+        EXPECT_TRUE(journal.notes_prompt().empty());
+        EXPECT_TRUE(journal.add_note_scope(10, "guide"));
+        EXPECT_TRUE(journal.add_note_scope(10, "guide"));
+        journal.save_note_reference({10, "Replacement", "Not copied"}, "other");
+        EXPECT_EQ(journal.notes_prompt("guide"), guide);
+        EXPECT_EQ(journal.add_note({10, "Same", "A"}, 1).text, "Added note “Same” to this chat.");
+        EXPECT_EQ(journal.notes_prompt("guide"), guide);
+    }
+    {
+        SessionJournal journal(prepared.database_path, prepared.session_key);
+        EXPECT_EQ(journal.notes_prompt("guide"), guide);
+        EXPECT_EQ(journal.notes_prompt(), "# Note: Same\n\nA");
+        EXPECT_EQ(journal.add_note({20, "Same", "New B"}, 2).text, "Added note “Same” to this chat.");
+        EXPECT_EQ(journal.notes_prompt("other"), "# Note: Same\n\nA\n\n# Note: Same\n\nNew B\n\n# Note: C\n\nC");
+        EXPECT_EQ(journal.add_note({20, "Same", "New B"}, 3).text, "Updated this chat’s copy of note “Same”.");
+        journal.clear_history();
+        EXPECT_TRUE(journal.notes_prompt("guide").empty());
+    }
+    EXPECT_EQ(scalar(prepared.database_path, "SELECT count(*) FROM session_note_scopes"), 0);
+    {
+        SessionJournal journal(prepared.database_path, prepared.session_key);
+        journal.save_note_reference({10, "A", "A"}, "guide");
+    }
+    repository.delete_session(stored.identity);
+    EXPECT_EQ(scalar(prepared.database_path, "SELECT count(*) FROM session_note_scopes"), 0);
+}
+
+TEST_F(SessionRepositoryTest, FailedNoteScopeSaveRollsBackTheCopy) {
+    auto repository = make_repository();
+    const auto stored = repository.create("lobby", "Notes");
+    const auto prepared = repository.prepare(stored.identity);
+    storage::SqliteDatabase database(prepared.database_path, storage::SqliteDatabase::Mode::read_write);
+    database.execute("CREATE TRIGGER reject_scope BEFORE INSERT ON session_note_scopes "
+        "BEGIN SELECT RAISE(ABORT, 'scope failed'); END");
+    SessionJournal journal(prepared.database_path, prepared.session_key);
+    EXPECT_THROW(journal.save_note_reference({10, "A", "A"}, "guide"), std::runtime_error);
+    EXPECT_TRUE(journal.notes_prompt("guide").empty());
+    EXPECT_EQ(scalar(prepared.database_path, "SELECT count(*) FROM session_notes"), 0);
+    EXPECT_EQ(scalar(prepared.database_path, "SELECT count(*) FROM session_note_scopes"), 0);
 }
 
 TEST_F(SessionRepositoryTest, EntryAudioPersistsAndIsScopedToItsSession) {

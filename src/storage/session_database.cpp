@@ -669,12 +669,13 @@ void SessionJournal::record_entry(const TranscriptEntry& entry) {
 TranscriptEntry SessionJournal::add_note(const NoteText& note, EntryId entry_id) {
     Transaction transaction(impl_->database);
     Statement existing = impl_->database.prepare(
-        "SELECT 1 FROM session_notes WHERE session_key = ?1 AND note_id = ?2",
+        "SELECT 1 FROM session_notes WHERE session_key = ?1 AND note_id = ?2 AND explicitly_added = 1",
         impl_->session_key, note.id);
     const bool refresh = existing.step();
     Statement copy = impl_->database.prepare(
-        "INSERT INTO session_notes (session_key, note_id, name, text) VALUES (?1, ?2, ?3, ?4) "
-        "ON CONFLICT (session_key, note_id) DO UPDATE SET name = excluded.name, text = excluded.text",
+        "INSERT INTO session_notes (session_key, note_id, name, text, explicitly_added) "
+        "VALUES (?1, ?2, ?3, ?4, 1) ON CONFLICT (session_key, note_id) DO UPDATE "
+        "SET name = excluded.name, text = excluded.text, explicitly_added = 1",
         impl_->session_key, note.id, note.name, note.text);
     copy.run();
     TranscriptEntry entry = make_notice_entry(entry_id, refresh
@@ -685,6 +686,27 @@ TranscriptEntry SessionJournal::add_note(const NoteText& note, EntryId entry_id)
     touch_session(impl_->database, impl_->session_key);
     transaction.commit();
     return entry;
+}
+
+bool SessionJournal::add_note_scope(std::int64_t note_id, std::string_view character_id) {
+    impl_->database.prepare(
+        "INSERT OR IGNORE INTO session_note_scopes (session_key, note_id, character_id) "
+        "SELECT session_key, note_id, ?3 FROM session_notes WHERE session_key = ?1 AND note_id = ?2",
+        impl_->session_key, note_id, character_id).run();
+    auto scope = impl_->database.prepare(
+        "SELECT 1 FROM session_note_scopes WHERE session_key = ?1 AND note_id = ?2 AND character_id = ?3",
+        impl_->session_key, note_id, character_id);
+    return scope.step();
+}
+
+void SessionJournal::save_note_reference(const NoteText& note, std::string_view character_id) {
+    Transaction transaction(impl_->database);
+    impl_->database.prepare(
+        "INSERT OR IGNORE INTO session_notes (session_key, note_id, name, text, explicitly_added) "
+        "VALUES (?1, ?2, ?3, ?4, 0)",
+        impl_->session_key, note.id, note.name, note.text).run();
+    (void)add_note_scope(note.id, character_id);
+    transaction.commit();
 }
 
 TranscriptEntry SessionJournal::add_text_file(
@@ -780,16 +802,22 @@ void SessionJournal::prune_folders(std::span<const std::int64_t> folder_ids) {
     transaction.commit();
 }
 
-void SessionJournal::clear_folder_associations() {
+void SessionJournal::clear_vault_context() {
     Transaction transaction(impl_->database);
     session_folder_clear(impl_->database, impl_->session_key);
+    impl_->database.prepare("DELETE FROM session_notes WHERE session_key = ?1", impl_->session_key).run();
     transaction.commit();
 }
 
-std::string SessionJournal::notes_prompt() const {
+std::string SessionJournal::notes_prompt(std::optional<std::string_view> character_id) const {
     Statement notes = impl_->database.prepare(
-        "SELECT name, text FROM session_notes WHERE session_key = ?1 ORDER BY note_id",
+        "SELECT name, text FROM session_notes n WHERE session_key = ?1 AND (explicitly_added = 1 "
+        "OR (?2 IS NOT NULL AND EXISTS (SELECT 1 FROM session_note_scopes s "
+        "WHERE s.session_key = n.session_key AND s.note_id = n.note_id "
+        "AND (s.character_id = '' OR s.character_id = ?2)))) ORDER BY note_id",
         impl_->session_key);
+    if (character_id) notes.bind(2, *character_id);
+    else notes.bind_null(2);
     std::string prompt;
     while (notes.step()) {
         if (!prompt.empty()) prompt += "\n\n";

@@ -1,8 +1,10 @@
 #include "session/session_controller.h"
+#include "session/session_open.h"
 #include "characters/character.h"
 #include "providers/model_backend.h"
 #include "storage/session_database.h"
 #include "storage/note_storage.h"
+#include "storage/session_repository.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"
 #include "support/test_notifier.h"
@@ -543,6 +545,350 @@ TEST(SessionController, SendsSavedNoteCopiesToEveryCharacterAndRefreshesOnlyOnRe
     (void)receive_until_idle(*controller);
     ASSERT_EQ(definitions.size(), 1U);
     EXPECT_EQ(definitions.front()->system_prompt.find("note content"), std::string::npos);
+}
+
+class ReferencedNotesTest : public testing::Test {
+protected:
+    void SetUp() override {
+        fixture.add_character("other", "Other");
+        std::filesystem::create_directories(fixture.root() / "forums/lobby/members/other");
+        path = test::import_test_database(fixture.root());
+        store = WorkspaceConfigStore::open(path);
+        sessions = std::make_unique<SessionRepository>(
+            [this] { return store->snapshot(); }, path, store->workspace_path(), store->welcome_path(),
+            TemporarySessionSeed{{std::string(entrance_id), std::string(welcome_id)}, std::string(welcome_name)});
+        providers = std::make_unique<Providers>([this](SharedCharacterDefinition definition) {
+            std::lock_guard lock(mutex);
+            definitions.push_back(std::move(definition));
+            return std::make_unique<test::RequestBackendFacade>(
+                std::make_shared<test::RequestBackendFacade::Slot>(
+                    std::make_unique<ScriptedBackend>(GenerationResult{}, std::vector<std::string>{"Answer"})));
+        });
+        identity = sessions->create("lobby", "References").identity;
+    }
+
+    void TearDown() override {
+        providers.reset();
+    }
+
+    OpenedSession open() {
+        return open_session(*sessions, identity, *providers,
+            std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}), *store);
+    }
+
+    NoteItem note(std::string_view name, std::string text) {
+        auto item = store->create_note_item({}, NoteItemKind::note, name);
+        store->save_note(item.id, document(std::move(text)));
+        return item;
+    }
+
+    static nlohmann::json document(std::string text) {
+        return {{"type", "doc"}, {"content", {{{"type", "paragraph"},
+            {"content", {{{"type", "text"}, {"text", std::move(text)}}}}}}}};
+    }
+
+    void reference(const NoteItem& item, FileReferenceOwner owner, std::string_view id) {
+        (void)store->create_file_reference(owner, id, FileReferenceKind::note, note_item_ref_id(item.id));
+    }
+
+    void unreference(const NoteItem& item, FileReferenceOwner owner, std::string_view id) {
+        store->delete_file_reference(owner, id, FileReferenceKind::note, note_item_ref_id(item.id));
+    }
+
+    std::int64_t count(std::string_view table) {
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
+        auto query = database.prepare("SELECT count(*) FROM " + std::string(table));
+        if (!query.step()) throw std::runtime_error("No count");
+        return query.integer(0);
+    }
+
+    test::TestWorkspace fixture;
+    std::filesystem::path path;
+    std::unique_ptr<WorkspaceConfigStore> store;
+    std::unique_ptr<SessionRepository> sessions;
+    std::unique_ptr<Providers> providers;
+    FullSessionId identity;
+    std::mutex mutex;
+    std::vector<SharedCharacterDefinition> definitions;
+};
+
+TEST_F(ReferencedNotesTest, AcquiresOnlyTargetedScopesAndKeepsSharedCopiesAcrossRequestsAndReopen) {
+    const auto a = note("A", "Original A");
+    const auto b = note("B", "Original B");
+    const auto c = note("C", "Original C");
+    store->save_compressed_note(b.id, "Compressed B");
+    reference(a, FileReferenceOwner::character, "guide");
+    reference(b, FileReferenceOwner::forum, "lobby");
+    reference(b, FileReferenceOwner::character, "guide");
+    reference(b, FileReferenceOwner::character, "other");
+    reference(c, FileReferenceOwner::character, "other");
+    EXPECT_EQ(count("session_notes"), 0);
+    auto opened = open();
+    ASSERT_TRUE(opened.controller->submit_prompt("reader", "First", "Guide").input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    ASSERT_EQ(definitions.size(), 1u);
+    const auto first = definitions.front()->system_prompt;
+    EXPECT_NE(first.find("# Note: A\n\nOriginal A\n\n# Note: B\n\nCompressed B"), std::string::npos);
+    EXPECT_EQ(first.find("Original C"), std::string::npos);
+    EXPECT_EQ(count("session_notes"), 2);
+    EXPECT_EQ(count("session_note_scopes"), 3);
+
+    store->save_compressed_note(a.id, "New compressed A");
+    (void)store->rename_note_item(a.id, "Renamed A");
+    unreference(b, FileReferenceOwner::forum, "lobby");
+    unreference(b, FileReferenceOwner::character, "guide");
+    store->delete_note_item(b.id);
+    ASSERT_TRUE(opened.controller->submit_prompt("reader", "Next", "Other").input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    ASSERT_EQ(definitions.size(), 2u);
+    EXPECT_NE(definitions.back()->system_prompt.find("# Note: B\n\nCompressed B"), std::string::npos);
+    EXPECT_NE(definitions.back()->system_prompt.find("# Note: C\n\nOriginal C"), std::string::npos);
+    EXPECT_EQ(definitions.back()->system_prompt.find("# Note: A"), std::string::npos);
+    EXPECT_EQ(count("session_note_scopes"), 5);
+    // Changing eligibility must not change an already eligible target's prompt.
+    reference(a, FileReferenceOwner::forum, "lobby");
+    ASSERT_TRUE(opened.controller->submit_prompt("reader", "Again", "Guide").input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    EXPECT_EQ(definitions.back()->system_prompt, first);
+    ASSERT_TRUE(opened.controller->add_note(a.id).input_consumed);
+    EXPECT_EQ(opened.controller->view().transcript.entries.back().text, "Added note “Renamed A” to this chat.");
+    unreference(a, FileReferenceOwner::forum, "lobby");
+    unreference(a, FileReferenceOwner::character, "guide");
+    store->delete_note_item(a.id);
+    opened = {};
+    opened = open();
+    const auto prepared = sessions->prepare(identity);
+    SessionJournal journal(prepared.database_path, prepared.session_key);
+    EXPECT_EQ(journal.notes_prompt(), "# Note: Renamed A\n\nNew compressed A");
+    definitions.clear();
+    ASSERT_TRUE(opened.controller->start_multicast("reader", "All", {}).input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    ASSERT_EQ(definitions.size(), 2u);
+    for (const auto& definition : definitions) {
+        const auto& prompt = definition->system_prompt;
+        const auto pos = prompt.find("# Note: Renamed A\n\nNew compressed A\n\n# Note: B\n\nCompressed B");
+        ASSERT_NE(pos, std::string::npos);
+        EXPECT_EQ(prompt.find("# Note: Renamed A", pos + 1), std::string::npos);
+        EXPECT_EQ(prompt.find("Original C") != std::string::npos, definition->character.id == "other");
+    }
+    opened = {};
+    identity = sessions->create("lobby", "Independent").identity;
+    opened = open();
+    definitions.clear();
+    ASSERT_TRUE(opened.controller->submit_prompt("reader", "Fresh", "Guide").input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    ASSERT_EQ(definitions.size(), 1u);
+    EXPECT_EQ(definitions.front()->system_prompt.find("# Note:"), std::string::npos);
+}
+
+TEST_F(ReferencedNotesTest, ExplicitPromotionAndLaterReferencesKeepNoteOrderAndClearReacquiresCopies) {
+    const auto first = note("First", "First source");
+    const auto scoped = note("Scoped", "Scoped source");
+    reference(scoped, FileReferenceOwner::character, "guide");
+    auto opened = open();
+    ASSERT_TRUE(opened.controller->submit_prompt("reader", "Only Guide", "Guide").input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    ASSERT_EQ(definitions.size(), 1u);
+    const auto guide_prompt = definitions.front()->system_prompt;
+    ASSERT_TRUE(opened.controller->add_note(scoped.id).input_consumed);
+    EXPECT_EQ(opened.controller->view().transcript.entries.back().text, "Added note “Scoped” to this chat.");
+    ASSERT_TRUE(opened.controller->start_multicast("reader", "Both", {}).input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    ASSERT_EQ(definitions.size(), 3u);
+    for (std::size_t i = 1; i < definitions.size(); ++i) {
+        EXPECT_NE(definitions[i]->system_prompt.find("# Note: Scoped\n\nScoped source"), std::string::npos);
+        if (definitions[i]->character.id == "guide") EXPECT_EQ(definitions[i]->system_prompt, guide_prompt);
+    }
+    reference(first, FileReferenceOwner::forum, "lobby");
+    ASSERT_TRUE(opened.controller->start_multicast("reader", "New reference", {}).input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    ASSERT_EQ(definitions.size(), 5u);
+    for (std::size_t i = 3; i < definitions.size(); ++i)
+        EXPECT_NE(definitions[i]->system_prompt.find("# Note: First\n\nFirst source\n\n# Note: Scoped\n\nScoped source"), std::string::npos);
+    store->save_compressed_note(scoped.id, "Updated source");
+    EXPECT_TRUE(opened.controller->clear_conversation().input_consumed);
+    EXPECT_EQ(count("session_note_scopes"), 0);
+    EXPECT_EQ(count("session_notes"), 0);
+    ASSERT_TRUE(opened.controller->start_multicast("reader", "Reacquire", {}).input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    ASSERT_EQ(definitions.size(), 7u);
+    for (std::size_t i = 5; i < definitions.size(); ++i) {
+        EXPECT_NE(definitions[i]->system_prompt.find("First source"), std::string::npos);
+        EXPECT_EQ(definitions[i]->system_prompt.find("Updated source") != std::string::npos,
+            definitions[i]->character.id == "guide");
+    }
+}
+
+TEST_F(ReferencedNotesTest, OmissionsShareTheExistingNoticeWithFoldersAndRetryOnTheNextRequest) {
+    const auto missing = note("Missing", "missing");
+    const auto broken = note("Broken", "broken");
+    const auto large = note("Large", "small original");
+    const auto wrong = note("Wrong kind", "wrong");
+    const auto compressed = note("Compressed", std::string(300000, 'x'));
+    const auto empty = store->create_note_item({}, NoteItemKind::note, "Empty");
+    const auto folder = store->create_note_item({}, NoteItemKind::folder, "Folder");
+    reference(missing, FileReferenceOwner::forum, "lobby");
+    for (const auto& item : {broken, large, wrong, compressed, empty})
+        reference(item, FileReferenceOwner::character, "guide");
+    const auto folder_store = store->register_folder_store(folder.id, FolderStoreService::openai, "saved", 1);
+    store->save_folder_store_remote_id(folder_store, "vs_folder");
+    store->mark_folder_store_ready(folder_store, "Ready");
+    (void)store->create_file_reference(FileReferenceOwner::character, "guide", FileReferenceKind::folder,
+        note_item_ref_id(folder.id));
+    store->delete_folder_store_record(folder_store, "Removed");
+    store->delete_note_item(missing.id);
+    store->save_compressed_note(large.id, std::string(256 * 1024 + 1, 'x'));
+    store->save_compressed_note(compressed.id, "Fits");
+    {
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+        database.prepare("UPDATE note_items SET content_json=X'00' WHERE id=?", broken.id).run();
+        database.prepare("UPDATE note_items SET kind='folder',content_json=NULL WHERE id=?", wrong.id).run();
+    }
+    const auto prepared = sessions->prepare(identity);
+    SessionJournal journal(prepared.database_path, prepared.session_key);
+    (void)journal.add_folder(folder.id, folder.name, 1, [](auto) { return true; });
+    auto opened = open();
+    const auto update = opened.controller->submit_prompt("reader", "First", "Guide");
+    ASSERT_TRUE(update.input_consumed);
+    const auto expected = "Note context omitted: Forum The Lobby — Missing (" + note_item_ref_id(missing.id)
+        + "): note unavailable; Guide — Broken (" + note_item_ref_id(broken.id)
+        + "): could not read note; Guide — Large (" + note_item_ref_id(large.id)
+        + "): exceeds 256 KiB; Guide — Wrong kind (" + note_item_ref_id(wrong.id) + "): note unavailable.";
+    ASSERT_TRUE(update.notice);
+    EXPECT_TRUE(update.notice->starts_with(expected));
+    EXPECT_NE(update.notice->find("\nFolder access omitted:"), std::string::npos);
+    auto finished = receive_until_idle(*opened.controller);
+    EXPECT_EQ(finished.notice, update.notice);
+    EXPECT_EQ(count("session_notes"), 2);
+    EXPECT_EQ(count("session_note_scopes"), 2);
+    ASSERT_EQ(definitions.size(), 1u);
+    EXPECT_NE(definitions.front()->system_prompt.find("# Note: Compressed\n\nFits\n\n# Note: Empty\n\n"), std::string::npos);
+    EXPECT_EQ(definitions.front()->system_prompt.find("small original"), std::string::npos);
+
+    // Every unresolved reference is retried; repairing its source is sufficient.
+    store->save_note(broken.id, document("Repaired"));
+    store->save_compressed_note(large.id, "Now fits");
+    unreference(missing, FileReferenceOwner::forum, "lobby");
+    unreference(wrong, FileReferenceOwner::character, "guide");
+    ASSERT_TRUE(opened.controller->submit_prompt("reader", "Retry", "Guide").input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    EXPECT_EQ(count("session_notes"), 4);
+    EXPECT_NE(definitions.back()->system_prompt.find("Repaired"), std::string::npos);
+    EXPECT_NE(definitions.back()->system_prompt.find("Now fits"), std::string::npos);
+    EXPECT_NE(definitions.back()->system_prompt.find("Fits"), std::string::npos);
+}
+
+TEST_F(ReferencedNotesTest, MulticastReadsASharedReferenceOnceAndOwnsFixedPromptText) {
+    const auto source = note("Shared", "First version");
+    reference(source, FileReferenceOwner::character, "guide");
+    reference(source, FileReferenceOwner::character, "other");
+    const auto prepared = sessions->prepare(identity);
+    int reads = 0;
+    auto controller = SessionController::from_workspace(
+        [&] { return store->snapshot(); }, [&](auto id) {
+            ++reads;
+            auto selected = store->get_note_text(id, true);
+            store->save_compressed_note(id, "Later version");
+            return selected;
+        }, [&](auto id) { return store->get_note_item(id); },
+        [&](auto id) { return store->get_folder_store_by_folder(id); },
+        "guide", "reader", prepared.database_path, prepared.session_key, prepared.database_password,
+        *providers, std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}), prepared.restore, identity);
+    ASSERT_TRUE(controller->start_multicast("reader", "Both", {}).input_consumed);
+    // Both prompts have already been prepared before providers finish.
+    unreference(source, FileReferenceOwner::character, "guide");
+    store->delete_note_item(source.id);
+    (void)receive_until_idle(*controller);
+    ASSERT_EQ(definitions.size(), 2u);
+    EXPECT_EQ(reads, 1);
+    for (const auto& definition : definitions) {
+        EXPECT_NE(definition->system_prompt.find("# Note: Shared\n\nFirst version"), std::string::npos);
+        EXPECT_EQ(definition->system_prompt.find("Later version"), std::string::npos);
+    }
+    ASSERT_TRUE(controller->start_multicast("reader", "Saved copies", {}).input_consumed);
+    (void)receive_until_idle(*controller);
+    EXPECT_EQ(reads, 1);
+    ASSERT_EQ(definitions.size(), 4u);
+    for (std::size_t i = 0; i < 2; ++i) {
+        const auto next = std::find_if(definitions.begin() + 2, definitions.end(), [&](const auto& definition) {
+            return definition->character.id == definitions[i]->character.id;
+        });
+        ASSERT_NE(next, definitions.end());
+        EXPECT_EQ(definitions[i]->system_prompt, (*next)->system_prompt);
+    }
+}
+
+TEST_F(ReferencedNotesTest, SummaryAndAnnotationReferencesUseTheExistingNoteReader) {
+    const auto source = note("Annotated", "Before comments");
+    std::ifstream input(std::filesystem::path(CHA_SOURCE_DIRECTORY) / "tests/fixtures/notes/annotations.json");
+    store->save_note(source.id, nlohmann::json::parse(input)["document"]);
+    const auto items = store->list_note_items();
+    const auto annotation = std::find_if(items.begin(), items.end(), [](const auto& item) {
+        return item.kind == NoteItemKind::annotation && !item.parent_id;
+    });
+    ASSERT_NE(annotation, items.end());
+    NoteItem summary;
+    {
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+        const auto summary_document = nlohmann::json::parse(R"({"type":"doc","content":[
+            {"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Short summary"}]},
+            {"type":"paragraph","content":[{"type":"text","text":"Overview"}]},
+            {"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Long summary"}]},
+            {"type":"paragraph","content":[{"type":"text","text":"Details"}]}]})");
+        summary = note_commit_summary(database, identity, note_summary_target(database, identity), summary_document);
+    }
+    store->save_compressed_note(summary.id, "Compressed summary");
+    reference(*annotation, FileReferenceOwner::forum, "lobby");
+    reference(summary, FileReferenceOwner::character, "guide");
+    auto opened = open();
+    ASSERT_TRUE(opened.controller->submit_prompt("reader", "Use context", "Guide").input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    ASSERT_EQ(definitions.size(), 1u);
+    EXPECT_NE(definitions.front()->system_prompt.find("# Note: ANNOTATIONS\n\n"
+        + store->get_note_text(annotation->id, true).text), std::string::npos);
+    EXPECT_NE(definitions.front()->system_prompt.find("# Note: " + summary.name + "\n\nCompressed summary"), std::string::npos);
+}
+
+TEST_F(ReferencedNotesTest, CopiesSurvivePreparationFailureUntilAnEmptyConversationIsCleared) {
+    const auto source = note("Source", "Saved source");
+    reference(source, FileReferenceOwner::character, "guide");
+    auto opened = open();
+    storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+    database.execute("CREATE TRIGGER reject_turn BEFORE INSERT ON turns "
+        "BEGIN SELECT RAISE(ABORT, 'turn failed'); END");
+    EXPECT_THROW((void)opened.controller->submit_prompt("reader", "Fail", "Guide"), std::runtime_error);
+    EXPECT_TRUE(definitions.empty());
+    EXPECT_TRUE(opened.controller->view().transcript.entries.empty());
+    EXPECT_EQ(count("session_notes"), 1);
+    EXPECT_EQ(count("session_note_scopes"), 1);
+    ASSERT_TRUE(opened.controller->clear_conversation().input_consumed);
+    EXPECT_EQ(count("session_notes"), 0);
+    EXPECT_EQ(count("session_note_scopes"), 0);
+    database.execute("DROP TRIGGER reject_turn");
+    store->save_compressed_note(source.id, "New source");
+    ASSERT_TRUE(opened.controller->submit_prompt("reader", "Retry", "Guide").input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    ASSERT_EQ(definitions.size(), 1u);
+    EXPECT_NE(definitions.front()->system_prompt.find("New source"), std::string::npos);
+}
+
+TEST_F(ReferencedNotesTest, AFailedScopeTransactionPreventsDispatchAndCanBeRetried) {
+    const auto source = note("Source", "Saved source");
+    reference(source, FileReferenceOwner::character, "guide");
+    auto opened = open();
+    storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+    database.execute("CREATE TRIGGER reject_scope BEFORE INSERT ON session_note_scopes "
+        "BEGIN SELECT RAISE(ABORT, 'scope failed'); END");
+    EXPECT_THROW((void)opened.controller->submit_prompt("reader", "Fail", "Guide"), std::runtime_error);
+    EXPECT_TRUE(definitions.empty());
+    EXPECT_FALSE(opened.controller->is_generating());
+    EXPECT_EQ(count("session_notes"), 0);
+    EXPECT_EQ(count("session_note_scopes"), 0);
+    database.execute("DROP TRIGGER reject_scope");
+    ASSERT_TRUE(opened.controller->submit_prompt("reader", "Retry", "Guide").input_consumed);
+    (void)receive_until_idle(*opened.controller);
+    ASSERT_EQ(definitions.size(), 1u);
+    EXPECT_NE(definitions.front()->system_prompt.find("Saved source"), std::string::npos);
 }
 
 TEST(SessionController, ValidatesTextFilesAndRollsBackAnAttachmentWhoseNoticeCannotBeSaved) {

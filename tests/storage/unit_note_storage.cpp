@@ -162,6 +162,33 @@ void summary_source(Database& database, std::string_view id = "source", std::str
     transaction.commit();
 }
 
+TEST_F(NoteStorageTest, NoteCopyScopeUpgradePreservesExistingExplicitCopiesAndIsRepeatable) {
+    summary_source(*database_);
+    database_->execute("DROP TABLE session_note_scopes");
+    database_->execute("ALTER TABLE session_notes DROP COLUMN explicitly_added");
+    database_->execute("INSERT INTO session_notes VALUES(1,10,'Old note','Saved text')");
+    for (int reopen = 0; reopen < 2; ++reopen) {
+        database_.reset();
+        database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
+        storage::SqliteTransaction transaction(*database_);
+        create_note_items_schema(*database_);
+        transaction.commit();
+        auto copy = database_->prepare("SELECT name,text,explicitly_added FROM session_notes");
+        ASSERT_TRUE(copy.step());
+        EXPECT_EQ(copy.text(0), "Old note");
+        EXPECT_EQ(copy.text(1), "Saved text");
+        EXPECT_EQ(copy.integer(2), 1);
+        EXPECT_TRUE(has_schema_object(*database_, "table", "session_note_scopes"));
+        EXPECT_FALSE(database_->prepare("PRAGMA foreign_key_check").step());
+        EXPECT_EQ(database_->pragma_integer("user_version"), workspace_session_database_version);
+    }
+    database_->execute("INSERT INTO session_note_scopes VALUES(1,10,'guide')");
+    EXPECT_THROW(database_->execute("INSERT INTO session_note_scopes VALUES(1,11,'guide')"), std::runtime_error);
+    EXPECT_THROW(database_->execute("UPDATE session_notes SET explicitly_added=2"), std::runtime_error);
+    database_->execute("DELETE FROM session_notes");
+    EXPECT_FALSE(database_->prepare("SELECT 1 FROM session_note_scopes").step());
+}
+
 TEST_F(NoteStorageTest, SummaryChaptersRejectInvalidReplacementWithoutChangingStoredNote) {
     summary_source(*database_);
     const FullSessionId source{"a", "source"};
@@ -437,7 +464,8 @@ TEST_F(NoteStorageTest, SummaryUpgradeOfBlobNotesIsAdditiveIdempotentAndUsable) 
     const auto legacy = note_create(*database_, {}, NoteItemKind::note, "Existing note");
     (void)note_save(*database_, legacy.id, annotation_fixture()["document"]);
     database_->prepare("INSERT INTO note_audio VALUES(?,0,'audio/mpeg',X'0102')", legacy.id).run();
-    database_->prepare("INSERT INTO session_notes VALUES(1,?,'Existing note','Saved chat copy')", legacy.id).run();
+    database_->prepare("INSERT INTO session_notes(session_key,note_id,name,text) "
+        "VALUES(1,?,'Existing note','Saved chat copy')", legacy.id).run();
     const auto blob = raw_content(*database_, legacy.id);
     database_->execute("DROP TABLE note_summaries");
     for (int reopen = 0; reopen < 2; ++reopen) {

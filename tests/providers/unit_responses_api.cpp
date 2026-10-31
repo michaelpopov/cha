@@ -638,5 +638,18 @@ TEST(ResponsesApi, HostedSearchOutputIsRetainedWithoutBecomingALocalCall) {
     }
 }
 
+TEST(ResponsesApi, EmptyAndForeignFolderAccessDoNotAdvertiseOrSerializeFileSearch) {
+    for (const auto& access : {FolderSearchAccess{FolderStoreService::openai, {}},
+                             FolderSearchAccess{FolderStoreService::google, {"fileSearchStores/foreign"}}}) {
+        Transcript transcript;
+        auto input = make_request(transcript, "Question");
+        input.folder_search = access;
+        const auto body = Json::parse(build_responses_request_body(input, {}, "System"));
+        EXPECT_FALSE(body.contains("tools"));
+        EXPECT_EQ(body.dump().find("fileSearchStores/foreign"), std::string::npos);
+        EXPECT_EQ(body.dump().find("Folder search is available"), std::string::npos);
+    }
+}
+
 } // namespace
 } // namespace cha

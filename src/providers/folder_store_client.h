@@ -79,6 +79,8 @@ struct FolderStoreRemoteResult {
     bool unknown_allocation{};
 };
 
+[[nodiscard]] std::optional<FolderStoreService> folder_store_endpoint_service(
+    const ModelBackendConfig& config);
 [[nodiscard]] FolderStoreEligibility folder_store_match(
     const ModelBackendConfig& config, const ApiKeyStore& keys);
 [[nodiscard]] FolderStoreEligibility folder_store_match(

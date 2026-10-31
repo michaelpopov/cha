@@ -218,6 +218,17 @@ private:
         SharedModelHistory history,
         ControllerUpdate& update,
         ResearchNeeds research_needs = {});
+    void materialize_note_references(
+        std::span<const FileReference> references,
+        std::string_view owner,
+        std::string_view character_id,
+        std::string& omissions);
+    [[nodiscard]] std::optional<FolderSearchAccess> resolve_folder_search(
+        const Workspace& workspace,
+        const CharacterMetadata& target,
+        const ModelBackendConfig& config,
+        std::string& context,
+        std::string& omissions);
     [[nodiscard]] ControllerUpdate start_resolved_multicast(
         std::string_view author_id,
         std::string text,
