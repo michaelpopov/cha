@@ -123,13 +123,13 @@ protected:
         std::ofstream(workspace.root() / "forums/lobby/members/writer/character.toml") << "# member\n";
         path = test::import_test_database(workspace.root());
         RuntimeSettings settings;
-        settings.note_audio_wait = [this](int seconds) {
+        settings.test_hooks.note_audio_wait = [this](int seconds) {
             std::size_t index;
             { const std::lock_guard lock(waits_mutex); waits.push_back(seconds); index = waits.size(); }
             if (on_wait) on_wait(index);
         };
-        settings.note_audio_before_launch = [this](auto id) { if (on_launch) on_launch(id); };
-        settings.note_audio_worker_started = [this](auto id, auto cancel) { if (on_worker) on_worker(id, std::move(cancel)); };
+        settings.test_hooks.note_audio_before_launch = [this](auto id) { if (on_launch) on_launch(id); };
+        settings.test_hooks.note_audio_worker_started = [this](auto id, auto cancel) { if (on_worker) on_worker(id, std::move(cancel)); };
         auto command = make_command(workspace, path);
         command.test_shutdown_grace_ms = 50;
         application = Application::open(command, {}, settings);
@@ -769,7 +769,7 @@ TEST_F(NoteAudioBackground, AbandonmentSignalsOnlyTheRemovedNotesAndContextChang
         auto command = make_command(workspace, path);
         command.test_shutdown_grace_ms = 50;
         RuntimeSettings settings;
-        settings.note_audio_worker_started = [this](auto id, auto cancel) { if (on_worker) on_worker(id, std::move(cancel)); };
+        settings.test_hooks.note_audio_worker_started = [this](auto id, auto cancel) { if (on_worker) on_worker(id, std::move(cancel)); };
         application = Application::open(command, {}, settings);
         epoch = application->context_epoch();
         // Retire retained test rows without adding recovery workers to the next case.

@@ -354,7 +354,7 @@ nlohmann::json Application::compress_note(std::int64_t id, std::uint64_t epoch, 
                     answer = collect_note_prompt(*client, definition, note.text, cancel);
                     if (!answer.result.retryable || cancel.load() || retries == 3) break;
                     const auto seconds = 10 << retries;
-                    if (owner->settings.note_compression_wait) owner->settings.note_compression_wait(seconds);
+                    if (owner->settings.test_hooks.note_compression_wait) owner->settings.test_hooks.note_compression_wait(seconds);
                     else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
@@ -527,7 +527,7 @@ std::shared_ptr<OperationReply> Application::generate_session_summary(
                         answer = collect_note_prompt(*client, definition, source, cancel);
                         if (!answer.result.retryable || cancel.load() || retries == 3) break;
                         const auto seconds = 10 << retries;
-                        if (owner->settings.note_compression_wait) owner->settings.note_compression_wait(seconds);
+                        if (owner->settings.test_hooks.note_compression_wait) owner->settings.test_hooks.note_compression_wait(seconds);
                         else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
                             std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }

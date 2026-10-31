@@ -69,7 +69,7 @@ Application::FolderStoreOperationStatus status_from(const auto& control) {
 // All application/store access by a worker goes through this guard. Network
 // calls use copied inputs after the guard releases the lifecycle lock.
 decltype(auto) guarded(auto& self, const auto& control, auto&& work) {
-    if (self.settings.folder_store_before_lifetime_lock) self.settings.folder_store_before_lifetime_lock();
+    if (self.settings.test_hooks.folder_store_before_lifetime_lock) self.settings.test_hooks.folder_store_before_lifetime_lock();
     const std::lock_guard lock(self.lifecycle_mutex);
     if (!self.folder_store_lifetime_locked(control, control->store_record_id)) throw Interrupted{};
     return work();
@@ -116,14 +116,14 @@ std::string current_key(auto& self, const auto& control, bool forward) {
 }
 
 void wait_round(auto& self, const auto& control, int round) {
-    if (self.settings.folder_store_wait) {
-        self.settings.folder_store_wait(round);
+    if (self.settings.test_hooks.folder_store_wait) {
+        self.settings.test_hooks.folder_store_wait(round);
         return;
     }
     std::unique_lock lock(control->wait_mutex);
     control->wait_cv.wait_for(lock, self.settings.folder_store_poll_interval, [&] {
         const bool cancelled = control->cancel_forward->load() || control->cancel_all->load();
-        if (self.settings.folder_store_poll_predicate_read) self.settings.folder_store_poll_predicate_read();
+        if (self.settings.test_hooks.folder_store_poll_predicate_read) self.settings.test_hooks.folder_store_poll_predicate_read();
         return cancelled;
     });
 }
@@ -347,7 +347,7 @@ void Application::Impl::run_folder_store_upload(std::shared_ptr<FolderStoreContr
     bool remote_started = false;
     FolderStoreClient client;
     try {
-        if (settings.folder_store_worker_started) settings.folder_store_worker_started(control->operation_id, control->cancel_all);
+        if (settings.test_hooks.folder_store_worker_started) settings.test_hooks.folder_store_worker_started(control->operation_id, control->cancel_all);
         auto capture = guarded(*this, control, [&] {
             if (control->cancel_forward->load()) throw Cancelled{};
             const auto snapshot = store->snapshot();
@@ -527,7 +527,7 @@ void Application::Impl::run_folder_store_upload(std::shared_ptr<FolderStoreContr
 
 void Application::Impl::run_folder_store_remove(std::shared_ptr<FolderStoreControl> control) {
     try {
-        if (settings.folder_store_worker_started) settings.folder_store_worker_started(control->operation_id, control->cancel_all);
+        if (settings.test_hooks.folder_store_worker_started) settings.test_hooks.folder_store_worker_started(control->operation_id, control->cancel_all);
         const auto record = guarded(*this, control, [&] {
             store->mark_folder_store_incomplete(*control->store_record_id);
             return *store->get_folder_store(*control->store_record_id);
@@ -576,7 +576,7 @@ void delete_locally(auto& self, const auto& control, const std::vector<std::stri
 
 void Application::Impl::run_folder_store_delete(std::shared_ptr<FolderStoreControl> control, bool retry) {
     try {
-        if (settings.folder_store_worker_started) settings.folder_store_worker_started(control->operation_id, control->cancel_all);
+        if (settings.test_hooks.folder_store_worker_started) settings.test_hooks.folder_store_worker_started(control->operation_id, control->cancel_all);
         const auto records = guarded(*this, control, [&] {
             if (!retry) store->mark_folder_stores_incomplete_in_subtree(control->root_id);
             auto records = store->folder_stores_in_subtree(control->root_id);
@@ -650,10 +650,10 @@ void Application::Impl::run_folder_store_delete(std::shared_ptr<FolderStoreContr
 
 bool Application::Impl::launch_folder_store_control(const std::shared_ptr<FolderStoreControl>& control, std::function<void()> work) {
     try {
-        if (settings.folder_store_before_launch) settings.folder_store_before_launch();
+        if (settings.test_hooks.folder_store_before_launch) settings.test_hooks.folder_store_before_launch();
         if (background_jobs.launch([this, control, work = std::move(work)](std::atomic_bool&) {
                 work();
-                if (settings.folder_store_worker_finished) settings.folder_store_worker_finished(control->operation_id);
+                if (settings.test_hooks.folder_store_worker_finished) settings.test_hooks.folder_store_worker_finished(control->operation_id);
             }, control->cancel_all, [control] {
                 const std::lock_guard lock(control->wait_mutex);
                 control->cancel_forward->store(true);

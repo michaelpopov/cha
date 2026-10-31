@@ -140,7 +140,7 @@ protected:
     void SetUp() override {
         database_ = test::import_test_database(workspace_.root());
         RuntimeSettings settings;
-        settings.note_compression_wait = [this](int seconds) { if (compression_wait_) compression_wait_(seconds); };
+        settings.test_hooks.note_compression_wait = [this](int seconds) { if (compression_wait_) compression_wait_(seconds); };
         application_ = app::Application::open(make_command(workspace_, database_), {}, settings);
         router_ = std::make_unique<BridgeRouter>(*application_);
         connection_ = router_->open_connection();

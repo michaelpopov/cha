@@ -91,11 +91,11 @@ protected:
         database_ = test::import_test_database(workspace_.root());
         RuntimeSettings settings;
         settings.folder_store_poll_interval = 0ms;
-        settings.folder_store_worker_finished = [this](std::int64_t id) {
+        settings.test_hooks.folder_store_worker_finished = [this](std::int64_t id) {
             { std::lock_guard lock(finished_mutex_); finished_.insert(id); }
             finished_cv_.notify_all();
         };
-        settings.folder_store_wait = [this](int) {
+        settings.test_hooks.folder_store_wait = [this](int) {
             {
                 std::lock_guard lock(wait_mutex_);
                 ++waits_;
@@ -186,7 +186,7 @@ protected:
         application_->request_shutdown();
         EXPECT_TRUE(application_->join_shutdown(2s));
         application_.reset();
-        settings.folder_store_worker_finished = [this](std::int64_t id) {
+        settings.test_hooks.folder_store_worker_finished = [this](std::int64_t id) {
             { std::lock_guard lock(finished_mutex_); finished_.insert(id); }
             finished_cv_.notify_all();
         };
@@ -362,7 +362,7 @@ TEST_F(FolderStoreOperationsTest, ChangedConfirmationCountDoesNotDelete) {
 TEST_F(FolderStoreOperationsTest, DrainDoesNotJoinAWorkerWaitingForTheLifecycleLock) {
     auto gate = std::make_shared<Gate>();
     RuntimeSettings settings;
-    settings.folder_store_before_lifetime_lock = [gate] { gate->arrive_and_wait(); };
+    settings.test_hooks.folder_store_before_lifetime_lock = [gate] { gate->arrive_and_wait(); };
     reopen(settings);
     application_->set_folder_store_transport_for_tests(openai_transport());
     const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
@@ -507,7 +507,7 @@ TEST_F(FolderStoreOperationsTest, CancellationLetsSentAllocationFinishThenCleans
 TEST_F(FolderStoreOperationsTest, PreflightReservationProtectsAncestors) {
     Gate gate;
     RuntimeSettings settings;
-    settings.folder_store_worker_started = [&](auto, auto) { gate.arrive_and_wait(); };
+    settings.test_hooks.folder_store_worker_started = [&](auto, auto) { gate.arrive_and_wait(); };
     reopen(settings);
     const auto parent = application_->create_note_item({}, NoteItemKind::folder, "Parent", epoch_);
     const auto child = application_->create_note_item(parent.id, NoteItemKind::folder, "Child", epoch_);
@@ -635,7 +635,7 @@ TEST_F(FolderStoreOperationsTest, UnknownOnlyDeleteNeedsNoKeyAndFinishesWithWarn
 
 TEST_F(FolderStoreOperationsTest, LaunchFailureReleasesAdmissionWithoutRemoteEffects) {
     RuntimeSettings settings;
-    settings.folder_store_before_launch = [] { throw std::runtime_error("launch failure"); };
+    settings.test_hooks.folder_store_before_launch = [] { throw std::runtime_error("launch failure"); };
     reopen(settings);
     EXPECT_THROW((void)application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_), ApplicationError);
     EXPECT_FALSE(application_->folder_store_operation_status(folder_.id, epoch_).present);
@@ -1016,7 +1016,7 @@ TEST_F(FolderStoreOperationsTest, CancelCannotMissThePollWakeupAfterPredicateRea
     auto once = std::make_shared<std::once_flag>();
     RuntimeSettings settings;
     settings.folder_store_poll_interval = 3s;
-    settings.folder_store_poll_predicate_read = [gate, once] {
+    settings.test_hooks.folder_store_poll_predicate_read = [gate, once] {
         std::call_once(*once, [&] { gate->arrive_and_wait(); });
     };
     reopen(settings);
@@ -1095,7 +1095,7 @@ TEST_F(FolderStoreOperationsTest, SavedKeyUsageIncludesIncompleteAndReadyStoresA
 TEST_F(FolderStoreOperationsTest, FailedRetryLaunchRetainsACompleteFailureStatusAndReservation) {
     auto fail_launch = std::make_shared<bool>(false);
     RuntimeSettings settings;
-    settings.folder_store_before_launch = [fail_launch] { if (*fail_launch) throw std::runtime_error("launch failure"); };
+    settings.test_hooks.folder_store_before_launch = [fail_launch] { if (*fail_launch) throw std::runtime_error("launch failure"); };
     reopen(settings);
     (void)seed_store(folder_.id);
     application_->set_folder_store_transport_for_tests([](const auto&, const auto&) { return FolderStoreHttpResponse{.status = 401}; });
@@ -1144,7 +1144,7 @@ TEST_F(FolderStoreOperationsTest, ClosePreservesUnsavedOwnershipUntilItCanBeReco
 TEST_F(FolderStoreOperationsTest, FailedRemoveLaunchPreservesPreviousOperationAndUnsavedOwnership) {
     auto fail_launch = std::make_shared<bool>(false);
     RuntimeSettings settings;
-    settings.folder_store_before_launch = [fail_launch] {
+    settings.test_hooks.folder_store_before_launch = [fail_launch] {
         if (*fail_launch) throw std::runtime_error("injected launch failure");
     };
     reopen(settings);

@@ -165,10 +165,10 @@ std::shared_ptr<std::atomic_bool> Application::Impl::launch_note_audio(NoteAudio
         entry = cancel;
     }
     try {
-        if (settings.note_audio_before_launch) settings.note_audio_before_launch(attempt.id);
+        if (settings.test_hooks.note_audio_before_launch) settings.test_hooks.note_audio_before_launch(attempt.id);
         const bool launched = background_jobs.launch([this, attempt, epoch, cancel,
             voice = std::move(voice), jsonl = std::move(jsonl)](std::atomic_bool&) mutable {
-            if (settings.note_audio_worker_started) settings.note_audio_worker_started(attempt.id, cancel);
+            if (settings.test_hooks.note_audio_worker_started) settings.test_hooks.note_audio_worker_started(attempt.id, cancel);
             run_note_audio(attempt, epoch, cancel, std::move(voice), std::move(jsonl));
         }, cancel);
         if (!launched) throw std::runtime_error("Could not start note audio worker.");
@@ -266,7 +266,7 @@ void Application::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t e
                 throw NoteAudioError(NoteAudioFailure::storage, reason + " Submission retry limit reached.");
             if (!submitting && (credential || failures >= 3)) warn(reason);
             const auto delay = submitting ? submission_retries++ : std::min(failures, 2u);
-            wait_note_audio(10 << delay, *cancel, settings.note_audio_wait);
+            wait_note_audio(10 << delay, *cancel, settings.test_hooks.note_audio_wait);
             if (failures < 3) ++failures;
         }
     };
@@ -315,7 +315,7 @@ void Application::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t e
                 if (!operation.contains("metadata") || !operation.at("metadata").is_object()
                     || !operation.at("metadata").contains("state") || !operation.at("metadata").at("state").is_string())
                     throw NoteAudioError(NoteAudioFailure::invalid, "The audio service returned an invalid batch response. Check the service.");
-                wait_note_audio(note_audio_poll_seconds, *cancel, settings.note_audio_wait);
+                wait_note_audio(note_audio_poll_seconds, *cancel, settings.test_hooks.note_audio_wait);
                 operation = retry([&] { return read_note_audio_batch(credentials, *attempt.batch_id, *cancel); }, false);
             }
             step = "result download";

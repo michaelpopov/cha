@@ -271,7 +271,7 @@ TEST(ApplicationVault, ConfigurationMergeKeepsStoreOwnershipAndUsesTheChangedSav
     std::promise<void> finished;
     auto done = finished.get_future();
     RuntimeSettings settings;
-    settings.folder_store_worker_finished = [&](auto) { finished.set_value(); };
+    settings.test_hooks.folder_store_worker_finished = [&](auto) { finished.set_value(); };
     auto application = Application::open(pair.command, {}, settings);
     const auto key = application->create_api_key({.display_name = "Original project", .value = "original-secret"}, application->context_epoch());
     ASSERT_EQ(key.id, "api_key_1");

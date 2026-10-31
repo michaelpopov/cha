@@ -93,6 +93,20 @@ void set_current_error(char** error) noexcept {
     }
 }
 
+// Logs the exception in flight once per run of failures, so a persistent
+// fault appears in the log without filling it every 50 ms.
+void log_worker_failure(const char* step, bool& logged) noexcept {
+    if (logged) return;
+    logged = true;
+    try {
+        throw;
+    } catch (const std::exception& exception) {
+        cha::log_error(std::string("Native host ") + step + " failed: " + exception.what());
+    } catch (...) {
+        cha::log_error(std::string("Native host ") + step + " failed with an unknown error");
+    }
+}
+
 ApplicationCommand runtime_command(const char* config_path) {
     const char* arguments[] = {"CHA", "--config", config_path};
     return parse_application_command(3, arguments);
@@ -122,12 +136,15 @@ bool join_workers_until(
 
 void run_ordinary_worker(ChaRuntime* runtime) {
     using namespace std::chrono_literals;
+    bool ordinary_failure_logged = false;
     while (!runtime->pump_stop.load()) {
         runtime->router->wait_for_ordinary_work(50ms);
         if (runtime->pump_stop.load()) break;
         try {
             runtime->router->run_ordinary_tasks();
+            ordinary_failure_logged = false;
         } catch (...) {
+            log_worker_failure("ordinary task", ordinary_failure_logged);
         }
     }
     {
@@ -139,6 +156,8 @@ void run_ordinary_worker(ChaRuntime* runtime) {
 
 void run_pump(ChaRuntime* runtime) {
     using namespace std::chrono_literals;
+    bool pump_failure_logged = false;
+    bool delivery_failure_logged = false;
     while (!runtime->pump_stop.load()) {
         if (!runtime->router) break;
         runtime->router->wait_for_work(50ms);
@@ -147,7 +166,9 @@ void run_pump(ChaRuntime* runtime) {
             runtime->router->run_control_tasks();
             runtime->router->expire_timeouts();
             runtime->router->pump_output();
+            pump_failure_logged = false;
         } catch (...) {
+            log_worker_failure("pump", pump_failure_logged);
             continue;
         }
         std::vector<std::string> ids;
@@ -160,7 +181,9 @@ void run_pump(ChaRuntime* runtime) {
             std::optional<nlohmann::json> batch;
             try {
                 batch = runtime->router->take_delivery(id);
+                delivery_failure_logged = false;
             } catch (...) {
+                log_worker_failure("delivery", delivery_failure_logged);
                 continue;
             }
             if (!batch) continue;
