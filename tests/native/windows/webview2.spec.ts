@@ -119,7 +119,7 @@ async function newNote(page: Page, name: string): Promise<void> {
   await page.getByRole('treeitem').first().getByRole('button').click();
   await page.getByRole('menuitem', { name: 'New note', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New note', exact: true });
-  await dialog.getByLabel('Name', { exact: true }).fill(name);
+  await dialog.getByLabel('Name, URL, or file path', { exact: true }).fill(name);
   await dialog.getByRole('button', { name: 'Create', exact: true }).click();
   await expect(page.locator('.tiptap[contenteditable="true"]')).toBeVisible();
 }
