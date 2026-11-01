@@ -127,6 +127,7 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
     : fallback;
 }
 
+export type NotePageStage = 'formatting_article' | 'formatting_transcript';
 export type NotePage = { url: string; title: string; markdown: string };
 export type NoteCompressionStartResult = components['schemas']['NoteCompressionStartResult'];
 export type NoteCompressionStatus = components['schemas']['NoteCompressionStatus'];
@@ -162,7 +163,7 @@ export interface NotesClient {
   contextEpoch(): number;
   noteAudio?: NoteAudioClient;
   importEpub: (file: File, items: readonly NoteItem[], parentId: number | null) => Promise<number>;
-  readNotePage: (url: string) => Promise<NotePage>;
+  readNotePage: (url: string, onProgress?: (stage: NotePageStage) => void) => Promise<NotePage>;
   readNoteTextFile: (path: string) => Promise<TextFileRequest | null>;
   readNotePicture: (url: string) => Promise<Uint8Array>;
   // Folder store summaries come from this listing; reload after item mutations.

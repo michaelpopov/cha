@@ -1,7 +1,7 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
 import { chromium } from '@playwright/test';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -179,7 +179,7 @@ async function holdReply(page: Page, method: string, failFirst = false): Promise
 
 // Drive the production Win32 entry points and the real timeout dialog. These
 // automated checks are separate from the operator's packaged-app checks.
-function nativeWindow(child: ChildProcess, action: 'close' | 'exit' | 'cancel' | 'anyway' | 'fatal' | 'fatal-ok' | 'inspect') {
+function nativeWindow(child: ChildProcess, action: 'close' | 'exit' | 'cancel' | 'anyway' | 'fatal' | 'fatal-ok' | 'inspect' | 'view', command?: number) {
   const script = `
 Add-Type -TypeDefinition @'
 using System;
@@ -193,6 +193,9 @@ public static class CHAWindow {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int count);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wparam, IntPtr lparam);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] public static extern IntPtr GetMenu(IntPtr window);
+  [DllImport("user32.dll")] public static extern IntPtr GetSubMenu(IntPtr menu, int position);
+  [DllImport("user32.dll")] public static extern uint GetMenuState(IntPtr menu, uint command, uint flags);
   public static IntPtr Find(uint process, string name) {
     IntPtr found = IntPtr.Zero;
     EnumWindows((window, data) => {
@@ -211,17 +214,30 @@ public static class CHAWindow {
 '@
 $main = [CHAWindow]::Find(${child.pid}, 'CHA.MainWindow')
 $dialog = [CHAWindow]::Find(${child.pid}, '#32770')
+$view = @{}
+${action === 'view' ? `
+$menu = [CHAWindow]::GetSubMenu([CHAWindow]::GetMenu($main), 1)
+$commands = @{ split=1003; sidebar=1004; pictures=1005; toolbar=1006; notes_prompt=1007; chat_toolbar=1008; russian=1009 }
+foreach ($entry in $commands.GetEnumerator()) {
+    $state = [CHAWindow]::GetMenuState($menu, [uint32]$entry.Value, 0)
+    if ($state -eq [uint32]::MaxValue) { throw 'View menu command was not found' }
+    $view[$entry.Key] = (($state -band 8) -ne 0)
+}
+${command === undefined ? '' : `[CHAWindow]::PostMessage($main, 273, [IntPtr]${command}, [IntPtr]::Zero) | Out-Null`}
+` : ''}
 ${action === 'close' ? '[CHAWindow]::PostMessage($main, 16, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null' : ''}
 ${action === 'exit' ? '[CHAWindow]::PostMessage($main, 273, [IntPtr]1001, [IntPtr]::Zero) | Out-Null' : ''}
 ${action === 'fatal' ? '[CHAWindow]::PostMessage($main, 32770, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null' : ''}
 ${action === 'cancel' || action === 'anyway' ? `if ($dialog -eq [IntPtr]::Zero) { throw 'Native close dialog was not found' }
 [CHAWindow]::PostMessage($dialog, 1126, [IntPtr]${action === 'cancel' ? 2 : 1}, [IntPtr]::Zero) | Out-Null` : ''}
 ${action === 'fatal-ok' ? '[CHAWindow]::PostMessage($dialog, 256, [IntPtr]13, [IntPtr]1) | Out-Null' : ''}
-@{ title = [CHAWindow]::Title($main); dialog = ($dialog -ne [IntPtr]::Zero) } | ConvertTo-Json -Compress
+$report = @{ title = [CHAWindow]::Title($main); dialog = ($dialog -ne [IntPtr]::Zero) }
+${action === 'view' ? '$report.view = $view' : ''}
+$report | ConvertTo-Json -Compress
 `;
   const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(result.stderr || 'Win32 close probe failed');
-  return JSON.parse(result.stdout.trim()) as { title: string; dialog: boolean };
+  return JSON.parse(result.stdout.trim()) as { title: string; dialog: boolean; view: Record<string, boolean> };
 }
 
 async function trackClose(page: Page, withhold = false): Promise<void> {
@@ -297,6 +313,52 @@ test.describe('WebView2 native host', () => {
     if (userData) removeTestData(userData);
   });
 
+  test('View preferences survive native quit, process restart and reload', async () => {
+    test.setTimeout(120_000);
+    const preferences = join(userData, 'config', 'view.json');
+    let expected = { split: false, sidebar: true, pictures: false, toolbar: true,
+      chat_toolbar: true, notes_prompt: true, russian: false };
+    expect(existsSync(preferences)).toBe(false);
+    expect(nativeWindow(host!, 'view').view).toEqual(expected);
+    const commands = { split: 1003, sidebar: 1004, pictures: 1005, toolbar: 1006,
+      chat_toolbar: 1008, notes_prompt: 1007, russian: 1009 };
+    for (let round = 0; round < 2; round += 1) {
+      for (const key of Object.keys(commands) as (keyof typeof commands)[]) {
+        nativeWindow(host!, 'view', commands[key]);
+        expected = { ...expected, [key]: !expected[key] };
+        if (key === 'russian') {
+          // Close after the DOM change, without polling the report or file.
+          await expect(page.locator('.cha-chat-column .cha-transliteration-toggle')).toHaveCount(expected.russian ? 1 : 0);
+        } else {
+          await expect.poll(() => nativeWindow(host!, 'view').view).toEqual(expected);
+        }
+      }
+      await page.evaluate(() => {
+        const native = window as any;
+        native.__CHA_NATIVE_POST__(JSON.stringify({ native_action: 'close', connection_id: native.__CHA_NATIVE_CONNECTION_ID__ }));
+      });
+      await expect.poll(() => host!.exitCode).toBe(0);
+      await browser!.close().catch(() => undefined);
+      expect(JSON.parse(readFileSync(preferences, 'utf8'))).toEqual(expected);
+
+      const launched = await launchHost(userData);
+      host = launched.child;
+      browser = launched.browser;
+      page = browser.contexts()[0].pages()[0];
+      await waitForApplication(page);
+      expect(await page.evaluate(() => (window as any).__CHA_NATIVE_INITIAL_VIEW_STATE__)).toEqual(expected);
+      expect(nativeWindow(host, 'view').view).toEqual(expected);
+      await expect(page.locator('.cha-app')).toHaveAttribute('data-sidebar', expected.sidebar ? 'open' : 'closed');
+      await expect(page.locator('.cha-chat-toolbar')).toHaveCount(expected.chat_toolbar ? 1 : 0);
+      const stamp = statSync(preferences).mtimeMs;
+      await page.reload();
+      await waitForApplication(page);
+      expect(await page.evaluate(() => (window as any).__CHA_NATIVE_INITIAL_VIEW_STATE__)).toEqual(expected);
+      expect(nativeWindow(host, 'view').view).toEqual(expected);
+      expect(statSync(preferences).mtimeMs).toBe(stamp);
+    }
+  });
+
   test('Chat toolbar saves per-session effort and toggles independently from Notes', async () => {
     await waitForApplication(page);
     const effort = page.getByRole('combobox', { name: 'Effort', exact: true });
@@ -317,6 +379,16 @@ test.describe('WebView2 native host', () => {
       host.__CHA_NATIVE_SET_LAYOUT__('toggle-chat-toolbar');
     });
     await expect(effort).toHaveCount(0);
+    const russian = page.getByRole('button', { name: 'Latin to Russian transliteration' });
+    await expect(russian).toHaveCount(0);
+    await page.evaluate(() => (window as any).__CHA_NATIVE_SET_LAYOUT__('toggle-russian'));
+    await expect(russian).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => (window as any).__CHA_TEST_VIEW_STATE__))
+      .toMatchObject({ russian: true });
+    await page.evaluate(() => (window as any).__CHA_NATIVE_SET_LAYOUT__('toggle-russian'));
+    await expect(russian).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (window as any).__CHA_TEST_VIEW_STATE__))
+      .toMatchObject({ russian: false });
     await expect(composer).toHaveValue('Keep toolbar draft');
     await expect.poll(() => page.evaluate(() => (window as any).__CHA_TEST_VIEW_STATE__))
       .toMatchObject({ toolbar: true, chat_toolbar: false });
@@ -422,7 +494,7 @@ test.describe('WebView2 native host', () => {
 
   test('exits the assertion as failed when asked', async () => {
     await waitForApplication(page);
-    const ok = await page.evaluate(() => 1 === 0);
+    const ok = await page.evaluate(() => false);
     expect(ok).toBe(true);
   });
 

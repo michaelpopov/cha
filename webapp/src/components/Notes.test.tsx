@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ChaError,
   type NoteItem,
+  type NotePage,
+  type NotesClient,
 } from '../api/client';
 import { bootstrapFixture, fixtureClient, forumDetailFixture, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
@@ -25,6 +27,39 @@ function notesClient(text = 'Saved plan') {
     getNote: async (id: number) => ({ id, document: noteDocument(text) }),
     saveNote: async () => undefined,
   });
+}
+
+function importClient(readNotePage: NotesClient['readNotePage'], readNoteTextFile?: NotesClient['readNoteTextFile']) {
+  let items = [plan];
+  const documents = new Map<number, Record<string, unknown>>([[plan.id, noteDocument('Saved plan')]]);
+  let nextId = 9;
+  const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => {
+    const created = { ...plan, id: nextId++, parent_id, kind, name };
+    items = [...items, created];
+    return created;
+  });
+  function update(id: number, changes: Partial<NoteItem>) {
+    items = items.map(item => item.id === id ? { ...item, ...changes } : item);
+    return items.find(item => item.id === id)!;
+  }
+  const getNote = vi.fn(async (id: number) => ({ id, document: documents.get(id) ?? { type: 'doc', content: [{ type: 'paragraph' }] } }));
+  const saveNote = vi.fn(async (id: number, document: Record<string, unknown>) => { documents.set(id, document); });
+  const renameNoteItem = vi.fn(async (id: number, name: string) => update(id, { name }));
+  const setNoteReadOnly = vi.fn(async (id: number, read_only: boolean) => update(id, { read_only }));
+  return {
+    client: fixtureClient({ listNoteItems: async () => items, createNoteItem, getNote, saveNote,
+      renameNoteItem, setNoteReadOnly, readNotePage, ...(readNoteTextFile ? { readNoteTextFile } : {}) }),
+    createNoteItem, getNote, saveNote, renameNoteItem, setNoteReadOnly, documents,
+  };
+}
+
+async function createUrlNote(url: string) {
+  fireEvent.click(screen.getByRole('button', { name: `Actions for ${bootstrapFixture.vault_name}` }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'New note' }));
+  const dialog = await screen.findByRole('dialog', { name: 'New note' });
+  fireEvent.change(within(dialog).getByLabelText('Name, URL, or file path'), { target: { value: url } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New note' })).toBeNull());
 }
 
 function contextBus() {
@@ -67,6 +102,135 @@ function historyAction(name: 'Undo' | 'Redo') {
 }
 
 describe('Notes in the application', () => {
+  it.each([
+    ['https://example.org/article', false], ['https://youtu.be/video', true],
+  ] as const)('creates, imports, titles, saves, and locks %s without submitting the prompt (hidden=%s)', async (url, hidden) => {
+    let finish!: (page: NotePage) => void;
+    const readNotePage = vi.fn(() => new Promise<NotePage>(resolve => { finish = resolve; }));
+    const notes = importClient(readNotePage);
+    const bus = contextBus();
+    render(<App client={notes.client} contextEvents={bus} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved plan');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Keep my draft' } });
+    act(() => typeInNote(' edited'));
+    if (hidden) act(() => bus.layout('toggle-notes-prompt'));
+    await createUrlNote(url);
+    await waitFor(() => expect(readNotePage).toHaveBeenCalledExactlyOnceWith(url, expect.any(Function)));
+    expect(notes.createNoteItem).toHaveBeenCalledExactlyOnceWith(null, 'note', 'New note');
+    expect(notes.documents.get(plan.id)).toEqual(noteDocument('Saved plan edited'));
+    expect(notes.saveNote.mock.invocationCallOrder[0]).toBeLessThan(notes.createNoteItem.mock.invocationCallOrder[0]);
+    expect(screen.getByText('Loading content…')).toHaveAttribute('role', 'status');
+    const editor = noteEditor();
+    expect(editor.isEditable).toBe(true);
+    let finishSave!: () => void;
+    notes.saveNote.mockImplementationOnce(async (id, document) => {
+      await new Promise<void>(resolve => { finishSave = resolve; });
+      notes.documents.set(id, document);
+    });
+    await act(async () => finish({ url, title: 'Content title', markdown: '**Imported content**' }));
+    await screen.findByText('Saving note…');
+    expect(notes.setNoteReadOnly).not.toHaveBeenCalled();
+    await act(async () => finishSave());
+    await screen.findByRole('treeitem', { name: 'Content title' });
+    await waitFor(() => expect(editor.isEditable).toBe(false));
+    expect(editor.getText({ blockSeparator: '\n' })).toBe('Content title\nImported content');
+    expect(editor.view.dom.querySelector('strong')).toHaveTextContent('Imported content');
+    expect(notes.documents.get(9)).toEqual(editor.getJSON());
+    expect(notes.setNoteReadOnly).toHaveBeenCalledExactlyOnceWith(9, true);
+    expect(notes.saveNote.mock.invocationCallOrder.at(-1)).toBeLessThan(notes.setNoteReadOnly.mock.invocationCallOrder[0]);
+    expect(screen.queryByText('Loading content…')).toBeNull();
+    if (hidden) act(() => bus.layout('toggle-notes-prompt'));
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep my draft');
+    expect(readNotePage).toHaveBeenCalledOnce();
+  });
+
+  it('creates a note from a file path and saves its title and content', async () => {
+    const readFile = vi.fn(async () => ({ name: '/tmp/plan.md', text: '# File title\n\nFile content' }));
+    const notes = importClient(vi.fn(), readFile);
+    render(<App client={notes.client} contextEvents={contextBus()} />);
+    await openNotes();
+    await createUrlNote('/tmp/plan.md');
+    await screen.findByRole('treeitem', { name: 'File title' });
+    await waitFor(() => expect(notes.setNoteReadOnly).toHaveBeenCalledWith(9, true));
+    expect(readFile).toHaveBeenCalledExactlyOnceWith('/tmp/plan.md');
+    expect(notes.createNoteItem).toHaveBeenCalledExactlyOnceWith(null, 'note', 'New note');
+    expect(JSON.stringify(notes.documents.get(9))).toContain('File content');
+  });
+
+  it('abandons the first pending URL when creating another and keeps the second loading status', async () => {
+    const finishes: ((page: NotePage) => void)[] = [];
+    const readNotePage = vi.fn(() => new Promise<NotePage>(resolve => { finishes.push(resolve); }));
+    const notes = importClient(readNotePage);
+    render(<App client={notes.client} />);
+    await openNotes();
+    await createUrlNote('https://example.org/first');
+    await waitFor(() => expect(readNotePage).toHaveBeenCalledTimes(1));
+    const firstEditor = noteEditor();
+    await createUrlNote('https://example.org/second');
+    await waitFor(() => expect(readNotePage).toHaveBeenCalledTimes(2));
+    const secondEditor = noteEditor();
+    expect(firstEditor.isDestroyed).toBe(true);
+    await act(async () => finishes[0]({ url: 'https://example.org/first', title: 'Old title', markdown: 'Old content' }));
+    expect(secondEditor.isEmpty).toBe(true);
+    expect(screen.getByText('Loading content…')).toBeInTheDocument();
+    expect(notes.renameNoteItem).not.toHaveBeenCalled();
+    expect(notes.setNoteReadOnly).not.toHaveBeenCalled();
+    expect(notes.saveNote).not.toHaveBeenCalled();
+    await act(async () => finishes[1]({ url: 'https://example.org/second', title: 'Second title', markdown: 'Second content' }));
+    await screen.findByRole('treeitem', { name: 'Second title' });
+    await waitFor(() => expect(secondEditor.isEditable).toBe(false));
+    expect(notes.documents.has(9)).toBe(false);
+    expect(notes.documents.get(10)).toEqual(secondEditor.getJSON());
+    expect(notes.renameNoteItem).toHaveBeenCalledExactlyOnceWith(10, 'Second title');
+    expect(notes.setNoteReadOnly).toHaveBeenCalledExactlyOnceWith(10, true);
+    fireEvent.click(screen.getByRole('treeitem', { name: 'New note' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    expect(noteEditor().isEmpty).toBe(true);
+    expect(readNotePage).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['page', false], ['page', true], ['file', false], ['file', true],
+  ] as const)('abandons a hidden empty %s note and does not restart it on remount (finish while hidden=%s)', async (kind, finishHidden) => {
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const readNotePage = vi.fn(async () => { await pending; return { url: 'https://example.org/article', title: 'Late title', markdown: 'Late content' }; });
+    const readNoteTextFile = vi.fn(async () => { await pending; return { name: '/plan.md', text: '# Late title\n\nLate content' }; });
+    const readSource = kind === 'page' ? readNotePage : readNoteTextFile;
+    const notes = importClient(readNotePage, readNoteTextFile);
+    const bus = contextBus();
+    render(<App client={notes.client} contextEvents={bus} />);
+    await openNotes();
+    await createUrlNote(kind === 'page' ? 'https://example.org/article' : '/plan.md');
+    await waitFor(() => expect(readSource).toHaveBeenCalledOnce());
+    const original = noteEditor();
+    act(() => bus.layout('split'));
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    fireEvent.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Welcome/ }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeInTheDocument());
+    expect(noteEditor()).toBe(original);
+    expect(screen.getByText('Loading content…')).toBeInTheDocument();
+    act(() => bus.layout('single'));
+    // DOM removal can precede the passive effect cleanup that destroys the editor.
+    await waitFor(() => {
+      expect(document.querySelector('.ProseMirror')).toBeNull();
+      expect(original.isDestroyed).toBe(true);
+    });
+    const resolve = async () => act(async () => finish());
+    if (finishHidden) await resolve();
+    act(() => bus.layout('split'));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    if (!finishHidden) await resolve();
+    expect(noteEditor().isEmpty).toBe(true);
+    expect(screen.queryByText('Loading content…')).toBeNull();
+    expect(readSource).toHaveBeenCalledOnce();
+    expect(notes.renameNoteItem).not.toHaveBeenCalled();
+    expect(notes.setNoteReadOnly).not.toHaveBeenCalled();
+    expect(notes.saveNote).not.toHaveBeenCalled();
+  });
+
   it('generates direct read-only folder notes in tree order and restores folder focus', async () => {
     const info = vi.fn(async (id: number) => ({ count: id === 7 ? 2 : 0 }));
     const start = vi.fn(async (id: number) => ({ attempt_id: id }));

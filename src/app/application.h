@@ -558,7 +558,8 @@ public:
     void abandon_session_summary(std::string_view connection_id,
         std::int64_t run_id, std::string_view reason, std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> read_note_page(
-        std::string url, std::uint64_t epoch);
+        std::string url, std::uint64_t epoch,
+        std::function<void(std::string_view)> progress = {});
     [[nodiscard]] std::shared_ptr<OperationReply> read_note_picture(
         std::string url, std::uint64_t epoch);
     bool save_note(

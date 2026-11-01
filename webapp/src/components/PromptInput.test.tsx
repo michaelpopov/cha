@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fixtureClient } from '../test/fixtures';
 import { PromptInput, type PromptInputProps } from './PromptInput';
+import { TransliterationProvider } from './TransliterationMode';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -17,7 +18,7 @@ function Harness({
 }: Partial<PromptInputProps> & { initial?: string }) {
   const [value, setValue] = useState(initial);
   return (
-    <PromptInput
+    <TransliterationProvider controlsVisible><PromptInput
       client={props.client ?? fixtureClient()}
       enabled={props.enabled ?? true}
       inputLabel="Message"
@@ -33,7 +34,7 @@ function Harness({
       placeholder={props.placeholder}
       stopAction={props.stopAction}
       value={props.value ?? value}
-    />
+    /></TransliterationProvider>
   );
 }
 

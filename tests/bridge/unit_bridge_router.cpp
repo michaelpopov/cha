@@ -2666,6 +2666,86 @@ std::string compression_refusal(std::string_view api, bool stream, bool partial_
         + "data: " + Json{{"type", "response.completed"}, {"response", response}}.dump() + "\n\n");
 }
 
+TEST_F(BridgeRouterTest, NotePageProgressReportsFormattingOnlyToItsRequestingConnection) {
+    bootstrap_epoch();
+    for (const bool youtube : {false, true}) {
+        SCOPED_TRACE(youtube);
+        const std::string url = youtube ? "https://youtu.be/video" : "https://example.org/article";
+        const nlohmann::json page{{"url", url}, {"title", "Title"},
+            {"markdown", youtube ? "Raw transcript" : std::string(5001, 'a')}};
+        MockHttpServer reader({http_response("application/json", page.dump())});
+        MockHttpServer provider({compression_response("chat_completions", false, "Formatted content")});
+        reader.pause_before_response(1);
+        provider.pause_before_response(1);
+        reader.start();
+        provider.start();
+        configure_compression(*application_, provider.port(), "chat_completions", false, epoch_);
+        auto settings = call("webSearch.get")["result"];
+        settings["web_reader_enabled"] = true;
+        settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+        ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+        const auto other = router_->open_connection();
+        const auto read = queue_request(*router_, connection_, next_id_, epoch_, "notes.readPage", {{"url", url}});
+        router_->run_ordinary_tasks();
+        ASSERT_TRUE(reader.wait_for_requests(1, 2s));
+        EXPECT_FALSE(router_->take_delivery(connection_));
+        reader.resume_responses();
+        ASSERT_TRUE(provider.wait_for_requests(1, 2s));
+        EXPECT_TRUE(router_->wait_for_work(10ms));
+        auto batch = wait_delivery(*router_, connection_);
+        ASSERT_TRUE(batch);
+        ASSERT_EQ(batch->at("messages").size(), 1U) << *batch;
+        EXPECT_EQ(batch->at("messages").front(), (nlohmann::json{
+            {"connection_id", connection_}, {"context_epoch", epoch_},
+            {"event", "notes.pageProgress"}, {"request_id", read},
+            {"stage", youtube ? "formatting_transcript" : "formatting_article"}}));
+        EXPECT_FALSE(router_->take_delivery(other));
+        ack_delivery(*router_, connection_, *batch);
+        EXPECT_FALSE(router_->take_delivery(connection_));
+        provider.resume_responses();
+        const auto replies = wait_replies(*router_, connection_, {read});
+        ASSERT_EQ(replies.size(), 1U);
+        EXPECT_TRUE(replies.at(read)["ok"]) << replies.at(read);
+        reader.join();
+        provider.join();
+        EXPECT_FALSE(router_->take_delivery(connection_));
+        router_->close_connection(other);
+    }
+}
+
+TEST_F(BridgeRouterTest, NotePageProgressFromAReplacedVaultIsNotDelivered) {
+    bootstrap_epoch();
+    const nlohmann::json page{{"url", "https://youtu.be/video"}, {"title", "Video"}, {"markdown", "Transcript"}};
+    MockHttpServer reader({http_response("application/json", page.dump())});
+    MockHttpServer provider({compression_response("chat_completions", false, "Formatted content")});
+    provider.pause_before_response(1);
+    reader.start();
+    provider.start();
+    configure_compression(*application_, provider.port(), "chat_completions", false, epoch_);
+    auto settings = call("webSearch.get")["result"];
+    settings["web_reader_enabled"] = true;
+    settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+    const auto copy = application_->create_vault(VaultCreate{
+        .display_name = "Copied", .copy_from = "Test", .password = {},
+    }, epoch_);
+    const auto read = queue_request(*router_, connection_, next_id_, epoch_, "notes.readPage", {{"url", page["url"]}});
+    router_->run_ordinary_tasks();
+    ASSERT_TRUE(provider.wait_for_requests(1, 2s));
+    // Leave the stage pending in the old request until after vault replacement.
+    (void)application_->switch_vault(copy.name, {}, epoch_);
+    auto batch = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(batch);
+    for (const auto& message : batch->at("messages")) EXPECT_NE(message.value("event", ""), "notes.pageProgress");
+    ack_delivery(*router_, connection_, *batch);
+    provider.resume_responses();
+    const auto replies = wait_replies(*router_, connection_, {read});
+    ASSERT_EQ(replies.size(), 1U);
+    EXPECT_EQ(replies.at(read)["error"]["code"], "vault_changed");
+    reader.join();
+    provider.join();
+}
+
 TEST_F(BridgeRouterTest, YoutubeNoteImportsUseTranscriptPromptAndCompressionSettings) {
     bootstrap_epoch();
     std::ifstream prompt_file(std::filesystem::path(CHA_SOURCE_DIRECTORY) / "resources/youtube-transcript.md");
@@ -2723,6 +2803,45 @@ TEST_F(BridgeRouterTest, YoutubeNoteImportsUseTranscriptPromptAndCompressionSett
     EXPECT_EQ(call("notes.list")["result"]["items"].size(), 2u);
 }
 
+TEST_F(BridgeRouterTest, SafeLinksYoutubeNoteImportsUseTranscriptFormatting) {
+    bootstrap_epoch();
+    std::ifstream prompt_file(std::filesystem::path(CHA_SOURCE_DIRECTORY) / "resources/youtube-transcript.md");
+    const std::string prompt{std::istreambuf_iterator<char>(prompt_file), std::istreambuf_iterator<char>()};
+    ASSERT_FALSE(prompt.empty());
+    const std::string regional = "https://na01.safelinks.protection.outlook.com/"
+        "?url=https%3A%2F%2Fwww.youtube.com%2Flive%2Fvideo%3Fsi%3Dtracking&data=ignored&reserved=0";
+    const std::string short_link = "https://SAFELINKS.PROTECTION.OUTLOOK.COM./"
+        "?data=ignored&url=https%3A%2F%2Fyoutu.be%2Fvideo%3Ft%3D12&reserved=0";
+    for (const auto& [url, final_url] : std::vector<std::pair<std::string, std::string>>{
+            {regional, regional}, {short_link, short_link}, {"https://example.org/redirect", regional}}) {
+        SCOPED_TRACE(url);
+        const nlohmann::json page{{"url", final_url}, {"title", "Video"},
+            {"markdown", "00:00 A short transcript."}};
+        MockHttpServer reader({http_response("application/json", page.dump())});
+        MockHttpServer provider({compression_response("chat_completions", false, "Formatted transcript.")});
+        reader.start();
+        provider.start();
+        configure_compression(*application_, provider.port(), "chat_completions", false, epoch_);
+        auto settings = call("webSearch.get")["result"];
+        settings["web_reader_enabled"] = true;
+        settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+        ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+
+        const auto reply = call("notes.readPage", {{"url", url}});
+        reader.join();
+        provider.join();
+        ASSERT_TRUE(reply["ok"]) << reply;
+        EXPECT_EQ(reply["result"], (nlohmann::json{{"url", final_url}, {"title", "Video"},
+            {"markdown", "# Video\n\nFormatted transcript."}}));
+        ASSERT_EQ(provider.requests().size(), 1U);
+        const auto body = nlohmann::json::parse(request_body(provider.requests().front()));
+        EXPECT_EQ(body["messages"][0]["content"], prompt);
+        EXPECT_EQ(body["messages"][1]["content"], "from User:\n# Video\n\n00:00 A short transcript.");
+        // Unwrapping affects formatter selection, not the URL sent to the reader.
+        EXPECT_EQ(nlohmann::json::parse(request_body(reader.requests().front()))["url"], url);
+    }
+}
+
 TEST_F(BridgeRouterTest, YoutubeNoteImportsKeepTitlesThroughFormatting) {
     bootstrap_epoch();
     struct Example {
@@ -2763,7 +2882,14 @@ TEST_F(BridgeRouterTest, YoutubeNoteImportsKeepTitlesThroughFormatting) {
 TEST_F(BridgeRouterTest, NoteImportsDoNotFormatShortArticlesOrYoutubeLookalikes) {
     bootstrap_epoch();
     for (const auto url : {"https://example.org/youtube.com", "https://youtube.com.example.org/watch",
-            "https://notyoutube.com/watch", "https://example.org/?url=https://youtu.be/video"}) {
+            "https://notyoutube.com/watch", "https://example.org/?url=https://youtu.be/video",
+            "https://na01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.org%2Fyoutube.com",
+            "https://safelinks.protection.outlook.com.evil.example/?url=https%3A%2F%2Fyoutu.be%2Fvideo",
+            "https://notsafelinks.protection.outlook.com/?url=https%3A%2F%2Fyoutu.be%2Fvideo",
+            "https://na01.safelinks.protection.outlook.com/?data=ignored",
+            "https://na01.safelinks.protection.outlook.com/?url=",
+            "https://na01.safelinks.protection.outlook.com/?url=not-a-url",
+            "https://na01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fyoutu.be%2Fvideo%00ignored"}) {
         SCOPED_TRACE(url);
         const nlohmann::json page{{"url", url}, {"title", "Article"}, {"markdown", "Original article"}};
         MockHttpServer reader({http_response("application/json", page.dump())});

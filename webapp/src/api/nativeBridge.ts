@@ -11,7 +11,7 @@ export interface NativeBridge {
   invoke<T>(
     method: string,
     params?: unknown,
-    options?: { signal?: AbortSignal; cancelMethod?: string },
+    options?: { signal?: AbortSignal; cancelMethod?: string; onProgress?: (stage: unknown) => void },
   ): Promise<T>;
   on<T>(event: string, handler: (payload: T) => void): () => void;
   dispose(): void;
@@ -76,6 +76,7 @@ export function isNativeReply(value: unknown): value is {
 type Pending = {
   method: string;
   epoch: number;
+  onProgress?: (stage: unknown) => void;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
 };
@@ -182,6 +183,11 @@ export function createEnvelopeNativeBridge(options: {
       } else if (message.event === 'app.connectionInvalidated') {
         rejectAll(new ChaProtocolError());
       } else if (message.event !== 'receiver-error' && message.context_epoch !== epoch) return;
+      if (message.event === 'notes.pageProgress') {
+        const request = pending.get(message.request_id as number);
+        if (request?.method === 'notes.readPage' && request.epoch === epoch) request.onProgress?.(message.stage);
+        return;
+      }
       emit(message.event as string, message);
       if (message.event === 'session.snapshot' || message.event === 'session.append'
           || message.event === 'session.generation') {
@@ -220,7 +226,7 @@ export function createEnvelopeNativeBridge(options: {
     invoke<T>(
       method: string,
       params?: unknown,
-      invokeOptions?: { signal?: AbortSignal; cancelMethod?: string },
+      invokeOptions?: { signal?: AbortSignal; cancelMethod?: string; onProgress?: (stage: unknown) => void },
     ): Promise<T> {
       if (disposed) return Promise.reject(new ChaProtocolError());
       if (invokeOptions?.signal?.aborted) {
@@ -258,6 +264,7 @@ export function createEnvelopeNativeBridge(options: {
         pending.set(id, {
           method,
           epoch,
+          onProgress: invokeOptions?.onProgress,
           resolve: (value) => {
             invokeOptions?.signal?.removeEventListener('abort', abort);
             resolve(value as T);

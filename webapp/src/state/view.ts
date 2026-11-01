@@ -1,3 +1,4 @@
+import type { NoteImportSource } from '../notes/importSource';
 import type { AnnotationDestination } from '../notes/annotationSource';
 import type {
   Bootstrap,
@@ -110,6 +111,7 @@ export interface AppState {
   notesToolbarVisible: boolean;
   chatToolbarVisible: boolean;
   notesPromptVisible: boolean;
+  russianVisible: boolean;
   pictureWidth: number;
   pictureCharacterId: string | null;
   mainView: MainView;
@@ -119,6 +121,7 @@ export interface AppState {
   notesEpoch: number;
   noteRequest: number;
   noteDestination?: AnnotationDestination;
+  noteImportSource?: NoteImportSource;
   bootstrapStatus: BootstrapStatus;
   bootstrap: Bootstrap | null;
   bootstrapMessage: string | null;
@@ -150,6 +153,8 @@ export interface AppState {
   streamMessage: string | null;
 }
 
+export type ViewPreferences = Pick<AppState, 'layoutMode' | 'sidebarOpen' | 'pictureOpen' | 'notesToolbarVisible' | 'chatToolbarVisible' | 'notesPromptVisible' | 'russianVisible'>;
+
 export const initialAppState: AppState = {
   sessionActivity: [],
   sidebarOpen: true,
@@ -157,12 +162,13 @@ export const initialAppState: AppState = {
   notesToolbarVisible: true,
   chatToolbarVisible: true,
   notesPromptVisible: true,
+  russianVisible: false,
   pictureWidth: 280,
   pictureCharacterId: null,
   mainView: 'chat',
   layoutMode: 'single',
   sidebarTab: 'chat',
-  activeNoteId: null, noteDestination: undefined,
+  activeNoteId: null, noteDestination: undefined, noteImportSource: undefined,
   notesEpoch: 0,
   noteRequest: 0,
   bootstrapStatus: 'loading',
@@ -189,6 +195,18 @@ export const initialAppState: AppState = {
   streamMessage: null,
 };
 
+export function createInitialAppState(prefs: Partial<ViewPreferences> = {}): AppState {
+  return { ...initialAppState,
+    layoutMode: prefs.layoutMode ?? initialAppState.layoutMode,
+    sidebarOpen: prefs.sidebarOpen ?? initialAppState.sidebarOpen,
+    pictureOpen: prefs.pictureOpen ?? initialAppState.pictureOpen,
+    notesToolbarVisible: prefs.notesToolbarVisible ?? initialAppState.notesToolbarVisible,
+    chatToolbarVisible: prefs.chatToolbarVisible ?? initialAppState.chatToolbarVisible,
+    notesPromptVisible: prefs.notesPromptVisible ?? initialAppState.notesPromptVisible,
+    russianVisible: prefs.russianVisible ?? initialAppState.russianVisible,
+  };
+}
+
 export type AppAction =
   | { type: 'set-layout'; mode: LayoutMode }
   | { type: 'bootstrap-started' }
@@ -200,12 +218,13 @@ export type AppAction =
   | { type: 'toggle-sidebar' }
   | { type: 'show-chat-tab' }
   | { type: 'show-notes-tab' }
-  | { type: 'open-note'; noteId: number; destination?: AnnotationDestination }
+  | { type: 'open-note'; noteId: number; destination?: AnnotationDestination; importSource?: NoteImportSource }
   | { type: 'close-note' }
   | { type: 'toggle-picture' }
   | { type: 'toggle-notes-toolbar' }
   | { type: 'toggle-chat-toolbar' }
   | { type: 'toggle-notes-prompt' }
+  | { type: 'toggle-russian' }
   | { type: 'resize-picture'; width: number }
   | { type: 'select-picture-character'; characterId: string }
   | { type: 'show-personas' }
@@ -443,11 +462,13 @@ function selectPictureCharacter(state: AppState, snapshot: SessionSnapshot, open
 
 function releaseClosedNote(previous: AppState, state: AppState, action: AppAction): AppState {
   const { notesVisible, chatVisible } = workspaceVisibility(state);
+  // A hidden editor unmounts, even when the layout retains its selected note.
+  if (!notesVisible && state.noteImportSource !== undefined) state = { ...state, noteImportSource: undefined };
   if (state.activeNoteId === null || notesVisible) return state;
   const leftVisibleNote = workspaceVisibility(previous).notesVisible
     && action.type !== 'set-layout';
   if (chatVisible && !leftVisibleNote) return state;
-  return { ...state, activeNoteId: null, noteDestination: undefined };
+  return { ...state, activeNoteId: null, noteDestination: undefined, noteImportSource: undefined };
 }
 
 function reduceApp(state: AppState, action: AppAction): AppState {
@@ -488,7 +509,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         pictureCharacterId: null,
         streamStatus: 'idle',
         streamMessage: null,
-        activeNoteId: null, noteDestination: undefined,
+        activeNoteId: null, noteDestination: undefined, noteImportSource: undefined,
         notesEpoch: state.notesEpoch + 1,
         ...idleSessionOperation(),
       };
@@ -510,6 +531,8 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, chatToolbarVisible: !state.chatToolbarVisible };
     case 'toggle-notes-toolbar':
       return { ...state, notesToolbarVisible: !state.notesToolbarVisible };
+    case 'toggle-russian':
+      return { ...state, russianVisible: !state.russianVisible };
     case 'toggle-notes-prompt':
       return { ...state, notesPromptVisible: !state.notesPromptVisible };
     case 'resize-picture':
@@ -534,12 +557,13 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         mainView: 'notes',
         activeNoteId: action.noteId,
         noteDestination: action.destination,
+        noteImportSource: action.importSource,
         noteRequest: state.noteRequest + 1,
         ...(notesVisible && chatVisible ? {} : idleSessionOperation()),
       };
     }
     case 'close-note':
-      return { ...state, activeNoteId: null, noteDestination: undefined };
+      return { ...state, activeNoteId: null, noteDestination: undefined, noteImportSource: undefined };
     case 'show-personas':
       return {
         ...state,

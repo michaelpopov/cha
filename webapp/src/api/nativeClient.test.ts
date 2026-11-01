@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { strToU8, zipSync } from 'fflate';
 
 import { ChaError, ChaProtocolError, isCommandResult, type SessionSnapshot } from './client';
-import { createFakeNativeBridge } from './nativeBridge';
+import { createEnvelopeNativeBridge, createFakeNativeBridge } from './nativeBridge';
 import { createNativeChaClient } from './nativeClient';
 import { bootstrapFixture } from '../test/fixtures';
 
@@ -685,6 +685,24 @@ describe('notes native client', () => {
     for (const invalid of [{ ...file, text: 42 }, { ...file, extra: true }, {}]) {
       await expect(clientFor({ 'notes.readTextFile': () => invalid }).readNoteTextFile(file.name)).rejects.toThrow();
     }
+  });
+
+  it('validates page progress stages and still returns the original page response', async () => {
+    const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post: () => {} });
+    bridge.setContextEpoch(1);
+    const client = createNativeChaClient(bridge);
+    const onProgress = vi.fn();
+    const pending = client.readNotePage('https://example.org', onProgress);
+    const progress = { connection_id: 'current', context_epoch: 1, event: 'notes.pageProgress', request_id: 1 };
+    const page = { url: 'https://example.org', title: 'Title', markdown: 'Article' };
+    bridge.receive({ connection_id: 'current', delivery_id: 1, messages: [
+      { ...progress, stage: 'formatting_article' }, { ...progress, stage: 'formatting_transcript' },
+      { ...progress, stage: 'unknown' }, { ...progress, stage: {} },
+      { connection_id: 'current', context_epoch: 1, id: 1, ok: true, result: page },
+    ] });
+    expect(onProgress.mock.calls).toEqual([['formatting_article'], ['formatting_transcript']]);
+    expect(await pending).toEqual(page);
+    bridge.dispose();
   });
 
   it('reads a page using the notes bridge and validates its reply', async () => {

@@ -36,6 +36,10 @@ private struct DownloadDestination {
 private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     private let fileManager = FileManager.default
+    private var viewState = NativeViewState()
+#if CHA_NATIVE_INSTRUMENTATION
+    private var persistenceProbe: NativePersistenceProbe?
+#endif
     private var window: NSWindow!
     private var webView: WKWebView!
     private var nativeBridge: ChaNativeBridgeReceiver?
@@ -45,6 +49,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private var toolbarMenuItem: NSMenuItem?
     private var chatToolbarMenuItem: NSMenuItem?
     private var notesPromptMenuItem: NSMenuItem?
+    private var russianMenuItem: NSMenuItem?
     private var webViewTitleObservation: NSKeyValueObservation?
     private var runtime: OpaquePointer?
     private var runtimeURL: URL?
@@ -62,11 +67,19 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private let rendererFailureLimit = 3
 
     private var supportDirectory: URL {
-        fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+#if CHA_NATIVE_INSTRUMENTATION
+        // The test build must never use the operator's application data.
+        guard let path = ProcessInfo.processInfo.environment["CHA_PERSISTENCE_CONFIG"],
+              path.hasPrefix("/") else { fatalError("Native persistence tests require an absolute configuration path") }
+        return URL(fileURLWithPath: path, isDirectory: true)
+#else
+        return fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(applicationName, isDirectory: true)
+#endif
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        viewState = NativeViewState.load(supportDirectory.appendingPathComponent("view.json"))
         installMenus()
         showWindow()
 
@@ -117,6 +130,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+#if CHA_NATIVE_INSTRUMENTATION
+        persistenceProbe?.reportExit(viewState)
+#endif
         quitting = true
         nativeBridge?.detach()
         nativeBridge = nil
@@ -187,6 +203,17 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         notesPrompt.target = self
         notesPrompt.state = .on
         notesPromptMenuItem = notesPrompt
+        let russian = layoutMenu.addItem(
+            withTitle: "Russian", action: #selector(toggleRussian(_:)), keyEquivalent: "")
+        russian.target = self
+        russianMenuItem = russian
+        splitView.state = viewState.split ? .on : .off
+        sidebar.state = viewState.sidebar ? .on : .off
+        pictures.state = viewState.pictures ? .on : .off
+        toolbar.state = viewState.toolbar ? .on : .off
+        chatToolbar.state = viewState.chatToolbar ? .on : .off
+        notesPrompt.state = viewState.notesPrompt ? .on : .off
+        russian.state = viewState.russian ? .on : .off
         layoutItem.submenu = layoutMenu
         mainMenu.addItem(layoutItem)
 
@@ -231,6 +258,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
 
     @objc private func toggleToolbar(_ sender: Any?) {
         nativeBridge?.setLayout("toggle-toolbar")
+    }
+
+    @objc private func toggleRussian(_ sender: Any?) {
+        nativeBridge?.setLayout("toggle-russian")
     }
 
     @objc private func toggleNotesPrompt(_ sender: Any?) {
@@ -374,6 +405,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         let built = makeNativeWebViewConfiguration(assetRoot: assets)
         let view = WKWebView(frame: .zero, configuration: built.0)
         attachWebView(view)
+#if CHA_NATIVE_INSTRUMENTATION
+        persistenceProbe = NativePersistenceProbe(view: view, config: supportDirectory)
+#endif
         if let runtime {
             let receiver = ChaNativeBridgeReceiver(runtime: runtime)
             receiver.saveSession = {
@@ -392,19 +426,37 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             receiver.onPageClose = { [weak self] in
                 self?.pageRequestedClose()
             }
-            receiver.onLayoutChanged = { [weak self] split, sidebar, pictures, toolbar, notesPrompt, chatToolbar in
-                self?.splitViewMenuItem?.state = split ? .on : .off
-                self?.sidebarMenuItem?.state = sidebar ? .on : .off
-                self?.picturesMenuItem?.state = pictures ? .on : .off
-                self?.toolbarMenuItem?.state = toolbar ? .on : .off
-                self?.chatToolbarMenuItem?.state = chatToolbar ? .on : .off
-                self?.notesPromptMenuItem?.state = notesPrompt ? .on : .off
+            receiver.currentView = { [weak self] in self?.viewState ?? NativeViewState() }
+            receiver.onLayoutChanged = { [weak self] split, sidebar, pictures, toolbar, notesPrompt, chatToolbar, russian in
+                guard let self else { return }
+                let next = NativeViewState(split: split, sidebar: sidebar, pictures: pictures, toolbar: toolbar, chatToolbar: chatToolbar, notesPrompt: notesPrompt, russian: russian)
+#if CHA_NATIVE_INSTRUMENTATION
+                self.persistenceProbe?.record(next)
+#endif
+                let changed = next != self.viewState
+                self.viewState = next
+                self.splitViewMenuItem?.state = split ? .on : .off
+                self.sidebarMenuItem?.state = sidebar ? .on : .off
+                self.picturesMenuItem?.state = pictures ? .on : .off
+                self.toolbarMenuItem?.state = toolbar ? .on : .off
+                self.chatToolbarMenuItem?.state = chatToolbar ? .on : .off
+                self.notesPromptMenuItem?.state = notesPrompt ? .on : .off
+                self.russianMenuItem?.state = russian ? .on : .off
+                if changed {
+                    next.save(self.supportDirectory.appendingPathComponent("view.json"))
+                }
             }
             receiver.attach(to: view, mediaHandler: built.1)
             nativeBridge = receiver
         }
         view.load(URLRequest(url: runtimeURL))
     }
+
+#if CHA_NATIVE_INSTRUMENTATION
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        persistenceProbe?.run()
+    }
+#endif
 
     private func attachWebView(_ view: WKWebView) {
         view.allowsMagnification = true

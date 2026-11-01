@@ -16,15 +16,17 @@ import { transliterateRussianChange } from './transliteration';
 type TextField = HTMLInputElement | HTMLTextAreaElement;
 
 interface TransliterationMode {
+  controlsVisible: boolean;
   enabled: boolean;
   toggle(): void;
 }
 
 const TransliterationModeContext = createContext<TransliterationMode | null>(null);
 
-export function TransliterationProvider({ children }: { children: ReactNode }) {
+export function TransliterationProvider({ children, controlsVisible = false }: { children: ReactNode; controlsVisible?: boolean }) {
   const [enabled, setEnabled] = useState(false);
   const mode = {
+    controlsVisible,
     enabled,
     toggle() {
       setEnabled((current) => !current);
@@ -122,6 +124,8 @@ export function TransliterationToggle<T extends TextField>({
   disabled?: boolean;
   transliteration: Transliteration<T>;
 }) {
+  const mode = useContext(TransliterationModeContext);
+  if (!mode?.controlsVisible) return null;
   return (
     <button
       aria-label="Latin to Russian transliteration"

@@ -4,13 +4,16 @@ import { notePageHtml, notePageName } from './pageImport';
 
 export const noteFileTooLarge = 'This file is too large to load into a note. The limit is 256 KiB of text.';
 
-export function promptFilePath(text: string): string | null {
+export function absoluteNoteFilePath(text: string): string | null {
   let path = text.trim();
   if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
   if (/[\r\n\0]/u.test(path)) return null;
-  // Match desktop chat paths, including Windows "Copy as path" and UNC paths.
-  // As in chat, "/word" without a second "/" is text.
-  return /^(?:\/[^/]*\/|[a-z]:[\\/]|\\\\)/iu.test(path) ? path : null;
+  return /^(?:\/|[a-z]:[\\/]|\\\\)/iu.test(path) ? path : null;
+}
+
+export function promptFilePath(text: string): string | null {
+  const path = absoluteNoteFilePath(text);
+  return path && /^(?:\/[^/]*\/|[a-z]:[\\/]|\\\\)/iu.test(path) ? path : null;
 }
 
 export function noteFileHtml(file: TextFileRequest): { html: string; title: string; preserveWhitespace: boolean } {

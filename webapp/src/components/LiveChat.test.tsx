@@ -928,7 +928,9 @@ describe('live chat', () => {
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
     await attachInitial(events);
 
-    const input = screen.getByRole('textbox', { name: 'Message' });
+    const input = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+    expect(screen.queryByRole('button', { name: 'Latin to Russian transliteration' })).toBeNull();
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-russian'));
     const toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
 
@@ -936,6 +938,19 @@ describe('live chat', () => {
     expect(toggle).toHaveAttribute('aria-pressed', 'true');
     await user.type(input, "Privet, shhuka mozhet s+hodit' v raj+on.");
     expect(input).toHaveValue('Привет, щука может сходить в район.');
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-russian'));
+    expect(screen.queryByRole('button', { name: 'Latin to Russian transliteration' })).toBeNull();
+    await user.type(input, ' da');
+    expect(input).toHaveValue('Привет, щука может сходить в район. да');
+    await user.keyboard('{Control>}{Shift>}y{/Shift}{/Control}');
+    expect(screen.queryByRole('button', { name: 'Latin to Russian transliteration' })).toBeNull();
+    await user.type(input, ' yes');
+    expect(input).toHaveValue('Привет, щука может сходить в район. да yes');
+    input.setSelectionRange(2, 5);
+    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-russian'));
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([2, 5]);
+    expect(screen.getByRole('button', { name: 'Latin to Russian transliteration' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('keeps a draft typed while the previous send was still in flight', async () => {
@@ -1784,4 +1799,35 @@ describe('session character toolbar integration', () => {
     act(() => events.handlers[0].onSnapshot({ ...snapshotFixture, lifecycle: 'stopping' }));
     expect(screen.getByLabelText('Model')).toBeDisabled();
   });
+});
+
+it('focuses repeated accepted desktop prompts without moving the composer or following multicast copies', async () => {
+  const user = userEvent.setup();
+  const events = drivableEvents();
+  const human: SessionSnapshot['transcript'][number] = {
+    id: 1, kind: 'human', participant_id: 'guest', display_name: 'Guest', text: 'Again',
+    addressed_to: '', addressed_to_name: '', status: 'complete', created_at: 1,
+  };
+  const submitInput = vi.fn(async () => ({ clear_input: true }));
+  render(<App client={fixtureClient({ submitInput })} connectSessionEvents={events.connect} />);
+  await attachInitial(events, { ...snapshotFixture, transcript: [human] });
+  const container = screen.getByLabelText('Conversation transcript');
+  Object.defineProperties(container, { scrollHeight: { value: 2000 }, clientHeight: { value: 200 } });
+  container.getBoundingClientRect = () => ({ top: 0 } as DOMRect);
+  screen.getByText('Again').closest('article')!.getBoundingClientRect = () => ({ top: 120 } as DOMRect);
+  container.scrollTop = 0;
+  fireEvent.scroll(container);
+  const input = screen.getByRole('textbox', { name: 'Message' });
+  await user.type(input, 'Again');
+  await user.click(screen.getByRole('button', { name: 'Send message' }));
+  await waitFor(() => expect(submitInput).toHaveBeenCalled());
+  const entries = [human, { ...human, id: 2 }];
+  act(() => events.handlers[0].onSnapshot({ ...snapshotFixture, transcript: entries }));
+  expect(container.scrollTop).toBe(120);
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(input);
+  expect(screen.getAllByText('Again')).toHaveLength(1);
+  container.scrollTop = 20;
+  fireEvent.scroll(container);
+  act(() => events.handlers[0].onSnapshot({ ...snapshotFixture, transcript: [...entries, { ...human, id: 3 }] }));
+  expect(container.scrollTop).toBe(20);
 });

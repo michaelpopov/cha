@@ -1,3 +1,4 @@
+import type { NoteImportSource } from '../notes/importSource';
 import { hotkeysCoreFeature, syncDataLoaderFeature } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
 import { generateText, getSchema } from '@tiptap/core';
@@ -28,6 +29,7 @@ import {
 } from '../notes/tree';
 import { FolderStoreDialog } from './FolderStoreDialog';
 import { NoteAudioDialog, type NoteAudioTarget } from './NoteAudioDialog';
+import { newNoteImportSource } from '../notes/importSource';
 import { noteReference } from '../notes/reference';
 import { notesExtensions } from '../notes/editor';
 import { noteAudioBlocks } from '../notes/useNoteAudio';
@@ -122,7 +124,7 @@ export function NotesTree({
   getNoteLength(id: number): Promise<number>;
   browsing: boolean;
   activeNoteId: number | null;
-  onOpenNote(id: number): void;
+  onOpenNote(id: number, importSource?: NoteImportSource): void;
   onBeforeCreateNote(): Promise<boolean>;
   onDeleteItem: DeleteNoteItem;
   onCompressNote: CompressNote;
@@ -484,9 +486,11 @@ export function NotesTree({
         return;
       }
       if (!alive.current) return;
-      const created = await clientRef.current.createNoteItem(captured.parentId, captured.kind, captured.name);
+      const importSource = captured.kind === 'note' ? newNoteImportSource(captured.name) : undefined;
+      const name = importSource ? availableNoteName(itemsRef.current, captured.parentId, 'New note') : captured.name;
+      const created = await clientRef.current.createNoteItem(captured.parentId, captured.kind, name);
       if (!alive.current) return;
-      const refreshed = await finishMutation(created.id, captured.kind === 'note' ? created.id : null);
+      const refreshed = await finishMutation(created.id, captured.kind === 'note' ? created.id : null, importSource);
       // A successful creation opens the new note. Refresh the old view only if it stays open.
       if (alive.current && captured.kind === 'note' && refreshed !== 'applied') onSourceChanged?.(captured.parentId);
     } catch (failure: unknown) {
@@ -515,7 +519,7 @@ export function NotesTree({
     }
   }
 
-  async function finishMutation(reveal: number | null, openNote: number | null) {
+  async function finishMutation(reveal: number | null, openNote: number | null, importSource?: NoteImportSource) {
     const refreshed = await refreshListing(reveal);
     if (!alive.current) return refreshed;
     if (refreshed === 'ignored') {
@@ -523,7 +527,7 @@ export function NotesTree({
       return refreshed;
     }
     setDialog(null);
-    if (refreshed === 'applied' && openNote !== null) openRef.current(openNote);
+    if (refreshed === 'applied' && openNote !== null) openRef.current(openNote, importSource);
     return refreshed;
   }
 
@@ -995,6 +999,7 @@ export function NotesTree({
         <NameDialog
           error={dialog.error}
           label="Create"
+          fieldLabel={dialog.kind === 'note' ? 'Name, URL, or file path' : 'Name'}
           name={dialog.name}
           pending={dialog.pending}
           title={dialog.kind === 'note' ? 'New note' : 'New folder'}
@@ -1122,6 +1127,7 @@ function NameDialog({
   pending,
   title,
   showTitle = false,
+  fieldLabel = 'Name',
   onClose,
   onName,
   onSubmit,
@@ -1132,6 +1138,7 @@ function NameDialog({
   pending: boolean;
   title: string;
   showTitle?: boolean;
+  fieldLabel?: string;
   onClose(): void;
   onName(name: string): void;
   onSubmit(): void;
@@ -1158,7 +1165,7 @@ function NameDialog({
         onSubmit();
       }}>
         <label>
-          Name
+          {fieldLabel}
           <input
             className="cha-form-control"
             disabled={pending}

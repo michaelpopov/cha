@@ -181,6 +181,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         std::chrono::steady_clock::time_point deadline{};
         std::shared_ptr<CommandReply> reply;
         std::shared_ptr<app::OperationReply> operation;
+        std::string page_progress;
         std::string forum_id;
         std::string session_id;
         std::string subscription_id;
@@ -672,6 +673,18 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 id,
                 outstanding.context_epoch,
                 std::get<nlohmann::json>(*peeked)));
+    }
+
+    void publish_page_progress(const std::string& connection_id, std::uint64_t id,
+        std::string_view stage) {
+        std::lock_guard lock(mutex);
+        auto connection = find_connection(connection_id);
+        if (!connection) return;
+        const auto found = connection->outstanding.find(id);
+        if (found == connection->outstanding.end()) return;
+        // Keep only the latest stage on the existing request, including under delivery backpressure.
+        found->second.page_progress = stage;
+        notify();
     }
 
     void start_background(
@@ -1399,11 +1412,16 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     static_cast<std::int64_t>(require_safe_id(params, "run_id")), require_string(params, "reason"), epoch);
                 result = nlohmann::json::object();
                 break;
-            case Method::notes_read_page:
+            case Method::notes_read_page: {
                 require_only_keys(params, {"url"});
+                auto weak = std::weak_ptr<Impl>(shared_from_this());
                 start_background(connection_id, id, application.read_note_page(
-                    require_string(params, "url"), epoch));
+                    require_string(params, "url"), epoch,
+                    [weak, connection_id, id](std::string_view stage) {
+                        if (auto impl = weak.lock()) impl->publish_page_progress(connection_id, id, stage);
+                    }));
                 return;
+            }
             case Method::notes_read_picture:
                 require_only_keys(params, {"url"});
                 start_background(connection_id, id, application.read_note_picture(
@@ -1987,6 +2005,14 @@ std::optional<nlohmann::json> BridgeRouter::take_delivery(
                 {"id", id}, {"context_epoch", epoch}});
     }
     connection->pending_compression.clear();
+    for (auto& [id, request] : connection->outstanding) {
+        if (request.page_progress.empty()) continue;
+        if (!impl_->application.check_context(request.context_epoch)) {
+            messages.push_back({{"connection_id", connection->id}, {"event", "notes.pageProgress"},
+                {"request_id", id}, {"context_epoch", request.context_epoch}, {"stage", request.page_progress}});
+        }
+        request.page_progress.clear();
+    }
     while (!connection->pending_replies.empty()) {
         auto reply = std::move(connection->pending_replies.front());
         connection->pending_replies.pop_front();
@@ -2046,7 +2072,9 @@ bool BridgeRouter::wait_for_work(std::chrono::milliseconds timeout) {
                 && (!connection->pending_replies.empty()
                     || connection->pending_context
                     || connection->pending_invalidation
-                    || connection->pending_session)) {
+                    || connection->pending_session
+                    || std::any_of(connection->outstanding.begin(), connection->outstanding.end(),
+                        [](const auto& entry) { return !entry.second.page_progress.empty(); }))) {
                 return true;
             }
         }

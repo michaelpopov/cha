@@ -308,8 +308,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     method: string,
     params: unknown,
     validate: (value: unknown) => value is T,
+    onProgress?: (stage: unknown) => void,
   ): Promise<T> => {
-    const result = await bridge.invoke(method, params);
+    const result = await bridge.invoke(method, params, onProgress ? { onProgress } : undefined);
     if (!validate(result)) throw new ChaProtocolError();
     return result;
   };
@@ -1003,13 +1004,15 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     abandonSessionSummary: async (runId, reason) => {
       await call('sessionSummary.abandon', { run_id: runId, reason }, isEmptyResult);
     },
-    readNotePage: (url) => call('notes.readPage', { url }, (value): value is NotePage => (
+    readNotePage: (url, onProgress) => call('notes.readPage', { url }, (value): value is NotePage => (
       isRecord(value)
       && Object.keys(value).length === 3
       && typeof value.url === 'string'
       && typeof value.title === 'string'
       && typeof value.markdown === 'string'
-    )),
+    ), stage => {
+      if (stage === 'formatting_article' || stage === 'formatting_transcript') onProgress?.(stage);
+    }),
     saveNote: async (id, document) => {
       return call('notes.save', { id, document }, (value): value is { annotation_created: boolean } => (
         isRecord(value) && Object.keys(value).length === 1 && typeof value.annotation_created === 'boolean'

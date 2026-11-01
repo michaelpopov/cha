@@ -22,6 +22,7 @@
 #include <chrono>
 #include <charconv>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -53,6 +54,7 @@ constexpr UINT kViewPictures = 1005;
 constexpr UINT kViewToolbar = 1006;
 constexpr UINT kViewNotesPrompt = 1007;
 constexpr UINT kViewChatToolbar = 1008;
+constexpr UINT kViewRussian = 1009;
 constexpr UINT kFatalError = WM_APP + 2;
 constexpr UINT kDeliveryReady = WM_APP + 3;
 constexpr UINT kShutdownDone = WM_APP + 4;
@@ -330,9 +332,62 @@ std::wstring without_fragment(std::wstring_view uri) {
     return std::wstring(pos == std::wstring_view::npos ? uri : uri.substr(0, pos));
 }
 
-std::wstring native_bootstrap_script(std::string_view connection_id) {
+nlohmann::json default_view_state() {
+    return {{"split", false}, {"sidebar", true}, {"pictures", false}, {"toolbar", true},
+        {"chat_toolbar", true}, {"notes_prompt", true}, {"russian", false}};
+}
+
+void view_warning(const std::string& message) {
+    const std::string line = "warning: View preferences: " + message + "\n";
+    ::OutputDebugStringA(line.c_str());
+    std::fputs(line.c_str(), stderr);
+}
+
+nlohmann::json load_view_state(const std::filesystem::path& path) {
+    auto result = default_view_state();
+    std::error_code error;
+    if (!std::filesystem::exists(path, error)) {
+        if (error) view_warning("cannot inspect " + cha::utf8_path(path) + ": " + error.message());
+        return result;
+    }
+    try {
+        std::ifstream input(path, std::ios::binary);
+        if (!input) throw std::runtime_error("cannot open file");
+        const auto data = nlohmann::json::parse(input);
+        if (!data.is_object()) throw std::runtime_error("expected an object");
+        for (auto it = data.begin(); it != data.end(); ++it) {
+            if (!result.contains(it.key())) view_warning("ignoring unknown field " + it.key() + " in " + cha::utf8_path(path));
+            else if (!it.value().is_boolean()) view_warning("ignoring invalid field " + it.key() + " in " + cha::utf8_path(path));
+            else result[it.key()] = it.value();
+        }
+    } catch (const std::exception& e) {
+        view_warning("cannot read " + cha::utf8_path(path) + ": " + e.what());
+    }
+    return result;
+}
+
+void save_view_state(const std::filesystem::path& path, const nlohmann::json& value) {
+    static unsigned long sequence = 0;
+    auto temporary = path;
+    temporary += L".tmp." + std::to_wstring(::GetCurrentProcessId()) + L"." + std::to_wstring(++sequence);
+    try {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        output << value.dump() << '\n';
+        output.close();
+        if (!output) throw std::runtime_error("cannot write temporary file");
+        if (!::MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+            throw std::runtime_error("replacement failed: " + std::to_string(::GetLastError()));
+    } catch (const std::exception& e) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        view_warning("cannot write " + cha::utf8_path(path) + ": " + e.what());
+    }
+}
+
+std::wstring native_bootstrap_script(std::string_view connection_id, const nlohmann::json& view) {
     const std::wstring id = wide_from_utf8(connection_id);
-    return L"window.__CHA_NATIVE_CONNECTION_ID__='" + id + L"';"
+    return L"window.__CHA_NATIVE_INITIAL_VIEW_STATE__=" + wide_from_utf8(view.dump()) + L";"
+        L"window.__CHA_NATIVE_CONNECTION_ID__='" + id + L"';"
         L"window.__CHA_NATIVE_CONTEXT_EPOCH__=0;"
         L"window.__CHA_NATIVE_QUEUE__=window.__CHA_NATIVE_QUEUE__||[];"
         L"if(typeof window.__CHA_NATIVE_RECEIVE__!=='function'){"
@@ -472,6 +527,8 @@ public:
         }
 #endif
         prepare_application_data(options.data_root);
+        view_state_ = load_view_state(config_directory_ / L"view.json");
+        update_view_menu(view_state_);
         start_runtime();
 #if defined(CHA_NATIVE_INSTRUMENTATION)
         if (options.startup_close == LaunchOptions::StartupClose::no_page) {
@@ -601,6 +658,7 @@ private:
         ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewToolbar, L"Toolbar");
         ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewChatToolbar, L"Chat toolbar");
         ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewNotesPrompt, L"Notes prompt");
+        ::AppendMenuW(layout_menu, MF_STRING, kViewRussian, L"Russian");
         ::AppendMenuW(main_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layout_menu), L"&View");
 
         RECT rectangle{0, 0, 1040, 760};
@@ -1103,7 +1161,7 @@ private:
             return respond_with_bytes(
                 args, 200, L"OK",
                 L"Content-Type: text/javascript; charset=utf-8\nCache-Control: no-store",
-                cha::utf8_from_wide(native_bootstrap_script(connection_id_)));
+                cha::utf8_from_wide(native_bootstrap_script(connection_id_, view_state_)));
         }
         if (uri.rfind(origin + L"/", 0) != 0) return not_found();
         std::wstring relative = uri.substr(origin.size() + 1);
@@ -1256,6 +1314,15 @@ private:
         return S_OK;
     }
 
+    void update_view_menu(const nlohmann::json& state) {
+        const auto menu = ::GetSubMenu(::GetMenu(window_), 1);
+        const std::pair<const char*, UINT> entries[] = {{"split", kLayoutSplit}, {"sidebar", kViewSidebar},
+            {"pictures", kViewPictures}, {"toolbar", kViewToolbar}, {"chat_toolbar", kViewChatToolbar},
+            {"notes_prompt", kViewNotesPrompt}, {"russian", kViewRussian}};
+        for (const auto& [key, id] : entries)
+            ::CheckMenuItem(menu, id, MF_BYCOMMAND | (state[key].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
+    }
+
     bool handle_native_action(const std::string& payload) {
         nlohmann::json json;
         try {
@@ -1276,21 +1343,14 @@ private:
                 && json.contains("pictures") && json["pictures"].is_boolean()
                 && json.contains("toolbar") && json["toolbar"].is_boolean()
                 && json.contains("chat_toolbar") && json["chat_toolbar"].is_boolean()
-                && json.contains("notes_prompt") && json["notes_prompt"].is_boolean()) {
-                // View follows File in the native menu bar.
-                const auto view_menu = ::GetSubMenu(::GetMenu(window_), 1);
-                ::CheckMenuItem(view_menu, kLayoutSplit,
-                    MF_BYCOMMAND | (json["split"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
-                ::CheckMenuItem(view_menu, kViewSidebar,
-                    MF_BYCOMMAND | (json["sidebar"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
-                ::CheckMenuItem(view_menu, kViewPictures,
-                    MF_BYCOMMAND | (json["pictures"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
-                ::CheckMenuItem(view_menu, kViewChatToolbar,
-                    MF_BYCOMMAND | (json["chat_toolbar"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
-                ::CheckMenuItem(view_menu, kViewToolbar,
-                    MF_BYCOMMAND | (json["toolbar"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
-                ::CheckMenuItem(view_menu, kViewNotesPrompt,
-                    MF_BYCOMMAND | (json["notes_prompt"].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
+                && json.contains("notes_prompt") && json["notes_prompt"].is_boolean()
+                && json.contains("russian") && json["russian"].is_boolean()) {
+                auto next = default_view_state();
+                for (auto it = next.begin(); it != next.end(); ++it) it.value() = json[it.key()];
+                const bool changed = next != view_state_;
+                view_state_ = std::move(next);
+                update_view_menu(view_state_);
+                if (changed) save_view_state(config_directory_ / L"view.json", view_state_);
             }
             return true;
         }
@@ -1640,6 +1700,9 @@ private:
         case kViewToolbar:
             set_layout("toggle-toolbar");
             break;
+        case kViewRussian:
+            set_layout("toggle-russian");
+            break;
         case kViewNotesPrompt:
             set_layout("toggle-notes-prompt");
             break;
@@ -1848,6 +1911,7 @@ private:
         ::MessageBoxW(window_, detail.c_str(), title.c_str(), MB_OK);
     }
 
+    nlohmann::json view_state_ = default_view_state();
     HINSTANCE instance_{};
     HWND window_{};
     ChaRuntime* runtime_{};

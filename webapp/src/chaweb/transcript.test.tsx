@@ -257,3 +257,20 @@ it('keeps the editor mounted, focused, and unchanged when the transcript is repl
   expect(box.selectionStart).toBe(3);
   expect(screen.getByText('Reply 2')).toBeInTheDocument();
 });
+
+it('reveals rendered first text once with automatic audio and preserves manual reading', () => {
+  const props = { characters: [], personas: [], layoutKey: 'compact:700', sessionKey: 'lobby/planning' };
+  const speech = { automatic: true, isCached: () => false, isDownloading: () => false } as unknown as import('./useReadAloud').ReadAloud;
+  const { rerender } = render(<Transcript {...props} speech={speech} entries={[entry({ text: '', status: 'streaming' })]} />);
+  const container = screen.getByLabelText('Conversation transcript');
+  const metrics = mockScroll(container, 2000, 200);
+  container.getBoundingClientRect = () => ({ top: 0 } as DOMRect);
+  screen.getByRole('article').getBoundingClientRect = () => ({ top: 140 } as DOMRect);
+  fireEvent.scroll(container);
+  rerender(<Transcript {...props} speech={speech} entries={[entry({ text: 'First words', status: 'streaming' })]} />);
+  expect(metrics.scrollTop).toBe(140);
+  metrics.scrollTop = 20;
+  fireEvent.scroll(container);
+  rerender(<Transcript {...props} speech={speech} entries={[entry({ text: 'First words and more', status: 'complete' })]} />);
+  expect(metrics.scrollTop).toBe(20);
+});

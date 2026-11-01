@@ -1,3 +1,4 @@
+import type { NoteImportSource } from '../notes/importSource';
 import { generateText, type Editor } from '@tiptap/core';
 import {
   useCallback,
@@ -45,7 +46,8 @@ import { useLiveSession, type SessionEventsConnector } from '../useLiveSession';
 import { useSessionActivity } from '../useSessionActivity';
 import {
   appReducer,
-  initialAppState,
+  createInitialAppState,
+  type ViewPreferences,
   navigationTitle,
   workspaceVisibility,
   type DataAction,
@@ -479,6 +481,7 @@ function ScreenContent({
         onSetNoteReadOnly={onSetNoteReadOnly}
         noteRequest={state.noteRequest}
         destination={state.noteDestination}
+        importSource={state.noteImportSource}
         notesEpoch={state.notesEpoch}
         onDraftChange={onNotesDraftChange}
         onRegisterDispose={onRegisterDispose}
@@ -565,6 +568,7 @@ function clampSidebarWidth(width: number) {
 }
 
 interface AppProps {
+  initialViewPreferences?: Partial<ViewPreferences>;
   client: ChaClient & NotesClient;
   contextEvents?: Pick<NativeBridge, 'on'>;
   connectSessionEvents?: SessionEventsConnector;
@@ -577,9 +581,10 @@ export function App({
   contextEvents,
   connectSessionEvents,
   retryDelays,
+  initialViewPreferences,
   reload = defaultReload,
 }: AppProps) {
-  const [state, dispatch] = useReducer(appReducer, initialAppState);
+  const [state, dispatch] = useReducer(appReducer, initialViewPreferences ?? {}, createInitialAppState);
   useSessionActivity(client, state, dispatch);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [catalogRevision, setCatalogRevision] = useState(0);
@@ -723,11 +728,15 @@ export function App({
     closeInstalled.current = true;
     installAppCloseHost(() => closeHost.current);
   }
-  useEffect(() => {
+  useLayoutEffect(() => {
     reportNativeLayout(state.layoutMode === 'split', state.sidebarOpen, state.pictureOpen,
-      state.notesToolbarVisible, state.notesPromptVisible, state.chatToolbarVisible);
-  }, [state.layoutMode, state.sidebarOpen, state.pictureOpen, state.notesToolbarVisible, state.notesPromptVisible, state.chatToolbarVisible]);
+      state.notesToolbarVisible, state.notesPromptVisible, state.chatToolbarVisible, state.russianVisible);
+  }, [state.layoutMode, state.sidebarOpen, state.pictureOpen, state.notesToolbarVisible, state.notesPromptVisible, state.chatToolbarVisible, state.russianVisible]);
   useEffect(() => installNativeLayoutHandler((requested) => {
+    if (requested === 'toggle-russian') {
+      dispatch({ type: 'toggle-russian' });
+      return;
+    }
     if (requested === 'toggle-notes-prompt') {
       dispatch({ type: 'toggle-notes-prompt' });
       return;
@@ -818,7 +827,7 @@ export function App({
     setNoteItems([]);
   }, [state.notesEpoch]);
 
-  const requestOpenNote = useCallback((id: number) => {
+  const requestOpenNote = useCallback((id: number, importSource?: NoteImportSource) => {
     const live = editorLiveRef.current;
     if (
       workspaceVisibility(state).notesVisible
@@ -830,7 +839,7 @@ export function App({
       live.view.focus();
       return;
     }
-    navigate({ type: 'open-note', noteId: id });
+    navigate({ type: 'open-note', noteId: id, importSource });
   }, [navigate, state.activeNoteId, state.mainView, state.layoutMode]);
 
   const sourceChanged = useCallback((parentId: number | null) => {
@@ -1397,7 +1406,7 @@ export function App({
   return (
     <AppErrorBoundary onReload={reload}>
       <DetailRefreshProvider value={detailRefresh}>
-      <TransliterationProvider>
+      <TransliterationProvider controlsVisible={state.russianVisible}>
         <div
           className={`cha-app ${state.sidebarOpen ? 'is-sidebar-open' : ''}${resizingSidebar ? ' is-resizing-sidebar' : ''}`}
           data-sidebar={state.sidebarOpen ? 'open' : 'closed'}

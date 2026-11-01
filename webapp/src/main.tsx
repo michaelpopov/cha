@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { readInitialNativeViewState } from './api/nativeLayout';
 import { installNativeHostBridge } from './api/nativeBridge';
 import { createNativeChaClient } from './api/nativeClient';
 import { createNativeSessionEvents } from './api/nativeEvents';
@@ -23,6 +24,7 @@ if (!native) {
 installNativeRecoveryHandlers(native);
 const app = (
   <App
+    initialViewPreferences={readInitialNativeViewState()}
     client={createNativeChaClient(native)}
     contextEvents={native}
     connectSessionEvents={createNativeSessionEvents(native, {

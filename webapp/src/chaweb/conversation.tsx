@@ -1,3 +1,4 @@
+import type { PromptFocus } from '../transcriptScroll';
 import { useEffect, useRef, useState } from 'react';
 
 import type { CharacterAppearance } from '../api/client';
@@ -9,6 +10,10 @@ import type { VoiceInput } from './useVoiceInput';
 
 export function Conversation({
   entries,
+  loaded,
+  contextKey,
+  promptFocus,
+  onPromptFocused,
   characters,
   personas,
   draft,
@@ -33,6 +38,10 @@ export function Conversation({
   voice,
 }: {
   entries: readonly TranscriptEntry[];
+  loaded?: boolean;
+  contextKey?: string;
+  promptFocus?: PromptFocus | null;
+  onPromptFocused?(marker: PromptFocus): void;
   characters: ReadonlyArray<{ id: string; appearance: CharacterAppearance }>;
   personas: ReadonlyArray<{ id: string; appearance: CharacterAppearance }>;
   draft: string;
@@ -93,6 +102,10 @@ export function Conversation({
   return (
     <div className="chaweb-conversation" ref={root}>
       <Transcript
+        loaded={loaded}
+        contextKey={contextKey}
+        promptFocus={promptFocus}
+        onPromptFocused={onPromptFocused}
         speech={speech}
         deleting={deleting}
         characters={characters}

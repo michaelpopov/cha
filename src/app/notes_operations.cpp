@@ -51,8 +51,9 @@ void Application::abandon_session_summary(std::string_view connection_id, std::i
     impl_->notes->abandon_session_summary(connection_id, run_id, reason, epoch);
 }
 
-std::shared_ptr<OperationReply> Application::read_note_page(std::string url, std::uint64_t epoch) {
-    return impl_->notes->read_note_page(std::move(url), epoch);
+std::shared_ptr<OperationReply> Application::read_note_page(std::string url, std::uint64_t epoch,
+    std::function<void(std::string_view)> progress) {
+    return impl_->notes->read_note_page(std::move(url), epoch, std::move(progress));
 }
 
 std::shared_ptr<OperationReply> Application::read_note_picture(std::string url, std::uint64_t epoch) {

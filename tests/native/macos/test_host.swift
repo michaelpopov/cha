@@ -185,6 +185,7 @@ private final class NativeTestHost: NSObject, NSApplicationDelegate, WKNavigatio
     private let options: HostOptions
     private var probeReceiver: ChaProbeReceiver?
     private var nativeBridge: ChaNativeBridgeReceiver?
+    private var viewState = NativeViewState()
     private var runtime: OpaquePointer?
     private var webView: WKWebView!
     private var window: NSWindow?
@@ -238,7 +239,17 @@ private final class NativeTestHost: NSObject, NSApplicationDelegate, WKNavigatio
             configuration: built.0)
         view.navigationDelegate = self
         view.uiDelegate = self
+        viewState = NativeViewState.load(config.appendingPathComponent("view.json"))
         let receiver = ChaNativeBridgeReceiver(runtime: created)
+        receiver.currentView = { [weak self] in self?.viewState ?? NativeViewState() }
+        receiver.onLayoutChanged = { [weak self] split, sidebar, pictures, toolbar, notesPrompt, chatToolbar, russian in
+            guard let self else { return }
+            let next = NativeViewState(split: split, sidebar: sidebar, pictures: pictures, toolbar: toolbar, chatToolbar: chatToolbar, notesPrompt: notesPrompt, russian: russian)
+            if next != self.viewState {
+                self.viewState = next
+                next.save(config.appendingPathComponent("view.json"))
+            }
+        }
         if let origin = options.devOrigin {
             receiver.isTrustedOrigin = { securityOrigin in
                 isChaAssetOrigin(securityOrigin)

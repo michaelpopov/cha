@@ -85,6 +85,10 @@ export function App({ client }: { client: ChaWebClient }) {
         />
       ) : (
         <Conversation
+          loaded={model.snapshot !== null}
+          contextKey={model.focusKey}
+          promptFocus={model.promptFocus}
+          onPromptFocused={model.consumePromptFocus}
           speech={{ ...speech, toggleAutomatic: toggleAutomaticAudio }}
           voice={voice}
           characters={model.snapshot?.characters ?? []}

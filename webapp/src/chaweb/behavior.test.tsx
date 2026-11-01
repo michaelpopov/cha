@@ -1146,3 +1146,27 @@ it('preserves edits in a new session opened before creation returns', async () =
   expect(screen.getByRole('textbox')).toHaveValue('Next input');
   expect(window.location.hash).toContain('/sessions/fresh');
 });
+
+it('focuses the creation prompt instead of the end of its first response', async () => {
+  const user = userEvent.setup();
+  const loaded = snapshot('fresh');
+  loaded.transcript = [
+    { ...loaded.transcript[0], text: 'New prompt' },
+    { ...loaded.transcript[0], id: 2, kind: 'character', text: 'Long response '.repeat(100) },
+  ];
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const parent = this.closest('.chaweb-transcript') as HTMLElement | null;
+    return { top: this.dataset.entryId ? Number(this.dataset.entryId) * 100 - (parent?.scrollTop ?? 0) : 0 } as DOMRect;
+  });
+  await showList(client({
+    createSession: vi.fn(async () => ({ id: 'fresh', label: 'Fresh' })),
+    getSession: vi.fn(async () => loaded),
+  }));
+  await user.click(screen.getByRole('button', { name: 'New Session' }));
+  const container = screen.getByLabelText('Conversation transcript');
+  Object.defineProperties(container, { scrollHeight: { value: 2000 }, clientHeight: { value: 200 } });
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'New prompt');
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  await screen.findByText('New prompt');
+  expect(container.scrollTop).toBe(100);
+});

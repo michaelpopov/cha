@@ -1,3 +1,4 @@
+import type { NoteImportSource } from '../notes/importSource';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
@@ -75,7 +76,7 @@ function renderTree({
   items?: NoteItem[];
   notes?: NotesClient;
   activeNoteId?: number | null;
-  onOpenNote?: (id: number) => void;
+  onOpenNote?: (id: number, importSource?: NoteImportSource) => void;
   onBeforeCreateNote?: () => Promise<boolean>;
   onDeleteItem?: DeleteNoteItem;
   getNoteLength?: (id: number) => Promise<number>;
@@ -102,7 +103,7 @@ function renderTree({
         onCompressNote={notesClient.compressNote}
         onSetNoteReadOnly={notesClient.setNoteReadOnly}
         onNoteItems={onNoteItems}
-        onOpenNote={(id) => { setActive(id); onOpenNote(id); }}
+        onOpenNote={(id, importSource) => { setActive(id); if (importSource) onOpenNote(id, importSource); else onOpenNote(id); }}
         vaultName="Personal"
       />
     );
@@ -655,6 +656,72 @@ describe('Notes tree', () => {
     expect(screen.getByRole('button', { name: 'Actions for Personal' })).toBeDisabled();
   });
 
+  it.each<[string, NoteImportSource]>([
+    ['https://example.org/article', { kind: 'page', url: 'https://example.org/article' }],
+    [' http://example.org/article ', { kind: 'page', url: 'http://example.org/article' }],
+    ['www.example.org/article', { kind: 'page', url: 'http://www.example.org/article' }],
+    ['https://youtu.be/video', { kind: 'page', url: 'https://youtu.be/video' }],
+    [`https://example.org/${'a'.repeat(210)}`, { kind: 'page', url: `https://example.org/${'a'.repeat(210)}` }],
+    ['/plan.md', { kind: 'file', path: '/plan.md' }],
+    ['"/tmp/my plan.md"', { kind: 'file', path: '/tmp/my plan.md' }],
+    [`/tmp/${'a'.repeat(210)}.md`, { kind: 'file', path: `/tmp/${'a'.repeat(210)}.md` }],
+  ])(
+    'creates a default-named note for %s in the captured parent and hands off its source', async (input, source) => {
+      let items = [study, { ...plan, parent_id: study.id, name: 'New note' }];
+      const leave = deferred<boolean>();
+      const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => {
+        const created = { ...plan, id: 9, parent_id, kind, name };
+        items = [...items, created];
+        return created;
+      });
+      const { onOpenNote } = renderTree({ notes: client({ listNoteItems: async () => items, createNoteItem }),
+        onBeforeCreateNote: () => leave.promise });
+      await screen.findByRole('treeitem', { name: 'Study' });
+      await chooseAction('Study', 'New note');
+      fireEvent.change(screen.getByLabelText('Name, URL, or file path'), { target: { value: input } });
+      expect(createNoteItem).not.toHaveBeenCalled();
+      fireEvent.submit(screen.getByRole('button', { name: 'Create' }).closest('form')!);
+      fireEvent.focus(screen.getByRole('treeitem', { name: 'Personal' }));
+      await act(async () => leave.resolve(true));
+      await waitFor(() => expect(onOpenNote).toHaveBeenCalledExactlyOnceWith(9, source));
+      expect(createNoteItem).toHaveBeenCalledExactlyOnceWith(study.id, 'note', 'New note 1');
+    },
+  );
+
+  it.each([
+    ['note', 'example.org'], ['note', 'README.md'], ['note', 'Read https://example.org'],
+    ['note', 'ftp://example.org'], ['folder', 'https://example.org/article'],
+  ] as const)('keeps %s input %s as a literal name', async (kind, name) => {
+    let items = [study];
+    const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => {
+      const created = { ...plan, id: 9, parent_id, kind, name };
+      items = [...items, created];
+      return created;
+    });
+    const { onOpenNote } = renderTree({ notes: client({ listNoteItems: async () => items, createNoteItem }) });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    await chooseAction('Study', `New ${kind}`);
+    fireEvent.change(screen.getByRole('textbox', { name: kind === 'note' ? 'Name, URL, or file path' : 'Name' }), { target: { value: name } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(createNoteItem).toHaveBeenCalledExactlyOnceWith(study.id, kind, name);
+    if (kind === 'note') expect(onOpenNote).toHaveBeenCalledExactlyOnceWith(9);
+    else expect(onOpenNote).not.toHaveBeenCalled();
+  });
+
+  it('keeps a URL in the dialog after creation fails without opening it', async () => {
+    const createNoteItem = vi.fn().mockRejectedValue(new ChaError('invalid_argument', 'Cannot create the note.'));
+    const { onOpenNote } = renderTree({ notes: client({ listNoteItems: async () => [study], createNoteItem }) });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    await chooseAction('Study', 'New note');
+    fireEvent.change(screen.getByLabelText('Name, URL, or file path'), { target: { value: 'https://example.org/article' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cannot create the note.');
+    expect(screen.getByLabelText('Name, URL, or file path')).toHaveValue('https://example.org/article');
+    expect(createNoteItem).toHaveBeenCalledExactlyOnceWith(study.id, 'note', 'New note');
+    expect(onOpenNote).not.toHaveBeenCalled();
+  });
+
   it('suggests available names and creates notes in the chosen folder after confirmation', async () => {
     let current: NoteItem[] = [study, philosophy,
       { id: 7, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: 3, kind: 'folder', name: 'New note' },
@@ -671,7 +738,7 @@ describe('Notes tree', () => {
     fireEvent.click(screen.getByRole('treeitem', { name: 'Personal' }));
     expect(screen.queryByRole('treeitem', { name: 'Study' })).not.toBeInTheDocument();
     await chooseAction('Personal', 'New note');
-    const name = await screen.findByRole('textbox', { name: 'Name' });
+    const name = await screen.findByRole('textbox', { name: 'Name, URL, or file path' });
     expect(name).toHaveValue('New note');
     expect(name).toHaveFocus();
     expect((name as HTMLInputElement).selectionStart).toBe(0);
@@ -684,13 +751,13 @@ describe('Notes tree', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('treeitem', { name: 'Study' }));
     await chooseAction('Philosophy', 'New note');
-    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('New note 1');
+    expect(screen.getByRole('textbox', { name: 'Name, URL, or file path' })).toHaveValue('New note 1');
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(onOpenNote).toHaveBeenCalledWith(11));
     expect(createNoteItem).toHaveBeenLastCalledWith(3, 'note', 'New note 1');
     expect(screen.getByRole('treeitem', { name: 'New note 1' })).toHaveAttribute('tabindex', '0');
     await chooseAction('Philosophy', 'New note');
-    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('New note 3');
+    expect(screen.getByRole('textbox', { name: 'Name, URL, or file path' })).toHaveValue('New note 3');
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(onOpenNote).toHaveBeenCalledWith(12));
     expect(createNoteItem).toHaveBeenLastCalledWith(3, 'note', 'New note 3');
@@ -702,6 +769,7 @@ describe('Notes tree', () => {
     renderTree({ notes: client({ listNoteItems: async () => [study], createNoteItem }), onBeforeCreateNote });
     await screen.findByRole('treeitem', { name: 'Study' });
     await chooseAction('Study', 'New note');
+    fireEvent.change(screen.getByLabelText('Name, URL, or file path'), { target: { value: 'https://example.org/article' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(onBeforeCreateNote).toHaveBeenCalledOnce());
     expect(screen.getByRole('dialog', { name: 'New note' })).toBeInTheDocument();
@@ -748,7 +816,7 @@ describe('Notes tree', () => {
       failRefresh = true;
       return { id: 9, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id, kind, name };
     });
-    renderTree({ notes: client({
+    const { onOpenNote } = renderTree({ notes: client({
       listNoteItems: async () => {
         if (failRefresh) { failRefresh = false; throw new Error('offline'); }
         return [study, aardvark];
@@ -756,13 +824,15 @@ describe('Notes tree', () => {
     }) });
     await screen.findByRole('treeitem', { name: 'Study' });
     await chooseAction('Personal', 'New note');
+    fireEvent.change(screen.getByLabelText('Name, URL, or file path'), { target: { value: 'https://example.org/article' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not load notes.');
     expect(screen.getByRole('treeitem', { name: 'Study' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Actions for Personal' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
-    expect(createNoteItem).toHaveBeenCalledOnce();
+    expect(createNoteItem).toHaveBeenCalledExactlyOnceWith(null, 'note', 'New note');
+    expect(onOpenNote).not.toHaveBeenCalled();
   });
 
   it('keeps creation errors and the entered name in the dialog for retry', async () => {
@@ -793,9 +863,9 @@ describe('Notes tree', () => {
     renderTree({ notes: client({ listNoteItems: async () => current, createNoteItem }) });
     await screen.findByRole('treeitem', { name: 'Study' });
     await chooseAction('Study', `New ${kind}`);
-    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '' } });
+    fireEvent.change(screen.getByRole('textbox', { name: kind === 'note' ? 'Name, URL, or file path' : 'Name' }), { target: { value: '' } });
     expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'My idea' } });
+    fireEvent.change(screen.getByRole('textbox', { name: kind === 'note' ? 'Name, URL, or file path' : 'Name' }), { target: { value: 'My idea' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(createNoteItem).toHaveBeenCalledExactlyOnceWith(1, kind, 'My idea'));
     expect(await screen.findByRole('treeitem', { name: 'My idea' })).toBeInTheDocument();
@@ -807,6 +877,8 @@ describe('Notes tree', () => {
     renderTree({ notes: client({ listNoteItems: async () => [study], createNoteItem }), onBeforeCreateNote });
     await screen.findByRole('treeitem', { name: 'Study' });
     await chooseAction('Study', `New ${kind}`);
+    fireEvent.change(screen.getByRole('textbox', { name: kind === 'note' ? 'Name, URL, or file path' : 'Name' }),
+      { target: { value: 'https://example.org/article' } });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByRole('treeitem', { name: 'Study' })).toHaveFocus();

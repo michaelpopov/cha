@@ -1,3 +1,4 @@
+import type { NoteImportSource } from '../notes/importSource';
 import { describe, expect, it } from 'vitest';
 
 import { bootstrapFixture, snapshotFixture } from '../test/fixtures';
@@ -16,6 +17,20 @@ function readyState(): AppState {
 }
 
 describe('application navigation reducer', () => {
+  it.each<NoteImportSource>([
+    { kind: 'page', url: 'https://example.org' }, { kind: 'file', path: '/plan.md' },
+  ])('carries a $kind source with its opening request and clears it with the selection', importSource => {
+    const state = appReducer(readyState(), { type: 'open-note', noteId: 4, importSource });
+    expect(state.noteImportSource).toEqual(importSource);
+    expect(state.noteRequest).toBe(1);
+    for (const action of [
+      { type: 'open-note', noteId: 4 }, { type: 'open-note', noteId: 5 },
+      { type: 'close-note' }, { type: 'vault-context-reset' }, { type: 'show-settings' },
+    ] satisfies AppAction[]) {
+      expect(appReducer(state, action).noteImportSource).toBeUndefined();
+    }
+  });
+
   it('keeps reference selection with its owner and clears it on file navigation and vault reset', () => {
     const reference = { kind: 'note' as const, ref_id: '##00000A' };
     let state = appReducer(readyState(), { type: 'inspect-character', characterId: 'guide' });
@@ -40,11 +55,13 @@ describe('application navigation reducer', () => {
   });
   it('retains a hidden note across unrelated actions but clears it on leaving the workspace', () => {
     let state = appReducer(readyState(), { type: 'set-layout', mode: 'split' });
-    state = appReducer(state, { type: 'open-note', noteId: 42 });
+    state = appReducer(state, { type: 'open-note', noteId: 42, importSource: { kind: 'page', url: 'https://example.org' } });
     state = appReducer(state, { type: 'show-chat' });
+    expect(state.noteImportSource).toEqual({ kind: 'page', url: 'https://example.org' });
     expect(workspaceVisibility(state)).toEqual({ notesVisible: true, chatVisible: true });
     expect(state.activeNoteId).toBe(42);
     state = appReducer(state, { type: 'set-layout', mode: 'single' });
+    expect(state.noteImportSource).toBeUndefined();
     state = appReducer(state, { type: 'show-chat-tab' });
     state = appReducer(state, { type: 'stream-state', status: 'connected' });
     expect(state.activeNoteId).toBe(42);

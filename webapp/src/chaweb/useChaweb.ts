@@ -7,6 +7,7 @@ import {
   type SessionListing,
   type SessionSnapshot,
 } from '../api/client';
+import { lastEntryId, type PromptFocus } from '../transcriptScroll';
 import { welcomeSessionId } from '../state/route';
 import { welcomeSnapshot, welcomeSubmission, type WelcomeTurn } from '../welcomeTurn';
 import { chaWebMessage, type ChaWebBootstrap, type ChaWebClient } from './client';
@@ -152,6 +153,7 @@ export function useChaweb(client: ChaWebClient) {
   const [screen, setScreen] = useState<'list' | 'conversation'>('list');
   const [forumId, setForumId] = useState('');
   const [conversation, setConversation] = useState<ConversationRef | null>(null);
+  const [promptFocus, setPromptFocus] = useState<PromptFocus | null>(null);
   const [audioKey, setAudioKey] = useState('');
   const [drafts, setDrafts] = useState<DraftMap>({});
   const [sessions, setSessions] = useState<SessionListing[]>([]);
@@ -198,6 +200,14 @@ export function useChaweb(client: ChaWebClient) {
   draftsRef.current = drafts;
   snapshotRef.current = snapshot;
   statusRef.current = status;
+
+  function focusContext(key: string) {
+    return JSON.stringify([bootstrapRef.current?.vault_name, key]);
+  }
+
+  function consumePromptFocus(marker: PromptFocus) {
+    setPromptFocus((current) => current === marker ? null : current);
+  }
 
   function patchStatus(recipe: (current: Status) => Status) {
     const next = recipe(statusRef.current);
@@ -339,6 +349,11 @@ export function useChaweb(client: ChaWebClient) {
     snapshotRef.current = loaded;
     setSnapshot(loaded);
     const key = sessionDraftKey(loaded.forum.id, loaded.session_id);
+    if (proves && !statusRef.current.conversations[key]?.sending) {
+      setPromptFocus((current) => current?.key === focusContext(key)
+        && !loaded.transcript.some((entry) => entry.kind === 'human' && entry.id > current.afterId)
+        ? null : current);
+    }
     patchStatus((current) => {
       const next = { ...current.conversations[key] };
       if (current.blockedKey === key) delete next.notice;
@@ -754,6 +769,11 @@ export function useChaweb(client: ChaWebClient) {
     if (control.mode !== 'send' || control.disabled) return;
     const current = conversationRef.current;
     if (!current || screenRef.current !== 'conversation') return;
+    const marker = {
+      key: focusContext(conversationKey(current)),
+      afterId: current.kind === 'draft' ? 0 : lastEntryId(snapshotRef.current?.transcript ?? []),
+    };
+    setPromptFocus(marker);
     if (current.kind === 'session') markWelcomePending(current.forumId, current.sessionId);
     if (current.kind === 'draft') {
       const key = newDraftKey(current.forumId);
@@ -762,8 +782,8 @@ export function useChaweb(client: ChaWebClient) {
       const { text, revision } = draft;
       patchStatus((state) => withConversation(state, key, { sending: true, notice: undefined, deleteError: undefined }));
       void clientRef.current.createSession(forum, text).then(
-        (created) => createdOk(forum, revision, text, created),
-        (error: unknown) => createdFail(forum, error),
+        (created) => createdOk(forum, revision, text, created, marker),
+        (error: unknown) => { consumePromptFocus(marker); createdFail(forum, error); },
       );
       return;
     }
@@ -775,7 +795,11 @@ export function useChaweb(client: ChaWebClient) {
     patchStatus((state) => withConversation(state, key, { sending: true, notice: undefined, deleteError: undefined }));
     void clientRef.current.submitInput(forum, session, text).then(
       () => inputOk(forum, key, revision, text),
-      (error: unknown) => inputFail(forum, key, error),
+      (error: unknown) => {
+        const failure = classifyWriteFailure(error);
+        if (failure === 'rejected' || failure === 'missing') consumePromptFocus(marker);
+        inputFail(forum, key, error);
+      },
     );
   }
 
@@ -886,7 +910,7 @@ export function useChaweb(client: ChaWebClient) {
     }
   }
 
-  function createdOk(forum: string, revision: number, text: string, created: CreateSessionResult) {
+  function createdOk(forum: string, revision: number, text: string, created: CreateSessionResult, marker: PromptFocus) {
     if (!mounted.current) return;
     const from = newDraftKey(forum);
     const key = sessionDraftKey(forum, created.id);
@@ -906,6 +930,8 @@ export function useChaweb(client: ChaWebClient) {
     if (window.location.hash !== hash) {
       window.history.pushState(null, '', locationUrl(hash));
     }
+    setPromptFocus((current) => current === marker
+      ? { ...marker, key: focusContext(key) } : current);
     const next: ConversationRef = { kind: 'session', forumId: forum, sessionId: created.id };
     conversationRef.current = next;
     screenRef.current = 'conversation';
@@ -1152,6 +1178,10 @@ export function useChaweb(client: ChaWebClient) {
 
   const active = conversation && screen === 'conversation' ? conversation : null;
   const activeKey = active ? conversationKey(active) : '';
+  const focusKey = JSON.stringify([bootstrap?.vault_name, activeKey]);
+  useEffect(() => {
+    setPromptFocus((current) => current?.key === focusKey ? current : null);
+  }, [focusKey]);
   const command = buildCommand(
     status,
     conversation,
@@ -1204,6 +1234,9 @@ export function useChaweb(client: ChaWebClient) {
     retryConversation: status.blockedKey === activeKey && status.reconnectingKey === null
       ? retryRead
       : null,
+    focusKey,
+    promptFocus,
+    consumePromptFocus,
     sessionKey: activeKey || 'none',
     // A new draft keeps its audio selection when its first Send creates the session.
     audioKey: active ? audioKey : '',

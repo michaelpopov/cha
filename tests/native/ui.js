@@ -54,11 +54,14 @@ async function nativeParity() {
   const bounds = (node) => node.getBoundingClientRect();
   const composerLayout = () => {
     const form = bounds(document.querySelector('.cha-composer'));
-    const status = bounds(document.querySelector('.cha-chat-status'));
+    const statusRow = document.querySelector('.cha-chat-status');
     const actions = bounds(document.querySelector('.cha-composer-actions'));
     check(form.left >= 0 && form.right <= innerWidth + 1, 'composer exceeds the window');
-    check(status.top >= form.bottom, 'status buttons overlap the composer');
-    check(status.bottom < innerHeight - 1, 'status buttons lack bottom spacing');
+    if (statusRow.getClientRects().length) {
+      const status = bounds(statusRow);
+      check(status.top >= form.bottom, 'status buttons overlap the composer');
+      check(status.bottom < innerHeight - 1, 'status buttons lack bottom spacing');
+    }
     check(actions.left >= form.left && actions.right <= form.right,
       'composer actions exceed the edit box');
     return form;
@@ -142,7 +145,7 @@ async function nativeParity() {
     const dialog = await until('New note dialog', () => (
       document.querySelector('dialog[aria-label="New note"]')
     ));
-    setValue(field('Name', dialog), 'UI smoke note');
+    setValue(field('Name, URL, or file path', dialog), 'UI smoke note');
     await click('Create', dialog);
     let note = await screen('Note');
     const prompt = await until('Notes composer', () => note.querySelector('textarea[aria-label="Prompt"]'));
@@ -150,11 +153,33 @@ async function nativeParity() {
     const notes = composerLayout();
     check(Math.abs(notes.left - chat.left) <= 1 && Math.abs(notes.width - chat.width) <= 1,
       'Notes composer does not align with Chat');
+    check(!note.querySelector('.cha-transliteration-toggle'), 'Russian controls visible by default');
+    check(!note.querySelector('.cha-chat-status').getClientRects().length, 'Hidden Russian controls leave an empty Notes status row');
+    window.__CHA_NATIVE_SET_LAYOUT__('toggle-russian');
+    await until('Russian controls visible', () => note.querySelector('.cha-transliteration-toggle'));
     const transliteration = bounds(note.querySelector('.cha-transliteration-toggle'));
     const status = bounds(note.querySelector('.cha-chat-status'));
     const statusPadding = parseFloat(getComputedStyle(note.querySelector('.cha-chat-status')).paddingRight);
     check(Math.abs(status.right - transliteration.right - statusPadding) <= 1,
       'Notes transliteration is not right-aligned');
+    const editorElement = note.querySelector('.ProseMirror');
+    const visibilityEditor = editorElement.chaEditor;
+    setValue(prompt, 'Keep Russian visibility draft');
+    prompt.focus();
+    prompt.setSelectionRange(2, 5);
+    window.__CHA_NATIVE_SET_LAYOUT__('toggle-russian');
+    await until('Russian controls hidden', () => !note.querySelector('.cha-transliteration-toggle'));
+    check(!note.querySelector('.cha-chat-status').getClientRects().length, 'Notes status row did not collapse');
+    check(note.querySelector('.ProseMirror') === editorElement && editorElement.chaEditor === visibilityEditor,
+      'Russian visibility remounted the Notes editor');
+    check(note.querySelector('textarea[aria-label="Prompt"]') === prompt
+      && prompt.value === 'Keep Russian visibility draft'
+      && prompt.selectionStart === 2 && prompt.selectionEnd === 5,
+      'Russian visibility lost the prompt or selection');
+    composerLayout();
+    window.__CHA_NATIVE_SET_LAYOUT__('toggle-russian');
+    await until('Russian controls restored', () => note.querySelector('.cha-transliteration-toggle'));
+    composerLayout();
     check(!button('Hide sidebar', note) && !button('Show sidebar', note), 'Notes sidebar toggle remains');
     window.__CHA_NATIVE_SET_LAYOUT__('toggle-sidebar');
     await until('sidebar closed', () => document.querySelector('.cha-app').dataset.sidebar === 'closed');

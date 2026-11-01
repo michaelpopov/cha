@@ -2,6 +2,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -20,6 +21,9 @@ import {
   type SessionSnapshot,
   type TextFileRequest,
 } from '../api/client';
+import {
+  isFollowing, lastEntryId, scrollTranscript, type PromptFocus, type TranscriptScroll,
+} from '../transcriptScroll';
 import { useAudioDownloads } from '../audioDownloads';
 import { readTextFile } from '../textFile';
 import { ChatPictureLayout } from './ChatPicture';
@@ -76,10 +80,6 @@ function actionMessage(failure: unknown): string {
   return publicErrorMessage(failure, 'The action could not be completed. Try again.');
 }
 
-// How close to the end still counts as following the conversation. A few pixels
-// of slack absorbs sub-pixel rounding, which would otherwise unpin the view the
-// first time it scrolled itself.
-const followSlack = 24;
 const allCharactersTarget = '*';
 // Older stored transcripts can contain a model-echoed UTC metadata line. Entry
 // creation time already has its own UI below the message, so hide that legacy
@@ -191,12 +191,14 @@ function TranscriptMessage({
   return (
     <article
       className={`cha-message is-${entry.kind}`}
+      data-entry-id={entry.id}
       data-status={entry.status}
     >
       {entry.kind !== 'human' && entry.display_name && (
         <div className="cha-speaker">{entry.display_name}</div>
       )}
       <div
+        data-message-body
         className={`cha-message-text${voiceClasses(
           entry.kind === 'human' || entry.kind === 'character' ? appearance : undefined,
         )}`}
@@ -343,7 +345,6 @@ export function ChatScreen({
   const composerEpoch = useRef(0);
   const actionPending = pendingAction !== null || sendPending || stopPending;
   const transcriptArea = useRef<HTMLDivElement | null>(null);
-  const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const textToSpeechSession = useRef<TextToSpeechSession | null>(null);
   const [autoAudioEnabled, setAutoAudioEnabled] = useState(false);
   const [autoAudioSubmitting, setAutoAudioSubmitting] = useState(false);
@@ -364,6 +365,8 @@ export function ChatScreen({
     isError: boolean;
   } | null>(null);
   const followingLatest = useRef(true);
+  const scrollObservation = useRef<TranscriptScroll | null>(null);
+  const pendingPrompt = useRef<PromptFocus | null>(null);
   const snapshot = state.sessionSnapshot;
   const generation = snapshot?.generation;
   const conversationKey = snapshot && `${snapshot.forum.id}/${snapshot.session_id}`;
@@ -422,7 +425,7 @@ export function ChatScreen({
 
   useEffect(() => {
     composerEpoch.current += 1;
-    followingLatest.current = true;
+    pendingPrompt.current = null;
     setSendPending(false);
     setStopPending(false);
     setPendingAction(null);
@@ -430,7 +433,7 @@ export function ChatScreen({
     stopping.current = false;
     setTurnToDelete(null);
     return () => { composerEpoch.current += 1; };
-  }, [conversationKey]);
+  }, [conversationKey, state.bootstrap?.vault_name]);
 
   function stopSpeech() {
     speechAttempt.current += 1;
@@ -693,9 +696,32 @@ export function ChatScreen({
   // keeps their place: a stream that yanked the view back on every token would
   // make the transcript unreadable exactly while it was worth reading.
   function followTranscript() {
-    if (followingLatest.current) transcriptEnd.current?.scrollIntoView?.({ block: 'end' });
+    const transcript = transcriptArea.current;
+    if (followingLatest.current && transcript) transcript.scrollTop = transcript.scrollHeight;
   }
-  useEffect(followTranscript, [conversationKey, generation?.active, generation?.phase, snapshot?.transcript]);
+  useLayoutEffect(() => {
+    const container = transcriptArea.current;
+    if (!container || !snapshot || !audioConversationKey) return;
+    if (scrollObservation.current) scrollObservation.current.following = followingLatest.current;
+    const next = scrollTranscript(container, scrollObservation.current, audioConversationKey,
+      snapshot.transcript, `${generation?.active}:${generation?.phase}`, autoAudioEnabled, pendingPrompt.current);
+    scrollObservation.current = next;
+    followingLatest.current = next.following;
+    if (next.consumed === pendingPrompt.current) pendingPrompt.current = null;
+  });
+
+  async function submitPrompt(text: string) {
+    const marker = { key: audioConversationKey ?? '', afterId: lastEntryId(snapshot?.transcript ?? []) };
+    pendingPrompt.current = marker;
+    try {
+      const result = await onSubmitInput(text);
+      if (!result.clear_input && pendingPrompt.current === marker) pendingPrompt.current = null;
+      return result;
+    } catch (failure) {
+      if (pendingPrompt.current === marker) pendingPrompt.current = null;
+      throw failure;
+    }
+  }
 
   // The composer and window resizing change the transcript height without
   // new text, so a following reader must stay at the end then as well.
@@ -711,8 +737,7 @@ export function ChatScreen({
   // whether the reader is following has to be recorded when they last scrolled
   // rather than measured after new text has already landed.
   function noteReadingPosition(event: UIEvent<HTMLDivElement>) {
-    const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
-    followingLatest.current = scrollHeight - scrollTop - clientHeight <= followSlack;
+    followingLatest.current = isFollowing(event.currentTarget);
   }
 
   async function stop() {
@@ -854,7 +879,6 @@ export function ChatScreen({
         ))}
         {generation && <GenerationProgress generation={generation} key={generation.request_id} />}
         {snapshot?.notice && <p className="cha-session-notice">{snapshot.notice}</p>}
-        <div ref={transcriptEnd} />
       </div>
       {liveMessage && (
         <div
@@ -913,7 +937,7 @@ export function ChatScreen({
         onError={setActionError}
         onFileDrop={connected && !generationActive && !actionPending
           ? (file) => void attachTextFile(file) : undefined}
-        onSubmit={onSubmitInput}
+        onSubmit={submitPrompt}
         onSubmittingChange={setSendPending}
         placeholder={sendToAll
           ? 'Message all characters'

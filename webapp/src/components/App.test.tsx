@@ -29,6 +29,7 @@ import {
 import { App } from './App';
 import { CharacterFileScreen, NewCharacterFileScreen, NewForumFileScreen, FileReferenceScreen, FileList } from './FileScreens';
 import { welcomeSessionId } from '../state/route';
+import { TransliterationProvider } from './TransliterationMode';
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
@@ -365,6 +366,7 @@ it('propagates a persona rename to the roster, forum details, and active chat', 
   await user.click(await screen.findByRole('button', { name: 'Rename Reader' }));
   const input = screen.getByRole('textbox', { name: 'Persona name' });
   await user.clear(input);
+  act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-russian'));
   await user.click(screen.getByRole('button', { name: 'Latin to Russian transliteration' }));
   await user.type(input, 'Redaktor');
   await user.click(screen.getByRole('button', { name: 'Save persona name' }));
@@ -451,6 +453,7 @@ it('edits persona Markdown as pasted text and cancels without saving', async () 
   await waitFor(() => expect(editor).toBeEnabled());
   await user.clear(editor);
   await user.type(editor, '# ');
+  act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-russian'));
   await user.click(screen.getByRole('button', { name: 'Latin to Russian transliteration' }));
   await user.type(editor, 'Privet');
   await user.click(screen.getByRole('button', { name: 'Save' }));
@@ -620,8 +623,11 @@ function renderCharacterFile(client: ChaClient, filename: string | null, charact
       },
     },
   };
-  return { navigate, ...render(filename === null
-    ? <NewCharacterFileScreen {...props} /> : <CharacterFileScreen {...props} />) };
+  return { navigate, ...render(
+    <TransliterationProvider controlsVisible>
+      {filename === null ? <NewCharacterFileScreen {...props} /> : <CharacterFileScreen {...props} />}
+    </TransliterationProvider>,
+  ) };
 }
 
 it('opens Files from character Settings and distinguishes Markdown, text, and picture entries', async () => {
@@ -1726,6 +1732,7 @@ it('transliterates Latin typing to Russian when renaming a session', async () =>
   await user.click(await screen.findByLabelText('Actions for Planning'));
   await user.click(screen.getByRole('menuitem', { name: 'Rename…' }));
   const name = screen.getByRole('textbox', { name: 'Session name' });
+  act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-russian'));
   const toggle = within(screen.getByRole('dialog')).getByRole('button', { name: 'Latin to Russian transliteration' });
   await user.click(toggle);
   expect(name).toHaveFocus();
@@ -1740,9 +1747,13 @@ it('transliterates Latin typing to Russian when renaming a session', async () =>
 
 it('toggles Russian transliteration application-wide with Ctrl+Shift+Y', async () => {
   const user = userEvent.setup();
-  render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
+  const events = drivableSessionEvents();
+  render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
 
+  await waitFor(() => expect(events.handlers.length).toBeGreaterThan(0));
+  act(() => events.handlers[0].onSnapshot(snapshotFixture));
   await screen.findByRole('textbox', { name: 'Message' });
+  act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-russian'));
   let toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });
   expect(toggle).toHaveAttribute('aria-pressed', 'false');
   expect(fireEvent.keyDown(window, {
@@ -3270,4 +3281,24 @@ describe('picture sizing', () => {
     expect(screen.getByRole('combobox', { name: 'Choose message target' })).toHaveValue('-');
   });
 
+});
+
+it('reports restored View choices on its first commit in StrictMode', async () => {
+  const previousPost = window.__CHA_NATIVE_POST__;
+  const previousConnection = window.__CHA_NATIVE_CONNECTION_ID__;
+  const messages: any[] = [];
+  window.__CHA_NATIVE_CONNECTION_ID__ = 'view-test';
+  window.__CHA_NATIVE_POST__ = raw => { messages.push(JSON.parse(raw)); };
+  try {
+    const view = render(<StrictMode><App client={fixtureClient()}
+      initialViewPreferences={{ layoutMode: 'split', sidebarOpen: false, russianVisible: true }} /></StrictMode>);
+    const reports = messages.filter(message => message.native_action === 'view_state');
+    expect(reports.length).toBeGreaterThan(0);
+    expect(reports.every(message => message.split && !message.sidebar && message.russian)).toBe(true);
+    await waitFor(() => expect(screen.queryByText('Loading CHA…')).not.toBeInTheDocument());
+    view.unmount();
+  } finally {
+    window.__CHA_NATIVE_POST__ = previousPost;
+    window.__CHA_NATIVE_CONNECTION_ID__ = previousConnection;
+  }
 });

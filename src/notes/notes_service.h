@@ -76,7 +76,8 @@ public:
     void cancel_summaries_locked(std::optional<std::string_view> connection_id = {});
     // Session deletion signals the run, leaving retirement to its current owner.
     void cancel_session_summary_locked(const FullSessionId& identity);
-    std::shared_ptr<OperationReply> read_note_page(std::string url, std::uint64_t epoch);
+    std::shared_ptr<OperationReply> read_note_page(std::string url, std::uint64_t epoch,
+        std::function<void(std::string_view)> progress = {});
     std::shared_ptr<OperationReply> read_note_picture(std::string url, std::uint64_t epoch);
 
     void set_note_audio_changed(NoteAudioChanged callback);

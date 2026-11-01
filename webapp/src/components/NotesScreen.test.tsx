@@ -2,7 +2,7 @@ import type { AnnotationDestination } from '../notes/annotationSource';
 import type { Editor } from '@tiptap/core';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useRef, useState } from 'react';
+import { StrictMode, useRef, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -10,6 +10,7 @@ import {
   type NoteContent,
   type NoteItem,
   type NotePage,
+  type NotesClient,
   type TextFileRequest,
 } from '../api/client';
 import { pictureTypeMessage } from '../notes/pictures';
@@ -20,6 +21,7 @@ import { noteSaveDelayMs, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { AppAction } from '../state/view';
 import { fixtureClient } from '../test/fixtures';
 import { NotesScreen } from './NotesScreen';
+import { TransliterationProvider } from './TransliterationMode';
 
 const plan: NoteItem = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
 const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
@@ -45,6 +47,11 @@ let liveEditor: { current: Editor | null } | null = null;
 function Harness({
   initialId = 4 as number | null,
   destination,
+  importUrl,
+  importPath,
+  promptVisible = true,
+  onNavigate = () => undefined,
+  onSetNoteReadOnly = async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }),
   items = [plan],
   getNote = async (id: number) => ({ id, document: documentWith(id === 5 ? 'Essay text' : 'Alpha') }),
   saveNote = async () => undefined,
@@ -57,11 +64,16 @@ function Harness({
 }: {
   initialId?: number | null;
   destination?: AnnotationDestination;
+  importUrl?: string;
+  importPath?: string;
+  promptVisible?: boolean;
+  onNavigate?: (action: AppAction) => void;
+  onSetNoteReadOnly?: (id: number, readOnly: boolean) => Promise<NoteItem>;
   items?: NoteItem[];
   getNote?: (id: number) => Promise<NoteContent>;
   saveNote?: (id: number, document: Record<string, unknown>) => Promise<void>;
   saveNoteScrollPosition?: (id: number, scrollTop: number) => Promise<void>;
-  readNotePage?: (url: string) => Promise<NotePage>;
+  readNotePage?: NotesClient['readNotePage'];
   readNoteTextFile?: (path: string) => Promise<TextFileRequest | null>;
   readNotePicture?: (url: string) => Promise<Uint8Array>;
   renameNoteItem?: (id: number, name: string) => Promise<NoteItem>;
@@ -93,6 +105,7 @@ function Harness({
     disposeEditor: () => disposeRef.current(),
   });
   function dispatch(action: AppAction) {
+    onNavigate(action);
     if (action.type === 'open-note') {
       setNoteId(action.noteId);
       setRequest((current) => current + 1);
@@ -106,6 +119,8 @@ function Harness({
       <NotesScreen
         activeNoteId={noteId}
         destination={destination}
+        importSource={noteId === initialId ? importPath ? { kind: 'file', path: importPath } : importUrl ? { kind: 'page', url: importUrl } : undefined : undefined}
+        promptVisible={promptVisible}
         client={client}
         navigate={dispatch}
         draft={text}
@@ -115,7 +130,7 @@ function Harness({
         noteRequest={request}
         notesEpoch={1}
         onDraftChange={setText}
-        onSetNoteReadOnly={async (id, readOnly) => ({ ...plan, id, read_only: readOnly })}
+        onSetNoteReadOnly={onSetNoteReadOnly}
         onRegisterDispose={(dispose) => { disposeRef.current = dispose; }}
         onRegisterSave={(save) => { saveRef.current = save; }}
       />
@@ -140,6 +155,196 @@ async function openedEditor(): Promise<Editor> {
 }
 
 describe('Notes screen', () => {
+  it.each(['formatting_article', 'formatting_transcript'] as const)('shows real import stages for %s with a hidden prompt', async stage => {
+    let report!: NonNullable<Parameters<NotesClient['readNotePage']>[1]>;
+    let finishPage!: (page: NotePage) => void;
+    const readNotePage = vi.fn<NotesClient['readNotePage']>((_url, onProgress) => {
+      report = onProgress!;
+      return new Promise(resolve => { finishPage = resolve; });
+    });
+    let finishPicture!: (bytes: Uint8Array) => void;
+    const readNotePicture = vi.fn(() => new Promise<Uint8Array>(resolve => { finishPicture = resolve; }));
+    let finishLock!: (note: NoteItem) => void;
+    const lock = vi.fn(() => new Promise<NoteItem>(resolve => { finishLock = resolve; }));
+    render(<Harness importUrl="https://example.org/article" promptVisible={false}
+      getNote={async id => ({ id, document: documentWith('') })}
+      readNotePage={readNotePage} readNotePicture={readNotePicture} onSetNoteReadOnly={lock} draft="Keep this" />);
+    await openedEditor();
+    const loading = await screen.findByText('Loading content…');
+    expect(loading).toHaveTextContent('Retrieving content…');
+    expect(loading.querySelector('.cha-notes-import-spinner')).toHaveAttribute('aria-hidden', 'true');
+    act(() => report(stage));
+    expect(loading).toHaveTextContent(stage === 'formatting_article' ? 'Formatting article…' : 'Formatting transcript…');
+    await act(async () => finishPage({ url: 'https://example.org/article', title: '', markdown: 'Article\n\n![Photo](/photo.png)' }));
+    expect(readNotePicture).toHaveBeenCalledExactlyOnceWith('https://example.org/photo.png');
+    expect(loading).toHaveTextContent('Loading pictures…');
+    await act(async () => finishPicture(new Uint8Array()));
+    expect(lock).toHaveBeenCalledExactlyOnceWith(plan.id, true);
+    expect(loading).toHaveTextContent('Saving note…');
+    await act(async () => finishLock({ ...plan, read_only: true }));
+    expect(screen.queryByText('Loading content…')).toBeNull();
+  });
+
+  it('ignores late stage updates from an abandoned import while another import is loading', async () => {
+    const reports: NonNullable<Parameters<NotesClient['readNotePage']>[1]>[] = [];
+    const finishes: ((page: NotePage) => void)[] = [];
+    const readNotePage = vi.fn<NotesClient['readNotePage']>((_url, onProgress) => {
+      reports.push(onProgress!);
+      return new Promise(resolve => { finishes.push(resolve); });
+    });
+    render(<Harness importUrl="https://example.org/first" readNotePage={readNotePage}
+      getNote={async id => ({ id, document: documentWith('') })} />);
+    await openedEditor();
+    await waitFor(() => expect(readNotePage).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
+    await openedEditor();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'https://example.org/second' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Essay' }));
+    await waitFor(() => expect(readNotePage).toHaveBeenCalledTimes(2));
+    act(() => reports[1]('formatting_article'));
+    act(() => reports[0]('formatting_transcript'));
+    expect(screen.getByText('Loading content…')).toHaveTextContent('Formatting article…');
+    await act(async () => finishes[0]({ url: 'https://example.org/first', title: '', markdown: 'Old article' }));
+    expect(screen.getByText('Loading content…')).toHaveTextContent('Formatting article…');
+    await act(async () => finishes[1]({ url: 'https://example.org/second', title: '', markdown: 'Current article' }));
+    expect(screen.queryByText('Loading content…')).toBeNull();
+  });
+
+
+  it.each([false, true])('starts a URL opening once after editor setup and preserves the prompt (hidden=%s)', async (hidden) => {
+    let open!: (content: NoteContent) => void;
+    const getNote = vi.fn(() => new Promise<NoteContent>(resolve => { open = resolve; }));
+    let finish!: (page: NotePage) => void;
+    const readNotePage = vi.fn(() => {
+      expect(liveEditor?.current?.isEditable).toBe(true);
+      return new Promise<NotePage>(resolve => { finish = resolve; });
+    });
+    const props = { getNote, readNotePage, importUrl: 'https://example.org/article',
+      draft: 'Keep this draft', promptVisible: !hidden };
+    const view = render(<StrictMode><Harness {...props} /></StrictMode>);
+    expect(readNotePage).not.toHaveBeenCalled();
+    await act(async () => open({ id: plan.id, document: documentWith('') }));
+    const editor = await openedEditor();
+    await waitFor(() => expect(readNotePage).toHaveBeenCalledExactlyOnceWith(props.importUrl, expect.any(Function)));
+    expect(screen.getByText('Loading content…')).toHaveAttribute('role', 'status');
+    fireEvent.click(screen.getByRole('button', { name: 'Content' }));
+    expect(screen.getByRole('menuitem', { name: 'Upload' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Content' }));
+    expect(editor.isEditable).toBe(true);
+    view.rerender(<StrictMode><Harness {...props} promptVisible={!hidden} items={[{ ...plan }]} /></StrictMode>);
+    expect(readNotePage).toHaveBeenCalledOnce();
+    await act(async () => finish({ url: props.importUrl, title: '', markdown: 'Article' }));
+    expect(editor.getText()).toBe('Article');
+    expect(screen.queryByText('Loading content…')).toBeNull();
+    view.rerender(<StrictMode><Harness {...props} promptVisible /></StrictMode>);
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this draft');
+    expect(readNotePage).toHaveBeenCalledOnce();
+  });
+
+  it('skips a nonempty note for the whole opening even when it is later emptied', async () => {
+    const readNotePage = vi.fn();
+    const props = { importUrl: 'https://example.org/article', readNotePage };
+    const view = render(<Harness {...props} />);
+    const editor = await openedEditor();
+    expect(editor.getText()).toBe('Alpha');
+    expect(readNotePage).not.toHaveBeenCalled();
+    act(() => editor.commands.clearContent());
+    view.rerender(<Harness {...props} promptVisible={false} />);
+    expect(readNotePage).not.toHaveBeenCalled();
+  });
+
+  it('does not restart a failed shortcut after rerender or dismissal and permits manual recovery', async () => {
+    const readNotePage = vi.fn().mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ url: 'https://example.org/article', title: '', markdown: 'Recovered article' });
+    const props = { importUrl: 'https://example.org/article', readNotePage,
+      getNote: async (id: number) => ({ id, document: documentWith('') }), draft: 'Keep this' };
+    const view = render(<Harness {...props} />);
+    const editor = await openedEditor();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not retrieve the web page. Try again.');
+    view.rerender(<Harness {...props} items={[{ ...plan }]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss error' }));
+    expect(readNotePage).toHaveBeenCalledOnce();
+    expect(screen.queryByText('Loading content…')).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: props.importUrl } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
+    await waitFor(() => expect(editor.getText()).toBe('Recovered article'));
+    expect(readNotePage).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('');
+  });
+
+  it.each(['page', 'file'] as const)('preserves the %s source through the existing opening Retry', async kind => {
+    const getNote = vi.fn().mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ id: plan.id, document: documentWith('') });
+    const readNotePage = vi.fn().mockResolvedValue({ url: 'https://example.org/article', title: '', markdown: 'Article' });
+    const readNoteTextFile = vi.fn().mockResolvedValue({ name: '/plan.txt', text: 'Article' });
+    const onNavigate = vi.fn();
+    const sourceProps = kind === 'page' ? { importUrl: 'https://example.org/article' } : { importPath: '/plan.txt' };
+    const readSource = kind === 'page' ? readNotePage : readNoteTextFile;
+    render(<Harness {...sourceProps} getNote={getNote} readNotePage={readNotePage}
+      readNoteTextFile={readNoteTextFile} onNavigate={onNavigate} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not open');
+    expect(readSource).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onNavigate).toHaveBeenCalledWith({ type: 'open-note', noteId: plan.id,
+      destination: undefined, importSource: kind === 'page'
+        ? { kind: 'page', url: 'https://example.org/article' } : { kind: 'file', path: '/plan.txt' } });
+    await screen.findByText('Article');
+    expect(readSource).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('ignores a late shortcut result in another note (failure=%s)', async fail => {
+    let finish!: (page: NotePage) => void;
+    let reject!: (failure: Error) => void;
+    const readNotePage = vi.fn(() => new Promise<NotePage>((ok, no) => { finish = ok; reject = no; }));
+    const renameNoteItem = vi.fn();
+    render(<Harness importUrl="https://example.org/article" readNotePage={readNotePage}
+      items={[{ ...plan, name: 'New note' }]} renameNoteItem={renameNoteItem}
+      getNote={async id => ({ id, document: documentWith(id === plan.id ? '' : 'Essay text') })} draft="Keep this" />);
+    await openedEditor();
+    await waitFor(() => expect(readNotePage).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
+    const editor = await openedEditor();
+    await act(async () => {
+      if (fail) reject(new Error('offline'));
+      else finish({ url: 'https://example.org/article', title: 'Late title', markdown: 'Late article' });
+    });
+    expect(editor.getText()).toBe('Essay text');
+    expect(renameNoteItem).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('Loading content…')).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this');
+  });
+
+  it.each(['page', 'path', 'upload'])('shows shared loading status for a manual %s import and disables overlap', async source => {
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const readNotePage = vi.fn(async () => { await pending; return { url: 'https://example.org', title: '', markdown: 'Article' }; });
+    const readNoteTextFile = vi.fn(async () => { await pending; return { name: 'file.txt', text: 'File content' }; });
+    render(<Harness readNotePage={readNotePage} readNoteTextFile={readNoteTextFile}
+      draft={source === 'page' ? 'https://example.org' : '/tmp/file.txt'} />);
+    await openedEditor();
+    if (source === 'upload') {
+      const file = new File(['File content'], 'file.txt');
+      // Keep the upload pending at its file read.
+      vi.spyOn(FileReader.prototype, 'readAsArrayBuffer').mockImplementation(function (this: FileReader) {
+        void pending.then(() => {
+          Object.defineProperty(this, 'result', { value: new TextEncoder().encode('File content').buffer });
+          this.onload?.(new ProgressEvent('load') as ProgressEvent<FileReader>);
+        });
+      });
+      fireEvent.change(screen.getByLabelText('Text file'), { target: { files: [file] } });
+    } else fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
+    expect(await screen.findByText('Loading content…')).toHaveAttribute('role', 'status');
+    fireEvent.click(screen.getByRole('button', { name: 'Content' }));
+    expect(screen.getByRole('menuitem', { name: 'Upload' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Content' }));
+    expect(screen.getByRole('button', { name: 'Send to Plan' })).toBeDisabled();
+    act(() => finish());
+    await waitFor(() => expect(screen.queryByText('Loading content…')).toBeNull());
+  });
+
+
   it.each([false, true])('copies the whole note from Content and keeps the selection, prompt, and scroll (read-only: %s)', async (readOnly) => {
     const user = userEvent.setup();
     const saveNote = vi.fn();
@@ -276,6 +481,60 @@ describe('Notes screen', () => {
     const document = editor.getJSON();
     fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
     await waitFor(() => expect(saveNote).toHaveBeenCalledWith(plan.id, document));
+  });
+
+  it('automatically imports a file into a new note without changing the prompt', async () => {
+    const readNoteTextFile = vi.fn(async () => ({ name: '/tmp/a.md', text: '# File title\n\nBody' }));
+    const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...plan, id, name }));
+    render(<Harness items={[{ ...plan, name: 'New note' }]} getNote={async id => ({ id, document: documentWith('') })}
+      importPath="/tmp/a.md" readNoteTextFile={readNoteTextFile} renameNoteItem={renameNoteItem} draft="Keep draft" />);
+    const editor = await openedEditor();
+    await waitFor(() => expect(renameNoteItem).toHaveBeenCalledWith(plan.id, 'File title'));
+    expect(editor.getText()).toContain('Body');
+    expect(readNoteTextFile).toHaveBeenCalledOnce();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep draft');
+  });
+
+  it('reports a missing explicit file without inserting the path or automatically retrying', async () => {
+    const readNoteTextFile = vi.fn(async () => null);
+    const props = { items: [{ ...plan, name: 'New note' }],
+      getNote: async (id: number) => ({ id, document: documentWith('') }),
+      importPath: '/tmp/missing file.md', readNoteTextFile, draft: 'Keep draft' };
+    const view = render(<Harness {...props} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('The file could not be loaded. Check the path and permissions.');
+    expect(liveEditor!.current!.isEmpty).toBe(true);
+    view.rerender(<Harness {...props} promptVisible={false} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss error' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(readNoteTextFile).toHaveBeenCalledOnce();
+    view.rerender(<Harness {...props} />);
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep draft');
+    expect(readNoteTextFile).toHaveBeenCalledOnce();
+  });
+
+  it.each(['content', 'null', 'error'] as const)('ignores a late file %s result in another note', async result => {
+    let finish!: (value: TextFileRequest | null) => void;
+    let reject!: (error: Error) => void;
+    const readNoteTextFile = vi.fn(() => new Promise<TextFileRequest | null>((ok, no) => { finish = ok; reject = no; }));
+    const renameNoteItem = vi.fn();
+    const onSetNoteReadOnly = vi.fn();
+    render(<Harness importPath="/tmp/plan.md" readNoteTextFile={readNoteTextFile}
+      items={[{ ...plan, name: 'New note' }]} renameNoteItem={renameNoteItem} onSetNoteReadOnly={onSetNoteReadOnly}
+      getNote={async id => ({ id, document: documentWith(id === plan.id ? '' : 'Essay text') })} draft="Keep draft" />);
+    await openedEditor();
+    await waitFor(() => expect(readNoteTextFile).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
+    const editor = await openedEditor();
+    await act(async () => {
+      if (result === 'error') reject(new Error('offline'));
+      else finish(result === 'null' ? null : { name: '/tmp/plan.md', text: '# Late title\n\nLate content' });
+    });
+    expect(editor.getText()).toBe('Essay text');
+    expect(renameNoteItem).not.toHaveBeenCalled();
+    expect(onSetNoteReadOnly).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('Loading content…')).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep draft');
   });
 
   it.each(['New note', 'New note 12', 'My note', 'New note draft'])(
@@ -519,7 +778,7 @@ describe('Notes screen', () => {
       fireEvent.change(prompt, { target: { value: address } });
       fireEvent.click(screen.getByRole('button', { name: 'Send to Plan' }));
       await waitFor(() => expect(readNotePage).toHaveBeenCalledWith(
-        address.startsWith('https://') ? address : `http://${address}`,
+        address.startsWith('https://') ? address : `http://${address}`, expect.any(Function),
       ));
       fireEvent.change(prompt, { target: { value: `${address} Next` } });
       await act(async () => finish({ url: 'https://example.org/article', title: 'Title', markdown: '**Article**' }));
@@ -985,7 +1244,7 @@ describe('Notes screen', () => {
   });
 
   it('inserts literal prompts from Send and Enter and keeps later typing', async () => {
-    render(<Harness />);
+    render(<TransliterationProvider controlsVisible><Harness /></TransliterationProvider>);
     const editor = await openedEditor();
     editor.commands.setTextSelection(3);
     const prompt = screen.getByRole('textbox', { name: 'Prompt' });

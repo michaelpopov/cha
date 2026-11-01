@@ -113,11 +113,39 @@ bool is_youtube_url(std::string_view url) {
     const std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> parsed(curl_url(), curl_url_cleanup);
     const std::string owned(url);
     if (!parsed || curl_url_set(parsed.get(), CURLUPART_URL, owned.c_str(), 0) != CURLUE_OK) return false;
-    char* raw_host = nullptr;
-    if (curl_url_get(parsed.get(), CURLUPART_HOST, &raw_host, 0) != CURLUE_OK) return false;
-    const std::unique_ptr<char, decltype(&curl_free)> host(raw_host, curl_free);
-    auto name = fold_ascii(host.get());
-    if (name.ends_with('.')) name.pop_back();
+    const auto hostname = [&] {
+        char* raw_host = nullptr;
+        if (curl_url_get(parsed.get(), CURLUPART_HOST, &raw_host, 0) != CURLUE_OK) return std::string{};
+        const std::unique_ptr<char, decltype(&curl_free)> host(raw_host, curl_free);
+        auto name = fold_ascii(host.get());
+        if (name.ends_with('.')) name.pop_back();
+        return name;
+    };
+    auto name = hostname();
+    if (name == "safelinks.protection.outlook.com" || name.ends_with(".safelinks.protection.outlook.com")) {
+        char* raw_query = nullptr;
+        if (curl_url_get(parsed.get(), CURLUPART_QUERY, &raw_query, 0) != CURLUE_OK) return false;
+        const std::unique_ptr<char, decltype(&curl_free)> query(raw_query, curl_free);
+        auto parameters = std::string_view(query.get());
+        while (!parameters.empty()) {
+            const auto end = parameters.find('&');
+            const auto parameter = parameters.substr(0, end);
+            if (parameter.starts_with("url=")) {
+                // Split before decoding so escaped '&' characters stay inside the target URL.
+                const std::string encoded(parameter.substr(4));
+                int length = 0;
+                const std::unique_ptr<char, decltype(&curl_free)> target(
+                    curl_easy_unescape(nullptr, encoded.c_str(), static_cast<int>(encoded.size()), &length), curl_free);
+                if (!target || std::string_view(target.get(), static_cast<std::size_t>(length)).find('\0') != std::string_view::npos)
+                    return false;
+                if (curl_url_set(parsed.get(), CURLUPART_URL, target.get(), 0) != CURLUE_OK) return false;
+                name = hostname();
+                break;
+            }
+            if (end == std::string_view::npos) break;
+            parameters.remove_prefix(end + 1);
+        }
+    }
     return name == "youtube.com" || name.ends_with(".youtube.com")
         || name == "youtu.be" || name == "www.youtu.be";
 }
@@ -642,7 +670,7 @@ void NotesService::abandon_session_summary(std::string_view connection_id, std::
 }
 
 std::shared_ptr<OperationReply> NotesService::read_note_page(
-    std::string url, std::uint64_t epoch) {
+    std::string url, std::uint64_t epoch, std::function<void(std::string_view)> progress) {
     auto reply = std::make_shared<OperationReply>();
     WorkspaceWebSearch config;
     std::shared_ptr<const Workspace> workspace;
@@ -663,7 +691,7 @@ std::shared_ptr<OperationReply> NotesService::read_note_page(
     }
     if (!impl_->background_jobs.launch(
             [owner = impl_.get(), reply, workspace = std::move(workspace),
-             config = std::move(config), key = std::move(key), url = std::move(url), epoch](
+             config = std::move(config), key = std::move(key), url = std::move(url), epoch, progress = std::move(progress)](
                 std::atomic_bool& cancel) {
                 try {
                     // Document imports use the full article, rather than the model tool's 64 KiB limit.
@@ -685,6 +713,7 @@ std::shared_ptr<OperationReply> NotesService::read_note_page(
                             const std::lock_guard lifecycle(owner->lifecycle_mutex);
                             owner->require_admitted(epoch);
                         }
+                        if (progress) progress(youtube ? "formatting_transcript" : "formatting_article");
                         auto title = page.at("title").get<std::string>();
                         page["markdown"] = format_note_page(*workspace,
                             page.at("markdown").get<std::string>(), title, youtube, owner->openai_auth,

@@ -6,11 +6,11 @@ import { CheckIcon, CopyIcon, SpeakerIcon, StopIcon } from '../components/Icons'
 import { Markdown } from '../components/Markdown';
 import { copyText } from './clipboard';
 import { formatTimestamp } from './time';
+import { isFollowing, scrollTranscript, type PromptFocus, type TranscriptScroll } from '../transcriptScroll';
 import type { ReadAloud } from './useReadAloud';
 
 export type TranscriptEntry = SessionSnapshot['transcript'][number];
 
-const followSlack = 24;
 
 const statusLabel: Record<TranscriptEntry['status'], string | null> = {
   complete: null,
@@ -70,6 +70,10 @@ export function Transcript({
   sessionKey,
   speech,
   deleting = false,
+  loaded = true,
+  contextKey = sessionKey,
+  promptFocus = null,
+  onPromptFocused,
 }: {
   entries: readonly TranscriptEntry[];
   characters: ReadonlyArray<{ id: string; appearance: CharacterAppearance }>;
@@ -78,24 +82,24 @@ export function Transcript({
   sessionKey: string;
   speech?: ReadAloud;
   deleting?: boolean;
+  loaded?: boolean;
+  contextKey?: string;
+  promptFocus?: PromptFocus | null;
+  onPromptFocused?(marker: PromptFocus): void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const following = useRef(true);
-  const seenSession = useRef(sessionKey);
-  if (seenSession.current !== sessionKey) {
-    seenSession.current = sessionKey;
-    following.current = true;
-  }
-
+  const observation = useRef<TranscriptScroll | null>(null);
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (!node || !following.current) return;
-    node.scrollTop = node.scrollHeight;
-  }, [entries, layoutKey, sessionKey]);
+    if (!node || !loaded) return;
+    const next = scrollTranscript(node, observation.current, contextKey, entries, layoutKey,
+      speech?.automatic ?? false, promptFocus);
+    observation.current = next;
+    if (promptFocus && next.consumed === promptFocus) onPromptFocused?.(promptFocus);
+  });
 
   function notePosition(event: UIEvent<HTMLDivElement>) {
-    const node = event.currentTarget;
-    following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= followSlack;
+    if (observation.current) observation.current.following = isFollowing(event.currentTarget);
   }
 
   // Multicast stores a copy of the prompt for each character. Match the desktop
@@ -132,11 +136,12 @@ export function Transcript({
         return (
           <article
             className={`chaweb-entry is-${entry.kind}`}
+            data-entry-id={entry.id}
             data-status={entry.status}
             key={entry.id}
           >
             {entry.display_name && <div className="chaweb-speaker">{entry.display_name}</div>}
-            <div className={`chaweb-entry-text${voiceClasses(appearance)}`}>
+            <div data-message-body className={`chaweb-entry-text${voiceClasses(appearance)}`}>
               <Markdown source={entry.text} />
             </div>
             {label && <div className="chaweb-entry-status">{label}</div>}

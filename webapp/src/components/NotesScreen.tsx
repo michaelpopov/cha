@@ -1,3 +1,4 @@
+import type { NoteImportSource } from '../notes/importSource';
 import { useNoteAudio } from '../notes/useNoteAudio';
 import { ChaError } from '../api/client';
 import { sortAnnotationGroups, type AnnotationDestination } from '../notes/annotationSource';
@@ -448,17 +449,6 @@ function FormatBar({
           open={formatMenu === 'font'}
         >
           <button
-            disabled={fontSize <= 10}
-            onClick={() => {
-              setFormatMenu(null);
-              changeFontSize(Math.max(10, fontSize - 2));
-            }}
-            role="menuitem"
-            type="button"
-          >
-            Decrease font size
-          </button>
-          <button
             disabled={fontSize >= 30}
             onClick={() => {
               setFormatMenu(null);
@@ -468,6 +458,17 @@ function FormatBar({
             type="button"
           >
             Increase font size
+          </button>
+          <button
+            disabled={fontSize <= 10}
+            onClick={() => {
+              setFormatMenu(null);
+              changeFontSize(Math.max(10, fontSize - 2));
+            }}
+            role="menuitem"
+            type="button"
+          >
+            Decrease font size
           </button>
         </ToolbarMenu>
       </div>
@@ -837,6 +838,7 @@ export function NotesScreen({
   notesEpoch,
   noteRequest,
   destination,
+  importSource,
   activeNoteId,
   noteItems,
   noteActions = null,
@@ -856,6 +858,7 @@ export function NotesScreen({
   notesEpoch: number;
   noteRequest: number;
   destination?: AnnotationDestination;
+  importSource?: NoteImportSource;
   activeNoteId: number | null;
   noteItems: readonly NoteItem[];
   noteActions?: NoteActions | null;
@@ -877,7 +880,7 @@ export function NotesScreen({
   const [playbackSpeed, setPlaybackSpeed] = useState(10);
   const [openError, setOpenError] = useState<string | null>(null);
   const [promptError, setPromptError] = useState<string | null>(null);
-  const [importingFile, setImportingFile] = useState(false);
+  const [importing, setImporting] = useState<string | null>(null);
   const [promptPending, setPromptPending] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -903,6 +906,7 @@ export function NotesScreen({
   const [matchCase, setMatchCase] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
   const [useRegex, setUseRegex] = useState(false);
+  const handledImportRequest = useRef<string | null>(null);
   const cancelNoteLoadRef = useRef<() => void>(() => undefined);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; position: number } | null>(null);
@@ -956,6 +960,8 @@ export function NotesScreen({
 
   useEffect(() => {
     setCommandError(null);
+    setImporting(null);
+    setPromptError(null);
     if (activeNoteId === null) {
       setPhase('empty');
       setOpenError(null);
@@ -1110,6 +1116,27 @@ export function NotesScreen({
   }, [activeNoteId]);
 
   useEffect(() => {
+    if (!importSource || phase !== 'ready' || !editing || !editor || activeNoteId === null
+        || save.frozen || importing !== null || !sameEditorContext(editor, activeNoteId, notesEpoch)) return;
+    const request = `${notesEpoch}:${noteRequest}`;
+    if (handledImportRequest.current === request) return;
+    // Consume the opening even if it already has content; later edits must not retry it.
+    handledImportRequest.current = request;
+    if (editor.isEmpty) {
+      if (importSource.kind === 'page') void loadNotePage(importSource.url);
+      else {
+        const current = editor;
+        const noteId = activeNoteId;
+        const epoch = notesEpoch;
+        void loadNoteFile(importSource.path).then(result => {
+          if (result === null && sameEditorContext(current, noteId, epoch))
+            setPromptError('The file could not be loaded. Check the path and permissions.');
+        });
+      }
+    }
+  }, [importSource, phase, editing, editor, activeNoteId, notesEpoch, noteRequest, save.frozen, importing]);
+
+  useEffect(() => {
     if (!findOpen) return;
     findInputRef.current?.focus();
   }, [findOpen]);
@@ -1250,12 +1277,15 @@ export function NotesScreen({
     focusNotesEditor(current);
   }
 
-  function sameEditorContext(current: Editor, noteId: number, epoch: number): boolean {
+  function sameEditorIdentity(current: Editor, noteId: number, epoch: number): boolean {
     return editorRef.current === current
       && noteIdRef.current === noteId
       && epochRef.current === epoch
-      && !current.isDestroyed
-      && current.isEditable;
+      && !current.isDestroyed;
+  }
+
+  function sameEditorContext(current: Editor, noteId: number, epoch: number): boolean {
+    return sameEditorIdentity(current, noteId, epoch) && current.isEditable;
   }
 
   function onPicture(file: File) {
@@ -1276,7 +1306,7 @@ export function NotesScreen({
     try {
       const name = availableNoteName(itemsRef.current, note.parent_id, title, note.id);
       const renamed = await client.renameNoteItem(note.id, name);
-      noteActions?.updated(renamed);
+      if (stillCurrent()) noteActions?.updated(renamed);
     } catch (failure: unknown) {
       if (stillCurrent()) {
         setPromptError(`The ${source} was imported, but the note could not be renamed. `
@@ -1290,8 +1320,10 @@ export function NotesScreen({
     const epoch = epochRef.current;
     const sameNote = () => editorRef.current === current
       && noteIdRef.current === noteId && epochRef.current === epoch;
+    setImporting('Saving note…');
     try {
-      noteActions?.updated(await onSetNoteReadOnly(noteId, true));
+      const locked = await onSetNoteReadOnly(noteId, true);
+      if (sameNote()) noteActions?.updated(locked);
     } catch (failure: unknown) {
       if (sameNote()) {
         setPromptError('The content was imported, but the note could not be made read-only. '
@@ -1305,9 +1337,9 @@ export function NotesScreen({
     const current = editorRef.current;
     const noteId = noteIdRef.current;
     const epoch = epochRef.current;
-    if (!current || noteId === null || !sameEditorContext(current, noteId, epoch)) return false;
+    if (importing !== null || !current || noteId === null || !sameEditorContext(current, noteId, epoch)) return false;
     const stillCurrent = () => sameEditorContext(current, noteId, epoch);
-    setImportingFile(true);
+    setImporting('Retrieving content…');
     setPromptError(null);
     try {
       let source;
@@ -1325,8 +1357,12 @@ export function NotesScreen({
       // A prompt can start with a path and still be ordinary text.
       if (!source) return null;
       const { html, title, preserveWhitespace } = noteFileHtml(source);
+      setImporting('');
       const accepted = await replaceNoteHtml(current, html,
-        (url) => client.readNotePicture(url), stillCurrent, preserveWhitespace);
+        (url) => {
+          if (stillCurrent()) setImporting('Loading pictures…');
+          return client.readNotePicture(url);
+        }, stillCurrent, preserveWhitespace);
       if (!accepted || !stillCurrent()) return false;
       const note = itemsRef.current.find((item) => item.id === noteId);
       if (title && note && defaultNoteName.test(note.name)) {
@@ -1338,7 +1374,46 @@ export function NotesScreen({
       if (stillCurrent()) setPromptError(publicErrorMessage(failure, 'The file could not be loaded. Try again.'));
       return false;
     } finally {
-      setImportingFile(false);
+      if (sameEditorIdentity(current, noteId, epoch)) setImporting(null);
+    }
+  }
+
+  async function loadNotePage(url: string): Promise<{ clear_input: boolean }> {
+    const current = editorRef.current;
+    const noteId = noteIdRef.current;
+    const epoch = epochRef.current;
+    if (importing !== null || !current || noteId === null || !sameEditorContext(current, noteId, epoch)) {
+      return { clear_input: false };
+    }
+    const stillCurrent = () => sameEditorContext(current, noteId, epoch);
+    setImporting('Retrieving content…');
+    setPromptError(null);
+    try {
+      const page = await client.readNotePage(url, stage => {
+        if (stillCurrent()) setImporting(stage === 'formatting_transcript' ? 'Formatting transcript…' : 'Formatting article…');
+      });
+      if (!stillCurrent()) return { clear_input: false };
+      setImporting('');
+      const title = notePageName(page.title);
+      const note = itemsRef.current.find((item) => item.id === noteId);
+      const wasEmpty = current.isEmpty;
+      const rename = wasEmpty && defaultNoteName.test(note?.name ?? '');
+      const accepted = await appendNoteHtml(current, notePageHtml(page),
+        (url) => {
+          if (stillCurrent()) setImporting('Loading pictures…');
+          return client.readNotePicture(url);
+        }, stillCurrent);
+      if (!accepted || !stillCurrent()) return { clear_input: false };
+      if (rename && title && note) await renameImportedNote(note, title, 'page', stillCurrent);
+      if (!stillCurrent()) return { clear_input: false };
+      return { clear_input: wasEmpty ? await lockImportedNote(noteId) : true };
+    } catch (failure: unknown) {
+      if (stillCurrent()) {
+        setPromptError(publicErrorMessage(failure, 'Could not retrieve the web page. Try again.'));
+      }
+      return { clear_input: false };
+    } finally {
+      if (sameEditorIdentity(current, noteId, epoch)) setImporting(null);
     }
   }
 
@@ -1397,7 +1472,7 @@ export function NotesScreen({
     && editor !== null
     && !editor.isDestroyed
     && editor.isEditable
-    && !importingFile
+    && importing === null
     && !save.frozen;
 
   return (
@@ -1464,7 +1539,7 @@ export function NotesScreen({
                 className="cha-button"
                 onClick={() => {
                   if (activeNoteId === null) return;
-                  navigate({ type: 'open-note', noteId: activeNoteId, destination });
+                  navigate({ type: 'open-note', noteId: activeNoteId, destination, importSource });
                 }}
                 type="button"
               >
@@ -1479,6 +1554,13 @@ export function NotesScreen({
         <div className="cha-notes-status" role="alert">
           <p>Could not save “{name}”. {failure}</p>
           <button className="cha-button" onClick={() => save.submitNow()} type="button">Retry</button>
+        </div>
+      )}
+      {importing !== null && (
+        <div className="cha-notes-status cha-notes-import-status" role="status">
+          <span aria-hidden="true" className="cha-notes-import-spinner" />
+          Loading content…
+          {importing && <span>{importing}</span>}
         </div>
       )}
       {promptError && (
@@ -1510,7 +1592,7 @@ export function NotesScreen({
           const current = editorRef.current;
           const noteId = noteIdRef.current;
           const epoch = epochRef.current;
-          if (!current || current.isDestroyed || !current.isEditable || noteId === null) {
+          if (importing !== null || !current || current.isDestroyed || !current.isEditable || noteId === null) {
             return { clear_input: false };
           }
           const filePath = promptFilePath(text);
@@ -1520,33 +1602,8 @@ export function NotesScreen({
             if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
           }
           const url = promptPageUrl(text);
-          let accepted: boolean;
-          if (url) {
-            try {
-              const page = await client.readNotePage(url);
-              if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
-              const title = notePageName(page.title);
-              const note = itemsRef.current.find((item) => item.id === noteId);
-              const wasEmpty = current.isEmpty;
-              const rename = wasEmpty && defaultNoteName.test(note?.name ?? '');
-              accepted = await appendNoteHtml(current, notePageHtml(page),
-                (url) => client.readNotePicture(url), () => sameEditorContext(current, noteId, epoch));
-              if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
-              if (accepted && rename && title && note) {
-                await renameImportedNote(note, title, 'page', () => sameEditorContext(current, noteId, epoch));
-              }
-              if (accepted && wasEmpty && sameEditorContext(current, noteId, epoch)) {
-                return { clear_input: await lockImportedNote(noteId) };
-              }
-            } catch (failure: unknown) {
-              if (sameEditorContext(current, noteId, epoch)) {
-                setPromptError(publicErrorMessage(failure, 'Could not retrieve the web page. Try again.'));
-              }
-              return { clear_input: false };
-            }
-          } else {
-            accepted = insertPromptParagraph(current, text);
-          }
+          if (url) return loadNotePage(url);
+          const accepted = insertPromptParagraph(current, text);
           if (
             !accepted
             || editorRef.current !== current

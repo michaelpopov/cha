@@ -26,6 +26,42 @@ const methodPolicies = loadFixture('native-method-policies.json') as Record<stri
 }>;
 
 describe('native bridge', () => {
+  it('delivers page progress only to its pending request in the current connection and vault', async () => {
+    const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post: () => {} });
+    bridge.setContextEpoch(7);
+    const firstProgress = vi.fn();
+    const secondProgress = vi.fn();
+    const otherProgress = vi.fn();
+    const first = bridge.invoke('notes.readPage', {}, { onProgress: firstProgress });
+    const second = bridge.invoke('notes.readPage', {}, { onProgress: secondProgress });
+    const other = bridge.invoke('notes.get', {}, { onProgress: otherProgress });
+    const progress = { connection_id: 'current', context_epoch: 7, event: 'notes.pageProgress',
+      request_id: 1, stage: 'formatting_article' };
+    bridge.receive({ connection_id: 'current', delivery_id: 1, messages: [
+      { ...progress, connection_id: 'old' }, { ...progress, context_epoch: 6 },
+      { ...progress, request_id: 99 }, { ...progress, request_id: 3 }, progress,
+      { ...progress, request_id: 2, stage: 'formatting_transcript' },
+    ] });
+    expect(firstProgress).toHaveBeenCalledExactlyOnceWith('formatting_article');
+    expect(secondProgress).toHaveBeenCalledExactlyOnceWith('formatting_transcript');
+    expect(otherProgress).not.toHaveBeenCalled();
+    bridge.receive({ connection_id: 'current', delivery_id: 2, messages: [
+      { connection_id: 'current', context_epoch: 7, id: 1, ok: true, result: {} }, progress,
+    ] });
+    await first;
+    expect(firstProgress).toHaveBeenCalledOnce();
+    const secondFailure = expect(second).rejects.toMatchObject({ code: 'vault_changed' });
+    const otherFailure = expect(other).rejects.toMatchObject({ code: 'vault_changed' });
+    bridge.setContextEpoch(8);
+    bridge.receive({ connection_id: 'current', delivery_id: 3, messages: [
+      { ...progress, request_id: 2 }, { ...progress, request_id: 2, context_epoch: 8 },
+    ] });
+    await Promise.all([secondFailure, otherFailure]);
+    expect(secondProgress).toHaveBeenCalledOnce();
+    bridge.dispose();
+  });
+
+
   it('applies the shared reply epoch requirement for every method', async () => {
     for (const [method, policy] of Object.entries(methodPolicies)) {
       const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post: () => {} });
