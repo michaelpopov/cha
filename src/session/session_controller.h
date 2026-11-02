@@ -147,7 +147,6 @@ public:
         SubmissionOutcome outcome;
         ControllerUpdate update;
         std::optional<CharacterId> persist_default_character_id;
-        bool save_summary{};
     };
     std::optional<SubmissionResult> take_submission_result();
 
@@ -217,8 +216,7 @@ private:
         std::string text,
         std::vector<CharacterMetadata> targets,
         SharedModelHistory history,
-        ControllerUpdate& update,
-        ResearchNeeds research_needs = {});
+        ControllerUpdate& update);
     void materialize_note_references(
         std::span<const FileReference> references,
         std::string_view owner,
@@ -233,8 +231,7 @@ private:
     [[nodiscard]] ControllerUpdate start_resolved_multicast(
         std::string_view author_id,
         std::string text,
-        std::vector<CharacterMetadata> targets,
-        ResearchNeeds research_needs = {});
+        std::vector<CharacterMetadata> targets);
     void activate_run(const RunSpec& run, std::size_t foreground_index,
                       ControllerUpdate& update);
     void finish_generation_run(ControllerUpdate& update);
@@ -257,8 +254,7 @@ private:
     TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;
 
-    ControllerUpdate dispatch_target(std::string_view author, std::string text, std::string_view target,
-        ResearchNeeds research_needs = {});
+    ControllerUpdate dispatch_target(std::string_view author, std::string text, std::string_view target);
     [[nodiscard]] std::vector<CharacterMetadata> forum_characters(const Workspace& current) const;
     ControllerUpdate start_classification(std::string_view author, std::string text,
         std::shared_ptr<SubmissionState> submission);

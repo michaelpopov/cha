@@ -32,8 +32,7 @@ edits the shared guide for every character.
   Google (Gemini), or Anthropic), and credentials.
 - API Keys: saved keys that providers and services select.
 - Session settings: the provider and effort for session naming, and recipient
-  detection. Recipient detection selects who answers an unaddressed message and
-  also detects a request to save the conversation.
+  detection. Recipient detection selects who answers an unaddressed message.
 - Notes settings: the provider and effort for note compression, web page and
   YouTube import, and saved summaries; the audio service URL and key for note
   audio on desktop.

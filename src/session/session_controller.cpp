@@ -681,8 +681,7 @@ ControllerUpdate SessionController::submit_prompt(
 }
 
 ControllerUpdate SessionController::dispatch_target(
-    std::string_view author, std::string text, std::string_view target_id,
-    ResearchNeeds research_needs) {
+    std::string_view author, std::string text, std::string_view target_id) {
     if (target_id == null_agent_handle) {
         ControllerUpdate update;
         record_monologue(author, std::move(text), update);
@@ -690,11 +689,11 @@ ControllerUpdate SessionController::dispatch_target(
     }
     const auto current = workspace();
     if (target_id == all_characters_target) {
-        return start_resolved_multicast(author, std::move(text), forum_characters(*current), research_needs);
+        return start_resolved_multicast(author, std::move(text), forum_characters(*current));
     }
     const auto* target = current->find_forum_character(identity_.forum_id, target_id);
     if (!target) return {.notice = "The selected recipient is no longer in this forum. Choose a target and send again."};
-    return start_resolved_multicast(author, std::move(text), {*target}, research_needs);
+    return start_resolved_multicast(author, std::move(text), {*target});
 }
 
 std::vector<CharacterMetadata> SessionController::forum_characters(const Workspace& current) const {
@@ -727,7 +726,7 @@ ControllerUpdate SessionController::start_classification(
     log_debug("Jev classification started: forum_id=" + identity_.forum_id
         + " session_id=" + identity_.session_id);
     auto request = providers_.make_jev_request(
-        {*current->jev(), text, options, deadline, jev_previous_turn(transcript_.view())}, notifier_);
+        {*current->jev(), text, options, deadline}, notifier_);
     pending_classification_ = PendingClassification{
         std::string(author), std::move(text), default_character_id_,
         std::move(options), std::move(submission),
@@ -793,13 +792,7 @@ ControllerUpdate SessionController::finish_classification() {
     log_debug("Jev classification finished: forum_id=" + identity_.forum_id
         + " session_id=" + identity_.session_id
         + " success=" + (result.outcome == JevOutcome::success ? "true" : "false"));
-    log_debug("Jev research decisions: search=" + std::string(result.research_needs.search ? "true" : "false")
-        + " page_read=" + (result.research_needs.page_read ? "true" : "false")
-        + " actual_data=" + (result.research_needs.actual_data ? "true" : "false"));
     log_debug_payload("Jev recipient decision", result.choice);
-    log_debug(std::string("Jev conversation save decision: ")
-        + (result.conversation_save == JevConversationSave::save_only ? "save_only"
-            : result.conversation_save == JevConversationSave::save_and_reply ? "save_and_reply" : "no"));
     log_debug_payload("Jev classification diagnostic", result.message);
     std::string target = input.fallback;
     bool failed = result.outcome == JevOutcome::failure;
@@ -819,32 +812,10 @@ ControllerUpdate SessionController::finish_classification() {
         return update;
     }
     if (failed) log_warn("Recipient detection failed; using captured fallback target: " + result.message);
-    // Welcome has no Notes folder for a summary.
-    const bool welcome = identity_.forum_id == workspace_entrance_id && identity_.session_id == welcome_id;
-    const bool save_summary = !failed && !welcome && result.conversation_save != JevConversationSave::none;
-    if (save_summary && result.conversation_save == JevConversationSave::save_only) {
-        record_monologue(input.author, std::move(input.text), update);
-        save_name_after_acceptance();
-        submission_result_ = SubmissionResult{
-            update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed,
-            update, {}, update.input_consumed};
-        if (!update.input_consumed) update.notice.reset();
-        return update;
-    }
-    // A question accompanying a save request still needs a character reply.
-    // A self-note decision keeps the active target, and a self-note target
-    // uses the forum default character.
-    if (save_summary && self_note) {
-        result.choice = "undefined";
-        target = input.fallback;
-    }
-    if (save_summary && target == null_agent_handle) {
-        target = workspace()->find_forum(identity_.forum_id)->default_character_id;
-    }
     // One owner-thread handoff: no idle publication and no classifier re-entry.
     const auto previous_target = default_character_id_;
     if (!failed && result.choice != "undefined") default_character_id_ = target;
-    auto dispatched = dispatch_target(input.author, std::move(input.text), target, result.research_needs);
+    auto dispatched = dispatch_target(input.author, std::move(input.text), target);
     if (dispatched.input_consumed) {
         if (failed) {
             std::string notice;
@@ -865,8 +836,7 @@ ControllerUpdate SessionController::finish_classification() {
     merge(update, std::move(dispatched));
     save_name_after_acceptance();
     submission_result_ = SubmissionResult{
-        update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed,
-        update, {}, update.input_consumed && save_summary};
+        update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed, update};
     if (update.input_consumed && !failed && result.choice != "undefined"
         && target != all_characters_target && target != null_agent_handle) {
         submission_result_->persist_default_character_id = target;
@@ -1124,8 +1094,7 @@ void SessionController::start_generation(
     std::string text,
     std::vector<CharacterMetadata> targets,
     SharedModelHistory history,
-    ControllerUpdate& update,
-    ResearchNeeds research_needs) {
+    ControllerUpdate& update) {
     if (!history || targets.empty()) {
         throw std::invalid_argument(
             "Generation requires history and at least one target");
@@ -1223,7 +1192,6 @@ void SessionController::start_generation(
                     .created_at = unix_now(),
                 },
                 .summary_tool = summaries ? summary_tool_ : SummaryTool{},
-                .research_needs = research_needs,
                 .folder_search = std::move(folder_search),
                 .folder_search_context = std::move(folder_context),
             },
@@ -1500,8 +1468,7 @@ ControllerUpdate SessionController::start_multicast(
 ControllerUpdate SessionController::start_resolved_multicast(
     std::string_view author_id,
     std::string text,
-    std::vector<CharacterMetadata> targets,
-    ResearchNeeds research_needs) {
+    std::vector<CharacterMetadata> targets) {
     if (trim_view(text).empty()) {
         return {.notice = "Multicast prompt is empty"};
     }
@@ -1524,8 +1491,7 @@ ControllerUpdate SessionController::start_resolved_multicast(
         std::move(text),
         std::move(targets),
         std::move(history),
-        update,
-        research_needs);
+        update);
     return update;
 }
 

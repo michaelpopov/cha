@@ -8,9 +8,7 @@
 #include "support/test_notifier.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
-#include "support/test_transcript.h"
 #include "util/logging.h"
-#include "workspace/builtins.h"
 #include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
@@ -28,32 +26,14 @@ JevRequestInput jev_input() {
     return input;
 }
 
-TEST(JevProtocol, SendsPromptContextAndQuestionsAndValidatesExactChoice) {
+TEST(JevProtocol, SendsOnlyPromptAndOptionsAndValidatesExactChoice) {
     auto input = jev_input();
     const auto body = make_jev_body(input);
     EXPECT_EQ(body["model"], "typesafe/jev-1.13");
-    EXPECT_EQ(body["state"].size(), 2u);
-    EXPECT_TRUE(body["state"]["previous_turn"].is_null());
+    EXPECT_EQ(body["state"].size(), 1u);
     EXPECT_EQ(body["state"]["prompt"], input.prompt);
     EXPECT_EQ(body["questions"]["recipient"]["criteria"].size(), 5u);
-    EXPECT_EQ(body["questions"].size(), 5u);
-    const auto serialized = nlohmann::ordered_json::parse(body.dump());
-    std::vector<std::string> names;
-    for (const auto& [name, question] : serialized["questions"].items()) {
-        names.push_back(name);
-        if (name == "recipient") continue;
-        EXPECT_EQ(question["type"], "choice");
-        std::vector<std::string> choices;
-        for (const auto& [choice, criterion] : question["criteria"].items()) {
-            choices.push_back(choice);
-            EXPECT_TRUE(criterion.is_string());
-        }
-        if (name == "save_conversation") {
-            EXPECT_EQ(choices, (std::vector<std::string>{"no", "save_only", "save_and_reply"}));
-        } else EXPECT_EQ(choices, (std::vector<std::string>{"yes", "no"}));
-    }
-    EXPECT_EQ(names, (std::vector<std::string>{"recipient", "search_required",
-        "page_read_required", "actual_data_required", "save_conversation"}));
+    EXPECT_EQ(body["questions"].size(), 1u);
     EXPECT_FALSE(body["questions"].contains("web_search"));
     const auto response = [](std::string recipient) {
         return nlohmann::json{{"answers", {
@@ -264,7 +244,6 @@ protected:
         searched.emplace_back(query);
         return search_context;
     }
-    std::vector<GenerationRequest> generation_inputs;
     JevResult decision{JevOutcome::success, "undefined"};
     std::shared_ptr<Providers> providers;
     std::unique_ptr<SessionController> controller;
@@ -1148,7 +1127,7 @@ TEST_F(JevRouting, ConfiguredWebToolsDoNotRetrieveBeforeOrWithoutAModelCall) {
     (void)send(prompt);
     finish();
     ASSERT_EQ(classified.size(), 1u);
-    EXPECT_EQ(make_jev_body(classified.front())["questions"].size(), 5u);
+    EXPECT_EQ(make_jev_body(classified.front())["questions"].size(), 1u);
     ASSERT_EQ(requests.size(), 1u);
     EXPECT_EQ(requests.front().run.prompt_text, prompt);
     EXPECT_EQ(called_providers, (std::vector<std::string>{"test"}));
@@ -1301,102 +1280,6 @@ TEST_F(JevRouting, FailedClassificationKeepsTheNotesTarget) {
     EXPECT_FALSE(controller->is_generating());
     EXPECT_TRUE(workers.empty());
     EXPECT_TRUE(called_providers.empty());
-}
-
-TEST_F(JevRouting, ConversationSaveOnlyRecordsPromptWithoutChangingTheTargetOrReplying) {
-    for (const auto* target : {"guide", "marcus", "*", "-"}) {
-        (void)controller->set_default_character_by_id(target);
-        decision = {JevOutcome::success, "undefined", {}, {}, JevConversationSave::save_only};
-        (void)send("Save this conversation for later review.");
-        run_workers();
-        (void)controller->receive_events(100);
-        const auto result = controller->take_submission_result();
-        ASSERT_TRUE(result);
-        EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
-        EXPECT_TRUE(result->save_summary);
-        EXPECT_FALSE(result->persist_default_character_id);
-        EXPECT_EQ(controller->view().default_character_id, target);
-        EXPECT_FALSE(controller->is_generating());
-        EXPECT_TRUE(workers.empty());
-        EXPECT_TRUE(called_providers.empty());
-        EXPECT_EQ(load_session_state(journal.path()).entries.back().text,
-            "Save this conversation for later review.");
-    }
-}
-
-TEST_F(JevRouting, ConversationSaveWithAQuestionAlsoStartsTheNormalReply) {
-    for (const auto* choice : {"undefined", "self_note"}) {
-        for (const auto* target : {"guide", "marcus", "*", "-"}) {
-            (void)controller->set_default_character_by_id(target);
-            decision = {JevOutcome::success, choice, {}, {}, JevConversationSave::save_and_reply};
-            (void)send("Save this conversation. Why did you recommend that?");
-            run_workers();
-            (void)controller->receive_events(100);
-            const auto result = controller->take_submission_result();
-            ASSERT_TRUE(result);
-            EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
-            EXPECT_TRUE(result->save_summary);
-            EXPECT_FALSE(result->persist_default_character_id);
-            EXPECT_TRUE(controller->is_generating());
-            EXPECT_EQ(workers.size(), std::string_view(target) == "*" ? 2u : 1u);
-            EXPECT_EQ(controller->view().default_character_id, target);
-            finish();
-        }
-    }
-}
-
-TEST_F(JevRouting, WelcomeDoesNotRequestAConversationSave) {
-    const FullSessionId welcome{std::string(workspace_entrance_id), std::string(welcome_id)};
-    test::TemporarySessionFile welcome_journal{"jev_welcome", welcome};
-    controller = SessionController::from_workspace_for_testing(
-        [this] { return store->snapshot(); }, std::string(workspace_assistant_id), "reader",
-        welcome_journal.path(), providers, notifier, {}, {}, welcome);
-    (void)controller->set_default_character_by_id("-");
-    decision = {JevOutcome::success, "undefined", {}, {}, JevConversationSave::save_only};
-    (void)send("Save this conversation.");
-    run_workers();
-    (void)controller->receive_events(100);
-    const auto result = controller->take_submission_result();
-    ASSERT_TRUE(result);
-    EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
-    EXPECT_FALSE(result->save_summary);
-    controller.reset();
-}
-
-TEST_F(JevRouting, UncertainOrFailedClassificationDoesNotRequestAConversationSave) {
-    for (const auto outcome : {JevOutcome::success, JevOutcome::failure}) {
-        decision = {outcome, "undefined", {}, {}, outcome == JevOutcome::failure
-            ? JevConversationSave::save_only : JevConversationSave::none};
-        (void)send("That was interesting. Let's discuss it later.");
-        run_workers();
-        (void)controller->receive_events(100);
-        const auto result = controller->take_submission_result();
-        ASSERT_TRUE(result);
-        EXPECT_FALSE(result->save_summary);
-        EXPECT_TRUE(controller->is_generating());
-        finish();
-    }
-}
-
-TEST_F(JevRouting, RuntimeReturnsTheSaveRequestAfterPersistingThePrompt) {
-    use_runtime_providers({JevOutcome::success, "undefined", {}, {}, JevConversationSave::save_only});
-    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
-        return OpenedSession{.label = "Original", .controller = make_controller(wake)};
-    });
-    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open({"lobby", "session"}, 2s)));
-    const auto session = manager.lookup({"lobby", "session"});
-    const auto reply = session->submit(RawCommand{"Save this conversation."}, 2s);
-    ASSERT_TRUE(std::holds_alternative<CommandResult>(reply));
-    const auto& result = std::get<CommandResult>(reply);
-    EXPECT_TRUE(result.clear_input);
-    EXPECT_TRUE(result.save_summary);
-    EXPECT_EQ(nlohmann::json(result).at("save_summary"), true);
-    const auto stored = load_session_state(journal.path());
-    ASSERT_EQ(stored.entries.size(), 1u);
-    EXPECT_EQ(stored.entries.front().text, "Save this conversation.");
-    const auto snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
-    EXPECT_FALSE(snapshot.generation.active);
-    EXPECT_EQ(snapshot.default_character_id, "guide");
 }
 
 TEST_F(JevRouting, RuntimeAcceptsSelfNotesWithoutSavingADefaultCharacter) {
@@ -1801,7 +1684,7 @@ TEST_F(JevRouting, RuntimeDefersReplyAndStopSettlesItWithoutPersistingMarkers) {
     auto released = release.get_future().share();
     providers = std::make_shared<Providers>(ProviderClientFactory{}, ProviderThreadLauncher{},
         [&](const auto&, const auto&) { started.set_value(); released.wait();
-            return JevResult{JevOutcome::success, "all_characters", {}, {}, JevConversationSave::save_only}; });
+            return JevResult{JevOutcome::success, "all_characters"}; });
     int saved = 0;
     LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
         return OpenedSession{.label = "Original", .controller = make_controller(wake),
@@ -1826,7 +1709,6 @@ TEST_F(JevRouting, RuntimeDefersReplyAndStopSettlesItWithoutPersistingMarkers) {
     auto completed = reply->wait_for(2s);
     ASSERT_TRUE(completed);
     EXPECT_FALSE(std::get<CommandResult>(*completed).clear_input);
-    EXPECT_FALSE(std::get<CommandResult>(*completed).save_summary);
     release.set_value();
     providers->shutdown();
     snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
@@ -1867,207 +1749,6 @@ TEST_F(JevRouting, NavigationKeepsPendingSessionAndCompletionWakesOwnerExactlyOn
     EXPECT_EQ(std::count_if(restored.entries.begin(), restored.entries.end(), [](const auto& entry) {
         return entry.kind == EntryKind::human && entry.text == "Original prompt" && entry.addressed_to == "marcus";
     }), 1);
-}
-
-
-TEST(JevProtocol, ParsesConversationSaveDecisionsAndDefaultsToNoSave) {
-    auto response = nlohmann::json::parse(R"({"answers":{
-        "recipient":{"type":"choice","choice":"undefined"},
-        "save_conversation":{"type":"choice","choice":"save_only"}}})");
-    EXPECT_EQ(parse_jev_result(response, jev_input()).conversation_save, JevConversationSave::save_only);
-    response["answers"]["save_conversation"]["choice"] = "save_and_reply";
-    EXPECT_EQ(parse_jev_result(response, jev_input()).conversation_save, JevConversationSave::save_and_reply);
-    for (const auto& answer : {nlohmann::json(nullptr), nlohmann::json::object(),
-        nlohmann::json{{"type", "text"}, {"choice", "save_only"}},
-        nlohmann::json{{"type", "choice"}, {"choice", true}},
-        nlohmann::json{{"type", "choice"}, {"choice", "yes"}},
-        nlohmann::json{{"type", "choice"}, {"choice", "save_only "}},
-        nlohmann::json{{"type", "choice"}, {"choice", "no"}}}) {
-        response["answers"]["save_conversation"] = answer;
-        const auto result = parse_jev_result(response, jev_input());
-        EXPECT_EQ(result.outcome, JevOutcome::success);
-        EXPECT_EQ(result.conversation_save, JevConversationSave::none);
-    }
-    response["answers"].erase("save_conversation");
-    EXPECT_EQ(parse_jev_result(response, jev_input()).conversation_save, JevConversationSave::none);
-}
-
-TEST(JevProtocol, ParsesResearchAnswersIndependentlyAndLogsInvalidDecisions) {
-    test::TestWorkspace fixture;
-    const auto path = fixture.root() / "decisions.log";
-    initialize_diagnostic_logging(path, "warn");
-    auto response = nlohmann::json::parse(R"({"answers":{
-        "recipient":{"type":"choice","choice":"character_2"},
-        "search_required":{"type":"choice","choice":"yes"},
-        "page_read_required":{"type":"choice","choice":"yes"},
-        "actual_data_required":{"type":"choice","choice":"yes"}}})");
-    const auto check = [&](bool search, bool read, bool data, JevOutcome outcome) {
-        const auto result = parse_jev_result(response, jev_input());
-        EXPECT_EQ(result.outcome, outcome);
-        if (outcome == JevOutcome::success) EXPECT_EQ(result.choice, "character_2");
-        EXPECT_EQ(result.research_needs.search, search);
-        EXPECT_EQ(result.research_needs.page_read, read);
-        EXPECT_EQ(result.research_needs.actual_data, data);
-    };
-    check(true, true, true, JevOutcome::success);
-    response["answers"]["search_required"]["choice"] = "no";
-    check(false, true, true, JevOutcome::success);
-    for (const auto& answer : {nlohmann::json(nullptr), nlohmann::json::object(),
-        nlohmann::json{{"type", "noul"}, {"choice", "yes"}},
-        nlohmann::json{{"type", "choice"}, {"choice", true}},
-        nlohmann::json{{"type", "choice"}, {"choice", "Yes"}}}) {
-        response["answers"]["page_read_required"] = answer;
-        check(false, false, true, JevOutcome::success);
-    }
-    response["answers"].erase("search_required");
-    response["answers"]["recipient"]["choice"] = "invalid";
-    check(false, false, true, JevOutcome::failure);
-    response = nullptr;
-    check(false, false, false, JevOutcome::failure);
-    shutdown_diagnostic_logging();
-    std::ifstream file(path);
-    const std::string log{std::istreambuf_iterator<char>(file), {}};
-    for (const auto* name : {"search_required", "page_read_required", "actual_data_required"})
-        EXPECT_NE(log.find(std::string("Invalid or missing Jev research decision: ") + name), std::string::npos);
-}
-
-TEST(JevContext, SelectsLastUncoveredHumanAndCompletedNonemptyReplies) {
-    std::vector<TranscriptEntry> entries{
-        test::human_entry(1, {"user", "User"}, {"a", "A"}, "Older"),
-        make_character_entry(2, "a", "A", "Older answer", EntryStatus::complete),
-        test::human_entry(3, {"user", "User"}, {"*", "All"}, "Compare"),
-        make_character_entry(4, "a", "A", "First", EntryStatus::complete),
-        make_character_entry(5, "b", "B", "Second", EntryStatus::complete),
-        make_character_entry(6, "a", "A", "Partial", EntryStatus::failed),
-        make_character_entry(7, "b", "B", "Stopped", EntryStatus::cancelled),
-        make_character_entry(8, "a", "A", "", EntryStatus::complete),
-        make_notice_entry(9, "Notice"), make_error_entry(10, "Error"),
-        make_character_entry(11, "a", "A", "Open", EntryStatus::complete),
-    };
-    TranscriptView view{.entries = entries, .open_entry_id = 11, .covered_until = 3};
-    const auto turn = jev_previous_turn(view);
-    ASSERT_TRUE(turn);
-    EXPECT_EQ(turn->human.speaker, "User");
-    EXPECT_EQ(turn->human.text, "Compare");
-    ASSERT_EQ(turn->replies.size(), 2u);
-    EXPECT_EQ(turn->replies[0].speaker, "A");
-    EXPECT_EQ(turn->replies[0].text, "First");
-    EXPECT_EQ(turn->replies[1].speaker, "B");
-    EXPECT_EQ(turn->replies[1].text, "Second");
-    view.covered_until = 4;
-    EXPECT_FALSE(jev_previous_turn(view));
-    view.covered_until = {};
-    auto input = jev_input();
-    input.previous_turn = jev_previous_turn(view);
-    const auto selected = make_jev_body(input)["state"];
-    entries[0].text = std::string(100000, 'x');
-    input.previous_turn = jev_previous_turn(view);
-    EXPECT_EQ(make_jev_body(input)["state"], selected);
-    entries.push_back(test::human_entry(12, {"user", "User"}, {"-", "-"}, "Note"));
-    view.entries = entries;
-    input.previous_turn = jev_previous_turn(view);
-    EXPECT_EQ(input.previous_turn->human.text, "Note");
-    EXPECT_TRUE(input.previous_turn->replies.empty());
-    EXPECT_FALSE(jev_previous_turn({}));
-}
-
-TEST(JevContext, BuilderLimitsEveryTextAtCompleteUtf8CodePoints) {
-    auto input = jev_input();
-    input.prompt = std::string(5000, 'p');
-    for (const auto& codepoint : {std::string("x"), std::string("é"), std::string("€"), std::string("😀")}) {
-        for (std::size_t remaining = 0; remaining <= codepoint.size(); ++remaining) {
-            const auto prefix = std::string(2048 - remaining, 'a');
-            const auto text = prefix + codepoint + "tail";
-            input.previous_turn = JevPreviousTurn{{"User", text}, {{"Seneca", text}, {"Marcus", text}}};
-            const auto state = make_jev_body(input)["state"];
-            const auto expected = prefix + (remaining == codepoint.size() ? codepoint : "");
-            const auto limited = text.substr(0, expected.size());
-            EXPECT_EQ(state["previous_turn"]["human"]["text"], limited);
-            ASSERT_EQ(state["previous_turn"]["replies"].size(), 2u);
-            for (const auto& reply : state["previous_turn"]["replies"])
-                EXPECT_EQ(reply["text"], limited);
-            EXPECT_EQ(state["prompt"], input.prompt);
-            EXPECT_EQ(state["previous_turn"]["human"]["speaker"], "User");
-        }
-    }
-}
-
-class JevCaptureBackend final : public ModelBackend {
-public:
-    explicit JevCaptureBackend(std::vector<GenerationRequest>& inputs) : inputs_(inputs) {}
-    RequestPayload prepare(const GenerationRequest& input) override {
-        inputs_.push_back(input);
-        return {};
-    }
-    GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink,
-        const std::atomic_bool&) override {
-        sink({GenerationDeltaKind::answer, "Answer"});
-        return {};
-    }
-private:
-    std::vector<GenerationRequest>& inputs_;
-};
-
-TEST_F(JevRouting, SharesResearchNeedsAcrossImplicitChildrenAndPreservesBypasses) {
-    controller.reset();
-    providers->shutdown();
-    auto& inputs = generation_inputs;
-    providers = std::make_shared<Providers>(
-        [this](auto) { return std::make_unique<JevCaptureBackend>(generation_inputs); },
-        [this](auto worker) { workers.push_back(std::move(worker)); },
-        [this](const auto& input, const auto&) { classified.push_back(input); return decision; });
-    controller = make_controller(notifier);
-    decision = {JevOutcome::success, "all_characters", {}, {true, true, true}};
-    (void)send("Compare current prices");
-    finish();
-    ASSERT_EQ(classified.size(), 1u);
-    EXPECT_FALSE(classified[0].previous_turn);
-    ASSERT_EQ(inputs.size(), 2u);
-    for (const auto& input : inputs) {
-        EXPECT_TRUE(input.research_needs.search);
-        EXPECT_TRUE(input.research_needs.page_read);
-        EXPECT_TRUE(input.research_needs.actual_data);
-        EXPECT_EQ(input.run.prompt_text, "Compare current prices");
-    }
-    for (const auto& entry : controller->view().transcript.entries)
-        if (entry.kind == EntryKind::human) EXPECT_EQ(entry.text, "Compare current prices");
-    decision = {JevOutcome::failure, {}, "Invalid recipient decision", {false, true, true}};
-    (void)send("Which is cheapest?");
-    finish();
-    ASSERT_EQ(classified.size(), 2u);
-    ASSERT_TRUE(classified.back().previous_turn);
-    EXPECT_EQ(classified.back().previous_turn->human.text, "Compare current prices");
-    EXPECT_FALSE(inputs.back().research_needs.search);
-    EXPECT_TRUE(inputs.back().research_needs.page_read);
-    EXPECT_TRUE(inputs.back().research_needs.actual_data);
-    decision = {JevOutcome::success, "self_note", {}, {true, true, true}};
-    const auto before_note = inputs.size();
-    (void)send("Note to self: compare prices");
-    finish();
-    EXPECT_EQ(inputs.size(), before_note);
-    const auto before_bypasses = classified.size();
-    for (const auto* prompt : {"@Guide question", "/mcast question", "/mcast @Marcus question"}) {
-        const auto before = inputs.size();
-        (void)send(prompt);
-        finish();
-        ASSERT_GT(inputs.size(), before);
-        for (auto i = before; i < inputs.size(); ++i) {
-            EXPECT_FALSE(inputs[i].research_needs.search);
-            EXPECT_FALSE(inputs[i].research_needs.page_read);
-            EXPECT_FALSE(inputs[i].research_needs.actual_data);
-        }
-    }
-    EXPECT_EQ(classified.size(), before_bypasses);
-    (void)controller->set_default_character_by_id("guide");
-    store->apply_jev_update(std::nullopt);
-    const auto before_disabled = inputs.size();
-    (void)send("Jev disabled");
-    finish();
-    ASSERT_GT(inputs.size(), before_disabled);
-    EXPECT_EQ(classified.size(), before_bypasses);
-    EXPECT_FALSE(inputs.back().research_needs.search);
-    EXPECT_FALSE(inputs.back().research_needs.page_read);
-    EXPECT_FALSE(inputs.back().research_needs.actual_data);
 }
 
 

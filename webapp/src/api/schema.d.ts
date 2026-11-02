@@ -633,7 +633,6 @@ export interface components {
         };
         CommandResult: {
             clear_input: boolean;
-            save_summary?: boolean;
             notice?: string;
         };
         TranscriptEntry: {

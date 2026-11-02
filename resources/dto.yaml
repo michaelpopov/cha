@@ -1478,8 +1478,6 @@ components:
       properties:
         clear_input:
           type: boolean
-        save_summary:
-          type: boolean
         notice:
           type: string
 

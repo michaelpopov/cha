@@ -16,7 +16,7 @@ The design uses existing paths:
 | --- | --- |
 | Start the mode | The command parser in `text_input.cpp`, like `/clear`. One more `CommandKind`. |
 | Carry the mode to the model request | `start_generation()`, which builds every `GenerationRequest` of a character turn. |
-| Add text to the model request | The `<research_requirements>` block in `project_model_context()`. One more block after it. |
+| Add text to the model request | `project_model_context()`, which builds the current user message. One block at its end. |
 | Keep the mode across reopen and restart | The `sessions` row, read by `read_state()` into `SessionRestore`, like `discardable`. |
 | Upgrade old databases | `ensure_session_lifecycle_columns()`, which already adds `recent_pending` and `discardable`. |
 
@@ -106,9 +106,9 @@ Session naming, conversation summaries, note compression, Assistant maintenance 
 
 ## 5. Model instruction
 
-Add `bool guided{}` to `GenerationRequest`, after `research_needs`.
+Add `bool guided{}` to `GenerationRequest`, after `include_tool_instructions`.
 
-In `project_model_context(const GenerationRequest&, std::string_view)`, after the optional `<research_requirements>` block, append this block to the content of the last user message when `input.guided` is true:
+In `project_model_context(const GenerationRequest&, std::string_view)`, append this block to the content of the last user message when `input.guided` is true:
 
 ```text
 
@@ -126,11 +126,11 @@ precedence over these rules, including the length of a part.
 </guided_session>
 ```
 
-Store the text as one string constant in `model_context.cpp`, written as one paragraph without the line breaks shown above. The block starts with two newlines, like the research block.
+Store the text as one string constant in `model_context.cpp`, written as one paragraph without the line breaks shown above. The block starts with two newlines.
 
 Reasons for this location:
 
-- It follows the research block pattern. The system prompt and the projected history stay the same for normal and guided sessions, so the cached prompt prefix stays valid.
+- The system prompt and the projected history stay the same for normal and guided sessions, so the cached prompt prefix stays valid.
 - Older user messages in the history do not contain the block, because the projection adds it only to the current message. The model sees the instruction once per request.
 - Both protocol encoders and every provider already use `project_model_context()`. No encoder changes.
 
@@ -193,7 +193,6 @@ Extend the existing test files. Do not add new test targets.
 `tests/agents/unit_model_context.cpp`:
 
 - `guided = true` appends the block to the last user message only. The history messages and the system message do not change.
-- With research needs and `guided` both set, the research block comes first.
 - `guided = false` gives the same messages as now.
 
 `tests/storage/unit_workspace_session_database.cpp`:

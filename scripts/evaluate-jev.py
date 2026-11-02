@@ -4,9 +4,9 @@
 Build: cmake --build --preset ninja --target cha_jev_eval_requests
 Run: JEV_EVAL_API_KEY=... python3 scripts/evaluate-jev.py --output /tmp/jev-results.json
 Use --requests-only to inspect the exact cases and requests without a key or network.
-Each fixture's expected object maps question names to recipient labels or
-research booleans. The output retains responses, including usage/input tokens,
-and reports choice counts, matches, and numeric ranges for each question.
+Each fixture's expected object maps question names to expected choices. The
+output retains responses, including usage/input tokens, and reports choice
+counts, matches, and numeric ranges for each question.
 """
 import argparse
 from collections import Counter, defaultdict
@@ -39,19 +39,18 @@ def numeric_fields(value, prefix=""):
 def summarize_question(runs, name, expected):
     choices = Counter()
     numbers = defaultdict(list)
-    expected_choice = ("yes" if expected else "no") if isinstance(expected, bool) else expected
     for run in runs:
         answer = run.get("answers", {}).get(name)
         choice = "failed" if "error" in run else "invalid"
         if isinstance(answer, dict) and answer.get("type") == "choice":
             value = answer.get("choice")
-            if isinstance(value, str) and (not isinstance(expected, bool) or value in ("yes", "no")):
+            if isinstance(value, str):
                 choice = value
         choices[choice] += 1
         for field, value in numeric_fields(answer):
             numbers[field].append(value)
     return {
-        "choice_counts": dict(choices), "matched": choices[expected_choice], "total": len(runs),
+        "choice_counts": dict(choices), "matched": choices[expected], "total": len(runs),
         "numeric_ranges": {field: {"min": min(values), "max": max(values),
                                     "changed": len(set(values)) > 1}
                            for field, values in numbers.items()},

@@ -258,7 +258,7 @@ export function NotesTree({
     element.style.top = `${Math.max(8, Math.min(menu.y, window.innerHeight - height - 8))}px`;
   }, [menu]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!menu) return;
     if (menu.sourceId !== 'vault' && dataRef.current.rows[menu.sourceId]?.kind === 'folder' && dataRef.current.rows[menu.sourceId]?.forumId === undefined && menu.storeStatus === null)
       menuRef.current?.focus();

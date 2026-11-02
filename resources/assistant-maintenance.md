@@ -63,7 +63,7 @@ stable ID. A display name is a label, not an ID or a reference target.
 | Speech is missing or uses the wrong voice | `system/voices/<id>/config.toml`, the character's global `voice`, and `system/voice-output/config.toml`. Without an assignment, output uses `default_voice`, which is a voice display name. Check the selected voice provider, service settings, key metadata, and logs. Cached audio retains its old voice. |
 | Dictation, hands-free sending, or transcription fails | `system/voice-input/config.toml`: provider, URL scheme, model, key reference, delay, prompt, and send phrase. Omitted provider means OpenAI; xAI uses WebSocket URLs and does not send delay or prompt. Also consider browser microphone access and secure-context requirements. |
 | An unaddressed message reaches the wrong character or becomes a Self-note | `system/jev/config.toml`, forum membership/defaults, and recipient-detection logs. Jev classifies the intended recipient. An explicit `@Assistant` bypasses Jev in Welcome. |
-| "Save this conversation" does not save a summary | `system/jev/config.toml` and `system/notes/config.toml`. Jev also detects a request to save the conversation. Outside Welcome, CHA then saves a session summary to Notes with the notes compression provider. Without Jev, the user can use Save summary in the session's sidebar menu. |
+| "Save this conversation" does not save a summary | `system/notes/config.toml`. CHA does not detect a typed save request. Outside Welcome, the user saves a session summary to Notes with Save summary in the session's sidebar menu. It uses the notes compression provider. |
 | Search or page reading is unavailable | `system/web-search/config.toml`, character `web_search_tool`, and provider/character `web_search`. Page reading first uses `web_reader` when `web_reader_enabled` is true and `web_reader_url` is set. It uses Firecrawl when `read_provider = "firecrawl"`, also after a `web_reader` failure. `web_reader_api_key` is not used. Check search and Firecrawl key metadata independently. Welcome and web page import into Notes use the same page-reading settings. |
 | Note compression, web page or YouTube import, Save summary, or note audio fails | `system/notes/config.toml`: `compression_provider`, `compression_reasoning_effort`, `audio_url`, and `audio_api_key`. Compression, import formatting, and session summaries use the compression provider; they fail when it is omitted or unavailable. Effort defaults to `high`. Note audio needs a saved key and an `audio_url` that is a service origin with no path, and runs only on desktop. Use `assistant_events` for job outcomes. |
 | A note or folder in a character's or forum's Files has no effect | `file_references` in the global `character.toml` or the forum's `config.toml`: tables with `kind` (`note` or `folder`), `ref_id` (a CHA Ref ID such as `##00000A`), and the captured `name`. Follow the Files explanation below and check logs for omitted references. |
@@ -99,9 +99,8 @@ global character and its provider and state their saved provider and effort.
 Read the saved session-only Model and Effort overrides with the `sessions`
 topic of `assistant_inspect`, then compare them with those global settings.
 
-For a conversation-save problem, first read `system/jev/config.toml` and
-`system/notes/config.toml`. Distinguish persistent chat history from a Notes
-summary.
+For a conversation-save problem, first read `system/notes/config.toml`.
+Distinguish persistent chat history from a Notes summary.
 
 `api_key` is a saved key ID, not a secret. Legacy provider `api_key_env` resolves
 an exact saved-key display name in this vault, never an environment variable.

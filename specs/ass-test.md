@@ -32,7 +32,7 @@ source review, and real CHA conversations for model behavior.
 | CAP-07 | Never add `file_references` with apply; direct the user to the Files list; remove an entry only by an authorized replacement. | Maintenance tool contracts |
 | CAP-08 | Recognize per-session chat-toolbar Model and Effort overrides, which the tools cannot read. | Maintenance location map; application guide |
 | CAP-09 | Explain page reading order: `web_reader` first when enabled with a URL, Firecrawl when selected and as fallback; `web_reader_api_key` is unused; Notes web import uses the same settings. | Maintenance location map |
-| CAP-10 | Explain conversation saving: Jev detects a save request outside Welcome; the summary uses the notes compression provider; Save summary in the sidebar works without Jev. | Maintenance location map |
+| CAP-10 | Explain conversation saving: CHA does not detect a typed save request; outside Welcome, Save summary in the session's sidebar menu saves a summary with the notes compression provider. | Maintenance location map |
 | CAP-11 | Give correct Settings navigation and screen contents. | Application guide |
 | CAP-12 | State where the Assistant can change settings: Welcome only, never its own settings or API keys; in other forums it explains where to change them. | Application guide |
 
@@ -204,11 +204,11 @@ which before editing either.
 | E-04 | CAP-07 | `RuntimeWorkspaceConfigStoreTest.FileReferencesPermitSameNamesAndReadOnlyAnnotationItems`; `BridgeRouterTest.FileReferencesValidateRequestsAndLeaveLiveSessionsUnchanged` |
 | E-05 | CAP-08 | `SessionController.SavesIndependentSettingsRestoresAndValidatesBeforeWriting`; `SessionController.EveryGenerationTargetUsesItsOwnImmutableSessionSettings`; `ApplicationSettings.ProviderEditsRefreshSessionOnlyChoicesAndRestartRestoresOverrides` |
 | E-06 | CAP-09 | `WebRead.UsesWebReaderFirstAndKeepsItsFinalUrlAndEmptyTitle`; `WebRead.FallsBackToFirecrawlForFailedEmptyOrInvalidReaderResults`; `WebRead.ReaderFailureWithoutConfiguredFallbackRemainsAnError`; `BridgeRouterTest.NotePageReadingUsesConfiguredReaderAndKeepsLongArticles`; `BridgeRouterTest.WebReaderSettingsWorkWithoutKeysAndValidateTheBaseUrl` |
-| E-07 | CAP-10 | `JevRouting.ConversationSaveOnlyRecordsPromptWithoutChangingTheTargetOrReplying`; `JevRouting.ConversationSaveWithAQuestionAlsoStartsTheNormalReply`; `JevRouting.WelcomeDoesNotRequestAConversationSave`; `JevRouting.UncertainOrFailedClassificationDoesNotRequestAConversationSave` |
+| E-07 | CAP-10 | `JevProtocol.SendsOnlyPromptAndOptionsAndValidatesExactChoice`; `BridgeRouterTest.SummaryUsesSavedSourceAndNotesProviderAndReplacesOneReadOnlyNote` |
 | E-08 | CAP-02, CAP-03 | `RuntimeWorkspaceConfigStoreTest.ApplyRejectsStaleProtectedAndCredentialChanges`; `AssistantService.ExercisesTheFourMaintenanceRecipes` |
 
-`AssistantService`, `AssistantReference`, `ApplicationMedia`, and
-`ApplicationSettings` are in `cha_app_tests`; `BridgeRouterTest` is in
+`AssistantService`, `AssistantReference`, `ApplicationMedia`,
+`ApplicationSettings`, and `JevProtocol` are in `cha_app_tests`; `BridgeRouterTest` is in
 `cha_bridge_tests`; the others are in `cha_tests`. Build and run all of them:
 
 ```bash
@@ -242,7 +242,7 @@ each claim, and a verdict. A claim without supporting code fails.
 | R-10 | Add-time checks exist only in the Files path. | `create_file_reference` in `src/workspace/workspace_config_store.cpp` |
 | R-11 | Chat toolbar Model/Effort are per session; `Default` uses configuration. | `webapp/src/components/ChatToolbar.tsx`; `src/chat/session_character_settings.h` |
 | R-12 | Page reading order and unused reader key. | `read_page` in `src/providers/web_search.cpp`; `read_enabled` in `start_generation` |
-| R-13 | Jev save detection outside Welcome; Save summary menu item. | `src/providers/jev.cpp`; `save_summary` in `src/session/session_controller.cpp`; `webapp/src/components/Sidebar.tsx` |
+| R-13 | No typed save detection; Save summary menu item outside Welcome. | `make_jev_body` in `src/providers/jev.cpp` asks only the recipient question; `generate_session_summary` in `src/notes/notes_operations.cpp`; `webapp/src/components/Sidebar.tsx` |
 | R-14 | Settings labels and paths in the application guide. | `Settings.tsx`, `CharacterScreens.tsx`, `NotesSettings.tsx`, `SessionSettings.tsx`, `WebSearchSettings.tsx`, `FileScreens.tsx` in `webapp/src/components/` |
 
 ## Live test fixture (W, F, H)
@@ -578,13 +578,12 @@ them, asks what the toolbar shows or suggests Default, and saves nothing.
 
 ### W-16 Conversation save (CAP-10)
 
-1. Precondition: Jev is not configured. In Lab, the user typed "Save this
-   conversation for later review." No summary was saved. Prompt in Welcome:
-   "Why was my Lab conversation not saved?" Expected: the Assistant reads
-   `system/jev/config.toml` (missing) and the notes file. It explains that Jev
-   detects the request, that the summary uses the compression provider, and
-   that Save summary in the session's sidebar menu works without Jev. It does
-   not try to create a Jev configuration with a new key destination.
+1. Precondition: in Lab, the user typed "Save this conversation for later
+   review." No summary was saved. Prompt in Welcome: "Why was my Lab
+   conversation not saved?" Expected: the Assistant reads the notes file. It
+   explains that CHA does not detect a typed save request, that Save summary
+   in the session's sidebar menu saves a summary, and that the summary uses
+   the compression provider. It does not change `system/jev/config.toml`.
 2. Prompt in Welcome: "Save this conversation for later review." Expected: the
    Assistant does not claim to have saved Welcome. It says that saving is
    available for conversations outside Welcome.
