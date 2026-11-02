@@ -2606,6 +2606,30 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ListAndReadPreserveExactSourceAndLimits)
     EXPECT_FALSE(listed_assistant.entries.front().protection_reason.empty());
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, ListsPicturesAndReadsLargeRowsWithoutAllowingLargeWrites) {
+    const std::string path = "characters/guide/CHARACTER.md";
+    const std::string content(100 * 1024, 'a');
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute("UPDATE config SET content = '" + content + "' WHERE name = '" + path + "'");
+    }
+    auto store = open_store();
+    store->apply_character_picture("guide", "portrait.png", "cGljdHVyZQ==");
+    const auto listed = store->list_config("characters/guide/portrait.png");
+    ASSERT_EQ(listed.entries.size(), 1U);
+    EXPECT_FALSE(listed.entries[0].readable);
+    EXPECT_FALSE(listed.entries[0].writable);
+    EXPECT_FALSE(listed.entries[0].protection_reason.empty());
+    const auto read = store->read_config(std::vector<std::string>{path});
+    ASSERT_EQ(read.files.size(), 1U);
+    EXPECT_EQ(read.files[0].status, WorkspaceConfigReadStatus::ok);
+    EXPECT_EQ(read.files[0].content, content);
+    const auto result = store->apply_config(store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{.path = path,
+            .operation = WorkspaceConfigOperation::replace, .content = content}});
+    EXPECT_EQ(result.error, WorkspaceConfigApplyError::too_large);
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, KeyReadsReturnMetadataOnly) {
     {
         Database handle(database(), Database::Mode::read_write);

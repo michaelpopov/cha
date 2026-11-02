@@ -13,6 +13,7 @@
 #include "storage/session_label.h"
 #include "storage/session_repository.h"
 #include "util/logging.h"
+#include "util/path_name.h"
 #include "util/text.h"
 #include "app/current_vault.h"
 #include "session/session_markdown.h"
@@ -275,6 +276,7 @@ Application::Impl::Impl(
       assistant(std::make_unique<AssistantService>(AssistantService::Links{
           .store = store.get(),
           .oauth = openai_auth.get(),
+          .api_keys = api_keys.get(),
           .lifecycle = &lifecycle_mutex,
           .stopping = &stopping_flag,
           .admit = [this](std::uint64_t epoch) { return admit_locked(epoch); },
@@ -290,6 +292,42 @@ Application::Impl::Impl(
                           {"audio", std::move(audio)}, {"compression", std::move(compression)}});
               }
               return pending;
+          },
+          .application = [this] {
+              using Json = nlohmann::json;
+              const auto optional_path = [](const std::optional<std::filesystem::path>& value) {
+                  return value ? Json(utf8_path(*value)) : Json(nullptr);
+              };
+              const auto optional_text = [](const std::optional<std::string>& value) {
+                  return value ? Json(*value) : Json(nullptr);
+              };
+              auto vaults = Json::array();
+              for (const auto& vault : command.vaults) {
+                  vaults.push_back({
+                      {"name", vault.name},
+                      {"source", utf8_path(vault.source)},
+                      {"data", utf8_path(vault.data)},
+                      {"password_protected", vault.password_protected},
+                      {"parent", optional_text(vault.parent)},
+                      {"mirror", optional_path(vault.mirror)},
+                      {"modify", optional_path(vault.modify)},
+                      {"r2_etag", optional_text(vault.r2_etag)},
+                  });
+              }
+              const auto current = capabilities();
+              return Json{
+                  {"version", CHA_PACKAGE_VERSION},
+                  {"capabilities", {
+                      {"can_modify", current.can_modify},
+                      {"can_transfer_r2", current.can_transfer_r2},
+                  }},
+                  {"active_vault", current_vault_.get().name},
+                  {"vaults", std::move(vaults)},
+                  {"mirror_base", optional_path(command.mirror_base)},
+                  {"modify_base", optional_path(command.modify_base)},
+                  {"log_level", diagnostic_log_level()},
+                  {"log_file", utf8_path(diagnostic_log_file())},
+              };
           },
       })),
       providers(shared_openai_provider_factory(

@@ -56,10 +56,12 @@ Adding or removing a Files reference does not restart running chats.
 The chat toolbar's Model and Effort change the selected character's provider
 and effort for the current session only; Default uses the character's settings.
 
-In Welcome, Assistant can inspect the vault configuration and, when asked,
-change characters, personas, forums, providers, styles, voices, and the
-session, notes, search, and voice settings. It cannot change its own settings
-or API keys. In other forums, it explains where to change them.
+In Welcome, Assistant can inspect application settings, vault registrations,
+notes and folders, uploaded stores, and session metadata without reading note
+or conversation text. When asked, it can change characters, personas, forums,
+providers, styles, voices, and the session, notes, search, and voice settings.
+It cannot change its own settings or API keys. In other forums, it explains
+where to change them.
 
 ## Commands
 

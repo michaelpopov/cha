@@ -163,9 +163,31 @@ void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
         };
     };
     append_tool(body, api, Json{
+        {"name", "assistant_inspect"},
+        {"description", "Read settings, the vault registry, notes and folders, "
+            "OpenAI and Gemini stores, and session metadata. Never returns session "
+            "or note text, or credentials. Follow next_after for further pages."},
+        {"strict", true},
+        {"parameters", function_parameters(
+            {
+                {"topic", Json{{"type", "string"}, {"enum", Json::array({
+                    "application", "providers", "styles", "voices", "characters",
+                    "personas", "forums", "services", "keys", "notes", "stores",
+                    "sessions", "session_entries"})}}},
+                {"forum_id", nullable_string(
+                    "Exact forum ID for sessions and session_entries; otherwise null")},
+                {"session_id", nullable_string(
+                    "Exact session ID for session_entries; otherwise null")},
+                {"after", nullable_string(
+                    "Previous next_after for the same topic and IDs, or null for the first page")},
+            },
+            Json::array({"topic", "forum_id", "session_id", "after"}))},
+    });
+    append_tool(body, api, Json{
         {"name", "vault_config_list"},
         {"description", "List vault configuration files in lexical order. "
             "prefix is a literal directory-boundary prefix, or null for every file. "
+            "Pictures are listed as unreadable metadata. "
             "This call does not save configuration."},
         {"strict", true},
         {"parameters", function_parameters(
@@ -175,7 +197,7 @@ void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
     append_tool(body, api, Json{
         {"name", "vault_config_read"},
         {"description", "Read exact configuration file text from the current snapshot. "
-            "Takes no version. A file is complete or too_large. "
+            "Takes no version. A file is complete or too_large within the 256 KiB call limit. "
             "Key files return metadata only. This call does not save configuration."},
         {"strict", true},
         {"parameters", function_parameters(

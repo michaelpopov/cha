@@ -2,9 +2,11 @@
 
 #include "app/application_config.h"
 #include "app/settings_operations.h"
+#include "app/workspace_operations.h"
 #include "providers/credentials.h"
 #include "providers/openai_oauth.h"
 #include "runtime/live_session_manager.h"
+#include "storage/not_found_error.h"
 #include "storage/session_repository.h"
 #include "util/logging.h"
 #include "util/path_name.h"
@@ -179,7 +181,7 @@ class Redactor {
 public:
     explicit Redactor(const AssistantService::Links& links) {
         try {
-            roots_.push_back(links.config_directory.string());
+            roots_.push_back(utf8_path(links.config_directory));
             if (const auto snapshot = links.store->snapshot()) {
                 for (const SavedApiKey& key : snapshot->api_keys()) {
                     if (!key.value.empty()) secrets_.push_back(key.value);
@@ -196,8 +198,8 @@ public:
             }
         }
         try {
-            roots_.push_back(links.store->private_root().string());
-            roots_.push_back(links.store->workspace_path().string());
+            roots_.push_back(utf8_path(links.store->private_root()));
+            roots_.push_back(utf8_path(links.store->workspace_path()));
         } catch (const std::exception&) {
         }
         std::erase_if(roots_, [](const std::string& root) { return root.size() < 2; });
@@ -457,6 +459,290 @@ std::string read_tool(
         {"version", version_text(read.revision)},
         {"files", std::move(files)},
     }.dump();
+}
+
+template <class T>
+Json optional_json(const std::optional<T>& value) {
+    return value ? Json(*value) : Json(nullptr);
+}
+
+// Redacts each string value. Encoded JSON escapes backslashes and quotes, so
+// redaction of the encoded text could miss Windows paths or break the syntax.
+void redact_strings(Json& value, const Redactor& redact) {
+    if (value.is_string()) {
+        value = redact(value.get<std::string>());
+    } else if (value.is_structured()) {
+        for (Json& child : value) redact_strings(child, redact);
+    }
+}
+
+// One ordered-key page contract for every list topic. A page holds up to
+// 64 KiB of items, or one larger item. An item that does not fit in one call
+// keeps only its key, so the next page continues after it.
+Json inspect_page(
+    std::string_view topic,
+    Json items,
+    const std::string& key,
+    const Json& after,
+    bool numeric_key) {
+    constexpr std::size_t page_limit = 64 * 1024;
+    const auto key_text = [&key](const Json& item) {
+        const Json& value = item.at(key);
+        return value.is_string() ? value.get<std::string>() : value.dump();
+    };
+    const auto key_less = [&](const Json& left, const Json& right) {
+        if (numeric_key) {
+            return left.at(key).get<std::int64_t>() < right.at(key).get<std::int64_t>();
+        }
+        return key_text(left) < key_text(right);
+    };
+    const std::int64_t after_number =
+        numeric_key && after.is_string() ? std::stoll(after.get<std::string>()) : 0;
+    const auto follows_cursor = [&](const Json& item) {
+        if (after.is_null()) return true;
+        if (numeric_key) return item.at(key).get<std::int64_t>() > after_number;
+        return key_text(item) > after.get<std::string>();
+    };
+
+    std::sort(items.begin(), items.end(), key_less);
+    Json page = Json::array();
+    Json next_after = nullptr;
+    std::size_t page_bytes = 0;
+    for (Json& item : items) {
+        if (!follows_cursor(item)) continue;
+        const std::size_t item_bytes = item.dump().size() + 1;
+        if (!page.empty() && page_bytes + item_bytes > page_limit) {
+            next_after = key_text(page.back());
+            break;
+        }
+        const Json alone{
+            {"topic", topic},
+            {"items", Json::array({item})},
+            {"next_after", key_text(item)},
+        };
+        if (alone.dump().size() > maintenance_call_result_limit) {
+            item = Json{{key, item.at(key)}, {"too_large", true}};
+        }
+        page_bytes += item_bytes;
+        page.push_back(std::move(item));
+    }
+    return Json{
+        {"topic", topic},
+        {"items", std::move(page)},
+        {"next_after", std::move(next_after)},
+    };
+}
+
+// Settings details without Markdown text and editor option lists.
+Json inspect_details(std::string_view topic, const Workspace& workspace) {
+    Json items = Json::array();
+    if (topic == "characters") {
+        for (const auto& character : workspace.characters()) {
+            items.push_back(app::workspace::character_detail(workspace, character));
+        }
+    } else if (topic == "personas") {
+        for (const auto& persona : workspace.personas()) {
+            items.push_back(app::workspace::persona_detail(workspace, persona));
+        }
+    } else {
+        for (const auto& forum : workspace.forums()) {
+            items.push_back(app::workspace::forum_detail(workspace, forum));
+        }
+    }
+    for (Json& item : items) {
+        for (const auto field : {
+                 "character_markdown", "editable_markdown", "persona_markdown", "forum_markdown"}) {
+            item.erase(field);
+        }
+        for (auto field = item.begin(); field != item.end();) {
+            if (field.key().starts_with("available_")) {
+                field = item.erase(field);
+            } else {
+                ++field;
+            }
+        }
+    }
+    return items;
+}
+
+Json inspect_services(
+    const Workspace& workspace,
+    const ApiKeyStore& api_keys,
+    const OpenAiOAuth& oauth) {
+    // The device code and verification URL stay in the login tool.
+    const auto auth = app::settings::openai_auth_status(oauth);
+    return Json{
+        {"jev", optional_json(app::settings::get_jev_settings(workspace))},
+        {"session_naming", app::settings::get_session_naming_settings(workspace)},
+        {"notes", app::settings::get_notes_settings(workspace)},
+        {"web_search", app::settings::get_web_search_settings(workspace)},
+        {"voice_input", optional_json(app::settings::get_voice_input_settings(workspace))},
+        {"voice_output", optional_json(app::settings::get_voice_output_settings(workspace))},
+        {"r2_storage", optional_json(app::settings::get_r2_storage(api_keys))},
+        {"openai_auth", {
+            {"status", auth.status},
+            {"attempt_expires_at", optional_json(auth.attempt_expires_at)},
+            {"error", optional_json(auth.error)},
+        }},
+    };
+}
+
+Json inspect_notes(const WorkspaceConfigStore& store) {
+    const auto attempts = store.get_note_audio_attempts();
+    Json items = Json::array();
+    for (const NoteItem& note : store.list_note_items()) {
+        Json item = note;
+        item["ref_id"] = note_item_ref_id(note.id);
+        item["audio_attempt"] = nullptr;
+        if (note.kind == NoteItemKind::note) {
+            item["audio_clips"] = store.get_note_audio_info(note.id);
+            for (const auto& attempt : attempts) {
+                if (attempt.note_id != note.id) continue;
+                // Saved when the attempt started; current settings can differ.
+                item["audio_attempt"] = {
+                    {"id", attempt.id},
+                    {"clip_count", attempt.clip_count},
+                    {"service_origin", attempt.service_origin},
+                    {"api_key_id", attempt.api_key_id},
+                    {"batch_id", optional_json(attempt.batch_id)},
+                };
+            }
+        }
+        items.push_back(std::move(item));
+    }
+    return items;
+}
+
+Json inspect_stores(const WorkspaceConfigStore& store) {
+    Json items = Json::array();
+    for (const auto& record : store.list_folder_stores()) {
+        items.push_back({
+            {"id", record.id},
+            {"folder_id", record.folder_id},
+            {"ref_id", note_item_ref_id(record.folder_id)},
+            {"folder_name", record.folder_name},
+            {"service", folder_store_service_name(record.service)},
+            {"api_key_id", record.api_key_id},
+            {"remote_store_id", optional_json(record.remote_store_id)},
+            {"state", record.state == FolderStoreState::ready ? "ready" : "incomplete"},
+            {"note_count", record.note_count},
+            {"uploaded_at", optional_json(record.uploaded_at)},
+            {"remote_outcome_unknown", record.remote_outcome_unknown},
+            {"file_ids", record.file_ids},
+        });
+    }
+    return items;
+}
+
+Json inspect_sessions(
+    const AssistantService::Links& links,
+    const std::string& forum_id) {
+    Json items = links.repository->inspect_sessions(forum_id);
+    const auto live = links.sessions->snapshot();
+    for (Json& item : items) {
+        const FullSessionId identity{forum_id, item.at("session_id").get<std::string>()};
+        item["live"] = std::ranges::find(live.running_sessions, identity)
+            != live.running_sessions.end();
+    }
+    return items;
+}
+
+std::string inspect_tool(
+    const Json& parsed,
+    const AssistantService::Links& links,
+    const Redactor& redact,
+    const AdmissionCheck& admission_error) {
+    if (parsed.size() != 4 || !parsed.contains("topic") || !parsed["topic"].is_string()
+        || !parsed.contains("forum_id") || !parsed.contains("session_id")
+        || !parsed.contains("after")) {
+        return tool_error("invalid_argument",
+            "assistant_inspect requires topic, forum_id, session_id, and after.");
+    }
+    const auto topic = parsed["topic"].get<std::string>();
+    const Json& forum_id = parsed["forum_id"];
+    const Json& session_id = parsed["session_id"];
+    const Json& after = parsed["after"];
+    const bool single_item = topic == "application" || topic == "services";
+    const bool session_topic = topic == "sessions" || topic == "session_entries";
+    const bool numeric_key = topic == "notes" || topic == "stores" || topic == "session_entries";
+    if ((session_topic ? !forum_id.is_string() : !forum_id.is_null())
+        || (topic == "session_entries" ? !session_id.is_string() : !session_id.is_null())
+        || (single_item ? !after.is_null() : !after.is_null() && !after.is_string())) {
+        return tool_error("invalid_argument", "Invalid IDs or after for this topic.");
+    }
+    if (numeric_key && after.is_string()) {
+        const auto& value = after.get_ref<const std::string&>();
+        std::int64_t number{};
+        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), number);
+        if (error != std::errc{} || end != value.data() + value.size()) {
+            return tool_error("invalid_argument", "after must be an integer key.");
+        }
+    }
+
+    const auto workspace = links.store->snapshot();
+    Json items = Json::array();
+    std::string key = "id";
+    if (topic == "application") {
+        if (!links.application) {
+            return tool_error("unavailable", "Application metadata is unavailable.");
+        }
+        items.push_back(links.application());
+    } else if (topic == "providers") {
+        if (!links.api_keys) return tool_error("unavailable", "Key metadata is unavailable.");
+        for (const auto& provider : app::settings::list_providers(*workspace)) {
+            items.push_back(app::settings::get_provider(*workspace, provider.id, *links.api_keys));
+        }
+    } else if (topic == "styles") {
+        items = app::settings::list_styles(*workspace);
+    } else if (topic == "voices") {
+        items = app::settings::list_voices(*workspace);
+    } else if (topic == "characters" || topic == "personas" || topic == "forums") {
+        items = inspect_details(topic, *workspace);
+    } else if (topic == "services") {
+        if (!links.api_keys || !links.oauth) {
+            return tool_error("unavailable", "Service metadata is unavailable.");
+        }
+        items.push_back(inspect_services(*workspace, *links.api_keys, *links.oauth));
+    } else if (topic == "keys") {
+        if (!links.api_keys) return tool_error("unavailable", "Key metadata is unavailable.");
+        items = app::settings::list_api_keys(
+            *workspace, *links.api_keys, links.store->folder_store_usage());
+    } else if (topic == "notes") {
+        items = inspect_notes(*links.store);
+    } else if (topic == "stores") {
+        items = inspect_stores(*links.store);
+    } else if (session_topic) {
+        if (!links.repository || !links.sessions) {
+            return tool_error("unavailable", "Session metadata is unavailable.");
+        }
+        try {
+            if (topic == "sessions") {
+                key = "session_id";
+                items = inspect_sessions(links, forum_id.get<std::string>());
+            } else {
+                key = "entry_id";
+                items = links.repository->inspect_entries(
+                    {forum_id.get<std::string>(), session_id.get<std::string>()});
+            }
+        } catch (const ForumNotFoundError& error) {
+            return tool_error("not_found", error.what());
+        } catch (const SessionNotFoundError& error) {
+            return tool_error("not_found", error.what());
+        }
+    } else {
+        return tool_error("invalid_argument", "Unknown inspection topic.");
+    }
+
+    redact_strings(items, redact);
+    const Json result = single_item
+        ? Json{{"topic", topic}, {"items", std::move(items)}, {"next_after", nullptr}}
+        : inspect_page(topic, std::move(items), key, after, numeric_key);
+    if (const auto error = admission_error()) return *error;
+    std::string encoded = result.dump();
+    if (encoded.size() > maintenance_call_result_limit) {
+        return tool_error("too_large", "Inspection result is too large.");
+    }
+    return encoded;
 }
 
 std::string events_tool(const Json& parsed, const AssistantService::Links& links,
@@ -947,6 +1233,11 @@ std::string AssistantService::execute(
         if (name == "vault_config_read") return read_tool(parsed, *links_.store, admission_error);
         if (name == "assistant_logging") return logging_tool(parsed, admission_error);
         if (name == "assistant_logs") return logs_tool(parsed, redact, admission_error);
+        if (name == "assistant_inspect") {
+            auto result = inspect_tool(parsed, links_, redact, admission_error);
+            if (cancel_check()) return tool_error("cancelled", "The maintenance tool was cancelled.");
+            return result;
+        }
         if (name == "assistant_events") return events_tool(parsed, links_, redact, admission_error);
         if (name == "add_character") {
             return add_character_tool(parsed, links_, context, lifecycle, cancel_check, redact);

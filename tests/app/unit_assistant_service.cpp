@@ -1,5 +1,8 @@
 #include "app/assistant_service.h"
 
+#include "app/settings_operations.h"
+#include "app/workspace_operations.h"
+#include "providers/api_key_store.h"
 #include "providers/maintenance.h"
 #include "providers/openai_oauth.h"
 #include "support/test_workspace.h"
@@ -62,6 +65,15 @@ MaintenanceContext welcome_context(std::uint64_t epoch = 1) {
     };
 }
 
+Json inspect_arguments(std::string_view topic, Json after = nullptr) {
+    return {
+        {"topic", topic},
+        {"forum_id", nullptr},
+        {"session_id", nullptr},
+        {"after", std::move(after)},
+    };
+}
+
 // One imported vault, its store, and the process log file for one test.
 class ServiceHarness {
 public:
@@ -88,6 +100,7 @@ public:
         store_ = WorkspaceConfigStore::open(database_);
         oauth_path_ = log_directory_ / "openai-auth.json";
         oauth_ = std::make_unique<OpenAiOAuth>(oauth_path_);
+        keys_ = std::make_unique<ApiKeyStore>(*store_);
         bind();
     }
 
@@ -153,6 +166,7 @@ private:
         service_ = std::make_unique<AssistantService>(AssistantService::Links{
             .store = secondary_ ? secondary_.get() : store_.get(),
             .oauth = oauth_.get(),
+            .api_keys = keys_.get(),
             .lifecycle = &lifecycle_,
             .stopping = &stopping_,
             .admit = [this](std::uint64_t epoch) -> std::optional<ErrorCode> {
@@ -163,6 +177,9 @@ private:
             },
             .config_directory = log_directory_,
             .pending_notes = [this] { return pending_notes; },
+            .application = [] {
+                return Json{{"version", "synthetic"}, {"active_vault", "Test"}};
+            },
         });
     }
 
@@ -172,6 +189,7 @@ private:
     std::filesystem::path oauth_path_;
     std::unique_ptr<WorkspaceConfigStore> store_;
     std::unique_ptr<WorkspaceConfigStore> secondary_;
+    std::unique_ptr<ApiKeyStore> keys_;
     std::unique_ptr<OpenAiOAuth> oauth_;
     std::unique_ptr<AssistantService> service_;
     std::timed_mutex lifecycle_;
@@ -410,12 +428,18 @@ TEST(AssistantService, NotesSettingsApplyAndUndo) {
     }
 }
 
-TEST(AssistantService, PicturesCannotBeListedReadOrWritten) {
+TEST(AssistantService, PicturesAreListedButCannotBeReadOrWritten) {
     ServiceHarness harness(true);
     for (const auto directory : {"characters/guide", "system/assistant"}) {
         const std::string path = std::string(directory) + "/PICTURE.png";
         const auto listed = harness.run("vault_config_list", {{"prefix", directory}});
-        EXPECT_EQ(listed.dump().find("PICTURE.png"), std::string::npos);
+        const auto entry = std::ranges::find_if(listed["entries"], [&](const Json& item) {
+            return item["path"] == path;
+        });
+        ASSERT_NE(entry, listed["entries"].end()) << listed;
+        EXPECT_EQ((*entry)["readable"], false);
+        EXPECT_EQ((*entry)["writable"], false);
+        EXPECT_TRUE(entry->contains("protection_reason"));
         const auto read = harness.run("vault_config_read", read_arguments(path));
         EXPECT_EQ(read["files"][0]["status"], "missing");
         EXPECT_FALSE(read["files"][0].contains("content"));
@@ -438,8 +462,6 @@ TEST(AssistantService, PicturesCannotBeListedReadOrWritten) {
         EXPECT_EQ(absent["committed"], false);
         EXPECT_EQ(absent["error"], "protected_path");
     }
-    const auto listed = harness.run("vault_config_list", {{"prefix", nullptr}});
-    EXPECT_EQ(listed.dump().find("PICTURE.png"), std::string::npos);
 }
 
 TEST(AssistantService, SetsScalarsAndRejectsMalformedArguments) {
@@ -1287,6 +1309,208 @@ TEST(AssistantService, SavesUnusedMemberSettingsWithWarnings) {
     EXPECT_EQ(snapshot->find_character("guide")->provider_id, "test");
     EXPECT_EQ(snapshot->find_forum_member("lobby", "guide")
         ->prompt_variables.at("greeting"), "Hello");
+}
+
+// Detail readers include Markdown text and editor options that inspection omits.
+Json without_editor_fields(Json item) {
+    for (const auto field : {
+             "character_markdown", "editable_markdown", "persona_markdown", "forum_markdown"}) {
+        item.erase(field);
+    }
+    for (auto field = item.begin(); field != item.end();) {
+        if (field.key().starts_with("available_")) {
+            field = item.erase(field);
+        } else {
+            ++field;
+        }
+    }
+    return item;
+}
+
+Json sorted_by_id(Json items) {
+    std::sort(items.begin(), items.end(), [](const Json& left, const Json& right) {
+        return left["id"] < right["id"];
+    });
+    return items;
+}
+
+TEST(AssistantInspect, ValidatesArgumentsAndAdmission) {
+    ServiceHarness harness;
+    EXPECT_EQ(harness.run("assistant_inspect", Json::object())["error"], "invalid_argument");
+    EXPECT_EQ(harness.run("assistant_inspect", inspect_arguments("unknown"))["error"],
+        "invalid_argument");
+    auto with_forum = inspect_arguments("notes");
+    with_forum["forum_id"] = "lobby";
+    EXPECT_EQ(harness.run("assistant_inspect", with_forum)["error"], "invalid_argument");
+    EXPECT_EQ(harness.run("assistant_inspect", inspect_arguments("notes", "garbage"))["error"],
+        "invalid_argument");
+
+    harness.context().forum_id = "lobby";
+    EXPECT_EQ(harness.run("assistant_inspect", inspect_arguments("notes"))["error"],
+        "unavailable");
+    harness.context() = welcome_context(2);
+    EXPECT_EQ(harness.run("assistant_inspect", inspect_arguments("notes"))["error"],
+        "stale_context");
+    harness.context() = welcome_context();
+    harness.cancelled() = true;
+    EXPECT_EQ(harness.run("assistant_inspect", inspect_arguments("notes"))["error"],
+        "cancelled");
+}
+
+TEST(AssistantInspect, SettingsMatchReadersAndReadsAreReadOnly) {
+    ServiceHarness harness;
+    ApiKeyStore keys(harness.store());
+    const auto snapshot = harness.store().snapshot();
+    const auto version = harness.store().config_revision();
+    const auto events = harness.store().list_events().size();
+
+    const auto application = harness.run("assistant_inspect", inspect_arguments("application"));
+    EXPECT_EQ(application["items"][0]["version"], "synthetic");
+    for (const std::string_view topic : {"providers", "styles", "voices", "characters",
+             "personas", "forums", "services", "keys", "notes", "stores"}) {
+        const auto result = harness.run("assistant_inspect", inspect_arguments(topic));
+        ASSERT_FALSE(result.contains("error")) << topic << result.dump();
+        EXPECT_TRUE(result["items"].is_array());
+        EXPECT_TRUE(result["next_after"].is_null());
+        for (const auto& item : result["items"]) {
+            EXPECT_EQ(item, without_editor_fields(item)) << topic;
+            const auto id = item.value("id", Json()).is_string()
+                ? item["id"].get<std::string>()
+                : std::string{};
+            if (topic == "providers") {
+                EXPECT_EQ(item, Json(app::settings::get_provider(*snapshot, id, keys)));
+            } else if (topic == "characters") {
+                EXPECT_EQ(item, without_editor_fields(app::workspace::get_character(*snapshot, id)));
+            } else if (topic == "personas") {
+                EXPECT_EQ(item, without_editor_fields(app::workspace::get_persona(*snapshot, id)));
+            } else if (topic == "forums") {
+                EXPECT_EQ(item, without_editor_fields(app::workspace::get_forum(*snapshot, id)));
+            }
+        }
+    }
+    EXPECT_EQ(harness.run("assistant_inspect", inspect_arguments("styles"))["items"],
+        sorted_by_id(app::settings::list_styles(*snapshot)));
+    EXPECT_EQ(harness.run("assistant_inspect", inspect_arguments("voices"))["items"],
+        sorted_by_id(app::settings::list_voices(*snapshot)));
+    EXPECT_EQ(harness.store().config_revision(), version);
+    EXPECT_EQ(harness.store().list_events().size(), events);
+}
+
+TEST(AssistantInspect, UnattachedStoresAndNoteContentExclusion) {
+    ServiceHarness harness;
+    auto& store = harness.store();
+    const auto openai_folder = store.create_note_item({}, NoteItemKind::folder, "OpenAI upload");
+    const auto google_folder = store.create_note_item({}, NoteItemKind::folder, "Google upload");
+    const auto ready = store.register_folder_store(
+        openai_folder.id, FolderStoreService::openai, "saved-key", 7);
+    store.save_folder_store_remote_id(ready, "remote-store");
+    store.add_folder_store_file_id(ready, "remote-file");
+    store.mark_folder_store_ready(ready, "synthetic upload");
+    const auto incomplete = store.register_folder_store(
+        google_folder.id, FolderStoreService::google, "old-key", 3);
+    store.set_folder_store_uncertainty(incomplete, true);
+
+    const auto stores = harness.run("assistant_inspect", inspect_arguments("stores"));
+    ASSERT_EQ(stores["items"].size(), 2U);
+    EXPECT_EQ(stores["items"][0]["remote_store_id"], "remote-store");
+    EXPECT_EQ(stores["items"][0]["note_count"], 7);
+    EXPECT_EQ(stores["items"][1]["state"], "incomplete");
+    EXPECT_EQ(stores["items"][1]["remote_outcome_unknown"], true);
+
+    const auto note = store.create_note_item({}, NoteItemKind::note, "Private note");
+    const Json text{{"type", "text"}, {"text", "DOCUMENT_SENTINEL"}};
+    const Json paragraph{{"type", "paragraph"}, {"content", Json::array({text})}};
+    store.save_note(note.id, {{"type", "doc"}, {"content", Json::array({paragraph})}});
+    store.save_compressed_note(note.id, "COMPRESSED_SENTINEL");
+    const auto notes = harness.run("assistant_inspect", inspect_arguments("notes")).dump();
+    EXPECT_EQ(notes.find("DOCUMENT_SENTINEL"), std::string::npos);
+    EXPECT_EQ(notes.find("COMPRESSED_SENTINEL"), std::string::npos);
+}
+
+TEST(AssistantInspect, SecretsAreExcludedAndPendingAudioUsesSavedAttempt) {
+    ServiceHarness harness;
+    ApiKeyStore keys(harness.store());
+    const auto key = keys.create("Synthetic key", "KEY_SECRET_SENTINEL");
+    keys.save_r2("Synthetic R2", "https://example.invalid", "public-access-id",
+        "R2_SECRET_SENTINEL");
+    const auto note = harness.store().create_note_item({}, NoteItemKind::note, "Pending");
+    (void)harness.store().set_note_read_only(note.id, true);
+    const auto attempt = harness.store().accept_note_audio(
+        note.id, 2, "https://saved.invalid", key.id, [](const NoteAudioAttempt&) {});
+    ASSERT_TRUE(attempt);
+
+    for (const std::string_view topic : {"providers", "keys", "services", "notes"}) {
+        const auto result = harness.run("assistant_inspect", inspect_arguments(topic));
+        ASSERT_FALSE(result.contains("error")) << result.dump();
+        EXPECT_EQ(result.dump().find("KEY_SECRET_SENTINEL"), std::string::npos);
+        EXPECT_EQ(result.dump().find("R2_SECRET_SENTINEL"), std::string::npos);
+        if (topic != "notes") continue;
+        const auto found = std::ranges::find_if(result["items"], [&](const Json& item) {
+            return item["id"] == note.id;
+        });
+        ASSERT_NE(found, result["items"].end());
+        EXPECT_EQ((*found)["audio_attempt"]["service_origin"], "https://saved.invalid");
+        EXPECT_EQ((*found)["audio_attempt"]["clip_count"], 2);
+        EXPECT_EQ((*found)["audio_attempt"]["api_key_id"], key.id);
+    }
+}
+
+TEST(AssistantInspect, RedactsValuesWithoutChangingJsonSyntax) {
+    ServiceHarness harness;
+    ApiKeyStore keys(harness.store());
+    const auto key = keys.create("Short key", "true");
+    const auto note = harness.store().create_note_item({}, NoteItemKind::note, "Name true");
+    const auto result = harness.run("assistant_inspect", inspect_arguments("keys"));
+    ASSERT_FALSE(result.contains("error")) << result.dump();
+    const auto found = std::ranges::find_if(result["items"], [&](const Json& item) {
+        return item["id"] == key.id;
+    });
+    ASSERT_NE(found, result["items"].end());
+    EXPECT_EQ((*found)["has_value"], true);
+    const auto notes = harness.run("assistant_inspect", inspect_arguments("notes"));
+    const auto named = std::ranges::find_if(notes["items"], [&](const Json& item) {
+        return item["id"] == note.id;
+    });
+    ASSERT_NE(named, notes["items"].end());
+    EXPECT_EQ((*named)["name"], "Name [REDACTED]");
+}
+
+TEST(AssistantInspect, PagesPastDeletedAndOversizedItems) {
+    ServiceHarness harness;
+    auto& store = harness.store();
+    for (int index = 0; index < 240; ++index) {
+        (void)store.create_note_item(
+            {}, NoteItemKind::note, std::string(190, 'n') + std::to_string(index));
+    }
+    auto page = harness.run("assistant_inspect", inspect_arguments("notes"));
+    ASSERT_FALSE(page["next_after"].is_null());
+    auto after = page["next_after"];
+    store.delete_note_item(std::stoll(after.get<std::string>()));
+    std::size_t count = page["items"].size();
+    while (!after.is_null()) {
+        page = harness.run("assistant_inspect", inspect_arguments("notes", after));
+        count += page["items"].size();
+        after = page["next_after"];
+    }
+    EXPECT_EQ(count, 242U);
+
+    const auto first = store.create_note_item({}, NoteItemKind::folder, "Large store");
+    const auto second = store.create_note_item({}, NoteItemKind::folder, "Next store");
+    const auto large = store.register_folder_store(first.id, FolderStoreService::openai, "saved", 1);
+    store.add_folder_store_file_id(large, std::string(100 * 1024, 'x'));
+    const auto next = store.register_folder_store(second.id, FolderStoreService::google, "saved", 1);
+    page = harness.run("assistant_inspect", inspect_arguments("stores"));
+    ASSERT_EQ(page["items"].size(), 1U);
+    EXPECT_FALSE(page["items"][0].contains("too_large"));
+    EXPECT_FALSE(page["next_after"].is_null());
+
+    store.add_folder_store_file_id(large, std::string(270 * 1024, 'z'));
+    page = harness.run("assistant_inspect", inspect_arguments("stores"));
+    ASSERT_EQ(page["items"].size(), 1U);
+    EXPECT_EQ(page["items"][0], (Json{{"id", large}, {"too_large", true}}));
+    page = harness.run("assistant_inspect", inspect_arguments("stores", page["next_after"]));
+    ASSERT_EQ(page["items"].size(), 1U);
+    EXPECT_EQ(page["items"][0]["id"], next);
 }
 
 } // namespace

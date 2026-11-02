@@ -8,6 +8,8 @@
 #include "storage/stored_session.h"
 #include "storage/session_lease.h"
 
+#include <nlohmann/json_fwd.hpp>
+
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -93,6 +95,8 @@ public:
 
     [[nodiscard]] std::vector<StoredSession> list(
         std::string_view forum_id) const;
+    [[nodiscard]] nlohmann::json inspect_sessions(std::string_view forum_id) const;
+    [[nodiscard]] nlohmann::json inspect_entries(const FullSessionId& identity) const;
     [[nodiscard]] std::vector<StoredSession> recent() const;
     void validate(const FullSessionId& identity) const;
     [[nodiscard]] StoredSession create(

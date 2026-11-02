@@ -1,5 +1,6 @@
 #include "storage/session_repository.h"
 
+#include "storage/folder_store_storage.h"
 #include "storage/not_found_error.h"
 #include "storage/session_label.h"
 #include "storage/session_timestamp.h"
@@ -9,7 +10,10 @@
 #include "util/path_name.h"
 #include "workspace/workspace.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <ctime>
 #include <filesystem>
@@ -61,6 +65,101 @@ std::vector<StoredSession> list_forum(
             .identity = {std::string(forum_id), statement.text(0)},
             .label = statement.text(1),
             .updated_at = statement.integer(2),
+        });
+    }
+    return result;
+}
+
+// Entry and turn codes are stored as integers from 0 through 3.
+constexpr std::array<std::string_view, 4> entry_kind_names{
+    "human", "character", "notice", "error"};
+constexpr std::array<std::string_view, 4> entry_status_names{
+    "complete", "streaming", "cancelled", "failed"};
+constexpr std::array<std::string_view, 4> turn_state_names{
+    "started", "completed", "cancelled", "failed"};
+
+std::string code_name(
+    std::int64_t code,
+    const std::array<std::string_view, 4>& names) {
+    return std::string(names.at(static_cast<std::size_t>(code)));
+}
+
+nlohmann::json session_overrides(Database& database, std::int64_t session_key) {
+    Statement statement = database.prepare(
+        "SELECT character_id, provider_id, reasoning_effort "
+        "FROM session_character_settings WHERE session_key = ?1 "
+        "ORDER BY character_id",
+        session_key);
+    auto result = nlohmann::json::array();
+    while (statement.step()) {
+        result.push_back({
+            {"character_id", statement.text(0)},
+            {"provider_id", statement.is_null(1)
+                ? nlohmann::json(nullptr)
+                : nlohmann::json(statement.text(1))},
+            {"reasoning_effort", statement.is_null(2)
+                ? nlohmann::json(nullptr)
+                : nlohmann::json(statement.text(2))},
+        });
+    }
+    return result;
+}
+
+nlohmann::json session_folders(Database& database, std::int64_t session_key) {
+    Statement statement = database.prepare(
+        "SELECT folder_id FROM session_folders WHERE session_key = ?1 "
+        "ORDER BY folder_id",
+        session_key);
+    auto result = nlohmann::json::array();
+    while (statement.step()) {
+        const std::int64_t folder_id = statement.integer(0);
+        result.push_back({
+            {"folder_id", folder_id},
+            {"ref_id", note_item_ref_id(folder_id)},
+        });
+    }
+    return result;
+}
+
+nlohmann::json session_notes(Database& database, std::int64_t session_key) {
+    Statement statement = database.prepare(
+        "SELECT sn.note_id, sn.name, sn.explicitly_added, "
+        "EXISTS (SELECT 1 FROM note_items AS n WHERE n.id = sn.note_id) "
+        "FROM session_notes AS sn WHERE sn.session_key = ?1 "
+        "ORDER BY sn.note_id",
+        session_key);
+    auto result = nlohmann::json::array();
+    while (statement.step()) {
+        const std::int64_t note_id = statement.integer(0);
+        auto scopes = nlohmann::json::array();
+        Statement scope = database.prepare(
+            "SELECT character_id FROM session_note_scopes "
+            "WHERE session_key = ?1 AND note_id = ?2 ORDER BY character_id",
+            session_key,
+            note_id);
+        while (scope.step()) scopes.push_back(scope.text(0));
+        result.push_back({
+            {"note_id", note_id},
+            {"ref_id", note_item_ref_id(note_id)},
+            {"name", statement.text(1)},
+            {"explicitly_added", statement.integer(2) != 0},
+            {"source_exists", statement.integer(3) != 0},
+            {"scopes", std::move(scopes)},
+        });
+    }
+    return result;
+}
+
+nlohmann::json session_files(Database& database, std::int64_t session_key) {
+    Statement statement = database.prepare(
+        "SELECT name, length(CAST(text AS BLOB)) FROM session_files "
+        "WHERE session_key = ?1 ORDER BY name",
+        session_key);
+    auto result = nlohmann::json::array();
+    while (statement.step()) {
+        result.push_back({
+            {"name", statement.text(0)},
+            {"bytes", statement.integer(1)},
         });
     }
     return result;
@@ -319,6 +418,107 @@ std::vector<StoredSession> SessionRepository::list(
     }
     require_persistent_forum(forum_id);
     return list_forum(database_path_, forum_id, database_password_);
+}
+
+nlohmann::json SessionRepository::inspect_sessions(std::string_view forum_id) const {
+    const std::shared_lock operation(operation_mutex_);
+    require_persistent_forum(forum_id);
+    Database database(database_path_, Database::Mode::read_only, database_password_);
+    validate_workspace_session_database_identity(database);
+    Statement sessions = database.prepare(
+        "SELECT s.session_key, s.session_id, s.label, s.updated_at, "
+        "s.recent_pending, s.discardable, s.history_epoch, "
+        "(SELECT COUNT(*) FROM entries AS e WHERE e.session_key = s.session_key), "
+        "(SELECT COALESCE(SUM(e.input_tokens), 0) FROM entries AS e "
+        "WHERE e.session_key = s.session_key), "
+        "(SELECT COALESCE(SUM(e.output_tokens), 0) FROM entries AS e "
+        "WHERE e.session_key = s.session_key), "
+        "(SELECT COUNT(*) FROM entry_audio AS a WHERE a.session_key = s.session_key), "
+        "(SELECT n.note_id FROM note_summaries AS n WHERE n.session_key = s.session_key) "
+        "FROM sessions AS s JOIN forums AS f USING (forum_key) "
+        "WHERE f.forum_id = ?1 AND s.archived_at IS NULL "
+        "ORDER BY s.session_id",
+        forum_id);
+    auto result = nlohmann::json::array();
+    while (sessions.step()) {
+        const std::int64_t session_key = sessions.integer(0);
+        result.push_back({
+            {"session_id", sessions.text(1)},
+            {"label", sessions.text(2)},
+            {"updated_at", sessions.integer(3)},
+            {"recent_pending", sessions.integer(4) != 0},
+            {"discardable", sessions.integer(5) != 0},
+            {"history_epoch", sessions.integer(6)},
+            {"entry_count", sessions.integer(7)},
+            {"input_tokens", sessions.integer(8)},
+            {"output_tokens", sessions.integer(9)},
+            {"cached_audio_count", sessions.integer(10)},
+            {"summary_note_id", sessions.is_null(11)
+                ? nlohmann::json(nullptr)
+                : nlohmann::json(sessions.integer(11))},
+            {"overrides", session_overrides(database, session_key)},
+            {"folders", session_folders(database, session_key)},
+            {"notes", session_notes(database, session_key)},
+            {"files", session_files(database, session_key)},
+        });
+    }
+    return result;
+}
+
+nlohmann::json SessionRepository::inspect_entries(const FullSessionId& identity) const {
+    const std::shared_lock operation(operation_mutex_);
+    require_persistent_forum(identity.forum_id);
+    Database database(database_path_, Database::Mode::read_only, database_password_);
+    validate_workspace_session_database_identity(database);
+    require_active(database, identity);
+    Statement entries = database.prepare(
+        "SELECT e.entry_id, e.epoch, e.request_id, t.state, e.kind, "
+        "e.participant_id, e.display_name, e.addressed_to, e.addressed_to_name, "
+        "e.status, e.created_at, e.input_tokens, e.output_tokens, "
+        "e.web_search_used, length(CAST(e.text AS BLOB)), a.content_type "
+        "FROM entries AS e "
+        "JOIN sessions AS s USING (session_key) "
+        "JOIN forums AS f USING (forum_key) "
+        "LEFT JOIN turns AS t "
+        "ON t.session_key = e.session_key AND t.request_id = e.request_id "
+        "LEFT JOIN entry_audio AS a "
+        "ON a.session_key = e.session_key AND a.entry_id = e.entry_id "
+        "WHERE f.forum_id = ?1 AND s.session_id = ?2 AND s.archived_at IS NULL "
+        "ORDER BY e.entry_id",
+        std::string_view(identity.forum_id),
+        std::string_view(identity.session_id));
+    // Request IDs, token counts, the turn, and cached audio can be absent.
+    const auto optional_integer = [&entries](int column) {
+        return entries.is_null(column)
+            ? nlohmann::json(nullptr)
+            : nlohmann::json(entries.integer(column));
+    };
+    auto result = nlohmann::json::array();
+    while (entries.step()) {
+        result.push_back({
+            {"entry_id", entries.integer(0)},
+            {"epoch", entries.integer(1)},
+            {"request_id", optional_integer(2)},
+            {"state", entries.is_null(3)
+                ? nlohmann::json(nullptr)
+                : nlohmann::json(code_name(entries.integer(3), turn_state_names))},
+            {"kind", code_name(entries.integer(4), entry_kind_names)},
+            {"participant_id", entries.text(5)},
+            {"display_name", entries.text(6)},
+            {"addressed_to", entries.text(7)},
+            {"addressed_to_name", entries.text(8)},
+            {"status", code_name(entries.integer(9), entry_status_names)},
+            {"created_at", entries.integer(10)},
+            {"input_tokens", optional_integer(11)},
+            {"output_tokens", optional_integer(12)},
+            {"web_search_used", entries.integer(13) != 0},
+            {"text_bytes", entries.integer(14)},
+            {"content_type", entries.is_null(15)
+                ? nlohmann::json(nullptr)
+                : nlohmann::json(entries.text(15))},
+        });
+    }
+    return result;
 }
 
 std::vector<StoredSession> SessionRepository::recent() const {

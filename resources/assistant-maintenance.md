@@ -96,8 +96,8 @@ provider merely to select it.
 
 For a difference between a chat and saved character settings, first read the
 global character and its provider and state their saved provider and effort.
-Then explain the session-only Model and Effort overrides. Your tools cannot
-read them; ask what the toolbar shows or suggest Default in both controls.
+Read the saved session-only Model and Effort overrides with the `sessions`
+topic of `assistant_inspect`, then compare them with those global settings.
 
 For a conversation-save problem, first read `system/jev/config.toml` and
 `system/notes/config.toml`. Distinguish persistent chat history from a Notes
@@ -401,21 +401,55 @@ Assistant needs a working model provider to use this tool; when its own
 credentials are unavailable, the operator can run the daemon's command-line
 `--openai-login` mode before starting the daemon.
 
+### `assistant_inspect(topic, forum_id, session_id, after)`
+
+Read current settings with defaults and active-vault metadata. All four arguments
+are required. Topics: `application`, `providers`, `styles`, `voices`, `characters`,
+`personas`, `forums`, `services`, `keys`, `notes`, `stores`, `sessions`, and
+`session_entries`. Set forum_id for sessions and session_entries, and session_id
+only for session_entries; use null for other IDs. Entrance has no stored sessions.
+Use null after for the first page, then pass next_after for the same topic and
+IDs until it is null. A partial list does not establish that an item is absent.
+Pages contain up to 64 KiB of items, or one larger item. An item exceeding the
+256 KiB call limit returns its key and too_large instead of its fields. Each
+page observes current state; deleted cursor items do not invalidate paging.
+
+`application` reports the running version, capabilities, active vault, current
+vault registrations, bases, and process logging values. `services` reports
+service settings, R2 metadata, and ChatGPT login status. These two topics return
+one item and require null after. Other topics return ascending keyed lists.
+Settings topics use the Settings readers and their defaults. Saved source text
+is separately available through vault_config_read; saved host values may differ
+from process values until restart.
+
+Questions about uploaded folders start with `stores`, including incomplete and
+unattached uploads. Its state and note_count are saved upload metadata, not a
+fresh provider check or the current folder count. `characters`, `forums`, and
+`sessions` show where folders are used. Keep uploaded stores, Files references,
+and chat attachments distinct. `notes` includes folders and annotations, Ref
+IDs, audio clip metadata, and saved pending audio attempt details. `sessions`
+includes live flags, saved toolbar overrides, attachment metadata and counts;
+`session_entries` includes entry metadata and byte lengths. Events and pending
+work remain in assistant_events. Inspection never returns session or note text,
+media bytes, or credentials, and never starts work or contacts a provider.
+
 ### `vault_config_list(prefix)`
 
 Pass a literal string prefix; `""` lists all paths. Matching respects directory
 boundaries, not globs or regular expressions. Results are in lexical order and
 include the configuration version, path byte sizes, readable/writable policy,
-and protection reasons. A result has at most 500 entries. If limited, narrow
-the prefix; there is no pagination argument. Listing is read-only and takes no
-input version.
+and protection reasons. Picture rows are listed as unreadable and unwritable.
+A result has at most 500 entries. If limited, narrow the prefix; a directory
+with more than 500 rows cannot be listed completely. There is no pagination
+argument. Listing is read-only and takes no input version.
 
 ### `vault_config_read(paths)`
 
 Pass an array of exact logical paths. No prior listing or input version is
 required. All requested files come from one current committed snapshot, with
-its version. Missing paths are reported explicitly. Reads return exact TOML
-and Markdown source. Protected Assistant files remain readable.
+its version. Missing paths are reported explicitly. A picture path is
+reported as `missing`. Reads return exact TOML and Markdown source. Protected
+Assistant files remain readable.
 
 Under `system/keys/`, only key ID, display name, type, and credential-present
 status are returned. Raw key files are not readable or writable. No API/R2 key
@@ -424,6 +458,8 @@ values, passwords, or OAuth tokens are available.
 Build a repair from files read at the same version. If separate reads have
 different versions, reread all needed files together. A read is complete or
 reports `too_large`; never reconstruct a replacement from partial text.
+Reads are limited to 256 KiB per call, including JSON encoding. Writes remain
+limited to 64 KiB per file.
 
 ### `vault_config_apply(action, version, changes)`
 

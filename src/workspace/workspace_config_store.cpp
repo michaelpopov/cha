@@ -1575,7 +1575,6 @@ struct WorkspaceConfigStore::Impl {
         for (const auto& [name, content] : published->source_files()) {
             if (!matches_list_prefix(name, prefix)) continue;
             const ConfigPathPolicy policy = config_path_policy(name, provider);
-            if (!policy.readable) continue;
             if (result.entries.size() == workspace_config_list_limit) {
                 result.truncated = true;
                 break;
@@ -1611,8 +1610,7 @@ struct WorkspaceConfigStore::Impl {
                 result.files.push_back(std::move(item));
                 continue;
             }
-            if (found->second.size() > workspace_config_file_size_limit
-                || result_bytes + found->second.size()
+            if (result_bytes + found->second.size()
                     > workspace_config_call_size_limit) {
                 item.status = WorkspaceConfigReadStatus::too_large;
                 result.files.push_back(std::move(item));

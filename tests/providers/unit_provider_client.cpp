@@ -1,5 +1,6 @@
 #include "providers/provider_client.h"
 #include "providers/maintenance.h"
+#include "providers/tool_calls.h"
 #include "support/test_workspace.h"
 #include "workspace/workspace_config_store.h"
 #include "chat/transcript.h"
@@ -2888,6 +2889,33 @@ TEST(ProviderClientTools, RejectsIncompleteChatToolCallsInBothResponseForms) {
     }
 }
 
+TEST(ProviderClientTools, InspectSchemaAcrossAllApis) {
+    for (const auto api : {ProviderApi::chat_completions, ProviderApi::responses,
+             ProviderApi::google, ProviderApi::anthropic}) {
+        Json body = Json::object();
+        add_maintenance_tools(body, api);
+        EXPECT_TRUE(function_tool_available(body, api, "assistant_inspect"));
+        Json function;
+        for (const auto& tool : body["tools"]) {
+            if (api == ProviderApi::google) {
+                for (const auto& value : tool["functionDeclarations"]) {
+                    if (value["name"] == "assistant_inspect") function = value;
+                }
+                continue;
+            }
+            const auto& value = api == ProviderApi::chat_completions ? tool["function"] : tool;
+            if (value["name"] == "assistant_inspect") function = value;
+        }
+        ASSERT_FALSE(function.is_null());
+        const char* schema_field = api == ProviderApi::google ? "parametersJsonSchema"
+            : api == ProviderApi::anthropic                   ? "input_schema"
+                                                              : "parameters";
+        const auto& schema = function.at(schema_field);
+        EXPECT_EQ(schema["required"], Json::array({"topic", "forum_id", "session_id", "after"}));
+        EXPECT_EQ(schema["properties"]["topic"]["enum"].size(), 13U);
+    }
+}
+
 Json maintenance_arguments() {
     return Json{{"prefix", nullptr}};
 }
@@ -2910,6 +2938,13 @@ void expect_maintenance_tools(const Json& body) {
             EXPECT_EQ(item["properties"]["content"]["type"], Json::array({"string", "null"}));
             EXPECT_EQ(item["properties"]["key"]["type"], Json::array({"string", "null"}));
             EXPECT_EQ(item["properties"]["value"]["type"], Json::array({"string", "number", "boolean", "null"}));
+        } else if (function["name"] == "assistant_inspect") {
+            EXPECT_EQ(schema["required"],
+                Json::array({"topic", "forum_id", "session_id", "after"}));
+            EXPECT_EQ(schema["properties"]["topic"]["enum"].size(), 13U);
+            for (const auto field : {"forum_id", "session_id", "after"}) {
+                EXPECT_EQ(schema["properties"][field]["type"], Json::array({"string", "null"}));
+            }
         } else if (function["name"] == "assistant_events") {
             EXPECT_TRUE(schema["properties"].empty());
             EXPECT_EQ(schema["required"], Json::array());
@@ -2926,7 +2961,7 @@ void expect_maintenance_tools(const Json& body) {
         EXPECT_NE(tool.value("type", ""), "openrouter:web_search");
     }
     EXPECT_EQ(names, (std::vector<std::string>{
-        "vault_config_list", "vault_config_read", "vault_config_apply", "add_character",
+        "assistant_inspect", "vault_config_list", "vault_config_read", "vault_config_apply", "add_character",
         "assistant_logs", "assistant_events", "assistant_logging",
         "host_config_list", "host_config_read", "host_config_write",
         "assistant_openai_login"}));

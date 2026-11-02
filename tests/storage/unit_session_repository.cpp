@@ -11,6 +11,7 @@
 #include "workspace/workspace.h"
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
 #include <algorithm>
@@ -1129,6 +1130,65 @@ TEST_F(SessionRepositoryTest, CharacterSettingsWriteRollsBackAndUnusedSessionSti
         (SessionCharacterSettings{"test", "high"}));
     EXPECT_TRUE(repository.discard_unused(automatic.identity));
     EXPECT_EQ(scalar(automatic.database_path, "SELECT COUNT(*) FROM session_character_settings"), 0);
+}
+
+TEST_F(SessionRepositoryTest, InspectMetadataExcludesContentAndReadsSavedOverrides) {
+    auto repository = make_repository();
+    const auto session = repository.create("lobby", "Metadata");
+    {
+        storage::SqliteDatabase database(
+            database_path(), storage::SqliteDatabase::Mode::read_write);
+        auto row = database.prepare(
+            "SELECT session_key FROM sessions WHERE session_id = ?1",
+            session.identity.session_id);
+        ASSERT_TRUE(row.step());
+        const auto key = row.integer(0);
+        database.prepare(
+            "INSERT INTO session_character_settings "
+            "(session_key, character_id, provider_id, reasoning_effort) "
+            "VALUES (?1, 'guide', 'second', 'high')",
+            key).run();
+        database.prepare(
+            "INSERT INTO turns (session_key, request_id, epoch, state) VALUES (?1, 1, 1, 1)",
+            key).run();
+        database.prepare(
+            "INSERT INTO entries (session_key, entry_id, epoch, request_id, kind, "
+            "participant_id, display_name, text, status) "
+            "VALUES (?1, 1, 1, 1, 1, 'guide', 'Guide', 'ENTRY_SENTINEL', 0)",
+            key).run();
+        database.prepare(
+            "INSERT INTO session_notes (session_key, note_id, name, text) "
+            "VALUES (?1, 999, 'Captured', 'COPY_SENTINEL')",
+            key).run();
+        database.prepare(
+            "INSERT INTO session_files (session_key, name, text) "
+            "VALUES (?1, 'attached.txt', 'FILE_SENTINEL')",
+            key).run();
+    }
+
+    const auto sessions = repository.inspect_sessions("lobby");
+    ASSERT_EQ(sessions.size(), 1U);
+    EXPECT_EQ(sessions[0]["overrides"][0]["provider_id"], "second");
+    EXPECT_EQ(sessions[0]["overrides"][0]["reasoning_effort"], "high");
+    EXPECT_EQ(sessions[0]["entry_count"], 1);
+    EXPECT_EQ(sessions[0]["notes"][0]["source_exists"], false);
+    EXPECT_EQ(sessions[0]["files"][0]["bytes"], 13);
+
+    const auto entries = repository.inspect_entries(session.identity);
+    ASSERT_EQ(entries.size(), 1U);
+    EXPECT_EQ(entries[0]["text_bytes"], 14);
+    EXPECT_EQ(entries[0]["state"], "completed");
+    EXPECT_EQ(entries[0]["kind"], "character");
+    EXPECT_EQ(entries[0]["status"], "complete");
+    EXPECT_TRUE(entries[0]["content_type"].is_null());
+
+    const auto encoded = sessions.dump() + entries.dump();
+    for (const auto sentinel : {"ENTRY_SENTINEL", "COPY_SENTINEL", "FILE_SENTINEL"}) {
+        EXPECT_EQ(encoded.find(sentinel), std::string::npos);
+    }
+    EXPECT_THROW((void)repository.inspect_entries({"lobby", "missing"}), SessionNotFoundError);
+    EXPECT_THROW(
+        (void)repository.inspect_sessions(temporary_identity().forum_id), ForumNotFoundError);
 }
 
 } // namespace

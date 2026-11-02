@@ -17,6 +17,7 @@
 
 namespace cha {
 
+class ApiKeyStore;
 class LiveSessionManager;
 class OpenAiOAuth;
 class SessionRepository;
@@ -29,6 +30,7 @@ public:
     struct Links {
         WorkspaceConfigStore* store{};
         OpenAiOAuth* oauth{};
+        ApiKeyStore* api_keys{};
         std::timed_mutex* lifecycle{};
         std::atomic_bool* stopping{};
         std::function<std::optional<ErrorCode>(std::uint64_t)> admit;
@@ -37,6 +39,7 @@ public:
         std::filesystem::path config_directory;
         // Called with lifecycle held; reads existing operation status only.
         std::function<nlohmann::json()> pending_notes;
+        std::function<nlohmann::json()> application;
     };
 
     explicit AssistantService(Links links);
