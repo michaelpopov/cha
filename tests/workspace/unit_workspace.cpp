@@ -1046,6 +1046,33 @@ TEST(Workspace, DescribesOtherForumMembersAndSharedReplies) {
         "supplied to other characters on their later turns."), std::string::npos);
 }
 
+TEST(Workspace, LoadsNicknamesAndDescribesThemInSystemPrompt) {
+    test::TestWorkspace fixture;
+    std::ofstream(fixture.root() / "characters" / "guide" / "Nicknames.TXT", std::ios::binary)
+        << "# Comment\n\n  Doc  \r\n   # Indented comment\nThe \"Guide\"\n";
+    fixture.add_character("observer", "Observer");
+    std::ofstream(fixture.root() / "characters" / "observer" / "nicknames.txt", std::ios::binary)
+        << "Obs";
+    const auto member = fixture.root() / "forums" / "lobby" / "members" / "observer";
+    std::filesystem::create_directories(member);
+    std::ofstream(member / "character.toml") << "# forum membership\n";
+
+    const Workspace workspace = Workspace::load(fixture.root());
+    EXPECT_EQ(workspace.find_character("guide")->nicknames,
+        (std::vector<std::string>{"Doc", "The \"Guide\""}));
+    EXPECT_EQ(workspace.find_character("observer")->nicknames, std::vector<std::string>{"Obs"});
+    const auto prompt = workspace.character_definition("lobby", "guide").system_prompt;
+    EXPECT_NE(prompt.find("You are the character named \"Guide\".\n"
+        "Your nicknames are \"Doc\", \"The \\\"Guide\\\"\".\n"
+        "The current human participant is"), std::string::npos);
+    EXPECT_NE(prompt.find("(JSON): [{\"name\":\"Observer\",\"nicknames\":[\"Obs\"]}]."),
+        std::string::npos);
+    const auto observer = workspace.character_definition("lobby", "observer").system_prompt;
+    EXPECT_NE(observer.find("Your nicknames are \"Obs\".\n"), std::string::npos);
+    EXPECT_NE(observer.find("[{\"name\":\"Guide\",\"nicknames\":[\"Doc\",\"The \\\"Guide\\\"\"]}]"),
+        std::string::npos);
+}
+
 TEST(Workspace, BuildsCharacterDefinitionWithVariantsBeforeSystemPromptAssembly) {
     test::TestWorkspace fixture;
     std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md", std::ios::binary)

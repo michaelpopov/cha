@@ -17,6 +17,7 @@ struct JevOption {
     std::string key;
     std::string character_id;
     std::string display_name;
+    std::vector<std::string> nicknames;
 };
 struct JevRequestInput {
     WorkspaceJev config;

@@ -11,8 +11,13 @@ nlohmann::ordered_json make_jev_body(const JevRequestInput& input) {
     using Json = nlohmann::ordered_json;
     Json criteria = Json::object();
     for (const auto& option : input.characters) {
-        criteria[option.key] = option.display_name + ": the user addresses "
-            + option.display_name + " as the single intended recipient and requests a response, rather than merely mentioning this character.";
+        std::string nicknames;
+        for (const auto& nickname : option.nicknames) {
+            nicknames += (nicknames.empty() ? " (also called " : ", ") + Json(nickname).dump();
+        }
+        if (!nicknames.empty()) nicknames += ")";
+        criteria[option.key] = option.display_name + nicknames + ": the user addresses "
+            + option.display_name + (nicknames.empty() ? "" : ", by name or nickname,") + " as the single intended recipient and requests a response, rather than merely mentioning this character.";
     }
     criteria["undefined"] = "Undefined: no explicit recipient or explicit intent to make a self-note is identified. This keeps the active forum target. Choose this for ordinary questions, requests, statements, personal thoughts, diary-like text, and reminders without explicit self-note intent. Also choose this when the recipient is ambiguous (including indistinguishable duplicate names), or the addressees do not match one character or the whole forum. A subset of a larger forum has no matching choice.";
     criteria["all_characters"] = "All characters: the user addresses the whole forum or requests a response from every character, including by naming all forum characters individually.";

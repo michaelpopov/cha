@@ -51,6 +51,17 @@ TEST(JevProtocol, SendsOnlyPromptAndOptionsAndValidatesExactChoice) {
     EXPECT_EQ(make_jev_body(input)["questions"]["recipient"]["criteria"].size(), 5u);
 }
 
+TEST(JevProtocol, DescribesNicknamesInCharacterCriteria) {
+    auto input = jev_input();
+    input.characters[1].nicknames = {"Emperor", "The \"Stoic\""};
+    const auto criteria = make_jev_body(input)["questions"]["recipient"]["criteria"];
+    EXPECT_EQ(criteria["character_1"], "Seneca: the user addresses Seneca as the single "
+        "intended recipient and requests a response, rather than merely mentioning this character.");
+    EXPECT_EQ(criteria["character_2"], "Marcus (also called \"Emperor\", \"The \\\"Stoic\\\"\"): "
+        "the user addresses Marcus, by name or nickname, as the single intended recipient "
+        "and requests a response, rather than merely mentioning this character.");
+}
+
 TEST(JevConfiguration, ValidatesAtomicallyRoundTripsAndDisablesWithoutDeletingKey) {
     test::TestWorkspace fixture;
     const auto database = test::import_test_database(fixture.root());

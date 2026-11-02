@@ -158,6 +158,8 @@ struct WorkspaceCharacter {
     // All direct files for the character file list, without binary content.
     std::vector<std::string> filenames;
     std::vector<FileReference> file_references;
+    // Alternative names from nicknames.txt for recipient detection and prompts.
+    std::vector<std::string> nicknames;
 };
 
 struct WorkspaceForumMember {

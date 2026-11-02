@@ -719,7 +719,8 @@ ControllerUpdate SessionController::start_classification(
     std::vector<JevOption> options;
     for (const auto& character : forum_characters(*current)) {
         options.push_back({"character_" + std::to_string(options.size() + 1),
-            character.id, character.display_name});
+            character.id, character.display_name,
+            current->find_character(character.id)->nicknames});
     }
     const auto deadline = std::min(submission->deadline,
         std::chrono::steady_clock::now() + jev_request_timeout);

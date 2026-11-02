@@ -28,5 +28,17 @@
   {"roster": ["Сенека", "Марк Аврелий"], "prompt": "Расскажи о Сенеке.", "expected": {"recipient": "undefined"}},
   {"roster": ["Сенека", "Марк Аврелий"], "prompt": "Сегодня я чувствую себя лучше.", "expected": {"recipient": "undefined"}},
   {"roster": ["Сенека", "Марк Аврелий"], "prompt": "Заметка для себя: завтра купить молоко.", "expected": {"recipient": "self_note"}},
-  {"roster": ["Сенека", "Марк Аврелий"], "prompt": "Продолжай.", "expected": {"recipient": "undefined"}}
+  {"roster": ["Сенека", "Марк Аврелий"], "prompt": "Продолжай.", "expected": {"recipient": "undefined"}},
+  {"roster": [{"name": "Seneca", "nicknames": ["Lucius"]}, {"name": "Marcus", "nicknames": ["Emperor"]}], "prompt": "Emperor, what is your view on duty?", "expected": {"recipient": "character_2"}},
+  {"roster": [{"name": "Seneca", "nicknames": ["Lucius"]}, {"name": "Marcus", "nicknames": ["Emperor"]}], "prompt": "Lucius, explain this.", "expected": {"recipient": "character_1"}},
+  {"roster": [{"name": "Seneca", "nicknames": ["Lucius"]}, {"name": "Marcus", "nicknames": ["Emperor"]}], "prompt": "Tell me about the Emperor.", "expected": {"recipient": "undefined"}},
+  {"roster": [{"name": "Seneca", "nicknames": ["Lucius"]}, {"name": "Marcus", "nicknames": ["Emperor"]}], "prompt": "Seneca, do you agree with the Emperor?", "expected": {"recipient": "character_1"}},
+  {"roster": [{"name": "Seneca", "nicknames": ["Lucius"]}, {"name": "Marcus", "nicknames": ["Emperor"]}], "prompt": "Emperor and Lucius, please answer.", "expected": {"recipient": "all_characters"}},
+  {"roster": ["Seneca", "Marcus"], "prompt": "Emperor, what is your view on duty?", "expected": {"recipient": "undefined"}},
+  {"roster": [{"name": "Seneca", "nicknames": ["Emperor"]}, {"name": "Marcus", "nicknames": ["Emperor"]}], "prompt": "Emperor, what is your view on duty?", "expected": {"recipient": "undefined"}},
+  {"roster": [{"name": "Seneca", "nicknames": ["Marcus"]}, "Marcus"], "prompt": "Marcus, explain your view.", "expected": {"recipient": "undefined"}},
+  {"roster": [{"name": "Seneca", "nicknames": ["Teacher"]}, "Marcus"], "prompt": "Teacher, explain this.", "expected": {"recipient": "character_1"}},
+  {"roster": [{"name": "Seneca", "nicknames": ["Teacher"]}, "Marcus"], "prompt": "My teacher said I should read more.", "expected": {"recipient": "undefined"}},
+  {"roster": [{"name": "Сенека"}, {"name": "Марк Аврелий", "nicknames": ["Император"]}], "prompt": "Император, что ты думаешь о долге?", "expected": {"recipient": "character_2"}},
+  {"roster": [{"name": "Сенека"}, {"name": "Марк Аврелий", "nicknames": ["Император"]}], "prompt": "Расскажи об Императоре.", "expected": {"recipient": "undefined"}}
 ]

@@ -1121,16 +1121,24 @@ std::string forum_context(
     Json others = Json::array();
     for (const WorkspaceForumMember& member : forum.members) {
         if (member.character_id == current.character_id) continue;
-        const auto& other = workspace.find_character(member.character_id)->character;
+        const auto* other_character = workspace.find_character(member.character_id);
+        const auto& other = other_character->character;
         Json encoded{{"name", other.display_name}};
+        if (!other_character->nicknames.empty()) encoded["nicknames"] = other_character->nicknames;
         if (other.description) encoded["description"] = *other.description;
         others.push_back(std::move(encoded));
     }
+    std::string nicknames;
+    for (const auto& nickname : character.nicknames) {
+        nicknames += (nicknames.empty() ? "\nYour nicknames are " : ", ") + Json(nickname).dump();
+    }
+    if (!nicknames.empty()) nicknames += ".";
     const auto* persona = workspace.find_persona(forum.default_persona_id);
     std::string result =
         "# Conversation protocol\n\nYou are the character named "
         + Json(character.character.display_name).dump()
-        + ".\nThe current human participant is "
+        + "." + nicknames
+        + "\nThe current human participant is "
         + Json(persona ? persona->display_name : guest_name).dump()
         + ".\nOther characters currently participating in this forum (JSON): "
         + others.dump()
@@ -1782,6 +1790,37 @@ struct LoadedCharacters {
     std::unordered_map<std::string, std::filesystem::path> directories;
 };
 
+std::vector<std::string> character_nicknames(
+    const TextSource& source,
+    const std::filesystem::path& directory,
+    const LoadWarnings& warnings) {
+    const auto is_nicknames = [](std::string_view filename) {
+        return std::ranges::equal(filename, std::string_view("nicknames.txt"),
+            [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
+    };
+    std::vector<std::string> filenames = direct_filenames(source, directory);
+    std::ranges::sort(filenames);
+    std::optional<std::string> text;
+    for (const auto& filename : filenames) {
+        if (!is_nicknames(filename)) continue;
+        if (text) {
+            warnings.emit(directory / filename, "Ignoring duplicate nicknames file " + filename);
+            continue;
+        }
+        text = read_text(source, directory / filename, "character nicknames");
+    }
+    std::vector<std::string> result;
+    if (!text) return result;
+    std::string_view rest = *text;
+    while (!rest.empty()) {
+        const auto end = rest.find('\n');
+        const auto line = trim_view(rest.substr(0, end));
+        rest = end == std::string_view::npos ? std::string_view{} : rest.substr(end + 1);
+        if (!line.empty() && !line.starts_with('#')) result.emplace_back(line);
+    }
+    return result;
+}
+
 LoadedCharacters load_characters(
     const TextSource& source,
     const Workspace& workspace,
@@ -1837,6 +1876,7 @@ LoadedCharacters load_characters(
                     ? prompt_template : read_text(source, entry, "character file"));
             }
         }
+        auto nicknames = character_nicknames(source, directory, warnings);
         result.characters.push_back({
             .character = {
                 .id = id,
@@ -1859,6 +1899,7 @@ LoadedCharacters load_characters(
             .markdown_files = std::move(markdown_files),
             .filenames = direct_filenames(source, directory),
             .file_references = config.file_references,
+            .nicknames = std::move(nicknames),
         });
     }
     return result;

@@ -11,9 +11,15 @@ int main(int argc, char** argv) {
         for (auto& item : cases) {
             cha::JevRequestInput input;
             input.prompt = item.at("prompt").get<std::string>();
-            for (const auto& name : item.at("roster")) {
+            // A roster entry is a name or {"name": ..., "nicknames": [...]}.
+            for (const auto& entry : item.at("roster")) {
                 const auto key = "character_" + std::to_string(input.characters.size() + 1);
-                input.characters.push_back({key, key, name.get<std::string>()});
+                if (entry.is_string()) {
+                    input.characters.push_back({key, key, entry.get<std::string>()});
+                } else {
+                    input.characters.push_back({key, key, entry.at("name").get<std::string>(),
+                        entry.value("nicknames", std::vector<std::string>{})});
+                }
             }
             item["request"] = cha::make_jev_body(input);
         }
