@@ -1,0 +1,28 @@
+{
+  "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"MAX_TOKENS\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 7,\n    \"totalTokenCount\": 7,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 7\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.8-flash\",\n  \"responseId\": \"od7nauO4Dcmtz7IPyfONiAo\"\n}\n",
+  "request": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Project Cedar demand and source code"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "maxOutputTokens": 1
+    },
+    "tools": [
+      {
+        "fileSearch": {
+          "fileSearchStoreNames": [
+            "fileSearchStores/cha-live-ga-20261102-49t4l6u3opvq"
+          ]
+        }
+      }
+    ]
+  },
+  "status": 200
+}

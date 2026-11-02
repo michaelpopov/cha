@@ -1,0 +1,415 @@
+[
+  {
+    "case": "W18-isolated",
+    "native_maintenance_call_count": 3,
+    "captured_maintenance_call_count": 3,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 4,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W04",
+    "native_maintenance_call_count": 6,
+    "captured_maintenance_call_count": 6,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 9,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W05",
+    "native_maintenance_call_count": 3,
+    "captured_maintenance_call_count": 3,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 4,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "gpt4o-W08",
+    "native_maintenance_call_count": 5,
+    "captured_maintenance_call_count": 5,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 5,
+    "models": [
+      "gpt-4o"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W11",
+    "native_maintenance_call_count": 4,
+    "captured_maintenance_call_count": 4,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 5,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W16",
+    "native_maintenance_call_count": 2,
+    "captured_maintenance_call_count": 2,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 5,
+    "models": [
+      "gpt-5.4-mini",
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W17",
+    "native_maintenance_call_count": 0,
+    "captured_maintenance_call_count": 0,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 2,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W10",
+    "native_maintenance_call_count": 3,
+    "captured_maintenance_call_count": 3,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 5,
+    "models": [
+      "gpt-5.4-mini",
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "gpt4o-W02-W03",
+    "native_maintenance_call_count": 5,
+    "captured_maintenance_call_count": 5,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 7,
+    "models": [
+      "gpt-4o",
+      "gpt-5.4-mini"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "F",
+    "native_maintenance_call_count": 0,
+    "captured_maintenance_call_count": 0,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 0,
+    "models": [],
+    "rejected_prompts": [
+      "@Assistant Where do I choose the model that compresses notes?",
+      "@Assistant Change Writer's provider to Gemini.",
+      "@Assistant What does Default mean in the chat toolbar?",
+      "@Assistant How do I give Writer a folder of documents?",
+      "@Assistant Which API formats can a provider use?",
+      "@Assistant Where are the shared instructions for all characters?"
+    ],
+    "prompt_dispatch_valid": false,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W07-W18",
+    "native_maintenance_call_count": 9,
+    "captured_maintenance_call_count": 9,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 12,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W09",
+    "native_maintenance_call_count": 4,
+    "captured_maintenance_call_count": 4,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 5,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "gpt4o-F05-after-import-fix",
+    "native_maintenance_call_count": 0,
+    "captured_maintenance_call_count": 0,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 1,
+    "models": [
+      "gpt-4o"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W08",
+    "native_maintenance_call_count": 9,
+    "captured_maintenance_call_count": 9,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 11,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "cleanup",
+    "native_maintenance_call_count": 0,
+    "captured_maintenance_call_count": 0,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 0,
+    "models": [],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W01",
+    "native_maintenance_call_count": 0,
+    "captured_maintenance_call_count": 0,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 1,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W06",
+    "native_maintenance_call_count": 4,
+    "captured_maintenance_call_count": 4,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 6,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "gpt4o-W04",
+    "native_maintenance_call_count": 10,
+    "captured_maintenance_call_count": 10,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 12,
+    "models": [
+      "gpt-4o"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W16-after-import-fix",
+    "native_maintenance_call_count": 2,
+    "captured_maintenance_call_count": 2,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 5,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "F-after-import-fix",
+    "native_maintenance_call_count": 0,
+    "captured_maintenance_call_count": 0,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 6,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "gpt4o-F05",
+    "native_maintenance_call_count": 0,
+    "captured_maintenance_call_count": 0,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 0,
+    "models": [],
+    "rejected_prompts": [
+      "@Assistant Which API formats can a provider use?"
+    ],
+    "prompt_dispatch_valid": false,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W02-W03",
+    "native_maintenance_call_count": 7,
+    "captured_maintenance_call_count": 7,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 10,
+    "models": [
+      "gpt-5.4-mini",
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W15",
+    "native_maintenance_call_count": 5,
+    "captured_maintenance_call_count": 5,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 6,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W12",
+    "native_maintenance_call_count": 3,
+    "captured_maintenance_call_count": 3,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 4,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W12-after-import-fix",
+    "native_maintenance_call_count": 2,
+    "captured_maintenance_call_count": 2,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 3,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "fresh-W02-W03",
+    "native_maintenance_call_count": 7,
+    "captured_maintenance_call_count": 7,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 10,
+    "models": [
+      "gpt-5.4-mini",
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "upload",
+    "native_maintenance_call_count": 0,
+    "captured_maintenance_call_count": 0,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 0,
+    "models": [],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W13",
+    "native_maintenance_call_count": 2,
+    "captured_maintenance_call_count": 2,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 5,
+    "models": [
+      "gpt-5.4-mini",
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  },
+  {
+    "case": "W14",
+    "native_maintenance_call_count": 3,
+    "captured_maintenance_call_count": 3,
+    "missing_results": [],
+    "tool_results_complete": true,
+    "completed_model_responses": 5,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "rejected_prompts": [],
+    "prompt_dispatch_valid": true,
+    "driver_ok_is_not_a_model_verdict": true
+  }
+]

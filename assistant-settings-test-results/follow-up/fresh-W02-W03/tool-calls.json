@@ -1,0 +1,247 @@
+[
+  {
+    "call_id": "call_3AeEVWEWAh9Thi4Ve8PfLC4p",
+    "utc": "2026-11-02T03:51:33.099832+00:00",
+    "prompt": "from Guest at 2026-11-02T03:51:31Z:\nCompressing my note fails. Why?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/notes/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "path": "system/notes/config.toml",
+          "status": "missing"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_BvGGlvWGHGPm3cOSb5YN5CNS",
+    "utc": "2026-11-02T03:51:34.540160+00:00",
+    "prompt": "from Guest at 2026-11-02T03:51:31Z:\nCompressing my note fails. Why?",
+    "name": "assistant_events",
+    "arguments": {},
+    "result": {
+      "events": [],
+      "limited": false,
+      "pending_notes": []
+    }
+  },
+  {
+    "call_id": "call_O5YPk6haRj2BPYKo6kIE4yfh",
+    "utc": "2026-11-02T03:51:36.035888+00:00",
+    "prompt": "from Guest at 2026-11-02T03:51:31Z:\nCompressing my note fails. Why?",
+    "name": "assistant_logs",
+    "arguments": {
+      "contains": "compress",
+      "limit": 40,
+      "minimum_level": "info"
+    },
+    "result": {
+      "entries": [],
+      "level": "debug",
+      "limited": false,
+      "status": "ok"
+    }
+  },
+  {
+    "call_id": "call_79XOTL7Vmv5xiiNIyowY5AbB",
+    "utc": "2026-11-02T03:51:40.982122+00:00",
+    "prompt": "from Guest at 2026-11-02T03:51:39Z:\nFix it. Use the OpenAI provider with low effort.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "system"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 51,
+          "path": "system/assistant/character.toml",
+          "protection_reason": "Assistant settings are read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 218,
+          "path": "system/keys/api_key_1/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 104,
+          "path": "system/keys/api_key_2/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 75,
+          "path": "system/keys/api_key_3/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 95,
+          "path": "system/keys/api_key_4/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 83,
+          "path": "system/keys/api_key_5/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 12,
+          "path": "system/keys/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 321,
+          "path": "system/providers/provider_1/config.toml",
+          "protection_reason": "Assistant's selected provider is read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 316,
+          "path": "system/providers/provider_2/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 358,
+          "path": "system/providers/provider_3/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 327,
+          "path": "system/providers/provider_4/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 52,
+          "path": "system/providers/test/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 57,
+          "path": "system/session/config.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_1oSqHVNVtbnu0s0Nzc2aBDXN",
+    "utc": "2026-11-02T03:51:42.911610+00:00",
+    "prompt": "from Guest at 2026-11-02T03:51:39Z:\nFix it. Use the OpenAI provider with low effort.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/providers/provider_1/config.toml",
+        "system/providers/provider_2/config.toml",
+        "system/providers/provider_3/config.toml",
+        "system/providers/provider_4/config.toml",
+        "system/notes/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "api = 'responses'\napi_key = 'api_key_1'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'Assistant test model'\nhost = 'api.openai.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gpt-6.1-sol'\nport = 443\nreasoning_effort = 'low'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_1/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'responses'\napi_key = 'api_key_1'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'openai-direct'\nhost = 'api.openai.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gpt-5.4-mini'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_2/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'google'\napi_key = 'api_key_2'\nauth = 'none'\nbase_path = '/v1beta'\ncache_retention = 'short'\ndisplay_name = 'google-direct'\nhost = 'generativelanguage.googleapis.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gemini-3.8-flash'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_3/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'anthropic'\napi_key = 'api_key_4'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'anthropic-direct'\nhost = 'api.anthropic.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'claude-sonnet-4-5'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_4/config.toml",
+          "status": "ok"
+        },
+        {
+          "path": "system/notes/config.toml",
+          "status": "missing"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_lYHRilSd3kGm09NSqqT6HNyd",
+    "utc": "2026-11-02T03:51:44.469388+00:00",
+    "prompt": "from Guest at 2026-11-02T03:51:39Z:\nFix it. Use the OpenAI provider with low effort.",
+    "name": "assistant_logs",
+    "arguments": {
+      "contains": "compression",
+      "limit": 20,
+      "minimum_level": "info"
+    },
+    "result": {
+      "entries": [],
+      "level": "debug",
+      "limited": false,
+      "status": "ok"
+    }
+  },
+  {
+    "call_id": "call_VkpOQbVeq7lyAbXexpxXUujk",
+    "utc": "2026-11-02T03:51:46.247615+00:00",
+    "prompt": "from Guest at 2026-11-02T03:51:39Z:\nFix it. Use the OpenAI provider with low effort.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": "compression_provider = \"provider_2\"\ncompression_reasoning_effort = \"low\"\n",
+          "key": null,
+          "operation": "create",
+          "path": "system/notes/config.toml",
+          "value": null
+        }
+      ],
+      "version": "1"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 73,
+          "old_bytes": null,
+          "path": "system/notes/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": false,
+      "version": "2",
+      "warnings": []
+    }
+  }
+]

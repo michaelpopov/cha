@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+await checkpoint('W06-before');await ask('step1','Remove the audio key from Notes settings.');await ask('step2','Put it back.');await checkpoint('W06-after');

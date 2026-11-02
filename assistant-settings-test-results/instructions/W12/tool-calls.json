@@ -1,0 +1,138 @@
+[
+  {
+    "call_id": "call_HOezcL34rRqI5OOTAZgubNcl",
+    "utc": "2026-11-02T05:09:26.820266+00:00",
+    "prompt": "from Guest at 2026-11-02T05:09:25Z:\nDoes Lab use my Huge note and Long note? What happens if I edit Long note later?",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "forums"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 0,
+          "path": "forums/forum_1/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 400,
+          "path": "forums/forum_1/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/builtin-assistant/character.toml",
+          "protection_reason": "Assistant member files are read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 27,
+          "path": "forums/lobby/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 39,
+          "path": "forums/lobby/members/character_defaults.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/members/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_reHG4HYcRy41D069GDScPxDn",
+    "utc": "2026-11-02T05:09:28.357905+00:00",
+    "prompt": "from Guest at 2026-11-02T05:09:25Z:\nDoes Lab use my Huge note and Long note? What happens if I edit Long note later?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "forums/forum_1/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "default_character = 'builtin-assistant'\ndefault_persona = 'builtin-guest'\ndisplay_name = 'Lab'\n\n[[file_references]]\nkind = 'note'\nname = 'Long note'\nref_id = '##000004'\n\n[[file_references]]\nkind = 'note'\nname = 'Huge note'\nref_id = '##000005'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs OpenAI'\nref_id = '##000006'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs Removed'\nref_id = '##00000A'\n",
+          "path": "forums/forum_1/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_E9fW5CLCAcOW9whC0Od3uyuy",
+    "utc": "2026-11-02T05:09:29.810615+00:00",
+    "prompt": "from Guest at 2026-11-02T05:09:25Z:\nDoes Lab use my Huge note and Long note? What happens if I edit Long note later?",
+    "name": "assistant_logs",
+    "arguments": {
+      "contains": "##000005",
+      "limit": 30,
+      "minimum_level": "info"
+    },
+    "result": {
+      "entries": [
+        {
+          "level": "warn",
+          "text": "[2026-11-01 21:09:24.084224] [thread 34658277] [warning] Note context omitted in forum_1/2026-11-01-21-09-24-session: Forum Lab (##000005): exceeds 256 KiB"
+        }
+      ],
+      "level": "debug",
+      "limited": false,
+      "status": "ok"
+    }
+  },
+  {
+    "call_id": "call_NZH8VRs3VrDfSfxuLIhwVpgc",
+    "utc": "2026-11-02T05:09:31.422171+00:00",
+    "prompt": "from Guest at 2026-11-02T05:09:25Z:\nDoes Lab use my Huge note and Long note? What happens if I edit Long note later?",
+    "name": "assistant_logs",
+    "arguments": {
+      "contains": "##000004",
+      "limit": 30,
+      "minimum_level": "info"
+    },
+    "result": {
+      "entries": [],
+      "level": "debug",
+      "limited": false,
+      "status": "ok"
+    }
+  }
+]

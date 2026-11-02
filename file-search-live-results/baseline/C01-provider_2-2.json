@@ -1,0 +1,150 @@
+{
+  "characters": [
+    {
+      "appearance": {
+        "font": "sans",
+        "size": "normal",
+        "style": "normal",
+        "text_color": "normal",
+        "weight": "normal"
+      },
+      "display_name": "Guide",
+      "id": "guide"
+    }
+  ],
+  "chat_settings": {
+    "characters": [
+      {
+        "character_id": "guide",
+        "provider_id": "provider_4",
+        "reasoning_effort": "none"
+      }
+    ],
+    "model_options": [
+      {
+        "display_name": "Live Gemini",
+        "host": "generativelanguage.googleapis.com",
+        "id": "provider_2",
+        "model": "gemini-3.8-flash"
+      },
+      {
+        "display_name": "Live Gpt4o",
+        "host": "api.openai.com",
+        "id": "provider_1",
+        "model": "gpt-4o"
+      },
+      {
+        "display_name": "Live Kimi",
+        "host": "openrouter.ai",
+        "id": "provider_3",
+        "model": "moonshotai/kimi-k2.5"
+      },
+      {
+        "display_name": "Live Luna",
+        "host": "chatgpt.com",
+        "id": "provider_4",
+        "model": "gpt-6-luna"
+      },
+      {
+        "display_name": "Test",
+        "host": "test",
+        "id": "test",
+        "model": "fake"
+      }
+    ]
+  },
+  "default_character_id": "guide",
+  "forum": {
+    "default_character_id": "guide",
+    "default_persona_display_name": "Guest",
+    "default_persona_id": "builtin-guest",
+    "display_name": "The Lobby",
+    "id": "lobby",
+    "members": [
+      {
+        "appearance": {
+          "font": "sans",
+          "size": "normal",
+          "style": "normal",
+          "text_color": "normal",
+          "weight": "normal"
+        },
+        "display_name": "Guide",
+        "id": "guide"
+      }
+    ]
+  },
+  "generation": {
+    "active": false,
+    "character_display_name": "",
+    "character_id": "",
+    "phase": "waiting"
+  },
+  "lifecycle": "running",
+  "session_id": "2026-11-01-16-34-21-session",
+  "session_label": "C01-provider_2-2",
+  "transcript": [
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793579661,
+      "display_name": "System",
+      "has_cached_audio": false,
+      "id": 1,
+      "input_tokens": null,
+      "kind": "notice",
+      "output_tokens": null,
+      "participant_id": "",
+      "status": "complete",
+      "text": "Added folder “O-B Packaging” to this chat.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793579661,
+      "display_name": "System",
+      "has_cached_audio": false,
+      "id": 2,
+      "input_tokens": null,
+      "kind": "notice",
+      "output_tokens": null,
+      "participant_id": "",
+      "status": "complete",
+      "text": "Added folder “G-A Спрос” to this chat.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "guide",
+      "addressed_to_name": "Guide",
+      "created_at": 1793579661,
+      "display_name": "Guest",
+      "has_cached_audio": false,
+      "id": 3,
+      "input_tokens": null,
+      "kind": "human",
+      "output_tokens": null,
+      "participant_id": "builtin-guest",
+      "request_id": 1,
+      "status": "complete",
+      "text": "Explicitly search both attached stores for Project Cedar packaging and demand. Calculate the minimum complete cases needed to meet demand, total cost and budget remaining. Report both source codes and filenames. Use source evidence for every value.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793579694,
+      "display_name": "Guide",
+      "has_cached_audio": false,
+      "id": 4,
+      "input_tokens": 2806,
+      "kind": "character",
+      "output_tokens": 202,
+      "participant_id": "guide",
+      "request_id": 1,
+      "status": "complete",
+      "text": "The two attached stores provide:\n\n- **Packaging** — `cedar-packaging.md` (O-B Packaging, source code **LIVE-263737978**): 11 units per case; 32 credits per case.\n- **Demand and budget** — `cedar-demand-данные.md` (G-A Спрос, source code **LIVE-3883795846**): demand is 44 units; budget is 200 credits.\n\nCalculation: 44 ÷ 11 = **4 complete cases** minimum. Total cost: 4 × 32 = **128 credits**. Budget remaining: 200 − 128 = **72 credits**.",
+      "web_search_used": false
+    }
+  ]
+}

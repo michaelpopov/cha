@@ -1,0 +1,30 @@
+[
+  {
+    "utc": "2026-11-02T05:09:57.723058+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:09:57Z:\nWhere do I choose the model that compresses notes?",
+    "tools": [
+      "summary_search",
+      "summary_read",
+      "file_search"
+    ],
+    "instructions_sha256": "1894da2fbe11ef468ebc0841208c75e8974dd18c0321bf744687f9c03aa47053",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": false
+  },
+  {
+    "utc": "2026-11-02T05:09:59.803650+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:09:59Z:\nHow do I give Writer a folder of documents?",
+    "tools": [
+      "summary_search",
+      "summary_read",
+      "file_search"
+    ],
+    "instructions_sha256": "1894da2fbe11ef468ebc0841208c75e8974dd18c0321bf744687f9c03aa47053",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": false
+  }
+]

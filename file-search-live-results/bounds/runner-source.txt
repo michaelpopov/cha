@@ -1,0 +1,141 @@
+#include "app/application.h"
+#include "app/settings_operations.h"
+#include "workspace/workspace_config_store.h"
+#include "workspace/workspace.h"
+#include "providers/api_key_store.h"
+#include "storage/folder_store_storage.h"
+#include "support/test_workspace.h"
+#include "util/logging.h"
+#include "observer.h"
+#include <iostream>
+#include <thread>
+#include <random>
+using namespace cha;
+using J=nlohmann::json;
+using namespace std::chrono_literals;
+const std::string out="/Users/mpopov/projects/cha/file-search-live-results/bounds/";
+void save(std::string name,J j){std::ofstream(out+name)<<j.dump(2)<<'\n';}
+J doc(std::string s){return {{"type","doc"},{"content",J::array({{{"type","paragraph"},{"content",J::array({{{"type","text"},{"text",s}}})}}})}};}
+int main(int argc,char**){
+ const auto batch_deadline=std::chrono::steady_clock::now()+30min;std::filesystem::create_directories(out);setenv("CHA_LIVE_OBSERVER_FILE",(out+"events.jsonl").c_str(),1);
+ if(argc>1){std::ifstream input(out+"ownership.json");J ledger;input>>ledger;FolderStoreClient client;std::atomic_bool cancel=false;J cleanup=J::array();for(auto&r:ledger){auto key=std::getenv(r["service"]=="openai"?"OPENAI_API_KEY":"GEMINI_API_KEY");auto id=r["remote_id"].get<std::string>();auto response=r["service"]=="openai"?client.openai_delete_store(id,key,cancel):client.google_delete_store(id,key,cancel);cleanup.push_back({{"kind","store"},{"id",id},{"result",static_cast<int>(response.kind)},{"message",response.message}});if(r.contains("file_id")){auto f=r["file_id"].get<std::string>();auto response=client.openai_delete_file(f,key,cancel);cleanup.push_back({{"kind","file"},{"id",f},{"result",static_cast<int>(response.kind)},{"message",response.message}});}}save("preflight-cleanup.json",cleanup);return 0;}
+
+ std::unique_ptr<app::Application> app;
+ std::filesystem::path host="/Users/mpopov/Library/Application Support/CHA";
+ std::filesystem::path db=host/"file-search-bounds-20261102.sqlite3";
+ std::vector<std::tuple<FolderStoreService,std::string,std::string>> owned;
+ std::vector<std::pair<std::string,std::string>> files;
+ std::atomic_bool cancel=false;
+ FolderStoreClient client;
+ int result=0;
+ try{
+ auto source=WorkspaceConfigStore::open(host/"Michaels.sqlite3");
+ auto w=source->snapshot(); ApiKeyStore source_keys(*source);
+ std::vector<std::pair<ProviderDetail,std::string>> selected;
+ J inventory=J::array();
+ for(auto&p:w->providers()){
+   auto detail=app::settings::get_provider(*w,p.id,source_keys);
+   inventory.push_back(detail);
+   if(p.id=="mistral"){
+     std::string key=detail.api_key?source_keys.value(*detail.api_key):"";
+     selected.emplace_back(detail,key);
+   }
+ }
+ save("providers.json",inventory); source.reset(); w.reset();
+ std::stable_sort(selected.begin(),selected.end(),[](const auto&a,const auto&b){return a.first.id=="gpt4o"&&b.first.id!="gpt4o";});
+ test::TestWorkspace blank;
+ test::import_test_database(blank.root(),db);
+ VaultDefinition v{.name="File Search Bounds 20261102",.data=db,.source=host/"file-search-bounds-20261102.toml"};
+ std::ofstream(v.source)<<"vault_name = \""<<v.name<<"\"\ndata = "<<J(db.string()).dump()<<"\n";
+ ApplicationCommand command{.config_directory=host,.vaults={v},.vault=v,.log_file=out+"model.log",.log_level="debug"};
+ initialize_diagnostic_logging(out+"model.log","debug");
+ app=app::Application::open(command); auto epoch=app->context_epoch();
+ J mapping=J::array();std::vector<std::string> consumers;
+ for(auto& [detail,key]:selected){
+    if(!key.empty()) detail.api_key=app->create_api_key({.display_name="Consumer "+detail.id,.value=key},epoch).id;
+    else detail.api_key.reset();
+    auto created=app->create_provider({.display_name="Live "+detail.display_name,.copy_from="test"},epoch);
+    J body=detail;for(auto f:{"id","used_by","writable"})body.erase(f);
+    body["display_name"]="Live "+detail.display_name; body["web_search"]="off";
+    auto updated=app->update_provider(created.id,body,epoch);
+    consumers.push_back(created.id); mapping.push_back({{"original",detail.id},{"provider",updated}});
+ }
+ save("consumer-mapping.json",mapping);
+ auto openai=std::getenv("OPENAI_API_KEY");auto google=std::getenv("GEMINI_API_KEY");
+ if(!openai||!google)throw std::runtime_error("Missing store environment credentials");
+ const auto ok=app->create_api_key({.display_name="O-B dedicated store",.value=openai},epoch).id;
+ const auto gk=app->create_api_key({.display_name="G-A dedicated store",.value=google},epoch).id;
+ std::mt19937 random(std::random_device{}());
+ auto code=[&]{return "LIVE-"+std::to_string(random());};
+ J ledger=J::array();std::vector<long> folders;
+ auto ledger_save=[&]{save("ownership.json",ledger);};
+ std::cout<<"Preparing long fixtures\n"<<std::flush;
+ auto run=[&](std::string id,size_t consumer,std::vector<long> attached,std::string prompt,std::string reuse=std::string{}) {
+   if(std::chrono::steady_clock::now()>=batch_deadline)throw std::runtime_error("Batch time bound reached; remaining cases incomplete");
+   const auto request_deadline=std::chrono::steady_clock::now()+10min;
+   live_observer::case_id=id;
+   (void)app->update_character("guide",{.provider=consumers[consumer],.web_search_tool=false},epoch);
+   std::string session=reuse;
+   if(session.empty()){session=app->create_session("lobby",id,epoch).id;auto opened=app->open_session("lobby",session,epoch);if(std::holds_alternative<ErrorCode>(opened))throw std::runtime_error("Session open failed");
+    for(auto folder:attached)(void)app->submit("lobby",session,RawCommand{.text=note_item_ref_id(folder)},epoch);
+   }
+   live_observer::event({{"event","expected_folders"},{"folders",attached},{"session",session}});
+   (void)app->submit("lobby",session,RawCommand{.text=prompt},epoch);
+   for(int n=0;n<6000;++n){if(std::chrono::steady_clock::now()>=request_deadline || std::chrono::steady_clock::now()>=batch_deadline){(void)app->stop("lobby",session,epoch);throw std::runtime_error("Runner bound reached; request incomplete, not an acceptance failure");}auto state=app->snapshot("lobby",session,epoch);auto snapshot=std::get_if<SessionSnapshot>(&state);if(!snapshot)throw std::runtime_error("Snapshot failed");if(!snapshot->generation.active){save(id+".json",J(*snapshot));break;}std::this_thread::sleep_for(100ms);}
+   std::ofstream(out+id+".md")<<app->export_session("lobby",session,epoch).markdown;
+   std::cout<<id<<" complete\n"<<std::flush;
+   return session;
+ };
+ auto update_consumer=[&](size_t consumer,std::function<void(J&)> edit){J body=app->get_provider(consumers[consumer],epoch);for(auto field:{"id","used_by","writable"})body.erase(field);edit(body);(void)app->update_provider(consumers[consumer],body,epoch);};
+ const std::string question="Explicitly search both attached stores for Project Cedar. Calculate minimum complete cases, total cost, and budget remaining. Give both source codes and filenames.";
+ auto fixture=[&](FolderStoreService service,std::string label,std::string keyid,std::string text) {
+   bool google_service=service==FolderStoreService::google;std::string key=google_service?google:openai;
+   auto folder=app->create_note_item({},NoteItemKind::folder,label,epoch);
+   auto remote=google_service?client.google_create_store("CHA live "+label,key,cancel):client.openai_create_store("CHA live "+label,key,cancel);
+   if(remote.kind!=FolderStoreRemoteKind::ok)throw std::runtime_error("Extra store create failed");
+   owned.emplace_back(service,remote.id,key);ledger.push_back({{"service",google_service?"google":"openai"},{"remote_id",remote.id},{"saved_key_id",keyid},{"folder_id",folder.id}});ledger_save();
+   if(google_service){auto upload=client.google_upload_document(remote.id,label+".md",text,key,cancel,cancel);if(upload.kind!=FolderStoreRemoteKind::ok)throw std::runtime_error("Extra Google upload failed");ledger.back()["operation"]=upload.id;ledger_save();for(int n=0;n<120;++n){auto status=client.google_inspect_operation(upload.id,key,cancel);if(status.done)break;if(n==119)throw std::runtime_error("Extra Google readiness timeout");std::this_thread::sleep_for(1s);}}
+   else{auto upload=client.openai_upload_file(label+".md",text,key,cancel);if(upload.kind!=FolderStoreRemoteKind::ok)throw std::runtime_error("Extra OpenAI upload failed");files.emplace_back(upload.id,key);ledger.back()["file_id"]=upload.id;ledger_save();auto attach=client.openai_attach_file(remote.id,upload.id,key,cancel);if(attach.kind!=FolderStoreRemoteKind::ok)throw std::runtime_error("Extra OpenAI attach failed");for(int n=0;n<120;++n){auto status=client.openai_inspect_file(remote.id,upload.id,key,cancel);if(status.status=="completed")break;if(n==119)throw std::runtime_error("Extra OpenAI readiness timeout");std::this_thread::sleep_for(1s);}}
+   {storage::SqliteDatabase database(db,storage::SqliteDatabase::Mode::read_write);storage::SqliteTransaction tx(database);auto id=folder_store_register(database,folder.id,service,keyid,1);folder_store_save_remote_id(database,id,remote.id);folder_store_mark_ready(database,id);tx.commit();}
+   live_observer::expected[remote.id]={keyid,key};return std::pair<long,std::string>{folder.id,remote.id};
+ };
+ size_t third=0;
+ auto add_document=[&](std::string store,std::string filename,std::string text){
+   if(std::chrono::steady_clock::now()>=batch_deadline)throw std::runtime_error("Batch time bound reached during lookup setup");
+   auto upload=client.openai_upload_file(filename,text,openai,cancel);if(upload.kind!=FolderStoreRemoteKind::ok)throw std::runtime_error("Lookup upload failed");files.emplace_back(upload.id,openai);ledger.push_back({{"service","openai"},{"owned_file_only",upload.id}});ledger_save();auto attach=client.openai_attach_file(store,upload.id,openai,cancel);if(attach.kind!=FolderStoreRemoteKind::ok)throw std::runtime_error("Lookup attach failed");for(int n=0;n<120;++n){auto status=client.openai_inspect_file(store,upload.id,openai,cancel);if(status.status=="completed")break;if(n==119)throw std::runtime_error("Lookup readiness timeout");std::this_thread::sleep_for(1s);}
+ };
+
+ std::vector<long> long_folders;std::vector<FolderStoreSearchTarget> targets;J oracle=J::array();int google_index=3;
+ auto long_store=[&](int index,bool google_service){
+   auto service=google_service?FolderStoreService::google:FolderStoreService::openai;
+   J codes=J::array();std::string first=code();codes.push_back(first);
+   auto document=[&](std::string source_code,int document_index){std::string text;for(int n=0;n<500;++n){if(n%5==0)text+="Project Longcase source "+std::to_string(index)+" document "+std::to_string(document_index)+" source code "+source_code+". ";text+="Архив садоводства содержит подробные описания растений, деревьев, сезонных изменений и погодных наблюдений. ";}return text;};
+   auto f=fixture(service,"Longcase"+std::to_string(index),google_service?gk:ok,document(first,0));
+   if(!google_service)for(int j=1;j<5;++j){auto next=code();codes.push_back(next);add_document(f.second,"longcase"+std::to_string(index)+"-doc"+std::to_string(j)+".md",document(next,j));}
+   long_folders.push_back(f.first);targets.push_back({.folder_name="Longcase"+std::to_string(index),.remote_store_id=f.second,.api_key=google_service?google:openai,.service=service});
+   oracle.push_back({{"index",index},{"codes",codes},{"remote_id",f.second},{"folder_id",f.first},{"service",google_service?"google":"openai"}});save("C15-oracle.json",oracle);
+ };
+ for(int i=0;i<4;++i)long_store(i,i==google_index);
+ auto calibrated_transport=[&](const FolderStoreHttpRequest& request,const std::atomic_bool& cancellation){auto response=folder_store_curl_transport(request,cancellation);live_observer::event({{"event","calibration_response"},{"url",request.url},{"body",request.body},{"status",response.status},{"response",response.body}});return response;};
+ J calibrated;
+ for(;;){
+   live_observer::case_id="C15-calibration-"+std::to_string(targets.size());
+   auto output=FolderStoreClient(calibrated_transport).search_stores(targets,"Project Longcase source codes",cancel);calibrated=J::parse(output);save(live_observer::case_id+".json",calibrated);
+   if(calibrated["stores"].size()<targets.size() || targets.size()==8)break;
+   long_store(static_cast<int>(targets.size()),false);
+ }
+ std::cout<<"Long fixtures ready: "<<targets.size()<<" stores; calibration returned "<<calibrated["stores"].size()<<" entries\n"<<std::flush;
+ run("C15",third,long_folders,"Explicitly search Project Longcase sources once for source codes. Report one source code supported by retained passages, and source "+std::to_string(targets.size()-1)+"'s code only if its evidence was delivered. Qualify missing or omitted source evidence; do not invent codes or repeatedly search to bypass a result limit.");
+ run("C15-google-chunk",third,{long_folders[google_index]},"Explicitly search the attached Project Longcase source "+std::to_string(google_index)+" once. Report its source code and qualify any truncated evidence.");
+
+ }catch(std::exception&e){save("run-error.json",{{"error",e.what()}});std::cerr<<e.what()<<"\n";result=1;}
+ J cleanup=J::array();
+ for(auto& [service,id,key]:owned){auto r=service==FolderStoreService::openai?client.openai_delete_store(id,key,cancel):client.google_delete_store(id,key,cancel);cleanup.push_back({{"kind","store"},{"id",id},{"result",static_cast<int>(r.kind)},{"message",r.message}});}
+ for(auto& [id,key]:files){auto r=client.openai_delete_file(id,key,cancel);cleanup.push_back({{"kind","file"},{"id",id},{"result",static_cast<int>(r.kind)},{"message",r.message}});}
+ save("cleanup.json",cleanup);
+ if(app){app->request_shutdown();app->join_shutdown(10s);app.reset();}
+ shutdown_diagnostic_logging();
+ for(auto suffix:{"","-wal","-shm",".cha-lock",".cha-main-lock"})std::filesystem::remove(db.string()+suffix);
+ std::filesystem::remove(host/"file-search-bounds-20261102.toml");
+ return result;
+}

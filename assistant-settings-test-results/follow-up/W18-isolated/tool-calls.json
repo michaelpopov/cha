@@ -1,0 +1,161 @@
+[
+  {
+    "call_id": "call_0AvUisbFmYj6tDsfMhCUHAdM",
+    "utc": "2026-11-02T03:49:08.892263+00:00",
+    "prompt": "from Guest at 2026-11-02T03:49:07Z:\nAbout Gem: I understand that effort has no effect. Save high effort for Gem anyway.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "characters"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 11868,
+          "path": "characters/character-voice.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_1/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_1/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 157,
+          "path": "characters/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_2/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_2/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 76,
+          "path": "characters/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_3/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_3/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 110,
+          "path": "characters/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 23,
+          "path": "characters/guide/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 41,
+          "path": "characters/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_faQ2jRZ3vIRmohna68oISAuZ",
+    "utc": "2026-11-02T03:49:10.248667+00:00",
+    "prompt": "from Guest at 2026-11-02T03:49:07Z:\nAbout Gem: I understand that effort has no effect. Save high effort for Gem anyway.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "characters/character_1/character.toml",
+        "characters/character_2/character.toml",
+        "characters/character_3/character.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Writer'\nprovider = 'provider_2'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs Gemini'\nref_id = '##000008'\n",
+          "path": "characters/character_1/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Gem'\nprovider = 'provider_3'\n",
+          "path": "characters/character_2/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Claude Test'\nprovider = 'provider_4'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_3/character.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_KAoCOBJUQb2NGeqHN9sJ2AFi",
+    "utc": "2026-11-02T03:49:13.391477+00:00",
+    "prompt": "from Guest at 2026-11-02T03:49:07Z:\nAbout Gem: I understand that effort has no effect. Save high effort for Gem anyway.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": null,
+          "key": "reasoning_effort",
+          "operation": "set",
+          "path": "characters/character_2/character.toml",
+          "value": "high"
+        }
+      ],
+      "version": "1"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 102,
+          "old_bytes": 76,
+          "path": "characters/character_2/character.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": true,
+      "version": "2",
+      "warnings": [
+        {
+          "message": "Character 'character_2' ignores reasoning_effort for Google",
+          "path": "characters/character_2/character.toml"
+        }
+      ]
+    }
+  }
+]

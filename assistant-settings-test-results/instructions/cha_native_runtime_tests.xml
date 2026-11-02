@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="13" failures="0" disabled="0" errors="0" time="1.314" timestamp="2026-11-01T21:08:37.289" name="AllTests">
+  <testsuite name="NativeRuntimeDeathTest" tests="2" failures="0" disabled="0" skipped="0" errors="0" time="1.07" timestamp="2026-11-01T21:08:37.289">
+    <testcase name="ShutdownDeadlineIncludesBlockedDelivery" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="163" status="run" result="completed" time="0.046" timestamp="2026-11-01T21:08:37.289" classname="NativeRuntimeDeathTest" />
+    <testcase name="AudioTransfersStopEvenWhenTheHostJoinFails" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="203" status="run" result="completed" time="1.024" timestamp="2026-11-01T21:08:37.335" classname="NativeRuntimeDeathTest" />
+  </testsuite>
+  <testsuite name="NativeRuntime" tests="1" failures="0" disabled="0" skipped="0" errors="0" time="0.004" timestamp="2026-11-01T21:08:38.360">
+    <testcase name="SupportsSecureWebSockets" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="27" status="run" result="completed" time="0.004" timestamp="2026-11-01T21:08:38.360" classname="NativeRuntime" />
+  </testsuite>
+  <testsuite name="NativeRuntimeTest" tests="10" failures="0" disabled="0" skipped="0" errors="0" time="0.239" timestamp="2026-11-01T21:08:38.365">
+    <testcase name="RejectsUnknownAndUnownedMediaResources" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="255" status="run" result="completed" time="0.011" timestamp="2026-11-01T21:08:38.365" classname="NativeRuntimeTest" />
+    <testcase name="ChunkReadsRejectUnknownResourcesAndInitializeOutputs" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="284" status="run" result="completed" time="0.009" timestamp="2026-11-01T21:08:38.377" classname="NativeRuntimeTest" />
+    <testcase name="StartsWithoutAListenerAndRunsFirstFlow" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="297" status="run" result="completed" time="0.017" timestamp="2026-11-01T21:08:38.387" classname="NativeRuntimeTest" />
+    <testcase name="StopAndShutdownProgressDuringAStalledR2Download" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="336" status="run" result="completed" time="0.117" timestamp="2026-11-01T21:08:38.404" classname="NativeRuntimeTest" />
+    <testcase name="CloseAndHandleDoNotPropagateExceptions" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="368" status="run" result="completed" time="0.01" timestamp="2026-11-01T21:08:38.521" classname="NativeRuntimeTest" />
+    <testcase name="VaultSwitchPublishesANewEpochAndRejectsStaleWork" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="377" status="run" result="completed" time="0.015" timestamp="2026-11-01T21:08:38.532" classname="NativeRuntimeTest" />
+    <testcase name="VaultSwitchPersistsAcrossRestart" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="409" status="run" result="completed" time="0.022" timestamp="2026-11-01T21:08:38.548" classname="NativeRuntimeTest" />
+    <testcase name="SaveFileUsesTemporaryReplaceAndHonorsEpoch" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="454" status="run" result="completed" time="0.01" timestamp="2026-11-01T21:08:38.570" classname="NativeRuntimeTest" />
+    <testcase name="ExportSessionWritesMarkdownThroughSaveFile" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="514" status="run" result="completed" time="0.012" timestamp="2026-11-01T21:08:38.581" classname="NativeRuntimeTest" />
+    <testcase name="CloseAndReopenConnectionDoesNotCrossResolve" file="/Users/mpopov/projects/cha/tests/native/unit_runtime_bridge.cpp" line="541" status="run" result="completed" time="0.01" timestamp="2026-11-01T21:08:38.593" classname="NativeRuntimeTest" />
+  </testsuite>
+</testsuites>

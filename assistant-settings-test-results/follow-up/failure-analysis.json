@@ -1,0 +1,191 @@
+[
+  {
+    "id": "W-01",
+    "original_failure_class": "Model coverage/tool-use omission",
+    "latest_evidence": "W01",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Read-only; configuration unchanged",
+    "remaining": "Model now explains all four fields and High default, but explicitly did not inspect saved Notes settings or identify its saved key.",
+    "disposition": "No native change warranted"
+  },
+  {
+    "id": "W-02",
+    "original_failure_class": "Model failed to establish current configuration; later fixture reset also retained old Events",
+    "latest_evidence": "fresh-W02-W03",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Fresh vault has no Notes file; tool read returns missing; Events empty; no write",
+    "remaining": "Correct missing-provider diagnosis, but no existing provider proposed and navigation says Notes instead of Notes settings.",
+    "disposition": "Corrected fresh-vault reset and event contamination; visible error-label correction subsequently approved and verified"
+  },
+  {
+    "id": "W-03",
+    "original_failure_class": "Model invented provider/API/model; fixture also selected a non-reasoning compression model and shared protected Assistant provider",
+    "latest_evidence": "fresh-W02-W03",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Exactly one Notes create; existing provider selected with low effort; real compression saved; success Event recorded",
+    "remaining": "Assistant answer omits changed path and creation-clears-undo detail. Native save notice supplies both.",
+    "disposition": "Separate test providers; available reasoning model for compression; complete logs/exports. No protection bypass or native write defect found"
+  },
+  {
+    "id": "W-04",
+    "original_failure_class": "Model treated unavailable undo as a new forward edit",
+    "latest_evidence": "W04",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "High \u2192 native undo to Low \u2192 second undo returns unavailable_undo; exact initial bytes restored",
+    "remaining": "Correct unavailable-undo answer but no forward-edit offer required by the strict spec.",
+    "disposition": "Fixed driver and captured all calls; model comparison confirms native undo is correct"
+  },
+  {
+    "id": "W-05",
+    "original_failure_class": "Model duplicate-path calls and incomplete manual recovery",
+    "latest_evidence": "W05",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "One apply, credential_destination_protected, no change",
+    "remaining": "Manual recovery says Settings \u2192 Notes and does not explicitly say desktop.",
+    "disposition": "Native protection retained; visible error-label mismatch separately identified"
+  },
+  {
+    "id": "W-06",
+    "original_failure_class": "Model invented a saved-key ID and omitted eligible undo",
+    "latest_evidence": "W06",
+    "strict_spec_verdict": "Pass",
+    "native_behavior": "Key removed; eligible native undo restores original bytes",
+    "remaining": "None; no workaround after protection.",
+    "disposition": "No native change; second model uses the existing undo path correctly"
+  },
+  {
+    "id": "W-07",
+    "original_failure_class": "Original model used wrong provider ID, stale versions and misreported committed warning; test also adds conflicting confirmation requirement",
+    "latest_evidence": "W07-W18",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Correct Google Notes provider and extra-high saved; effectlessness explained",
+    "remaining": "Strict step 1 expects an extra confirmation before saving explicitly requested ignored effort. Current maintenance instructions authorize explicit changes and forbid repeated permission requests.",
+    "disposition": "Retained current authorization rules and unused-setting warnings; did not add approval machinery just to satisfy this case"
+  },
+  {
+    "id": "W-08",
+    "original_failure_class": "Model diagnosed effort and edited wrong character; native rejection was correct",
+    "latest_evidence": "W08",
+    "strict_spec_verdict": "Pass",
+    "native_behavior": "Single base_path repair; original HTTP 404 reproduced; Gem answers after /v1beta repair",
+    "remaining": "None. Bare service URLs disappear under the established global URL-removal policy; this is not evidence of model omission.",
+    "disposition": "No endpoint/protection change needed; retained established URL policy"
+  },
+  {
+    "id": "W-09",
+    "original_failure_class": "Model read wrong character/provider; real Anthropic credential also missing",
+    "latest_evidence": "W09",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Read-only; latest answer identifies Anthropic and model-default thinking correctly",
+    "remaining": "Temperature omission remains. Anthropic reproduction remains Blocked because ANTHROPIC_API_KEY is unavailable.",
+    "disposition": "Reclassified credential-dependent reproduction separately from answer correctness"
+  },
+  {
+    "id": "W-10",
+    "original_failure_class": "Model guessed a display name as a logical ID and concluded an empty listing meant no reference",
+    "latest_evidence": "W10",
+    "strict_spec_verdict": "Pass",
+    "native_behavior": "Real F3 upload/reference/removal reproduced; reference remains; logs say no ready store; correct Upload to store recovery",
+    "remaining": "None.",
+    "disposition": "No fuzzy path subsystem added; correct existing list/read/log workflow suffices"
+  },
+  {
+    "id": "W-11",
+    "original_failure_class": "Model confused document File Search with web search",
+    "latest_evidence": "W11",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Latest answer correctly explains forum/character scope and native OpenAI versus cross-provider function search; no write",
+    "remaining": "Does not cover the two-native-store limit, Gemini 2.5 restriction, or Welcome exclusion.",
+    "disposition": "No native search change; remaining issue is required answer coverage"
+  },
+  {
+    "id": "W-12",
+    "original_failure_class": "Model guessed Lab path and falsely reported no references",
+    "latest_evidence": "W12-after-import-fix",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Correct references, first-use copies, compressed text, 256 KiB rule and new-session refresh; no write",
+    "remaining": "Does not verify Huge note actually exceeds the limit and omits re-adding the note in the existing chat as another refresh path.",
+    "disposition": "Import membership restored; no note-materialization defect found"
+  },
+  {
+    "id": "W-14",
+    "original_failure_class": "Model failed entity discovery; guide also lacked the complete Files navigation",
+    "latest_evidence": "W14",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Correct manual Note reference path; authorized replacement removes only Docs Removed; other files unchanged",
+    "remaining": "Answer does not explain that Files creation validates item existence/kind/readiness and captures the name.",
+    "disposition": "Added missing Files navigation to application-guide.md; native removal behavior retained"
+  },
+  {
+    "id": "W-15",
+    "original_failure_class": "Model mistook session override for a global provider change",
+    "latest_evidence": "W15",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Independent native snapshot proves Google session override while Writer global provider remains OpenAI; correct Model explanation",
+    "remaining": "Answer does not also mention the toolbar Effort override.",
+    "disposition": "No settings-store change; session override behavior works"
+  },
+  {
+    "id": "W-16",
+    "original_failure_class": "Model speculated without checking missing Jev; driver originally left Welcome closed",
+    "latest_evidence": "W16-after-import-fix",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Correct missing recipient detection and Save summary alternative; Welcome save correctly refused; no configuration writes",
+    "remaining": "Answer omits that summary generation uses the Notes compression provider.",
+    "disposition": "Driver reopens the target and checks prompt acceptance; import membership fixed"
+  },
+  {
+    "id": "W-17",
+    "original_failure_class": "Model omitted complete manual navigation",
+    "latest_evidence": "W17",
+    "strict_spec_verdict": "Pass",
+    "native_behavior": "Own settings/Files protected; exact Character settings and API Keys recovery; no credential request or write",
+    "remaining": "None.",
+    "disposition": "No native protection change"
+  },
+  {
+    "id": "F-01",
+    "original_failure_class": "Model coverage omission",
+    "latest_evidence": "F-after-import-fix",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Correct Notes settings, provider and effort; no maintenance tools or write",
+    "remaining": "Omits provider reuse for imports and summaries.",
+    "disposition": "Import round-trip bug fixed; invalid intermediate attempts were not graded"
+  },
+  {
+    "id": "F-02",
+    "original_failure_class": "Model navigation omission",
+    "latest_evidence": "F-after-import-fix",
+    "strict_spec_verdict": "Pass",
+    "native_behavior": "Exact Characters \u2192 Writer \u2192 Character settings \u2192 Provider; no claim of a change; no maintenance tools",
+    "remaining": "None.",
+    "disposition": "Import round-trip bug fixed; native tools stay unavailable in ordinary forums"
+  },
+  {
+    "id": "F-03",
+    "original_failure_class": "Model omitted session-only scope",
+    "latest_evidence": "F-after-import-fix",
+    "strict_spec_verdict": "Pass",
+    "native_behavior": "Correct configured defaults and current-session-only overrides",
+    "remaining": "None.",
+    "disposition": "Import round-trip bug fixed; no toolbar changes"
+  },
+  {
+    "id": "F-04",
+    "original_failure_class": "Confirmed application-guide information gap plus model coverage omission",
+    "latest_evidence": "F-after-import-fix",
+    "strict_spec_verdict": "Fail",
+    "native_behavior": "Exact Upload to store, Copy Ref ID, Character settings \u2192 Files \u2192 New file \u2192 Folder reference path",
+    "remaining": "Omits /detach scope required by the strict spec.",
+    "disposition": "Fixed missing navigation in the ordinary-forum guide; retained correct folder behavior"
+  },
+  {
+    "id": "F-05",
+    "original_failure_class": "Model ignored API-format list already present in its prompt",
+    "latest_evidence": "F-after-import-fix",
+    "strict_spec_verdict": "Pass",
+    "native_behavior": "Correct four API formats with no maintenance tools. gpt-4o diagnostic control also now names all four.",
+    "remaining": "None. Original failure does not reproduce under the corrected fixture; no API-format serialization fault found.",
+    "disposition": "No API/parser change"
+  }
+]

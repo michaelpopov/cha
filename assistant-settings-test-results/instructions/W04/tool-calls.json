@@ -1,0 +1,145 @@
+[
+  {
+    "call_id": "call_Qza2oZLeygTHrWOnm10Y5ZDe",
+    "utc": "2026-11-02T05:07:28.090549+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:26Z:\nUse high effort for compression.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/notes/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "audio_api_key = ''\naudio_url = ''\ncompression_provider = 'provider_2'\ncompression_reasoning_effort = 'low'\n",
+          "path": "system/notes/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_msidkjfXQNpfPFr6k88yaBps",
+    "utc": "2026-11-02T05:07:29.753904+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:26Z:\nUse high effort for compression.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": null,
+          "key": "compression_reasoning_effort",
+          "operation": "set",
+          "path": "system/notes/config.toml",
+          "value": "high"
+        }
+      ],
+      "version": "1"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 108,
+          "old_bytes": 107,
+          "path": "system/notes/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": true,
+      "version": "2",
+      "warnings": []
+    }
+  },
+  {
+    "call_id": "call_uEVku3dLDN8XPLP6ScFV5x2i",
+    "utc": "2026-11-02T05:07:33.963582+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:32Z:\nUndo that.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "system/notes"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 108,
+          "path": "system/notes/config.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "2"
+    }
+  },
+  {
+    "call_id": "call_Mks0YmvDGTGfCdcrEUdcqCNk",
+    "utc": "2026-11-02T05:07:35.467838+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:32Z:\nUndo that.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "undo",
+      "changes": null,
+      "version": "2"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 107,
+          "old_bytes": 108,
+          "path": "system/notes/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": false,
+      "version": "3",
+      "warnings": []
+    }
+  },
+  {
+    "call_id": "call_1ObuEOsmUSxXK4lNPY7rDHfP",
+    "utc": "2026-11-02T05:07:38.642619+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:37Z:\nUndo again.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "system/notes"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 107,
+          "path": "system/notes/config.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "3"
+    }
+  },
+  {
+    "call_id": "call_3lEll4NdWbByXQvEuzEyRtfj",
+    "utc": "2026-11-02T05:07:40.204361+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:37Z:\nUndo again.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "undo",
+      "changes": null,
+      "version": "3"
+    },
+    "result": {
+      "changed": [],
+      "committed": false,
+      "error": "unavailable_undo",
+      "message": "Configuration undo is not available",
+      "undo_available": false,
+      "version": "3",
+      "warnings": []
+    }
+  }
+]

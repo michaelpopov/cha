@@ -1,0 +1,203 @@
+[
+  {
+    "call_id": "call_6sSAXbqix3ohXV41FWColTSk",
+    "utc": "2026-11-02T05:09:43.867664+00:00",
+    "prompt": "from Guest at 2026-11-02T05:09:42Z:\nWhy was my Lab conversation not saved?",
+    "name": "assistant_logs",
+    "arguments": {
+      "contains": null,
+      "limit": 100,
+      "minimum_level": "info"
+    },
+    "result": {
+      "entries": [
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.184235] [thread 34659280] [info] diagnostic logging enabled"
+        },
+        {
+          "level": "warn",
+          "text": "[2026-11-01 21:09:39.184397] [thread 34659280] [warning] Vault definition '[path]/cha.toml' field 'modify' is unused and was ignored."
+        },
+        {
+          "level": "warn",
+          "text": "[2026-11-01 21:09:39.187230] [thread 34659280] [warning] Character 'character_2' ignores reasoning_effort for Google"
+        },
+        {
+          "level": "warn",
+          "text": "[2026-11-01 21:09:39.187273] [thread 34659280] [warning] Ignoring reasoning_effort for Anthropic character in [path]/characters/character_3/character.toml"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.442034] [thread 34659288] [info] Session opened"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.442419] [thread 34659288] [info] web session forum_id=builtin-entrance session_id=builtin-welcome event=lease_acquired_runtime_started"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.467566] [thread 34659288] [info] Session opened"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.467770] [thread 34659288] [info] web session forum_id=forum_1 session_id=2026-11-01-21-09-39-session event=lease_acquired_runtime_started"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.468079] [thread 34659288] [info] web session forum_id=builtin-entrance session_id=builtin-welcome event=runtime_stopping reason=session_closed"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.468092] [thread 34659288] [info] Session controller shutting down"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.468385] [thread 34659288] [info] web session forum_id=builtin-entrance session_id=builtin-welcome event=controller_released_runtime_finished"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.468394] [thread 34659288] [info] web session forum_id=builtin-entrance session_id=builtin-welcome event=registry_retired"
+        },
+        {
+          "level": "warn",
+          "text": "[2026-11-01 21:09:39.470444] [thread 34659288] [warning] Note context omitted in forum_1/2026-11-01-21-09-39-session: Forum Lab (##000005): exceeds 256 KiB"
+        },
+        {
+          "level": "warn",
+          "text": "[2026-11-01 21:09:39.470757] [thread 34659288] [warning] Folder access in forum_1/2026-11-01-21-09-39-session: Assistant (builtin-assistant): Docs Removed (##00000A): no ready store; sources: Forum Lab Files"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.470908] [thread 34659288] [info] Provider request admitted: provider_id=provider_1 character_id=builtin-assistant forum_id=forum_1 session_id=2026-11-01-21-09-39-session request_id=1 token=1 model=gpt-6.1-sol effort=low api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false active_count=1"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.470938] [thread 34659288] [info] web session forum_id=forum_1 session_id=2026-11-01-21-09-39-session event=generation_started request_id=1"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:39.470951] [thread 34659340] [info] Provider request started: provider_id=provider_1 character_id=builtin-assistant forum_id=forum_1 session_id=2026-11-01-21-09-39-session request_id=1 token=1 model=gpt-6.1-sol effort=low api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.153753] [thread 34659340] [info] HTTP request completed: endpoint=https://api.openai.com:443/v1/responses status=200 content_type=text/event-stream; charset=utf-8 request_bytes=11273 response_bytes=62291 duration_ms=2681.753250 provider_request_id=req_e8cfd87794c642c7b1f5804c73f9e389 input_tokens=3551 output_tokens=99 cache_read_tokens=0 cache_write_tokens=3522"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.153794] [thread 34659340] [info] Prompt processing statistics: provider_id=provider_1 character_id=builtin-assistant forum_id=forum_1 session_id=2026-11-01-21-09-39-session request_id=1 token=1 model=gpt-6.1-sol effort=low api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false request_payload_bytes=11273 system_prompt_bytes=9032 conversation_bytes=76 outcome=completed stage=finished overall_ms=2682.858625 preparation_ms=1.060750 model_calls=1 model_failed=0 model_cancelled=0 model_ms=2681.776000 tools_wall_ms=0.000000 web_search_calls=0 web_search_failed=0 web_search_cancelled=0 web_search_ms=0.000000 web_search_result_bytes=0 web_read_calls=0 web_read_failed=0 web_read_cancelled=0 web_read_ms=0.000000 web_read_result_bytes=0 summary_calls=0 summary_failed=0 summary_cancelled=0 summary_ms=0.000000 summary_result_bytes=0 maintenance_calls=0 maintenance_failed=0 maintenance_cancelled=0 maintenance_ms=0.000000 maintenance_result_bytes=0 tool_calls_requested=0 tool_calls_rejected=0 tool_limit_hits=0 other_ms=0.021875 first_answer_ms=1911.328917 answer_bytes=344 reasoning_bytes=0 input_tokens=3551 output_tokens=99 total_tokens=3650 cache_read_tokens=0 cache_write_tokens=3522"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.153818] [thread 34659340] [info] Provider request completed: provider_id=provider_1 character_id=builtin-assistant forum_id=forum_1 session_id=2026-11-01-21-09-39-session request_id=1 token=1 model=gpt-6.1-sol effort=low api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false request_payload_bytes=11273 system_prompt_bytes=9032 conversation_bytes=76 input_tokens=3551 output_tokens=99 total_tokens=3650 cache_read_tokens=0 cache_write_tokens=3522"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.154420] [thread 34659288] [info] web session forum_id=forum_1 session_id=2026-11-01-21-09-39-session event=generation_terminal request_id=1 status=complete"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.275050] [thread 34659288] [info] Session opened"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.275419] [thread 34659288] [info] web session forum_id=builtin-entrance session_id=builtin-welcome event=lease_acquired_runtime_started"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.275436] [thread 34659288] [info] web session forum_id=forum_1 session_id=2026-11-01-21-09-39-session event=runtime_stopping reason=session_closed"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.275446] [thread 34659288] [info] Session controller shutting down"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.275503] [thread 34659288] [info] web session forum_id=forum_1 session_id=2026-11-01-21-09-39-session event=controller_released_runtime_finished"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.275509] [thread 34659288] [info] web session forum_id=forum_1 session_id=2026-11-01-21-09-39-session event=registry_retired"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.276051] [thread 34659288] [info] Provider request admitted: provider_id=provider_1 character_id=builtin-assistant forum_id=builtin-entrance session_id=builtin-welcome request_id=1 token=2 model=gpt-6.1-sol effort=low api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false active_count=1"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.276080] [thread 34659288] [info] web session forum_id=builtin-entrance session_id=builtin-welcome event=generation_started request_id=1"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:42.276092] [thread 34659552] [info] Provider request started: provider_id=provider_1 character_id=builtin-assistant forum_id=builtin-entrance session_id=builtin-welcome request_id=1 token=2 model=gpt-6.1-sol effort=low api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:09:43.864735] [thread 34659552] [info] HTTP request completed: endpoint=https://api.openai.com:443/v1/responses status=200 content_type=text/event-stream; charset=utf-8 request_bytes=168610 response_bytes=513943 duration_ms=1587.971709 provider_request_id=req_2551652aedcb46b08befbd0799a96ff4 input_tokens=35453 output_tokens=28 cache_read_tokens=35420 cache_write_tokens=30"
+        }
+      ],
+      "level": "debug",
+      "limited": false,
+      "status": "ok"
+    }
+  },
+  {
+    "call_id": "call_npcSBjYyKg4tAXBGvPUebsMe",
+    "utc": "2026-11-02T05:09:45.603573+00:00",
+    "prompt": "from Guest at 2026-11-02T05:09:42Z:\nWhy was my Lab conversation not saved?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/jev/config.toml",
+        "system/notes/config.toml",
+        "system/session/config.toml",
+        "forums/forum_1/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "path": "system/jev/config.toml",
+          "status": "missing"
+        },
+        {
+          "content": "audio_api_key = ''\naudio_url = ''\ncompression_provider = 'provider_2'\ncompression_reasoning_effort = 'low'\n",
+          "path": "system/notes/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "naming_provider = 'test'\nnaming_reasoning_effort = 'low'\n",
+          "path": "system/session/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "default_character = 'builtin-assistant'\ndefault_persona = 'builtin-guest'\ndisplay_name = 'Lab'\n\n[[file_references]]\nkind = 'note'\nname = 'Long note'\nref_id = '##000004'\n\n[[file_references]]\nkind = 'note'\nname = 'Huge note'\nref_id = '##000005'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs OpenAI'\nref_id = '##000006'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs Removed'\nref_id = '##00000A'\n",
+          "path": "forums/forum_1/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_2Peb34lvM5witTDKKqb2OAwc",
+    "utc": "2026-11-02T05:09:47.856099+00:00",
+    "prompt": "from Guest at 2026-11-02T05:09:42Z:\nWhy was my Lab conversation not saved?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/providers/provider_2/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "api = 'responses'\napi_key = 'api_key_1'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'openai-direct'\nhost = 'api.openai.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gpt-5.4-mini'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_2/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  }
+]

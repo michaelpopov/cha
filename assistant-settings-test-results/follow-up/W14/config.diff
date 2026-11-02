@@ -1,0 +1,11 @@
+--- before/forums/forum_1/config.toml
++++ after/forums/forum_1/config.toml
+@@ -15,8 +15,3 @@
+ kind = 'folder'
+ name = 'Docs OpenAI'
+ ref_id = '##000006'
+-
+-[[file_references]]
+-kind = 'folder'
+-name = 'Docs Removed'
+-ref_id = '##00000A'

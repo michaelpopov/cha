@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+let s=await session('W13 reproduction',C.lab);await submit(s,'@Writer Read https://example.com and tell me what it says.');C.reproduction=await rpc('session.snapshot',s);await checkpoint('W13-before');await ask('answer','Why does page reading use Firecrawl, and does my web_reader key matter?');await checkpoint('W13-after');

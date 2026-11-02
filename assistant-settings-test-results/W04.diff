@@ -1,0 +1,8 @@
+--- before/system/notes/config.toml
++++ after/system/notes/config.toml
+@@ -1,4 +1,4 @@
+ audio_api_key = ''
+ audio_url = ''
+ compression_provider = 'provider_1'
+-compression_reasoning_effort = 'low'
++compression_reasoning_effort = 'high'

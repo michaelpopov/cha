@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+await checkpoint('W07-before');await ask('W07step1',"Set Gem's reasoning effort to high.");await ask('W07step2','Use Gemini for note compression with extra high effort.');await checkpoint('W07-after');await checkpoint('W18-before');await ask('W18','About Gem: I understand that effort has no effect. Save high effort for Gem anyway.');C.gem=await rpc('character.get',{character_id:C.Gem});await checkpoint('W18-after');

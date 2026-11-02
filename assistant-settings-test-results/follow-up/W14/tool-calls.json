@@ -1,0 +1,126 @@
+[
+  {
+    "call_id": "call_oRTTtFiiKq7NPM9TFNYAlH3H",
+    "utc": "2026-11-02T03:45:59.415256+00:00",
+    "prompt": "from Guest at 2026-11-02T03:45:57Z:\nRemove the Docs Removed folder from Lab's Files. Do it.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "forums"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 0,
+          "path": "forums/forum_1/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 360,
+          "path": "forums/forum_1/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 27,
+          "path": "forums/lobby/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 39,
+          "path": "forums/lobby/members/character_defaults.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/members/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_Icyr85KUj0mFXHoQd18Czbuz",
+    "utc": "2026-11-02T03:46:00.605037+00:00",
+    "prompt": "from Guest at 2026-11-02T03:45:57Z:\nRemove the Docs Removed folder from Lab's Files. Do it.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "forums/forum_1/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "default_persona = 'builtin-guest'\ndisplay_name = 'Lab'\n\n[[file_references]]\nkind = 'note'\nname = 'Long note'\nref_id = '##000004'\n\n[[file_references]]\nkind = 'note'\nname = 'Huge note'\nref_id = '##000005'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs OpenAI'\nref_id = '##000006'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs Removed'\nref_id = '##00000A'\n",
+          "path": "forums/forum_1/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_Z65owuz85HEtTQHl9DqJClqu",
+    "utc": "2026-11-02T03:46:02.488897+00:00",
+    "prompt": "from Guest at 2026-11-02T03:45:57Z:\nRemove the Docs Removed folder from Lab's Files. Do it.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": "default_persona = 'builtin-guest'\ndisplay_name = 'Lab'\n\n[[file_references]]\nkind = 'note'\nname = 'Long note'\nref_id = '##000004'\n\n[[file_references]]\nkind = 'note'\nname = 'Huge note'\nref_id = '##000005'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs OpenAI'\nref_id = '##000006'\n",
+          "key": null,
+          "operation": "replace",
+          "path": "forums/forum_1/config.toml",
+          "value": null
+        }
+      ],
+      "version": "1"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 281,
+          "old_bytes": 360,
+          "path": "forums/forum_1/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": true,
+      "version": "2",
+      "warnings": []
+    }
+  }
+]

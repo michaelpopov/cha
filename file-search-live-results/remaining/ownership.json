@@ -1,0 +1,65 @@
+[
+  {
+    "file_id": "file-13n4tsc9WtdLQoyqvwXSZj",
+    "folder_id": 3,
+    "remote_id": "vs_6ae7de3b39a481919f57576973645f77",
+    "saved_key_id": "api_key_4",
+    "service": "openai"
+  },
+  {
+    "folder_id": 4,
+    "operation": "fileSearchStores/cha-live-ga-20261102-49t4l6u3opvq/upload/operations/cedardemandmd-cu8wwe8xlcrb",
+    "remote_id": "fileSearchStores/cha-live-ga-20261102-49t4l6u3opvq",
+    "saved_key_id": "api_key_5",
+    "service": "google"
+  },
+  {
+    "file_id": "file-Aw5CVeUkY1uXTXgBQYzQma",
+    "folder_id": 5,
+    "remote_id": "vs_6ae7de47495c8191bccfd12c1254b2e8",
+    "saved_key_id": "api_key_4",
+    "service": "openai"
+  },
+  {
+    "file_id": "file-D9DD3hKpX61ZGTVJKEGnVd",
+    "folder_id": 6,
+    "remote_id": "vs_6ae7de505a7c819197ed1e4aec6ac415",
+    "saved_key_id": "api_key_4",
+    "service": "openai"
+  },
+  {
+    "file_id": "file-QE1DXJyB1dL8yLe8buoVbH",
+    "folder_id": 7,
+    "remote_id": "vs_6ae7deeffdc48191b7a281df4b10a6b0",
+    "saved_key_id": "api_key_4",
+    "service": "openai"
+  },
+  {
+    "file_id": "file-Vx9TpuU5RmbaVC8rJgakdB",
+    "folder_id": 8,
+    "remote_id": "vs_6ae7df66e1bc8191842917aba0610875",
+    "saved_key_id": "api_key_6",
+    "service": "openai"
+  },
+  {
+    "file_id": "file-H5wYEKeMUJCQiYtvui5yJt",
+    "folder_id": 9,
+    "remote_id": "vs_6ae7df8171c881919e1f2c8cc79f23c2",
+    "saved_key_id": "api_key_4",
+    "service": "openai"
+  },
+  {
+    "folder_id": 10,
+    "operation": "fileSearchStores/cha-live-deletion1-67313zdimulf/upload/operations/deletion1md-3hsjpvqvkj6y",
+    "remote_id": "fileSearchStores/cha-live-deletion1-67313zdimulf",
+    "saved_key_id": "api_key_7",
+    "service": "google"
+  },
+  {
+    "folder_id": 11,
+    "operation": "fileSearchStores/cha-live-remotedeletion1-ch8y9xfjiurk/upload/operations/remotedeletion1md-us3k83qvnl4i",
+    "remote_id": "fileSearchStores/cha-live-remotedeletion1-ch8y9xfjiurk",
+    "saved_key_id": "api_key_5",
+    "service": "google"
+  }
+]

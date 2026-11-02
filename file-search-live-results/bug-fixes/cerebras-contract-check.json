@@ -1,0 +1,19 @@
+{
+  "checked_utc": "2026-11-02T02:17:55.638877+00:00",
+  "changed_contract_observed": false,
+  "sources": [
+    {
+      "url": "https://inference-docs.cerebras.ai/capabilities/tool-use#schema-requirements",
+      "finding": "Qwen strict tool schemas prohibit pattern, minLength, and maxLength."
+    },
+    {
+      "url": "https://inference-docs.cerebras.ai/capabilities/structured-outputs#supported-features",
+      "finding": "Strict tools share the structured-output rules. Numeric minimum/maximum are supported; exact nullable type-array acceptance requires a live request."
+    },
+    {
+      "url": "https://inference-docs.cerebras.ai/support/change-log",
+      "finding": "The October 2, 2025 numeric-bound entry is specifically headed gpt-oss-120b."
+    }
+  ],
+  "implementation": "Retained numeric constraints, nullable type arrays, strict flags and all other existing schema properties."
+}

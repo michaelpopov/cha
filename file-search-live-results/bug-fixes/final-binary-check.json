@@ -1,0 +1,14 @@
+[
+  {
+    "path": "build/ninja/libChaRuntime.dylib",
+    "temporary_observer_absent": true
+  },
+  {
+    "path": "build/ninja/cha_tests",
+    "temporary_observer_absent": true
+  },
+  {
+    "path": "build/ninja/cha_app_tests",
+    "temporary_observer_absent": true
+  }
+]

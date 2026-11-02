@@ -889,11 +889,16 @@ std::vector<FileReference> load_file_references(
         const auto kind = parse_file_reference_kind(required_string(*entry, path, "kind"));
         if (!kind) fail("kind must be note or folder");
         auto ref_id = required_string(*entry, path, "ref_id");
-        if (ref_id != trim_view(ref_id) || !parse_item_reference(ref_id))
+        const auto id = parse_item_reference(ref_id);
+        if (ref_id != trim_view(ref_id) || !id)
             fail("expected a trimmed CHA Ref ID");
         auto name = required_string(*entry, path, "name");
         try { validate_display_label(name, "Reference name"); }
         catch (const std::invalid_argument& error) { fail(error.what()); }
+        if (*id <= 0) {
+            warnings.emit(path, "Ignoring file reference " + ref_id + ": no item can have this Ref ID");
+            continue;
+        }
         if (std::ranges::any_of(result, [&](const auto& saved) {
                 return saved.kind == *kind && saved.ref_id == ref_id;
             })) fail("duplicate reference");

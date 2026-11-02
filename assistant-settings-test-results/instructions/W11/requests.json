@@ -1,0 +1,112 @@
+[
+  {
+    "utc": "2026-11-02T05:09:09.910751+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:09:09Z:\nExplain how Writer can search Docs OpenAI and Docs Gemini.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "0b40f5fb96cf1dd32b6a455e984c3045dcda37bac75ce10695dc079dae5b7cb5",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T05:09:11.758522+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:09:09Z:\nExplain how Writer can search Docs OpenAI and Docs Gemini.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "0b40f5fb96cf1dd32b6a455e984c3045dcda37bac75ce10695dc079dae5b7cb5",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T05:09:13.732051+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:09:09Z:\nExplain how Writer can search Docs OpenAI and Docs Gemini.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "0b40f5fb96cf1dd32b6a455e984c3045dcda37bac75ce10695dc079dae5b7cb5",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T05:09:15.375588+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:09:09Z:\nExplain how Writer can search Docs OpenAI and Docs Gemini.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "0b40f5fb96cf1dd32b6a455e984c3045dcda37bac75ce10695dc079dae5b7cb5",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T05:09:16.773116+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:09:09Z:\nExplain how Writer can search Docs OpenAI and Docs Gemini.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "0b40f5fb96cf1dd32b6a455e984c3045dcda37bac75ce10695dc079dae5b7cb5",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  }
+]

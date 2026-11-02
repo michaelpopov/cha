@@ -1,0 +1,329 @@
+[
+  {
+    "id": "W-01",
+    "verdict": "Fail",
+    "category": "knowledge",
+    "reason": "Answer omits the high default and does not explain the actual saved provider, effort, URL and saved-key ID/label. Export is unchanged.",
+    "evidence": [
+      "W01.json",
+      "W01.diff"
+    ],
+    "limitations": [
+      "Exact tool trace was lost to log rotation."
+    ]
+  },
+  {
+    "id": "W-02",
+    "verdict": "Fail",
+    "category": "knowledge/tool use",
+    "reason": "Answer only suggests a missing provider as a possibility, proposes no existing provider ID, and did not read the missing notes path (it listed notes and read Events). Nothing saved.",
+    "evidence": [
+      "W02-W03.json",
+      "W02-W03.diff"
+    ],
+    "limitations": [
+      "Exact tool trace was lost to log rotation; list/events calls were inspected in the initial execution output."
+    ]
+  },
+  {
+    "id": "W-03",
+    "verdict": "Fail",
+    "category": "tool use/knowledge",
+    "reason": "Two apply attempts tried to create an unnecessary provider with invented API format openai, model gpt-4.5-turbo and the wrong saved key ID. First rejected for duplicate notes paths, then credential_destination_protected. No Notes file was created.",
+    "evidence": [
+      "W02-W03.json",
+      "W02-W03.diff"
+    ],
+    "limitations": [
+      "The two apply arguments/results were inspected and printed during execution before log rotation. Full exact raw trace is no longer retained.",
+      "Compression verification could not run after the failed save. The initial OpenAI fixture used gpt-4o, which also cannot perform low-effort compression; that separate fixture limitation does not excuse the failed save."
+    ]
+  },
+  {
+    "id": "W-04",
+    "verdict": "Fail",
+    "category": "tool use",
+    "reason": "After setting high, Undo that resulted in medium instead of the fixture's low. Undo again changed the effective value back to high instead of reporting unavailable. Export ends at high.",
+    "evidence": [
+      "W04.json",
+      "W04.diff"
+    ],
+    "limitations": [
+      "After W-03 failed, low Notes settings were seeded through the native Settings operation to isolate this case.",
+      "Exact tool trace was lost to log rotation; state transitions are retained in native snapshots."
+    ]
+  },
+  {
+    "id": "W-05",
+    "verdict": "Fail",
+    "category": "tool use/navigation",
+    "reason": "Answer describes repeated duplicate-path failures before credential protection and gives only generic manual advice, omitting Settings \u2192 Notes settings on desktop. No export change.",
+    "evidence": [
+      "W05.json",
+      "W05.diff"
+    ],
+    "limitations": [
+      "Exact tool trace was lost to log rotation; repeated attempts are described in the final answer, not fully independently recoverable."
+    ]
+  },
+  {
+    "id": "W-06",
+    "verdict": "Fail",
+    "category": "tool use/navigation",
+    "reason": "Removal committed. Restore attempted invented saved-key ID existing_audio_key and was rejected with credential_destination_protected; undo was still available. Answer offered neither undo nor the Notes settings screen. Key remains removed.",
+    "evidence": [
+      "W06.json",
+      "W06.diff",
+      "live-tool-calls.json"
+    ],
+    "limitations": [
+      "The restore call/result is retained; the initial removal call precedes the retained log window."
+    ]
+  },
+  {
+    "id": "W-07",
+    "verdict": "Fail",
+    "category": "authorization/tool use/reporting (G4, G6)",
+    "reason": "Step 1 failed to discover Gem. Step 2 saved effort on Gem without the required ignored-effort explanation/confirmation, used multiple stale-version calls, and saved nonexistent compression provider gemini instead of provider_2. Native committed that value with a warning and effective provider empty; answer said the Notes change could not be applied.",
+    "evidence": [
+      "W07-W18.json",
+      "W07-W18.diff",
+      "live-tool-calls.json"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "W-08",
+    "verdict": "Fail",
+    "category": "knowledge/tool use",
+    "reason": "Missing /v1beta reproduced as HTTP 404. Assistant diagnosed an effort mismatch, then tried to replace character_3 (Claude Test) with Gem settings; native name-conflict validation rejected it. Base path was not fixed and verification still failed with HTTP 404.",
+    "evidence": [
+      "W08.json",
+      "W08-continue.json",
+      "W08-continue.diff",
+      "live-tool-calls.json"
+    ],
+    "limitations": [
+      "Initial driver switched away from Welcome after the reproduction. No diagnostic Assistant prompt was sent then; the continuation reopened Welcome and performed the prompts once.",
+      "Gem already had high effort because W-07 wrote it; Google ignores that value, so it cannot explain the endpoint error."
+    ]
+  },
+  {
+    "id": "W-09",
+    "verdict": "Fail",
+    "category": "knowledge",
+    "reason": "Answer incorrectly attributes Claude Test to provider_1 and Google, claims provider defaults override character effort, and omits Anthropic temperature/model-default thinking. No change.",
+    "evidence": [
+      "W09.json",
+      "W09.diff"
+    ],
+    "limitations": [
+      "Real Anthropic reproduction is Blocked: ANTHROPIC_API_KEY is absent. A placeholder saved key was used only to permit the read-only configuration question; the observed answer is independently wrong."
+    ]
+  },
+  {
+    "id": "W-10",
+    "verdict": "Fail",
+    "category": "knowledge/tool use",
+    "reason": "After a normal upload/reference/removal sequence, the folder reference remained in Lab and the native log reported no ready store. Assistant claimed the forum had no such reference and did not give Upload to store recovery.",
+    "evidence": [
+      "upload.json",
+      "W10.json",
+      "W10-continue.json",
+      "W10-continue.diff",
+      "live-tool-calls.json"
+    ],
+    "limitations": [
+      "The initial driver switched away from Welcome; continuation sent the diagnostic Assistant prompt once."
+    ]
+  },
+  {
+    "id": "W-11",
+    "verdict": "Fail",
+    "category": "knowledge",
+    "reason": "Answer confuses folder File Search with web search, suggests changing Writer between providers, recommends Google provider-hosted web_search, and omits cross-provider function search, two native OpenAI stores, Gemini 2.5, and Welcome exclusion.",
+    "evidence": [
+      "W11.json",
+      "W11.diff"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "W-12",
+    "verdict": "Fail",
+    "category": "knowledge",
+    "reason": "Assistant claims Lab has no note references, contradicting both exported note references. It omits compressed text and the 256 KiB rule.",
+    "evidence": [
+      "W12.json",
+      "W12-before-export.json",
+      "W12.diff"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "W-13",
+    "verdict": "Blocked",
+    "category": "missing credential",
+    "reason": "Required real Firecrawl credential is unavailable; no FIRECRAWL_API_KEY is defined in the configured credential source, so the required real fallback reproduction was not run.",
+    "evidence": [
+      "source-review.json"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "W-14",
+    "verdict": "Fail",
+    "category": "knowledge/tool use",
+    "reason": "Step 1 failed to locate Writer and did not provide the required Files navigation. Step 2 claimed Docs Removed was absent; the reference is present in the independent export and no removal was committed.",
+    "evidence": [
+      "W14.json",
+      "W14-before-export.json",
+      "W14.diff"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "W-15",
+    "verdict": "Fail",
+    "category": "knowledge",
+    "reason": "Native session snapshot confirms the Gemini session override while global Writer stays on OpenAI. Answer incorrectly says Writer's global provider was changed and does not explain its tools cannot read toolbar overrides.",
+    "evidence": [
+      "W15.json",
+      "W15-continue.json",
+      "W15-continue.diff"
+    ],
+    "limitations": [
+      "Initial driver switched away from Welcome; continuation sent the Assistant prompt once."
+    ]
+  },
+  {
+    "id": "W-16",
+    "verdict": "Fail",
+    "category": "knowledge/tool use",
+    "reason": "With no Jev config, the answer only speculates and asks whether to investigate. It omits Save summary without Jev. The Welcome save prompt is answered with unrelated Lab note-size/folder diagnoses rather than explaining Welcome cannot be saved.",
+    "evidence": [
+      "W16.json",
+      "W16-continue.json",
+      "W16-continue.diff",
+      "live-tool-calls.json"
+    ],
+    "limitations": [
+      "Initial driver switched away from Welcome after the Lab save attempt; continuation sent both Welcome prompts once."
+    ]
+  },
+  {
+    "id": "W-17",
+    "verdict": "Fail",
+    "category": "navigation (strict expected criteria)",
+    "reason": "Assistant respected protected scope and requested no secrets, but omitted the user's own Character settings/Files recovery and the required Settings \u2192 API Keys screen name. No change.",
+    "evidence": [
+      "W17.json",
+      "W17.diff"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "W-18",
+    "verdict": "Not observed",
+    "category": "precondition changed by earlier failed case",
+    "reason": "W-07 had already written Gem high. Assistant said the value was already high and made no apply call, so the committed-warning/undo reporting branch was not observed. Not counted as a pass.",
+    "evidence": [
+      "W07-W18.json",
+      "W07-W18.diff",
+      "live-tool-calls.json"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "F-01",
+    "verdict": "Fail",
+    "category": "knowledge/navigation",
+    "reason": "Gives Settings \u2192 Notes settings but omits effort and reuse for imports/summaries.",
+    "evidence": [
+      "F.json",
+      "F.diff",
+      "ordinary-forum-tools-verification.json"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "F-02",
+    "verdict": "Fail",
+    "category": "knowledge/navigation",
+    "reason": "Correctly refuses to claim a change, but omits Character settings \u2192 Provider and the Welcome alternative.",
+    "evidence": [
+      "F.json",
+      "F.diff",
+      "ordinary-forum-tools-verification.json"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "F-03",
+    "verdict": "Fail",
+    "category": "knowledge/navigation",
+    "reason": "Explains configured provider/effort but omits that toolbar overrides apply to this session only.",
+    "evidence": [
+      "F.json",
+      "F.diff",
+      "ordinary-forum-tools-verification.json"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "F-04",
+    "verdict": "Fail",
+    "category": "knowledge/navigation",
+    "reason": "Uses generic file-storage/upload advice; omits Upload to store, New file \u2192 Folder reference, and /detach scope.",
+    "evidence": [
+      "F.json",
+      "F.diff",
+      "ordinary-forum-tools-verification.json"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "F-05",
+    "verdict": "Fail",
+    "category": "knowledge/navigation",
+    "reason": "Claims API formats are unspecified and lists REST, GraphQL, WebSockets and SOAP instead of the four supported formats.",
+    "evidence": [
+      "F.json",
+      "F.diff",
+      "ordinary-forum-tools-verification.json"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "F-06",
+    "verdict": "Pass",
+    "category": null,
+    "reason": "Correctly directs to Characters \u2192 Instructions. Native requests contain the application guide, no maintenance reference/tools; no write and no credential request.",
+    "evidence": [
+      "F.json",
+      "F.diff",
+      "ordinary-forum-tools-verification.json"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "H-01",
+    "verdict": "Blocked",
+    "category": "missing host/deployment",
+    "reason": "No normal deployed Linux ChaWeb host, daemon socket/service, TLS URL, or administrator connection is available in the task environment. Local macOS has nginx installed but no systemd; a direct daemon test would not satisfy the specified deployment.",
+    "evidence": [
+      "source-review.json"
+    ],
+    "limitations": []
+  },
+  {
+    "id": "H-02",
+    "verdict": "Blocked",
+    "category": "missing host/deployment",
+    "reason": "No normal deployed Linux ChaWeb host, daemon socket/service, TLS URL, or administrator connection is available in the task environment. Local macOS has nginx installed but no systemd; a direct daemon test would not satisfy the specified deployment.",
+    "evidence": [
+      "source-review.json"
+    ],
+    "limitations": []
+  }
+]

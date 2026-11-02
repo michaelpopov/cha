@@ -1,0 +1,18 @@
+[
+  {
+    "executable": "cha_tests",
+    "exit_code": 0
+  },
+  {
+    "executable": "cha_app_tests",
+    "exit_code": 0
+  },
+  {
+    "executable": "cha_bridge_tests",
+    "exit_code": 0
+  },
+  {
+    "executable": "cha_native_runtime_tests",
+    "exit_code": 0
+  }
+]

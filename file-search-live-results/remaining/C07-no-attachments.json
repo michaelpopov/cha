@@ -1,0 +1,114 @@
+{
+  "characters": [
+    {
+      "appearance": {
+        "font": "sans",
+        "size": "normal",
+        "style": "normal",
+        "text_color": "normal",
+        "weight": "normal"
+      },
+      "display_name": "Guide",
+      "id": "guide"
+    }
+  ],
+  "chat_settings": {
+    "characters": [
+      {
+        "character_id": "guide",
+        "provider_id": "provider_3",
+        "reasoning_effort": "none"
+      }
+    ],
+    "model_options": [
+      {
+        "display_name": "Live Gemini",
+        "host": "generativelanguage.googleapis.com",
+        "id": "provider_2",
+        "model": "gemini-3.8-flash"
+      },
+      {
+        "display_name": "Live Gpt4o",
+        "host": "api.openai.com",
+        "id": "provider_1",
+        "model": "gpt-4o"
+      },
+      {
+        "display_name": "Live Mistral",
+        "host": "api.mistral.ai",
+        "id": "provider_3",
+        "model": "mistral-large-latest"
+      },
+      {
+        "display_name": "Test",
+        "host": "test",
+        "id": "test",
+        "model": "fake"
+      }
+    ]
+  },
+  "default_character_id": "guide",
+  "forum": {
+    "default_character_id": "guide",
+    "default_persona_display_name": "Guest",
+    "default_persona_id": "builtin-guest",
+    "display_name": "The Lobby",
+    "id": "lobby",
+    "members": [
+      {
+        "appearance": {
+          "font": "sans",
+          "size": "normal",
+          "style": "normal",
+          "text_color": "normal",
+          "weight": "normal"
+        },
+        "display_name": "Guide",
+        "id": "guide"
+      }
+    ]
+  },
+  "generation": {
+    "active": false,
+    "character_display_name": "",
+    "character_id": "",
+    "phase": "waiting"
+  },
+  "lifecycle": "running",
+  "session_id": "2026-11-01-16-51-03-session",
+  "session_label": "C07-no-attachments",
+  "transcript": [
+    {
+      "addressed_to": "guide",
+      "addressed_to_name": "Guide",
+      "created_at": 1793580663,
+      "display_name": "Guest",
+      "has_cached_audio": false,
+      "id": 1,
+      "input_tokens": null,
+      "kind": "human",
+      "output_tokens": null,
+      "participant_id": "builtin-guest",
+      "request_id": 1,
+      "status": "complete",
+      "text": "Search attached folder stores for Project Cedar's source codes. If no folder tool is available, say so; do not guess.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793580664,
+      "display_name": "Guide",
+      "has_cached_audio": false,
+      "id": 2,
+      "input_tokens": 1222,
+      "kind": "character",
+      "output_tokens": 59,
+      "participant_id": "guide",
+      "request_id": 1,
+      "status": "complete",
+      "text": "No folder exploration or file-system tools are available in this environment. I cannot search or access attached folders, including for Project Cedar's source codes. If you have another way to share the relevant details—such as uploading specific files or describing what you need—I’d be happy to assist further!",
+      "web_search_used": false
+    }
+  ]
+}

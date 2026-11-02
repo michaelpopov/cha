@@ -1,0 +1,16 @@
+[
+  {
+    "file_id": "file-5THLNu1T4NvDVcXYxVKK4J",
+    "folder_id": 3,
+    "remote_id": "vs_6ae7dfdf6f748191b28ee5311eb95fc2",
+    "saved_key_id": "api_key_2",
+    "service": "openai"
+  },
+  {
+    "folder_id": 4,
+    "operation": "fileSearchStores/cha-live-gb-20261102-pjyxefy7xkur/upload/operations/cedardemandmd-qie47h8udci0",
+    "remote_id": "fileSearchStores/cha-live-gb-20261102-pjyxefy7xkur",
+    "saved_key_id": "api_key_3",
+    "service": "google"
+  }
+]

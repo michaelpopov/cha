@@ -1,0 +1,97 @@
+import json,re,collections
+from pathlib import Path
+root=Path('/Users/mpopov/projects/cha/file-search-live-results/bug-fixes')
+checks=[]
+def check(case,name,passed,**details):
+    checks.append(dict(case=case,check=name,passed=bool(passed),**details))
+def decoded(value):
+    if isinstance(value,str):
+        try:return json.loads(value)
+        except ValueError:return value
+    return value
+for folder in (root,root/'gemini'):
+    events=[json.loads(line) for line in (folder/'events.jsonl').read_text().splitlines() if line]
+    prepared={e['observation_id']:e for e in events if e['event']=='prepared'}
+    ledger=json.loads((folder/'ownership.json').read_text())
+    by_folder={r['folder_id']:r['remote_id'] for r in ledger}
+    expected={e['case']:{by_folder[f] for f in e['folders']} for e in events if e['event']=='expected_folders'}
+    active={};requests=[]
+    for log in sorted(folder.glob('model.*.log'),reverse=True)+[folder/'model.log']:
+        for line in log.read_text().splitlines():
+            m=re.match(r'^\[[^\]]+\] \[thread (\d+)\] \[(\w+)\] (.*)$',line)
+            if not m:continue
+            thread,level,message=m.groups()
+            if message.startswith('Provider request started:'):
+                fields=dict(re.findall(r'([a-zA-Z_]+)=([^\s]+)',message))
+                active[thread]=(fields.get('session_id'),fields.get('request_id'),fields.get('token'))
+            tag='HTTP model request body data='
+            if message.startswith(tag):requests.append((active.get(thread),decoded(decoded(message[len(tag):]))))
+    for prep in prepared.values():
+        case=prep['case']
+        check(case,'complete resolved target set', {t['remote_store_id'] for t in prep['targets']}==expected[case])
+        check(case,'resolved saved credentials',all(t['target_credential_matches_expected'] for t in prep['targets']))
+        if case=='Cerebras-mixed':
+            funcs={t['function']['name']:t['function'] for t in prep['request']['tools']}
+            check(case,'production summary and folder schemas without maxLength',set(funcs)=={'summary_search','summary_read','search_attached_files'} and all('maxLength' not in funcs[n]['parameters']['properties']['query'] for n in ('summary_search','search_attached_files')))
+            cursor=funcs['summary_search']['parameters']['properties']['before_note_id']
+            check(case,'numeric and nullable summary constraints retained',cursor['type']==['integer','null'] and cursor['minimum']==1 and cursor['maximum']==9007199254740991)
+            oracle=json.loads((folder/'oracle.json').read_text())
+            answer=(folder/'Cerebras-mixed.md').read_text()
+            check(case,'both undisclosed source codes and filenames answered',all(s in answer for s in (oracle['O-code'],oracle['G-code'],'cedar-packaging.md','cedar-demand-данные.md')))
+            check(case,'source codes absent from initial consumer request',all(oracle[n] not in json.dumps(prep['request']) for n in ('O-code','G-code')))
+    for event in events:
+        case=event['case']
+        if event['event']=='dispatch':
+            check(case,'outgoing saved credential matched',event['credential_matches_expected'],method=event['method'],store=event['store'])
+        if event['event']!='tool_output':continue
+        prep=prepared[event['observation_id']]
+        keys={key for key,body in requests if body==prep['request']}
+        wanted=decoded(event['output']);delivered=False;linked=False
+        for key,body in requests:
+            if key not in keys:continue
+            calls={}
+            if 'messages' in body:
+                for item in body['messages']:
+                    for call in item.get('tool_calls') or []:calls[call['id']]=call['function']['name']
+                    if item.get('role')=='tool' and decoded(item['content'])==wanted:
+                        delivered=True;linked=calls.get(item['tool_call_id'])=='search_attached_files'
+            for item in body.get('input',[]):
+                if item.get('type')=='function_call':calls[item['call_id']]=item['name']
+                if item.get('type')=='function_call_output' and decoded(item['output'])==wanted:
+                    delivered=True;linked=calls.get(item['call_id'])=='search_attached_files'
+        check(case,'exact normalized output delivered with actual tool call ID',delivered and linked,invocation=event['invocation'])
+        raw=[e for e in events if e['event']=='retrieval_response' and e['invocation']==event['invocation'] and e['method']=='POST']
+        for store in wanted['stores']:
+            for match in store['matches']:
+                passages=[]
+                for response in raw:
+                    body=decoded(response['body'])
+                    for candidate in body.get('candidates',[]):
+                        for chunk in candidate.get('groundingMetadata',{}).get('groundingChunks',[]):
+                            context=chunk.get('retrievedContext',{})
+                            passages.append((context.get('title',''),context.get('text','')))
+                    for item in body.get('data',[]):
+                        passages.append((item['filename'],'\n'.join(part['text'] for part in item['content'] if part['type']=='text')))
+                check(case,'normalized source passage matches real retrieved text',(match['filename'],match['text']) in passages,invocation=event['invocation'])
+        if case=='C13-healthy-empty':
+            get=[e for e in events if e['event']=='retrieval_response' and e['invocation']==event['invocation'] and e['method']=='GET']
+            empty_stop=any(any(c.get('finishReason')=='STOP' and not c.get('groundingMetadata',{}).get('groundingChunks') for c in decoded(r['body']).get('candidates',[])) for r in raw)
+            check(case,'empty STOP inspected successfully and remained error-free',empty_stop and len(get)==1 and get[0]['status']==200 and len(wanted['stores'])==1 and wanted['stores'][0]['matches']==[] and 'error' not in wanted['stores'][0])
+        if case=='C12-deleted-gemini':
+            errors=[s for s in wanted['stores'] if 'error' in s]
+            peers=[s for s in wanted['stores'] if s['matches'] and 'error' not in s]
+            get=[e for e in events if e['event']=='retrieval_response' and e['invocation']==event['invocation'] and e['method']=='GET']
+            warning='Store search failed for RemoteDeletion'
+            check(case,'deleted store inspection 404 produced safe error with healthy peers',len(errors)==1 and errors[0]['error']=='The remote resource was not found.' and len(peers)>=1 and all('error' not in s for s in wanted['stores'] if not s['folder'].startswith('RemoteDeletion')) and any(e['status']==404 for e in get) and warning in (folder/'model.log').read_text())
+    if folder.name=='gemini':
+        outputs=[decoded(e['output']) for e in events if e['event']=='tool_output' and e['case']=='C12-deleted-gemini']
+        check('C12-deleted-gemini','first real search preserved passages from both healthy services',len([s for s in outputs[0]['stores'] if s['matches'] and 'error' not in s])==2)
+        oracle=json.loads((folder/'oracle.json').read_text())
+        final=(folder/'C12-deleted-gemini.md').read_text()
+        check('C12-deleted-gemini','completed consumer answer used both sources and reported access failure',all(value in final for value in (oracle['O-code'],oracle['G-code'],'cedar-packaging.md','cedar-demand-данные.md','The remote resource was not found.')))
+        check('C13-healthy-empty','completed consumer answer reported no matches without inventing a fact','returned no matches' in (folder/'C13-healthy-empty.md').read_text())
+(root/'verification.json').write_text(json.dumps(checks,indent=2)+'\n')
+print('Evidence checks:',len(checks),'passed:',sum(c['passed'] for c in checks))
+for c in checks:
+    if not c['passed']:print('FAILED',c)
+raise SystemExit(any(not c['passed'] for c in checks))

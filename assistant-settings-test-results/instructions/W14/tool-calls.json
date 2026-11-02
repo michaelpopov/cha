@@ -1,0 +1,133 @@
+[
+  {
+    "call_id": "call_SS65BAyariLNRKVm4bdIliuI",
+    "utc": "2026-11-02T05:10:07.880793+00:00",
+    "prompt": "from Guest at 2026-11-02T05:10:06Z:\nRemove the Docs Removed folder from Lab's Files. Do it.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "forums"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 0,
+          "path": "forums/forum_1/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 400,
+          "path": "forums/forum_1/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/builtin-assistant/character.toml",
+          "protection_reason": "Assistant member files are read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 27,
+          "path": "forums/lobby/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 39,
+          "path": "forums/lobby/members/character_defaults.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/members/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_y7sxQWKdpiQsFgQ9bWyYX9u4",
+    "utc": "2026-11-02T05:10:09.997582+00:00",
+    "prompt": "from Guest at 2026-11-02T05:10:06Z:\nRemove the Docs Removed folder from Lab's Files. Do it.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "forums/forum_1/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "default_character = 'builtin-assistant'\ndefault_persona = 'builtin-guest'\ndisplay_name = 'Lab'\n\n[[file_references]]\nkind = 'note'\nname = 'Long note'\nref_id = '##000004'\n\n[[file_references]]\nkind = 'note'\nname = 'Huge note'\nref_id = '##000005'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs OpenAI'\nref_id = '##000006'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs Removed'\nref_id = '##00000A'\n",
+          "path": "forums/forum_1/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_0z5PYq4xvODudDaMnRVlHdUE",
+    "utc": "2026-11-02T05:10:12.288374+00:00",
+    "prompt": "from Guest at 2026-11-02T05:10:06Z:\nRemove the Docs Removed folder from Lab's Files. Do it.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": "default_character = 'builtin-assistant'\ndefault_persona = 'builtin-guest'\ndisplay_name = 'Lab'\n\n[[file_references]]\nkind = 'note'\nname = 'Long note'\nref_id = '##000004'\n\n[[file_references]]\nkind = 'note'\nname = 'Huge note'\nref_id = '##000005'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs OpenAI'\nref_id = '##000006'\n",
+          "key": null,
+          "operation": "replace",
+          "path": "forums/forum_1/config.toml",
+          "value": null
+        }
+      ],
+      "version": "1"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 321,
+          "old_bytes": 400,
+          "path": "forums/forum_1/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": true,
+      "version": "2",
+      "warnings": []
+    }
+  }
+]

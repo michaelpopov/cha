@@ -1,0 +1,15 @@
+[
+  {
+    "file_id": "file-LyPSKycaMy9G37rvoxnocJ",
+    "folder_id": 3,
+    "remote_id": "vs_6ae7e4c6e7608191ab25db88a2f475fe",
+    "saved_key_id": "api_key_2",
+    "service": "openai"
+  },
+  {
+    "folder_id": 4,
+    "remote_id": "fileSearchStores/cha-live-geminichunkboundar-p3j82g3wnao6",
+    "saved_key_id": "api_key_3",
+    "service": "google"
+  }
+]

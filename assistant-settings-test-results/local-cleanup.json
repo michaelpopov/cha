@@ -1,0 +1,17 @@
+{
+  "host_settings_restored": true,
+  "original_active_vault": "Michaels",
+  "host_app_toml_sha256": "5e9b47a67c9e222f37c1d0008928f573fed1ab924a68c2766baf27aac0992416",
+  "removed_test_owned_paths": [
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Test-20261101.sqlite3",
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Test-20261101.sqlite3-wal",
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Test-20261101.sqlite3-shm",
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Test-20261101.sqlite3.cha-main-lock",
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Test-20261101.sqlite3.cha-lock",
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Test-20261101.sqlite3.cha-sessions",
+    "/Users/mpopov/Library/Application Support/CHA/ass-test-vault.toml"
+  ],
+  "test_vault_absent": true,
+  "registration_absent": true,
+  "raw_exports_deleted": true
+}

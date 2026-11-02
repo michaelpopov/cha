@@ -1,0 +1,117 @@
+{
+  "characters": [
+    {
+      "appearance": {
+        "font": "sans",
+        "size": "normal",
+        "style": "normal",
+        "text_color": "normal",
+        "weight": "normal"
+      },
+      "display_name": "Guide",
+      "id": "guide"
+    }
+  ],
+  "chat_settings": {
+    "characters": [
+      {
+        "character_id": "guide",
+        "provider_id": "provider_1",
+        "reasoning_effort": "none"
+      }
+    ],
+    "model_options": [
+      {
+        "display_name": "Live Mistral",
+        "host": "api.mistral.ai",
+        "id": "provider_1",
+        "model": "mistral-large-latest"
+      },
+      {
+        "display_name": "Test",
+        "host": "test",
+        "id": "test",
+        "model": "fake"
+      }
+    ]
+  },
+  "default_character_id": "guide",
+  "forum": {
+    "default_character_id": "guide",
+    "default_persona_display_name": "Guest",
+    "default_persona_id": "builtin-guest",
+    "display_name": "The Lobby",
+    "id": "lobby",
+    "members": [
+      {
+        "appearance": {
+          "font": "sans",
+          "size": "normal",
+          "style": "normal",
+          "text_color": "normal",
+          "weight": "normal"
+        },
+        "display_name": "Guide",
+        "id": "guide"
+      }
+    ]
+  },
+  "generation": {
+    "active": false,
+    "character_display_name": "",
+    "character_id": "",
+    "phase": "waiting"
+  },
+  "lifecycle": "running",
+  "session_id": "2026-11-01-17-13-57-session",
+  "session_label": "C15-google-chunk",
+  "transcript": [
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793582037,
+      "display_name": "System",
+      "has_cached_audio": false,
+      "id": 1,
+      "input_tokens": null,
+      "kind": "notice",
+      "output_tokens": null,
+      "participant_id": "",
+      "status": "complete",
+      "text": "Added folder “Longcase3” to this chat.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "guide",
+      "addressed_to_name": "Guide",
+      "created_at": 1793582037,
+      "display_name": "Guest",
+      "has_cached_audio": false,
+      "id": 2,
+      "input_tokens": null,
+      "kind": "human",
+      "output_tokens": null,
+      "participant_id": "builtin-guest",
+      "request_id": 1,
+      "status": "complete",
+      "text": "Explicitly search the attached Project Longcase source 3 once. Report its source code and qualify any truncated evidence.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793582053,
+      "display_name": "Guide",
+      "has_cached_audio": false,
+      "id": 3,
+      "input_tokens": 3325,
+      "kind": "character",
+      "output_tokens": 190,
+      "participant_id": "guide",
+      "request_id": 1,
+      "status": "complete",
+      "text": "Here is the source code retrieved from **Project Longcase source 3** in the attached folder **Longcase3 (##000006)**, file **Longcase3.md**. The evidence is **not truncated**, but the content repeats a single line multiple times, suggesting either a formatting error or placeholder text in the source:\n\n---\n**Source Code (LIVE-3878952080):**\n```\nАрхив садоводства содержит подробные описания растений, деревьев, сезонных изменений и погодных наблюдений.\n```\nThis line is repeated **15 times** in the retrieved passage. No additional functional code, logic, or unique content was found in the searched portion of the file.\n\nIf you expected different content, let me know how to refine the search.",
+      "web_search_used": false
+    }
+  ]
+}

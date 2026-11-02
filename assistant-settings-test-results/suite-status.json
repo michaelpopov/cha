@@ -1,0 +1,34 @@
+[
+  {
+    "executable": "cha_tests",
+    "tests": 867,
+    "passed": 865,
+    "skipped": 2,
+    "failures": 0,
+    "evidence": "cha_tests.xml"
+  },
+  {
+    "executable": "cha_app_tests",
+    "tests": 616,
+    "passed": 616,
+    "skipped": 0,
+    "failures": 0,
+    "evidence": "cha_app_tests-final.xml"
+  },
+  {
+    "executable": "cha_bridge_tests",
+    "tests": 137,
+    "passed": 137,
+    "skipped": 0,
+    "failures": 0,
+    "evidence": "cha_bridge_tests.xml"
+  },
+  {
+    "executable": "cha_native_runtime_tests",
+    "tests": 13,
+    "passed": 13,
+    "skipped": 0,
+    "failures": 0,
+    "evidence": "cha_native_runtime_tests.xml"
+  }
+]

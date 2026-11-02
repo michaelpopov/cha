@@ -1,0 +1,20 @@
+[
+  {
+    "files": [
+      "file-MuzgB9tiQxfYTawHUuaLMX"
+    ],
+    "folder_id": 6,
+    "id": 1,
+    "key_id": "api_key_1",
+    "remote_id": "vs_6ae80217860c8191ba7e6dc7332d0966",
+    "service": "openai"
+  },
+  {
+    "files": [],
+    "folder_id": 8,
+    "id": 2,
+    "key_id": "api_key_2",
+    "remote_id": "fileSearchStores/docs-gemini-000008-bo6xqvkeahp8",
+    "service": "google"
+  }
+]

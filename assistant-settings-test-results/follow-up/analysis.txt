@@ -1,0 +1,156 @@
+Analysis of the 21 failed live tests
+
+Original commit: e0a075c609dffd3e34b4e7934084d0c84c5d30a3 (dirty working tree)
+Latest strict verdicts for the original 21: {'Fail': 14, 'Pass': 7}
+These are strict plan verdicts, not counts of native application defects. Many remaining failures are omitted explanation details despite correct native behavior.
+
+Confirmed application issues:
+- application defect — fixed: Import inferred valid characters only from characters/*/character.toml and removed built-in Assistant from forum membership. Assistant-only forums could then be pruned along with orphaned sessions. Seed the set with the always-present built-in Assistant.
+  Discovered during the follow-up config-only reset; it did not cause the original 21 failures, whose Lab membership was created after import.
+- application prompt gap — fixed: Ordinary Assistant lacked the full Character settings → Files → New file → reference-type navigation. Added the actual UI path, checked against CharacterScreens.tsx and FileScreens.tsx.
+- visible error copy — fixed after explicit user approval: All three error strings now use the approved Notes settings / Settings → Search API names. Four affected bridge tests and exact-string checks pass.
+- test fixture/runner — fixed: Separate Assistant and compression providers; use a listed reasoning model for low-effort compression; fresh DB for missing-provider case; restore/check membership; check clear_input so rejected @handles are not accepted tests; reopen target before each submit; per-case unique debug logs; independent exports around each write-capable case without reopening the store/clearing undo.
+- test interpretation — documented, product decision retained: W-07 requires confirmation beyond the explicit user request, conflicting with maintenance authorization and the unused-settings rule. W-18 was tested independently rather than forcing a refusal into the application. W-13 needed no real Firecrawl key. Existing URL stripping was verified in source/history/tests and left unchanged.
+
+Per-case assessment:
+W-01 — Fail
+  Original cause: Model coverage/tool-use omission
+  Native result: Read-only; configuration unchanged
+  Remaining: Model now explains all four fields and High default, but explicitly did not inspect saved Notes settings or identify its saved key.
+  Action: No native change warranted
+  Evidence: W01/
+W-02 — Fail
+  Original cause: Model failed to establish current configuration; later fixture reset also retained old Events
+  Native result: Fresh vault has no Notes file; tool read returns missing; Events empty; no write
+  Remaining: Correct missing-provider diagnosis, but no existing provider proposed and navigation says Notes instead of Notes settings.
+  Action: Corrected fresh-vault reset and event contamination; visible error-label correction subsequently approved and verified
+  Evidence: fresh-W02-W03/
+W-03 — Fail
+  Original cause: Model invented provider/API/model; fixture also selected a non-reasoning compression model and shared protected Assistant provider
+  Native result: Exactly one Notes create; existing provider selected with low effort; real compression saved; success Event recorded
+  Remaining: Assistant answer omits changed path and creation-clears-undo detail. Native save notice supplies both.
+  Action: Separate test providers; available reasoning model for compression; complete logs/exports. No protection bypass or native write defect found
+  Evidence: fresh-W02-W03/
+W-04 — Fail
+  Original cause: Model treated unavailable undo as a new forward edit
+  Native result: High → native undo to Low → second undo returns unavailable_undo; exact initial bytes restored
+  Remaining: Correct unavailable-undo answer but no forward-edit offer required by the strict spec.
+  Action: Fixed driver and captured all calls; model comparison confirms native undo is correct
+  Evidence: W04/
+W-05 — Fail
+  Original cause: Model duplicate-path calls and incomplete manual recovery
+  Native result: One apply, credential_destination_protected, no change
+  Remaining: Manual recovery says Settings → Notes and does not explicitly say desktop.
+  Action: Native protection retained; visible error-label mismatch separately identified
+  Evidence: W05/
+W-06 — Pass
+  Original cause: Model invented a saved-key ID and omitted eligible undo
+  Native result: Key removed; eligible native undo restores original bytes
+  Remaining: None; no workaround after protection.
+  Action: No native change; second model uses the existing undo path correctly
+  Evidence: W06/
+W-07 — Fail
+  Original cause: Original model used wrong provider ID, stale versions and misreported committed warning; test also adds conflicting confirmation requirement
+  Native result: Correct Google Notes provider and extra-high saved; effectlessness explained
+  Remaining: Strict step 1 expects an extra confirmation before saving explicitly requested ignored effort. Current maintenance instructions authorize explicit changes and forbid repeated permission requests.
+  Action: Retained current authorization rules and unused-setting warnings; did not add approval machinery just to satisfy this case
+  Evidence: W07-W18/
+W-08 — Pass
+  Original cause: Model diagnosed effort and edited wrong character; native rejection was correct
+  Native result: Single base_path repair; original HTTP 404 reproduced; Gem answers after /v1beta repair
+  Remaining: None. Bare service URLs disappear under the established global URL-removal policy; this is not evidence of model omission.
+  Action: No endpoint/protection change needed; retained established URL policy
+  Evidence: W08/
+W-09 — Fail
+  Original cause: Model read wrong character/provider; real Anthropic credential also missing
+  Native result: Read-only; latest answer identifies Anthropic and model-default thinking correctly
+  Remaining: Temperature omission remains. Anthropic reproduction remains Blocked because ANTHROPIC_API_KEY is unavailable.
+  Action: Reclassified credential-dependent reproduction separately from answer correctness
+  Evidence: W09/
+W-10 — Pass
+  Original cause: Model guessed a display name as a logical ID and concluded an empty listing meant no reference
+  Native result: Real F3 upload/reference/removal reproduced; reference remains; logs say no ready store; correct Upload to store recovery
+  Remaining: None.
+  Action: No fuzzy path subsystem added; correct existing list/read/log workflow suffices
+  Evidence: W10/
+W-11 — Fail
+  Original cause: Model confused document File Search with web search
+  Native result: Latest answer correctly explains forum/character scope and native OpenAI versus cross-provider function search; no write
+  Remaining: Does not cover the two-native-store limit, Gemini 2.5 restriction, or Welcome exclusion.
+  Action: No native search change; remaining issue is required answer coverage
+  Evidence: W11/
+W-12 — Fail
+  Original cause: Model guessed Lab path and falsely reported no references
+  Native result: Correct references, first-use copies, compressed text, 256 KiB rule and new-session refresh; no write
+  Remaining: Does not verify Huge note actually exceeds the limit and omits re-adding the note in the existing chat as another refresh path.
+  Action: Import membership restored; no note-materialization defect found
+  Evidence: W12-after-import-fix/
+W-14 — Fail
+  Original cause: Model failed entity discovery; guide also lacked the complete Files navigation
+  Native result: Correct manual Note reference path; authorized replacement removes only Docs Removed; other files unchanged
+  Remaining: Answer does not explain that Files creation validates item existence/kind/readiness and captures the name.
+  Action: Added missing Files navigation to application-guide.md; native removal behavior retained
+  Evidence: W14/
+W-15 — Fail
+  Original cause: Model mistook session override for a global provider change
+  Native result: Independent native snapshot proves Google session override while Writer global provider remains OpenAI; correct Model explanation
+  Remaining: Answer does not also mention the toolbar Effort override.
+  Action: No settings-store change; session override behavior works
+  Evidence: W15/
+W-16 — Fail
+  Original cause: Model speculated without checking missing Jev; driver originally left Welcome closed
+  Native result: Correct missing recipient detection and Save summary alternative; Welcome save correctly refused; no configuration writes
+  Remaining: Answer omits that summary generation uses the Notes compression provider.
+  Action: Driver reopens the target and checks prompt acceptance; import membership fixed
+  Evidence: W16-after-import-fix/
+W-17 — Pass
+  Original cause: Model omitted complete manual navigation
+  Native result: Own settings/Files protected; exact Character settings and API Keys recovery; no credential request or write
+  Remaining: None.
+  Action: No native protection change
+  Evidence: W17/
+F-01 — Fail
+  Original cause: Model coverage omission
+  Native result: Correct Notes settings, provider and effort; no maintenance tools or write
+  Remaining: Omits provider reuse for imports and summaries.
+  Action: Import round-trip bug fixed; invalid intermediate attempts were not graded
+  Evidence: F-after-import-fix/
+F-02 — Pass
+  Original cause: Model navigation omission
+  Native result: Exact Characters → Writer → Character settings → Provider; no claim of a change; no maintenance tools
+  Remaining: None.
+  Action: Import round-trip bug fixed; native tools stay unavailable in ordinary forums
+  Evidence: F-after-import-fix/
+F-03 — Pass
+  Original cause: Model omitted session-only scope
+  Native result: Correct configured defaults and current-session-only overrides
+  Remaining: None.
+  Action: Import round-trip bug fixed; no toolbar changes
+  Evidence: F-after-import-fix/
+F-04 — Fail
+  Original cause: Confirmed application-guide information gap plus model coverage omission
+  Native result: Exact Upload to store, Copy Ref ID, Character settings → Files → New file → Folder reference path
+  Remaining: Omits /detach scope required by the strict spec.
+  Action: Fixed missing navigation in the ordinary-forum guide; retained correct folder behavior
+  Evidence: F-after-import-fix/
+F-05 — Pass
+  Original cause: Model ignored API-format list already present in its prompt
+  Native result: Correct four API formats with no maintenance tools. gpt-4o diagnostic control also now names all four.
+  Remaining: None. Original failure does not reproduce under the corrected fixture; no API-format serialization fault found.
+  Action: No API/parser change
+  Evidence: F-after-import-fix/
+
+Additional validation:
+F-06 — Pass: Correct Characters → Instructions; no maintenance tools.
+W-18 — Pass (isolated branch): Reset Gem effort through normal settings, then used the same explicit authorization prompt in a fresh Welcome. One set committed with exact Google warning and undo available; answer reports all three. This isolates the branch because W-07 itself already saves High.
+W-13 — Fail (coverage), not Blocked: Corrected previous grading error: spec says a real Firecrawl credential is not needed. Placeholder key permitted actual reader failure and Firecrawl fallback. Correct order/unused reader-key explanation; answer omits that Notes web import shares these settings.
+H-01/H-02 — Blocked: No normal deployed Linux ChaWeb host/socket/service/TLS endpoint available.
+
+Validation: 1,632 native tests passed, two permitted OAuth skips; zero failures. New import regression failed before the one-line fix. All 38 WorkspaceConfigStoreTest cases pass after it.
+Independent verification: 47 checks passed for saved bytes, undo, protection, actual compression, Gemini repair, scope, accepted forum prompts, and export completion.
+New native tool traces are complete. Each write-capable case has independent before/after exports.
+Remote stores and uploaded file return 404. Both local test vault instances, registrations and sidecars were deleted. Original host app.toml restored exactly.
+No credentials found in evidence audit. No docs/ files edited.
+
+No changes were made to protection rules, ignored-settings behavior, URL filtering, toolbar scope or authorization rules to force model tests to pass.
+Visible error-copy corrections were explicitly approved, applied and verified. See approved-errors-validation.json. Historical live verdicts remain unchanged.

@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+await checkpoint('W04-before');await ask('step1','Use high effort for compression.');await ask('step2','Undo that.');await ask('step3','Undo again.');await checkpoint('W04-after');

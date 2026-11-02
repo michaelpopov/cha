@@ -1,0 +1,5 @@
+--- before/system/notes/config.toml
++++ after/system/notes/config.toml
+@@ -0,0 +1,2 @@
++compression_provider = "provider_2"
++compression_reasoning_effort = "low"

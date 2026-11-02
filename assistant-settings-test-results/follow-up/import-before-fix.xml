@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="1" failures="1" disabled="0" errors="0" time="0.028" timestamp="2026-11-01T19:47:35.129" name="AllTests">
+  <testsuite name="WorkspaceConfigStoreTest" tests="1" failures="1" disabled="0" skipped="0" errors="0" time="0.028" timestamp="2026-11-01T19:47:35.129">
+    <testcase name="ImportPreservesBuiltinAssistantMembershipAndOnlyMemberForums" file="/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp" line="3746" status="run" result="completed" time="0.028" timestamp="2026-11-01T19:47:35.129" classname="WorkspaceConfigStoreTest">
+      <failure message="/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp:3761&#x0A;Expected equality of these values:&#x0A;  config_contents(database())&#x0A;    Which is: { (&quot;characters/guide/CHARACTER.md&quot;, &quot;Character instructions\n&quot;), (&quot;characters/guide/character.toml&quot;, &quot;display_name = \&quot;Guide\&quot;\nprovider = \&quot;test\&quot;\n&quot;), (&quot;forums/lobby/FORUM.md&quot;, &quot;Forum instructions\n&quot;), (&quot;forums/lobby/config.toml&quot;, &quot;default_persona = &apos;builtin-guest&apos;\ndisplay_name = &apos;The Lobby&apos;\n&quot;), (&quot;forums/lobby/members/character_defaults.toml&quot;, &quot;# Provider selection is per character.\n&quot;), (&quot;forums/lobby/members/guide/character.toml&quot;, &quot;# forum membership\n&quot;), (&quot;personas/reader/persona.toml&quot;, &quot;display_name = \&quot;Reader\&quot;\n&quot;), (&quot;system/assistant/character.toml&quot;, &quot;display_name = \&quot;Assistant\&quot;\nprovider = \&quot;test\&quot;\n&quot;), (&quot;system/providers/test/config.toml&quot;, &quot;host = \&quot;test\&quot;\nport = 1\nmode = \&quot;test\&quot;\nmodel = \&quot;fake\&quot;\n&quot;) }&#x0A;  before&#x0A;    Which is: { (&quot;characters/guide/CHARACTER.md&quot;, &quot;Character instructions\n&quot;), (&quot;characters/guide/character.toml&quot;, &quot;display_name = \&quot;Guide\&quot;\nprovider = \&quot;test\&quot;\n&quot;), (&quot;forums/forum_1/FORUM.md&quot;, &quot;&quot;), (&quot;forums/forum_1/config.toml&quot;, &quot;default_character = &apos;builtin-assistant&apos;\ndefault_persona = &apos;builtin-guest&apos;\ndisplay_name = &apos;Assistant only&apos;\n&quot;), (&quot;forums/forum_1/members/builtin-assistant/character.toml&quot;, &quot;# Forum member\n&quot;), (&quot;forums/lobby/FORUM.md&quot;, &quot;Forum instructions\n&quot;), (&quot;forums/lobby/config.toml&quot;, &quot;default_character = &apos;builtin-assistant&apos;\ndefault_persona = &apos;builtin-guest&apos;\ndisplay_name = &apos;The Lobby&apos;\n&quot;), (&quot;forums/lobby/members/builtin-assistant/character.toml&quot;, &quot;# Forum member\n&quot;), (&quot;forums/lobby/members/character_defaults.toml&quot;, &quot;# Provider selection is per character.\n&quot;), (&quot;forums/lobby/members/guide/character.toml&quot;, &quot;# forum membership\n&quot;), (&quot;personas/reader/persona.toml&quot;, &quot;display_name = \&quot;Reader\&quot;\n&quot;), (&quot;system/assistant/character.toml&quot;, &quot;display_name = \&quot;Assistant\&quot;\nprovider = \&quot;test\&quot;\n&quot;), (&quot;system/providers/test/config.toml&quot;, &quot;host = \&quot;test\&quot;\nport = 1\nmode = \&quot;test\&quot;\nmodel = \&quot;fake\&quot;\n&quot;) }&#x0A;With diff:&#x0A;@@ -2,7 +2,13 @@&#x0A; &quot;), (&quot;characters/guide/character.toml&quot;, &quot;display_name = \&quot;Guide\&quot;&#x0A; provider = \&quot;test\&quot;&#x0A;+&quot;), (&quot;forums/forum_1/FORUM.md&quot;, &quot;&quot;), (&quot;forums/forum_1/config.toml&quot;, &quot;default_character = &apos;builtin-assistant&apos;&#x0A;+default_persona = &apos;builtin-guest&apos;&#x0A;+display_name = &apos;Assistant only&apos;&#x0A;+&quot;), (&quot;forums/forum_1/members/builtin-assistant/character.toml&quot;, &quot;# Forum member&#x0A; &quot;), (&quot;forums/lobby/FORUM.md&quot;, &quot;Forum instructions&#x0A;-&quot;), (&quot;forums/lobby/config.toml&quot;, &quot;default_persona = &apos;builtin-guest&apos;&#x0A;+&quot;), (&quot;forums/lobby/config.toml&quot;, &quot;default_character = &apos;builtin-assistant&apos;&#x0A;+default_persona = &apos;builtin-guest&apos;&#x0A; display_name = &apos;The Lobby&apos;&#x0A;+&quot;), (&quot;forums/lobby/members/builtin-assistant/character.toml&quot;, &quot;# Forum member&#x0A; &quot;), (&quot;forums/lobby/members/character_defaults.toml&quot;, &quot;# Provider selection is per character.&#x0A; &quot;), (&quot;forums/lobby/members/guide/character.toml&quot;, &quot;# forum membership&#x0A;&#x0A;" type=""><![CDATA[/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp:3761
+Expected equality of these values:
+  config_contents(database())
+    Which is: { ("characters/guide/CHARACTER.md", "Character instructions\n"), ("characters/guide/character.toml", "display_name = \"Guide\"\nprovider = \"test\"\n"), ("forums/lobby/FORUM.md", "Forum instructions\n"), ("forums/lobby/config.toml", "default_persona = 'builtin-guest'\ndisplay_name = 'The Lobby'\n"), ("forums/lobby/members/character_defaults.toml", "# Provider selection is per character.\n"), ("forums/lobby/members/guide/character.toml", "# forum membership\n"), ("personas/reader/persona.toml", "display_name = \"Reader\"\n"), ("system/assistant/character.toml", "display_name = \"Assistant\"\nprovider = \"test\"\n"), ("system/providers/test/config.toml", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n") }
+  before
+    Which is: { ("characters/guide/CHARACTER.md", "Character instructions\n"), ("characters/guide/character.toml", "display_name = \"Guide\"\nprovider = \"test\"\n"), ("forums/forum_1/FORUM.md", ""), ("forums/forum_1/config.toml", "default_character = 'builtin-assistant'\ndefault_persona = 'builtin-guest'\ndisplay_name = 'Assistant only'\n"), ("forums/forum_1/members/builtin-assistant/character.toml", "# Forum member\n"), ("forums/lobby/FORUM.md", "Forum instructions\n"), ("forums/lobby/config.toml", "default_character = 'builtin-assistant'\ndefault_persona = 'builtin-guest'\ndisplay_name = 'The Lobby'\n"), ("forums/lobby/members/builtin-assistant/character.toml", "# Forum member\n"), ("forums/lobby/members/character_defaults.toml", "# Provider selection is per character.\n"), ("forums/lobby/members/guide/character.toml", "# forum membership\n"), ("personas/reader/persona.toml", "display_name = \"Reader\"\n"), ("system/assistant/character.toml", "display_name = \"Assistant\"\nprovider = \"test\"\n"), ("system/providers/test/config.toml", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n") }
+With diff:
+@@ -2,7 +2,13 @@
+ "), ("characters/guide/character.toml", "display_name = \"Guide\"
+ provider = \"test\"
++"), ("forums/forum_1/FORUM.md", ""), ("forums/forum_1/config.toml", "default_character = 'builtin-assistant'
++default_persona = 'builtin-guest'
++display_name = 'Assistant only'
++"), ("forums/forum_1/members/builtin-assistant/character.toml", "# Forum member
+ "), ("forums/lobby/FORUM.md", "Forum instructions
+-"), ("forums/lobby/config.toml", "default_persona = 'builtin-guest'
++"), ("forums/lobby/config.toml", "default_character = 'builtin-assistant'
++default_persona = 'builtin-guest'
+ display_name = 'The Lobby'
++"), ("forums/lobby/members/builtin-assistant/character.toml", "# Forum member
+ "), ("forums/lobby/members/character_defaults.toml", "# Provider selection is per character.
+ "), ("forums/lobby/members/guide/character.toml", "# forum membership
+
+]]></failure>
+      <failure message="/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp:3765&#x0A;Expected equality of these values:&#x0A;  lobby-&gt;default_character_id&#x0A;    Which is: &quot;guide&quot;&#x0A;  workspace_assistant_id&#x0A;    Which is: &quot;builtin-assistant&quot;&#x0A;" type=""><![CDATA[/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp:3765
+Expected equality of these values:
+  lobby->default_character_id
+    Which is: "guide"
+  workspace_assistant_id
+    Which is: "builtin-assistant"
+]]></failure>
+      <failure message="/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp:3766&#x0A;Expected equality of these values:&#x0A;  lobby-&gt;members.size()&#x0A;    Which is: 1&#x0A;  2u&#x0A;    Which is: 2&#x0A;" type=""><![CDATA[/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp:3766
+Expected equality of these values:
+  lobby->members.size()
+    Which is: 1
+  2u
+    Which is: 2
+]]></failure>
+      <failure message="/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp:3768&#x0A;Expected: (only) != (nullptr), actual: NULL vs (nullptr)&#x0A;" type=""><![CDATA[/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp:3768
+Expected: (only) != (nullptr), actual: NULL vs (nullptr)
+]]></failure>
+    </testcase>
+  </testsuite>
+</testsuites>

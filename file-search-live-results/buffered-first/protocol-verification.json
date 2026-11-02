@@ -1,0 +1,28 @@
+[
+  {
+    "protocol": "responses",
+    "model": "gpt-4o",
+    "calls": [
+      "call_4NQ2pF554O3RzWcQkpDNFeyV",
+      "call_xRztEHfqSwfT6agYziZmlXqV",
+      "call_joQReLqErJStLIo7LmRaauAT"
+    ],
+    "results": [
+      "call_4NQ2pF554O3RzWcQkpDNFeyV",
+      "call_xRztEHfqSwfT6agYziZmlXqV",
+      "call_joQReLqErJStLIo7LmRaauAT"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "google",
+    "model": null,
+    "calls": [
+      "call_2701"
+    ],
+    "results": [
+      "call_2701"
+    ],
+    "results_have_calls": true
+  }
+]

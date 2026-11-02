@@ -3188,6 +3188,196 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyRejectsStaleProtectedAndCredentialC
         WorkspaceConfigApplyError::credential_destination_protected);
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyWritesNotesSettingsAndProtectsAudioKey) {
+    auto store = open_store();
+    const std::string path = "system/notes/config.toml";
+    const auto created = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = path,
+            .operation = WorkspaceConfigOperation::create,
+            .content = "compression_provider = \"test\"\n",
+        }});
+    ASSERT_TRUE(created.committed);
+    EXPECT_EQ(store->snapshot()->notes().compression_provider_id, "test");
+
+    store->apply_api_key_create("api_key_1", "Audio", "audio-key");
+    const auto before_new = config_contents(database());
+    const auto new_revision = store->config_revision();
+    const auto new_snapshot = store->snapshot();
+    const auto new_destination = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = path,
+            .operation = WorkspaceConfigOperation::replace,
+            .content = "compression_provider = \"test\"\n"
+                "audio_url = \"https://audio.example\"\naudio_api_key = \"api_key_1\"\n",
+        }});
+    EXPECT_FALSE(new_destination.committed);
+    EXPECT_EQ(
+        new_destination.error,
+        WorkspaceConfigApplyError::credential_destination_protected);
+    EXPECT_EQ(config_contents(database()), before_new);
+    EXPECT_EQ(store->config_revision(), new_revision);
+    EXPECT_EQ(store->snapshot(), new_snapshot);
+
+    store->apply_notes_update({
+        .compression_provider_id = "test",
+        .audio_url = "https://audio.example",
+        .audio_api_key_id = "api_key_1",
+    });
+    const auto effort = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = path,
+            .operation = WorkspaceConfigOperation::set,
+            .key = "compression_reasoning_effort",
+            .value = std::string("low"),
+        }});
+    EXPECT_TRUE(effort.committed);
+    EXPECT_EQ(store->snapshot()->notes().compression_reasoning_effort, "low");
+    EXPECT_EQ(store->snapshot()->notes().audio_api_key_id, "api_key_1");
+    const auto before_host = config_contents(database());
+    const auto host_revision = store->config_revision();
+    const auto host_snapshot = store->snapshot();
+    const auto other_host = store->apply_config(
+        store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{
+            .path = path,
+            .operation = WorkspaceConfigOperation::set,
+            .key = "audio_url",
+            .value = std::string("https://other.example"),
+        }});
+    EXPECT_FALSE(other_host.committed);
+    EXPECT_EQ(
+        other_host.error,
+        WorkspaceConfigApplyError::credential_destination_protected);
+    EXPECT_EQ(config_contents(database()), before_host);
+    EXPECT_EQ(store->config_revision(), host_revision);
+    EXPECT_EQ(store->snapshot(), host_snapshot);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, NotesWarningsDoNotBlockApply) {
+    auto store = open_store();
+    const std::string path = "system/notes/config.toml";
+    ASSERT_TRUE(store->apply_config(store->config_revision(),
+        std::vector<WorkspaceConfigChange>{{.path = path,
+            .operation = WorkspaceConfigOperation::create,
+            .content = "compression_provider = \"test\"\n"}}).committed);
+    struct Case { std::string content; std::string warning; std::string provider; };
+    for (const auto& item : std::vector<Case>{
+        {"compression_provider = \"missing\"\n",
+            "Notes compression provider 'missing' is unavailable; ignoring it", ""},
+        {"compression_provider = \"test\"\ncompression_reasoning_effort = \"max\"\n",
+            "Ignoring unsupported notes compression effort; using high", "test"},
+        {"compression_provider = \"test\"\nextra = true\n",
+            "Ignoring unused notes setting: extra", "test"},
+    }) {
+        SCOPED_TRACE(item.content);
+        const auto result = store->apply_config(store->config_revision(),
+            std::vector<WorkspaceConfigChange>{{.path = path,
+                .operation = WorkspaceConfigOperation::replace, .content = item.content}});
+        ASSERT_TRUE(result.committed) << result.error_message;
+        ASSERT_EQ(result.warnings.size(), 1u);
+        EXPECT_EQ(result.warnings[0].path, path);
+        EXPECT_EQ(result.warnings[0].message, item.warning);
+        EXPECT_EQ(store->snapshot()->notes().compression_provider_id, item.provider);
+        EXPECT_EQ(store->snapshot()->notes().compression_reasoning_effort, "high");
+        EXPECT_EQ(stored_config(database(), path), item.content);
+    }
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, NotesAudioPairRules) {
+    auto store = open_store();
+    store->apply_api_key_create("api_key_1", "Audio", "audio-key");
+    store->apply_notes_update({.compression_provider_id = "test",
+        .audio_url = "https://audio.example", .audio_api_key_id = "api_key_1"});
+    const auto set = [&](std::string key, std::optional<std::string> value,
+                         WorkspaceConfigApplyError expected) {
+        const auto revision = store->config_revision();
+        const auto snapshot = store->snapshot();
+        const auto rows = config_contents(database());
+        WorkspaceConfigChange change{.path = "system/notes/config.toml",
+            .operation = WorkspaceConfigOperation::set, .key = std::move(key)};
+        if (value) change.value = *value;
+        const auto result = store->apply_config(revision, std::vector{change});
+        EXPECT_EQ(result.error, expected) << result.error_message;
+        EXPECT_EQ(result.committed, expected == WorkspaceConfigApplyError::none);
+        if (!result.committed) {
+            EXPECT_EQ(store->config_revision(), revision);
+            EXPECT_EQ(store->snapshot(), snapshot);
+            EXPECT_EQ(config_contents(database()), rows);
+        }
+    };
+    const auto protected_pair = WorkspaceConfigApplyError::credential_destination_protected;
+    const auto committed = WorkspaceConfigApplyError::none;
+    set("audio_url", "https://audio.example/", committed);
+    set("audio_url", "http://audio.example", protected_pair);
+    set("audio_url", "https://audio.example:8443", protected_pair);
+    set("audio_api_key", "api_key_99", protected_pair);
+    const auto paired_source = stored_config(database(), "system/notes/config.toml");
+    set("audio_api_key", std::nullopt, committed);
+    EXPECT_TRUE(store->snapshot()->notes().audio_api_key_id.empty());
+    set("audio_api_key", "api_key_1", protected_pair);
+    ASSERT_TRUE(store->undo_config(store->config_revision()).committed);
+    EXPECT_EQ(stored_config(database(), "system/notes/config.toml"), paired_source);
+    EXPECT_EQ(store->snapshot()->notes().audio_api_key_id, "api_key_1");
+    store->apply_jev_update(WorkspaceJev{.url = "https://shared.example/decisions",
+        .api_key_id = "api_key_1"});
+    set("audio_url", "https://shared.example", committed);
+    EXPECT_EQ(store->snapshot()->notes().audio_url, "https://shared.example");
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, FileReferencesThroughApply) {
+    auto store = open_store();
+    const auto note = store->create_note_item({}, NoteItemKind::note, "Reference");
+    (void)store->create_file_reference(FileReferenceOwner::forum,
+        "lobby", FileReferenceKind::note, note_item_ref_id(note.id));
+    const std::string path = "forums/lobby/config.toml";
+    const auto original = stored_config(database(), path);
+    const auto table = original.find("[[file_references]]");
+    ASSERT_NE(table, std::string::npos);
+    const auto base = original.substr(0, table);
+    const auto replace = [&](const std::string& content) {
+        return store->apply_config(store->config_revision(),
+            std::vector<WorkspaceConfigChange>{{.path = path,
+                .operation = WorkspaceConfigOperation::replace, .content = content}});
+    };
+    ASSERT_TRUE(replace(base).committed);
+    EXPECT_TRUE(store->snapshot()->find_forum("lobby")->file_references.empty());
+    for (const auto& entry : std::vector<std::string>{
+        "[[file_references]]\nkind = 'image'\nref_id = '##000001'\nname = 'Invalid'\n",
+        "[[file_references]]\nkind = 'note'\nref_id = '##000001 extra'\nname = 'Invalid'\n",
+        "[[file_references]]\nkind = 'note'\nref_id = '##000001'\nname = 'First'\n"
+        "[[file_references]]\nkind = 'note'\nref_id = '##000001'\nname = 'Duplicate'\n",
+    }) {
+        SCOPED_TRACE(entry);
+        const auto revision = store->config_revision();
+        const auto snapshot = store->snapshot();
+        const auto rows = config_contents(database());
+        const auto result = replace(base + entry);
+        EXPECT_FALSE(result.committed);
+        EXPECT_EQ(result.error, WorkspaceConfigApplyError::validation_failure);
+        EXPECT_EQ(store->config_revision(), revision);
+        EXPECT_EQ(store->snapshot(), snapshot);
+        EXPECT_EQ(config_contents(database()), rows);
+    }
+    const auto zero = replace(base + "[[file_references]]\nkind = 'folder'\n"
+        "ref_id = '##000000'\nname = 'Zero'\n");
+    ASSERT_TRUE(zero.committed) << zero.error_message;
+    ASSERT_EQ(zero.warnings.size(), 1u);
+    EXPECT_EQ(zero.warnings[0].path, path);
+    EXPECT_EQ(zero.warnings[0].message, "Ignoring file reference ##000000: no item can have this Ref ID");
+    EXPECT_TRUE(store->snapshot()->find_forum("lobby")->file_references.empty());
+    const auto absent = note_item_ref_id(note.id + 1);
+    EXPECT_FALSE(store->get_note_item(note.id + 1));
+    ASSERT_TRUE(replace(base + "[[file_references]]\nkind = 'note'\n"
+        "ref_id = '" + absent + "'\nname = 'Absent'\n").committed);
+    const auto& references = store->snapshot()->find_forum("lobby")->file_references;
+    ASSERT_EQ(references.size(), 1u);
+    EXPECT_EQ(references[0].ref_id, absent);
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyAllowsSharedSettingsAndSeparateProvider) {
     auto store = open_store();
     const auto copied = store->apply_config(
@@ -3559,6 +3749,42 @@ TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {
     expect_package_seed_subscription(
         workspace->character_definition("stoics", "seneca").provider.config);
     (void)store;
+}
+
+TEST_F(WorkspaceConfigStoreTest, ImportPreservesBuiltinAssistantMembershipAndOnlyMemberForums) {
+    import_from_source();
+    auto store = WorkspaceConfigStore::open(database());
+    const std::vector<std::string> members{"guide", std::string(workspace_assistant_id)};
+    (void)store->apply_forum_members_and_persona("lobby", members, workspace_guest_id);
+    (void)store->apply_forum_default_character("lobby", workspace_assistant_id);
+    const auto assistant_only = store->create_forum("Assistant only", workspace_guest_id);
+    (void)store->apply_forum_members_and_persona(assistant_only,
+        std::vector<std::string>{std::string(workspace_assistant_id)}, workspace_guest_id);
+    const auto before = config_contents(database());
+    store.reset();
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.prepare("INSERT INTO forums (forum_id) VALUES (?1)", std::string_view(assistant_only)).run();
+        handle.prepare("INSERT INTO sessions (forum_key, session_id, label, updated_at, archived_at, "
+            "history_epoch, next_entry_id, next_request_id) SELECT forum_key, 'kept', 'Kept', 1, NULL, 1, 1, 1 "
+            "FROM forums WHERE forum_id = ?1", std::string_view(assistant_only)).run();
+    }
+
+    (void)export_workspace_configuration(database(), export_);
+    (void)import_workspace_configuration(export_, database());
+
+    EXPECT_EQ(config_contents(database()), before);
+    EXPECT_EQ(table_row_count(database(), "sessions"), 1);
+    store = WorkspaceConfigStore::open(database());
+    const auto lobby = store->snapshot()->find_forum("lobby");
+    ASSERT_NE(lobby, nullptr);
+    EXPECT_EQ(lobby->default_character_id, workspace_assistant_id);
+    EXPECT_EQ(lobby->members.size(), 2u);
+    const auto only = store->snapshot()->find_forum(assistant_only);
+    ASSERT_NE(only, nullptr);
+    EXPECT_EQ(only->default_character_id, workspace_assistant_id);
+    ASSERT_EQ(only->members.size(), 1u);
+    EXPECT_EQ(only->members[0].character_id, workspace_assistant_id);
 }
 
 TEST_F(WorkspaceConfigStoreTest, PicturesRoundTripAllBytesInNestedDefinitionsAndAssistant) {

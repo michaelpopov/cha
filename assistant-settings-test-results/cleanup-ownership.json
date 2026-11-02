@@ -1,0 +1,22 @@
+{
+  "test_vault": "Assistant-Capability-Test-20261101",
+  "spec_authorization": "specs/ass-test.md:703-704",
+  "created_by": "disposable native fixture runner; no user vault copy",
+  "upload_evidence": "upload.json",
+  "exact_targets": [
+    {
+      "name": "Docs OpenAI",
+      "folder_id": 6,
+      "store_id": 1,
+      "service": "openai",
+      "remote_id": "vs_6ae80217860c8191ba7e6dc7332d0966"
+    },
+    {
+      "name": "Docs Gemini",
+      "folder_id": 8,
+      "store_id": 2,
+      "service": "google",
+      "remote_id": "fileSearchStores/docs-gemini-000008-bo6xqvkeahp8"
+    }
+  ]
+}

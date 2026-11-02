@@ -1,0 +1,86 @@
+[
+  {
+    "utc": "2026-11-02T03:48:25.307526+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:48:25Z:\nWhere do I choose the model that compresses notes?",
+    "tools": [
+      "summary_search",
+      "summary_read",
+      "file_search"
+    ],
+    "instructions_sha256": "5f6f3c40c4178b2088672b1c9a8e9ca88b99cdba7a7d74b539d660e3cbeb1d0b",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": false
+  },
+  {
+    "utc": "2026-11-02T03:48:27.921496+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:48:27Z:\nChange Writer's provider to Gemini.",
+    "tools": [
+      "summary_search",
+      "summary_read",
+      "file_search"
+    ],
+    "instructions_sha256": "5f6f3c40c4178b2088672b1c9a8e9ca88b99cdba7a7d74b539d660e3cbeb1d0b",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": false
+  },
+  {
+    "utc": "2026-11-02T03:48:30.783528+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:48:30Z:\nWhat does Default mean in the chat toolbar?",
+    "tools": [
+      "summary_search",
+      "summary_read",
+      "file_search"
+    ],
+    "instructions_sha256": "5f6f3c40c4178b2088672b1c9a8e9ca88b99cdba7a7d74b539d660e3cbeb1d0b",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": false
+  },
+  {
+    "utc": "2026-11-02T03:48:33.287529+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:48:33Z:\nHow do I give Writer a folder of documents?",
+    "tools": [
+      "summary_search",
+      "summary_read",
+      "file_search"
+    ],
+    "instructions_sha256": "5f6f3c40c4178b2088672b1c9a8e9ca88b99cdba7a7d74b539d660e3cbeb1d0b",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": false
+  },
+  {
+    "utc": "2026-11-02T03:48:36.205488+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:48:36Z:\nWhich API formats can a provider use?",
+    "tools": [
+      "summary_search",
+      "summary_read",
+      "file_search"
+    ],
+    "instructions_sha256": "5f6f3c40c4178b2088672b1c9a8e9ca88b99cdba7a7d74b539d660e3cbeb1d0b",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": false
+  },
+  {
+    "utc": "2026-11-02T03:48:38.371679+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:48:38Z:\nWhere are the shared instructions for all characters?",
+    "tools": [
+      "summary_search",
+      "summary_read",
+      "file_search"
+    ],
+    "instructions_sha256": "5f6f3c40c4178b2088672b1c9a8e9ca88b99cdba7a7d74b539d660e3cbeb1d0b",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": false
+  }
+]

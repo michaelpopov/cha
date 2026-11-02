@@ -1,0 +1,25 @@
+{
+  "authorization": "specs/ass-test.md:703-704; current user requested affected test reruns",
+  "test_vault": "Assistant-Capability-Followup",
+  "upload_evidence": "upload/observations.json",
+  "exact_targets": [
+    {
+      "name": "Docs OpenAI",
+      "folder_id": 6,
+      "store_id": 1,
+      "service": "openai",
+      "remote_id": "vs_6ae8070c81e48191b7575e6c2f8792f2",
+      "files": [
+        "file-5jazmn7RohWz3SThWs4CrB"
+      ]
+    },
+    {
+      "name": "Docs Gemini",
+      "folder_id": 8,
+      "store_id": 2,
+      "service": "google",
+      "remote_id": "fileSearchStores/docs-gemini-000008-6ejznvqrnne6",
+      "files": []
+    }
+  ]
+}

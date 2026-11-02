@@ -1,0 +1,16 @@
+[
+  {
+    "utc": "2026-11-02T03:48:40.666674+00:00",
+    "model": "gpt-4o",
+    "prompt": "from Guest at 2026-11-02T03:48:40Z:\nWhich API formats can a provider use?",
+    "tools": [
+      "summary_search",
+      "summary_read",
+      "file_search"
+    ],
+    "instructions_sha256": "5f6f3c40c4178b2088672b1c9a8e9ca88b99cdba7a7d74b539d660e3cbeb1d0b",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": false
+  }
+]

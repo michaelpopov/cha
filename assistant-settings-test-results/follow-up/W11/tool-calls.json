@@ -1,0 +1,218 @@
+[
+  {
+    "call_id": "call_Nq1JNcC8R74At1gFuJYnBjU8",
+    "utc": "2026-11-02T03:44:53.057783+00:00",
+    "prompt": "from Guest at 2026-11-02T03:44:51Z:\nExplain how Writer can search Docs OpenAI and Docs Gemini.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "characters"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 11868,
+          "path": "characters/character-voice.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_1/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_1/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 157,
+          "path": "characters/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_2/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_2/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 102,
+          "path": "characters/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_3/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_3/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 110,
+          "path": "characters/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 23,
+          "path": "characters/guide/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 41,
+          "path": "characters/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_7qQQEaYFJDqDLkpGvr4RMgTm",
+    "utc": "2026-11-02T03:44:54.419584+00:00",
+    "prompt": "from Guest at 2026-11-02T03:44:51Z:\nExplain how Writer can search Docs OpenAI and Docs Gemini.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "characters/character_1/character.toml",
+        "characters/character_2/character.toml",
+        "characters/character_3/character.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Writer'\nprovider = 'provider_2'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs Gemini'\nref_id = '##000008'\n",
+          "path": "characters/character_1/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Gem'\nprovider = 'provider_3'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_2/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Claude Test'\nprovider = 'provider_4'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_3/character.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_ubnuBqF6oxqBgxEUcDgkAD5R",
+    "utc": "2026-11-02T03:44:55.603998+00:00",
+    "prompt": "from Guest at 2026-11-02T03:44:51Z:\nExplain how Writer can search Docs OpenAI and Docs Gemini.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "forums"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 0,
+          "path": "forums/forum_1/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 360,
+          "path": "forums/forum_1/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 27,
+          "path": "forums/lobby/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 39,
+          "path": "forums/lobby/members/character_defaults.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/members/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_pB66QEcUx8QhjVibWx8kubas",
+    "utc": "2026-11-02T03:44:57.196836+00:00",
+    "prompt": "from Guest at 2026-11-02T03:44:51Z:\nExplain how Writer can search Docs OpenAI and Docs Gemini.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "forums/forum_1/config.toml",
+        "system/providers/provider_2/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "default_persona = 'builtin-guest'\ndisplay_name = 'Lab'\n\n[[file_references]]\nkind = 'note'\nname = 'Long note'\nref_id = '##000004'\n\n[[file_references]]\nkind = 'note'\nname = 'Huge note'\nref_id = '##000005'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs OpenAI'\nref_id = '##000006'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs Removed'\nref_id = '##00000A'\n",
+          "path": "forums/forum_1/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'responses'\napi_key = 'api_key_1'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'openai-direct'\nhost = 'api.openai.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gpt-5.4-mini'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_2/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  }
+]

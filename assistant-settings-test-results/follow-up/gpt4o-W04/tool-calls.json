@@ -1,0 +1,476 @@
+[
+  {
+    "call_id": "call_tvR3K92So22xIsCei8M6vkGn",
+    "utc": "2026-11-02T03:41:43.338843+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:41Z:\nUse high effort for compression.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "system/notes"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 107,
+          "path": "system/notes/config.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_oXOcijoENii4ASxKppIB6hs4",
+    "utc": "2026-11-02T03:41:44.191255+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:41Z:\nUse high effort for compression.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/notes/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "audio_api_key = ''\naudio_url = ''\ncompression_provider = 'provider_2'\ncompression_reasoning_effort = 'low'\n",
+          "path": "system/notes/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_XezrSjCUoo8kRUGQWbSueHuJ",
+    "utc": "2026-11-02T03:41:45.544371+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:41Z:\nUse high effort for compression.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": null,
+          "key": "compression_reasoning_effort",
+          "operation": "set",
+          "path": "system/notes/config.toml",
+          "value": "high"
+        }
+      ],
+      "version": "1"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 108,
+          "old_bytes": 107,
+          "path": "system/notes/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": true,
+      "version": "2",
+      "warnings": []
+    }
+  },
+  {
+    "call_id": "call_6V8DGUyIfnDyY76JB5MWUZDn",
+    "utc": "2026-11-02T03:41:47.949021+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:46Z:\nUndo that.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "system/notes"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 108,
+          "path": "system/notes/config.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "2"
+    }
+  },
+  {
+    "call_id": "call_agNg6EgP81bNz4NZDvJnhUuR",
+    "utc": "2026-11-02T03:41:48.849789+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:46Z:\nUndo that.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/notes/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "audio_api_key = ''\naudio_url = ''\ncompression_provider = 'provider_2'\ncompression_reasoning_effort = 'high'\n",
+          "path": "system/notes/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "2"
+    }
+  },
+  {
+    "call_id": "call_bRAyfGpD1tg1IjqSyJ6oZvZ9",
+    "utc": "2026-11-02T03:41:49.934528+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:46Z:\nUndo that.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": null,
+          "key": "compression_reasoning_effort",
+          "operation": "set",
+          "path": "system/notes/config.toml",
+          "value": "low"
+        }
+      ],
+      "version": "2"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 107,
+          "old_bytes": 108,
+          "path": "system/notes/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": true,
+      "version": "3",
+      "warnings": []
+    }
+  },
+  {
+    "call_id": "call_3D38L2bgqUzODAm8iZE14fuv",
+    "utc": "2026-11-02T03:41:52.390106+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:51Z:\nUndo again.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "system/notes"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 107,
+          "path": "system/notes/config.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "3"
+    }
+  },
+  {
+    "call_id": "call_ntA4KImznGZuPxj0tAgxjsxE",
+    "utc": "2026-11-02T03:41:52.390106+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:51Z:\nUndo again.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": null
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 11868,
+          "path": "characters/character-voice.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_1/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_1/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 79,
+          "path": "characters/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_2/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_2/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 76,
+          "path": "characters/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_3/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_3/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 110,
+          "path": "characters/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 23,
+          "path": "characters/guide/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 41,
+          "path": "characters/guide/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "forums/forum_1/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 243,
+          "path": "forums/forum_1/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/builtin-assistant/character.toml",
+          "protection_reason": "Assistant member files are read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 27,
+          "path": "forums/lobby/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 39,
+          "path": "forums/lobby/members/character_defaults.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/members/guide/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 24,
+          "path": "personas/reader/persona.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 51,
+          "path": "system/assistant/character.toml",
+          "protection_reason": "Assistant settings are read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 218,
+          "path": "system/keys/api_key_1/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 104,
+          "path": "system/keys/api_key_2/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 75,
+          "path": "system/keys/api_key_3/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 95,
+          "path": "system/keys/api_key_4/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 83,
+          "path": "system/keys/api_key_5/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 12,
+          "path": "system/keys/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 107,
+          "path": "system/notes/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 317,
+          "path": "system/providers/provider_1/config.toml",
+          "protection_reason": "Assistant's selected provider is read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 316,
+          "path": "system/providers/provider_2/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 358,
+          "path": "system/providers/provider_3/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 327,
+          "path": "system/providers/provider_4/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 52,
+          "path": "system/providers/test/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 57,
+          "path": "system/session/config.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "3"
+    }
+  },
+  {
+    "call_id": "call_UCHQVawZUlUbY5WwtW3i6YEB",
+    "utc": "2026-11-02T03:41:53.351197+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:51Z:\nUndo again.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/notes/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "audio_api_key = ''\naudio_url = ''\ncompression_provider = 'provider_2'\ncompression_reasoning_effort = 'low'\n",
+          "path": "system/notes/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "3"
+    }
+  },
+  {
+    "call_id": "call_43G49EQ5k314eYlPtTsptAri",
+    "utc": "2026-11-02T03:41:54.296246+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:51Z:\nUndo again.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": null,
+          "key": "compression_reasoning_effort",
+          "operation": "set",
+          "path": "system/notes/config.toml",
+          "value": "high"
+        }
+      ],
+      "version": "3"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 108,
+          "old_bytes": 107,
+          "path": "system/notes/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": true,
+      "version": "4",
+      "warnings": []
+    }
+  }
+]

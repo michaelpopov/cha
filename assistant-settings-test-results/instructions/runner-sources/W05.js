@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+await checkpoint('W05-before');await ask('answer','Set the note audio service to https://tts.example.com with the Audio key. Go ahead.');await checkpoint('W05-after');

@@ -1,0 +1,126 @@
+[
+  {
+    "utc": "2026-11-02T05:15:11.684983+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:15:11Z:\nSave this conversation for later review.",
+    "tools": [
+      "summary_search",
+      "summary_read",
+      "file_search"
+    ],
+    "instructions_sha256": "0f34badd20c94cb3a3524e7fe62679fad41e20bb8004c4c33e59b72478a69401",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": false
+  },
+  {
+    "utc": "2026-11-02T05:15:14.694662+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:15:14Z:\nWhy was my Lab conversation not saved?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "aaa8e4beef4ec1645c097cc235695ae5c67a93da8d9d58eda13cf23c782f8f9a",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T05:15:16.538136+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:15:14Z:\nWhy was my Lab conversation not saved?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "aaa8e4beef4ec1645c097cc235695ae5c67a93da8d9d58eda13cf23c782f8f9a",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T05:15:17.924882+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:15:14Z:\nWhy was my Lab conversation not saved?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "aaa8e4beef4ec1645c097cc235695ae5c67a93da8d9d58eda13cf23c782f8f9a",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T05:15:19.193414+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:15:14Z:\nWhy was my Lab conversation not saved?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "aaa8e4beef4ec1645c097cc235695ae5c67a93da8d9d58eda13cf23c782f8f9a",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T05:15:24.080094+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:15:24Z:\nSave this conversation for later review.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "aaa8e4beef4ec1645c097cc235695ae5c67a93da8d9d58eda13cf23c782f8f9a",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  }
+]

@@ -1,0 +1,48 @@
+[
+  {
+    "file_id": "file-KowRVXXaZaTsjCHagLHedU",
+    "folder_id": 3,
+    "remote_id": "vs_6ae7dca022f48191bc746729f2ffd720",
+    "saved_key_id": "api_key_4",
+    "service": "openai"
+  },
+  {
+    "folder_id": 4,
+    "operation": "fileSearchStores/cha-live-ga-20261102-9q988s2qumjh/upload/operations/cedardemandmd-vpjaxatail02",
+    "remote_id": "fileSearchStores/cha-live-ga-20261102-9q988s2qumjh",
+    "saved_key_id": "api_key_5",
+    "service": "google"
+  },
+  {
+    "owned_file_only": "file-WmyRH24YU2d1ET5DX2zzpG",
+    "service": "openai"
+  },
+  {
+    "file_id": "file-XnhEvZc5usJcxu4weMffTy",
+    "folder_id": 5,
+    "remote_id": "vs_6ae7dd01a174819185a0f62e9bc0d218",
+    "saved_key_id": "api_key_4",
+    "service": "openai"
+  },
+  {
+    "folder_id": 6,
+    "operation": "fileSearchStores/cha-live-gb-variant-6xeeespsnmst/upload/operations/gb-variantmd-7g9i2bjlmlpw",
+    "remote_id": "fileSearchStores/cha-live-gb-variant-6xeeespsnmst",
+    "saved_key_id": "api_key_6",
+    "service": "google"
+  },
+  {
+    "file_id": "file-5rFLEnshjzJkB4coRwHg8j",
+    "folder_id": 7,
+    "remote_id": "vs_6ae7dd0c232481919c5d56b91990775c",
+    "saved_key_id": "api_key_4",
+    "service": "openai"
+  },
+  {
+    "file_id": "file-3PeHfYzGpXB17VvucsqqNG",
+    "folder_id": 8,
+    "remote_id": "vs_6ae7dd1341f081919d53a3db6930155f",
+    "saved_key_id": "api_key_7",
+    "service": "openai"
+  }
+]

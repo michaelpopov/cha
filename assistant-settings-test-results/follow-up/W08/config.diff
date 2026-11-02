@@ -1,0 +1,10 @@
+--- before/system/providers/provider_3/config.toml
++++ after/system/providers/provider_3/config.toml
+@@ -1,6 +1,7 @@
+ api = 'google'
+ api_key = 'api_key_2'
+ auth = 'none'
++base_path = '/v1beta'
+ cache_retention = 'short'
+ display_name = 'google-direct'
+ host = 'generativelanguage.googleapis.com'

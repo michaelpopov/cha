@@ -1,0 +1,23 @@
+  if(data->req.eos_read &&
+    (Curl_bufq_is_empty(&data->req.sendbuf) ||
+     Curl_bufq_len(&data->req.sendbuf) == blen)) {
+    DEBUGF(infof(data, "sending last upload chunk of %zu bytes", blen));
+    eos = TRUE;
+  }
+  result = Curl_xfer_send(data, buf, blen, eos, pnwritten);
+  if(!result) {
+    if(eos && (blen == *pnwritten))
+      data->req.eos_sent = TRUE;
+    if(*pnwritten) {
+      if(hds_len)
+        Curl_debug(data, CURLINFO_HEADER_OUT, buf,
+                   CURLMIN(hds_len, *pnwritten));
+      if(*pnwritten > hds_len) {
+        size_t body_len = *pnwritten - hds_len;
+        Curl_debug(data, CURLINFO_DATA_OUT, buf + hds_len, body_len);
+        data->req.writebytecount += body_len;
+        Curl_pgrs_upload_inc(data, body_len);
+      }
+    }
+  }
+  return result;

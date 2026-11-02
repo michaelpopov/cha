@@ -1,0 +1,928 @@
+{
+  "reason": "Error: session.submit: {\"code\":\"session_not_live\",\"message\":\"That session is not open.\"}",
+  "ok": false,
+  "step": "startup",
+  "events": [
+    {
+      "forum_id": "builtin-entrance",
+      "event": "session.snapshot",
+      "session_id": "builtin-welcome",
+      "payload": {
+        "lifecycle": "stopping",
+        "characters": [
+          {
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "weight": "normal",
+              "font": "sans",
+              "text_color": "normal"
+            },
+            "id": "builtin-assistant",
+            "display_name": "Assistant"
+          }
+        ],
+        "generation": {
+          "phase": "waiting",
+          "active": false,
+          "character_id": "",
+          "character_display_name": ""
+        },
+        "transcript": [],
+        "chat_settings": {
+          "characters": [
+            {
+              "provider_id": "provider_1",
+              "character_id": "builtin-assistant",
+              "reasoning_effort": "none"
+            }
+          ],
+          "model_options": [
+            {
+              "id": "provider_3",
+              "model": "claude-sonnet-4-5",
+              "host": "api.anthropic.com",
+              "display_name": "anthropic-direct"
+            },
+            {
+              "id": "provider_2",
+              "model": "gemini-3.8-flash",
+              "host": "generativelanguage.googleapis.com",
+              "display_name": "google-direct"
+            },
+            {
+              "id": "provider_1",
+              "model": "gpt-4o",
+              "host": "api.openai.com",
+              "display_name": "openai-direct"
+            },
+            {
+              "id": "test",
+              "model": "fake",
+              "host": "test",
+              "display_name": "Test"
+            }
+          ]
+        },
+        "session_id": "builtin-welcome",
+        "session_label": "Welcome",
+        "forum": {
+          "default_persona_id": "builtin-guest",
+          "id": "builtin-entrance",
+          "display_name": "Entrance",
+          "default_character_id": "builtin-assistant",
+          "default_persona_display_name": "Guest",
+          "members": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              },
+              "display_name": "Assistant"
+            }
+          ]
+        },
+        "default_character_id": "builtin-assistant",
+        "shutdown_reason": "session_closed"
+      },
+      "connection_id": "view-2",
+      "context_epoch": 1,
+      "subscription_id": "sub-1",
+      "seq": 1
+    }
+  ],
+  "trace": [
+    {
+      "result": {
+        "result": {
+          "context_epoch": 1,
+          "bootstrap": {
+            "forums": [
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "builtin-entrance",
+                "display_name": "Entrance",
+                "default_character_id": "builtin-assistant",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "font": "sans",
+                      "weight": "normal"
+                    },
+                    "id": "builtin-assistant",
+                    "display_name": "Assistant"
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "forum_1",
+                "display_name": "Lab",
+                "default_character_id": "builtin-assistant",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "id": "builtin-assistant",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "font": "sans",
+                      "text_color": "normal"
+                    },
+                    "display_name": "Assistant"
+                  },
+                  {
+                    "id": "character_3",
+                    "display_name": "Claude Test",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "font": "sans",
+                      "text_color": "normal"
+                    }
+                  },
+                  {
+                    "id": "character_2",
+                    "display_name": "Gem",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "weight": "normal",
+                      "font": "sans"
+                    }
+                  },
+                  {
+                    "id": "character_1",
+                    "display_name": "Writer",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "font": "sans",
+                      "text_color": "normal"
+                    }
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "lobby",
+                "display_name": "The Lobby",
+                "default_character_id": "guide",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "font": "sans",
+                      "text_color": "normal"
+                    },
+                    "id": "guide",
+                    "display_name": "Guide"
+                  }
+                ]
+              }
+            ],
+            "vaults": [
+              "Annushka",
+              "Assistant-Capability-Test-20261101",
+              "Base",
+              "CHA",
+              "Daily",
+              "Michaels",
+              "philosophy",
+              "Test"
+            ],
+            "characters": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "display_name": "Assistant"
+              },
+              {
+                "id": "character_3",
+                "display_name": "Claude Test",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              },
+              {
+                "id": "character_2",
+                "display_name": "Gem",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                }
+              },
+              {
+                "id": "guide",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                },
+                "display_name": "Guide"
+              },
+              {
+                "id": "character_1",
+                "display_name": "Writer",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                }
+              }
+            ],
+            "initial_forum_id": "builtin-entrance",
+            "personas": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                },
+                "id": "builtin-guest",
+                "display_name": "Guest"
+              },
+              {
+                "id": "reader",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                },
+                "display_name": "Reader"
+              }
+            ],
+            "recent_sessions": [
+              {
+                "session_label": "Welcome",
+                "session_id": "builtin-welcome",
+                "forum_id": "builtin-entrance",
+                "updated_at": 1793589823
+              },
+              {
+                "session_id": "2026-11-01-19-23-30-session",
+                "session_label": "W10 reproduction",
+                "forum_id": "forum_1",
+                "updated_at": 1793589811
+              },
+              {
+                "session_label": "W08 reproduction",
+                "session_id": "2026-11-01-19-22-55-session",
+                "forum_id": "forum_1",
+                "updated_at": 1793589776
+              }
+            ],
+            "entrance_forum_id": "builtin-entrance",
+            "vault_name": "Assistant-Capability-Test-20261101",
+            "initial_session_id": "builtin-welcome"
+          },
+          "capabilities": {
+            "can_modify": false,
+            "can_transfer_r2": false
+          },
+          "state": "running",
+          "application_version": "development"
+        },
+        "id": 9000000000000,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "app.bootstrap",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000001,
+        "result": {
+          "forum_id": "builtin-entrance",
+          "session_id": "builtin-welcome"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "forum_id": "builtin-entrance",
+        "session_id": "builtin-welcome"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "id": 9000000000002,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "session_id": "builtin-welcome",
+        "input": {
+          "text": "/clear"
+        },
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000003,
+        "result": {
+          "transcript": [],
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "provider_id": "provider_1",
+                "reasoning_effort": "none"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_3",
+                "model": "claude-sonnet-4-5",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "google-direct",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-4o",
+                "display_name": "openai-direct",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "display_name": "Test",
+                "host": "test",
+                "model": "fake"
+              }
+            ]
+          },
+          "lifecycle": "running",
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "text_color": "normal",
+                "font": "sans"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "session_id": "builtin-welcome",
+          "session_label": "Welcome",
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "forum_id": "builtin-entrance",
+        "session_id": "builtin-welcome"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "id": "2026-11-01-19-23-44-session",
+          "label": "S1"
+        },
+        "id": 9000000000004,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.create",
+      "params": {
+        "label": "S1",
+        "forum_id": "forum_1"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000005,
+        "result": {
+          "session_id": "2026-11-01-19-23-44-session",
+          "forum_id": "forum_1"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "2026-11-01-19-23-44-session",
+        "forum_id": "forum_1"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "clear_input": false
+        },
+        "id": 9000000000006,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.setCharacterSettings",
+      "params": {
+        "session_id": "2026-11-01-19-23-44-session",
+        "reasoning_effort": null,
+        "forum_id": "forum_1",
+        "character_id": "character_1",
+        "provider_id": "provider_2"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000007,
+        "result": {
+          "transcript": [],
+          "characters": [
+            {
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              },
+              "id": "builtin-assistant",
+              "display_name": "Assistant"
+            },
+            {
+              "id": "character_1",
+              "display_name": "Writer",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "text_color": "normal",
+                "font": "sans"
+              }
+            },
+            {
+              "id": "character_2",
+              "display_name": "Gem",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              }
+            },
+            {
+              "id": "character_3",
+              "display_name": "Claude Test",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              }
+            }
+          ],
+          "chat_settings": {
+            "characters": [
+              {
+                "reasoning_effort": "none",
+                "character_id": "builtin-assistant",
+                "provider_id": "provider_1"
+              },
+              {
+                "character_id": "character_1",
+                "provider_id": "provider_2",
+                "reasoning_effort": "none"
+              },
+              {
+                "reasoning_effort": "high",
+                "character_id": "character_2",
+                "provider_id": "provider_2"
+              },
+              {
+                "character_id": "character_3",
+                "reasoning_effort": "high",
+                "provider_id": "provider_3"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_3",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com",
+                "model": "claude-sonnet-4-5"
+              },
+              {
+                "id": "provider_2",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com",
+                "display_name": "google-direct"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-4o",
+                "display_name": "openai-direct",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "display_name": "Test",
+                "host": "test"
+              }
+            ]
+          },
+          "lifecycle": "running",
+          "session_label": "S1",
+          "session_id": "2026-11-01-19-23-44-session",
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "forum_1",
+            "display_name": "Lab",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "display_name": "Assistant"
+              },
+              {
+                "id": "character_3",
+                "display_name": "Claude Test",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              },
+              {
+                "id": "character_2",
+                "display_name": "Gem",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                }
+              },
+              {
+                "id": "character_1",
+                "display_name": "Writer",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                }
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "2026-11-01-19-23-44-session",
+        "forum_id": "forum_1"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000008,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That session is not open.",
+          "code": "session_not_live"
+        }
+      },
+      "method": "session.submit",
+      "params": {
+        "session_id": "builtin-welcome",
+        "input": {
+          "text": "Writer answers in S1 with Gemini, but its settings say OpenAI. Why?"
+        },
+        "forum_id": "builtin-entrance"
+      }
+    }
+  ],
+  "screen": "cha\nChat\nNotes\nForums\n\nEntrance\n\nLab\n\n\nThe Lobby\n\nRecent Sessions\n\nWelcome\nEntrance\n\nW10 reproduction\nLab\n\n\nW08 reproduction\nLab\n\n\n\n\n\n\nWelcome\n\n\n\nEntrance\nFrom: Guest\nTo: Assistant",
+  "assertions": [],
+  "C": {
+    "openai": "provider_1",
+    "welcome": {
+      "forum_id": "builtin-entrance",
+      "session_id": "builtin-welcome"
+    },
+    "sessionSettings": {
+      "transcript": [],
+      "characters": [
+        {
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "text_color": "normal",
+            "font": "sans",
+            "weight": "normal"
+          },
+          "id": "builtin-assistant",
+          "display_name": "Assistant"
+        },
+        {
+          "id": "character_1",
+          "display_name": "Writer",
+          "description": "Test character",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "weight": "normal",
+            "text_color": "normal",
+            "font": "sans"
+          }
+        },
+        {
+          "id": "character_2",
+          "display_name": "Gem",
+          "description": "Test character",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "weight": "normal",
+            "font": "sans",
+            "text_color": "normal"
+          }
+        },
+        {
+          "id": "character_3",
+          "display_name": "Claude Test",
+          "description": "Test character",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "text_color": "normal",
+            "font": "sans",
+            "weight": "normal"
+          }
+        }
+      ],
+      "chat_settings": {
+        "characters": [
+          {
+            "reasoning_effort": "none",
+            "character_id": "builtin-assistant",
+            "provider_id": "provider_1"
+          },
+          {
+            "character_id": "character_1",
+            "provider_id": "provider_2",
+            "reasoning_effort": "none"
+          },
+          {
+            "reasoning_effort": "high",
+            "character_id": "character_2",
+            "provider_id": "provider_2"
+          },
+          {
+            "character_id": "character_3",
+            "reasoning_effort": "high",
+            "provider_id": "provider_3"
+          }
+        ],
+        "model_options": [
+          {
+            "id": "provider_3",
+            "display_name": "anthropic-direct",
+            "host": "api.anthropic.com",
+            "model": "claude-sonnet-4-5"
+          },
+          {
+            "id": "provider_2",
+            "model": "gemini-3.8-flash",
+            "host": "generativelanguage.googleapis.com",
+            "display_name": "google-direct"
+          },
+          {
+            "id": "provider_1",
+            "model": "gpt-4o",
+            "display_name": "openai-direct",
+            "host": "api.openai.com"
+          },
+          {
+            "id": "test",
+            "model": "fake",
+            "display_name": "Test",
+            "host": "test"
+          }
+        ]
+      },
+      "lifecycle": "running",
+      "session_label": "S1",
+      "session_id": "2026-11-01-19-23-44-session",
+      "generation": {
+        "phase": "waiting",
+        "active": false,
+        "character_id": "",
+        "character_display_name": ""
+      },
+      "forum": {
+        "default_persona_id": "builtin-guest",
+        "id": "forum_1",
+        "display_name": "Lab",
+        "default_character_id": "builtin-assistant",
+        "default_persona_display_name": "Guest",
+        "members": [
+          {
+            "id": "builtin-assistant",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "weight": "normal",
+              "font": "sans",
+              "text_color": "normal"
+            },
+            "display_name": "Assistant"
+          },
+          {
+            "id": "character_3",
+            "display_name": "Claude Test",
+            "description": "Test character",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "weight": "normal",
+              "font": "sans",
+              "text_color": "normal"
+            }
+          },
+          {
+            "id": "character_2",
+            "display_name": "Gem",
+            "description": "Test character",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "text_color": "normal",
+              "font": "sans",
+              "weight": "normal"
+            }
+          },
+          {
+            "id": "character_1",
+            "display_name": "Writer",
+            "description": "Test character",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "weight": "normal",
+              "text_color": "normal",
+              "font": "sans"
+            }
+          }
+        ]
+      },
+      "default_character_id": "builtin-assistant"
+    },
+    "Long note": {
+      "id": 4,
+      "ref_id": "##000004"
+    },
+    "Gem": "character_2",
+    "lab": "forum_1",
+    "notes": {},
+    "Docs Removed": {
+      "id": 10,
+      "ref_id": "##00000A"
+    },
+    "Writer": "character_1",
+    "Docs Gemini": {
+      "id": 8,
+      "ref_id": "##000008"
+    },
+    "Huge note": {
+      "id": 5,
+      "ref_id": "##000005"
+    },
+    "anthropic": "provider_3",
+    "Claude Test": "character_3",
+    "google": "provider_2",
+    "Docs OpenAI": {
+      "id": 6,
+      "ref_id": "##000006"
+    }
+  },
+  "exit_code": 1,
+  "utc": "2026-11-02T03:23:43.758371+00:00"
+}

@@ -1,0 +1,134 @@
+[
+  {
+    "case": "C01-Kimi-0",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 1,
+    "model_tools_requested": 1,
+    "mixed_numbers_present": null
+  },
+  {
+    "case": "C01-Kimi-1",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 1,
+    "model_tools_requested": 1,
+    "mixed_numbers_present": null
+  },
+  {
+    "case": "C01-Kimi-2",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 2,
+    "model_tools_requested": 1,
+    "mixed_numbers_present": true
+  },
+  {
+    "case": "C01-gemini-0",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 1,
+    "model_tools_requested": 1,
+    "mixed_numbers_present": null
+  },
+  {
+    "case": "C01-gemini-1",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 1,
+    "model_tools_requested": 1,
+    "mixed_numbers_present": null
+  },
+  {
+    "case": "C01-gemini-2",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 2,
+    "model_tools_requested": 1,
+    "mixed_numbers_present": true
+  },
+  {
+    "case": "C01-gpt4o-0",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 1,
+    "model_tools_requested": 1,
+    "mixed_numbers_present": null
+  },
+  {
+    "case": "C01-gpt4o-1",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 1,
+    "model_tools_requested": 1,
+    "mixed_numbers_present": null
+  },
+  {
+    "case": "C01-gpt4o-2",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 4,
+    "model_tools_requested": 2,
+    "mixed_numbers_present": true
+  },
+  {
+    "case": "C01-provider_2-0",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 1,
+    "model_tools_requested": 1,
+    "mixed_numbers_present": null
+  },
+  {
+    "case": "C01-provider_2-1",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 1,
+    "model_tools_requested": 1,
+    "mixed_numbers_present": null
+  },
+  {
+    "case": "C01-provider_2-2",
+    "source_codes_in_raw": true,
+    "source_codes_in_tool_output": true,
+    "source_codes_in_answer": true,
+    "codes_absent_initial": true,
+    "all_dispatch_credentials_match": true,
+    "retrieval_dispatches": 4,
+    "model_tools_requested": 2,
+    "mixed_numbers_present": true
+  }
+]

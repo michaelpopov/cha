@@ -1,0 +1,40 @@
+[
+  {
+    "id": "vs_6ae7f2a9f54c8191b6a324703b605086",
+    "inspection_kind": 3,
+    "kind": "store",
+    "message": "",
+    "result": 0,
+    "service": "openai"
+  },
+  {
+    "id": "fileSearchStores/cha-live-ga-20261102-3b3hkesjsj6a",
+    "inspection_kind": 1,
+    "kind": "store",
+    "message": "",
+    "result": 0,
+    "service": "google"
+  },
+  {
+    "id": "fileSearchStores/cha-live-healthyempty-u1ttlwo9r4ti",
+    "inspection_kind": 1,
+    "kind": "store",
+    "message": "",
+    "result": 0,
+    "service": "google"
+  },
+  {
+    "id": "fileSearchStores/cha-live-remotedeletion-c0qqylkqwtrh",
+    "inspection_kind": 1,
+    "kind": "store",
+    "message": "The remote resource was not found.",
+    "result": 1,
+    "service": "google"
+  },
+  {
+    "id": "file-9d2DrarGmc9o4hziwUHibi",
+    "kind": "file",
+    "message": "",
+    "result": 0
+  }
+]

@@ -1,0 +1,68 @@
+[
+  {
+    "utc": "2026-11-02T03:48:44.001985+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:48:43Z:\nDoes Lab use my Huge note and Long note? What happens if I edit Long note later?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "5a1c5971fb4e1694e41e8126d0a699ea4e9322ac01c4f91e3f08855876d69127",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:48:45.707440+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:48:43Z:\nDoes Lab use my Huge note and Long note? What happens if I edit Long note later?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "5a1c5971fb4e1694e41e8126d0a699ea4e9322ac01c4f91e3f08855876d69127",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:48:47.045051+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:48:43Z:\nDoes Lab use my Huge note and Long note? What happens if I edit Long note later?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "5a1c5971fb4e1694e41e8126d0a699ea4e9322ac01c4f91e3f08855876d69127",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  }
+]

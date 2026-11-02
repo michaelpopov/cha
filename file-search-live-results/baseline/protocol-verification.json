@@ -1,0 +1,138 @@
+[
+  {
+    "protocol": "responses",
+    "model": "gpt-4o",
+    "calls": [
+      "call_bDGqwBy7t45pTlzgBbHqsB5Q"
+    ],
+    "results": [
+      "call_bDGqwBy7t45pTlzgBbHqsB5Q"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "responses",
+    "model": "gpt-4o",
+    "calls": [
+      "call_7NBiBdN45bbjpCyMmqspneq2"
+    ],
+    "results": [
+      "call_7NBiBdN45bbjpCyMmqspneq2"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "responses",
+    "model": "gpt-4o",
+    "calls": [
+      "call_SWStWCHcpJXxbZgyv23Hcm0t",
+      "call_0ztm22rJACDuNPq6imqOQuaT"
+    ],
+    "results": [
+      "call_SWStWCHcpJXxbZgyv23Hcm0t",
+      "call_0ztm22rJACDuNPq6imqOQuaT"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "google",
+    "model": null,
+    "calls": [
+      "call_8187"
+    ],
+    "results": [
+      "call_8187"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "google",
+    "model": null,
+    "calls": [
+      "call_1485435"
+    ],
+    "results": [
+      "call_1485435"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "google",
+    "model": null,
+    "calls": [
+      "call_1854180"
+    ],
+    "results": [
+      "call_1854180"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "moonshotai/kimi-k2.5",
+    "calls": [
+      "functions.search_attached_files:0"
+    ],
+    "results": [
+      "functions.search_attached_files:0"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "moonshotai/kimi-k2.5",
+    "calls": [
+      "functions.search_attached_files:0"
+    ],
+    "results": [
+      "functions.search_attached_files:0"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "moonshotai/kimi-k2.5",
+    "calls": [
+      "functions.search_attached_files:0"
+    ],
+    "results": [
+      "functions.search_attached_files:0"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "responses",
+    "model": "gpt-6-luna",
+    "calls": [
+      "call_8d8bfbefe19b4e84be0bbd108a3cb3e7"
+    ],
+    "results": [
+      "call_8d8bfbefe19b4e84be0bbd108a3cb3e7"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "responses",
+    "model": "gpt-6-luna",
+    "calls": [
+      "call_258bda848c8e4daabb4bc162a06be71a"
+    ],
+    "results": [
+      "call_258bda848c8e4daabb4bc162a06be71a"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "responses",
+    "model": "gpt-6-luna",
+    "calls": [
+      "call_dfbfc4aba0684241b29e1bcc9b89f3b9",
+      "call_9e86f07383ed4e848d85c42e2fc768b3"
+    ],
+    "results": [
+      "call_dfbfc4aba0684241b29e1bcc9b89f3b9",
+      "call_9e86f07383ed4e848d85c42e2fc768b3"
+    ],
+    "results_have_calls": true
+  }
+]

@@ -1,0 +1,200 @@
+[
+  {
+    "utc": "2026-11-02T03:42:23.851919+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:23Z:\nUse high effort for compression.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:42:28.587224+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:23Z:\nUse high effort for compression.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:42:31.731145+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:23Z:\nUse high effort for compression.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:42:33.171776+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:33Z:\nUndo that.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:42:34.599762+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:33Z:\nUndo that.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:42:36.075374+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:33Z:\nUndo that.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:42:37.393103+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:37Z:\nUndo again.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:42:39.183737+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:37Z:\nUndo again.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:42:41.629986+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:37Z:\nUndo again.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  }
+]

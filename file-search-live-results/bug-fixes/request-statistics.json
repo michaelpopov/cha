@@ -1,0 +1,47 @@
+[
+  {
+    "case": "Cerebras-mixed",
+    "model": "qwen-3.8-27b",
+    "api": "chat_completions",
+    "stream": true,
+    "model_requests": 3,
+    "tool_invocations": 3,
+    "retrieval_POSTs": 6,
+    "inspection_GETs": 0,
+    "observed_tool_interval_seconds": 48.859,
+    "input_tokens": 5613,
+    "output_tokens": 529,
+    "session_id": "2026-11-01-18-15-27-session",
+    "first_outcome": "passed"
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "model": "gpt-4o",
+    "api": "responses",
+    "stream": true,
+    "model_requests": 2,
+    "tool_invocations": 2,
+    "retrieval_POSTs": 6,
+    "inspection_GETs": 3,
+    "observed_tool_interval_seconds": 68.057,
+    "input_tokens": 2780,
+    "output_tokens": 255,
+    "session_id": "2026-11-01-18-17-55-session",
+    "first_outcome": "passed"
+  },
+  {
+    "case": "C13-healthy-empty",
+    "model": "gpt-4o",
+    "api": "responses",
+    "stream": true,
+    "model_requests": 2,
+    "tool_invocations": 1,
+    "retrieval_POSTs": 1,
+    "inspection_GETs": 1,
+    "observed_tool_interval_seconds": 21.857,
+    "input_tokens": 2424,
+    "output_tokens": 58,
+    "session_id": "2026-11-01-18-17-28-session",
+    "first_outcome": "passed"
+  }
+]

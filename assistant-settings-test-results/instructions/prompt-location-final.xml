@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="1" failures="0" disabled="0" errors="0" time="0.013" timestamp="2026-11-01T21:13:56.402" name="AllTests">
+  <testsuite name="SessionController" tests="1" failures="0" disabled="0" skipped="0" errors="0" time="0.013" timestamp="2026-11-01T21:13:56.402">
+    <testcase name="AttachesMaintenanceToolsOnlyToAssistantInWelcome" file="/Users/mpopov/projects/cha/tests/session/unit_session_controller.cpp" line="1343" status="run" result="completed" time="0.013" timestamp="2026-11-01T21:13:56.402" classname="SessionController" />
+  </testsuite>
+</testsuites>

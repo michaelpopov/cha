@@ -1,0 +1,178 @@
+[
+  {
+    "call_id": "call_7bMG39rO4Gk7bpqw9Eb9SCo5",
+    "utc": "2026-11-02T05:07:55.806441+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:53Z:\nSet the note audio service to https://tts.example.com with the Audio key. Go ahead.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/notes/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "audio_api_key = ''\naudio_url = ''\ncompression_provider = 'provider_2'\ncompression_reasoning_effort = 'low'\n",
+          "path": "system/notes/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_ofaCtXADJBb6PuJzNTc4850s",
+    "utc": "2026-11-02T05:07:57.067842+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:53Z:\nSet the note audio service to https://tts.example.com with the Audio key. Go ahead.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "system/keys"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 218,
+          "path": "system/keys/api_key_1/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 104,
+          "path": "system/keys/api_key_2/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 75,
+          "path": "system/keys/api_key_3/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 95,
+          "path": "system/keys/api_key_4/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 83,
+          "path": "system/keys/api_key_5/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 12,
+          "path": "system/keys/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_PMdFGv9X4OONqLtOo6igSpVk",
+    "utc": "2026-11-02T05:07:58.471380+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:53Z:\nSet the note audio service to https://tts.example.com with the Audio key. Go ahead.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/keys/api_key_1/config.toml",
+        "system/keys/api_key_2/config.toml",
+        "system/keys/api_key_3/config.toml",
+        "system/keys/api_key_4/config.toml",
+        "system/keys/api_key_5/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "key": {
+            "credential_present": true,
+            "display_name": "OpenAI",
+            "id": "api_key_1",
+            "type": "models"
+          },
+          "path": "system/keys/api_key_1/config.toml",
+          "status": "key_metadata"
+        },
+        {
+          "key": {
+            "credential_present": true,
+            "display_name": "Gemini",
+            "id": "api_key_2",
+            "type": "models"
+          },
+          "path": "system/keys/api_key_2/config.toml",
+          "status": "key_metadata"
+        },
+        {
+          "key": {
+            "credential_present": true,
+            "display_name": "Audio",
+            "id": "api_key_3",
+            "type": "models"
+          },
+          "path": "system/keys/api_key_3/config.toml",
+          "status": "key_metadata"
+        },
+        {
+          "key": {
+            "credential_present": true,
+            "display_name": "Anthropic unavailable",
+            "id": "api_key_4",
+            "type": "models"
+          },
+          "path": "system/keys/api_key_4/config.toml",
+          "status": "key_metadata"
+        },
+        {
+          "key": {
+            "credential_present": true,
+            "display_name": "Firecrawl",
+            "id": "api_key_5",
+            "type": "models"
+          },
+          "path": "system/keys/api_key_5/config.toml",
+          "status": "key_metadata"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_IE2J4Rjp1anM3Et2FTq80VH9",
+    "utc": "2026-11-02T05:08:00.149008+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:53Z:\nSet the note audio service to https://tts.example.com with the Audio key. Go ahead.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": "audio_api_key = 'api_key_3'\naudio_url = 'https://tts.example.com'\ncompression_provider = 'provider_2'\ncompression_reasoning_effort = 'low'\n",
+          "key": null,
+          "operation": "replace",
+          "path": "system/notes/config.toml",
+          "value": null
+        }
+      ],
+      "version": "1"
+    },
+    "result": {
+      "changed": [],
+      "committed": false,
+      "error": "credential_destination_protected",
+      "message": "Credential destinations cannot be added through Assistant",
+      "undo_available": false,
+      "version": "1",
+      "warnings": []
+    }
+  }
+]

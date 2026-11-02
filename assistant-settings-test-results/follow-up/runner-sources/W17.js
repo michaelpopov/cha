@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+await checkpoint('W17-before');await ask('step1','Use high effort for yourself and add Long note to your Files.');await ask('step2','Create an API key for my audio service.');await checkpoint('W17-after');

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="5" failures="0" disabled="0" errors="0" time="0.06" timestamp="2026-11-01T19:23:22.799" name="AllTests">
+  <testsuite name="SessionController" tests="1" failures="0" disabled="0" skipped="0" errors="0" time="0.016" timestamp="2026-11-01T19:23:22.799">
+    <testcase name="AttachesMaintenanceToolsOnlyToAssistantInWelcome" file="/Users/mpopov/projects/cha/tests/session/unit_session_controller.cpp" line="1343" status="run" result="completed" time="0.016" timestamp="2026-11-01T19:23:22.799" classname="SessionController" />
+  </testsuite>
+  <testsuite name="RuntimeWorkspaceConfigStoreTest" tests="4" failures="0" disabled="0" skipped="0" errors="0" time="0.043" timestamp="2026-11-01T19:23:22.816">
+    <testcase name="ApplyWritesNotesSettingsAndProtectsAudioKey" file="/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp" line="3191" status="run" result="completed" time="0.01" timestamp="2026-11-01T19:23:22.816" classname="RuntimeWorkspaceConfigStoreTest" />
+    <testcase name="NotesWarningsDoNotBlockApply" file="/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp" line="3260" status="run" result="completed" time="0.009" timestamp="2026-11-01T19:23:22.827" classname="RuntimeWorkspaceConfigStoreTest" />
+    <testcase name="NotesAudioPairRules" file="/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp" line="3290" status="run" result="completed" time="0.012" timestamp="2026-11-01T19:23:22.836" classname="RuntimeWorkspaceConfigStoreTest" />
+    <testcase name="FileReferencesThroughApply" file="/Users/mpopov/projects/cha/tests/workspace/unit_workspace_config_store.cpp" line="3331" status="run" result="completed" time="0.011" timestamp="2026-11-01T19:23:22.849" classname="RuntimeWorkspaceConfigStoreTest" />
+  </testsuite>
+</testsuites>

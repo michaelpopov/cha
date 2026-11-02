@@ -1,0 +1,10 @@
+{
+  "removed_documents": [
+    {
+      "body": "{}\n",
+      "name": "fileSearchStores/cha-live-healthyempty-u1ttlwo9r4ti/documents/healthyemptymd-prp3le24jr94",
+      "status": 200
+    }
+  ],
+  "store": "fileSearchStores/cha-live-healthyempty-u1ttlwo9r4ti"
+}

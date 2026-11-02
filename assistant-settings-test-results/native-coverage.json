@@ -1,0 +1,50 @@
+[
+  {
+    "id": "N-01",
+    "verdict": "Pass",
+    "test": "RuntimeWorkspaceConfigStoreTest.ApplyWritesNotesSettingsAndProtectsAudioKey",
+    "evidence": "native-core-final.xml"
+  },
+  {
+    "id": "N-02",
+    "verdict": "Pass",
+    "test": "AssistantService.NotesSettingsAreListedReadAndWritable",
+    "evidence": "native-app-final.xml"
+  },
+  {
+    "id": "N-03",
+    "verdict": "Pass",
+    "test": "AssistantService.NotesSettingsApplyAndUndo",
+    "evidence": "native-app-final.xml"
+  },
+  {
+    "id": "N-04",
+    "verdict": "Pass",
+    "test": "RuntimeWorkspaceConfigStoreTest.NotesWarningsDoNotBlockApply",
+    "evidence": "native-core-final.xml"
+  },
+  {
+    "id": "N-05",
+    "verdict": "Pass",
+    "test": "RuntimeWorkspaceConfigStoreTest.NotesAudioPairRules",
+    "evidence": "native-core-final.xml"
+  },
+  {
+    "id": "N-06",
+    "verdict": "Pass",
+    "test": "ApplicationMedia.NoteCompressionUsesAssistantAppliedProvider",
+    "evidence": "native-app-final.xml"
+  },
+  {
+    "id": "N-07",
+    "verdict": "Pass",
+    "test": "RuntimeWorkspaceConfigStoreTest.FileReferencesThroughApply",
+    "evidence": "native-core-final.xml"
+  },
+  {
+    "id": "N-08",
+    "verdict": "Pass",
+    "test": "SessionController.AttachesMaintenanceToolsOnlyToAssistantInWelcome + AssistantReference.ConcatenatesBothHostLinesAndTheThreeDocuments",
+    "evidence": "native-core-final.xml"
+  }
+]

@@ -1,0 +1,398 @@
+[
+  {
+    "id": "W-03",
+    "assertion": "one Notes create with selected low effort, real compression completion and success Event",
+    "pass": true,
+    "evidence": [
+      "fresh-W02-W03/observations.json",
+      "fresh-W02-W03/tool-calls.json"
+    ]
+  },
+  {
+    "id": "W-04",
+    "assertion": "high, native undo to low, second undo unavailable, exact original export restored",
+    "pass": true,
+    "evidence": [
+      "W04/tool-calls.json",
+      "W04/observations.json",
+      "W04/config.diff"
+    ]
+  },
+  {
+    "id": "W-05",
+    "assertion": "one rejected new audio destination, no configuration change",
+    "pass": true,
+    "evidence": [
+      "W05/tool-calls.json",
+      "W05/config.diff"
+    ]
+  },
+  {
+    "id": "W-06",
+    "assertion": "remove key then eligible undo restores original bytes",
+    "pass": true,
+    "evidence": [
+      "W06/observations.json",
+      "W06/tool-calls.json",
+      "W06/config.diff"
+    ]
+  },
+  {
+    "id": "W-07",
+    "assertion": "requested Google Notes provider really selected",
+    "pass": true,
+    "evidence": [
+      "W07-W18/observations.json"
+    ]
+  },
+  {
+    "id": "W-08",
+    "assertion": "missing path reproduced, single provider repair, Gem answers after repair",
+    "pass": true,
+    "evidence": [
+      "W08/observations.json",
+      "W08/tool-calls.json",
+      "W08/config.diff"
+    ]
+  },
+  {
+    "id": "W-09",
+    "assertion": "read-only case made no configuration changes",
+    "pass": true,
+    "evidence": [
+      "W09/tool-calls.json",
+      "W09/config.diff"
+    ]
+  },
+  {
+    "id": "W-10",
+    "assertion": "read-only case made no configuration changes",
+    "pass": true,
+    "evidence": [
+      "W10/tool-calls.json",
+      "W10/config.diff"
+    ]
+  },
+  {
+    "id": "W-11",
+    "assertion": "read-only case made no configuration changes",
+    "pass": true,
+    "evidence": [
+      "W11/tool-calls.json",
+      "W11/config.diff"
+    ]
+  },
+  {
+    "id": "W-12",
+    "assertion": "read-only case made no configuration changes",
+    "pass": true,
+    "evidence": [
+      "W12-after-import-fix/tool-calls.json",
+      "W12-after-import-fix/config.diff"
+    ]
+  },
+  {
+    "id": "W-13",
+    "assertion": "read-only case made no configuration changes",
+    "pass": true,
+    "evidence": [
+      "W13/tool-calls.json",
+      "W13/config.diff"
+    ]
+  },
+  {
+    "id": "W-15",
+    "assertion": "read-only case made no configuration changes",
+    "pass": true,
+    "evidence": [
+      "W15/tool-calls.json",
+      "W15/config.diff"
+    ]
+  },
+  {
+    "id": "W-16",
+    "assertion": "read-only case made no configuration changes",
+    "pass": true,
+    "evidence": [
+      "W16-after-import-fix/tool-calls.json",
+      "W16-after-import-fix/config.diff"
+    ]
+  },
+  {
+    "id": "W-17",
+    "assertion": "read-only case made no configuration changes",
+    "pass": true,
+    "evidence": [
+      "W17/tool-calls.json",
+      "W17/config.diff"
+    ]
+  },
+  {
+    "id": "W-14",
+    "assertion": "only requested folder reference removed; every other path unchanged",
+    "pass": true,
+    "evidence": [
+      "W14/config.diff",
+      "W14/before-export.json",
+      "W14/after-export.json"
+    ]
+  },
+  {
+    "id": "W-15",
+    "assertion": "session override is Google, global Writer stays OpenAI",
+    "pass": true,
+    "evidence": [
+      "W15/observations.json",
+      "W15/before-export.json"
+    ]
+  },
+  {
+    "id": "W-18",
+    "assertion": "one committed effort set, exact ignored-effort warning and undo available",
+    "pass": true,
+    "evidence": [
+      "W18-isolated/tool-calls.json"
+    ]
+  },
+  {
+    "id": "F-01 to F-06",
+    "assertion": "six accepted Assistant answers with guide and no maintenance tools",
+    "pass": true,
+    "evidence": [
+      "F-after-import-fix/observations.json",
+      "F-after-import-fix/requests.json"
+    ]
+  },
+  {
+    "id": "W18-isolated",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W18-isolated/observations.json"
+    ]
+  },
+  {
+    "id": "W04",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W04/observations.json"
+    ]
+  },
+  {
+    "id": "W05",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W05/observations.json"
+    ]
+  },
+  {
+    "id": "gpt4o-W08",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "gpt4o-W08/observations.json"
+    ]
+  },
+  {
+    "id": "W11",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W11/observations.json"
+    ]
+  },
+  {
+    "id": "W16",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W16/observations.json"
+    ]
+  },
+  {
+    "id": "W17",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W17/observations.json"
+    ]
+  },
+  {
+    "id": "W10",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W10/observations.json"
+    ]
+  },
+  {
+    "id": "gpt4o-W02-W03",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "gpt4o-W02-W03/observations.json"
+    ]
+  },
+  {
+    "id": "F",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "F/observations.json"
+    ]
+  },
+  {
+    "id": "W07-W18",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W07-W18/observations.json"
+    ]
+  },
+  {
+    "id": "W09",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W09/observations.json"
+    ]
+  },
+  {
+    "id": "gpt4o-F05-after-import-fix",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "gpt4o-F05-after-import-fix/observations.json"
+    ]
+  },
+  {
+    "id": "W08",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W08/observations.json"
+    ]
+  },
+  {
+    "id": "cleanup",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "cleanup/observations.json"
+    ]
+  },
+  {
+    "id": "W01",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W01/observations.json"
+    ]
+  },
+  {
+    "id": "W06",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W06/observations.json"
+    ]
+  },
+  {
+    "id": "gpt4o-W04",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "gpt4o-W04/observations.json"
+    ]
+  },
+  {
+    "id": "W16-after-import-fix",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W16-after-import-fix/observations.json"
+    ]
+  },
+  {
+    "id": "F-after-import-fix",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "F-after-import-fix/observations.json"
+    ]
+  },
+  {
+    "id": "gpt4o-F05",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "gpt4o-F05/observations.json"
+    ]
+  },
+  {
+    "id": "W02-W03",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W02-W03/observations.json"
+    ]
+  },
+  {
+    "id": "W15",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W15/observations.json"
+    ]
+  },
+  {
+    "id": "W12",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W12/observations.json"
+    ]
+  },
+  {
+    "id": "W12-after-import-fix",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W12-after-import-fix/observations.json"
+    ]
+  },
+  {
+    "id": "fresh-W02-W03",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "fresh-W02-W03/observations.json"
+    ]
+  },
+  {
+    "id": "upload",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "upload/observations.json"
+    ]
+  },
+  {
+    "id": "W13",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W13/observations.json"
+    ]
+  },
+  {
+    "id": "W14",
+    "assertion": "no checkpoint/export errors",
+    "pass": true,
+    "evidence": [
+      "W14/observations.json"
+    ]
+  }
+]

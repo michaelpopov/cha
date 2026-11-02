@@ -1,0 +1,145 @@
+[
+  {
+    "call_id": "call_yovVeoYMIrkFj2K3ojIPok5z",
+    "utc": "2026-11-02T03:41:58.122456+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:56Z:\nGem fails in Lab. What is wrong?",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "characters/"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 11868,
+          "path": "characters/character-voice.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_1/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_1/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 79,
+          "path": "characters/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_2/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_2/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 76,
+          "path": "characters/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_3/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_3/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 110,
+          "path": "characters/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 23,
+          "path": "characters/guide/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 41,
+          "path": "characters/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_xhFBIpqu2HhhQNgIPc2vZHWr",
+    "utc": "2026-11-02T03:41:58.122456+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:56Z:\nGem fails in Lab. What is wrong?",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "forums/Lab/members/"
+    },
+    "result": {
+      "entries": [],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_uGEkCW2SCZfuFO1CudOOLQxk",
+    "utc": "2026-11-02T03:41:59.136068+00:00",
+    "prompt": "from Guest at 2026-11-02T03:41:56Z:\nGem fails in Lab. What is wrong?",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "characters/gem/"
+    },
+    "result": {
+      "entries": [],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_l91E91wtdIrn83PRTljgtNeN",
+    "utc": "2026-11-02T03:42:01.211529+00:00",
+    "prompt": "from Guest at 2026-11-02T03:42:00Z:\nFix it.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "characters/gem"
+    },
+    "result": {
+      "entries": [],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_x9B5HU5BjDKpvT0AFwClNHJa",
+    "utc": "2026-11-02T03:42:01.211529+00:00",
+    "prompt": "from Guest at 2026-11-02T03:42:00Z:\nFix it.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "forums/Lab/members"
+    },
+    "result": {
+      "entries": [],
+      "truncated": false,
+      "version": "1"
+    }
+  }
+]

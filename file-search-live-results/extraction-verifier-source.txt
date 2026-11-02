@@ -1,0 +1,29 @@
+import pathlib,json
+root=pathlib.Path('/Users/mpopov/projects/cha/file-search-live-results');checked=0;violations=[]
+def prefix(s,n):return s.encode()[:n].decode('utf-8','ignore')
+for path in root.rglob('events.jsonl'):
+ ev=[json.loads(l) for l in path.read_text().split('\n') if l];prep={e['observation_id']:e for e in ev if e['event']=='prepared'}
+ for e in ev:
+  if e['event']!='tool_output':continue
+  out=json.loads(e['output']);targets={t['folder_name']:t['remote_store_id'] for t in prep[e['observation_id']]['targets']}
+  raw={x['store']:x for x in ev if x['event']=='retrieval_response' and x['invocation']==e['invocation']}
+  for store in out.get('stores',[]):
+   if 'error' in store:continue
+   response=raw[targets[store['folder']]];b=json.loads(response['body']);expected=[]
+   if response['store'].startswith('fileSearchStores'):
+    chunks=b['candidates'][0].get('groundingMetadata',{}).get('groundingChunks',[])
+    for chunk in chunks:
+     c=chunk.get('retrievedContext',{});text=c.get('text','')
+     if text:expected.append({'filename':prefix(c.get('title',''),256),'text':prefix(text,4096)})
+   else:
+    for match in b['data'][:5]:
+     text=''
+     for part in match['content']:
+      if part['type']!='text':continue
+      if text and len(text.encode())<4096:text+='\n'
+      text+=prefix(part['text'],4096-len(text.encode()))
+     expected.append({'filename':prefix(match['filename'],256),'file_id':prefix(match['file_id'],128),'text':text})
+   checked+=len(store['matches'])
+   if store['matches']!=expected[:5]:violations.append({'batch':str(path.parent.relative_to(root)),'case':e['case'],'store':store['folder']})
+report={'returned_source_matches_checked':checked,'mismatches':violations,'passed':not violations,'google_source':'groundingMetadata.groundingChunks[].retrievedContext.text; generated content excluded'}
+(root/'extraction-verification.json').write_text(json.dumps(report,indent=2)+'\n');print(report)

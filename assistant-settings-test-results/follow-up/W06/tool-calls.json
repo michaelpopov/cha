@@ -1,0 +1,104 @@
+[
+  {
+    "call_id": "call_rXKsE72o37CxsTNCp1SNJHGw",
+    "utc": "2026-11-02T03:43:00.895766+00:00",
+    "prompt": "from Guest at 2026-11-02T03:42:59Z:\nRemove the audio key from Notes settings.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/notes/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "audio_api_key = 'api_key_3'\naudio_url = 'https://tts.example.com'\ncompression_provider = 'provider_2'\ncompression_reasoning_effort = 'medium'\n",
+          "path": "system/notes/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_EpfF1s3E7CWVkOwPeJtOxCwL",
+    "utc": "2026-11-02T03:43:02.245429+00:00",
+    "prompt": "from Guest at 2026-11-02T03:42:59Z:\nRemove the audio key from Notes settings.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": null,
+          "key": "audio_api_key",
+          "operation": "set",
+          "path": "system/notes/config.toml",
+          "value": null
+        }
+      ],
+      "version": "1"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 114,
+          "old_bytes": 142,
+          "path": "system/notes/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": true,
+      "version": "2",
+      "warnings": []
+    }
+  },
+  {
+    "call_id": "call_NOv87KvCy0fcWXAYTcS4Tmtz",
+    "utc": "2026-11-02T03:43:05.281113+00:00",
+    "prompt": "from Guest at 2026-11-02T03:43:03Z:\nPut it back.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "system/notes"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 114,
+          "path": "system/notes/config.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "2"
+    }
+  },
+  {
+    "call_id": "call_36zY2hbCm99VKpoMyx6w92wh",
+    "utc": "2026-11-02T03:43:06.685554+00:00",
+    "prompt": "from Guest at 2026-11-02T03:43:03Z:\nPut it back.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "undo",
+      "changes": null,
+      "version": "2"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 142,
+          "old_bytes": 114,
+          "path": "system/notes/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": false,
+      "version": "3",
+      "warnings": []
+    }
+  }
+]

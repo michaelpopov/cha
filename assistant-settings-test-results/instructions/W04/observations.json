@@ -1,0 +1,2422 @@
+{
+  "C": {
+    "anthropic": "provider_4",
+    "step2Settings": {
+      "audio_api_key": "",
+      "compression_reasoning_effort": "low",
+      "compression_provider": "provider_2",
+      "audio_url": ""
+    },
+    "welcome": {
+      "session_id": "builtin-welcome",
+      "forum_id": "builtin-entrance"
+    },
+    "google": "provider_3",
+    "assistant": "provider_1",
+    "anthropic_credential": false,
+    "Gem": "character_2",
+    "step3Settings": {
+      "audio_api_key": "",
+      "compression_reasoning_effort": "low",
+      "compression_provider": "provider_2",
+      "audio_url": ""
+    },
+    "Huge note": {
+      "id": 5,
+      "ref_id": "##000005"
+    },
+    "step3": {
+      "lifecycle": "running",
+      "characters": [
+        {
+          "id": "builtin-assistant",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "weight": "normal",
+            "font": "sans",
+            "text_color": "normal"
+          },
+          "display_name": "Assistant"
+        }
+      ],
+      "generation": {
+        "phase": "waiting",
+        "active": false,
+        "character_id": "",
+        "character_display_name": ""
+      },
+      "transcript": [
+        {
+          "id": 1,
+          "request_id": 1,
+          "created_at": 1793596046,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "display_name": "Guest",
+          "output_tokens": null,
+          "participant_id": "builtin-guest",
+          "input_tokens": null,
+          "text": "Use high effort for compression.",
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 2,
+          "request_id": 1,
+          "created_at": 1793596051,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "Assistant",
+          "input_tokens": 106666,
+          "participant_id": "builtin-assistant",
+          "output_tokens": 156,
+          "text": "Saved **Notes settings \u2192 Reasoning effort** as **high** in `system/notes/config.toml`. This applies to note compression, web page and YouTube import formatting, and saved session summaries.\n\nThe compression provider is unchanged. Note audio URL and key remain unset; note audio is desktop-only.\n\nNo validation warnings. Undo is available.",
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        },
+        {
+          "id": 3,
+          "created_at": 1793596052,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "System",
+          "text": "Configuration was saved. Changed: system/notes/config.toml (108 bytes). Undo is available.",
+          "participant_id": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "kind": "notice",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        },
+        {
+          "id": 4,
+          "request_id": 2,
+          "created_at": 1793596052,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "display_name": "Guest",
+          "text": "Undo that.",
+          "input_tokens": null,
+          "participant_id": "builtin-guest",
+          "output_tokens": null,
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 5,
+          "request_id": 2,
+          "created_at": 1793596056,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "Assistant",
+          "input_tokens": 106934,
+          "text": "Undone. The previous Notes settings were restored in `system/notes/config.toml`.\n\nThe change committed with no warnings. Undo is no longer available; there is no redo.",
+          "output_tokens": 90,
+          "participant_id": "builtin-assistant",
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        },
+        {
+          "id": 6,
+          "created_at": 1793596057,
+          "web_search_used": false,
+          "addressed_to": "",
+          "output_tokens": null,
+          "text": "Configuration was saved. Changed: system/notes/config.toml (107 bytes). Undo is not available.",
+          "display_name": "System",
+          "participant_id": "",
+          "input_tokens": null,
+          "kind": "notice",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        },
+        {
+          "id": 7,
+          "request_id": 3,
+          "created_at": 1793596057,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "output_tokens": null,
+          "text": "Undo again.",
+          "participant_id": "builtin-guest",
+          "input_tokens": null,
+          "display_name": "Guest",
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 8,
+          "request_id": 3,
+          "created_at": 1793596062,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "Assistant",
+          "text": "There\u2019s no further undo available. Nothing changed.\n\nCHA keeps only one undo record, and the previous undo cleared it. There\u2019s no redo. If you want a particular Notes setting restored, I can make a new change.",
+          "input_tokens": 107165,
+          "output_tokens": 99,
+          "participant_id": "builtin-assistant",
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        }
+      ],
+      "session_label": "Welcome",
+      "session_id": "builtin-welcome",
+      "chat_settings": {
+        "characters": [
+          {
+            "provider_id": "provider_1",
+            "character_id": "builtin-assistant",
+            "reasoning_effort": "low"
+          }
+        ],
+        "model_options": [
+          {
+            "id": "provider_4",
+            "display_name": "anthropic-direct",
+            "model": "claude-sonnet-4-5",
+            "host": "api.anthropic.com"
+          },
+          {
+            "id": "provider_1",
+            "model": "gpt-6.1-sol",
+            "host": "api.openai.com",
+            "display_name": "Assistant test model"
+          },
+          {
+            "id": "provider_3",
+            "display_name": "google-direct",
+            "model": "gemini-3.8-flash",
+            "host": "generativelanguage.googleapis.com"
+          },
+          {
+            "id": "provider_2",
+            "display_name": "openai-direct",
+            "model": "gpt-5.4-mini",
+            "host": "api.openai.com"
+          },
+          {
+            "id": "test",
+            "display_name": "Test",
+            "host": "test",
+            "model": "fake"
+          }
+        ]
+      },
+      "forum": {
+        "default_persona_id": "builtin-guest",
+        "id": "builtin-entrance",
+        "display_name": "Entrance",
+        "default_character_id": "builtin-assistant",
+        "default_persona_display_name": "Guest",
+        "members": [
+          {
+            "id": "builtin-assistant",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "text_color": "normal",
+              "font": "sans",
+              "weight": "normal"
+            },
+            "display_name": "Assistant"
+          }
+        ]
+      },
+      "default_character_id": "builtin-assistant"
+    },
+    "Claude Test": "character_3",
+    "openai": "provider_2",
+    "Writer": "character_1",
+    "step2": {
+      "lifecycle": "running",
+      "chat_settings": {
+        "characters": [
+          {
+            "character_id": "builtin-assistant",
+            "reasoning_effort": "low",
+            "provider_id": "provider_1"
+          }
+        ],
+        "model_options": [
+          {
+            "id": "provider_4",
+            "display_name": "anthropic-direct",
+            "model": "claude-sonnet-4-5",
+            "host": "api.anthropic.com"
+          },
+          {
+            "id": "provider_1",
+            "model": "gpt-6.1-sol",
+            "host": "api.openai.com",
+            "display_name": "Assistant test model"
+          },
+          {
+            "id": "provider_3",
+            "display_name": "google-direct",
+            "host": "generativelanguage.googleapis.com",
+            "model": "gemini-3.8-flash"
+          },
+          {
+            "id": "provider_2",
+            "display_name": "openai-direct",
+            "host": "api.openai.com",
+            "model": "gpt-5.4-mini"
+          },
+          {
+            "id": "test",
+            "model": "fake",
+            "display_name": "Test",
+            "host": "test"
+          }
+        ]
+      },
+      "generation": {
+        "phase": "waiting",
+        "active": false,
+        "character_id": "",
+        "character_display_name": ""
+      },
+      "transcript": [
+        {
+          "id": 1,
+          "request_id": 1,
+          "created_at": 1793596046,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "output_tokens": null,
+          "input_tokens": null,
+          "text": "Use high effort for compression.",
+          "display_name": "Guest",
+          "participant_id": "builtin-guest",
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 2,
+          "request_id": 1,
+          "created_at": 1793596051,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "Assistant",
+          "input_tokens": 106666,
+          "participant_id": "builtin-assistant",
+          "output_tokens": 156,
+          "text": "Saved **Notes settings \u2192 Reasoning effort** as **high** in `system/notes/config.toml`. This applies to note compression, web page and YouTube import formatting, and saved session summaries.\n\nThe compression provider is unchanged. Note audio URL and key remain unset; note audio is desktop-only.\n\nNo validation warnings. Undo is available.",
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        },
+        {
+          "id": 3,
+          "created_at": 1793596052,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "System",
+          "text": "Configuration was saved. Changed: system/notes/config.toml (108 bytes). Undo is available.",
+          "participant_id": "",
+          "input_tokens": null,
+          "output_tokens": null,
+          "kind": "notice",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        },
+        {
+          "id": 4,
+          "request_id": 2,
+          "created_at": 1793596052,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "output_tokens": null,
+          "input_tokens": null,
+          "text": "Undo that.",
+          "participant_id": "builtin-guest",
+          "display_name": "Guest",
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 5,
+          "request_id": 2,
+          "created_at": 1793596056,
+          "web_search_used": false,
+          "addressed_to": "",
+          "output_tokens": 90,
+          "input_tokens": 106934,
+          "display_name": "Assistant",
+          "text": "Undone. The previous Notes settings were restored in `system/notes/config.toml`.\n\nThe change committed with no warnings. Undo is no longer available; there is no redo.",
+          "participant_id": "builtin-assistant",
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        },
+        {
+          "id": 6,
+          "created_at": 1793596057,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "System",
+          "text": "Configuration was saved. Changed: system/notes/config.toml (107 bytes). Undo is not available.",
+          "input_tokens": null,
+          "participant_id": "",
+          "output_tokens": null,
+          "kind": "notice",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        }
+      ],
+      "session_label": "Welcome",
+      "session_id": "builtin-welcome",
+      "characters": [
+        {
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "text_color": "normal",
+            "font": "sans",
+            "weight": "normal"
+          },
+          "id": "builtin-assistant",
+          "display_name": "Assistant"
+        }
+      ],
+      "forum": {
+        "default_persona_id": "builtin-guest",
+        "id": "builtin-entrance",
+        "display_name": "Entrance",
+        "default_character_id": "builtin-assistant",
+        "default_persona_display_name": "Guest",
+        "members": [
+          {
+            "id": "builtin-assistant",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "text_color": "normal",
+              "weight": "normal",
+              "font": "sans"
+            },
+            "display_name": "Assistant"
+          }
+        ]
+      },
+      "default_character_id": "builtin-assistant"
+    },
+    "step1Settings": {
+      "audio_api_key": "",
+      "compression_reasoning_effort": "high",
+      "compression_provider": "provider_2",
+      "audio_url": ""
+    },
+    "Long note": {
+      "id": 4,
+      "ref_id": "##000004"
+    },
+    "Docs Removed": {
+      "id": 10,
+      "ref_id": "##00000A"
+    },
+    "step1": {
+      "session_label": "Welcome",
+      "characters": [
+        {
+          "id": "builtin-assistant",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "text_color": "normal",
+            "font": "sans",
+            "weight": "normal"
+          },
+          "display_name": "Assistant"
+        }
+      ],
+      "generation": {
+        "phase": "waiting",
+        "active": false,
+        "character_id": "",
+        "character_display_name": ""
+      },
+      "chat_settings": {
+        "characters": [
+          {
+            "character_id": "builtin-assistant",
+            "provider_id": "provider_1",
+            "reasoning_effort": "low"
+          }
+        ],
+        "model_options": [
+          {
+            "id": "provider_4",
+            "model": "claude-sonnet-4-5",
+            "display_name": "anthropic-direct",
+            "host": "api.anthropic.com"
+          },
+          {
+            "id": "provider_1",
+            "model": "gpt-6.1-sol",
+            "display_name": "Assistant test model",
+            "host": "api.openai.com"
+          },
+          {
+            "id": "provider_3",
+            "display_name": "google-direct",
+            "host": "generativelanguage.googleapis.com",
+            "model": "gemini-3.8-flash"
+          },
+          {
+            "id": "provider_2",
+            "display_name": "openai-direct",
+            "model": "gpt-5.4-mini",
+            "host": "api.openai.com"
+          },
+          {
+            "id": "test",
+            "model": "fake",
+            "display_name": "Test",
+            "host": "test"
+          }
+        ]
+      },
+      "transcript": [
+        {
+          "id": 1,
+          "request_id": 1,
+          "created_at": 1793596046,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "display_name": "Guest",
+          "text": "Use high effort for compression.",
+          "participant_id": "builtin-guest",
+          "input_tokens": null,
+          "output_tokens": null,
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 2,
+          "request_id": 1,
+          "created_at": 1793596051,
+          "web_search_used": false,
+          "addressed_to": "",
+          "output_tokens": 156,
+          "input_tokens": 106666,
+          "display_name": "Assistant",
+          "participant_id": "builtin-assistant",
+          "text": "Saved **Notes settings \u2192 Reasoning effort** as **high** in `system/notes/config.toml`. This applies to note compression, web page and YouTube import formatting, and saved session summaries.\n\nThe compression provider is unchanged. Note audio URL and key remain unset; note audio is desktop-only.\n\nNo validation warnings. Undo is available.",
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        },
+        {
+          "id": 3,
+          "created_at": 1793596052,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "System",
+          "input_tokens": null,
+          "participant_id": "",
+          "text": "Configuration was saved. Changed: system/notes/config.toml (108 bytes). Undo is available.",
+          "output_tokens": null,
+          "kind": "notice",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        }
+      ],
+      "lifecycle": "running",
+      "session_id": "builtin-welcome",
+      "forum": {
+        "default_persona_id": "builtin-guest",
+        "id": "builtin-entrance",
+        "display_name": "Entrance",
+        "default_character_id": "builtin-assistant",
+        "default_persona_display_name": "Guest",
+        "members": [
+          {
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "weight": "normal",
+              "text_color": "normal",
+              "font": "sans"
+            },
+            "id": "builtin-assistant",
+            "display_name": "Assistant"
+          }
+        ]
+      },
+      "default_character_id": "builtin-assistant"
+    },
+    "lab": "forum_1",
+    "notes": {},
+    "Docs Gemini": {
+      "id": 8,
+      "ref_id": "##000008"
+    },
+    "Docs OpenAI": {
+      "id": 6,
+      "ref_id": "##000006"
+    }
+  },
+  "events": [],
+  "trace": [
+    {
+      "result": {
+        "result": {
+          "context_epoch": 1,
+          "capabilities": {
+            "can_modify": false,
+            "can_transfer_r2": false
+          },
+          "state": "running",
+          "bootstrap": {
+            "vaults": [
+              "Annushka",
+              "Assistant-Instructions-Test",
+              "Base",
+              "CHA",
+              "Daily",
+              "Michaels",
+              "philosophy",
+              "Test"
+            ],
+            "personas": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "id": "builtin-guest",
+                "display_name": "Guest"
+              },
+              {
+                "id": "reader",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "display_name": "Reader"
+              }
+            ],
+            "characters": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                },
+                "display_name": "Assistant"
+              },
+              {
+                "id": "character_3",
+                "display_name": "Claude Test",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                }
+              },
+              {
+                "id": "character_2",
+                "display_name": "Gem",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              },
+              {
+                "id": "guide",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "display_name": "Guide"
+              },
+              {
+                "id": "character_1",
+                "display_name": "Writer",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              }
+            ],
+            "initial_forum_id": "builtin-entrance",
+            "recent_sessions": [
+              {
+                "session_label": "Welcome",
+                "session_id": "builtin-welcome",
+                "forum_id": "builtin-entrance",
+                "updated_at": 1793596046
+              }
+            ],
+            "entrance_forum_id": "builtin-entrance",
+            "forums": [
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "builtin-entrance",
+                "display_name": "Entrance",
+                "default_character_id": "builtin-assistant",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "text_color": "normal",
+                      "font": "sans"
+                    },
+                    "id": "builtin-assistant",
+                    "display_name": "Assistant"
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "forum_1",
+                "display_name": "Lab",
+                "default_character_id": "builtin-assistant",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "text_color": "normal",
+                      "font": "sans"
+                    },
+                    "id": "builtin-assistant",
+                    "display_name": "Assistant"
+                  },
+                  {
+                    "id": "character_3",
+                    "display_name": "Claude Test",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "weight": "normal",
+                      "font": "sans"
+                    }
+                  },
+                  {
+                    "id": "character_2",
+                    "display_name": "Gem",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "font": "sans",
+                      "weight": "normal"
+                    }
+                  },
+                  {
+                    "id": "character_1",
+                    "display_name": "Writer",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "font": "sans",
+                      "weight": "normal"
+                    }
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "lobby",
+                "display_name": "The Lobby",
+                "default_character_id": "guide",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "id": "guide",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "font": "sans",
+                      "weight": "normal"
+                    },
+                    "display_name": "Guide"
+                  }
+                ]
+              }
+            ],
+            "vault_name": "Assistant-Instructions-Test",
+            "initial_session_id": "builtin-welcome"
+          },
+          "application_version": "development"
+        },
+        "context_epoch": 1,
+        "id": 9000000000000,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "app.bootstrap",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000001,
+        "result": {
+          "session_id": "builtin-welcome",
+          "forum_id": "builtin-entrance"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000002,
+        "result": {
+          "forum_id": "builtin-entrance",
+          "session_id": "builtin-welcome"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "id": 9000000000003,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "input": {
+          "text": "/clear"
+        },
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "session_label": "Welcome",
+          "transcript": [],
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "lifecycle": "running",
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "session_id": "builtin-welcome",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "reasoning_effort": "low",
+                "provider_id": "provider_1"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com",
+                "display_name": "anthropic-direct"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com",
+                "display_name": "Assistant test model"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "host": "api.openai.com",
+                "model": "gpt-5.4-mini"
+              },
+              {
+                "id": "test",
+                "display_name": "Test",
+                "host": "test",
+                "model": "fake"
+              }
+            ]
+          },
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "id": 9000000000004,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000005,
+        "ok": false,
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        },
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-instructions/checkpoints/W04-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000006,
+        "ok": false,
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        },
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-instructions/checkpoints/W04-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000007,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-instructions/checkpoints/W04-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000008,
+        "ok": false,
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        },
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-instructions/checkpoints/W04-before.txt"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "name": "/private/tmp/cha-ass-instructions/checkpoints/W04-before.txt",
+          "text": "ready"
+        },
+        "id": 9000000000009,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-instructions/checkpoints/W04-before.txt"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "session_id": "builtin-welcome",
+          "forum_id": "builtin-entrance"
+        },
+        "context_epoch": 1,
+        "id": 9000000000010,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000011,
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "input": {
+          "text": "Use high effort for compression."
+        },
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "session_label": "Welcome",
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793596046,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "input_tokens": null,
+              "display_name": "Guest",
+              "participant_id": "builtin-guest",
+              "text": "Use high effort for compression.",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793596051,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "input_tokens": 106666,
+              "participant_id": "builtin-assistant",
+              "text": "Saved **Notes settings \u2192 Reasoning effort** as **high** in `system/notes/config.toml`. This applies to note compression, web page and YouTube import formatting, and saved session summaries.\n\nThe compression provider is unchanged. Note audio URL and key remain unset; note audio is desktop-only.\n\nNo validation warnings. Undo is available.",
+              "output_tokens": 156,
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 3,
+              "created_at": 1793596052,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "System",
+              "input_tokens": null,
+              "participant_id": "",
+              "text": "Configuration was saved. Changed: system/notes/config.toml (108 bytes). Undo is available.",
+              "output_tokens": null,
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "text_color": "normal",
+                "font": "sans"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "lifecycle": "running",
+          "session_id": "builtin-welcome",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "reasoning_effort": "low",
+                "provider_id": "provider_1"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com",
+                "model": "claude-sonnet-4-5"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com"
+              },
+              {
+                "id": "provider_2",
+                "model": "gpt-5.4-mini",
+                "host": "api.openai.com",
+                "display_name": "openai-direct"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "host": "test",
+                "display_name": "Test"
+              }
+            ]
+          },
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "id": 9000000000185,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "session_label": "Welcome",
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "provider_id": "provider_1",
+                "reasoning_effort": "low"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "model": "claude-sonnet-4-5",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-6.1-sol",
+                "display_name": "Assistant test model",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "host": "generativelanguage.googleapis.com",
+                "model": "gemini-3.8-flash"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "model": "gpt-5.4-mini",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "display_name": "Test",
+                "host": "test"
+              }
+            ]
+          },
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793596046,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "display_name": "Guest",
+              "text": "Use high effort for compression.",
+              "participant_id": "builtin-guest",
+              "input_tokens": null,
+              "output_tokens": null,
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793596051,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": 156,
+              "input_tokens": 106666,
+              "display_name": "Assistant",
+              "participant_id": "builtin-assistant",
+              "text": "Saved **Notes settings \u2192 Reasoning effort** as **high** in `system/notes/config.toml`. This applies to note compression, web page and YouTube import formatting, and saved session summaries.\n\nThe compression provider is unchanged. Note audio URL and key remain unset; note audio is desktop-only.\n\nNo validation warnings. Undo is available.",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 3,
+              "created_at": 1793596052,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "System",
+              "input_tokens": null,
+              "participant_id": "",
+              "text": "Configuration was saved. Changed: system/notes/config.toml (108 bytes). Undo is available.",
+              "output_tokens": null,
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "lifecycle": "running",
+          "session_id": "builtin-welcome",
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "id": 9000000000186,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "audio_api_key": "",
+          "compression_reasoning_effort": "high",
+          "compression_provider": "provider_2",
+          "audio_url": ""
+        },
+        "context_epoch": 1,
+        "id": 9000000000187,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notesSettings.get",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000188,
+        "result": {
+          "session_id": "builtin-welcome",
+          "forum_id": "builtin-entrance"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "id": 9000000000189,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "input": {
+          "text": "Undo that."
+        },
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "lifecycle": "running",
+          "session_label": "Welcome",
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793596046,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "input_tokens": null,
+              "display_name": "Guest",
+              "participant_id": "builtin-guest",
+              "text": "Use high effort for compression.",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793596051,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "input_tokens": 106666,
+              "participant_id": "builtin-assistant",
+              "output_tokens": 156,
+              "text": "Saved **Notes settings \u2192 Reasoning effort** as **high** in `system/notes/config.toml`. This applies to note compression, web page and YouTube import formatting, and saved session summaries.\n\nThe compression provider is unchanged. Note audio URL and key remain unset; note audio is desktop-only.\n\nNo validation warnings. Undo is available.",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 3,
+              "created_at": 1793596052,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "System",
+              "input_tokens": null,
+              "text": "Configuration was saved. Changed: system/notes/config.toml (108 bytes). Undo is available.",
+              "participant_id": "",
+              "output_tokens": null,
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 4,
+              "request_id": 2,
+              "created_at": 1793596052,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "display_name": "Guest",
+              "input_tokens": null,
+              "participant_id": "builtin-guest",
+              "text": "Undo that.",
+              "output_tokens": null,
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 5,
+              "request_id": 2,
+              "created_at": 1793596056,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "text": "Undone. The previous Notes settings were restored in `system/notes/config.toml`.\n\nThe change committed with no warnings. Undo is no longer available; there is no redo.",
+              "input_tokens": 106934,
+              "output_tokens": 90,
+              "participant_id": "builtin-assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 6,
+              "created_at": 1793596057,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": null,
+              "text": "Configuration was saved. Changed: system/notes/config.toml (107 bytes). Undo is not available.",
+              "participant_id": "",
+              "input_tokens": null,
+              "display_name": "System",
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "characters": [
+            {
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              },
+              "id": "builtin-assistant",
+              "display_name": "Assistant"
+            }
+          ],
+          "session_id": "builtin-welcome",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "reasoning_effort": "low",
+                "provider_id": "provider_1"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com",
+                "display_name": "Assistant test model"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "host": "generativelanguage.googleapis.com",
+                "model": "gemini-3.8-flash"
+              },
+              {
+                "id": "provider_2",
+                "model": "gpt-5.4-mini",
+                "display_name": "openai-direct",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "display_name": "Test",
+                "host": "test"
+              }
+            ]
+          },
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "id": 9000000000344,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "lifecycle": "running",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "reasoning_effort": "low",
+                "provider_id": "provider_1"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com",
+                "display_name": "Assistant test model"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "host": "generativelanguage.googleapis.com",
+                "model": "gemini-3.8-flash"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "host": "api.openai.com",
+                "model": "gpt-5.4-mini"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "display_name": "Test",
+                "host": "test"
+              }
+            ]
+          },
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793596046,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "input_tokens": null,
+              "text": "Use high effort for compression.",
+              "display_name": "Guest",
+              "participant_id": "builtin-guest",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793596051,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "input_tokens": 106666,
+              "participant_id": "builtin-assistant",
+              "output_tokens": 156,
+              "text": "Saved **Notes settings \u2192 Reasoning effort** as **high** in `system/notes/config.toml`. This applies to note compression, web page and YouTube import formatting, and saved session summaries.\n\nThe compression provider is unchanged. Note audio URL and key remain unset; note audio is desktop-only.\n\nNo validation warnings. Undo is available.",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 3,
+              "created_at": 1793596052,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "System",
+              "text": "Configuration was saved. Changed: system/notes/config.toml (108 bytes). Undo is available.",
+              "participant_id": "",
+              "input_tokens": null,
+              "output_tokens": null,
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 4,
+              "request_id": 2,
+              "created_at": 1793596052,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "input_tokens": null,
+              "text": "Undo that.",
+              "participant_id": "builtin-guest",
+              "display_name": "Guest",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 5,
+              "request_id": 2,
+              "created_at": 1793596056,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": 90,
+              "input_tokens": 106934,
+              "display_name": "Assistant",
+              "text": "Undone. The previous Notes settings were restored in `system/notes/config.toml`.\n\nThe change committed with no warnings. Undo is no longer available; there is no redo.",
+              "participant_id": "builtin-assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 6,
+              "created_at": 1793596057,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "System",
+              "text": "Configuration was saved. Changed: system/notes/config.toml (107 bytes). Undo is not available.",
+              "input_tokens": null,
+              "participant_id": "",
+              "output_tokens": null,
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "session_label": "Welcome",
+          "session_id": "builtin-welcome",
+          "characters": [
+            {
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              },
+              "id": "builtin-assistant",
+              "display_name": "Assistant"
+            }
+          ],
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                },
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "id": 9000000000345,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "audio_api_key": "",
+          "compression_reasoning_effort": "low",
+          "compression_provider": "provider_2",
+          "audio_url": ""
+        },
+        "id": 9000000000346,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notesSettings.get",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000347,
+        "result": {
+          "session_id": "builtin-welcome",
+          "forum_id": "builtin-entrance"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000348,
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "input": {
+          "text": "Undo again."
+        },
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000539,
+        "result": {
+          "session_label": "Welcome",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "reasoning_effort": "low",
+                "provider_id": "provider_1"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com",
+                "model": "claude-sonnet-4-5"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com",
+                "display_name": "Assistant test model"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com"
+              },
+              {
+                "id": "provider_2",
+                "model": "gpt-5.4-mini",
+                "host": "api.openai.com",
+                "display_name": "openai-direct"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "host": "test",
+                "display_name": "Test"
+              }
+            ]
+          },
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793596046,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "display_name": "Guest",
+              "text": "Use high effort for compression.",
+              "participant_id": "builtin-guest",
+              "input_tokens": null,
+              "output_tokens": null,
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793596051,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": 156,
+              "input_tokens": 106666,
+              "display_name": "Assistant",
+              "text": "Saved **Notes settings \u2192 Reasoning effort** as **high** in `system/notes/config.toml`. This applies to note compression, web page and YouTube import formatting, and saved session summaries.\n\nThe compression provider is unchanged. Note audio URL and key remain unset; note audio is desktop-only.\n\nNo validation warnings. Undo is available.",
+              "participant_id": "builtin-assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 3,
+              "created_at": 1793596052,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "System",
+              "text": "Configuration was saved. Changed: system/notes/config.toml (108 bytes). Undo is available.",
+              "participant_id": "",
+              "output_tokens": null,
+              "input_tokens": null,
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 4,
+              "request_id": 2,
+              "created_at": 1793596052,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "input_tokens": null,
+              "text": "Undo that.",
+              "participant_id": "builtin-guest",
+              "display_name": "Guest",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 5,
+              "request_id": 2,
+              "created_at": 1793596056,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "output_tokens": 90,
+              "participant_id": "builtin-assistant",
+              "input_tokens": 106934,
+              "text": "Undone. The previous Notes settings were restored in `system/notes/config.toml`.\n\nThe change committed with no warnings. Undo is no longer available; there is no redo.",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 6,
+              "created_at": 1793596057,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": null,
+              "input_tokens": null,
+              "participant_id": "",
+              "display_name": "System",
+              "text": "Configuration was saved. Changed: system/notes/config.toml (107 bytes). Undo is not available.",
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 7,
+              "request_id": 3,
+              "created_at": 1793596057,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "display_name": "Guest",
+              "input_tokens": null,
+              "participant_id": "builtin-guest",
+              "text": "Undo again.",
+              "output_tokens": null,
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 8,
+              "request_id": 3,
+              "created_at": 1793596062,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "output_tokens": 99,
+              "input_tokens": 107165,
+              "text": "There\u2019s no further undo available. Nothing changed.\n\nCHA keeps only one undo record, and the previous undo cleared it. There\u2019s no redo. If you want a particular Notes setting restored, I can make a new change.",
+              "participant_id": "builtin-assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "lifecycle": "running",
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "session_id": "builtin-welcome",
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "lifecycle": "running",
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793596046,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "display_name": "Guest",
+              "output_tokens": null,
+              "participant_id": "builtin-guest",
+              "input_tokens": null,
+              "text": "Use high effort for compression.",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793596051,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "input_tokens": 106666,
+              "participant_id": "builtin-assistant",
+              "output_tokens": 156,
+              "text": "Saved **Notes settings \u2192 Reasoning effort** as **high** in `system/notes/config.toml`. This applies to note compression, web page and YouTube import formatting, and saved session summaries.\n\nThe compression provider is unchanged. Note audio URL and key remain unset; note audio is desktop-only.\n\nNo validation warnings. Undo is available.",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 3,
+              "created_at": 1793596052,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "System",
+              "text": "Configuration was saved. Changed: system/notes/config.toml (108 bytes). Undo is available.",
+              "participant_id": "",
+              "input_tokens": null,
+              "output_tokens": null,
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 4,
+              "request_id": 2,
+              "created_at": 1793596052,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "display_name": "Guest",
+              "text": "Undo that.",
+              "input_tokens": null,
+              "participant_id": "builtin-guest",
+              "output_tokens": null,
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 5,
+              "request_id": 2,
+              "created_at": 1793596056,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "input_tokens": 106934,
+              "text": "Undone. The previous Notes settings were restored in `system/notes/config.toml`.\n\nThe change committed with no warnings. Undo is no longer available; there is no redo.",
+              "output_tokens": 90,
+              "participant_id": "builtin-assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 6,
+              "created_at": 1793596057,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": null,
+              "text": "Configuration was saved. Changed: system/notes/config.toml (107 bytes). Undo is not available.",
+              "display_name": "System",
+              "participant_id": "",
+              "input_tokens": null,
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 7,
+              "request_id": 3,
+              "created_at": 1793596057,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "text": "Undo again.",
+              "participant_id": "builtin-guest",
+              "input_tokens": null,
+              "display_name": "Guest",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 8,
+              "request_id": 3,
+              "created_at": 1793596062,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "text": "There\u2019s no further undo available. Nothing changed.\n\nCHA keeps only one undo record, and the previous undo cleared it. There\u2019s no redo. If you want a particular Notes setting restored, I can make a new change.",
+              "input_tokens": 107165,
+              "output_tokens": 99,
+              "participant_id": "builtin-assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "session_label": "Welcome",
+          "session_id": "builtin-welcome",
+          "chat_settings": {
+            "characters": [
+              {
+                "provider_id": "provider_1",
+                "character_id": "builtin-assistant",
+                "reasoning_effort": "low"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com",
+                "display_name": "Assistant test model"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "model": "gpt-5.4-mini",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "display_name": "Test",
+                "host": "test",
+                "model": "fake"
+              }
+            ]
+          },
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "id": 9000000000540,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "audio_api_key": "",
+          "compression_reasoning_effort": "low",
+          "compression_provider": "provider_2",
+          "audio_url": ""
+        },
+        "id": 9000000000541,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notesSettings.get",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000542,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-instructions/checkpoints/W04-after.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000543,
+        "ok": false,
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        },
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-instructions/checkpoints/W04-after.txt"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "name": "/private/tmp/cha-ass-instructions/checkpoints/W04-after.txt",
+          "text": "ready"
+        },
+        "id": 9000000000544,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-instructions/checkpoints/W04-after.txt"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "name": "prompt accepted /clear",
+      "ok": true
+    },
+    {
+      "name": "prompt accepted Use high effort for compression.",
+      "ok": true
+    },
+    {
+      "name": "prompt accepted Undo that.",
+      "ok": true
+    },
+    {
+      "name": "prompt accepted Undo again.",
+      "ok": true
+    }
+  ],
+  "ok": true,
+  "exit_code": 0,
+  "utc": "2026-11-02T05:07:26.088099+00:00",
+  "checkpoints": [
+    "W04-before",
+    "W04-after"
+  ],
+  "checkpoint_errors": []
+}

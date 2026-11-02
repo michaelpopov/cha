@@ -1,4 +1,5 @@
 #include "session/session_controller.h"
+#include "app/assistant_service.h"
 #include "session/session_open.h"
 #include "characters/character.h"
 #include "providers/model_backend.h"
@@ -1349,18 +1350,36 @@ TEST(SessionController, AttachesMaintenanceToolsOnlyToAssistantInWelcome) {
             GenerationResult{}, std::vector<std::string>{"Answer"});
         ScriptedBackend* const observed = backend.get();
         auto slot = std::make_shared<test::RequestBackendFacade::Slot>(std::move(backend));
-        auto providers = std::make_shared<Providers>([slot](SharedCharacterDefinition) {
+        std::vector<SharedCharacterDefinition> definitions;
+        auto providers = std::make_shared<Providers>([slot, &definitions](SharedCharacterDefinition definition) {
+            definitions.push_back(std::move(definition));
             return std::make_unique<test::RequestBackendFacade>(slot);
         });
         auto controller = SessionController::from_workspace_for_testing(
             [workspace] { return workspace; }, std::string(workspace_assistant_id), "reader",
             journal.path, providers,
             std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
-            {}, {}, std::move(identity));
+            {}, {}, std::move(identity), 1, 0,
+            std::make_shared<const std::string>(maintenance_reference(false)));
         (void)controller->submit_prompt("reader", "Fix it");
         (void)receive_until_idle(*controller);
         EXPECT_EQ(observed->inputs.size(), 1U);
-        return !observed->inputs.empty() && static_cast<bool>(observed->inputs.back().maintenance_tool);
+        EXPECT_EQ(definitions.size(), 1u);
+        const bool maintenance = !observed->inputs.empty()
+            && static_cast<bool>(observed->inputs.back().maintenance_tool);
+        if (!definitions.empty()) {
+            const auto& prompt = definitions.back()->system_prompt;
+            const auto guide = prompt.find("# CHA application guide");
+            const auto reference = prompt.find("# Operating instructions for Assistant");
+            EXPECT_NE(guide, std::string::npos);
+            if (maintenance) {
+                EXPECT_NE(reference, std::string::npos);
+                EXPECT_LT(guide, reference);
+            } else {
+                EXPECT_EQ(reference, std::string::npos);
+            }
+        }
+        return maintenance;
     };
     EXPECT_TRUE(maintenance_attached(
         {std::string(workspace_entrance_id), std::string(welcome_id)}));

@@ -1,0 +1,71 @@
+[
+  {
+    "call_id": "call_WUi67yXj0sV1TieLRcw8qC5r",
+    "utc": "2026-11-02T05:15:16.538136+00:00",
+    "prompt": "from Guest at 2026-11-02T05:15:14Z:\nWhy was my Lab conversation not saved?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/jev/config.toml",
+        "system/notes/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "path": "system/jev/config.toml",
+          "status": "missing"
+        },
+        {
+          "content": "audio_api_key = ''\naudio_url = ''\ncompression_provider = 'provider_2'\ncompression_reasoning_effort = 'low'\n",
+          "path": "system/notes/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_Gyop0ax0rA6vOWZXcyD4PBQY",
+    "utc": "2026-11-02T05:15:17.924882+00:00",
+    "prompt": "from Guest at 2026-11-02T05:15:14Z:\nWhy was my Lab conversation not saved?",
+    "name": "assistant_logs",
+    "arguments": {
+      "contains": "summary",
+      "limit": 40,
+      "minimum_level": "info"
+    },
+    "result": {
+      "entries": [
+        {
+          "level": "info",
+          "text": "[2026-11-01 21:15:14.542662] [thread 34669125] [info] Prompt processing statistics: provider_id=provider_1 character_id=builtin-assistant forum_id=forum_1 session_id=2026-11-01-21-15-11-session request_id=1 token=1 model=gpt-6.1-sol effort=low api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false request_payload_bytes=11371 system_prompt_bytes=9129 conversation_bytes=76 outcome=completed stage=finished overall_ms=2859.124333 preparation_ms=1.339500 model_calls=1 model_failed=0 model_cancelled=0 model_ms=2857.738833 tools_wall_ms=0.000000 web_search_calls=0 web_search_failed=0 web_search_cancelled=0 web_search_ms=0.000000 web_search_result_bytes=0 web_read_calls=0 web_read_failed=0 web_read_cancelled=0 web_read_ms=0.000000 web_read_result_bytes=0 summary_calls=0 summary_failed=0 summary_cancelled=0 summary_ms=0.000000 summary_result_bytes=0 maintenance_calls=0 maintenance_failed=0 maintenance_cancelled=0 maintenance_ms=0.000000 maintenance_result_bytes=0 tool_calls_requested=0 tool_calls_rejected=0 tool_limit_hits=0 other_ms=0.046000 first_answer_ms=2170.499292 answer_bytes=279 reasoning_bytes=0 input_tokens=3567 output_tokens=109 total_tokens=3676 cache_read_tokens=0 cache_write_tokens=3538"
+        }
+      ],
+      "level": "debug",
+      "limited": false,
+      "status": "ok"
+    }
+  },
+  {
+    "call_id": "call_Xd4B4vEqadWy4e3DyYuUBndJ",
+    "utc": "2026-11-02T05:15:19.193414+00:00",
+    "prompt": "from Guest at 2026-11-02T05:15:14Z:\nWhy was my Lab conversation not saved?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/providers/provider_2/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "api = 'responses'\napi_key = 'api_key_1'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'openai-direct'\nhost = 'api.openai.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gpt-5.4-mini'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_2/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  }
+]

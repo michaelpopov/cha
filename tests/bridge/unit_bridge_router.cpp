@@ -392,7 +392,8 @@ TEST_F(BridgeRouterTest, NotePageReadingReportsConfigurationAndFetchFailures) {
     auto reply = call("notes.readPage", {{"url", "https://example.org"}});
     EXPECT_FALSE(reply["ok"]);
     EXPECT_EQ(reply["error"]["code"], "invalid_argument");
-    EXPECT_NE(reply["error"]["message"].get<std::string>().find("not configured"), std::string::npos);
+    EXPECT_EQ(reply["error"]["message"],
+        "Page reading is not configured. Enable web_reader or Firecrawl in Settings → Search API.");
 
     MockHttpServer server({"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"});
     server.start();
@@ -2978,7 +2979,7 @@ TEST_F(BridgeRouterTest, YoutubeNoteImportsReportMissingCompressionProvider) {
     settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
     ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
     expect_note_error(call("notes.readPage", {{"url", "https://youtu.be/video"}}), "invalid_argument",
-        "Select a compression provider in Settings → Notes.");
+        "Select a compression provider in Notes settings.");
     reader.join();
 }
 
@@ -3317,6 +3318,19 @@ TEST_F(BridgeRouterTest, SummaryRejectsIncompleteRefusedAndEmptyAnswersWithoutCr
     server.join();
 }
 
+TEST_F(BridgeRouterTest, SummaryReportsContextWindowWithNotesSettings) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    MockHttpServer server({"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    expect_note_error(call("sessionSummary.generate", summary_identity(source)), "invalid_argument",
+        "The conversation exceeds the model's context window. Select a model with a larger context window "
+        "in Settings → Notes settings and try again.");
+    server.join();
+    EXPECT_EQ(application_->list_note_items(epoch_).size(), 2U);
+}
+
 TEST_F(BridgeRouterTest, SummaryDisconnectAfterMarkdownDeliveryReleasesReservation) {
     bootstrap_epoch();
     const auto source = summary_source(*application_, database_, epoch_);
@@ -3575,7 +3589,7 @@ TEST_F(BridgeRouterTest, CompressionReportsProviderSettingsAndEmptyNotes) {
     bootstrap_epoch();
     const auto note = compression_source(*application_, epoch_);
     expect_note_error(compress_and_wait({{"id", note.id}}), "invalid_argument",
-        "Select a compression provider in Settings → Notes.");
+        "Select a compression provider in Notes settings.");
     application_->save_note(note.id, text_document(std::string(4096, ' ')), epoch_);
     expect_note_error(compress_and_wait({{"id", note.id}}), "invalid_argument",
         "This note has no text to compress.");

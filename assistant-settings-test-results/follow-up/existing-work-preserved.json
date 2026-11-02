@@ -1,0 +1,8 @@
+{
+  "resources/application-guide.md": true,
+  "resources/assistant-maintenance.md": true,
+  "src/workspace/workspace_config_store.cpp": true,
+  "src/app/assistant_service.cpp": true,
+  "src/providers/provider_client.cpp": true,
+  "src/providers/responses_api.cpp": true
+}

@@ -1,0 +1,7 @@
+{
+  "resources/application-guide.md": "74f47cdd2b4e79915bfd6d4afb35de9c6e7c486a1a4929681cb18a546fa64f44",
+  "resources/assistant-maintenance.md": "986fe86415ad8f17276519f178573e10f4a9e8938dee162df3540bfbbaf501c3",
+  "src/notes/notes_operations.cpp": "db294e1637116bc158b926a0dc53c5edbc917c3fd17cd425c6d30dfca690e7dc",
+  "src/workspace/workspace_config_store.cpp": "2b39407c8f5576e36efa5ca69cab25607ffb2a077ee3bb25902e47f41f1f42cf",
+  "tests/workspace/unit_workspace_config_store.cpp": "a54587fd38238b5814f50d5f1093d41593ad87d606aff0b800ee0276237ffebb"
+}

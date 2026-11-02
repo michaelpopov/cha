@@ -1,0 +1,767 @@
+[
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_1",
+    "observation_id": 1,
+    "invocation": 2,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_1",
+    "observation_id": 1,
+    "invocation": 3,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_1",
+    "observation_id": 1,
+    "invocation": 4,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-astra-oauth-openai",
+    "observation_id": 5,
+    "invocation": 6,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-astra-oauth-google",
+    "observation_id": 7,
+    "invocation": 8,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-astra",
+    "observation_id": 9,
+    "invocation": 10,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-DeepSeek",
+    "observation_id": 12,
+    "invocation": 13,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-DeepSeek",
+    "observation_id": 12,
+    "invocation": 14,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_3",
+    "observation_id": 15,
+    "invocation": 16,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_3",
+    "observation_id": 15,
+    "invocation": 17,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_6",
+    "observation_id": 20,
+    "invocation": 21,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_6",
+    "observation_id": 20,
+    "invocation": 22,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_4",
+    "observation_id": 23,
+    "invocation": 24,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_4",
+    "observation_id": 23,
+    "invocation": 25,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_4",
+    "observation_id": 23,
+    "invocation": 26,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-GeminiPro",
+    "observation_id": 27,
+    "invocation": 28,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-mistral",
+    "observation_id": 30,
+    "invocation": 31,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-mistral",
+    "observation_id": 30,
+    "invocation": 32,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-mistral",
+    "observation_id": 30,
+    "invocation": 33,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-qwen",
+    "observation_id": 34,
+    "invocation": 35,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-qwen",
+    "observation_id": 34,
+    "invocation": 36,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-QwenLarge",
+    "observation_id": 37,
+    "invocation": 38,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_9",
+    "observation_id": 40,
+    "invocation": 41,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_10",
+    "observation_id": 42,
+    "invocation": 43,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_10",
+    "observation_id": 42,
+    "invocation": 44,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_11",
+    "observation_id": 45,
+    "invocation": 46,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C01-extra-provider_14",
+    "observation_id": 47,
+    "invocation": 48,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C18-reversed",
+    "observation_id": 52,
+    "invocation": 53,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C03",
+    "observation_id": 54,
+    "invocation": 55,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C03",
+    "observation_id": 54,
+    "invocation": 56,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "expanded",
+    "case": "C03",
+    "observation_id": 54,
+    "invocation": 57,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "bounds",
+    "case": "C15",
+    "observation_id": 1,
+    "invocation": 2,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "bounds",
+    "case": "C15-google-chunk",
+    "observation_id": 3,
+    "invocation": 4,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "buffered-first",
+    "case": "C01-buffered-gpt4o",
+    "observation_id": 1,
+    "invocation": 2,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "buffered-first",
+    "case": "C01-buffered-gpt4o",
+    "observation_id": 1,
+    "invocation": 3,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "buffered-first",
+    "case": "C01-buffered-gpt4o",
+    "observation_id": 1,
+    "invocation": 4,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "buffered-first",
+    "case": "C01-buffered-gemini",
+    "observation_id": 5,
+    "invocation": 6,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "gemini-cap",
+    "case": "C15-gemini-byte-cap",
+    "observation_id": 1,
+    "invocation": 2,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-gpt4o-0",
+    "observation_id": 1,
+    "invocation": 2,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-gpt4o-1",
+    "observation_id": 3,
+    "invocation": 4,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-gpt4o-2",
+    "observation_id": 5,
+    "invocation": 6,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-gpt4o-2",
+    "observation_id": 5,
+    "invocation": 7,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-gemini-0",
+    "observation_id": 8,
+    "invocation": 9,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-gemini-1",
+    "observation_id": 10,
+    "invocation": 11,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-gemini-2",
+    "observation_id": 12,
+    "invocation": 13,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-Kimi-0",
+    "observation_id": 14,
+    "invocation": 15,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-Kimi-1",
+    "observation_id": 16,
+    "invocation": 17,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-Kimi-2",
+    "observation_id": 18,
+    "invocation": 19,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-provider_2-0",
+    "observation_id": 20,
+    "invocation": 21,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-provider_2-1",
+    "observation_id": 22,
+    "invocation": 23,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-provider_2-2",
+    "observation_id": 24,
+    "invocation": 25,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "baseline",
+    "case": "C01-provider_2-2",
+    "observation_id": 24,
+    "invocation": 26,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "byte-caps",
+    "case": "C15-byte-caps",
+    "observation_id": 1,
+    "invocation": 2,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C06",
+    "observation_id": 1,
+    "invocation": 4,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C06",
+    "observation_id": 2,
+    "invocation": 3,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C07-hidden",
+    "observation_id": 5,
+    "invocation": 6,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C13-absent",
+    "observation_id": 8,
+    "invocation": 9,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C13-unicode",
+    "observation_id": 10,
+    "invocation": 11,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C11-invalid-0",
+    "observation_id": 12,
+    "invocation": 13,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C11-recovered-0",
+    "observation_id": 14,
+    "invocation": 15,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C11-invalid-1",
+    "observation_id": 16,
+    "invocation": 17,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C11-recovered-1",
+    "observation_id": 18,
+    "invocation": 19,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C20-openai-overflow",
+    "observation_id": 23,
+    "invocation": 24,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C17",
+    "observation_id": 25,
+    "invocation": 26,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": false,
+    "cancelled_before_continuation": true
+  },
+  {
+    "batch": "remaining",
+    "case": "C17-next-request",
+    "observation_id": 27,
+    "invocation": 28,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C17-next-request",
+    "observation_id": 27,
+    "invocation": 29,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C10-before-0",
+    "observation_id": 30,
+    "invocation": 31,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C10-deleted-key-0",
+    "observation_id": 32,
+    "invocation": 33,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C12-0",
+    "observation_id": 35,
+    "invocation": 36,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C12-0",
+    "observation_id": 35,
+    "invocation": 37,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C10-before-1",
+    "observation_id": 38,
+    "invocation": 39,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C10-deleted-key-1",
+    "observation_id": 40,
+    "invocation": 41,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C12-1",
+    "observation_id": 43,
+    "invocation": 44,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "remaining",
+    "case": "C12-1",
+    "observation_id": 43,
+    "invocation": 45,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "context-controls",
+    "case": "C10-context-0",
+    "observation_id": 2,
+    "invocation": 3,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "context-controls",
+    "case": "C10-context-1",
+    "observation_id": 4,
+    "invocation": 5,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "google-variant",
+    "case": "C01-Google-variant-0",
+    "observation_id": 1,
+    "invocation": 2,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "google-variant",
+    "case": "C01-Google-variant-1",
+    "observation_id": 3,
+    "invocation": 4,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "google-variant",
+    "case": "C01-Google-variant-2",
+    "observation_id": 5,
+    "invocation": 6,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "edges",
+    "case": "C01-buffered-mistral",
+    "observation_id": 1,
+    "invocation": 2,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "edges",
+    "case": "C01-buffered-mistral",
+    "observation_id": 1,
+    "invocation": 3,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "edges",
+    "case": "C01-buffered-mistral",
+    "observation_id": 1,
+    "invocation": 4,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "edges",
+    "case": "C08",
+    "observation_id": 5,
+    "invocation": 6,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "edges",
+    "case": "C04-four-stores",
+    "observation_id": 7,
+    "invocation": 8,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  },
+  {
+    "batch": "edges",
+    "case": "C05",
+    "observation_id": 9,
+    "invocation": 10,
+    "matched_cha_request_count": 1,
+    "actual_consumer_tool_result_matches": true,
+    "cancelled_before_continuation": false
+  }
+]

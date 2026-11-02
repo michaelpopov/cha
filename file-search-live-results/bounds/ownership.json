@@ -1,0 +1,101 @@
+[
+  {
+    "file_id": "file-4uBqFSLdXRc5Yq4b2ZmaHn",
+    "folder_id": 3,
+    "remote_id": "vs_6ae7e2bdb8ec81918c75c7a630532cd8",
+    "saved_key_id": "api_key_2",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-FC1UCS33aNmUHNBxknjzgN",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-LBdeA4GGUfYGMUf6KytN1C",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-M2szSv4sgVtL1cpqNQd71Z",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-QiFkhaLucgPBD8fSCqWhjL",
+    "service": "openai"
+  },
+  {
+    "file_id": "file-FM2SsprLud9iCb9nQ8pknX",
+    "folder_id": 4,
+    "remote_id": "vs_6ae7e2ea7f0481918840a9bf24a814ed",
+    "saved_key_id": "api_key_2",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-AjYAAzSp5Jc4eKE75Gd561",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-19jub5aXseNsX6jDzyesCu",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-QeEigqXjWWeaRPqWBCuMrG",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-ADDsEXHsrGu87SPDir2579",
+    "service": "openai"
+  },
+  {
+    "file_id": "file-DS43A5cNwf6nzeVuprM1c5",
+    "folder_id": 5,
+    "remote_id": "vs_6ae7e31925388191a0115584ae509369",
+    "saved_key_id": "api_key_2",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-RWHJ6i15bqFNqVFbCmWRnX",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-VaQKhS69ELpELDCCKXe8eA",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-KrgGAv4qN2rBxaCrawjfNf",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-YTKkwFggPNHdn2snYv9LtB",
+    "service": "openai"
+  },
+  {
+    "folder_id": 6,
+    "operation": "fileSearchStores/cha-live-longcase3-vg7zac5gkdkh/upload/operations/longcase3md-lv2kop97aclu",
+    "remote_id": "fileSearchStores/cha-live-longcase3-vg7zac5gkdkh",
+    "saved_key_id": "api_key_3",
+    "service": "google"
+  },
+  {
+    "file_id": "file-8TeJ2G1fVuUqW2HazTDvY4",
+    "folder_id": 7,
+    "remote_id": "vs_6ae7e36e0d048191b4a69cd33fa39b76",
+    "saved_key_id": "api_key_2",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-TLW9rbBMdfJTHw5JMEVqTf",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-WrYHnYiN3rASFY9AKgVreg",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-VbQU1m7xHt7dYEyNkAVGv5",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-53yNe14X1kfNcteUeySnju",
+    "service": "openai"
+  }
+]

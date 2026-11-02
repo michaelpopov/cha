@@ -1,0 +1,268 @@
+[
+  {
+    "utc": "2026-11-02T03:43:29.523645+00:00",
+    "model": null,
+    "prompt": "",
+    "tools": [
+      null
+    ],
+    "instructions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "guide_present": false,
+    "fixed_file_navigation": false,
+    "maintenance_present": false
+  },
+  {
+    "utc": "2026-11-02T03:43:29.850843+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:43:29Z:\nGem fails in Lab. What is wrong?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "3b73f0eebff19b462d9762ea71cddffdb5d2db1fa0e69714b1592f7ca6ea4e24",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:43:31.241401+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:43:29Z:\nGem fails in Lab. What is wrong?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "3b73f0eebff19b462d9762ea71cddffdb5d2db1fa0e69714b1592f7ca6ea4e24",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:43:33.090653+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:43:29Z:\nGem fails in Lab. What is wrong?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "3b73f0eebff19b462d9762ea71cddffdb5d2db1fa0e69714b1592f7ca6ea4e24",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:43:34.513191+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:43:29Z:\nGem fails in Lab. What is wrong?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "3b73f0eebff19b462d9762ea71cddffdb5d2db1fa0e69714b1592f7ca6ea4e24",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:43:36.140968+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:43:29Z:\nGem fails in Lab. What is wrong?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "3b73f0eebff19b462d9762ea71cddffdb5d2db1fa0e69714b1592f7ca6ea4e24",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:43:39.387386+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:43:39Z:\nFix it.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "3b73f0eebff19b462d9762ea71cddffdb5d2db1fa0e69714b1592f7ca6ea4e24",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:43:41.208539+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:43:39Z:\nFix it.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "3b73f0eebff19b462d9762ea71cddffdb5d2db1fa0e69714b1592f7ca6ea4e24",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:43:42.617464+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:43:39Z:\nFix it.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "3b73f0eebff19b462d9762ea71cddffdb5d2db1fa0e69714b1592f7ca6ea4e24",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:43:43.951776+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:43:39Z:\nFix it.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "3b73f0eebff19b462d9762ea71cddffdb5d2db1fa0e69714b1592f7ca6ea4e24",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:43:45.226037+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:43:39Z:\nFix it.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "3b73f0eebff19b462d9762ea71cddffdb5d2db1fa0e69714b1592f7ca6ea4e24",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:43:48.592138+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:43:39Z:\nFix it.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "3b73f0eebff19b462d9762ea71cddffdb5d2db1fa0e69714b1592f7ca6ea4e24",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:43:51.119436+00:00",
+    "model": null,
+    "prompt": "",
+    "tools": [
+      null
+    ],
+    "instructions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "guide_present": false,
+    "fixed_file_navigation": false,
+    "maintenance_present": false
+  }
+]

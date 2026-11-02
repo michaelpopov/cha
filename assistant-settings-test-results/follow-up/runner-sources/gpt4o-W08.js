@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+let s=await session('W08 reproduction',C.lab);await submit(s,'@Gem Say hello.');C.reproduction=await rpc('session.snapshot',s);await checkpoint('W08-before');await ask('step1','Gem fails in Lab. What is wrong?');await ask('step2','Fix it.');let v=await session('W08 verification',C.lab);await submit(v,'@Gem Say hello.');C.verification=await rpc('session.snapshot',v);C.googleProvider=await rpc('provider.get',{provider_id:C.google});await checkpoint('W08-after');

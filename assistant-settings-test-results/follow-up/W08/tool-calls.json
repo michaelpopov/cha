@@ -1,0 +1,602 @@
+[
+  {
+    "call_id": "call_arsTI2cRisQl55m1E70U4NC5",
+    "utc": "2026-11-02T03:43:31.241401+00:00",
+    "prompt": "from Guest at 2026-11-02T03:43:29Z:\nGem fails in Lab. What is wrong?",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": ""
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 11868,
+          "path": "characters/character-voice.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_1/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_1/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 79,
+          "path": "characters/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_2/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_2/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 102,
+          "path": "characters/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_3/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_3/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 110,
+          "path": "characters/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 23,
+          "path": "characters/guide/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 41,
+          "path": "characters/guide/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "forums/forum_1/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 203,
+          "path": "forums/forum_1/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 27,
+          "path": "forums/lobby/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 39,
+          "path": "forums/lobby/members/character_defaults.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/members/guide/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 24,
+          "path": "personas/reader/persona.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 51,
+          "path": "system/assistant/character.toml",
+          "protection_reason": "Assistant settings are read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 218,
+          "path": "system/keys/api_key_1/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 104,
+          "path": "system/keys/api_key_2/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 75,
+          "path": "system/keys/api_key_3/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 95,
+          "path": "system/keys/api_key_4/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 83,
+          "path": "system/keys/api_key_5/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 12,
+          "path": "system/keys/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 109,
+          "path": "system/notes/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 321,
+          "path": "system/providers/provider_1/config.toml",
+          "protection_reason": "Assistant's selected provider is read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 316,
+          "path": "system/providers/provider_2/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 336,
+          "path": "system/providers/provider_3/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 327,
+          "path": "system/providers/provider_4/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 52,
+          "path": "system/providers/test/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 57,
+          "path": "system/session/config.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_rOZ6gyHLisL0yqLti2rK9Prp",
+    "utc": "2026-11-02T03:43:33.090653+00:00",
+    "prompt": "from Guest at 2026-11-02T03:43:29Z:\nGem fails in Lab. What is wrong?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "characters/character_1/character.toml",
+        "characters/character_2/character.toml",
+        "characters/character_3/character.toml",
+        "forums/forum_1/config.toml",
+        "system/providers/provider_2/config.toml",
+        "system/providers/provider_3/config.toml",
+        "system/providers/provider_4/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Writer'\nprovider = 'provider_2'\n",
+          "path": "characters/character_1/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Gem'\nprovider = 'provider_3'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_2/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Claude Test'\nprovider = 'provider_4'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_3/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "default_persona = 'builtin-guest'\ndisplay_name = 'Lab'\n\n[[file_references]]\nkind = 'note'\nname = 'Long note'\nref_id = '##000004'\n\n[[file_references]]\nkind = 'note'\nname = 'Huge note'\nref_id = '##000005'\n",
+          "path": "forums/forum_1/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'responses'\napi_key = 'api_key_1'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'openai-direct'\nhost = 'api.openai.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gpt-5.4-mini'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_2/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'google'\napi_key = 'api_key_2'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'google-direct'\nhost = 'generativelanguage.googleapis.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gemini-3.8-flash'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_3/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'anthropic'\napi_key = 'api_key_4'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'anthropic-direct'\nhost = 'api.anthropic.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'claude-sonnet-4-5'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_4/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_s7CutnLhneLBaaGpns39jN3C",
+    "utc": "2026-11-02T03:43:34.513191+00:00",
+    "prompt": "from Guest at 2026-11-02T03:43:29Z:\nGem fails in Lab. What is wrong?",
+    "name": "assistant_logs",
+    "arguments": {
+      "contains": "character_2",
+      "limit": 60,
+      "minimum_level": "info"
+    },
+    "result": {
+      "entries": [
+        {
+          "level": "warn",
+          "text": "[2026-11-01 19:43:29.232259] [thread 34558813] [warning] Character 'character_2' ignores reasoning_effort for Google"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:43:29.522397] [thread 34558826] [info] Provider request admitted: provider_id=provider_3 character_id=character_2 forum_id=forum_1 session_id=2026-11-01-19-43-29-session request_id=1 token=1 model=gemini-3.8-flash effort=high api=google stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false active_count=1"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:43:29.522436] [thread 34558983] [info] Provider request started: provider_id=provider_3 character_id=character_2 forum_id=forum_1 session_id=2026-11-01-19-43-29-session request_id=1 token=1 model=gemini-3.8-flash effort=high api=google stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:43:29.736036] [thread 34558983] [info] Prompt processing statistics: provider_id=provider_3 character_id=character_2 forum_id=forum_1 session_id=2026-11-01-19-43-29-session request_id=1 token=1 model=gemini-3.8-flash effort=high api=google stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false request_payload_bytes=18244 system_prompt_bytes=16112 conversation_bytes=46 outcome=protocol_error stage=processing overall_ms=213.597166 preparation_ms=1.106250 model_calls=1 model_failed=1 model_cancelled=0 model_ms=212.475417 tools_wall_ms=0.000000 web_search_calls=0 web_search_failed=0 web_search_cancelled=0 web_search_ms=0.000000 web_search_result_bytes=0 web_read_calls=0 web_read_failed=0 web_read_cancelled=0 web_read_ms=0.000000 web_read_result_bytes=0 summary_calls=0 summary_failed=0 summary_cancelled=0 summary_ms=0.000000 summary_result_bytes=0 maintenance_calls=0 maintenance_failed=0 maintenance_cancelled=0 maintenance_ms=0.000000 maintenance_result_bytes=0 tool_calls_requested=0 tool_calls_rejected=0 tool_limit_hits=0 other_ms=0.015499 first_answer_ms=unreported answer_bytes=0 reasoning_bytes=0 input_tokens=unreported output_tokens=unreported total_tokens=unreported cache_read_tokens=unreported cache_write_tokens=unreported"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:43:29.736041] [thread 34558983] [info] Provider request failed usage: provider_id=provider_3 character_id=character_2 forum_id=forum_1 session_id=2026-11-01-19-43-29-session request_id=1 token=1 model=gemini-3.8-flash effort=high api=google stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false request_payload_bytes=18244 system_prompt_bytes=16112 conversation_bytes=46 input_tokens=unreported output_tokens=unreported total_tokens=unreported cache_read_tokens=unreported cache_write_tokens=unreported"
+        },
+        {
+          "level": "error",
+          "text": "[2026-11-01 19:43:29.736052] [thread 34558983] [error] Provider request failed: provider_id=provider_3 character_id=character_2 forum_id=forum_1 session_id=2026-11-01-19-43-29-session request_id=1 token=1 model=gemini-3.8-flash effort=high api=google stream=true provider_web_search=off web_search_provider=off web_read_provider=off web_reader_enabled=false request_payload_bytes=18244 system_prompt_bytes=16112 conversation_bytes=46"
+        }
+      ],
+      "level": "debug",
+      "limited": false,
+      "status": "ok"
+    }
+  },
+  {
+    "call_id": "call_LXxAH5iklp91yfR4alx3SDlt",
+    "utc": "2026-11-02T03:43:36.140968+00:00",
+    "prompt": "from Guest at 2026-11-02T03:43:29Z:\nGem fails in Lab. What is wrong?",
+    "name": "assistant_logs",
+    "arguments": {
+      "contains": "404",
+      "limit": 15,
+      "minimum_level": "info"
+    },
+    "result": {
+      "entries": [
+        {
+          "level": "error",
+          "text": "[2026-11-01 19:43:29.736003] [thread 34558983] [error] HTTP request failed: endpoint=https://generativelanguage.googleapis.com:443/models/gemini-3.8-flash:streamGenerateContent?alt=sse status=404 content_type=text/html request_bytes=18244 response_bytes=0 duration_ms=212.449750 provider_request_id=unreported input_tokens=unreported output_tokens=unreported cache_read_tokens=unreported cache_write_tokens=unreported"
+        }
+      ],
+      "level": "debug",
+      "limited": false,
+      "status": "ok"
+    }
+  },
+  {
+    "call_id": "call_WIChFuKcs3wtz9brNjWJtABi",
+    "utc": "2026-11-02T03:43:41.208539+00:00",
+    "prompt": "from Guest at 2026-11-02T03:43:39Z:\nFix it.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "system/providers"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 321,
+          "path": "system/providers/provider_1/config.toml",
+          "protection_reason": "Assistant's selected provider is read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 316,
+          "path": "system/providers/provider_2/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 336,
+          "path": "system/providers/provider_3/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 327,
+          "path": "system/providers/provider_4/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 52,
+          "path": "system/providers/test/config.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_W0PfLu7C2FGhOqBI34yG65cF",
+    "utc": "2026-11-02T03:43:42.617464+00:00",
+    "prompt": "from Guest at 2026-11-02T03:43:39Z:\nFix it.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "characters"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 11868,
+          "path": "characters/character-voice.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_1/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_1/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 79,
+          "path": "characters/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_2/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_2/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 102,
+          "path": "characters/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_3/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_3/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 110,
+          "path": "characters/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 23,
+          "path": "characters/guide/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 41,
+          "path": "characters/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_n30PuDtJyGERDgdORohh4x9M",
+    "utc": "2026-11-02T03:43:43.951776+00:00",
+    "prompt": "from Guest at 2026-11-02T03:43:39Z:\nFix it.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "characters/character_1/character.toml",
+        "characters/character_2/character.toml",
+        "characters/character_3/character.toml",
+        "system/providers/provider_2/config.toml",
+        "system/providers/provider_3/config.toml",
+        "system/providers/provider_4/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Writer'\nprovider = 'provider_2'\n",
+          "path": "characters/character_1/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Gem'\nprovider = 'provider_3'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_2/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Claude Test'\nprovider = 'provider_4'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_3/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'responses'\napi_key = 'api_key_1'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'openai-direct'\nhost = 'api.openai.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gpt-5.4-mini'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_2/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'google'\napi_key = 'api_key_2'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'google-direct'\nhost = 'generativelanguage.googleapis.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gemini-3.8-flash'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_3/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'anthropic'\napi_key = 'api_key_4'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'anthropic-direct'\nhost = 'api.anthropic.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'claude-sonnet-4-5'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_4/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_vnvwFLnPqCjl5ahJrd96QCas",
+    "utc": "2026-11-02T03:43:45.226037+00:00",
+    "prompt": "from Guest at 2026-11-02T03:43:39Z:\nFix it.",
+    "name": "assistant_logs",
+    "arguments": {
+      "contains": "generativelanguage",
+      "limit": 15,
+      "minimum_level": "info"
+    },
+    "result": {
+      "entries": [
+        {
+          "level": "error",
+          "text": "[2026-11-01 19:43:29.736003] [thread 34558983] [error] HTTP request failed: endpoint=https://generativelanguage.googleapis.com:443/models/gemini-3.8-flash:streamGenerateContent?alt=sse status=404 content_type=text/html request_bytes=18244 response_bytes=0 duration_ms=212.449750 provider_request_id=unreported input_tokens=unreported output_tokens=unreported cache_read_tokens=unreported cache_write_tokens=unreported"
+        }
+      ],
+      "level": "debug",
+      "limited": false,
+      "status": "ok"
+    }
+  },
+  {
+    "call_id": "call_EF53BRbc2xl4t8BSCMiNNxI9",
+    "utc": "2026-11-02T03:43:48.592138+00:00",
+    "prompt": "from Guest at 2026-11-02T03:43:39Z:\nFix it.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": "api = 'google'\napi_key = 'api_key_2'\nauth = 'none'\nbase_path = '/v1beta'\ncache_retention = 'short'\ndisplay_name = 'google-direct'\nhost = 'generativelanguage.googleapis.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gemini-3.8-flash'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "key": null,
+          "operation": "replace",
+          "path": "system/providers/provider_3/config.toml",
+          "value": null
+        }
+      ],
+      "version": "1"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 358,
+          "old_bytes": 336,
+          "path": "system/providers/provider_3/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": true,
+      "version": "2",
+      "warnings": []
+    }
+  }
+]

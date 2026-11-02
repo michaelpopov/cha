@@ -478,6 +478,45 @@ TEST(ApplicationMedia, DefaultElevenLabsVoiceUsesItsCredentialAndStreamsAudio) {
 
 
 
+TEST(ApplicationMedia, NoteCompressionUsesAssistantAppliedProvider) {
+    using Json = nlohmann::json;
+    const Json response{{"status", "completed"}, {"output", Json::array({{
+        {"type", "message"}, {"role", "assistant"}, {"content", Json::array({{
+            {"type", "output_text"}, {"text", "Compressed through Assistant settings"}}})}}})}};
+    MockHttpServer server({http_response("text/event-stream",
+        "data: " + Json{{"type", "response.output_text.delta"},
+            {"delta", "Compressed through Assistant settings"}}.dump() + "\n\n"
+        "data: " + Json{{"type", "response.completed"}, {"response", response}}.dump() + "\n\n")});
+    server.start();
+    test::TestWorkspace fixture;
+    fixture.write_provider("mock", "host = '127.0.0.1'\nport = " + std::to_string(server.port())
+        + "\nmodel = 'mock'\nmode = 'net'\napi = 'responses'\n");
+    auto application = Application::open(make_command(fixture, test::import_test_database(fixture.root())));
+    const auto epoch = application->context_epoch();
+    const auto applied = application->store().apply_config(application->store().config_revision(),
+        std::vector<WorkspaceConfigChange>{{.path = "system/notes/config.toml",
+            .operation = WorkspaceConfigOperation::create,
+            .content = "compression_provider = 'mock'\n"}});
+    ASSERT_TRUE(applied.committed) << applied.error_message;
+    EXPECT_EQ(application->get_notes_settings(epoch).compression_provider, "mock");
+    const auto note = application->create_note_item({}, NoteItemKind::note, "Long note", epoch);
+    application->save_note(note.id, {{"type", "doc"}, {"content", Json::array({
+        {{"type", "paragraph"}, {"content", Json::array({{{"type", "text"}, {"text", std::string(4096, 'a')}}})}}
+    })}}, epoch);
+    ASSERT_EQ(application->compress_note(note.id, epoch), Json({{"accepted", true}}));
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (application->note_compression_status(note.id, epoch)["pending"].get<bool>()
+        && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(2ms);
+    EXPECT_FALSE(application->note_compression_status(note.id, epoch)["pending"].get<bool>());
+    server.join();
+    EXPECT_EQ(application->get_note(note.id, epoch).compressed_text, "Compressed through Assistant settings");
+    ASSERT_EQ(server.requests().size(), 1u);
+    EXPECT_TRUE(server.requests()[0].starts_with("POST /v1/responses HTTP/"))
+        << server.requests()[0].substr(0, server.requests()[0].find("\r\n"));
+    application->request_shutdown();
+    EXPECT_TRUE(application->join_shutdown(2s));
+}
+
 TEST(ApplicationMedia, GoogleNoteCompressionUsesDefaultEffortAndRejectsPartialAnswers) {
     using Json = nlohmann::json;
     for (const auto* reason : {"STOP", "MAX_TOKENS", "SAFETY"}) {

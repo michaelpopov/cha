@@ -29,7 +29,7 @@ ProviderSelection note_editing_provider(const Workspace& workspace) {
     const auto* provider = workspace.find_provider(workspace.notes().compression_provider_id);
     if (!provider) {
         throw ApplicationError(ErrorCode::invalid_argument,
-            "Select a compression provider in Settings → Notes.");
+            "Select a compression provider in Notes settings.");
     }
     const auto& effort = workspace.notes().compression_reasoning_effort;
     if (effort != "none"
@@ -285,7 +285,7 @@ void require_summary_answer(const NotePromptAnswer& answer, const std::atomic_bo
     if (result.outcome != GenerationOutcome::completed) {
         if (result.message == "Prompt exceeds the model's context window.")
             throw ApplicationError(ErrorCode::invalid_argument,
-                "The conversation exceeds the model's context window. Select a model with a larger context window in Settings → Notes and try again.");
+                "The conversation exceeds the model's context window. Select a model with a larger context window in Settings → Notes settings and try again.");
         const std::initializer_list<std::string_view> safe_reasons{
             "HTTP request failed: idle timeout reached", "HTTP request failed: Timeout was reached",
             "Provider quota or billing limit exceeded.", "Provider authentication or permission was rejected.",
@@ -687,7 +687,7 @@ std::shared_ptr<OperationReply> NotesService::read_note_page(
     }
     if (!config.web_reader_enabled && config.read_provider != "firecrawl") {
         throw ApplicationError(ErrorCode::invalid_argument,
-            "Page reading is not configured. Enable web_reader or Firecrawl in Web search settings.");
+            "Page reading is not configured. Enable web_reader or Firecrawl in Settings → Search API.");
     }
     if (!impl_->background_jobs.launch(
             [owner = impl_.get(), reply, workspace = std::move(workspace),

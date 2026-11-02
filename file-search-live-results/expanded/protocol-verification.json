@@ -1,0 +1,276 @@
+[
+  {
+    "protocol": "google",
+    "model": null,
+    "calls": [
+      "call_19347"
+    ],
+    "results": [
+      "call_19347"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "google",
+    "model": null,
+    "calls": [
+      "call_19347",
+      "call_487321"
+    ],
+    "results": [
+      "call_19347",
+      "call_487321"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "google",
+    "model": null,
+    "calls": [
+      "call_19347",
+      "call_487321",
+      "call_1488"
+    ],
+    "results": [
+      "call_19347",
+      "call_487321",
+      "call_1488"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "responses",
+    "model": "gpt-6-astra",
+    "calls": [
+      "call_8e9df544f03b48d390796813969f3e9b"
+    ],
+    "results": [
+      "call_8e9df544f03b48d390796813969f3e9b"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "responses",
+    "model": "gpt-6-astra",
+    "calls": [
+      "call_7bfe2d8a459f496e83255c8a61e5ea04"
+    ],
+    "results": [
+      "call_7bfe2d8a459f496e83255c8a61e5ea04"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "responses",
+    "model": "gpt-6-astra",
+    "calls": [
+      "call_5c146c983e114bad92eadb3353ca4993"
+    ],
+    "results": [
+      "call_5c146c983e114bad92eadb3353ca4993"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "deepseek/deepseek-v4-pro-0813",
+    "calls": [
+      "call_dd7ea5941de64f0d94f71d9e",
+      "call_08e9793220294b4cb5fa34bb"
+    ],
+    "results": [
+      "call_dd7ea5941de64f0d94f71d9e",
+      "call_08e9793220294b4cb5fa34bb"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "accounts/fireworks/models/deepseek-v4p1-flash",
+    "calls": [
+      "call_cd19587a91824359b73bb07e",
+      "call_88ab70ccdac64f61b91eb132"
+    ],
+    "results": [
+      "call_cd19587a91824359b73bb07e",
+      "call_88ab70ccdac64f61b91eb132"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "accounts/fireworks/models/minimax-m3",
+    "calls": [
+      "call_7l0XQXiEdWi33JurW11ghIWF",
+      "call_QlAh0MzU6Sdp9GgphDmlCciQ"
+    ],
+    "results": [
+      "call_7l0XQXiEdWi33JurW11ghIWF",
+      "call_QlAh0MzU6Sdp9GgphDmlCciQ"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "accounts/fireworks/models/qwen3p8-max",
+    "calls": [
+      "chatcmpl-tool-8e9467281f99046c",
+      "chatcmpl-tool-b25ac9e4ef6617a8",
+      "chatcmpl-tool-82ab2e229353663b"
+    ],
+    "results": [
+      "chatcmpl-tool-8e9467281f99046c",
+      "chatcmpl-tool-b25ac9e4ef6617a8",
+      "chatcmpl-tool-82ab2e229353663b"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "gemini-pro-latest",
+    "calls": [
+      "call_1705321"
+    ],
+    "results": [
+      "call_1705321"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "mistral-large-latest",
+    "calls": [
+      "laxSTheBO",
+      "21c3Ttx2Z",
+      "gNV0x2AhR"
+    ],
+    "results": [
+      "laxSTheBO",
+      "21c3Ttx2Z",
+      "gNV0x2AhR"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "qwen/qwen3.8-max",
+    "calls": [
+      "call_399a0abf9e5e46c6996dfaa3",
+      "call_146f5a6ca38b4a96bb961e65"
+    ],
+    "results": [
+      "call_399a0abf9e5e46c6996dfaa3",
+      "call_146f5a6ca38b4a96bb961e65"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "qwen/qwen3.8-2.4t-a95b",
+    "calls": [
+      "chatcmpl-tool-a3a7c59aceb14d0c"
+    ],
+    "results": [
+      "chatcmpl-tool-a3a7c59aceb14d0c"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "abliteration-abliterated-model-large-v2",
+    "calls": [
+      "call_908b71f2bf8147b0",
+      "call_9eafe5ac08c33855"
+    ],
+    "results": [
+      "call_908b71f2bf8147b0",
+      "call_9eafe5ac08c33855"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "abliteration-abliterated-model-large-flash",
+    "calls": [
+      "call_8a0d9ad5550e5f1d",
+      "call_a0a97ed38c12fc6f"
+    ],
+    "results": [
+      "call_8a0d9ad5550e5f1d",
+      "call_a0a97ed38c12fc6f"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "aion-labs-aion-3-0",
+    "calls": [
+      "call_0"
+    ],
+    "results": [
+      "call_0"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "aion-labs-aion-3-5-mini",
+    "calls": [
+      "call_0"
+    ],
+    "results": [
+      "call_0"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "google",
+    "model": null,
+    "calls": [
+      "search_attached_files"
+    ],
+    "results": [
+      "search_attached_files"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "moonshotai/kimi-k2.5",
+    "calls": [
+      "functions.search_attached_files:0"
+    ],
+    "results": [
+      "functions.search_attached_files:0"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "moonshotai/kimi-k2.5",
+    "calls": [
+      "functions.search_attached_files:0",
+      "functions.search_attached_files:1"
+    ],
+    "results": [
+      "functions.search_attached_files:0",
+      "functions.search_attached_files:1"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "moonshotai/kimi-k2.5",
+    "calls": [
+      "functions.search_attached_files:0",
+      "functions.search_attached_files:1",
+      "functions.search_attached_files:2"
+    ],
+    "results": [
+      "functions.search_attached_files:0",
+      "functions.search_attached_files:1",
+      "functions.search_attached_files:2"
+    ],
+    "results_have_calls": true
+  }
+]

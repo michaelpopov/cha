@@ -1,0 +1,103 @@
+[
+  {
+    "utc": "2026-11-02T03:45:13.051441+00:00",
+    "model": "gpt-5.4-mini",
+    "prompt": "from Guest at 2026-11-02T03:45:13Z:\nRead https://example.com and tell me what it says.",
+    "tools": [
+      "web_read",
+      "summary_search",
+      "summary_read",
+      "search_attached_files",
+      "file_search"
+    ],
+    "instructions_sha256": "63df2fe95e5da3d6cdfe0d363b850594a0a0255d7015625da183d5f793fb67d0",
+    "guide_present": false,
+    "fixed_file_navigation": false,
+    "maintenance_present": false
+  },
+  {
+    "utc": "2026-11-02T03:45:14.354493+00:00",
+    "model": "gpt-5.4-mini",
+    "prompt": "from Guest at 2026-11-02T03:45:13Z:\nRead https://example.com and tell me what it says.",
+    "tools": [
+      "web_read",
+      "summary_search",
+      "summary_read",
+      "search_attached_files",
+      "file_search"
+    ],
+    "instructions_sha256": "63df2fe95e5da3d6cdfe0d363b850594a0a0255d7015625da183d5f793fb67d0",
+    "guide_present": false,
+    "fixed_file_navigation": false,
+    "maintenance_present": false
+  },
+  {
+    "utc": "2026-11-02T03:45:15.598566+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:45:15Z:\nWhy does page reading use Firecrawl, and does my web_reader key matter?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login",
+      "web_read"
+    ],
+    "instructions_sha256": "1bc9062f92333eec7b15b4b2903882274d42202c352798a82c166025814c544b",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:45:17.715630+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:45:15Z:\nWhy does page reading use Firecrawl, and does my web_reader key matter?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login",
+      "web_read"
+    ],
+    "instructions_sha256": "1bc9062f92333eec7b15b4b2903882274d42202c352798a82c166025814c544b",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:45:19.660720+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:45:15Z:\nWhy does page reading use Firecrawl, and does my web_reader key matter?",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login",
+      "web_read"
+    ],
+    "instructions_sha256": "1bc9062f92333eec7b15b4b2903882274d42202c352798a82c166025814c544b",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": true
+  }
+]

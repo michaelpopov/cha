@@ -1,0 +1,176 @@
+{
+  "characters": [
+    {
+      "appearance": {
+        "font": "sans",
+        "size": "normal",
+        "style": "normal",
+        "text_color": "normal",
+        "weight": "normal"
+      },
+      "display_name": "Guide",
+      "id": "guide"
+    }
+  ],
+  "chat_settings": {
+    "characters": [
+      {
+        "character_id": "guide",
+        "provider_id": "provider_3",
+        "reasoning_effort": "none"
+      }
+    ],
+    "model_options": [
+      {
+        "display_name": "Live Gemini",
+        "host": "generativelanguage.googleapis.com",
+        "id": "provider_2",
+        "model": "gemini-3.8-flash"
+      },
+      {
+        "display_name": "Live Gpt4o",
+        "host": "api.openai.com",
+        "id": "provider_1",
+        "model": "gpt-4o"
+      },
+      {
+        "display_name": "Live Mistral",
+        "host": "api.mistral.ai",
+        "id": "provider_3",
+        "model": "mistral-large-latest"
+      },
+      {
+        "display_name": "Test",
+        "host": "test",
+        "id": "test",
+        "model": "fake"
+      }
+    ]
+  },
+  "default_character_id": "guide",
+  "forum": {
+    "default_character_id": "guide",
+    "default_persona_display_name": "Guest",
+    "default_persona_id": "builtin-guest",
+    "display_name": "The Lobby",
+    "id": "lobby",
+    "members": [
+      {
+        "appearance": {
+          "font": "sans",
+          "size": "normal",
+          "style": "normal",
+          "text_color": "normal",
+          "weight": "normal"
+        },
+        "display_name": "Guide",
+        "id": "guide"
+      }
+    ]
+  },
+  "generation": {
+    "active": false,
+    "character_display_name": "",
+    "character_id": "",
+    "phase": "waiting"
+  },
+  "lifecycle": "running",
+  "session_id": "2026-11-01-16-52-16-session",
+  "session_label": "C11-invalid-1",
+  "transcript": [
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793580736,
+      "display_name": "System",
+      "has_cached_audio": false,
+      "id": 1,
+      "input_tokens": null,
+      "kind": "notice",
+      "output_tokens": null,
+      "participant_id": "",
+      "status": "complete",
+      "text": "Added folder “O-B Packaging” to this chat.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793580736,
+      "display_name": "System",
+      "has_cached_audio": false,
+      "id": 2,
+      "input_tokens": null,
+      "kind": "notice",
+      "output_tokens": null,
+      "participant_id": "",
+      "status": "complete",
+      "text": "Added folder “G-A Спрос” to this chat.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "guide",
+      "addressed_to_name": "Guide",
+      "created_at": 1793580736,
+      "display_name": "Guest",
+      "has_cached_audio": false,
+      "id": 3,
+      "input_tokens": null,
+      "kind": "human",
+      "output_tokens": null,
+      "participant_id": "builtin-guest",
+      "request_id": 1,
+      "status": "complete",
+      "text": "Explicitly search both attached Project Cedar sources. Give verified facts and identify any source access errors; do not guess unavailable facts.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793580739,
+      "display_name": "Guide",
+      "has_cached_audio": false,
+      "id": 4,
+      "input_tokens": 2895,
+      "kind": "character",
+      "output_tokens": 147,
+      "participant_id": "guide",
+      "request_id": 1,
+      "status": "complete",
+      "text": "Here are the verified facts from the **O-B Packaging (##000003)** source:\n\n- **Project Cedar packaging details**:\n  - **Units per case**: 14\n  - **Cost per case**: 34 credits\n  - **Source code**: `LIVE-4147111809`\n  - **Reserved material**: Cobalt\n\n---\n**Source access error**:\nThe **G-A Спрос (##000004)** folder rejected the request. No facts were retrieved from it. If you need details from this folder, its configuration or content may require review.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "guide",
+      "addressed_to_name": "Guide",
+      "created_at": 1793580740,
+      "display_name": "Guest",
+      "has_cached_audio": false,
+      "id": 5,
+      "input_tokens": null,
+      "kind": "human",
+      "output_tokens": null,
+      "participant_id": "builtin-guest",
+      "request_id": 2,
+      "status": "complete",
+      "text": "Explicitly search both attached stores again. Report the source codes and filenames from newly retrieved evidence.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793580756,
+      "display_name": "Guide",
+      "has_cached_audio": false,
+      "id": 6,
+      "input_tokens": 3340,
+      "kind": "character",
+      "output_tokens": 214,
+      "participant_id": "guide",
+      "request_id": 2,
+      "status": "complete",
+      "text": "Here are the verified facts from the **reattempted search** of both attached stores, including **source codes** and **filenames**:\n\n---\n### **O-B Packaging (##000003)**\n- **Filename**: `cedar-packaging.md`\n- **Source code**: `LIVE-4147111809`\n- **Details**:\n  - Units per case: 14\n  - Cost per case: 34 credits\n  - Reserved material: Cobalt\n\n---\n### **G-A Спрос (##000004)**\n- **Filename**: `cedar-demand-данные.md`\n- **Source code**: `LIVE-1391754255`\n- **Details**:\n  - Demand: 44 units\n  - Budget: 200 credits\n  - Reserved color: Бирюзовый (Turquoise)",
+      "web_search_used": false
+    }
+  ]
+}

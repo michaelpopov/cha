@@ -1,0 +1,17 @@
+[
+  {
+    "url": "https://api.openai.com/v1/vector_stores/vs_6ae8070c81e48191b7575e6c2f8792f2",
+    "http_status": 404,
+    "removed": true
+  },
+  {
+    "url": "https://api.openai.com/v1/files/file-5jazmn7RohWz3SThWs4CrB",
+    "http_status": 404,
+    "removed": true
+  },
+  {
+    "url": "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/docs-gemini-000008-6ejznvqrnne6",
+    "http_status": 404,
+    "removed": true
+  }
+]

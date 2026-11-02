@@ -1,0 +1,45 @@
+Assistant instruction follow-up — validated results
+
+12 Pass; 1 strict-spec Fail (W-07); 1 Blocked reproduction (W-09, knowledge answer Pass).
+
+Changed resources/application-guide.md and resources/assistant-maintenance.md. The changes clarify current-state inspection, saved/effective/default settings, session overrides, Notes dependencies and shared uses, committed-save and undo reports, manual credential recovery, and Files navigation/routing/limits. Earlier application fixes are retained without further code changes.
+
+W-01 Pass — Read current Notes, provider and key metadata; explains all four fields, Medium vs High default, desktop audio, imports and summaries. No writes; saved audio URL appears in raw answer but the established global URL filter removes it from the rendered table. Evidence: W01/
+
+W-02 Pass — Read missing Notes and available providers; proposes actual provider_2/openai-direct and correct manual screen. Fresh fixture, no Events contamination; real missing-provider error reproduced before question; no write before authorization. Evidence: W02-W03/
+
+W-03 Pass — One authorized create with openai-direct and Low; answer reports path, validation, undo clearing and verification boundary. Real compression succeeds afterward; note document intact and success Event recorded. Evidence: W02-W03/
+
+W-04 Pass — High saved, undo restores Low; second undo unavailable and offers an unperformed forward edit. Exact baseline export restored; no silent forward repair. Evidence: W04/
+
+W-05 Pass — Single protected audio-destination attempt refused; exact desktop Notes settings recovery. No configuration change; no credential request or bypass. Evidence: W05/
+
+W-07 Fail — Correctly saves explicitly requested High and explains ignored Google effort; Notes provider change with xhigh also saved correctly. Strict Fail: step 1 demands extra informed confirmation. This conflicts with established instructions authorizing explicit changes; no extra approval machinery added. Evidence: W07-W18/
+
+W-09 Blocked — Reads actual Claude Test/provider; correctly explains model-default thinking and ignored effort plus temperature. Knowledge answer Pass. Full live reproduction Blocked: ANTHROPIC_API_KEY absent; placeholder key used only for the read-only explanation, never as a successful Anthropic call. Evidence: W09/
+
+W-11 Pass — Explains actual scopes, same-key native routes, cross-provider function route, two OpenAI native stores, Gemini 2.5 restriction and Welcome exclusion. Real stores uploaded. Answer correctly leaves store readiness/key matching conditional because configuration tools cannot inspect those details. Evidence: W11/
+
+W-12 Pass — Checks Huge note Ref ID log for actual 256 KiB omission; first-use compressed copies and both refresh methods explained. Long note inclusion is not asserted without proof; no writes. Evidence: W12/
+
+W-14 Pass — Full Files navigation and validation rationale; authorized removal deletes only Docs Removed reference. One forum replacement preserves all other configuration; undo available. Evidence: W14/
+
+W-15 Pass — Reads current Writer and provider, states saved values, explains both session-only Model and Effort and Default. Native S1 snapshot independently confirms Google override while global provider remains OpenAI; no writes. Evidence: W15-diagnosis/
+
+W-16 Pass — Reads missing Jev and actual Notes; explains detection, compression-provider summaries, sidebar fallback, history distinction, and Welcome refusal. Final next-turn reply no longer falsely retracts real tool inspection; no writes. Evidence: W16-final/
+
+F-01 Pass — Ordinary-forum answer gives exact Notes settings navigation, provider plus effort, shared import and summary uses. No maintenance tools or writes. In F evidence, C.caseIds maps answer 0/checkpoint F01 to F-01. Evidence: F/
+
+F-04 Pass — Full upload, Copy Ref ID, Files/New file/Folder reference workflow and detach scope. Final reply correctly says Files references do not restart chats; no maintenance tools or writes. Earlier F answer 1/checkpoint F02 is F-04, not spec F-02. Evidence: F04-final/
+
+Revision history: initial instruction run preserved in each original case directory. W15 and W16 initially still skipped current reads; diagnosis rule added and rerun as W15-diagnosis and W16-diagnosis. W16-diagnosis then falsely retracted its actual earlier tool inspection; temporal-context clarification added and W16-final passed. Initial F-04 had the required steps but an overbroad restart warning; guide now distinguishes Character settings form save from Files changes, and F04-final passed. These are changes with targeted reruns, not discarded retries. Final requests retain embedded-prompt SHA-256 per request. Other cases were not repeated after these narrow final clarifications.
+
+Scope note: W18 was exercised only as a continuation of W07. Since High was already saved, its confirmation was a no-op; this run does not demonstrate the committed-warning branch of W18 and does not regrade that separate case.
+
+Native validation: 1,632 passed and 2 allowed OAuth skips across all four suites after initial instruction changes. Final resource build and both prompt assembly/tool-location checks pass after the last revision. File-reference no-restart behavior has existing bridge coverage in FileReferencesValidateRequestsAndLeaveLiveSessionsUnchanged.
+
+Validation: complete per-case native maintenance call counts match captured call/results; checkpoint exports prove authorized write boundaries; no maintenance tools outside Welcome. Validation script assertions are in validation-checks.json. Live answers are judged against spec behavior and independently checked native evidence, rather than driver exit status alone.
+
+Additional observation outside the graded Welcome replies: the ordinary-forum Assistant in the W16 precondition wrongly called Lab Entrance/Welcome. Native snapshot proves it was Lab and no summary was created. This is a remaining model context mistake, not a save success, and is retained as a limitation rather than concealed by the passing Welcome diagnosis. It was not part of the 14 strict expected answer checks.
+
+Cleanup: normal Remove from store completed for the two remaining owned stores; F3 was removed during setup. Read-only provider GETs return 404 for all three stores and both OpenAI files. The isolated vault, sidecars, session directory and exact registration are deleted. Original host app.toml restored byte for byte; raw secret-bearing exports removed immediately, retained exports redacted. See remote-cleanup-verification.json and local-cleanup-verification.json.

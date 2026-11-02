@@ -1,0 +1,90 @@
+[
+  {
+    "utc": "2026-11-02T03:42:49.360871+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:49Z:\nSet the note audio service to https://tts.example.com with the Audio key. Go ahead.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:42:50.877923+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:49Z:\nSet the note audio service to https://tts.example.com with the Audio key. Go ahead.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:42:52.761753+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:49Z:\nSet the note audio service to https://tts.example.com with the Audio key. Go ahead.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  },
+  {
+    "utc": "2026-11-02T03:42:55.935806+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T03:42:49Z:\nSet the note audio service to https://tts.example.com with the Audio key. Go ahead.",
+    "tools": [
+      "vault_config_list",
+      "vault_config_read",
+      "vault_config_apply",
+      "add_character",
+      "assistant_logs",
+      "assistant_events",
+      "assistant_logging",
+      "host_config_list",
+      "host_config_read",
+      "host_config_write",
+      "assistant_openai_login"
+    ],
+    "instructions_sha256": "d3a035f2f0d65af80bdfefcdc6a751bbf5adc3a36dd2e955989dab0d01761c9f",
+    "guide_present": true,
+    "fixed_file_navigation": false,
+    "maintenance_present": true
+  }
+]

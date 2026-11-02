@@ -1,0 +1,10 @@
+ M resources/application-guide.md
+ M resources/assistant-maintenance.md
+ M src/workspace/workspace_config_store.cpp
+ M tests/workspace/unit_workspace_config_store.cpp
+?? docs/guided-prd.md
+?? file-search-live-results/
+?? specs/ass-test.md
+?? specs/bug-fixes.md
+?? specs/file-search-test.md
+?? specs/guided-design.md

@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+let s=await session('W10 reproduction',C.lab);await submit(s,'@Writer Say hello.');C.reproduction=await rpc('session.snapshot',s);await checkpoint('W10-before');await ask('answer',"Lab's Docs Removed folder seems to do nothing. Why?");await checkpoint('W10-after');

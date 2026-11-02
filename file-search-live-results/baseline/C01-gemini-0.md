@@ -1,0 +1,12 @@
+<!-- CHA session: C01-gemini-0 -->
+*Started November 01, 2026 at 16:31 PST*
+
+`System` · Added folder “O-B Packaging” to this chat.
+
+`Guest` · Explicitly search the attached files for Project Cedar packaging. Report units per case, credits per case, the source code, and source filename.
+
+`Guide` · Based on the attached file `cedar-packaging.md`:  
+* **Units per case:** 11
+* **Credits per case:** 32
+* **Source code:** LIVE-263737978
+* **Source filename:** `cedar-packaging.md`

@@ -1,0 +1,41 @@
+import pathlib,json,re,datetime
+root=pathlib.Path('/Users/mpopov/projects/cha/file-search-live-results')
+report=[]
+for oracle_path in root.rglob('oracle.json'):
+ folder=oracle_path.parent
+ ep=folder/'events.jsonl'
+ if not ep.exists():continue
+ oracle=json.loads(oracle_path.read_text());events=[json.loads(l) for l in ep.read_text().splitlines()]
+ for path in sorted(folder.glob('C01*.json')):
+  snap=json.loads(path.read_text())
+  if not isinstance(snap,dict) or 'transcript' not in snap:continue
+  case=path.stem;e=[x for x in events if x['case']==case]
+  prepared=next((x for x in e if x['event']=='prepared'),None)
+  if not prepared:continue
+  which=0 if case.endswith('-0') or case.endswith('-openai') else 1 if case.endswith('-1') or case.endswith('-google') else 2
+  codes=[oracle['O-code']] if which==0 else [oracle['G-code']] if which==1 else [oracle['O-code'],oracle['G-code']]
+  answer='\n'.join(t['text'] for t in snap['transcript'] if t['kind']=='character')
+  errors=[t['text'] for t in snap['transcript'] if t['kind']=='error']
+  passages=[];filenames=[]
+  for x in e:
+   if x['event']!='retrieval_response' or x['status']!=200:continue
+   b=json.loads(x['body'])
+   if x['store'].startswith('fileSearchStores'):
+    for c in b.get('candidates',[{}])[0].get('groundingMetadata',{}).get('groundingChunks',[]):
+     t=c.get('retrievedContext',{});passages.append(t.get('text',''));filenames.append(t.get('title',''))
+   else:
+    for d in b.get('data',[]):
+     passages.extend(t.get('text','') for t in d.get('content',[]) if t['type']=='text');filenames.append(d['filename'])
+  source='\n'.join(passages);outputs='\n'.join(x['output'] for x in e if x['event']=='tool_output')
+  dispatch=[x for x in e if x['event']=='dispatch']
+  checks=dict(codes_absent_initial=all(c not in json.dumps(prepared['request']) for c in codes),codes_in_source=all(c in source for c in codes),codes_in_tool_output=all(c in outputs for c in codes),codes_in_answer=all(c in answer for c in codes),filenames_in_answer=bool(filenames) and all(f in answer for f in set(filenames)),all_credentials_match=(all(x['credential_matches_expected'] for x in dispatch) if dispatch else None),no_native_search=not any(t.get('type')=='file_search' or 'fileSearch' in t for t in prepared['request'].get('tools',[])),target_count_matches=len(prepared['targets'])==(2 if which==2 else 1))
+  ledger=json.loads((folder/'ownership.json').read_text());stores=[x for x in ledger if 'remote_id' in x][:2];expected=stores if which==2 else [stores[which]]
+  checks['complete_target_set_matches']={x['remote_store_id'] for x in prepared['targets']}=={x['remote_id'] for x in expected}
+  checks['saved_id_labels_match']=all(any(t['remote_store_id']==x['remote_id'] and t['saved_key_id']==x['saved_key_id'] for x in expected) for t in prepared['targets'])
+  if which!=2:checks['standalone_numbers']=all(re.search(r'(?<!\d)'+str(oracle[k])+r'(?!\d)',answer) for k in (('units','price') if which==0 else ('demand','budget')))
+  if which==2:checks['arithmetic_numbers']=all(re.search(r'(?<!\d)'+str(oracle[k])+r'(?!\d)',answer) for k in ('cases','total','remaining'))
+  verdict='blocked' if errors else 'pass' if all(checks.values()) else 'fail'
+  report.append(dict(utc_start=datetime.datetime.fromtimestamp(prepared['utc_epoch_ms']/1000,datetime.timezone.utc).isoformat(),case=str(path.relative_to(root)),model=prepared['model'],host=prepared['host'],protocol=prepared['api'],stream=prepared['stream'],verdict=verdict,checks=checks,errors=errors,retrieval_requests=len(dispatch),search_invocations=sum(x['event']=='tool_query' for x in e)))
+(root/'case-verification.json').write_text(json.dumps(report,indent=2)+'\n')
+for r in report:
+ print(r['case'],r['verdict'],[k for k,v in r['checks'].items() if not v] if r['verdict']!='blocked' else r['errors'][0].split('\n')[0][:160])

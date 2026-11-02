@@ -1,0 +1,2997 @@
+{
+  "events": [],
+  "assertions": [],
+  "C": {
+    "welcome": {
+      "session_id": "builtin-welcome",
+      "forum_id": "builtin-entrance"
+    },
+    "Docs OpenAI": {
+      "id": 6,
+      "ref_id": "##000006"
+    },
+    "assistant": "provider_1",
+    "google": "provider_3",
+    "W02Settings": {
+      "audio_api_key": "",
+      "compression_reasoning_effort": "high",
+      "compression_provider": "",
+      "audio_url": ""
+    },
+    "anthropic_credential": false,
+    "Gem": "character_2",
+    "W02": {
+      "session_label": "Welcome",
+      "characters": [
+        {
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "weight": "normal",
+            "font": "sans",
+            "text_color": "normal"
+          },
+          "id": "builtin-assistant",
+          "display_name": "Assistant"
+        }
+      ],
+      "lifecycle": "running",
+      "transcript": [
+        {
+          "id": 1,
+          "request_id": 1,
+          "created_at": 1793590872,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "output_tokens": null,
+          "input_tokens": null,
+          "text": "Compressing my note fails. Why?",
+          "participant_id": "builtin-guest",
+          "display_name": "Guest",
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 2,
+          "request_id": 1,
+          "created_at": 1793590875,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "Assistant",
+          "input_tokens": 69490,
+          "participant_id": "builtin-assistant",
+          "output_tokens": 69,
+          "text": "It seems there are no recent events or pending operations related to note compression. This could mean the issue might be configuration-related, or it hasn\u2019t logged a specific error recently. \n\nLet's inspect the notes configuration to see if there are potential issues. Shall I proceed with that?",
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        }
+      ],
+      "generation": {
+        "phase": "waiting",
+        "active": false,
+        "character_id": "",
+        "character_display_name": ""
+      },
+      "session_id": "builtin-welcome",
+      "chat_settings": {
+        "characters": [
+          {
+            "character_id": "builtin-assistant",
+            "reasoning_effort": "none",
+            "provider_id": "provider_1"
+          }
+        ],
+        "model_options": [
+          {
+            "id": "provider_4",
+            "model": "claude-sonnet-4-5",
+            "host": "api.anthropic.com",
+            "display_name": "anthropic-direct"
+          },
+          {
+            "id": "provider_1",
+            "model": "gpt-4o",
+            "host": "api.openai.com",
+            "display_name": "Assistant test model"
+          },
+          {
+            "id": "provider_3",
+            "model": "gemini-3.8-flash",
+            "host": "generativelanguage.googleapis.com",
+            "display_name": "google-direct"
+          },
+          {
+            "id": "provider_2",
+            "display_name": "openai-direct",
+            "host": "api.openai.com",
+            "model": "gpt-5.4-mini"
+          },
+          {
+            "id": "test",
+            "display_name": "Test",
+            "model": "fake",
+            "host": "test"
+          }
+        ]
+      },
+      "forum": {
+        "default_persona_id": "builtin-guest",
+        "id": "builtin-entrance",
+        "display_name": "Entrance",
+        "default_character_id": "builtin-assistant",
+        "default_persona_display_name": "Guest",
+        "members": [
+          {
+            "id": "builtin-assistant",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "text_color": "normal",
+              "font": "sans",
+              "weight": "normal"
+            },
+            "display_name": "Assistant"
+          }
+        ]
+      },
+      "default_character_id": "builtin-assistant"
+    },
+    "events": {
+      "items": [
+        {
+          "id": 2,
+          "message": "Compressed version ready for \u201cLong note\u201d (note 4).",
+          "recorded_at": 1793590883,
+          "severity": "success"
+        },
+        {
+          "id": 1,
+          "recorded_at": 1793590881,
+          "message": "Compression started for \u201cLong note\u201d (note 4).",
+          "severity": "info"
+        }
+      ]
+    },
+    "Huge note": {
+      "id": 5,
+      "ref_id": "##000005"
+    },
+    "W03": {
+      "session_label": "Welcome",
+      "characters": [
+        {
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "text_color": "normal",
+            "font": "sans",
+            "weight": "normal"
+          },
+          "id": "builtin-assistant",
+          "display_name": "Assistant"
+        }
+      ],
+      "generation": {
+        "phase": "waiting",
+        "active": false,
+        "character_id": "",
+        "character_display_name": ""
+      },
+      "chat_settings": {
+        "characters": [
+          {
+            "character_id": "builtin-assistant",
+            "provider_id": "provider_1",
+            "reasoning_effort": "none"
+          }
+        ],
+        "model_options": [
+          {
+            "id": "provider_4",
+            "display_name": "anthropic-direct",
+            "host": "api.anthropic.com",
+            "model": "claude-sonnet-4-5"
+          },
+          {
+            "id": "provider_1",
+            "display_name": "Assistant test model",
+            "model": "gpt-4o",
+            "host": "api.openai.com"
+          },
+          {
+            "id": "provider_3",
+            "model": "gemini-3.8-flash",
+            "display_name": "google-direct",
+            "host": "generativelanguage.googleapis.com"
+          },
+          {
+            "id": "provider_2",
+            "display_name": "openai-direct",
+            "host": "api.openai.com",
+            "model": "gpt-5.4-mini"
+          },
+          {
+            "id": "test",
+            "display_name": "Test",
+            "model": "fake",
+            "host": "test"
+          }
+        ]
+      },
+      "lifecycle": "running",
+      "session_id": "builtin-welcome",
+      "transcript": [
+        {
+          "id": 1,
+          "request_id": 1,
+          "created_at": 1793590872,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "output_tokens": null,
+          "input_tokens": null,
+          "participant_id": "builtin-guest",
+          "display_name": "Guest",
+          "text": "Compressing my note fails. Why?",
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 2,
+          "request_id": 1,
+          "created_at": 1793590875,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "Assistant",
+          "text": "It seems there are no recent events or pending operations related to note compression. This could mean the issue might be configuration-related, or it hasn\u2019t logged a specific error recently. \n\nLet's inspect the notes configuration to see if there are potential issues. Shall I proceed with that?",
+          "output_tokens": 69,
+          "participant_id": "builtin-assistant",
+          "input_tokens": 69490,
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        },
+        {
+          "id": 3,
+          "request_id": 2,
+          "created_at": 1793590875,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "output_tokens": null,
+          "input_tokens": null,
+          "participant_id": "builtin-guest",
+          "display_name": "Guest",
+          "text": "Fix it. Use the OpenAI provider with low effort.",
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 4,
+          "request_id": 2,
+          "created_at": 1793590879,
+          "web_search_used": false,
+          "addressed_to": "",
+          "output_tokens": 272,
+          "text": "The notes configuration file is missing, which is essential for setting the note compression provider and effort. To proceed, I will create this configuration using the OpenAI provider with low effort.\n\nHere's the plan:\n1. Use the OpenAI provider (`provider_2`).\n2. Set the reasoning effort to low.\n\nLet me apply this change.\n\nThe notes configuration has been updated to use the OpenAI provider with low effort. Please try compressing your note again and let me know if you encounter any further issues!",
+          "participant_id": "builtin-assistant",
+          "input_tokens": 141162,
+          "display_name": "Assistant",
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        },
+        {
+          "id": 5,
+          "created_at": 1793590881,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "System",
+          "text": "Configuration was saved. Changed: system/notes/config.toml (73 bytes). Undo is not available.",
+          "output_tokens": null,
+          "participant_id": "",
+          "input_tokens": null,
+          "kind": "notice",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        }
+      ],
+      "forum": {
+        "default_persona_id": "builtin-guest",
+        "id": "builtin-entrance",
+        "display_name": "Entrance",
+        "default_character_id": "builtin-assistant",
+        "default_persona_display_name": "Guest",
+        "members": [
+          {
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "text_color": "normal",
+              "weight": "normal",
+              "font": "sans"
+            },
+            "id": "builtin-assistant",
+            "display_name": "Assistant"
+          }
+        ]
+      },
+      "default_character_id": "builtin-assistant"
+    },
+    "Claude Test": "character_3",
+    "openai": "provider_2",
+    "Writer": "character_1",
+    "compressed": {
+      "document": {
+        "content": [
+          {
+            "content": [
+              {
+                "type": "text",
+                "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "id": 4,
+      "scroll_top": 0,
+      "compressed_text": "The supplied text contains only repeated \u201ca\u201d characters and no substantive chapter content."
+    },
+    "initialCompression": "Error: notes.compressStart: {\"code\":\"invalid_argument\",\"message\":\"Select a compression provider in Settings \u2192 Notes.\"}",
+    "Long note": {
+      "id": 4,
+      "ref_id": "##000004"
+    },
+    "Docs Removed": {
+      "id": 10,
+      "ref_id": "##00000A"
+    },
+    "W03Settings": {
+      "audio_api_key": "",
+      "compression_reasoning_effort": "low",
+      "compression_provider": "provider_2",
+      "audio_url": ""
+    },
+    "lab": "forum_1",
+    "notes": {},
+    "Docs Gemini": {
+      "id": 8,
+      "ref_id": "##000008"
+    },
+    "anthropic": "provider_4"
+  },
+  "trace": [
+    {
+      "result": {
+        "result": {
+          "context_epoch": 1,
+          "capabilities": {
+            "can_modify": false,
+            "can_transfer_r2": false
+          },
+          "bootstrap": {
+            "vaults": [
+              "Annushka",
+              "Assistant-Capability-Followup",
+              "Base",
+              "CHA",
+              "Daily",
+              "Michaels",
+              "philosophy",
+              "Test"
+            ],
+            "personas": [
+              {
+                "id": "builtin-guest",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "display_name": "Guest"
+              },
+              {
+                "id": "reader",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                },
+                "display_name": "Reader"
+              }
+            ],
+            "characters": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                },
+                "display_name": "Assistant"
+              },
+              {
+                "id": "character_3",
+                "display_name": "Claude Test",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              },
+              {
+                "id": "character_2",
+                "display_name": "Gem",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                }
+              },
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "id": "guide",
+                "display_name": "Guide"
+              },
+              {
+                "id": "character_1",
+                "display_name": "Writer",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                }
+              }
+            ],
+            "forums": [
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "builtin-entrance",
+                "display_name": "Entrance",
+                "default_character_id": "builtin-assistant",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "id": "builtin-assistant",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "font": "sans",
+                      "weight": "normal"
+                    },
+                    "display_name": "Assistant"
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "forum_1",
+                "display_name": "Lab",
+                "default_character_id": "builtin-assistant",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "font": "sans",
+                      "weight": "normal"
+                    },
+                    "id": "builtin-assistant",
+                    "display_name": "Assistant"
+                  },
+                  {
+                    "id": "character_3",
+                    "display_name": "Claude Test",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "font": "sans",
+                      "weight": "normal"
+                    }
+                  },
+                  {
+                    "id": "character_2",
+                    "display_name": "Gem",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "font": "sans",
+                      "text_color": "normal"
+                    }
+                  },
+                  {
+                    "id": "character_1",
+                    "display_name": "Writer",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "weight": "normal",
+                      "font": "sans"
+                    }
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "lobby",
+                "display_name": "The Lobby",
+                "default_character_id": "guide",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "id": "guide",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "font": "sans",
+                      "text_color": "normal"
+                    },
+                    "display_name": "Guide"
+                  }
+                ]
+              }
+            ],
+            "recent_sessions": [
+              {
+                "session_id": "builtin-welcome",
+                "session_label": "Welcome",
+                "forum_id": "builtin-entrance",
+                "updated_at": 1793590872
+              }
+            ],
+            "entrance_forum_id": "builtin-entrance",
+            "initial_forum_id": "builtin-entrance",
+            "vault_name": "Assistant-Capability-Followup",
+            "initial_session_id": "builtin-welcome"
+          },
+          "state": "running",
+          "application_version": "development"
+        },
+        "context_epoch": 1,
+        "id": 9000000000000,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "app.bootstrap",
+      "params": {}
+    },
+    {
+      "result": {
+        "result": {
+          "session_id": "builtin-welcome",
+          "forum_id": "builtin-entrance"
+        },
+        "id": 9000000000001,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000002,
+        "result": {
+          "session_id": "builtin-welcome",
+          "forum_id": "builtin-entrance"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "context_epoch": 1,
+        "id": 9000000000003,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "input": {
+          "text": "/clear"
+        },
+        "forum_id": "builtin-entrance",
+        "session_id": "builtin-welcome"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "lifecycle": "running",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "provider_id": "provider_1",
+                "reasoning_effort": "none"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "model": "gpt-4o",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "provider_3",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com",
+                "display_name": "google-direct"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "host": "api.openai.com",
+                "model": "gpt-5.4-mini"
+              },
+              {
+                "id": "test",
+                "display_name": "Test",
+                "host": "test",
+                "model": "fake"
+              }
+            ]
+          },
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "weight": "normal",
+                "font": "sans"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "session_label": "Welcome",
+          "transcript": [],
+          "session_id": "builtin-welcome",
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                },
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "id": 9000000000004,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000005,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "Select a compression provider in Settings \u2192 Notes.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.compressStart",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000006,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W02-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000007,
+        "ok": false,
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        },
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W02-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000008,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W02-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000009,
+        "ok": false,
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        },
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W02-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000010,
+        "result": {
+          "name": "/private/tmp/cha-ass-followup/checkpoints/W02-before.txt",
+          "text": "ready"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W02-before.txt"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "session_id": "builtin-welcome",
+          "forum_id": "builtin-entrance"
+        },
+        "context_epoch": 1,
+        "id": 9000000000011,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "id": 9000000000012,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "input": {
+          "text": "Compressing my note fails. Why?"
+        },
+        "forum_id": "builtin-entrance",
+        "session_id": "builtin-welcome"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000097,
+        "result": {
+          "session_label": "Welcome",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "reasoning_effort": "none",
+                "provider_id": "provider_1"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com",
+                "model": "claude-sonnet-4-5"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "model": "gpt-4o",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "provider_3",
+                "model": "gemini-3.8-flash",
+                "display_name": "google-direct",
+                "host": "generativelanguage.googleapis.com"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "model": "gpt-5.4-mini",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "display_name": "Test",
+                "host": "test"
+              }
+            ]
+          },
+          "characters": [
+            {
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              },
+              "id": "builtin-assistant",
+              "display_name": "Assistant"
+            }
+          ],
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793590872,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "display_name": "Guest",
+              "input_tokens": null,
+              "participant_id": "builtin-guest",
+              "output_tokens": null,
+              "text": "Compressing my note fails. Why?",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793590875,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": 69,
+              "text": "It seems there are no recent events or pending operations related to note compression. This could mean the issue might be configuration-related, or it hasn\u2019t logged a specific error recently. \n\nLet's inspect the notes configuration to see if there are potential issues. Shall I proceed with that?",
+              "participant_id": "builtin-assistant",
+              "input_tokens": 69490,
+              "display_name": "Assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "session_id": "builtin-welcome",
+          "lifecycle": "running",
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "session_label": "Welcome",
+          "characters": [
+            {
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              },
+              "id": "builtin-assistant",
+              "display_name": "Assistant"
+            }
+          ],
+          "lifecycle": "running",
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793590872,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "input_tokens": null,
+              "text": "Compressing my note fails. Why?",
+              "participant_id": "builtin-guest",
+              "display_name": "Guest",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793590875,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "input_tokens": 69490,
+              "participant_id": "builtin-assistant",
+              "output_tokens": 69,
+              "text": "It seems there are no recent events or pending operations related to note compression. This could mean the issue might be configuration-related, or it hasn\u2019t logged a specific error recently. \n\nLet's inspect the notes configuration to see if there are potential issues. Shall I proceed with that?",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "session_id": "builtin-welcome",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "reasoning_effort": "none",
+                "provider_id": "provider_1"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com",
+                "display_name": "anthropic-direct"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-4o",
+                "host": "api.openai.com",
+                "display_name": "Assistant test model"
+              },
+              {
+                "id": "provider_3",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com",
+                "display_name": "google-direct"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "host": "api.openai.com",
+                "model": "gpt-5.4-mini"
+              },
+              {
+                "id": "test",
+                "display_name": "Test",
+                "model": "fake",
+                "host": "test"
+              }
+            ]
+          },
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "context_epoch": 1,
+        "id": 9000000000098,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000099,
+        "result": {
+          "audio_api_key": "",
+          "compression_reasoning_effort": "high",
+          "compression_provider": "",
+          "audio_url": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notesSettings.get",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000100,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W02-after.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000101,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W02-after.txt"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "name": "/private/tmp/cha-ass-followup/checkpoints/W02-after.txt",
+          "text": "ready"
+        },
+        "context_epoch": 1,
+        "id": 9000000000102,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W02-after.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000103,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W03-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000104,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W03-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000105,
+        "ok": false,
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        },
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W03-before.txt"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "name": "/private/tmp/cha-ass-followup/checkpoints/W03-before.txt",
+          "text": "ready"
+        },
+        "context_epoch": 1,
+        "id": 9000000000106,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W03-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "session_id": "builtin-welcome",
+          "forum_id": "builtin-entrance"
+        },
+        "id": 9000000000107,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "context_epoch": 1,
+        "id": 9000000000108,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "session_id": "builtin-welcome",
+        "input": {
+          "text": "Fix it. Use the OpenAI provider with low effort."
+        },
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000280,
+        "result": {
+          "session_label": "Welcome",
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793590872,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "display_name": "Guest",
+              "text": "Compressing my note fails. Why?",
+              "participant_id": "builtin-guest",
+              "input_tokens": null,
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793590875,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "input_tokens": 69490,
+              "text": "It seems there are no recent events or pending operations related to note compression. This could mean the issue might be configuration-related, or it hasn\u2019t logged a specific error recently. \n\nLet's inspect the notes configuration to see if there are potential issues. Shall I proceed with that?",
+              "output_tokens": 69,
+              "participant_id": "builtin-assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 3,
+              "request_id": 2,
+              "created_at": 1793590875,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "display_name": "Guest",
+              "text": "Fix it. Use the OpenAI provider with low effort.",
+              "input_tokens": null,
+              "participant_id": "builtin-guest",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 4,
+              "request_id": 2,
+              "created_at": 1793590879,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "text": "The notes configuration file is missing, which is essential for setting the note compression provider and effort. To proceed, I will create this configuration using the OpenAI provider with low effort.\n\nHere's the plan:\n1. Use the OpenAI provider (`provider_2`).\n2. Set the reasoning effort to low.\n\nLet me apply this change.\n\nThe notes configuration has been updated to use the OpenAI provider with low effort. Please try compressing your note again and let me know if you encounter any further issues!",
+              "participant_id": "builtin-assistant",
+              "output_tokens": 272,
+              "input_tokens": 141162,
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 5,
+              "created_at": 1793590881,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": null,
+              "input_tokens": null,
+              "participant_id": "",
+              "text": "Configuration was saved. Changed: system/notes/config.toml (73 bytes). Undo is not available.",
+              "display_name": "System",
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "lifecycle": "running",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "provider_id": "provider_1",
+                "reasoning_effort": "none"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "host": "api.openai.com",
+                "model": "gpt-4o"
+              },
+              {
+                "id": "provider_3",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com",
+                "display_name": "google-direct"
+              },
+              {
+                "id": "provider_2",
+                "model": "gpt-5.4-mini",
+                "host": "api.openai.com",
+                "display_name": "openai-direct"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "host": "test",
+                "display_name": "Test"
+              }
+            ]
+          },
+          "session_id": "builtin-welcome",
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000281,
+        "result": {
+          "session_label": "Welcome",
+          "characters": [
+            {
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              },
+              "id": "builtin-assistant",
+              "display_name": "Assistant"
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "provider_id": "provider_1",
+                "reasoning_effort": "none"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com",
+                "model": "claude-sonnet-4-5"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "model": "gpt-4o",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "provider_3",
+                "model": "gemini-3.8-flash",
+                "display_name": "google-direct",
+                "host": "generativelanguage.googleapis.com"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "host": "api.openai.com",
+                "model": "gpt-5.4-mini"
+              },
+              {
+                "id": "test",
+                "display_name": "Test",
+                "model": "fake",
+                "host": "test"
+              }
+            ]
+          },
+          "lifecycle": "running",
+          "session_id": "builtin-welcome",
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793590872,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "input_tokens": null,
+              "participant_id": "builtin-guest",
+              "display_name": "Guest",
+              "text": "Compressing my note fails. Why?",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793590875,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "text": "It seems there are no recent events or pending operations related to note compression. This could mean the issue might be configuration-related, or it hasn\u2019t logged a specific error recently. \n\nLet's inspect the notes configuration to see if there are potential issues. Shall I proceed with that?",
+              "output_tokens": 69,
+              "participant_id": "builtin-assistant",
+              "input_tokens": 69490,
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 3,
+              "request_id": 2,
+              "created_at": 1793590875,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "input_tokens": null,
+              "participant_id": "builtin-guest",
+              "display_name": "Guest",
+              "text": "Fix it. Use the OpenAI provider with low effort.",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 4,
+              "request_id": 2,
+              "created_at": 1793590879,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": 272,
+              "text": "The notes configuration file is missing, which is essential for setting the note compression provider and effort. To proceed, I will create this configuration using the OpenAI provider with low effort.\n\nHere's the plan:\n1. Use the OpenAI provider (`provider_2`).\n2. Set the reasoning effort to low.\n\nLet me apply this change.\n\nThe notes configuration has been updated to use the OpenAI provider with low effort. Please try compressing your note again and let me know if you encounter any further issues!",
+              "participant_id": "builtin-assistant",
+              "input_tokens": 141162,
+              "display_name": "Assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 5,
+              "created_at": 1793590881,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "System",
+              "text": "Configuration was saved. Changed: system/notes/config.toml (73 bytes). Undo is not available.",
+              "output_tokens": null,
+              "participant_id": "",
+              "input_tokens": null,
+              "kind": "notice",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "audio_api_key": "",
+          "compression_reasoning_effort": "low",
+          "compression_provider": "provider_2",
+          "audio_url": ""
+        },
+        "id": 9000000000282,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notesSettings.get",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000283,
+        "result": {
+          "audio_api_key": "",
+          "compression_reasoning_effort": "low",
+          "compression_provider": "provider_2",
+          "audio_url": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notesSettings.get",
+      "params": {}
+    },
+    {
+      "result": {
+        "result": {
+          "accepted": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000284,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressStart",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000285,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000286,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000287,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000288,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000289,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000290,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000291,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000292,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000293,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000294,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000295,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000296,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000297,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000298,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000299,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000300,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000301,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000302,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000303,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000304,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000305,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000306,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000307,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000308,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000309,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000310,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000311,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000312,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000313,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000314,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000315,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000316,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000317,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000318,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000319,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000320,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000321,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000322,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000323,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000324,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000325,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000326,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000327,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000328,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000329,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000330,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000331,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000332,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000333,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000334,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000335,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000336,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000337,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000338,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000339,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000340,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000341,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000342,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000343,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000344,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000345,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000346,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000347,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000348,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000349,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000350,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000351,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000352,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000353,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000354,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000355,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000356,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000357,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "pending": true
+        },
+        "context_epoch": 1,
+        "id": 9000000000358,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "pending": true
+        },
+        "id": 9000000000359,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000360,
+        "result": {
+          "pending": true
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000361,
+        "result": {
+          "pending": false
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.compressionStatus",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "document": {
+            "content": [
+              {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                ],
+                "type": "paragraph"
+              }
+            ],
+            "type": "doc"
+          },
+          "id": 4,
+          "scroll_top": 0,
+          "compressed_text": "The supplied text contains only repeated \u201ca\u201d characters and no substantive chapter content."
+        },
+        "id": 9000000000362,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.get",
+      "params": {
+        "id": 4
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000363,
+        "result": {
+          "items": [
+            {
+              "id": 2,
+              "message": "Compressed version ready for \u201cLong note\u201d (note 4).",
+              "recorded_at": 1793590883,
+              "severity": "success"
+            },
+            {
+              "id": 1,
+              "recorded_at": 1793590881,
+              "message": "Compression started for \u201cLong note\u201d (note 4).",
+              "severity": "info"
+            }
+          ]
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "events.list",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000364,
+        "ok": false,
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        },
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W03-after.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000365,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W03-after.txt"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "name": "/private/tmp/cha-ass-followup/checkpoints/W03-after.txt",
+          "text": "ready"
+        },
+        "context_epoch": 1,
+        "id": 9000000000366,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W03-after.txt"
+      }
+    }
+  ],
+  "ok": true,
+  "exit_code": 0,
+  "utc": "2026-11-02T03:41:12.286515+00:00",
+  "checkpoints": [
+    "W02-before",
+    "W02-after",
+    "W03-before",
+    "W03-after"
+  ],
+  "checkpoint_errors": []
+}

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="4" failures="0" disabled="0" errors="0" time="0.056" timestamp="2026-11-01T19:25:48.934" name="AllTests">
+  <testsuite name="AssistantService" tests="2" failures="0" disabled="0" skipped="0" errors="0" time="0.029" timestamp="2026-11-01T19:25:48.934">
+    <testcase name="NotesSettingsAreListedReadAndWritable" file="/Users/mpopov/projects/cha/tests/app/unit_assistant_service.cpp" line="339" status="run" result="completed" time="0.016" timestamp="2026-11-01T19:25:48.934" classname="AssistantService" />
+    <testcase name="NotesSettingsApplyAndUndo" file="/Users/mpopov/projects/cha/tests/app/unit_assistant_service.cpp" line="365" status="run" result="completed" time="0.012" timestamp="2026-11-01T19:25:48.951" classname="AssistantService" />
+  </testsuite>
+  <testsuite name="AssistantReference" tests="1" failures="0" disabled="0" skipped="0" errors="0" time="0.002" timestamp="2026-11-01T19:25:48.964">
+    <testcase name="ConcatenatesBothHostLinesAndTheThreeDocuments" file="/Users/mpopov/projects/cha/tests/app/unit_assistant_service.cpp" line="680" status="run" result="completed" time="0.002" timestamp="2026-11-01T19:25:48.964" classname="AssistantReference" />
+  </testsuite>
+  <testsuite name="ApplicationMedia" tests="1" failures="0" disabled="0" skipped="0" errors="0" time="0.024" timestamp="2026-11-01T19:25:48.966">
+    <testcase name="NoteCompressionUsesAssistantAppliedProvider" file="/Users/mpopov/projects/cha/tests/app/unit_media_operations.cpp" line="481" status="run" result="completed" time="0.024" timestamp="2026-11-01T19:25:48.966" classname="ApplicationMedia" />
+  </testsuite>
+</testsuites>

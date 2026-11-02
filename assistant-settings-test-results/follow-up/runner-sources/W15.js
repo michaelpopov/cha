@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+let s=await session('S1',C.lab);await rpc('session.setCharacterSettings',{...s,character_id:C.Writer,provider_id:C.google,reasoning_effort:null});C.sessionSettings=await rpc('session.snapshot',s);await checkpoint('W15-before');await ask('answer','Writer answers in S1 with Gemini, but its settings say OpenAI. Why?');await checkpoint('W15-after');

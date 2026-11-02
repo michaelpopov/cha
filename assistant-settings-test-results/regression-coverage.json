@@ -1,0 +1,392 @@
+[
+  {
+    "spec_pattern": "ApplicationSettings.SavesNotesCompressionSettingsInTheVault",
+    "tests": {
+      "ApplicationSettings.SavesNotesCompressionSettingsInTheVault": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "BridgeRouterTest.SavesNotesSettingsAndIgnoresUnusedFields",
+    "tests": {
+      "BridgeRouterTest.SavesNotesSettingsAndIgnoresUnusedFields": {
+        "status": "pass",
+        "file": "cha_bridge_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "BridgeRouterTest.YoutubeNoteImportsUseTranscriptPromptAndCompressionSettings",
+    "tests": {
+      "BridgeRouterTest.YoutubeNoteImportsUseTranscriptPromptAndCompressionSettings": {
+        "status": "pass",
+        "file": "cha_bridge_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "BridgeRouterTest.YoutubeNoteImportsReportMissingCompressionProvider",
+    "tests": {
+      "BridgeRouterTest.YoutubeNoteImportsReportMissingCompressionProvider": {
+        "status": "pass",
+        "file": "cha_bridge_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "BridgeRouterTest.CompressionUsesSelectedEffortAcrossProviderApis",
+    "tests": {
+      "BridgeRouterTest.CompressionUsesSelectedEffortAcrossProviderApis": {
+        "status": "pass",
+        "file": "cha_bridge_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "ApplicationSettings.TestsAndSavesNativeGoogleIgnoringUnusedOpenRouterSettings",
+    "tests": {
+      "ApplicationSettings.TestsAndSavesNativeGoogleIgnoringUnusedOpenRouterSettings": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "ApplicationSettings.TestsAndSavesNativeAnthropicIgnoringUnusedOpenRouterSettings",
+    "tests": {
+      "ApplicationSettings.TestsAndSavesNativeAnthropicIgnoringUnusedOpenRouterSettings": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "Workspace.GoogleIgnoresUnusedSettingsAndCharacterOverridesWithWarnings",
+    "tests": {
+      "Workspace.GoogleIgnoresUnusedSettingsAndCharacterOverridesWithWarnings": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "Workspace.AnthropicIgnoresUnusedSettingsAndCharacterOverridesWithWarnings",
+    "tests": {
+      "Workspace.AnthropicIgnoresUnusedSettingsAndCharacterOverridesWithWarnings": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "ApplicationMedia.GoogleNoteCompressionUsesDefaultEffortAndRejectsPartialAnswers",
+    "tests": {
+      "ApplicationMedia.GoogleNoteCompressionUsesDefaultEffortAndRejectsPartialAnswers": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "ApplicationMedia.AnthropicNoteCompressionUsesDefaultEffortAndRejectsPartialAnswers",
+    "tests": {
+      "ApplicationMedia.AnthropicNoteCompressionUsesDefaultEffortAndRejectsPartialAnswers": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "ReferencedNotesTest.*",
+    "tests": {
+      "ReferencedNotesTest.AcquiresOnlyTargetedScopesAndKeepsSharedCopiesAcrossRequestsAndReopen": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedNotesTest.ExplicitPromotionAndLaterReferencesKeepNoteOrderAndClearReacquiresCopies": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedNotesTest.OmissionsShareTheExistingNoticeWithFoldersAndRetryOnTheNextRequest": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedNotesTest.MulticastReadsASharedReferenceOnceAndOwnsFixedPromptText": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedNotesTest.SummaryAndAnnotationReferencesUseTheExistingNoteReader": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedNotesTest.CopiesSurvivePreparationFailureUntilAnEmptyConversationIsCleared": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedNotesTest.AFailedScopeTransactionPreventsDispatchAndCanBeRetried": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "ReferencedFoldersTest.*",
+    "tests": {
+      "ReferencedFoldersTest.MulticastUnionsApplicableSourcesForNativeAndLocalSearch": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.CurrentSettingsDetachClearAndReopenKeepEachSourceIndependent": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.ResolvesCurrentStoresEffectiveProviderAndSavedKeyOnEveryAnswer": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.OpenAiCapacityMergesRemoteSourcesAndPreservesNumericOrder": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.DeletedStoreKeyIsReportedAndExcludedFromSearchContext": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.GoogleKeepsNativeStoresAndReportsIncompleteOpenAiAttachments": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.NativeStoresAndOpenAiSearchToolCanBeUsedTogether": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.MixedAttachmentsWorkAcrossProviderProtocolsAndAuthentication": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.OAuthSearchUsesAttachedStoresWithoutMatchingModelKeyOrHostedLimit": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.RenamesWarnForEveryOwnerAndProviderErrorsIdentifyAllSources": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.BadSourcesAreOmittedOnceAndValidPeersStillUseCapacity": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.MissingModelKeyStillResolvesOpenAiStoresAndReportsUnavailableAttachments": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.SessionNamingDoesNotResolveOrInheritOrdinaryFolderAccess": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.Gemini25ReportsEveryToolOnlyFolderAndRestoresTargetsWithoutNativeStores": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      },
+      "ReferencedFoldersTest.InheritedGoogleFoldersKeepGemini25FileSearchAndWarnWhenFunctionsAreRemoved": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "SessionOpenTest.FolderAccessResolvesPerTargetAndRefreshesAfterReplacementAndDetach",
+    "tests": {
+      "SessionOpenTest.FolderAccessResolvesPerTargetAndRefreshesAfterReplacementAndDetach": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "SessionOpenTest.WelcomeMaintenanceSkipsFolderLookupAndReadyAttachUsesTheActiveVault",
+    "tests": {
+      "SessionOpenTest.WelcomeMaintenanceSkipsFolderLookupAndReadyAttachUsesTheActiveVault": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "RuntimeWorkspaceConfigStoreTest.FileReferencesPermitSameNamesAndReadOnlyAnnotationItems",
+    "tests": {
+      "RuntimeWorkspaceConfigStoreTest.FileReferencesPermitSameNamesAndReadOnlyAnnotationItems": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "BridgeRouterTest.FileReferencesValidateRequestsAndLeaveLiveSessionsUnchanged",
+    "tests": {
+      "BridgeRouterTest.FileReferencesValidateRequestsAndLeaveLiveSessionsUnchanged": {
+        "status": "pass",
+        "file": "cha_bridge_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "SessionController.SavesIndependentSettingsRestoresAndValidatesBeforeWriting",
+    "tests": {
+      "SessionController.SavesIndependentSettingsRestoresAndValidatesBeforeWriting": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "SessionController.EveryGenerationTargetUsesItsOwnImmutableSessionSettings",
+    "tests": {
+      "SessionController.EveryGenerationTargetUsesItsOwnImmutableSessionSettings": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "ApplicationSettings.ProviderEditsRefreshSessionOnlyChoicesAndRestartRestoresOverrides",
+    "tests": {
+      "ApplicationSettings.ProviderEditsRefreshSessionOnlyChoicesAndRestartRestoresOverrides": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "WebRead.UsesWebReaderFirstAndKeepsItsFinalUrlAndEmptyTitle",
+    "tests": {
+      "WebRead.UsesWebReaderFirstAndKeepsItsFinalUrlAndEmptyTitle": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "WebRead.FallsBackToFirecrawlForFailedEmptyOrInvalidReaderResults",
+    "tests": {
+      "WebRead.FallsBackToFirecrawlForFailedEmptyOrInvalidReaderResults": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "WebRead.ReaderFailureWithoutConfiguredFallbackRemainsAnError",
+    "tests": {
+      "WebRead.ReaderFailureWithoutConfiguredFallbackRemainsAnError": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "BridgeRouterTest.NotePageReadingUsesConfiguredReaderAndKeepsLongArticles",
+    "tests": {
+      "BridgeRouterTest.NotePageReadingUsesConfiguredReaderAndKeepsLongArticles": {
+        "status": "pass",
+        "file": "cha_bridge_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "BridgeRouterTest.WebReaderSettingsWorkWithoutKeysAndValidateTheBaseUrl",
+    "tests": {
+      "BridgeRouterTest.WebReaderSettingsWorkWithoutKeysAndValidateTheBaseUrl": {
+        "status": "pass",
+        "file": "cha_bridge_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "JevRouting.ConversationSaveOnlyRecordsPromptWithoutChangingTheTargetOrReplying",
+    "tests": {
+      "JevRouting.ConversationSaveOnlyRecordsPromptWithoutChangingTheTargetOrReplying": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "JevRouting.ConversationSaveWithAQuestionAlsoStartsTheNormalReply",
+    "tests": {
+      "JevRouting.ConversationSaveWithAQuestionAlsoStartsTheNormalReply": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "JevRouting.WelcomeDoesNotRequestAConversationSave",
+    "tests": {
+      "JevRouting.WelcomeDoesNotRequestAConversationSave": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "JevRouting.UncertainOrFailedClassificationDoesNotRequestAConversationSave",
+    "tests": {
+      "JevRouting.UncertainOrFailedClassificationDoesNotRequestAConversationSave": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "RuntimeWorkspaceConfigStoreTest.ApplyRejectsStaleProtectedAndCredentialChanges",
+    "tests": {
+      "RuntimeWorkspaceConfigStoreTest.ApplyRejectsStaleProtectedAndCredentialChanges": {
+        "status": "pass",
+        "file": "cha_tests.xml"
+      }
+    },
+    "verdict": "pass"
+  },
+  {
+    "spec_pattern": "AssistantService.ExercisesTheFourMaintenanceRecipes",
+    "tests": {
+      "AssistantService.ExercisesTheFourMaintenanceRecipes": {
+        "status": "pass",
+        "file": "cha_app_tests-final.xml"
+      }
+    },
+    "verdict": "pass"
+  }
+]

@@ -1,0 +1,55 @@
+[
+  {
+    "call_id": "call_WvzCrsN3iXYVpN5PJcP9pWXJ",
+    "utc": "2026-11-02T05:07:45.719544+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:44Z:\nWhat do my Notes settings do?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/notes/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "audio_api_key = 'api_key_3'\naudio_url = 'https://tts.example.com'\ncompression_provider = 'provider_2'\ncompression_reasoning_effort = 'medium'\n",
+          "path": "system/notes/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_rGKGLDkn7qOV6JxD06KyJYm2",
+    "utc": "2026-11-02T05:07:47.670055+00:00",
+    "prompt": "from Guest at 2026-11-02T05:07:44Z:\nWhat do my Notes settings do?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/providers/provider_2/config.toml",
+        "system/keys/api_key_3/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "api = 'responses'\napi_key = 'api_key_1'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'openai-direct'\nhost = 'api.openai.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gpt-5.4-mini'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_2/config.toml",
+          "status": "ok"
+        },
+        {
+          "key": {
+            "credential_present": true,
+            "display_name": "Audio",
+            "id": "api_key_3",
+            "type": "models"
+          },
+          "path": "system/keys/api_key_3/config.toml",
+          "status": "key_metadata"
+        }
+      ],
+      "version": "1"
+    }
+  }
+]

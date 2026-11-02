@@ -1,0 +1,2198 @@
+{
+  "assertions": [],
+  "events": [],
+  "ok": true,
+  "C": {
+    "welcome": {
+      "session_id": "builtin-welcome",
+      "forum_id": "builtin-entrance"
+    },
+    "anthropic": "provider_4",
+    "step2Settings": {
+      "audio_api_key": "",
+      "compression_reasoning_effort": "low",
+      "compression_provider": "provider_2",
+      "audio_url": ""
+    },
+    "anthropic_credential": false,
+    "google": "provider_3",
+    "assistant": "provider_1",
+    "Gem": "character_2",
+    "labSave": {
+      "notice": "Note context omitted: Forum Lab \u2014 Huge note (##000005): exceeds 256 KiB.\nFolder access omitted: Writer \u2014 Docs Removed (##00000A): no ready store; sources: Forum Lab Files.",
+      "session_label": "Lab save attempt",
+      "chat_settings": {
+        "characters": [
+          {
+            "character_id": "character_1",
+            "provider_id": "provider_2",
+            "reasoning_effort": "none"
+          },
+          {
+            "provider_id": "provider_3",
+            "character_id": "character_2",
+            "reasoning_effort": "high"
+          },
+          {
+            "character_id": "character_3",
+            "reasoning_effort": "high",
+            "provider_id": "provider_4"
+          }
+        ],
+        "model_options": [
+          {
+            "id": "provider_4",
+            "display_name": "anthropic-direct",
+            "host": "api.anthropic.com",
+            "model": "claude-sonnet-4-5"
+          },
+          {
+            "id": "provider_1",
+            "display_name": "Assistant test model",
+            "model": "gpt-6.1-sol",
+            "host": "api.openai.com"
+          },
+          {
+            "id": "provider_3",
+            "model": "gemini-3.8-flash",
+            "host": "generativelanguage.googleapis.com",
+            "display_name": "google-direct"
+          },
+          {
+            "id": "provider_2",
+            "display_name": "openai-direct",
+            "host": "api.openai.com",
+            "model": "gpt-5.4-mini"
+          },
+          {
+            "id": "test",
+            "model": "fake",
+            "host": "test",
+            "display_name": "Test"
+          }
+        ]
+      },
+      "lifecycle": "running",
+      "characters": [
+        {
+          "id": "character_1",
+          "display_name": "Writer",
+          "description": "Test character",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "text_color": "normal",
+            "font": "sans",
+            "weight": "normal"
+          }
+        },
+        {
+          "id": "character_2",
+          "display_name": "Gem",
+          "description": "Test character",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "weight": "normal",
+            "text_color": "normal",
+            "font": "sans"
+          }
+        },
+        {
+          "id": "character_3",
+          "display_name": "Claude Test",
+          "description": "Test character",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "text_color": "normal",
+            "font": "sans",
+            "weight": "normal"
+          }
+        }
+      ],
+      "transcript": [
+        {
+          "id": 1,
+          "request_id": 1,
+          "created_at": 1793591136,
+          "web_search_used": false,
+          "addressed_to": "character_1",
+          "output_tokens": null,
+          "display_name": "Guest",
+          "participant_id": "builtin-guest",
+          "text": "Save this conversation for later review.",
+          "input_tokens": null,
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Writer"
+        },
+        {
+          "id": 2,
+          "request_id": 1,
+          "created_at": 1793591137,
+          "web_search_used": false,
+          "addressed_to": "",
+          "output_tokens": 22,
+          "text": "Character profile received. You may begin, or ask for a brief summary of the voice.",
+          "participant_id": "character_1",
+          "display_name": "Writer",
+          "input_tokens": 4837,
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        }
+      ],
+      "session_id": "2026-11-01-19-45-36-session",
+      "generation": {
+        "phase": "waiting",
+        "active": false,
+        "character_id": "",
+        "character_display_name": ""
+      },
+      "forum": {
+        "default_persona_id": "builtin-guest",
+        "id": "forum_1",
+        "display_name": "Lab",
+        "default_character_id": "character_1",
+        "default_persona_display_name": "Guest",
+        "members": [
+          {
+            "id": "character_3",
+            "display_name": "Claude Test",
+            "description": "Test character",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "text_color": "normal",
+              "weight": "normal",
+              "font": "sans"
+            }
+          },
+          {
+            "id": "character_2",
+            "display_name": "Gem",
+            "description": "Test character",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "text_color": "normal",
+              "font": "sans",
+              "weight": "normal"
+            }
+          },
+          {
+            "id": "character_1",
+            "display_name": "Writer",
+            "description": "Test character",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "weight": "normal",
+              "font": "sans",
+              "text_color": "normal"
+            }
+          }
+        ]
+      },
+      "default_character_id": "character_1"
+    },
+    "Huge note": {
+      "id": 5,
+      "ref_id": "##000005"
+    },
+    "Claude Test": "character_3",
+    "openai": "provider_2",
+    "Writer": "character_1",
+    "step2": {
+      "session_label": "Welcome",
+      "chat_settings": {
+        "characters": [
+          {
+            "character_id": "builtin-assistant",
+            "provider_id": "provider_1",
+            "reasoning_effort": "low"
+          }
+        ],
+        "model_options": [
+          {
+            "id": "provider_4",
+            "model": "claude-sonnet-4-5",
+            "host": "api.anthropic.com",
+            "display_name": "anthropic-direct"
+          },
+          {
+            "id": "provider_1",
+            "model": "gpt-6.1-sol",
+            "host": "api.openai.com",
+            "display_name": "Assistant test model"
+          },
+          {
+            "id": "provider_3",
+            "display_name": "google-direct",
+            "host": "generativelanguage.googleapis.com",
+            "model": "gemini-3.8-flash"
+          },
+          {
+            "id": "provider_2",
+            "display_name": "openai-direct",
+            "model": "gpt-5.4-mini",
+            "host": "api.openai.com"
+          },
+          {
+            "id": "test",
+            "display_name": "Test",
+            "host": "test",
+            "model": "fake"
+          }
+        ]
+      },
+      "generation": {
+        "phase": "waiting",
+        "active": false,
+        "character_id": "",
+        "character_display_name": ""
+      },
+      "characters": [
+        {
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "text_color": "normal",
+            "font": "sans",
+            "weight": "normal"
+          },
+          "id": "builtin-assistant",
+          "display_name": "Assistant"
+        }
+      ],
+      "transcript": [
+        {
+          "id": 1,
+          "request_id": 1,
+          "created_at": 1793591137,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "output_tokens": null,
+          "display_name": "Guest",
+          "input_tokens": null,
+          "text": "Why was my Lab conversation not saved?",
+          "participant_id": "builtin-guest",
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 2,
+          "request_id": 1,
+          "created_at": 1793591141,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "Assistant",
+          "text": "Do you mean the **conversation is missing from Recent**, or that **\u201csave this conversation\u201d did not create a summary in Notes**?\n\nI checked the current logs and settings:\n\n- Writer\u2019s latest Lab reply completed successfully. There is no storage error in the available logs, but these logs alone cannot prove the conversation was saved.\n- **Recipient detection is not configured.** It also detects requests such as \u201csave this conversation,\u201d so that phrase will not automatically trigger a Notes summary.\n\nIf you wanted a summary, use **Save summary** in the session\u2019s sidebar menu. Ordinary Lab conversation history should persist without that command.\n\nWhich of those two things is missing?",
+          "output_tokens": 212,
+          "input_tokens": 109627,
+          "participant_id": "builtin-assistant",
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        },
+        {
+          "id": 3,
+          "request_id": 2,
+          "created_at": 1793591143,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "output_tokens": null,
+          "text": "Save this conversation for later review.",
+          "input_tokens": null,
+          "participant_id": "builtin-guest",
+          "display_name": "Guest",
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 4,
+          "request_id": 2,
+          "created_at": 1793591144,
+          "web_search_used": false,
+          "addressed_to": "",
+          "display_name": "Assistant",
+          "input_tokens": 34946,
+          "participant_id": "builtin-assistant",
+          "text": "Welcome is temporary, so I can\u2019t save this help conversation for later review. It is removed when CHA shuts down.\n\nFor the **Lab conversation**, reopen it from **Recent**, then choose **Save summary** in its sidebar menu to create a summary in **Notes**. Its normal conversation history persists separately from that summary.",
+          "output_tokens": 69,
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        }
+      ],
+      "session_id": "builtin-welcome",
+      "lifecycle": "running",
+      "forum": {
+        "default_persona_id": "builtin-guest",
+        "id": "builtin-entrance",
+        "display_name": "Entrance",
+        "default_character_id": "builtin-assistant",
+        "default_persona_display_name": "Guest",
+        "members": [
+          {
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "text_color": "normal",
+              "font": "sans",
+              "weight": "normal"
+            },
+            "id": "builtin-assistant",
+            "display_name": "Assistant"
+          }
+        ]
+      },
+      "default_character_id": "builtin-assistant"
+    },
+    "step1Settings": {
+      "audio_api_key": "",
+      "compression_reasoning_effort": "low",
+      "compression_provider": "provider_2",
+      "audio_url": ""
+    },
+    "Long note": {
+      "id": 4,
+      "ref_id": "##000004"
+    },
+    "Docs Removed": {
+      "id": 10,
+      "ref_id": "##00000A"
+    },
+    "step1": {
+      "lifecycle": "running",
+      "transcript": [
+        {
+          "id": 1,
+          "request_id": 1,
+          "created_at": 1793591137,
+          "web_search_used": false,
+          "addressed_to": "builtin-assistant",
+          "display_name": "Guest",
+          "text": "Why was my Lab conversation not saved?",
+          "input_tokens": null,
+          "participant_id": "builtin-guest",
+          "output_tokens": null,
+          "kind": "human",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": "Assistant"
+        },
+        {
+          "id": 2,
+          "request_id": 1,
+          "created_at": 1793591141,
+          "web_search_used": false,
+          "addressed_to": "",
+          "output_tokens": 212,
+          "text": "Do you mean the **conversation is missing from Recent**, or that **\u201csave this conversation\u201d did not create a summary in Notes**?\n\nI checked the current logs and settings:\n\n- Writer\u2019s latest Lab reply completed successfully. There is no storage error in the available logs, but these logs alone cannot prove the conversation was saved.\n- **Recipient detection is not configured.** It also detects requests such as \u201csave this conversation,\u201d so that phrase will not automatically trigger a Notes summary.\n\nIf you wanted a summary, use **Save summary** in the session\u2019s sidebar menu. Ordinary Lab conversation history should persist without that command.\n\nWhich of those two things is missing?",
+          "display_name": "Assistant",
+          "input_tokens": 109627,
+          "participant_id": "builtin-assistant",
+          "kind": "character",
+          "has_cached_audio": false,
+          "status": "complete",
+          "addressed_to_name": ""
+        }
+      ],
+      "generation": {
+        "phase": "waiting",
+        "active": false,
+        "character_id": "",
+        "character_display_name": ""
+      },
+      "characters": [
+        {
+          "id": "builtin-assistant",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "text_color": "normal",
+            "weight": "normal",
+            "font": "sans"
+          },
+          "display_name": "Assistant"
+        }
+      ],
+      "chat_settings": {
+        "characters": [
+          {
+            "character_id": "builtin-assistant",
+            "reasoning_effort": "low",
+            "provider_id": "provider_1"
+          }
+        ],
+        "model_options": [
+          {
+            "id": "provider_4",
+            "model": "claude-sonnet-4-5",
+            "host": "api.anthropic.com",
+            "display_name": "anthropic-direct"
+          },
+          {
+            "id": "provider_1",
+            "display_name": "Assistant test model",
+            "model": "gpt-6.1-sol",
+            "host": "api.openai.com"
+          },
+          {
+            "id": "provider_3",
+            "display_name": "google-direct",
+            "host": "generativelanguage.googleapis.com",
+            "model": "gemini-3.8-flash"
+          },
+          {
+            "id": "provider_2",
+            "display_name": "openai-direct",
+            "model": "gpt-5.4-mini",
+            "host": "api.openai.com"
+          },
+          {
+            "id": "test",
+            "model": "fake",
+            "display_name": "Test",
+            "host": "test"
+          }
+        ]
+      },
+      "session_label": "Welcome",
+      "session_id": "builtin-welcome",
+      "forum": {
+        "default_persona_id": "builtin-guest",
+        "id": "builtin-entrance",
+        "display_name": "Entrance",
+        "default_character_id": "builtin-assistant",
+        "default_persona_display_name": "Guest",
+        "members": [
+          {
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "text_color": "normal",
+              "font": "sans",
+              "weight": "normal"
+            },
+            "id": "builtin-assistant",
+            "display_name": "Assistant"
+          }
+        ]
+      },
+      "default_character_id": "builtin-assistant"
+    },
+    "Docs Gemini": {
+      "id": 8,
+      "ref_id": "##000008"
+    },
+    "notes": {},
+    "lab": "forum_1",
+    "Docs OpenAI": {
+      "id": 6,
+      "ref_id": "##000006"
+    }
+  },
+  "trace": [
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000000,
+        "result": {
+          "context_epoch": 1,
+          "capabilities": {
+            "can_modify": false,
+            "can_transfer_r2": false
+          },
+          "bootstrap": {
+            "vaults": [
+              "Annushka",
+              "Assistant-Capability-Followup",
+              "Base",
+              "CHA",
+              "Daily",
+              "Michaels",
+              "philosophy",
+              "Test"
+            ],
+            "forums": [
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "builtin-entrance",
+                "display_name": "Entrance",
+                "default_character_id": "builtin-assistant",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "text_color": "normal",
+                      "font": "sans"
+                    },
+                    "id": "builtin-assistant",
+                    "display_name": "Assistant"
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "forum_1",
+                "display_name": "Lab",
+                "default_character_id": "character_1",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "id": "character_3",
+                    "display_name": "Claude Test",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "text_color": "normal",
+                      "font": "sans"
+                    }
+                  },
+                  {
+                    "id": "character_2",
+                    "display_name": "Gem",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "weight": "normal",
+                      "font": "sans"
+                    }
+                  },
+                  {
+                    "id": "character_1",
+                    "display_name": "Writer",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "text_color": "normal",
+                      "font": "sans"
+                    }
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "lobby",
+                "display_name": "The Lobby",
+                "default_character_id": "guide",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "font": "sans",
+                      "weight": "normal"
+                    },
+                    "id": "guide",
+                    "display_name": "Guide"
+                  }
+                ]
+              }
+            ],
+            "characters": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "display_name": "Assistant"
+              },
+              {
+                "id": "character_3",
+                "display_name": "Claude Test",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                }
+              },
+              {
+                "id": "character_2",
+                "display_name": "Gem",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                }
+              },
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "id": "guide",
+                "display_name": "Guide"
+              },
+              {
+                "id": "character_1",
+                "display_name": "Writer",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                }
+              }
+            ],
+            "personas": [
+              {
+                "id": "builtin-guest",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                },
+                "display_name": "Guest"
+              },
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                },
+                "id": "reader",
+                "display_name": "Reader"
+              }
+            ],
+            "recent_sessions": [
+              {
+                "session_id": "builtin-welcome",
+                "session_label": "Welcome",
+                "forum_id": "builtin-entrance",
+                "updated_at": 1793591136
+              },
+              {
+                "session_id": "2026-11-01-19-45-24-session",
+                "session_label": "S1",
+                "forum_id": "forum_1",
+                "updated_at": 1793591124
+              },
+              {
+                "session_label": "W13 reproduction",
+                "session_id": "2026-11-01-19-45-13-session",
+                "forum_id": "forum_1",
+                "updated_at": 1793591115
+              },
+              {
+                "session_label": "W10 reproduction",
+                "session_id": "2026-11-01-19-44-40-session",
+                "forum_id": "forum_1",
+                "updated_at": 1793591082
+              },
+              {
+                "session_label": "W08 verification",
+                "session_id": "2026-11-01-19-43-51-session",
+                "forum_id": "forum_1",
+                "updated_at": 1793591040
+              },
+              {
+                "session_id": "2026-11-01-19-43-29-session",
+                "session_label": "W08 reproduction",
+                "forum_id": "forum_1",
+                "updated_at": 1793591009
+              },
+              {
+                "session_id": "2026-11-01-19-42-02-session",
+                "session_label": "W08 verification",
+                "forum_id": "forum_1",
+                "updated_at": 1793590922
+              },
+              {
+                "session_label": "W08 reproduction",
+                "session_id": "2026-11-01-19-41-56-session",
+                "forum_id": "forum_1",
+                "updated_at": 1793590916
+              }
+            ],
+            "entrance_forum_id": "builtin-entrance",
+            "initial_forum_id": "builtin-entrance",
+            "vault_name": "Assistant-Capability-Followup",
+            "initial_session_id": "builtin-welcome"
+          },
+          "state": "running",
+          "application_version": "development"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "app.bootstrap",
+      "params": {}
+    },
+    {
+      "result": {
+        "result": {
+          "forum_id": "builtin-entrance",
+          "session_id": "builtin-welcome"
+        },
+        "context_epoch": 1,
+        "id": 9000000000001,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "session_id": "builtin-welcome",
+          "forum_id": "builtin-entrance"
+        },
+        "id": 9000000000002,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000003,
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "input": {
+          "text": "/clear"
+        },
+        "forum_id": "builtin-entrance",
+        "session_id": "builtin-welcome"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000004,
+        "result": {
+          "lifecycle": "running",
+          "transcript": [],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "text_color": "normal",
+                "font": "sans"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "session_label": "Welcome",
+          "chat_settings": {
+            "characters": [
+              {
+                "reasoning_effort": "low",
+                "character_id": "builtin-assistant",
+                "provider_id": "provider_1"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com",
+                "display_name": "anthropic-direct"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "host": "generativelanguage.googleapis.com",
+                "model": "gemini-3.8-flash"
+              },
+              {
+                "id": "provider_2",
+                "model": "gpt-5.4-mini",
+                "host": "api.openai.com",
+                "display_name": "openai-direct"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "display_name": "Test",
+                "host": "test"
+              }
+            ]
+          },
+          "session_id": "builtin-welcome",
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "label": "Lab save attempt",
+          "id": "2026-11-01-19-45-36-session"
+        },
+        "id": 9000000000005,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.create",
+      "params": {
+        "label": "Lab save attempt",
+        "forum_id": "forum_1"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "forum_id": "forum_1",
+          "session_id": "2026-11-01-19-45-36-session"
+        },
+        "id": 9000000000006,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "2026-11-01-19-45-36-session",
+        "forum_id": "forum_1"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "session_id": "2026-11-01-19-45-36-session",
+          "forum_id": "forum_1"
+        },
+        "context_epoch": 1,
+        "id": 9000000000007,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "2026-11-01-19-45-36-session",
+        "forum_id": "forum_1"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "clear_input": true,
+          "notice": "Note context omitted: Forum Lab \u2014 Huge note (##000005): exceeds 256 KiB.\nFolder access omitted: Writer \u2014 Docs Removed (##00000A): no ready store; sources: Forum Lab Files."
+        },
+        "context_epoch": 1,
+        "id": 9000000000008,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "input": {
+          "text": "Save this conversation for later review."
+        },
+        "session_id": "2026-11-01-19-45-36-session",
+        "forum_id": "forum_1"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "notice": "Note context omitted: Forum Lab \u2014 Huge note (##000005): exceeds 256 KiB.\nFolder access omitted: Writer \u2014 Docs Removed (##00000A): no ready store; sources: Forum Lab Files.",
+          "lifecycle": "running",
+          "chat_settings": {
+            "characters": [
+              {
+                "reasoning_effort": "none",
+                "character_id": "character_1",
+                "provider_id": "provider_2"
+              },
+              {
+                "reasoning_effort": "high",
+                "character_id": "character_2",
+                "provider_id": "provider_3"
+              },
+              {
+                "character_id": "character_3",
+                "provider_id": "provider_4",
+                "reasoning_effort": "high"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com",
+                "model": "claude-sonnet-4-5"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "provider_3",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com",
+                "display_name": "google-direct"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "model": "gpt-5.4-mini",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "host": "test",
+                "display_name": "Test"
+              }
+            ]
+          },
+          "characters": [
+            {
+              "id": "character_1",
+              "display_name": "Writer",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "text_color": "normal",
+                "font": "sans"
+              }
+            },
+            {
+              "id": "character_2",
+              "display_name": "Gem",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              }
+            },
+            {
+              "id": "character_3",
+              "display_name": "Claude Test",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "weight": "normal",
+                "font": "sans"
+              }
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793591136,
+              "web_search_used": false,
+              "addressed_to": "character_1",
+              "display_name": "Guest",
+              "text": "Save this conversation for later review.",
+              "participant_id": "builtin-guest",
+              "input_tokens": null,
+              "output_tokens": null,
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Writer"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793591137,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": 22,
+              "input_tokens": 4837,
+              "participant_id": "character_1",
+              "display_name": "Writer",
+              "text": "Character profile received. You may begin, or ask for a brief summary of the voice.",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "session_id": "2026-11-01-19-45-36-session",
+          "session_label": "Lab save attempt",
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "forum_1",
+            "display_name": "Lab",
+            "default_character_id": "character_1",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "character_3",
+                "display_name": "Claude Test",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                }
+              },
+              {
+                "id": "character_2",
+                "display_name": "Gem",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              },
+              {
+                "id": "character_1",
+                "display_name": "Writer",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                }
+              }
+            ]
+          },
+          "default_character_id": "character_1"
+        },
+        "id": 9000000000038,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "2026-11-01-19-45-36-session",
+        "forum_id": "forum_1"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000039,
+        "result": {
+          "notice": "Note context omitted: Forum Lab \u2014 Huge note (##000005): exceeds 256 KiB.\nFolder access omitted: Writer \u2014 Docs Removed (##00000A): no ready store; sources: Forum Lab Files.",
+          "session_label": "Lab save attempt",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "character_1",
+                "provider_id": "provider_2",
+                "reasoning_effort": "none"
+              },
+              {
+                "provider_id": "provider_3",
+                "character_id": "character_2",
+                "reasoning_effort": "high"
+              },
+              {
+                "character_id": "character_3",
+                "reasoning_effort": "high",
+                "provider_id": "provider_4"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com",
+                "model": "claude-sonnet-4-5"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "provider_3",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com",
+                "display_name": "google-direct"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "host": "api.openai.com",
+                "model": "gpt-5.4-mini"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "host": "test",
+                "display_name": "Test"
+              }
+            ]
+          },
+          "lifecycle": "running",
+          "characters": [
+            {
+              "id": "character_1",
+              "display_name": "Writer",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              }
+            },
+            {
+              "id": "character_2",
+              "display_name": "Gem",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "text_color": "normal",
+                "font": "sans"
+              }
+            },
+            {
+              "id": "character_3",
+              "display_name": "Claude Test",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              }
+            }
+          ],
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793591136,
+              "web_search_used": false,
+              "addressed_to": "character_1",
+              "output_tokens": null,
+              "display_name": "Guest",
+              "participant_id": "builtin-guest",
+              "text": "Save this conversation for later review.",
+              "input_tokens": null,
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Writer"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793591137,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": 22,
+              "text": "Character profile received. You may begin, or ask for a brief summary of the voice.",
+              "participant_id": "character_1",
+              "display_name": "Writer",
+              "input_tokens": 4837,
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "session_id": "2026-11-01-19-45-36-session",
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "forum_1",
+            "display_name": "Lab",
+            "default_character_id": "character_1",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "character_3",
+                "display_name": "Claude Test",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                }
+              },
+              {
+                "id": "character_2",
+                "display_name": "Gem",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                }
+              },
+              {
+                "id": "character_1",
+                "display_name": "Writer",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              }
+            ]
+          },
+          "default_character_id": "character_1"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "2026-11-01-19-45-36-session",
+        "forum_id": "forum_1"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000040,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W16-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000041,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W16-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000042,
+        "result": {
+          "name": "/private/tmp/cha-ass-followup/checkpoints/W16-before.txt",
+          "text": "ready"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W16-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000043,
+        "result": {
+          "forum_id": "builtin-entrance",
+          "session_id": "builtin-welcome"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "context_epoch": 1,
+        "id": 9000000000044,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "input": {
+          "text": "Why was my Lab conversation not saved?"
+        },
+        "forum_id": "builtin-entrance",
+        "session_id": "builtin-welcome"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793591137,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "input_tokens": null,
+              "participant_id": "builtin-guest",
+              "display_name": "Guest",
+              "text": "Why was my Lab conversation not saved?",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793591141,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": 212,
+              "text": "Do you mean the **conversation is missing from Recent**, or that **\u201csave this conversation\u201d did not create a summary in Notes**?\n\nI checked the current logs and settings:\n\n- Writer\u2019s latest Lab reply completed successfully. There is no storage error in the available logs, but these logs alone cannot prove the conversation was saved.\n- **Recipient detection is not configured.** It also detects requests such as \u201csave this conversation,\u201d so that phrase will not automatically trigger a Notes summary.\n\nIf you wanted a summary, use **Save summary** in the session\u2019s sidebar menu. Ordinary Lab conversation history should persist without that command.\n\nWhich of those two things is missing?",
+              "display_name": "Assistant",
+              "input_tokens": 109627,
+              "participant_id": "builtin-assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "chat_settings": {
+            "characters": [
+              {
+                "provider_id": "provider_1",
+                "character_id": "builtin-assistant",
+                "reasoning_effort": "low"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com",
+                "model": "claude-sonnet-4-5"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com",
+                "display_name": "Assistant test model"
+              },
+              {
+                "id": "provider_3",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com",
+                "display_name": "google-direct"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "host": "api.openai.com",
+                "model": "gpt-5.4-mini"
+              },
+              {
+                "id": "test",
+                "display_name": "Test",
+                "host": "test",
+                "model": "fake"
+              }
+            ]
+          },
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "text_color": "normal",
+                "font": "sans"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "lifecycle": "running",
+          "session_id": "builtin-welcome",
+          "session_label": "Welcome",
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "id": 9000000000230,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000231,
+        "result": {
+          "lifecycle": "running",
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793591137,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "display_name": "Guest",
+              "text": "Why was my Lab conversation not saved?",
+              "input_tokens": null,
+              "participant_id": "builtin-guest",
+              "output_tokens": null,
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793591141,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": 212,
+              "text": "Do you mean the **conversation is missing from Recent**, or that **\u201csave this conversation\u201d did not create a summary in Notes**?\n\nI checked the current logs and settings:\n\n- Writer\u2019s latest Lab reply completed successfully. There is no storage error in the available logs, but these logs alone cannot prove the conversation was saved.\n- **Recipient detection is not configured.** It also detects requests such as \u201csave this conversation,\u201d so that phrase will not automatically trigger a Notes summary.\n\nIf you wanted a summary, use **Save summary** in the session\u2019s sidebar menu. Ordinary Lab conversation history should persist without that command.\n\nWhich of those two things is missing?",
+              "display_name": "Assistant",
+              "input_tokens": 109627,
+              "participant_id": "builtin-assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "weight": "normal",
+                "font": "sans"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "reasoning_effort": "low",
+                "provider_id": "provider_1"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com",
+                "display_name": "anthropic-direct"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "host": "generativelanguage.googleapis.com",
+                "model": "gemini-3.8-flash"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "model": "gpt-5.4-mini",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "display_name": "Test",
+                "host": "test"
+              }
+            ]
+          },
+          "session_label": "Welcome",
+          "session_id": "builtin-welcome",
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000232,
+        "result": {
+          "audio_api_key": "",
+          "compression_reasoning_effort": "low",
+          "compression_provider": "provider_2",
+          "audio_url": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notesSettings.get",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000233,
+        "result": {
+          "forum_id": "builtin-entrance",
+          "session_id": "builtin-welcome"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "id": 9000000000234,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "session_id": "builtin-welcome",
+        "input": {
+          "text": "Save this conversation for later review."
+        },
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793591137,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "input_tokens": null,
+              "participant_id": "builtin-guest",
+              "display_name": "Guest",
+              "text": "Why was my Lab conversation not saved?",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793591141,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": 212,
+              "input_tokens": 109627,
+              "text": "Do you mean the **conversation is missing from Recent**, or that **\u201csave this conversation\u201d did not create a summary in Notes**?\n\nI checked the current logs and settings:\n\n- Writer\u2019s latest Lab reply completed successfully. There is no storage error in the available logs, but these logs alone cannot prove the conversation was saved.\n- **Recipient detection is not configured.** It also detects requests such as \u201csave this conversation,\u201d so that phrase will not automatically trigger a Notes summary.\n\nIf you wanted a summary, use **Save summary** in the session\u2019s sidebar menu. Ordinary Lab conversation history should persist without that command.\n\nWhich of those two things is missing?",
+              "display_name": "Assistant",
+              "participant_id": "builtin-assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 3,
+              "request_id": 2,
+              "created_at": 1793591143,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "input_tokens": null,
+              "text": "Save this conversation for later review.",
+              "display_name": "Guest",
+              "participant_id": "builtin-guest",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 4,
+              "request_id": 2,
+              "created_at": 1793591144,
+              "web_search_used": false,
+              "addressed_to": "",
+              "output_tokens": 69,
+              "text": "Welcome is temporary, so I can\u2019t save this help conversation for later review. It is removed when CHA shuts down.\n\nFor the **Lab conversation**, reopen it from **Recent**, then choose **Save summary** in its sidebar menu to create a summary in **Notes**. Its normal conversation history persists separately from that summary.",
+              "participant_id": "builtin-assistant",
+              "display_name": "Assistant",
+              "input_tokens": 34946,
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "lifecycle": "running",
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "session_label": "Welcome",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "provider_id": "provider_1",
+                "reasoning_effort": "low"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com",
+                "display_name": "anthropic-direct"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "host": "api.openai.com",
+                "model": "gpt-6.1-sol"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "host": "generativelanguage.googleapis.com",
+                "model": "gemini-3.8-flash"
+              },
+              {
+                "id": "provider_2",
+                "model": "gpt-5.4-mini",
+                "display_name": "openai-direct",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "display_name": "Test",
+                "host": "test"
+              }
+            ]
+          },
+          "session_id": "builtin-welcome",
+          "characters": [
+            {
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "weight": "normal",
+                "font": "sans"
+              },
+              "id": "builtin-assistant",
+              "display_name": "Assistant"
+            }
+          ],
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "id": 9000000000304,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "session_label": "Welcome",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "provider_id": "provider_1",
+                "reasoning_effort": "low"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com",
+                "display_name": "anthropic-direct"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-6.1-sol",
+                "host": "api.openai.com",
+                "display_name": "Assistant test model"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "host": "generativelanguage.googleapis.com",
+                "model": "gemini-3.8-flash"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "model": "gpt-5.4-mini",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "display_name": "Test",
+                "host": "test",
+                "model": "fake"
+              }
+            ]
+          },
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "characters": [
+            {
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              },
+              "id": "builtin-assistant",
+              "display_name": "Assistant"
+            }
+          ],
+          "transcript": [
+            {
+              "id": 1,
+              "request_id": 1,
+              "created_at": 1793591137,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "display_name": "Guest",
+              "input_tokens": null,
+              "text": "Why was my Lab conversation not saved?",
+              "participant_id": "builtin-guest",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 2,
+              "request_id": 1,
+              "created_at": 1793591141,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "text": "Do you mean the **conversation is missing from Recent**, or that **\u201csave this conversation\u201d did not create a summary in Notes**?\n\nI checked the current logs and settings:\n\n- Writer\u2019s latest Lab reply completed successfully. There is no storage error in the available logs, but these logs alone cannot prove the conversation was saved.\n- **Recipient detection is not configured.** It also detects requests such as \u201csave this conversation,\u201d so that phrase will not automatically trigger a Notes summary.\n\nIf you wanted a summary, use **Save summary** in the session\u2019s sidebar menu. Ordinary Lab conversation history should persist without that command.\n\nWhich of those two things is missing?",
+              "output_tokens": 212,
+              "input_tokens": 109627,
+              "participant_id": "builtin-assistant",
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            },
+            {
+              "id": 3,
+              "request_id": 2,
+              "created_at": 1793591143,
+              "web_search_used": false,
+              "addressed_to": "builtin-assistant",
+              "output_tokens": null,
+              "text": "Save this conversation for later review.",
+              "input_tokens": null,
+              "participant_id": "builtin-guest",
+              "display_name": "Guest",
+              "kind": "human",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": "Assistant"
+            },
+            {
+              "id": 4,
+              "request_id": 2,
+              "created_at": 1793591144,
+              "web_search_used": false,
+              "addressed_to": "",
+              "display_name": "Assistant",
+              "input_tokens": 34946,
+              "participant_id": "builtin-assistant",
+              "text": "Welcome is temporary, so I can\u2019t save this help conversation for later review. It is removed when CHA shuts down.\n\nFor the **Lab conversation**, reopen it from **Recent**, then choose **Save summary** in its sidebar menu to create a summary in **Notes**. Its normal conversation history persists separately from that summary.",
+              "output_tokens": 69,
+              "kind": "character",
+              "has_cached_audio": false,
+              "status": "complete",
+              "addressed_to_name": ""
+            }
+          ],
+          "session_id": "builtin-welcome",
+          "lifecycle": "running",
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "context_epoch": 1,
+        "id": 9000000000305,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000306,
+        "result": {
+          "audio_api_key": "",
+          "compression_reasoning_effort": "low",
+          "compression_provider": "provider_2",
+          "audio_url": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notesSettings.get",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000307,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W16-after.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000308,
+        "ok": false,
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        },
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W16-after.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000309,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W16-after.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000310,
+        "result": {
+          "name": "/private/tmp/cha-ass-followup/checkpoints/W16-after.txt",
+          "text": "ready"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/W16-after.txt"
+      }
+    }
+  ],
+  "exit_code": 0,
+  "utc": "2026-11-02T03:45:36.237473+00:00",
+  "checkpoints": [
+    "W16-before",
+    "W16-after"
+  ],
+  "checkpoint_errors": []
+}

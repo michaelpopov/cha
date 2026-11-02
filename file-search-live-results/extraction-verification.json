@@ -1,0 +1,6 @@
+{
+  "returned_source_matches_checked": 173,
+  "mismatches": [],
+  "passed": true,
+  "google_source": "groundingMetadata.groundingChunks[].retrievedContext.text; generated content excluded"
+}

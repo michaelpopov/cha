@@ -1,0 +1,175 @@
+{
+  "characters": [
+    {
+      "appearance": {
+        "font": "sans",
+        "size": "normal",
+        "style": "normal",
+        "text_color": "normal",
+        "weight": "normal"
+      },
+      "description": "Private retrieval test peer",
+      "display_name": "Peer",
+      "id": "character_1"
+    },
+    {
+      "appearance": {
+        "font": "sans",
+        "size": "normal",
+        "style": "normal",
+        "text_color": "normal",
+        "weight": "normal"
+      },
+      "display_name": "Guide",
+      "id": "guide"
+    }
+  ],
+  "chat_settings": {
+    "characters": [
+      {
+        "character_id": "character_1",
+        "provider_id": "provider_3",
+        "reasoning_effort": "none"
+      },
+      {
+        "character_id": "guide",
+        "provider_id": "provider_3",
+        "reasoning_effort": "none"
+      }
+    ],
+    "model_options": [
+      {
+        "display_name": "Live Gemini",
+        "host": "generativelanguage.googleapis.com",
+        "id": "provider_2",
+        "model": "gemini-3.8-flash"
+      },
+      {
+        "display_name": "Live Gpt4o",
+        "host": "api.openai.com",
+        "id": "provider_1",
+        "model": "gpt-4o"
+      },
+      {
+        "display_name": "Live Mistral",
+        "host": "api.mistral.ai",
+        "id": "provider_3",
+        "model": "mistral-large-latest"
+      },
+      {
+        "display_name": "Test",
+        "host": "test",
+        "id": "test",
+        "model": "fake"
+      }
+    ]
+  },
+  "default_character_id": "guide",
+  "forum": {
+    "default_character_id": "guide",
+    "default_persona_display_name": "Guest",
+    "default_persona_id": "builtin-guest",
+    "display_name": "The Lobby",
+    "id": "lobby",
+    "members": [
+      {
+        "appearance": {
+          "font": "sans",
+          "size": "normal",
+          "style": "normal",
+          "text_color": "normal",
+          "weight": "normal"
+        },
+        "display_name": "Guide",
+        "id": "guide"
+      },
+      {
+        "appearance": {
+          "font": "sans",
+          "size": "normal",
+          "style": "normal",
+          "text_color": "normal",
+          "weight": "normal"
+        },
+        "description": "Private retrieval test peer",
+        "display_name": "Peer",
+        "id": "character_1"
+      }
+    ]
+  },
+  "generation": {
+    "active": false,
+    "character_display_name": "",
+    "character_id": "",
+    "phase": "waiting"
+  },
+  "lifecycle": "running",
+  "session_id": "2026-11-01-16-50-31-session",
+  "session_label": "C06",
+  "transcript": [
+    {
+      "addressed_to": "guide",
+      "addressed_to_name": "Guide",
+      "created_at": 1793580631,
+      "display_name": "Guest",
+      "has_cached_audio": false,
+      "id": 1,
+      "input_tokens": null,
+      "kind": "human",
+      "output_tokens": null,
+      "participant_id": "builtin-guest",
+      "request_id": 1,
+      "status": "complete",
+      "text": "Explicitly search your private attached files and the shared Forum source. Give your private source code and the shared source code with filenames. Do not guess facts outside your files.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793580635,
+      "display_name": "Guide",
+      "has_cached_audio": false,
+      "id": 2,
+      "input_tokens": 3050,
+      "kind": "character",
+      "output_tokens": 204,
+      "participant_id": "guide",
+      "request_id": 1,
+      "status": "complete",
+      "text": "Here are the results from the explicit search of my private attached files and the shared Forum source:\n\n### **Private Source Code (Attached Files)**\n**Folder:** *O-B Packaging (##000003)*\n**Filename:** `cedar-packaging.md`\n**Source Code:** `LIVE-4147111809`\n**Additional Context:**\n- Project Cedar packaging has **14 units per case**.\n- Each case costs **34 credits**.\n- Reserved material: **cobalt**.\n\n---\n\n### **Shared Source Code (Forum Source)**\n**Folder:** *Shared (##000005)*\n**Filename:** `Shared.md`\n**Source Code:** `LIVE-123084143`\n**Additional Context:**\n- Shared approval status: **indigo**.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "character_1",
+      "addressed_to_name": "Peer",
+      "created_at": 1793580631,
+      "display_name": "Guest",
+      "has_cached_audio": false,
+      "id": 3,
+      "input_tokens": null,
+      "kind": "human",
+      "output_tokens": null,
+      "participant_id": "builtin-guest",
+      "request_id": 2,
+      "status": "complete",
+      "text": "Explicitly search your private attached files and the shared Forum source. Give your private source code and the shared source code with filenames. Do not guess facts outside your files.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793580641,
+      "display_name": "Peer",
+      "has_cached_audio": false,
+      "id": 4,
+      "input_tokens": 7412,
+      "kind": "character",
+      "output_tokens": 137,
+      "participant_id": "character_1",
+      "request_id": 2,
+      "status": "complete",
+      "text": "### Private Source Code (from attached files):\n**Folder:** `G-A Спрос (##000004)`\n**Filename:** `cedar-demand-данные.md`\n**Source Code:** `LIVE-1391754255`\n\n---\n\n### Shared Source Code (from Forum source):\n**Folder:** `Shared (##000005)`\n**Filename:** `Shared.md`\n**Source Code:** `LIVE-123084143`",
+      "web_search_used": false
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "characters": [
+    {
+      "appearance": {
+        "font": "sans",
+        "size": "normal",
+        "style": "normal",
+        "text_color": "normal",
+        "weight": "normal"
+      },
+      "display_name": "Guide",
+      "id": "guide"
+    }
+  ],
+  "chat_settings": {
+    "characters": [
+      {
+        "character_id": "guide",
+        "provider_id": "provider_3",
+        "reasoning_effort": "none"
+      }
+    ],
+    "model_options": [
+      {
+        "display_name": "Live Gemini",
+        "host": "generativelanguage.googleapis.com",
+        "id": "provider_2",
+        "model": "gemini-3.8-flash"
+      },
+      {
+        "display_name": "Live Gpt4o",
+        "host": "api.openai.com",
+        "id": "provider_1",
+        "model": "gpt-4o"
+      },
+      {
+        "display_name": "Live Mistral",
+        "host": "api.mistral.ai",
+        "id": "provider_3",
+        "model": "mistral-large-latest"
+      },
+      {
+        "display_name": "Test",
+        "host": "test",
+        "id": "test",
+        "model": "fake"
+      }
+    ]
+  },
+  "default_character_id": "guide",
+  "forum": {
+    "default_character_id": "guide",
+    "default_persona_display_name": "Guest",
+    "default_persona_id": "builtin-guest",
+    "display_name": "The Lobby",
+    "id": "lobby",
+    "members": [
+      {
+        "appearance": {
+          "font": "sans",
+          "size": "normal",
+          "style": "normal",
+          "text_color": "normal",
+          "weight": "normal"
+        },
+        "display_name": "Guide",
+        "id": "guide"
+      }
+    ]
+  },
+  "generation": {
+    "active": false,
+    "character_display_name": "",
+    "character_id": "",
+    "phase": "waiting"
+  },
+  "lifecycle": "running",
+  "session_id": "2026-11-01-16-56-19-session",
+  "session_label": "C10-before-1",
+  "transcript": [
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793580979,
+      "display_name": "System",
+      "has_cached_audio": false,
+      "id": 1,
+      "input_tokens": null,
+      "kind": "notice",
+      "output_tokens": null,
+      "participant_id": "",
+      "status": "complete",
+      "text": "Added folder “Deletion1” to this chat.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "guide",
+      "addressed_to_name": "Guide",
+      "created_at": 1793580979,
+      "display_name": "Guest",
+      "has_cached_audio": false,
+      "id": 2,
+      "input_tokens": null,
+      "kind": "human",
+      "output_tokens": null,
+      "participant_id": "builtin-guest",
+      "request_id": 1,
+      "status": "complete",
+      "text": "Explicitly search Project Deletion and report its source code.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793580987,
+      "display_name": "Guide",
+      "has_cached_audio": false,
+      "id": 3,
+      "input_tokens": 2786,
+      "kind": "character",
+      "output_tokens": 73,
+      "participant_id": "guide",
+      "request_id": 1,
+      "status": "complete",
+      "text": "The **Project Deletion** source code is:\n\n**`LIVE-3748160451`**\n\nThis was retrieved from the file `Deletion1.md` in the **Deletion1 (##00000A)** folder.",
+      "web_search_used": false
+    }
+  ]
+}

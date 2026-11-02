@@ -1,0 +1,291 @@
+[
+  {
+    "case": "Cerebras-mixed",
+    "check": "complete resolved target set",
+    "passed": true
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "resolved saved credentials",
+    "passed": true
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "production summary and folder schemas without maxLength",
+    "passed": true
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "numeric and nullable summary constraints retained",
+    "passed": true
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "both undisclosed source codes and filenames answered",
+    "passed": true
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "source codes absent from initial consumer request",
+    "passed": true
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "vs_6ae7f234724c819197f6b3a5fb489015"
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "fileSearchStores/cha-live-ga-20261102-h9vrn2dydlkn"
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "exact normalized output delivered with actual tool call ID",
+    "passed": true,
+    "invocation": 2
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "normalized source passage matches real retrieved text",
+    "passed": true,
+    "invocation": 2
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "normalized source passage matches real retrieved text",
+    "passed": true,
+    "invocation": 2
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "vs_6ae7f234724c819197f6b3a5fb489015"
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "fileSearchStores/cha-live-ga-20261102-h9vrn2dydlkn"
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "exact normalized output delivered with actual tool call ID",
+    "passed": true,
+    "invocation": 3
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "normalized source passage matches real retrieved text",
+    "passed": true,
+    "invocation": 3
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "normalized source passage matches real retrieved text",
+    "passed": true,
+    "invocation": 3
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "vs_6ae7f234724c819197f6b3a5fb489015"
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "fileSearchStores/cha-live-ga-20261102-h9vrn2dydlkn"
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "exact normalized output delivered with actual tool call ID",
+    "passed": true,
+    "invocation": 4
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "normalized source passage matches real retrieved text",
+    "passed": true,
+    "invocation": 4
+  },
+  {
+    "case": "Cerebras-mixed",
+    "check": "normalized source passage matches real retrieved text",
+    "passed": true,
+    "invocation": 4
+  },
+  {
+    "case": "C13-healthy-empty",
+    "check": "complete resolved target set",
+    "passed": true
+  },
+  {
+    "case": "C13-healthy-empty",
+    "check": "resolved saved credentials",
+    "passed": true
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "complete resolved target set",
+    "passed": true
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "resolved saved credentials",
+    "passed": true
+  },
+  {
+    "case": "C13-healthy-empty",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "fileSearchStores/cha-live-healthyempty-u1ttlwo9r4ti"
+  },
+  {
+    "case": "C13-healthy-empty",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "GET",
+    "store": "fileSearchStores/cha-live-healthyempty-u1ttlwo9r4ti"
+  },
+  {
+    "case": "C13-healthy-empty",
+    "check": "exact normalized output delivered with actual tool call ID",
+    "passed": true,
+    "invocation": 2
+  },
+  {
+    "case": "C13-healthy-empty",
+    "check": "empty STOP inspected successfully and remained error-free",
+    "passed": true
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "vs_6ae7f2a9f54c8191b6a324703b605086"
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "fileSearchStores/cha-live-ga-20261102-3b3hkesjsj6a"
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "fileSearchStores/cha-live-remotedeletion-c0qqylkqwtrh"
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "GET",
+    "store": "fileSearchStores/cha-live-remotedeletion-c0qqylkqwtrh"
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "exact normalized output delivered with actual tool call ID",
+    "passed": true,
+    "invocation": 4
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "normalized source passage matches real retrieved text",
+    "passed": true,
+    "invocation": 4
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "normalized source passage matches real retrieved text",
+    "passed": true,
+    "invocation": 4
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "deleted store inspection 404 produced safe error with healthy peers",
+    "passed": true
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "vs_6ae7f2a9f54c8191b6a324703b605086"
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "fileSearchStores/cha-live-ga-20261102-3b3hkesjsj6a"
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "GET",
+    "store": "fileSearchStores/cha-live-ga-20261102-3b3hkesjsj6a"
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "POST",
+    "store": "fileSearchStores/cha-live-remotedeletion-c0qqylkqwtrh"
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "outgoing saved credential matched",
+    "passed": true,
+    "method": "GET",
+    "store": "fileSearchStores/cha-live-remotedeletion-c0qqylkqwtrh"
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "exact normalized output delivered with actual tool call ID",
+    "passed": true,
+    "invocation": 5
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "normalized source passage matches real retrieved text",
+    "passed": true,
+    "invocation": 5
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "deleted store inspection 404 produced safe error with healthy peers",
+    "passed": true
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "first real search preserved passages from both healthy services",
+    "passed": true
+  },
+  {
+    "case": "C12-deleted-gemini",
+    "check": "completed consumer answer used both sources and reported access failure",
+    "passed": true
+  },
+  {
+    "case": "C13-healthy-empty",
+    "check": "completed consumer answer reported no matches without inventing a fact",
+    "passed": true
+  }
+]

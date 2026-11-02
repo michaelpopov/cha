@@ -1,0 +1,18 @@
+{
+  "approved_by_user": true,
+  "utc": "2026-11-02T05:03:02.503145+00:00",
+  "status": "applied and verified",
+  "messages": [
+    "Select a compression provider in Settings \u2192 Notes settings.",
+    "The conversation exceeds the model's context window. Select a model with a larger context window in Settings \u2192 Notes settings and try again.",
+    "Page reading is not configured. Enable web_reader or Firecrawl in Settings \u2192 Search API."
+  ],
+  "screen_labels_match": true,
+  "affected_tests": {
+    "run": 4,
+    "failures": 0,
+    "evidence": "approved-errors-tests.xml"
+  },
+  "source_checks": "All three exact approved strings present; obsolete screen names absent from Notes operations",
+  "live_verdicts": "Prior live results are historical and were not regraded or rerun for this text-only change."
+}

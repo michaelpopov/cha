@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+await checkpoint('W14-before');await ask('step1',"Add Long note to Writer's Files. Go ahead.");await ask('step2',"Remove the Docs Removed folder from Lab's Files. Do it.");C.forum=await rpc('forum.get',{forum_id:C.lab});await checkpoint('W14-after');

@@ -1,0 +1,67 @@
+{
+  "accepted": false,
+  "commit": "e0a075c609dffd3e34b4e7934084d0c84c5d30a3",
+  "utc": "2026-11-02T03:29:07.862191+00:00",
+  "host": "macOS-26.7.1-arm64-arm-64bit",
+  "dirty_tree": true,
+  "assistant": {
+    "provider_label": "openai-direct",
+    "provider_id": "provider_1",
+    "model": "gpt-4o",
+    "api": "responses",
+    "host": "desktop application"
+  },
+  "native_suites": [
+    {
+      "executable": "cha_tests",
+      "tests": 867,
+      "passed": 865,
+      "skipped": 2,
+      "failures": 0,
+      "evidence": "cha_tests.xml"
+    },
+    {
+      "executable": "cha_app_tests",
+      "tests": 616,
+      "passed": 616,
+      "skipped": 0,
+      "failures": 0,
+      "evidence": "cha_app_tests-final.xml"
+    },
+    {
+      "executable": "cha_bridge_tests",
+      "tests": 137,
+      "passed": 137,
+      "skipped": 0,
+      "failures": 0,
+      "evidence": "cha_bridge_tests.xml"
+    },
+    {
+      "executable": "cha_native_runtime_tests",
+      "tests": 13,
+      "passed": 13,
+      "skipped": 0,
+      "failures": 0,
+      "evidence": "cha_native_runtime_tests.xml"
+    }
+  ],
+  "native_cases": "N-01 to N-08 Pass",
+  "regressions": "All 31 E patterns match passing tests",
+  "source_review": "R-01 to R-14 Pass with supporting file/line excerpts",
+  "live_counts": {
+    "Fail": 21,
+    "Blocked": 3,
+    "Not observed": 1,
+    "Pass": 1
+  },
+  "case_count": 26,
+  "cleanup": "Remote stores/files return 404; local test vault/registration removed; original app.toml restored",
+  "limitations": [
+    "One run of one Assistant model; these model-behavior failures do not establish the outcome for every model.",
+    "Generated IDs were used by normal Settings operations; fixture.json maps display labels to actual IDs.",
+    "The original test fixture shared the OpenAI provider between Assistant and Writer/Notes. gpt-4o cannot run low-effort Notes compression; W-03 save failed independently before that verification.",
+    "Early debug logs rotated before archival. Exact traces for W-01 to W-05 and W-06 removal are unavailable; these failures are supported by retained answers, native snapshots and exports, but full evidence completeness is not met.",
+    "Four driver interruptions were resumed only after their Assistant prompts had not been sent. Original attempts and continuations are retained.",
+    "No product implementation or UI changes were made. Six proposed native tests were added and N-01/N-08 assertions expanded."
+  ]
+}

@@ -1,0 +1,1 @@
+await bridge();let s=await session('Folder navigation final check',C.lab);await checkpoint('F04-before');await submit(s,'@Assistant How do I give Writer a folder of documents?');C.answer=await rpc('session.snapshot',s);await checkpoint('F04-after');

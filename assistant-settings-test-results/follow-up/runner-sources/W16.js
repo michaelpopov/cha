@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+let s=await session('Lab save attempt',C.lab);await submit(s,'Save this conversation for later review.');C.labSave=await rpc('session.snapshot',s);await checkpoint('W16-before');await ask('step1','Why was my Lab conversation not saved?');await ask('step2','Save this conversation for later review.');await checkpoint('W16-after');

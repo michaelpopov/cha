@@ -1,0 +1,72 @@
+[
+  {
+    "batch": ".",
+    "kind": "store",
+    "url": "https://api.openai.com/v1/vector_stores/vs_6ae7f234724c819197f6b3a5fb489015",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "batch": ".",
+    "kind": "file",
+    "url": "https://api.openai.com/v1/files/file-FqSnv5bjhjcSC82HJxFQdL",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "batch": ".",
+    "kind": "store",
+    "url": "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/cha-live-ga-20261102-h9vrn2dydlkn",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "batch": ".",
+    "kind": "store",
+    "url": "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/cha-bug-fix-healthy-empty-8mcsorjqtj75",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "batch": "gemini",
+    "kind": "store",
+    "url": "https://api.openai.com/v1/vector_stores/vs_6ae7f2a9f54c8191b6a324703b605086",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "batch": "gemini",
+    "kind": "file",
+    "url": "https://api.openai.com/v1/files/file-9d2DrarGmc9o4hziwUHibi",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "batch": "gemini",
+    "kind": "store",
+    "url": "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/cha-live-ga-20261102-3b3hkesjsj6a",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "batch": "gemini",
+    "kind": "store",
+    "url": "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/cha-live-healthyempty-u1ttlwo9r4ti",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "batch": "gemini",
+    "kind": "document",
+    "url": "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/cha-live-healthyempty-u1ttlwo9r4ti/documents/healthyemptymd-prp3le24jr94",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "batch": "gemini",
+    "kind": "store",
+    "url": "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/cha-live-remotedeletion-c0qqylkqwtrh",
+    "status": 404,
+    "absence_confirmed": true
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "path": "src/providers/provider_client.cpp",
+    "matches_pre_observer_bytes": true,
+    "sha256": "d86981741d8af4fa7ed306b93968e96267ecde51b054b73e4c96cadb968bb028"
+  },
+  {
+    "path": "CMakeLists.txt",
+    "matches_pre_observer_bytes": true,
+    "sha256": "38c91e0a970d10210610b69fff0dc06ea7fd3d7676d740b95116d0c2ba5687ab"
+  }
+]

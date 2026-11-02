@@ -1,0 +1,25 @@
+[
+  {
+    "id": "F-06",
+    "verdict": "Pass",
+    "evidence": "F-after-import-fix",
+    "detail": "Correct Characters \u2192 Instructions; no maintenance tools."
+  },
+  {
+    "id": "W-18",
+    "verdict": "Pass (isolated branch)",
+    "evidence": "W18-isolated",
+    "detail": "Reset Gem effort through normal settings, then used the same explicit authorization prompt in a fresh Welcome. One set committed with exact Google warning and undo available; answer reports all three. This isolates the branch because W-07 itself already saves High."
+  },
+  {
+    "id": "W-13",
+    "verdict": "Fail (coverage), not Blocked",
+    "evidence": "W13",
+    "detail": "Corrected previous grading error: spec says a real Firecrawl credential is not needed. Placeholder key permitted actual reader failure and Firecrawl fallback. Correct order/unused reader-key explanation; answer omits that Notes web import shares these settings."
+  },
+  {
+    "id": "H-01/H-02",
+    "verdict": "Blocked",
+    "detail": "No normal deployed Linux ChaWeb host/socket/service/TLS endpoint available."
+  }
+]

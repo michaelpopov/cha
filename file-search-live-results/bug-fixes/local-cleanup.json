@@ -1,0 +1,19 @@
+{
+  "temporary_artifacts": [
+    {
+      "path": "build/ninja/cha_bug_fix_live",
+      "removed": true
+    },
+    {
+      "path": "build/ninja/CMakeFiles/cha_bug_fix_live.dir",
+      "removed": true
+    },
+    {
+      "path": "/private/tmp/cha-bug-fixes-live",
+      "removed": true
+    }
+  ],
+  "temporary_vault_removed": true,
+  "original_provider_settings_equal_across_runs": true,
+  "unrelated_user_files_preserved": true
+}

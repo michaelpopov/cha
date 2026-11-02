@@ -1,0 +1,149 @@
+[
+  {
+    "call_id": "call_kY2zUib98JVcQsXgJXjonLyA",
+    "utc": "2026-11-02T05:08:30.356465+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:28Z:\nWhy does high effort make no difference for Claude Test?",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "characters"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 11868,
+          "path": "characters/character-voice.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_1/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_1/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 79,
+          "path": "characters/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_2/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_2/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 102,
+          "path": "characters/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_3/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_3/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 110,
+          "path": "characters/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 23,
+          "path": "characters/guide/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 41,
+          "path": "characters/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_tJeT0GvtTybnMiMfPEw3hD5S",
+    "utc": "2026-11-02T05:08:31.766653+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:28Z:\nWhy does high effort make no difference for Claude Test?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "characters/character_1/character.toml",
+        "characters/character_2/character.toml",
+        "characters/character_3/character.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Writer'\nprovider = 'provider_2'\n",
+          "path": "characters/character_1/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Gem'\nprovider = 'provider_3'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_2/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Claude Test'\nprovider = 'provider_4'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_3/character.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_amgg0vJ4bgH8HXmoLXW4hzdO",
+    "utc": "2026-11-02T05:08:33.219351+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:28Z:\nWhy does high effort make no difference for Claude Test?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/providers/provider_4/config.toml",
+        "characters/character_3/character.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "api = 'anthropic'\napi_key = 'api_key_4'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'anthropic-direct'\nhost = 'api.anthropic.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'claude-sonnet-4-5'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_4/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Claude Test'\nprovider = 'provider_4'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_3/character.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  }
+]

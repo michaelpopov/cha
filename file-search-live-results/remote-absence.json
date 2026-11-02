@@ -1,0 +1,596 @@
+[
+  {
+    "ledger": "preflight-ownership.json",
+    "resource": "vs_6ae7d90be75081919d4468c4480fcdb9",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "preflight-ownership.json",
+    "resource": "file-DZed1Z5j9U8kp5ZwksEcmr",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "preflight-ownership.json",
+    "resource": "fileSearchStores/cha-live-ga-20261102-lli78bwh5dzs",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "vs_6ae7dbe6b8108191b13e5251980b7eef",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-Nkbmcio3Xr6rqxMroWaT5q",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "fileSearchStores/cha-live-ga-20261102-30bqmjq1ppju",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "vs_6ae7de9131908191a2a7d5e3e7c836d3",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-K5oECz7uSjauvkMZMz4E9F",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-Do6bfup3DsJ5wkTaYJM2HS",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-VErDj2yUR9ymPfBFGdDETb",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-JJL1WkBxeUdNzrw9fzqJKp",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-C9jSaHjMwvqrnf7q7tDWpW",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-BGM1ajUrw7qqj1ronxTUfc",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-WB4SEUN5gKnUagEHqN5nwq",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-SYBEvYj5UPQyQLho66rFhy",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-VCC6eHXwBfRRBdbfasdWTH",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-8xhQR7LLtmR1eF719jhhkx",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-LCqpLbtQpyvfXoLbf44dkK",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-J5YxvuyckAtVcWd6wSEVW3",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-W6iFuwk4p9s5HgaS1iNAkk",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-UZne6od3F57CARSachGQQe",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-T3qutTQMMwg9EFgwWHwuGk",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-HQv6Swx5f2uS6hdpKFCbyz",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-JfFYZ89nKQYGqe22W7br3i",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-WXnKcEzdmMFknFGWKbx5ec",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "expanded/ownership.json",
+    "resource": "file-V43jwu4SzSeRKb99UCbdZb",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "vs_6ae7e2bdb8ec81918c75c7a630532cd8",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-4uBqFSLdXRc5Yq4b2ZmaHn",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-FC1UCS33aNmUHNBxknjzgN",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-LBdeA4GGUfYGMUf6KytN1C",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-M2szSv4sgVtL1cpqNQd71Z",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-QiFkhaLucgPBD8fSCqWhjL",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "vs_6ae7e2ea7f0481918840a9bf24a814ed",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-FM2SsprLud9iCb9nQ8pknX",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-AjYAAzSp5Jc4eKE75Gd561",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-19jub5aXseNsX6jDzyesCu",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-QeEigqXjWWeaRPqWBCuMrG",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-ADDsEXHsrGu87SPDir2579",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "vs_6ae7e31925388191a0115584ae509369",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-DS43A5cNwf6nzeVuprM1c5",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-RWHJ6i15bqFNqVFbCmWRnX",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-VaQKhS69ELpELDCCKXe8eA",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-KrgGAv4qN2rBxaCrawjfNf",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-YTKkwFggPNHdn2snYv9LtB",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "fileSearchStores/cha-live-longcase3-vg7zac5gkdkh",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "vs_6ae7e36e0d048191b4a69cd33fa39b76",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-8TeJ2G1fVuUqW2HazTDvY4",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-TLW9rbBMdfJTHw5JMEVqTf",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-WrYHnYiN3rASFY9AKgVreg",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-VbQU1m7xHt7dYEyNkAVGv5",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "bounds/ownership.json",
+    "resource": "file-53yNe14X1kfNcteUeySnju",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "attempt-1/ownership.json",
+    "resource": "vs_6ae7d95968048191966f88039a9c8789",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "attempt-1/ownership.json",
+    "resource": "file-VDQvcPy4oRh88fFKpbpfUQ",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "attempt-1/ownership.json",
+    "resource": "fileSearchStores/cha-live-ga-20261102-udjeudjt3r8l",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "buffered-first/ownership.json",
+    "resource": "vs_6ae7dadaa7208191aa6c5722e9d1c66a",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "buffered-first/ownership.json",
+    "resource": "file-U5ozDr6Y21iwXu5fNBGmuv",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "buffered-first/ownership.json",
+    "resource": "fileSearchStores/cha-live-ga-20261102-1xqe4g0lczn8",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "gemini-cap/ownership.json",
+    "resource": "fileSearchStores/cha-live-geminichunkboundar-7iv7uuoqcbep",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "baseline/ownership.json",
+    "resource": "vs_6ae7d9913a9c819189f1d25fc34d7ed1",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "baseline/ownership.json",
+    "resource": "file-CBgcjTjvQwJrwJAADSH1wH",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "baseline/ownership.json",
+    "resource": "fileSearchStores/cha-live-ga-20261102-fu57jlbckt3p",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "byte-caps/ownership.json",
+    "resource": "vs_6ae7e4c6e7608191ab25db88a2f475fe",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "byte-caps/ownership.json",
+    "resource": "file-LyPSKycaMy9G37rvoxnocJ",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "byte-caps/ownership.json",
+    "resource": "fileSearchStores/cha-live-geminichunkboundar-p3j82g3wnao6",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "vs_6ae7de3b39a481919f57576973645f77",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "file-13n4tsc9WtdLQoyqvwXSZj",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "fileSearchStores/cha-live-ga-20261102-49t4l6u3opvq",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "vs_6ae7de47495c8191bccfd12c1254b2e8",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "file-Aw5CVeUkY1uXTXgBQYzQma",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "vs_6ae7de505a7c819197ed1e4aec6ac415",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "file-D9DD3hKpX61ZGTVJKEGnVd",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "vs_6ae7deeffdc48191b7a281df4b10a6b0",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "file-QE1DXJyB1dL8yLe8buoVbH",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "vs_6ae7df66e1bc8191842917aba0610875",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "file-Vx9TpuU5RmbaVC8rJgakdB",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "vs_6ae7df8171c881919e1f2c8cc79f23c2",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "file-H5wYEKeMUJCQiYtvui5yJt",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "fileSearchStores/cha-live-deletion1-67313zdimulf",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "remaining/ownership.json",
+    "resource": "fileSearchStores/cha-live-remotedeletion1-ch8y9xfjiurk",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "context-controls/ownership.json",
+    "resource": "vs_6ae7e130b204819194fe0cb3b61586c7",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "context-controls/ownership.json",
+    "resource": "file-3cd9xVM5WD4Fonk7BGJr2e",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "context-controls/ownership.json",
+    "resource": "fileSearchStores/cha-live-ga-20261102-zc2keoxv1xwl",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "context-controls/ownership.json",
+    "resource": "vs_6ae7e145f5c48191a0c32262f07eacb3",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "context-controls/ownership.json",
+    "resource": "file-UkP1euSd1nambDHb6WQhQ3",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "context-controls/ownership.json",
+    "resource": "fileSearchStores/cha-live-contextmissing1-bh2mqz3z9x0b",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "google-variant/ownership.json",
+    "resource": "vs_6ae7dfdf6f748191b28ee5311eb95fc2",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "google-variant/ownership.json",
+    "resource": "file-5THLNu1T4NvDVcXYxVKK4J",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "google-variant/ownership.json",
+    "resource": "fileSearchStores/cha-live-gb-20261102-pjyxefy7xkur",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "edges/ownership.json",
+    "resource": "vs_6ae7dca022f48191bc746729f2ffd720",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "edges/ownership.json",
+    "resource": "file-KowRVXXaZaTsjCHagLHedU",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "edges/ownership.json",
+    "resource": "fileSearchStores/cha-live-ga-20261102-9q988s2qumjh",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "edges/ownership.json",
+    "resource": "file-WmyRH24YU2d1ET5DX2zzpG",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "edges/ownership.json",
+    "resource": "vs_6ae7dd01a174819185a0f62e9bc0d218",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "edges/ownership.json",
+    "resource": "file-XnhEvZc5usJcxu4weMffTy",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "edges/ownership.json",
+    "resource": "fileSearchStores/cha-live-gb-variant-6xeeespsnmst",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "edges/ownership.json",
+    "resource": "vs_6ae7dd0c232481919c5d56b91990775c",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "edges/ownership.json",
+    "resource": "file-5rFLEnshjzJkB4coRwHg8j",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "edges/ownership.json",
+    "resource": "vs_6ae7dd1341f081919d53a3db6930155f",
+    "status": 404,
+    "absence_confirmed": true
+  },
+  {
+    "ledger": "edges/ownership.json",
+    "resource": "file-3PeHfYzGpXB17VvucsqqNG",
+    "status": 404,
+    "absence_confirmed": true
+  }
+]

@@ -1,0 +1,482 @@
+[
+  {
+    "call_id": "call_PiSIQ1MQACfoP8XP4JCOTwg4",
+    "utc": "2026-11-02T05:08:04.628695+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:02Z:\nSet Gem's reasoning effort to high.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "characters"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 11868,
+          "path": "characters/character-voice.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_1/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_1/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 79,
+          "path": "characters/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_2/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_2/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 76,
+          "path": "characters/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_3/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_3/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 110,
+          "path": "characters/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 23,
+          "path": "characters/guide/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 41,
+          "path": "characters/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_e5vDF2R86UsuuRPm1mP7CrVT",
+    "utc": "2026-11-02T05:08:06.137138+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:02Z:\nSet Gem's reasoning effort to high.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "characters/character_1/character.toml",
+        "characters/character_2/character.toml",
+        "characters/character_3/character.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Writer'\nprovider = 'provider_2'\n",
+          "path": "characters/character_1/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Gem'\nprovider = 'provider_3'\n",
+          "path": "characters/character_2/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Claude Test'\nprovider = 'provider_4'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_3/character.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_qBcjSduy9VXAEwJWH8SosPz9",
+    "utc": "2026-11-02T05:08:07.712709+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:02Z:\nSet Gem's reasoning effort to high.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "characters/character_2/character.toml",
+        "system/providers/provider_3/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Gem'\nprovider = 'provider_3'\n",
+          "path": "characters/character_2/character.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'google'\napi_key = 'api_key_2'\nauth = 'none'\nbase_path = '/v1beta'\ncache_retention = 'short'\ndisplay_name = 'google-direct'\nhost = 'generativelanguage.googleapis.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gemini-3.8-flash'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_3/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_wq2OyDG4rSX7cO75qraTkm2L",
+    "utc": "2026-11-02T05:08:11.444126+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:02Z:\nSet Gem's reasoning effort to high.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": null,
+          "key": "reasoning_effort",
+          "operation": "set",
+          "path": "characters/character_2/character.toml",
+          "value": "high"
+        }
+      ],
+      "version": "1"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 102,
+          "old_bytes": 76,
+          "path": "characters/character_2/character.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": true,
+      "version": "2",
+      "warnings": [
+        {
+          "message": "Character 'character_2' ignores reasoning_effort for Google",
+          "path": "characters/character_2/character.toml"
+        }
+      ]
+    }
+  },
+  {
+    "call_id": "call_AkQbZCDnnSZMmJpFFWTz5eRI",
+    "utc": "2026-11-02T05:08:15.881405+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:13Z:\nUse Gemini for note compression with extra high effort.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "system"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 51,
+          "path": "system/assistant/character.toml",
+          "protection_reason": "Assistant settings are read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 218,
+          "path": "system/keys/api_key_1/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 104,
+          "path": "system/keys/api_key_2/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 75,
+          "path": "system/keys/api_key_3/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 95,
+          "path": "system/keys/api_key_4/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 83,
+          "path": "system/keys/api_key_5/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 12,
+          "path": "system/keys/config.toml",
+          "protection_reason": "Credentials cannot be written",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 107,
+          "path": "system/notes/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 321,
+          "path": "system/providers/provider_1/config.toml",
+          "protection_reason": "Assistant's selected provider is read-only",
+          "readable": true,
+          "writable": false
+        },
+        {
+          "bytes": 316,
+          "path": "system/providers/provider_2/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 358,
+          "path": "system/providers/provider_3/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 327,
+          "path": "system/providers/provider_4/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 52,
+          "path": "system/providers/test/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 57,
+          "path": "system/session/config.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "2"
+    }
+  },
+  {
+    "call_id": "call_rvs7xerKCDmdDAJflxSzp8bH",
+    "utc": "2026-11-02T05:08:17.422261+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:13Z:\nUse Gemini for note compression with extra high effort.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/notes/config.toml",
+        "system/providers/provider_1/config.toml",
+        "system/providers/provider_2/config.toml",
+        "system/providers/provider_3/config.toml",
+        "system/providers/provider_4/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "audio_api_key = ''\naudio_url = ''\ncompression_provider = 'provider_2'\ncompression_reasoning_effort = 'low'\n",
+          "path": "system/notes/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'responses'\napi_key = 'api_key_1'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'Assistant test model'\nhost = 'api.openai.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gpt-6.1-sol'\nport = 443\nreasoning_effort = 'low'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_1/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'responses'\napi_key = 'api_key_1'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'openai-direct'\nhost = 'api.openai.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gpt-5.4-mini'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_2/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'google'\napi_key = 'api_key_2'\nauth = 'none'\nbase_path = '/v1beta'\ncache_retention = 'short'\ndisplay_name = 'google-direct'\nhost = 'generativelanguage.googleapis.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'gemini-3.8-flash'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_3/config.toml",
+          "status": "ok"
+        },
+        {
+          "content": "api = 'anthropic'\napi_key = 'api_key_4'\nauth = 'none'\ncache_retention = 'short'\ndisplay_name = 'anthropic-direct'\nhost = 'api.anthropic.com'\nhttps = true\nidle_timeout_s = 90\nmode = 'net'\nmodel = 'claude-sonnet-4-5'\nport = 443\nreasoning_effort = 'none'\nreasoning_format = 'auto'\nstream = true\ntimeout_s = 180\nweb_search = 'off'\n",
+          "path": "system/providers/provider_4/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "2"
+    }
+  },
+  {
+    "call_id": "call_q6ijyp6XvbKSTyZKDKRyaWUe",
+    "utc": "2026-11-02T05:08:19.200118+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:13Z:\nUse Gemini for note compression with extra high effort.",
+    "name": "vault_config_apply",
+    "arguments": {
+      "action": "apply",
+      "changes": [
+        {
+          "content": "audio_api_key = ''\naudio_url = ''\ncompression_provider = 'provider_3'\ncompression_reasoning_effort = 'xhigh'\n",
+          "key": null,
+          "operation": "replace",
+          "path": "system/notes/config.toml",
+          "value": null
+        }
+      ],
+      "version": "2"
+    },
+    "result": {
+      "changed": [
+        {
+          "new_bytes": 109,
+          "old_bytes": 107,
+          "path": "system/notes/config.toml"
+        }
+      ],
+      "committed": true,
+      "error": null,
+      "message": "Configuration was saved.",
+      "undo_available": true,
+      "version": "3",
+      "warnings": []
+    }
+  },
+  {
+    "call_id": "call_gbjbHclTBGqbiVLvHV4qYteP",
+    "utc": "2026-11-02T05:08:24.652069+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:22Z:\nAbout Gem: I understand that effort has no effect. Save high effort for Gem anyway.",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "characters"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 11868,
+          "path": "characters/character-voice.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_1/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_1/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 79,
+          "path": "characters/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_2/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_2/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 102,
+          "path": "characters/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 83,
+          "path": "characters/character_3/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 0,
+          "path": "characters/character_3/PROFILE.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 110,
+          "path": "characters/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 23,
+          "path": "characters/guide/CHARACTER.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 41,
+          "path": "characters/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "3"
+    }
+  },
+  {
+    "call_id": "call_FqfOCxVb3E8FZhWDmuSvyaxD",
+    "utc": "2026-11-02T05:08:26.086068+00:00",
+    "prompt": "from Guest at 2026-11-02T05:08:22Z:\nAbout Gem: I understand that effort has no effect. Save high effort for Gem anyway.",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "characters/character_2/character.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "description = 'Test character'\ndisplay_name = 'Gem'\nprovider = 'provider_3'\nreasoning_effort = 'high'\n",
+          "path": "characters/character_2/character.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "3"
+    }
+  }
+]

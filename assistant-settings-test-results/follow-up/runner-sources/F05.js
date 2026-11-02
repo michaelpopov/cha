@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+let s=await session('Format diagnostic control',C.lab);await checkpoint('F05-before');await submit(s,'@Assistant Which API formats can a provider use?');C.answer=await rpc('session.snapshot',s);await checkpoint('F05-after');

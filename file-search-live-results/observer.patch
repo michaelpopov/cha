@@ -1,0 +1,78 @@
+--- a/src/providers/provider_client.cpp
++++ b/src/providers/provider_client.cpp
+@@ -1,4 +1,5 @@
+ #include "providers/provider_client.h"
++#include "/private/tmp/cha-file-search-live/observer.h"
+ 
+ #include "providers/api_key_store.h"
+ #include "providers/folder_store_client.h"
+@@ -578,10 +579,38 @@
+     }
+     if (input.summary_tool && summary_tools_available(Json::parse(prepared.bytes), config.api))
+         prepared.summary_tool = input.summary_tool;
++    const auto observation_id = ++live_observer::serial;
++    nlohmann::json actual_targets = nlohmann::json::array();
++    if (input.folder_search) for (const auto& target : input.folder_search->search_targets) {
++        const auto expected = live_observer::expected.find(target.remote_store_id);
++        actual_targets.push_back({{"remote_store_id", target.remote_store_id}, {"folder_name", target.folder_name},
++            {"saved_key_id", expected == live_observer::expected.end() ? "unmapped" : expected->second.first},
++            {"target_credential_matches_expected", expected != live_observer::expected.end() && expected->second.second == target.api_key}});
++    }
++    live_observer::event({{"event", "prepared"}, {"observation_id", observation_id}, {"targets", actual_targets}, {"folder_search_context", input.folder_search_context},
++        {"model", config.model}, {"host", config.host}, {"api", to_string(config.api)}, {"stream", config.stream},
++        {"request", nlohmann::json::parse(prepared.bytes, nullptr, false)}});
+     if (!input.maintenance_tool && input.folder_search && !input.folder_search->search_targets.empty()
+         && function_tool_available(Json::parse(prepared.bytes), config.api, "search_attached_files"))
+-        prepared.folder_search_tool = [targets = input.folder_search->search_targets](std::string_view query, const std::atomic_bool& cancel) {
+-            return FolderStoreClient{}.search_stores(targets, query, cancel);
++        prepared.folder_search_tool = [targets = input.folder_search->search_targets, observation_id](std::string_view query, const std::atomic_bool& cancel) {
++            const auto invocation = ++live_observer::serial;
++            live_observer::event({{"event", "tool_query"}, {"observation_id", observation_id}, {"invocation", invocation}, {"query", query}});
++            auto transport = [observation_id, invocation](const FolderStoreHttpRequest& request, const std::atomic_bool& cancellation) {
++                std::string store, key_id; bool matches = false;
++                for (const auto& [id, key] : live_observer::expected) if (request.url.find(id) != std::string::npos || request.body.find(id) != std::string::npos) {
++                    store = id; key_id = key.first;
++                    for (const auto& header : request.headers) if (header.name == "Authorization") matches = header.value == "Bearer " + key.second;
++                    else if (header.name == "x-goog-api-key") matches = header.value == key.second;
++                    break;
++                }
++                live_observer::event({{"event", "dispatch"}, {"observation_id", observation_id}, {"invocation", invocation}, {"store", store}, {"saved_key_id", key_id}, {"credential_matches_expected", matches}, {"url", request.url}, {"body", request.body}});
++                auto response = folder_store_curl_transport(request, cancellation);
++                live_observer::event({{"event", "retrieval_response"}, {"observation_id", observation_id}, {"invocation", invocation}, {"store", store}, {"status", response.status}, {"body", response.body}, {"cancelled", response.cancelled}});
++                return response;
++            };
++            auto output = FolderStoreClient(transport).search_stores(targets, query, cancel);
++            live_observer::event({{"event", "tool_output"}, {"observation_id", observation_id}, {"invocation", invocation}, {"output", output}});
++            return output;
+         };
+     return prepared;
+ }
+--- a/src/providers/folder_store_client.cpp
++++ b/src/providers/folder_store_client.cpp
+@@ -1,3 +1,4 @@
++#include "/private/tmp/cha-file-search-live/observer.h"
+ #include "providers/folder_store_client.h"
+ 
+ #include "util/curl.h"
+@@ -279,6 +280,21 @@
+             +[](void* user, curl_off_t, curl_off_t, curl_off_t, curl_off_t) -> int {
+                 return static_cast<const std::atomic_bool*>(user)->load() ? 1 : 0;
+             }));
++        bool observed_bytes = false;
++        if (live_observer::first_bytes) {
++            require(curl_easy_setopt(curl.get(), CURLOPT_VERBOSE, 1L));
++            require(curl_easy_setopt(curl.get(), CURLOPT_DEBUGDATA, &observed_bytes));
++            require(curl_easy_setopt(curl.get(), CURLOPT_DEBUGFUNCTION,
++                +[](CURL*, curl_infotype type, char*, size_t, void* user) -> int {
++                    auto& observed = *static_cast<bool*>(user);
++                    if (!observed && type == CURLINFO_HEADER_OUT) {
++                        observed = true;
++                        live_observer::event({{"event", "first_request_bytes_sent"}});
++                        live_observer::first_bytes();
++                    }
++                    return 0;
++                }));
++        }
+         require(curl_easy_setopt(curl.get(), CURLOPT_PROTOCOLS_STR, "https"));
+         require(curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, 1L));
+         require(curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, 2L));

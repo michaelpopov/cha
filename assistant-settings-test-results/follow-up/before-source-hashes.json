@@ -1,0 +1,8 @@
+{
+  "resources/application-guide.md": "af374c7885301249f1d214fff3f34cf49b824752dc9ce13ad99ac1c77e76d182",
+  "resources/assistant-maintenance.md": "7f51fd1887824e53bfb43e80dc0e777e6542599e97bb61cec4843fd80d5cd2fe",
+  "src/workspace/workspace_config_store.cpp": "d6c33a27384e65c4532cf6d1c3bd84cbb6db25fe6254bc5eebc4ed741f473261",
+  "src/app/assistant_service.cpp": "d33403efc896b9dc46538cddf6eb1bd5dd9f70eb13fa56c53836e77526f3cf8a",
+  "src/providers/provider_client.cpp": "d86981741d8af4fa7ed306b93968e96267ecde51b054b73e4c96cadb968bb028",
+  "src/providers/responses_api.cpp": "260b96eb0aad011c1c043e1d87fa3bbf55a6bdcee9f4aea02c376a09ff6372e5"
+}

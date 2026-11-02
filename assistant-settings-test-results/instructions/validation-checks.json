@@ -1,0 +1,190 @@
+[
+  {
+    "check": "F: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "F04-final: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W01: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W02-W03: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W04: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W05: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W07-W18: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W09: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W11: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W12: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W14: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W15-diagnosis: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W16-final: driver, checkpoint exports and complete native tool results",
+    "passed": true
+  },
+  {
+    "check": "W01: no configuration changes",
+    "passed": true
+  },
+  {
+    "check": "W05: no configuration changes",
+    "passed": true
+  },
+  {
+    "check": "W09: no configuration changes",
+    "passed": true
+  },
+  {
+    "check": "W11: no configuration changes",
+    "passed": true
+  },
+  {
+    "check": "W12: no configuration changes",
+    "passed": true
+  },
+  {
+    "check": "W15-diagnosis: no configuration changes",
+    "passed": true
+  },
+  {
+    "check": "W16-final: no configuration changes",
+    "passed": true
+  },
+  {
+    "check": "F: no configuration changes",
+    "passed": true
+  },
+  {
+    "check": "F04-final: no configuration changes",
+    "passed": true
+  },
+  {
+    "check": "W02: read-only before authorization",
+    "passed": true
+  },
+  {
+    "check": "W03: exactly one create, committed, undo cleared",
+    "passed": true
+  },
+  {
+    "check": "W03: real compression with original note retained and success Event",
+    "passed": true
+  },
+  {
+    "check": "W04: High then undo then unavailable; exact bytes restored",
+    "passed": true
+  },
+  {
+    "check": "W04: native settings Low restored and no silent forward edit",
+    "passed": true
+  },
+  {
+    "check": "W05: one protected apply rejected",
+    "passed": true
+  },
+  {
+    "check": "W07: ignored High and Google Notes xhigh were actually saved",
+    "passed": true
+  },
+  {
+    "check": "W09: no writes and actual character/provider read",
+    "passed": true
+  },
+  {
+    "check": "W09: real Anthropic reproduction prerequisite missing",
+    "passed": true
+  },
+  {
+    "check": "W11: all three fixture store uploads succeeded",
+    "passed": true
+  },
+  {
+    "check": "W12: actual Huge note omission found",
+    "passed": true
+  },
+  {
+    "check": "W14: only requested forum reference removed",
+    "passed": true
+  },
+  {
+    "check": "W15: native session override Google while saved provider OpenAI",
+    "passed": true
+  },
+  {
+    "check": "W16: Jev missing and Notes read before current diagnosis",
+    "passed": true
+  },
+  {
+    "check": "W16: no writes, no false retraction on next turn",
+    "passed": true
+  },
+  {
+    "check": "F: maintenance tools unavailable outside Welcome",
+    "passed": true
+  },
+  {
+    "check": "F04-final: maintenance tools unavailable outside Welcome",
+    "passed": true
+  },
+  {
+    "check": "F04: corrected Files restart explanation present",
+    "passed": true
+  },
+  {
+    "check": "cha_tests: native suite no failures",
+    "passed": true
+  },
+  {
+    "check": "cha_app_tests: native suite no failures",
+    "passed": true
+  },
+  {
+    "check": "cha_bridge_tests: native suite no failures",
+    "passed": true
+  },
+  {
+    "check": "cha_native_runtime_tests: native suite no failures",
+    "passed": true
+  },
+  {
+    "check": "prompt-location-final: final prompt integration check",
+    "passed": true
+  },
+  {
+    "check": "prompt-assembly-final: final prompt integration check",
+    "passed": true
+  },
+  {
+    "check": "Only prompt resources changed in this task; previous application fixes retained",
+    "passed": true
+  }
+]

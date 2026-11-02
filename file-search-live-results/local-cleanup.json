@@ -1,0 +1,18 @@
+{
+  "checked_utc": "2026-11-02T01:32:01.332823+00:00",
+  "removed": [
+    "/Users/mpopov/Library/Application Support/CHA/file-search-live-20261102.sqlite3.cha-sessions",
+    "/Users/mpopov/Library/Application Support/CHA/file-search-expanded-20261102.sqlite3.cha-sessions",
+    "/Users/mpopov/Library/Application Support/CHA/file-search-edges-20261102.sqlite3.cha-sessions",
+    "/Users/mpopov/Library/Application Support/CHA/file-search-remaining-20261102.sqlite3.cha-sessions",
+    "/Users/mpopov/Library/Application Support/CHA/file-search-google-variant-20261102.sqlite3.cha-sessions",
+    "/Users/mpopov/Library/Application Support/CHA/file-search-context-20261102.sqlite3.cha-sessions",
+    "/Users/mpopov/Library/Application Support/CHA/file-search-bounds-20261102.sqlite3.cha-sessions",
+    "/Users/mpopov/Library/Application Support/CHA/file-search-byte-caps-20261102.sqlite3.cha-sessions",
+    "/Users/mpopov/Library/Application Support/CHA/file-search-gemini-cap-20261102.sqlite3.cha-sessions",
+    "/private/var/folders/2v/5w0cdcns2kzdgz3x2mh7f7s80000gn/T/cha-runtime-2618245727208375-2",
+    "/private/var/folders/2v/5w0cdcns2kzdgz3x2mh7f7s80000gn/T/cha_web_workspace_2618245722405958_1"
+  ],
+  "remaining_test_vault_paths": [],
+  "active_vault": "Michaels"
+}

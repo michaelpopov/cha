@@ -1,0 +1,1 @@
+await bridge();await submit(C.welcome,'/clear');await checkpoint('W18-before');await ask('answer','About Gem: I understand that effort has no effect. Save high effort for Gem anyway.');C.gem=await rpc('character.get',{character_id:C.Gem});await checkpoint('W18-after');

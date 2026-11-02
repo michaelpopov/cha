@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+await checkpoint('W09-before');await ask('answer','Why does high effort make no difference for Claude Test?');await checkpoint('W09-after');

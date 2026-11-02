@@ -1,0 +1,24 @@
+[
+  {
+    "protocol": "chat_completions",
+    "model": "mistral-large-latest",
+    "calls": [
+      "4I2QiM4GZ"
+    ],
+    "results": [
+      "4I2QiM4GZ"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "mistral-large-latest",
+    "calls": [
+      "SYfLK0vl6"
+    ],
+    "results": [
+      "SYfLK0vl6"
+    ],
+    "results_have_calls": true
+  }
+]

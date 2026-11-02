@@ -1,0 +1,145 @@
+{
+  "characters": [
+    {
+      "appearance": {
+        "font": "sans",
+        "size": "normal",
+        "style": "normal",
+        "text_color": "normal",
+        "weight": "normal"
+      },
+      "display_name": "Guide",
+      "id": "guide"
+    }
+  ],
+  "chat_settings": {
+    "characters": [
+      {
+        "character_id": "guide",
+        "provider_id": "provider_2",
+        "reasoning_effort": "none"
+      }
+    ],
+    "model_options": [
+      {
+        "display_name": "Live Gemini",
+        "host": "generativelanguage.googleapis.com",
+        "id": "provider_2",
+        "model": "gemini-2.5-flash"
+      },
+      {
+        "display_name": "Live Gpt4o",
+        "host": "api.openai.com",
+        "id": "provider_1",
+        "model": "gpt-4o"
+      },
+      {
+        "display_name": "Live Mistral",
+        "host": "api.mistral.ai",
+        "id": "provider_3",
+        "model": "mistral-large-latest"
+      },
+      {
+        "display_name": "Test",
+        "host": "test",
+        "id": "test",
+        "model": "fake"
+      }
+    ]
+  },
+  "default_character_id": "guide",
+  "forum": {
+    "default_character_id": "guide",
+    "default_persona_display_name": "Guest",
+    "default_persona_id": "builtin-guest",
+    "display_name": "The Lobby",
+    "id": "lobby",
+    "members": [
+      {
+        "appearance": {
+          "font": "sans",
+          "size": "normal",
+          "style": "normal",
+          "text_color": "normal",
+          "weight": "normal"
+        },
+        "display_name": "Guide",
+        "id": "guide"
+      }
+    ]
+  },
+  "generation": {
+    "active": false,
+    "character_display_name": "",
+    "character_id": "",
+    "phase": "waiting"
+  },
+  "lifecycle": "running",
+  "notice": "Folder access omitted: Guide — O-B Packaging (##000003): this Gemini model cannot combine native File Search with the folder search tool; sources: chat (/detach ##000003).",
+  "session_id": "2026-11-01-17-03-00-session",
+  "session_label": "C18-context-control",
+  "transcript": [
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793581380,
+      "display_name": "System",
+      "has_cached_audio": false,
+      "id": 1,
+      "input_tokens": null,
+      "kind": "notice",
+      "output_tokens": null,
+      "participant_id": "",
+      "status": "complete",
+      "text": "Added folder “O-B Packaging” to this chat.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793581380,
+      "display_name": "System",
+      "has_cached_audio": false,
+      "id": 2,
+      "input_tokens": null,
+      "kind": "notice",
+      "output_tokens": null,
+      "participant_id": "",
+      "status": "complete",
+      "text": "Added folder “G-A Спрос” to this chat.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "guide",
+      "addressed_to_name": "Guide",
+      "created_at": 1793581380,
+      "display_name": "Guest",
+      "has_cached_audio": false,
+      "id": 3,
+      "input_tokens": null,
+      "kind": "human",
+      "output_tokens": null,
+      "participant_id": "builtin-guest",
+      "request_id": 1,
+      "status": "complete",
+      "text": "Reply ready.",
+      "web_search_used": false
+    },
+    {
+      "addressed_to": "",
+      "addressed_to_name": "",
+      "created_at": 1793581381,
+      "display_name": "Guide",
+      "has_cached_audio": false,
+      "id": 4,
+      "input_tokens": 536,
+      "kind": "character",
+      "output_tokens": 115,
+      "participant_id": "guide",
+      "request_id": 1,
+      "status": "complete",
+      "text": "Hello there! I'm ready too. How can I help you today? Please feel free to ask your question or let me know what you'd like to discuss.",
+      "web_search_used": false
+    }
+  ]
+}

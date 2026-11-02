@@ -1,0 +1,95 @@
+[
+  {
+    "file_id": "file-Nkbmcio3Xr6rqxMroWaT5q",
+    "folder_id": 3,
+    "remote_id": "vs_6ae7dbe6b8108191b13e5251980b7eef",
+    "saved_key_id": "api_key_24",
+    "service": "openai"
+  },
+  {
+    "folder_id": 4,
+    "operation": "fileSearchStores/cha-live-ga-20261102-30bqmjq1ppju/upload/operations/cedardemandmd-gjkaxst1xvoz",
+    "remote_id": "fileSearchStores/cha-live-ga-20261102-30bqmjq1ppju",
+    "saved_key_id": "api_key_25",
+    "service": "google"
+  },
+  {
+    "file_id": "file-K5oECz7uSjauvkMZMz4E9F",
+    "folder_id": 5,
+    "remote_id": "vs_6ae7de9131908191a2a7d5e3e7c836d3",
+    "saved_key_id": "api_key_24",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-Do6bfup3DsJ5wkTaYJM2HS",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-VErDj2yUR9ymPfBFGdDETb",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-JJL1WkBxeUdNzrw9fzqJKp",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-C9jSaHjMwvqrnf7q7tDWpW",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-BGM1ajUrw7qqj1ronxTUfc",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-WB4SEUN5gKnUagEHqN5nwq",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-SYBEvYj5UPQyQLho66rFhy",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-VCC6eHXwBfRRBdbfasdWTH",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-8xhQR7LLtmR1eF719jhhkx",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-LCqpLbtQpyvfXoLbf44dkK",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-J5YxvuyckAtVcWd6wSEVW3",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-W6iFuwk4p9s5HgaS1iNAkk",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-UZne6od3F57CARSachGQQe",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-T3qutTQMMwg9EFgwWHwuGk",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-HQv6Swx5f2uS6hdpKFCbyz",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-JfFYZ89nKQYGqe22W7br3i",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-WXnKcEzdmMFknFGWKbx5ec",
+    "service": "openai"
+  },
+  {
+    "owned_file_only": "file-V43jwu4SzSeRKb99UCbdZb",
+    "service": "openai"
+  }
+]

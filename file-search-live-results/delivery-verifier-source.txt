@@ -1,0 +1,41 @@
+import pathlib,json,re,collections
+root=pathlib.Path('/Users/mpopov/projects/cha/file-search-live-results');checks=[]
+def contains_result(value,wanted):
+ if isinstance(value,str):
+  try:return json.loads(value)==wanted
+  except:return False
+ if isinstance(value,dict):return value==wanted or any(contains_result(x,wanted) for x in value.values())
+ if isinstance(value,list):return any(contains_result(x,wanted) for x in value)
+ return False
+for event_file in root.rglob('events.jsonl'):
+ folder=event_file.parent;log=folder/'model.log'
+ if not log.exists():continue
+ ev=[json.loads(l) for l in event_file.read_text().split('\n') if l];prepared={e['observation_id']:e for e in ev if e['event']=='prepared'};active={};requests=[]
+ logs=sorted(folder.glob('model.*.log'),key=lambda p:int(p.name.split('.')[1]),reverse=True)+[log]
+ for path in logs:
+  for line in path.read_text().split('\n'):
+   m=re.match(r'^\[[^\]]+\] \[thread (\d+)\] \[(\w+)\] (.*)$',line)
+   if not m:continue
+   thread,level,message=m.groups()
+   if message.startswith('Provider request started:'):
+    f=dict(re.findall(r'([a-zA-Z_]+)=([^\s]+)',message));active[thread]=(f.get('session_id'),f.get('request_id'),f.get('token'))
+   tag='HTTP model request body data='
+   if message.startswith(tag):
+    try:requests.append((active.get(thread),json.loads(json.loads(message[len(tag):]))))
+    except:pass
+ for e in ev:
+  if e['event']!='tool_output':continue
+  initial=prepared[e['observation_id']]['request'];keys={key for key,body in requests if body==initial};wanted=json.loads(e['output']);found=False
+  for key,body in requests:
+   if key not in keys:continue
+   outputs=[]
+   for item in body.get('input',[]):
+    if item.get('type')=='function_call_output':outputs.append(item.get('output'))
+   for item in body.get('messages',[]):
+    if item.get('role')=='tool':outputs.append(item.get('content'))
+   for content in body.get('contents',[]):
+    for part in content.get('parts',[]):
+     if 'functionResponse' in part:outputs.append(part['functionResponse'].get('response'))
+   if any(contains_result(value,wanted) for value in outputs):found=True;break
+  checks.append({'batch':str(folder.relative_to(root)),'case':e['case'],'observation_id':e['observation_id'],'invocation':e['invocation'],'matched_cha_request_count':len(keys),'actual_consumer_tool_result_matches':found,'cancelled_before_continuation':e['case']=='C17'})
+(root/'tool-delivery-verification.json').write_text(json.dumps(checks,indent=2)+'\n');print('tool outputs',len(checks),'matched delivery',sum(c['actual_consumer_tool_result_matches'] for c in checks),'intentionally cancelled',sum(c['cancelled_before_continuation'] for c in checks));print('unexplained',[c for c in checks if not c['actual_consumer_tool_result_matches'] and not c['cancelled_before_continuation']])

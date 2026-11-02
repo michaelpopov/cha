@@ -1,0 +1,99 @@
+{
+  "utc": "2026-11-02T03:55:34.677815+00:00",
+  "commit": "e0a075c609dffd3e34b4e7934084d0c84c5d30a3",
+  "original_failed_cases": 21,
+  "latest_strict_counts_for_those_21": {
+    "Fail": 14,
+    "Pass": 7
+  },
+  "models": {
+    "primary_assistant": "gpt-6.1-sol, low, Responses",
+    "diagnostic_control": "gpt-4o, none, Responses",
+    "compression": "gpt-5.4-mini, low; real saved compression verified",
+    "gemini": "gemini-3.8-flash; real endpoint repair verified"
+  },
+  "native": [
+    {
+      "name": "cha_tests",
+      "tests": 868,
+      "passed": 866,
+      "skipped": 2,
+      "failures": 0
+    },
+    {
+      "name": "cha_app_tests",
+      "tests": 616,
+      "passed": 616,
+      "skipped": 0,
+      "failures": 0
+    },
+    {
+      "name": "cha_bridge_tests",
+      "tests": 137,
+      "passed": 137,
+      "skipped": 0,
+      "failures": 0
+    },
+    {
+      "name": "cha_native_runtime_tests",
+      "tests": 13,
+      "passed": 13,
+      "skipped": 0,
+      "failures": 0
+    }
+  ],
+  "native_independent_checks": "47 passed; see independent-verification.json",
+  "acceptance": "Not a blanket live acceptance: strict model-content omissions and W-07 contract conflict remain.",
+  "issues": [
+    {
+      "kind": "application defect",
+      "status": "fixed",
+      "source": "src/workspace/workspace_config_store.cpp:750",
+      "description": "Import inferred valid characters only from characters/*/character.toml and removed built-in Assistant from forum membership. Assistant-only forums could then be pruned along with orphaned sessions. Seed the set with the always-present built-in Assistant.",
+      "validation": "Import regression fails before fix; all 38 WorkspaceConfigStoreTest cases and four full native suites pass after fix.",
+      "causality": "Discovered during the follow-up config-only reset; it did not cause the original 21 failures, whose Lab membership was created after import."
+    },
+    {
+      "kind": "application prompt gap",
+      "status": "fixed",
+      "source": "resources/application-guide.md:44",
+      "description": "Ordinary Assistant lacked the full Character settings \u2192 Files \u2192 New file \u2192 reference-type navigation. Added the actual UI path, checked against CharacterScreens.tsx and FileScreens.tsx.",
+      "validation": "Rebuilt embedded resource. F-04 rerun includes the complete navigation."
+    },
+    {
+      "kind": "visible error copy",
+      "status": "fixed after explicit user approval",
+      "source": "src/notes/notes_operations.cpp:32,288,690",
+      "description": "Updated all three approved error strings to name Notes settings / Settings \u2192 Search API.",
+      "validation": "Build succeeded; four affected bridge tests pass; exact approved strings match the UI screen labels."
+    },
+    {
+      "kind": "test fixture/runner",
+      "status": "fixed",
+      "description": "Separate Assistant and compression providers; use a listed reasoning model for low-effort compression; fresh DB for missing-provider case; restore/check membership; check clear_input so rejected @handles are not accepted tests; reopen target before each submit; per-case unique debug logs; independent exports around each write-capable case without reopening the store/clearing undo."
+    },
+    {
+      "kind": "test interpretation",
+      "status": "documented, product decision retained",
+      "description": "W-07 requires confirmation beyond the explicit user request, conflicting with maintenance authorization and the unused-settings rule. W-18 was tested independently rather than forcing a refusal into the application. W-13 needed no real Firecrawl key. Existing URL stripping was verified in source/history/tests and left unchanged."
+    }
+  ],
+  "cleanup": {
+    "host_settings_restored": true,
+    "original_active_vault": "Michaels",
+    "host_settings_sha256": "5e9b47a67c9e222f37c1d0008928f573fed1ab924a68c2766baf27aac0992416",
+    "removed_test_owned_paths": [
+      "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Followup.sqlite3",
+      "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Followup.sqlite3.cha-main-lock",
+      "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Followup.sqlite3.cha-lock",
+      "/Users/mpopov/Library/Application Support/CHA/ass-followup-vault.toml"
+    ],
+    "fresh_test_vault_absent": true,
+    "registration_absent": true,
+    "fresh_remote_store_count": 0,
+    "raw_exports_deleted": true,
+    "private_baseline_export_deleted": true
+  },
+  "evidence": "All retained new maintenance calls have native outputs. Invalid intermediate F attempts are preserved but not graded. Earlier log-rotation gaps remain a limitation of the original run, not of the new runs.",
+  "approved_error_copy_validation": "approved-errors-validation.json"
+}

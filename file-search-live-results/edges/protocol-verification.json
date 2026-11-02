@@ -1,0 +1,52 @@
+[
+  {
+    "protocol": "chat_completions",
+    "model": "mistral-large-latest",
+    "calls": [
+      "Yl6oKJJpf",
+      "q32TXijgg",
+      "zzUXNgkL1"
+    ],
+    "results": [
+      "Yl6oKJJpf",
+      "q32TXijgg",
+      "zzUXNgkL1"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "mistral-large-latest",
+    "calls": [
+      "GxpTUhbRN"
+    ],
+    "results": [
+      "GxpTUhbRN"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "mistral-large-latest",
+    "calls": [
+      "JPcSO1S86"
+    ],
+    "results": [
+      "JPcSO1S86"
+    ],
+    "results_have_calls": true
+  },
+  {
+    "protocol": "chat_completions",
+    "model": "mistral-large-latest",
+    "calls": [
+      "f6IZ1rl5f",
+      "uFn4LM5nu"
+    ],
+    "results": [
+      "f6IZ1rl5f",
+      "uFn4LM5nu"
+    ],
+    "results_have_calls": true
+  }
+]

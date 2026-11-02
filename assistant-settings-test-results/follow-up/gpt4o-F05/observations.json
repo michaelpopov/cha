@@ -1,0 +1,1141 @@
+{
+  "assertions": [],
+  "trace": [
+    {
+      "result": {
+        "result": {
+          "context_epoch": 1,
+          "bootstrap": {
+            "forums": [
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "builtin-entrance",
+                "display_name": "Entrance",
+                "default_character_id": "builtin-assistant",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "id": "builtin-assistant",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "font": "sans",
+                      "text_color": "normal"
+                    },
+                    "display_name": "Assistant"
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "forum_1",
+                "display_name": "Lab",
+                "default_character_id": "character_1",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "id": "character_3",
+                    "display_name": "Claude Test",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "font": "sans",
+                      "text_color": "normal"
+                    }
+                  },
+                  {
+                    "id": "character_2",
+                    "display_name": "Gem",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "font": "sans",
+                      "weight": "normal"
+                    }
+                  },
+                  {
+                    "id": "character_1",
+                    "display_name": "Writer",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "weight": "normal",
+                      "font": "sans"
+                    }
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "lobby",
+                "display_name": "The Lobby",
+                "default_character_id": "guide",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "id": "guide",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "weight": "normal",
+                      "font": "sans"
+                    },
+                    "display_name": "Guide"
+                  }
+                ]
+              }
+            ],
+            "vaults": [
+              "Annushka",
+              "Assistant-Capability-Followup",
+              "Base",
+              "CHA",
+              "Daily",
+              "Michaels",
+              "philosophy",
+              "Test"
+            ],
+            "characters": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                },
+                "display_name": "Assistant"
+              },
+              {
+                "id": "character_3",
+                "display_name": "Claude Test",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              },
+              {
+                "id": "character_2",
+                "display_name": "Gem",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                }
+              },
+              {
+                "id": "guide",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "display_name": "Guide"
+              },
+              {
+                "id": "character_1",
+                "display_name": "Writer",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                }
+              }
+            ],
+            "initial_forum_id": "builtin-entrance",
+            "recent_sessions": [
+              {
+                "session_label": "Welcome",
+                "session_id": "builtin-welcome",
+                "forum_id": "builtin-entrance",
+                "updated_at": 1793591154
+              },
+              {
+                "session_label": "Forum capability tests",
+                "session_id": "2026-11-01-19-45-52-session",
+                "forum_id": "forum_1",
+                "updated_at": 1793591154
+              },
+              {
+                "session_label": "Lab save attempt",
+                "session_id": "2026-11-01-19-45-36-session",
+                "forum_id": "forum_1",
+                "updated_at": 1793591137
+              },
+              {
+                "session_label": "S1",
+                "session_id": "2026-11-01-19-45-24-session",
+                "forum_id": "forum_1",
+                "updated_at": 1793591124
+              },
+              {
+                "session_id": "2026-11-01-19-45-13-session",
+                "session_label": "W13 reproduction",
+                "forum_id": "forum_1",
+                "updated_at": 1793591115
+              },
+              {
+                "session_id": "2026-11-01-19-44-40-session",
+                "session_label": "W10 reproduction",
+                "forum_id": "forum_1",
+                "updated_at": 1793591082
+              },
+              {
+                "session_label": "W08 verification",
+                "session_id": "2026-11-01-19-43-51-session",
+                "forum_id": "forum_1",
+                "updated_at": 1793591040
+              },
+              {
+                "session_id": "2026-11-01-19-43-29-session",
+                "session_label": "W08 reproduction",
+                "forum_id": "forum_1",
+                "updated_at": 1793591009
+              },
+              {
+                "session_id": "2026-11-01-19-42-02-session",
+                "session_label": "W08 verification",
+                "forum_id": "forum_1",
+                "updated_at": 1793590922
+              },
+              {
+                "session_id": "2026-11-01-19-41-56-session",
+                "session_label": "W08 reproduction",
+                "forum_id": "forum_1",
+                "updated_at": 1793590916
+              }
+            ],
+            "entrance_forum_id": "builtin-entrance",
+            "personas": [
+              {
+                "id": "builtin-guest",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "display_name": "Guest"
+              },
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                },
+                "id": "reader",
+                "display_name": "Reader"
+              }
+            ],
+            "vault_name": "Assistant-Capability-Followup",
+            "initial_session_id": "builtin-welcome"
+          },
+          "capabilities": {
+            "can_modify": false,
+            "can_transfer_r2": false
+          },
+          "state": "running",
+          "application_version": "development"
+        },
+        "id": 9000000000000,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "app.bootstrap",
+      "params": {}
+    },
+    {
+      "result": {
+        "result": {
+          "forum_id": "builtin-entrance",
+          "session_id": "builtin-welcome"
+        },
+        "context_epoch": 1,
+        "id": 9000000000001,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "session_id": "builtin-welcome",
+          "forum_id": "builtin-entrance"
+        },
+        "id": 9000000000002,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "clear_input": true,
+          "notice": ""
+        },
+        "id": 9000000000003,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "forum_id": "builtin-entrance",
+        "input": {
+          "text": "/clear"
+        },
+        "session_id": "builtin-welcome"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000004,
+        "result": {
+          "lifecycle": "running",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "builtin-assistant",
+                "provider_id": "provider_1",
+                "reasoning_effort": "none"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com",
+                "model": "claude-sonnet-4-5"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "host": "api.openai.com",
+                "model": "gpt-4o"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "host": "generativelanguage.googleapis.com",
+                "model": "gemini-3.8-flash"
+              },
+              {
+                "id": "provider_2",
+                "model": "gpt-5.4-mini",
+                "display_name": "openai-direct",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "display_name": "Test",
+                "host": "test"
+              }
+            ]
+          },
+          "characters": [
+            {
+              "id": "builtin-assistant",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              },
+              "display_name": "Assistant"
+            }
+          ],
+          "session_label": "Welcome",
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "session_id": "builtin-welcome",
+          "transcript": [],
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "builtin-entrance",
+            "display_name": "Entrance",
+            "default_character_id": "builtin-assistant",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "builtin-assistant",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "display_name": "Assistant"
+              }
+            ]
+          },
+          "default_character_id": "builtin-assistant"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "session_id": "builtin-welcome",
+        "forum_id": "builtin-entrance"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "id": "2026-11-01-19-45-54-session",
+          "label": "Format diagnostic control"
+        },
+        "id": 9000000000005,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.create",
+      "params": {
+        "label": "Format diagnostic control",
+        "forum_id": "forum_1"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "forum_id": "forum_1",
+          "session_id": "2026-11-01-19-45-54-session"
+        },
+        "id": 9000000000006,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "forum_id": "forum_1",
+        "session_id": "2026-11-01-19-45-54-session"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000007,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/F05-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000008,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/F05-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000009,
+        "ok": false,
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        },
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/F05-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "name": "/private/tmp/cha-ass-followup/checkpoints/F05-before.txt",
+          "text": "ready"
+        },
+        "id": 9000000000010,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/F05-before.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000011,
+        "result": {
+          "session_id": "2026-11-01-19-45-54-session",
+          "forum_id": "forum_1"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.open",
+      "params": {
+        "forum_id": "forum_1",
+        "session_id": "2026-11-01-19-45-54-session"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "clear_input": false,
+          "notice": "Unknown character @Assistant. Characters in this forum: @Writer, @Gem, @Claude Test"
+        },
+        "context_epoch": 1,
+        "id": 9000000000012,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.submit",
+      "params": {
+        "session_id": "2026-11-01-19-45-54-session",
+        "input": {
+          "text": "@Assistant Which API formats can a provider use?"
+        },
+        "forum_id": "forum_1"
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "notice": "Unknown character @Assistant. Characters in this forum: @Writer, @Gem, @Claude Test",
+          "session_label": "Format diagnostic control",
+          "characters": [
+            {
+              "id": "character_1",
+              "display_name": "Writer",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              }
+            },
+            {
+              "id": "character_2",
+              "display_name": "Gem",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              }
+            },
+            {
+              "id": "character_3",
+              "display_name": "Claude Test",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              }
+            }
+          ],
+          "lifecycle": "running",
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "character_1",
+                "reasoning_effort": "none",
+                "provider_id": "provider_2"
+              },
+              {
+                "character_id": "character_2",
+                "provider_id": "provider_3",
+                "reasoning_effort": "high"
+              },
+              {
+                "character_id": "character_3",
+                "provider_id": "provider_4",
+                "reasoning_effort": "high"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "model": "claude-sonnet-4-5",
+                "host": "api.anthropic.com",
+                "display_name": "anthropic-direct"
+              },
+              {
+                "id": "provider_1",
+                "model": "gpt-4o",
+                "host": "api.openai.com",
+                "display_name": "Assistant test model"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "host": "generativelanguage.googleapis.com",
+                "model": "gemini-3.8-flash"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "model": "gpt-5.4-mini",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "test",
+                "display_name": "Test",
+                "model": "fake",
+                "host": "test"
+              }
+            ]
+          },
+          "session_id": "2026-11-01-19-45-54-session",
+          "transcript": [],
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "forum_1",
+            "display_name": "Lab",
+            "default_character_id": "character_1",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "character_3",
+                "display_name": "Claude Test",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                }
+              },
+              {
+                "id": "character_2",
+                "display_name": "Gem",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                }
+              },
+              {
+                "id": "character_1",
+                "display_name": "Writer",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "weight": "normal",
+                  "font": "sans"
+                }
+              }
+            ]
+          },
+          "default_character_id": "character_1"
+        },
+        "id": 9000000000013,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "forum_id": "forum_1",
+        "session_id": "2026-11-01-19-45-54-session"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000014,
+        "result": {
+          "notice": "Unknown character @Assistant. Characters in this forum: @Writer, @Gem, @Claude Test",
+          "session_label": "Format diagnostic control",
+          "characters": [
+            {
+              "id": "character_1",
+              "display_name": "Writer",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              }
+            },
+            {
+              "id": "character_2",
+              "display_name": "Gem",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "text_color": "normal",
+                "font": "sans",
+                "weight": "normal"
+              }
+            },
+            {
+              "id": "character_3",
+              "display_name": "Claude Test",
+              "description": "Test character",
+              "appearance": {
+                "size": "normal",
+                "style": "normal",
+                "weight": "normal",
+                "font": "sans",
+                "text_color": "normal"
+              }
+            }
+          ],
+          "generation": {
+            "phase": "waiting",
+            "active": false,
+            "character_id": "",
+            "character_display_name": ""
+          },
+          "lifecycle": "running",
+          "chat_settings": {
+            "characters": [
+              {
+                "character_id": "character_1",
+                "reasoning_effort": "none",
+                "provider_id": "provider_2"
+              },
+              {
+                "reasoning_effort": "high",
+                "character_id": "character_2",
+                "provider_id": "provider_3"
+              },
+              {
+                "provider_id": "provider_4",
+                "character_id": "character_3",
+                "reasoning_effort": "high"
+              }
+            ],
+            "model_options": [
+              {
+                "id": "provider_4",
+                "model": "claude-sonnet-4-5",
+                "display_name": "anthropic-direct",
+                "host": "api.anthropic.com"
+              },
+              {
+                "id": "provider_1",
+                "display_name": "Assistant test model",
+                "model": "gpt-4o",
+                "host": "api.openai.com"
+              },
+              {
+                "id": "provider_3",
+                "display_name": "google-direct",
+                "model": "gemini-3.8-flash",
+                "host": "generativelanguage.googleapis.com"
+              },
+              {
+                "id": "provider_2",
+                "display_name": "openai-direct",
+                "host": "api.openai.com",
+                "model": "gpt-5.4-mini"
+              },
+              {
+                "id": "test",
+                "model": "fake",
+                "display_name": "Test",
+                "host": "test"
+              }
+            ]
+          },
+          "transcript": [],
+          "session_id": "2026-11-01-19-45-54-session",
+          "forum": {
+            "default_persona_id": "builtin-guest",
+            "id": "forum_1",
+            "display_name": "Lab",
+            "default_character_id": "character_1",
+            "default_persona_display_name": "Guest",
+            "members": [
+              {
+                "id": "character_3",
+                "display_name": "Claude Test",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              },
+              {
+                "id": "character_2",
+                "display_name": "Gem",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              },
+              {
+                "id": "character_1",
+                "display_name": "Writer",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              }
+            ]
+          },
+          "default_character_id": "character_1"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "session.snapshot",
+      "params": {
+        "forum_id": "forum_1",
+        "session_id": "2026-11-01-19-45-54-session"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000015,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/F05-after.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000016,
+        "ok": false,
+        "connection_id": "view-2",
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        }
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/F05-after.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000017,
+        "ok": false,
+        "error": {
+          "message": "That file was not found.",
+          "code": "invalid_argument"
+        },
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/F05-after.txt"
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "name": "/private/tmp/cha-ass-followup/checkpoints/F05-after.txt",
+          "text": "ready"
+        },
+        "id": 9000000000018,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.readTextFile",
+      "params": {
+        "path": "/private/tmp/cha-ass-followup/checkpoints/F05-after.txt"
+      }
+    }
+  ],
+  "ok": true,
+  "events": [],
+  "C": {
+    "welcome": {
+      "session_id": "builtin-welcome",
+      "forum_id": "builtin-entrance"
+    },
+    "openai": "provider_2",
+    "anthropic_credential": false,
+    "answer": {
+      "notice": "Unknown character @Assistant. Characters in this forum: @Writer, @Gem, @Claude Test",
+      "session_label": "Format diagnostic control",
+      "characters": [
+        {
+          "id": "character_1",
+          "display_name": "Writer",
+          "description": "Test character",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "text_color": "normal",
+            "font": "sans",
+            "weight": "normal"
+          }
+        },
+        {
+          "id": "character_2",
+          "display_name": "Gem",
+          "description": "Test character",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "text_color": "normal",
+            "font": "sans",
+            "weight": "normal"
+          }
+        },
+        {
+          "id": "character_3",
+          "display_name": "Claude Test",
+          "description": "Test character",
+          "appearance": {
+            "size": "normal",
+            "style": "normal",
+            "weight": "normal",
+            "font": "sans",
+            "text_color": "normal"
+          }
+        }
+      ],
+      "generation": {
+        "phase": "waiting",
+        "active": false,
+        "character_id": "",
+        "character_display_name": ""
+      },
+      "lifecycle": "running",
+      "chat_settings": {
+        "characters": [
+          {
+            "character_id": "character_1",
+            "reasoning_effort": "none",
+            "provider_id": "provider_2"
+          },
+          {
+            "reasoning_effort": "high",
+            "character_id": "character_2",
+            "provider_id": "provider_3"
+          },
+          {
+            "provider_id": "provider_4",
+            "character_id": "character_3",
+            "reasoning_effort": "high"
+          }
+        ],
+        "model_options": [
+          {
+            "id": "provider_4",
+            "model": "claude-sonnet-4-5",
+            "display_name": "anthropic-direct",
+            "host": "api.anthropic.com"
+          },
+          {
+            "id": "provider_1",
+            "display_name": "Assistant test model",
+            "model": "gpt-4o",
+            "host": "api.openai.com"
+          },
+          {
+            "id": "provider_3",
+            "display_name": "google-direct",
+            "model": "gemini-3.8-flash",
+            "host": "generativelanguage.googleapis.com"
+          },
+          {
+            "id": "provider_2",
+            "display_name": "openai-direct",
+            "host": "api.openai.com",
+            "model": "gpt-5.4-mini"
+          },
+          {
+            "id": "test",
+            "model": "fake",
+            "display_name": "Test",
+            "host": "test"
+          }
+        ]
+      },
+      "transcript": [],
+      "session_id": "2026-11-01-19-45-54-session",
+      "forum": {
+        "default_persona_id": "builtin-guest",
+        "id": "forum_1",
+        "display_name": "Lab",
+        "default_character_id": "character_1",
+        "default_persona_display_name": "Guest",
+        "members": [
+          {
+            "id": "character_3",
+            "display_name": "Claude Test",
+            "description": "Test character",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "weight": "normal",
+              "font": "sans",
+              "text_color": "normal"
+            }
+          },
+          {
+            "id": "character_2",
+            "display_name": "Gem",
+            "description": "Test character",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "weight": "normal",
+              "font": "sans",
+              "text_color": "normal"
+            }
+          },
+          {
+            "id": "character_1",
+            "display_name": "Writer",
+            "description": "Test character",
+            "appearance": {
+              "size": "normal",
+              "style": "normal",
+              "weight": "normal",
+              "font": "sans",
+              "text_color": "normal"
+            }
+          }
+        ]
+      },
+      "default_character_id": "character_1"
+    },
+    "Long note": {
+      "id": 4,
+      "ref_id": "##000004"
+    },
+    "assistant": "provider_1",
+    "Gem": "character_2",
+    "lab": "forum_1",
+    "notes": {},
+    "Docs Removed": {
+      "id": 10,
+      "ref_id": "##00000A"
+    },
+    "Writer": "character_1",
+    "Huge note": {
+      "id": 5,
+      "ref_id": "##000005"
+    },
+    "Docs Gemini": {
+      "id": 8,
+      "ref_id": "##000008"
+    },
+    "anthropic": "provider_4",
+    "Claude Test": "character_3",
+    "google": "provider_3",
+    "Docs OpenAI": {
+      "id": 6,
+      "ref_id": "##000006"
+    }
+  },
+  "exit_code": 0,
+  "utc": "2026-11-02T03:45:54.594558+00:00",
+  "checkpoints": [
+    "F05-before",
+    "F05-after"
+  ],
+  "checkpoint_errors": []
+}

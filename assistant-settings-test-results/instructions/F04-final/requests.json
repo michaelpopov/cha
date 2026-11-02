@@ -1,0 +1,16 @@
+[
+  {
+    "utc": "2026-11-02T05:15:27.876328+00:00",
+    "model": "gpt-6.1-sol",
+    "prompt": "from Guest at 2026-11-02T05:15:27Z:\nHow do I give Writer a folder of documents?",
+    "tools": [
+      "summary_search",
+      "summary_read",
+      "file_search"
+    ],
+    "instructions_sha256": "0f34badd20c94cb3a3524e7fe62679fad41e20bb8004c4c33e59b72478a69401",
+    "guide_present": true,
+    "fixed_file_navigation": true,
+    "maintenance_present": false
+  }
+]

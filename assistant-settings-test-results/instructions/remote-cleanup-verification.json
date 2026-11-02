@@ -1,0 +1,27 @@
+[
+  {
+    "url": "https://api.openai.com/v1/vector_stores/vs_6ae81ad5d83881919107a12a8c4bef4b",
+    "http_status": 404,
+    "removed": true
+  },
+  {
+    "url": "https://api.openai.com/v1/files/file-CnGfoLvD16mjkeFB61CBiW",
+    "http_status": 404,
+    "removed": true
+  },
+  {
+    "url": "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/docs-gemini-000008-h73ti8wxczfx",
+    "http_status": 404,
+    "removed": true
+  },
+  {
+    "url": "https://api.openai.com/v1/vector_stores/vs_6ae81ae6405881919e492bc30d96ef82",
+    "http_status": 404,
+    "removed": true
+  },
+  {
+    "url": "https://api.openai.com/v1/files/file-W5MYzzsHzBSmxWAwFNHoFu",
+    "http_status": 404,
+    "removed": true
+  }
+]

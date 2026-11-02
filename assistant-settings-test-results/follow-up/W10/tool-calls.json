@@ -1,0 +1,114 @@
+[
+  {
+    "call_id": "call_c7C1iuZOzGdsPoBzuxC6qCK9",
+    "utc": "2026-11-02T03:44:43.863995+00:00",
+    "prompt": "from Guest at 2026-11-02T03:44:42Z:\nLab's Docs Removed folder seems to do nothing. Why?",
+    "name": "vault_config_list",
+    "arguments": {
+      "prefix": "forums"
+    },
+    "result": {
+      "entries": [
+        {
+          "bytes": 0,
+          "path": "forums/forum_1/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 360,
+          "path": "forums/forum_1/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_1/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_2/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 15,
+          "path": "forums/forum_1/members/character_3/character.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/FORUM.md",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 27,
+          "path": "forums/lobby/config.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 39,
+          "path": "forums/lobby/members/character_defaults.toml",
+          "readable": true,
+          "writable": true
+        },
+        {
+          "bytes": 19,
+          "path": "forums/lobby/members/guide/character.toml",
+          "readable": true,
+          "writable": true
+        }
+      ],
+      "truncated": false,
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_aQlkiHUJq9mBKH0LKQyzLJc7",
+    "utc": "2026-11-02T03:44:45.843564+00:00",
+    "prompt": "from Guest at 2026-11-02T03:44:42Z:\nLab's Docs Removed folder seems to do nothing. Why?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "forums/forum_1/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "default_persona = 'builtin-guest'\ndisplay_name = 'Lab'\n\n[[file_references]]\nkind = 'note'\nname = 'Long note'\nref_id = '##000004'\n\n[[file_references]]\nkind = 'note'\nname = 'Huge note'\nref_id = '##000005'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs OpenAI'\nref_id = '##000006'\n\n[[file_references]]\nkind = 'folder'\nname = 'Docs Removed'\nref_id = '##00000A'\n",
+          "path": "forums/forum_1/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_ekLNJ1jAalWQmigIqQw2hLQg",
+    "utc": "2026-11-02T03:44:47.431989+00:00",
+    "prompt": "from Guest at 2026-11-02T03:44:42Z:\nLab's Docs Removed folder seems to do nothing. Why?",
+    "name": "assistant_logs",
+    "arguments": {
+      "contains": "##00000A",
+      "limit": 40,
+      "minimum_level": "info"
+    },
+    "result": {
+      "entries": [
+        {
+          "level": "warn",
+          "text": "[2026-11-01 19:44:40.648067] [thread 34564016] [warning] Folder access in forum_1/2026-11-01-19-44-40-session: Writer (character_1): Docs Removed (##00000A): no ready store; sources: Forum Lab Files"
+        }
+      ],
+      "level": "debug",
+      "limited": false,
+      "status": "ok"
+    }
+  }
+]

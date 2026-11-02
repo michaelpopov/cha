@@ -1,0 +1,2796 @@
+{
+  "trace": [
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000000,
+        "result": {
+          "context_epoch": 1,
+          "bootstrap": {
+            "forums": [
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "builtin-entrance",
+                "display_name": "Entrance",
+                "default_character_id": "builtin-assistant",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "id": "builtin-assistant",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "font": "sans",
+                      "text_color": "normal"
+                    },
+                    "display_name": "Assistant"
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "forum_1",
+                "display_name": "Lab",
+                "default_character_id": "builtin-assistant",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "font": "sans",
+                      "weight": "normal"
+                    },
+                    "id": "builtin-assistant",
+                    "display_name": "Assistant"
+                  },
+                  {
+                    "id": "character_3",
+                    "display_name": "Claude Test",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "text_color": "normal",
+                      "font": "sans"
+                    }
+                  },
+                  {
+                    "id": "character_2",
+                    "display_name": "Gem",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "weight": "normal",
+                      "font": "sans"
+                    }
+                  },
+                  {
+                    "id": "character_1",
+                    "display_name": "Writer",
+                    "description": "Test character",
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "text_color": "normal",
+                      "font": "sans",
+                      "weight": "normal"
+                    }
+                  }
+                ]
+              },
+              {
+                "default_persona_id": "builtin-guest",
+                "id": "lobby",
+                "display_name": "The Lobby",
+                "default_character_id": "guide",
+                "default_persona_display_name": "Guest",
+                "members": [
+                  {
+                    "appearance": {
+                      "size": "normal",
+                      "style": "normal",
+                      "weight": "normal",
+                      "font": "sans",
+                      "text_color": "normal"
+                    },
+                    "id": "guide",
+                    "display_name": "Guide"
+                  }
+                ]
+              }
+            ],
+            "vaults": [
+              "Annushka",
+              "Assistant-Capability-Test-20261101",
+              "Base",
+              "CHA",
+              "Daily",
+              "Michaels",
+              "philosophy",
+              "Test"
+            ],
+            "initial_forum_id": "builtin-entrance",
+            "characters": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                },
+                "id": "builtin-assistant",
+                "display_name": "Assistant"
+              },
+              {
+                "id": "character_3",
+                "display_name": "Claude Test",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                }
+              },
+              {
+                "id": "character_2",
+                "display_name": "Gem",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "text_color": "normal",
+                  "font": "sans",
+                  "weight": "normal"
+                }
+              },
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "id": "guide",
+                "display_name": "Guide"
+              },
+              {
+                "id": "character_1",
+                "display_name": "Writer",
+                "description": "Test character",
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                }
+              }
+            ],
+            "recent_sessions": [
+              {
+                "session_label": "Welcome",
+                "session_id": "builtin-welcome",
+                "forum_id": "builtin-entrance",
+                "updated_at": 1793589999
+              },
+              {
+                "session_id": "2026-11-01-19-24-43-session",
+                "session_label": "W08 verification",
+                "forum_id": "forum_1",
+                "updated_at": 1793589884
+              },
+              {
+                "session_id": "2026-11-01-19-23-49-session",
+                "session_label": "Forum Assistant capability tests",
+                "forum_id": "forum_1",
+                "updated_at": 1793589837
+              },
+              {
+                "session_label": "W16 Lab save attempt",
+                "session_id": "2026-11-01-19-23-44-session-2",
+                "forum_id": "forum_1",
+                "updated_at": 1793589825
+              },
+              {
+                "session_label": "S1",
+                "session_id": "2026-11-01-19-23-44-session",
+                "forum_id": "forum_1",
+                "updated_at": 1793589824
+              },
+              {
+                "session_id": "2026-11-01-19-23-30-session",
+                "session_label": "W10 reproduction",
+                "forum_id": "forum_1",
+                "updated_at": 1793589811
+              },
+              {
+                "session_id": "2026-11-01-19-22-55-session",
+                "session_label": "W08 reproduction",
+                "forum_id": "forum_1",
+                "updated_at": 1793589776
+              }
+            ],
+            "entrance_forum_id": "builtin-entrance",
+            "personas": [
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "font": "sans",
+                  "text_color": "normal"
+                },
+                "id": "builtin-guest",
+                "display_name": "Guest"
+              },
+              {
+                "appearance": {
+                  "size": "normal",
+                  "style": "normal",
+                  "weight": "normal",
+                  "text_color": "normal",
+                  "font": "sans"
+                },
+                "id": "reader",
+                "display_name": "Reader"
+              }
+            ],
+            "vault_name": "Assistant-Capability-Test-20261101",
+            "initial_session_id": "builtin-welcome"
+          },
+          "state": "running",
+          "capabilities": {
+            "can_modify": false,
+            "can_transfer_r2": false
+          },
+          "application_version": "development"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "app.bootstrap",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "items": [
+            {
+              "forum_id": "",
+              "has_compressed": false,
+              "read_only": false,
+              "is_summary": false,
+              "id": 1,
+              "parent_id": null,
+              "kind": "folder",
+              "summary_linked": false,
+              "name": "Forums"
+            },
+            {
+              "forum_id": "lobby",
+              "has_compressed": false,
+              "read_only": false,
+              "id": 2,
+              "is_summary": false,
+              "parent_id": 1,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "The Lobby"
+            },
+            {
+              "forum_id": "forum_1",
+              "has_compressed": false,
+              "read_only": false,
+              "id": 3,
+              "is_summary": false,
+              "parent_id": 1,
+              "kind": "folder",
+              "summary_linked": false,
+              "name": "Lab"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "is_summary": false,
+              "id": 4,
+              "parent_id": null,
+              "summary_linked": false,
+              "kind": "note",
+              "name": "Long note"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "id": 5,
+              "is_summary": false,
+              "parent_id": null,
+              "kind": "note",
+              "summary_linked": false,
+              "name": "Huge note"
+            },
+            {
+              "has_compressed": false,
+              "read_only": false,
+              "is_summary": false,
+              "id": 6,
+              "parent_id": null,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "Docs OpenAI",
+              "store": {
+                "state": "ready",
+                "service": "openai",
+                "id": 1
+              }
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "id": 7,
+              "is_summary": false,
+              "parent_id": 6,
+              "kind": "note",
+              "summary_linked": false,
+              "name": "Fixture document"
+            },
+            {
+              "has_compressed": false,
+              "read_only": false,
+              "is_summary": false,
+              "id": 8,
+              "parent_id": null,
+              "kind": "folder",
+              "summary_linked": false,
+              "name": "Docs Gemini",
+              "store": {
+                "state": "ready",
+                "id": 2,
+                "service": "google"
+              }
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "is_summary": false,
+              "id": 9,
+              "parent_id": 8,
+              "summary_linked": false,
+              "kind": "note",
+              "name": "Fixture document"
+            },
+            {
+              "has_compressed": false,
+              "read_only": false,
+              "id": 10,
+              "is_summary": false,
+              "parent_id": null,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "Docs Removed"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "is_summary": false,
+              "id": 11,
+              "parent_id": 10,
+              "summary_linked": false,
+              "kind": "note",
+              "name": "Fixture document"
+            }
+          ]
+        },
+        "id": 9000000000001,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.list",
+      "params": {}
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "operation_id": 1
+        },
+        "id": 9000000000002,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeRemove",
+      "params": {
+        "store_id": 1,
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000003,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000004,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "completed": 0,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "total": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "completed": 0,
+          "present": true,
+          "phase": "removing",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "total": 0,
+          "error": "",
+          "kind": "remove",
+          "folder_deleted": false
+        },
+        "id": 9000000000005,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000006,
+        "result": {
+          "kind": "remove",
+          "phase": "removing",
+          "present": true,
+          "result": "",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "total": 0,
+          "completed": 0,
+          "error": "",
+          "folder_deleted": false
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "kind": "remove",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "completed": 0,
+          "error": "",
+          "folder_deleted": false
+        },
+        "id": 9000000000007,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "completed": 0,
+          "error": "",
+          "kind": "remove"
+        },
+        "id": 9000000000008,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000009,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "completed": 0,
+          "present": true,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "total": 0,
+          "error": "",
+          "completed": 0
+        },
+        "context_epoch": 1,
+        "id": 9000000000010,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "error": "",
+          "completed": 0,
+          "total": 0
+        },
+        "id": 9000000000011,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "completed": 0,
+          "present": true,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "total": 0,
+          "error": "",
+          "kind": "remove",
+          "folder_deleted": false
+        },
+        "id": 9000000000012,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "error": "",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "completed": 0,
+          "folder_deleted": false,
+          "kind": "remove"
+        },
+        "id": 9000000000013,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000014,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false,
+          "completed": 0
+        },
+        "id": 9000000000015,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "error": "",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "total": 0,
+          "folder_deleted": false,
+          "completed": 0
+        },
+        "context_epoch": 1,
+        "id": 9000000000016,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "completed": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "total": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "id": 9000000000017,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000018,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "error": "",
+          "completed": 0,
+          "total": 0
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "error": "",
+          "kind": "remove",
+          "completed": 0
+        },
+        "id": 9000000000019,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "total": 0,
+          "completed": 0,
+          "error": ""
+        },
+        "context_epoch": 1,
+        "id": 9000000000020,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "completed": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "kind": "remove",
+          "folder_deleted": false,
+          "error": ""
+        },
+        "id": 9000000000021,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "total": 0,
+          "present": true,
+          "phase": "removing",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "id": 9000000000022,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "total": 0,
+          "completed": 0,
+          "error": ""
+        },
+        "id": 9000000000023,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000024,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "kind": "remove",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "total": 0,
+          "error": "",
+          "completed": 0,
+          "folder_deleted": false
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000025,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false,
+          "completed": 0
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000026,
+        "result": {
+          "total": 0,
+          "phase": "removing",
+          "present": true,
+          "result": "",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "completed": 0,
+          "error": "",
+          "kind": "remove"
+        },
+        "id": 9000000000027,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "completed": 0,
+          "present": true,
+          "phase": "removing",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "total": 0,
+          "error": "",
+          "kind": "remove",
+          "folder_deleted": false
+        },
+        "id": 9000000000028,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "kind": "remove",
+          "result": "",
+          "present": true,
+          "phase": "removing",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "id": 9000000000029,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "id": 9000000000030,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000031,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false,
+          "completed": 0
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "completed": 0,
+          "error": "",
+          "folder_deleted": false
+        },
+        "id": 9000000000032,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "kind": "remove",
+          "phase": "removing",
+          "present": true,
+          "result": "",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "total": 0,
+          "error": "",
+          "folder_deleted": false,
+          "completed": 0
+        },
+        "id": 9000000000033,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "folder_deleted": false,
+          "phase": "removing",
+          "present": true,
+          "result": "",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "error": "",
+          "completed": 0,
+          "total": 0
+        },
+        "id": 9000000000034,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "total": 0,
+          "error": "",
+          "completed": 0,
+          "kind": "remove"
+        },
+        "id": 9000000000035,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "error": "",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "total": 0,
+          "completed": 0,
+          "folder_deleted": false,
+          "kind": "remove"
+        },
+        "id": 9000000000036,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "total": 0,
+          "phase": "removing",
+          "result": "",
+          "present": true,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "error": "",
+          "completed": 0,
+          "folder_deleted": false
+        },
+        "id": 9000000000037,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "completed": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "error": "",
+          "kind": "remove",
+          "folder_deleted": false
+        },
+        "id": 9000000000038,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "error": "",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "completed": 0,
+          "folder_deleted": false,
+          "kind": "remove"
+        },
+        "id": 9000000000039,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "completed": 0,
+          "present": true,
+          "phase": "removing",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "total": 0,
+          "error": "",
+          "folder_deleted": false
+        },
+        "id": 9000000000040,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000041,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "error": "",
+          "completed": 0,
+          "total": 0
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "folder_deleted": false,
+          "phase": "removing",
+          "present": true,
+          "result": "",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "completed": 0,
+          "kind": "remove",
+          "error": ""
+        },
+        "id": 9000000000042,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "error": "",
+          "present": true,
+          "phase": "removing",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "kind": "remove",
+          "folder_deleted": false,
+          "completed": 0
+        },
+        "id": 9000000000043,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "error": "",
+          "total": 0,
+          "completed": 0
+        },
+        "context_epoch": 1,
+        "id": 9000000000044,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "completed": 0,
+          "present": true,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false
+        },
+        "context_epoch": 1,
+        "id": 9000000000045,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false,
+          "completed": 0
+        },
+        "context_epoch": 1,
+        "id": 9000000000046,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000047,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "error": "",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "completed": 0,
+          "folder_deleted": false,
+          "total": 0
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000048,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "folder_deleted": false,
+          "present": true,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "error": "",
+          "total": 0,
+          "completed": 0
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "completed": 0,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "kind": "remove",
+          "total": 0,
+          "error": "",
+          "folder_deleted": false
+        },
+        "context_epoch": 1,
+        "id": 9000000000049,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false,
+          "completed": 0
+        },
+        "id": 9000000000050,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "error": "",
+          "present": true,
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": false,
+          "total": 0,
+          "completed": 0,
+          "kind": "remove",
+          "folder_deleted": false
+        },
+        "context_epoch": 1,
+        "id": 9000000000051,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000052,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "kind": "remove",
+          "error": "",
+          "completed": 0
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "error": "",
+          "present": true,
+          "phase": "removing",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "kind": "remove",
+          "completed": 0,
+          "folder_deleted": false
+        },
+        "id": 9000000000053,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "completed": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 1,
+          "total": 0,
+          "error": "",
+          "folder_deleted": false,
+          "kind": "remove"
+        },
+        "id": 9000000000054,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000055,
+        "result": {
+          "result": "success",
+          "total": 0,
+          "present": true,
+          "phase": "completed",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": true,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false,
+          "completed": 0
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 6
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "items": [
+            {
+              "forum_id": "",
+              "has_compressed": false,
+              "read_only": false,
+              "id": 1,
+              "is_summary": false,
+              "parent_id": null,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "Forums"
+            },
+            {
+              "forum_id": "lobby",
+              "has_compressed": false,
+              "read_only": false,
+              "is_summary": false,
+              "id": 2,
+              "parent_id": 1,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "The Lobby"
+            },
+            {
+              "forum_id": "forum_1",
+              "has_compressed": false,
+              "read_only": false,
+              "id": 3,
+              "is_summary": false,
+              "parent_id": 1,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "Lab"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "is_summary": false,
+              "id": 4,
+              "parent_id": null,
+              "kind": "note",
+              "summary_linked": false,
+              "name": "Long note"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "is_summary": false,
+              "id": 5,
+              "parent_id": null,
+              "summary_linked": false,
+              "kind": "note",
+              "name": "Huge note"
+            },
+            {
+              "has_compressed": false,
+              "read_only": false,
+              "is_summary": false,
+              "id": 6,
+              "parent_id": null,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "Docs OpenAI"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "id": 7,
+              "is_summary": false,
+              "parent_id": 6,
+              "summary_linked": false,
+              "kind": "note",
+              "name": "Fixture document"
+            },
+            {
+              "has_compressed": false,
+              "read_only": false,
+              "is_summary": false,
+              "id": 8,
+              "parent_id": null,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "Docs Gemini",
+              "store": {
+                "id": 2,
+                "state": "ready",
+                "service": "google"
+              }
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "is_summary": false,
+              "id": 9,
+              "parent_id": 8,
+              "summary_linked": false,
+              "kind": "note",
+              "name": "Fixture document"
+            },
+            {
+              "has_compressed": false,
+              "read_only": false,
+              "is_summary": false,
+              "id": 10,
+              "parent_id": null,
+              "kind": "folder",
+              "summary_linked": false,
+              "name": "Docs Removed"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "id": 11,
+              "is_summary": false,
+              "parent_id": 10,
+              "kind": "note",
+              "summary_linked": false,
+              "name": "Fixture document"
+            }
+          ]
+        },
+        "id": 9000000000056,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.list",
+      "params": {}
+    },
+    {
+      "result": {
+        "result": {
+          "operation_id": 2
+        },
+        "id": 9000000000057,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeRemove",
+      "params": {
+        "folder_id": 8,
+        "store_id": 2
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "completed": 0,
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false,
+          "total": 0
+        },
+        "id": 9000000000058,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000059,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "kind": "remove",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 2,
+          "total": 0,
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "folder_deleted": false,
+          "present": true,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 2,
+          "total": 0,
+          "error": "",
+          "completed": 0,
+          "kind": "remove"
+        },
+        "id": 9000000000060,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "total": 0,
+          "kind": "remove",
+          "completed": 0,
+          "error": ""
+        },
+        "id": 9000000000061,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "error": "",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 2,
+          "kind": "remove",
+          "completed": 0,
+          "total": 0,
+          "folder_deleted": false
+        },
+        "context_epoch": 1,
+        "id": 9000000000062,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "error": "",
+          "present": true,
+          "phase": "removing",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 2,
+          "total": 0,
+          "completed": 0,
+          "folder_deleted": false,
+          "kind": "remove"
+        },
+        "context_epoch": 1,
+        "id": 9000000000063,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "kind": "remove",
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "total": 0,
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "id": 9000000000064,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "completed": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 2,
+          "kind": "remove",
+          "total": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "context_epoch": 1,
+        "id": 9000000000065,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "error": "",
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "kind": "remove",
+          "completed": 0,
+          "folder_deleted": false,
+          "total": 0
+        },
+        "id": 9000000000066,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000067,
+        "result": {
+          "result": "",
+          "error": "",
+          "present": true,
+          "phase": "removing",
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "total": 0,
+          "completed": 0,
+          "folder_deleted": false,
+          "kind": "remove"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000068,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "completed": 0,
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "total": 0,
+          "error": "",
+          "folder_deleted": false,
+          "kind": "remove"
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "error": "",
+          "phase": "removing",
+          "present": true,
+          "result": "",
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "total": 0,
+          "completed": 0,
+          "kind": "remove",
+          "folder_deleted": false
+        },
+        "id": 9000000000069,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000070,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "error": "",
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "total": 0,
+          "kind": "remove",
+          "completed": 0,
+          "folder_deleted": false
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "completed": 0,
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "total": 0,
+          "error": "",
+          "folder_deleted": false,
+          "kind": "remove"
+        },
+        "context_epoch": 1,
+        "id": 9000000000071,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 2,
+          "kind": "remove",
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "id": 9000000000072,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "error": "",
+          "phase": "removing",
+          "present": true,
+          "result": "",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 2,
+          "kind": "remove",
+          "completed": 0,
+          "total": 0,
+          "folder_deleted": false
+        },
+        "id": 9000000000073,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 2,
+          "kind": "remove",
+          "error": "",
+          "completed": 0,
+          "folder_deleted": false
+        },
+        "id": 9000000000074,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "total": 0,
+          "phase": "removing",
+          "present": true,
+          "result": "",
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "kind": "remove",
+          "error": "",
+          "completed": 0,
+          "folder_deleted": false
+        },
+        "id": 9000000000075,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000076,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "total": 0,
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false,
+          "completed": 0
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "kind": "remove",
+          "error": "",
+          "completed": 0,
+          "total": 0
+        },
+        "id": 9000000000077,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "kind": "remove",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 2,
+          "total": 0,
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "id": 9000000000078,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "error": "",
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "kind": "remove",
+          "completed": 0,
+          "total": 0,
+          "folder_deleted": false
+        },
+        "id": 9000000000079,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "folder_deleted": false,
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "kind": "remove",
+          "completed": 0,
+          "total": 0,
+          "error": ""
+        },
+        "id": 9000000000080,
+        "context_epoch": 1,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000081,
+        "result": {
+          "total": 0,
+          "phase": "removing",
+          "present": true,
+          "result": "",
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "kind": "remove",
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "kind": "remove",
+          "known_cleanup_remains": false,
+          "operation_id": 2,
+          "terminal": false,
+          "total": 0,
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "id": 9000000000082,
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000083,
+        "result": {
+          "result": "",
+          "phase": "removing",
+          "present": true,
+          "kind": "remove",
+          "known_cleanup_remains": false,
+          "terminal": false,
+          "operation_id": 2,
+          "total": 0,
+          "completed": 0,
+          "folder_deleted": false,
+          "error": ""
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000084,
+        "result": {
+          "total": 0,
+          "phase": "completed",
+          "present": true,
+          "result": "success",
+          "known_cleanup_remains": false,
+          "terminal": true,
+          "operation_id": 2,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false,
+          "completed": 0
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.storeOperation",
+      "params": {
+        "folder_id": 8
+      }
+    },
+    {
+      "result": {
+        "context_epoch": 1,
+        "id": 9000000000085,
+        "result": {
+          "items": [
+            {
+              "forum_id": "",
+              "has_compressed": false,
+              "read_only": false,
+              "is_summary": false,
+              "id": 1,
+              "parent_id": null,
+              "kind": "folder",
+              "summary_linked": false,
+              "name": "Forums"
+            },
+            {
+              "forum_id": "lobby",
+              "has_compressed": false,
+              "read_only": false,
+              "is_summary": false,
+              "id": 2,
+              "parent_id": 1,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "The Lobby"
+            },
+            {
+              "forum_id": "forum_1",
+              "has_compressed": false,
+              "read_only": false,
+              "id": 3,
+              "is_summary": false,
+              "parent_id": 1,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "Lab"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "id": 4,
+              "is_summary": false,
+              "parent_id": null,
+              "summary_linked": false,
+              "kind": "note",
+              "name": "Long note"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "id": 5,
+              "is_summary": false,
+              "parent_id": null,
+              "summary_linked": false,
+              "kind": "note",
+              "name": "Huge note"
+            },
+            {
+              "has_compressed": false,
+              "read_only": false,
+              "is_summary": false,
+              "id": 6,
+              "parent_id": null,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "Docs OpenAI"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "id": 7,
+              "is_summary": false,
+              "parent_id": 6,
+              "kind": "note",
+              "summary_linked": false,
+              "name": "Fixture document"
+            },
+            {
+              "has_compressed": false,
+              "read_only": false,
+              "id": 8,
+              "is_summary": false,
+              "parent_id": null,
+              "kind": "folder",
+              "summary_linked": false,
+              "name": "Docs Gemini"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "id": 9,
+              "is_summary": false,
+              "parent_id": 8,
+              "summary_linked": false,
+              "kind": "note",
+              "name": "Fixture document"
+            },
+            {
+              "has_compressed": false,
+              "read_only": false,
+              "id": 10,
+              "is_summary": false,
+              "parent_id": null,
+              "summary_linked": false,
+              "kind": "folder",
+              "name": "Docs Removed"
+            },
+            {
+              "has_compressed": false,
+              "read_only": true,
+              "id": 11,
+              "is_summary": false,
+              "parent_id": 10,
+              "kind": "note",
+              "summary_linked": false,
+              "name": "Fixture document"
+            }
+          ]
+        },
+        "ok": true,
+        "connection_id": "view-2"
+      },
+      "method": "notes.list",
+      "params": {}
+    }
+  ],
+  "assertions": [
+    {
+      "name": "ownership matches recorded upload",
+      "ok": true
+    },
+    {
+      "name": "recorded test store removed",
+      "ok": true
+    },
+    {
+      "name": "ownership matches recorded upload",
+      "ok": true
+    },
+    {
+      "name": "recorded test store removed",
+      "ok": true
+    },
+    {
+      "name": "no test-owned stores remain",
+      "ok": true
+    }
+  ],
+  "events": [],
+  "C": {
+    "Claude Test": "character_3",
+    "openai": "provider_1",
+    "Long note": {
+      "id": 4,
+      "ref_id": "##000004"
+    },
+    "Gem": "character_2",
+    "lab": "forum_1",
+    "notes": {},
+    "Docs Removed": {
+      "id": 10,
+      "ref_id": "##00000A"
+    },
+    "Writer": "character_1",
+    "cleanup": [
+      {
+        "target": {
+          "folder_id": 6,
+          "remote_id": "vs_6ae80217860c8191ba7e6dc7332d0966",
+          "name": "Docs OpenAI",
+          "store_id": 1,
+          "service": "openai"
+        },
+        "result": {
+          "result": "success",
+          "total": 0,
+          "present": true,
+          "phase": "completed",
+          "known_cleanup_remains": false,
+          "operation_id": 1,
+          "terminal": true,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false,
+          "completed": 0
+        }
+      },
+      {
+        "target": {
+          "remote_id": "fileSearchStores/docs-gemini-000008-bo6xqvkeahp8",
+          "service": "google",
+          "name": "Docs Gemini",
+          "store_id": 2,
+          "folder_id": 8
+        },
+        "result": {
+          "total": 0,
+          "phase": "completed",
+          "present": true,
+          "result": "success",
+          "known_cleanup_remains": false,
+          "terminal": true,
+          "operation_id": 2,
+          "kind": "remove",
+          "error": "",
+          "folder_deleted": false,
+          "completed": 0
+        }
+      }
+    ],
+    "google": "provider_2",
+    "anthropic": "provider_3",
+    "remainingStores": [],
+    "Docs Gemini": {
+      "id": 8,
+      "ref_id": "##000008"
+    },
+    "Docs OpenAI": {
+      "id": 6,
+      "ref_id": "##000006"
+    },
+    "Huge note": {
+      "id": 5,
+      "ref_id": "##000005"
+    }
+  },
+  "ok": true,
+  "exit_code": 0,
+  "utc": "2026-11-02T03:26:39.902349+00:00"
+}

@@ -1,0 +1,63 @@
+[
+  {
+    "codes": [
+      "LIVE-3256442954",
+      "LIVE-3342211177",
+      "LIVE-1058775975",
+      "LIVE-2521814720",
+      "LIVE-1426178495"
+    ],
+    "folder_id": 3,
+    "index": 0,
+    "remote_id": "vs_6ae7e2bdb8ec81918c75c7a630532cd8",
+    "service": "openai"
+  },
+  {
+    "codes": [
+      "LIVE-1259963137",
+      "LIVE-35037854",
+      "LIVE-1947794024",
+      "LIVE-881649516",
+      "LIVE-4081612198"
+    ],
+    "folder_id": 4,
+    "index": 1,
+    "remote_id": "vs_6ae7e2ea7f0481918840a9bf24a814ed",
+    "service": "openai"
+  },
+  {
+    "codes": [
+      "LIVE-1102102303",
+      "LIVE-1340614813",
+      "LIVE-1642386389",
+      "LIVE-3101786545",
+      "LIVE-3453417069"
+    ],
+    "folder_id": 5,
+    "index": 2,
+    "remote_id": "vs_6ae7e31925388191a0115584ae509369",
+    "service": "openai"
+  },
+  {
+    "codes": [
+      "LIVE-3878952080"
+    ],
+    "folder_id": 6,
+    "index": 3,
+    "remote_id": "fileSearchStores/cha-live-longcase3-vg7zac5gkdkh",
+    "service": "google"
+  },
+  {
+    "codes": [
+      "LIVE-1608140792",
+      "LIVE-3809087520",
+      "LIVE-3624308662",
+      "LIVE-1623819022",
+      "LIVE-57483236"
+    ],
+    "folder_id": 7,
+    "index": 4,
+    "remote_id": "vs_6ae7e36e0d048191b4a69cd33fa39b76",
+    "service": "openai"
+  }
+]

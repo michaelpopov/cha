@@ -1,0 +1,30 @@
+[
+  {
+    "file_id": "file-9d2DrarGmc9o4hziwUHibi",
+    "folder_id": 3,
+    "remote_id": "vs_6ae7f2a9f54c8191b6a324703b605086",
+    "saved_key_id": "api_key_3",
+    "service": "openai"
+  },
+  {
+    "folder_id": 4,
+    "operation": "fileSearchStores/cha-live-ga-20261102-3b3hkesjsj6a/upload/operations/cedardemandmd-tnkgvg1bv7ky",
+    "remote_id": "fileSearchStores/cha-live-ga-20261102-3b3hkesjsj6a",
+    "saved_key_id": "api_key_4",
+    "service": "google"
+  },
+  {
+    "folder_id": 5,
+    "operation": "fileSearchStores/cha-live-healthyempty-u1ttlwo9r4ti/upload/operations/healthyemptymd-prp3le24jr94",
+    "remote_id": "fileSearchStores/cha-live-healthyempty-u1ttlwo9r4ti",
+    "saved_key_id": "api_key_4",
+    "service": "google"
+  },
+  {
+    "folder_id": 6,
+    "operation": "fileSearchStores/cha-live-remotedeletion-c0qqylkqwtrh/upload/operations/remotedeletionmd-j8e1ou9vkf5s",
+    "remote_id": "fileSearchStores/cha-live-remotedeletion-c0qqylkqwtrh",
+    "saved_key_id": "api_key_4",
+    "service": "google"
+  }
+]

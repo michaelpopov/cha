@@ -1,0 +1,8 @@
+{
+  "src/workspace/workspace_config_store.cpp": "2b39407c8f5576e36efa5ca69cab25607ffb2a077ee3bb25902e47f41f1f42cf",
+  "src/notes/notes_operations.cpp": "db294e1637116bc158b926a0dc53c5edbc917c3fd17cd425c6d30dfca690e7dc",
+  "resources/application-guide.md": "4eaa7e44cc09f606f36b7e188eb2d9f325e1335f55281f0567bdb8f443a6a897",
+  "resources/assistant-maintenance.md": "7f51fd1887824e53bfb43e80dc0e777e6542599e97bb61cec4843fd80d5cd2fe",
+  "tests/workspace/unit_workspace_config_store.cpp": "a54587fd38238b5814f50d5f1093d41593ad87d606aff0b800ee0276237ffebb",
+  "tests/bridge/unit_bridge_router.cpp": "40ac576e99ce43be3c8d662934e71ad8a13126bb0b793d2b7ff38e8f6613fdc6"
+}

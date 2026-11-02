@@ -1,0 +1,11 @@
+{
+  "native_maintenance_call_count": 10,
+  "captured_maintenance_call_count": 10,
+  "missing_results": [],
+  "tool_results_complete": true,
+  "completed_model_responses": 13,
+  "models": [
+    "gpt-5.4-mini",
+    "gpt-6.1-sol"
+  ]
+}

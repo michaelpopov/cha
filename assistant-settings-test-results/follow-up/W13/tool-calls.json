@@ -1,0 +1,93 @@
+[
+  {
+    "call_id": "call_1HvwjqqtUoQBgPpdEl0Fzfh6",
+    "utc": "2026-11-02T03:45:14.354493+00:00",
+    "prompt": "from Guest at 2026-11-02T03:45:13Z:\nRead https://example.com and tell me what it says.",
+    "name": "web_read",
+    "arguments": {
+      "url": "https://example.com"
+    },
+    "result": {
+      "error": "Page reading HTTP 401"
+    }
+  },
+  {
+    "call_id": "call_MGcAPp1wMxsiN24k4j49TWml",
+    "utc": "2026-11-02T03:45:17.715630+00:00",
+    "prompt": "from Guest at 2026-11-02T03:45:15Z:\nWhy does page reading use Firecrawl, and does my web_reader key matter?",
+    "name": "vault_config_read",
+    "arguments": {
+      "paths": [
+        "system/web-search/config.toml"
+      ]
+    },
+    "result": {
+      "files": [
+        {
+          "content": "api_key = ''\nfirecrawl_api_key = 'api_key_5'\nprovider = 'brave'\nread_provider = 'firecrawl'\ntool_enabled = false\nweb_reader_api_key = 'api_key_3'\nweb_reader_enabled = true\nweb_reader_url = 'http://127.0.0.1:9'\n",
+          "path": "system/web-search/config.toml",
+          "status": "ok"
+        }
+      ],
+      "version": "1"
+    }
+  },
+  {
+    "call_id": "call_sFbcNFBfW1eAGLwc9p22pd9a",
+    "utc": "2026-11-02T03:45:19.660720+00:00",
+    "prompt": "from Guest at 2026-11-02T03:45:15Z:\nWhy does page reading use Firecrawl, and does my web_reader key matter?",
+    "name": "assistant_logs",
+    "arguments": {
+      "contains": "web_reader",
+      "limit": 15,
+      "minimum_level": "info"
+    },
+    "result": {
+      "entries": [
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:45:13.048938] [thread 34565857] [info] Provider request admitted: provider_id=provider_2 character_id=character_1 forum_id=forum_1 session_id=2026-11-01-19-45-13-session request_id=1 token=1 model=gpt-5.4-mini effort=none api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=firecrawl web_reader_enabled=true active_count=1"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:45:13.048987] [thread 34566029] [info] Provider request started: provider_id=provider_2 character_id=character_1 forum_id=forum_1 session_id=2026-11-01-19-45-13-session request_id=1 token=1 model=gpt-5.4-mini effort=none api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=firecrawl web_reader_enabled=true"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:45:14.003202] [thread 34566110] [info] Page reading initiated: trigger=model_tool provider=web_reader"
+        },
+        {
+          "level": "warn",
+          "text": "[2026-11-01 19:45:14.003212] [thread 34566110] [warning] web_reader API key is saved but unused; the service has no API-key authentication contract"
+        },
+        {
+          "level": "warn",
+          "text": "[2026-11-01 19:45:14.003559] [thread 34566110] [warning] web_reader page reading failed: Page reading connection failed: Could not connect to server"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:45:14.003671] [thread 34566110] [info] web_reader page reading failed; trying Firecrawl"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:45:15.463559] [thread 34566029] [info] Prompt processing statistics: provider_id=provider_2 character_id=character_1 forum_id=forum_1 session_id=2026-11-01-19-45-13-session request_id=1 token=1 model=gpt-5.4-mini effort=none api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=firecrawl web_reader_enabled=true request_payload_bytes=19840 system_prompt_bytes=16208 conversation_bytes=86 outcome=completed stage=finished overall_ms=2414.550834 preparation_ms=2.321459 model_calls=2 model_failed=0 model_cancelled=0 model_ms=2060.930666 tools_wall_ms=351.125042 web_search_calls=0 web_search_failed=0 web_search_cancelled=0 web_search_ms=0.000000 web_search_result_bytes=0 web_read_calls=1 web_read_failed=1 web_read_cancelled=0 web_read_ms=350.911708 web_read_result_bytes=33 summary_calls=0 summary_failed=0 summary_cancelled=0 summary_ms=0.000000 summary_result_bytes=0 maintenance_calls=0 maintenance_failed=0 maintenance_cancelled=0 maintenance_ms=0.000000 maintenance_result_bytes=0 tool_calls_requested=1 tool_calls_rejected=0 tool_limit_hits=0 other_ms=0.173667 first_answer_ms=2052.000500 answer_bytes=182 reasoning_bytes=0 input_tokens=9923 output_tokens=70 total_tokens=9993 cache_read_tokens=4608 cache_write_tokens=0"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:45:15.463567] [thread 34566029] [info] Provider request completed: provider_id=provider_2 character_id=character_1 forum_id=forum_1 session_id=2026-11-01-19-45-13-session request_id=1 token=1 model=gpt-5.4-mini effort=none api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=firecrawl web_reader_enabled=true request_payload_bytes=19840 system_prompt_bytes=16208 conversation_bytes=86 input_tokens=9923 output_tokens=70 total_tokens=9993 cache_read_tokens=4608 cache_write_tokens=0"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:45:15.596707] [thread 34565857] [info] Provider request admitted: provider_id=provider_1 character_id=builtin-assistant forum_id=builtin-entrance session_id=builtin-welcome request_id=1 token=2 model=gpt-6.1-sol effort=low api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=firecrawl web_reader_enabled=true active_count=1"
+        },
+        {
+          "level": "info",
+          "text": "[2026-11-01 19:45:15.596743] [thread 34566160] [info] Provider request started: provider_id=provider_1 character_id=builtin-assistant forum_id=builtin-entrance session_id=builtin-welcome request_id=1 token=2 model=gpt-6.1-sol effort=low api=responses stream=true provider_web_search=off web_search_provider=off web_read_provider=firecrawl web_reader_enabled=true"
+        }
+      ],
+      "level": "debug",
+      "limited": false,
+      "status": "ok"
+    }
+  }
+]

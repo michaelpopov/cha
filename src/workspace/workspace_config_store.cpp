@@ -747,7 +747,7 @@ std::string without_forum_default_lines(std::string_view content) {
 }
 
 PrunedImport prune_imported_rows(std::vector<ConfigFile> rows) {
-    std::set<std::string> characters;
+    std::set<std::string> characters{std::string(workspace_assistant_id)};
     for (const ConfigFile& row : rows) {
         constexpr std::string_view prefix = "characters/";
         constexpr std::string_view suffix = "/character.toml";
@@ -1059,6 +1059,7 @@ bool is_writable_config_root(std::string_view path) {
         "system/jev/",
         "system/web-search/",
         "system/session/",
+        "system/notes/",
         "system/voice-input/",
         "system/voice-output/",
     };
@@ -1232,6 +1233,7 @@ std::set<CredentialPair> credential_destination_pairs(
         const bool provider = is_provider_config(row.name);
         if (!provider
             && row.name != "system/jev/config.toml"
+            && row.name != "system/notes/config.toml"
             && row.name != "system/voice-input/config.toml"
             && row.name != "system/voice-output/config.toml"
             && row.name != "system/web-search/config.toml") {
@@ -1270,6 +1272,10 @@ std::set<CredentialPair> credential_destination_pairs(
             add_credential_pair(
                 pairs, url_credential_destination(text(table, "web_reader_url")),
                 resolve_key_reference(workspace, text(table, "web_reader_api_key"), {}));
+        } else if (row.name == "system/notes/config.toml") {
+            add_credential_pair(
+                pairs, url_credential_destination(text(table, "audio_url")),
+                resolve_key_reference(workspace, text(table, "audio_api_key"), {}));
         } else {
             add_credential_pair(pairs, url_credential_destination(text(table, "url")), key(table));
         }

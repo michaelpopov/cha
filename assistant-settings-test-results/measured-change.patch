@@ -1,0 +1,153 @@
+diff --git a/resources/application-guide.md b/resources/application-guide.md
+index f54428a1..c87ba438 100644
+--- a/resources/application-guide.md
++++ b/resources/application-guide.md
+@@ -13,14 +13,46 @@ read-only catalog of the workspace personas and their descriptions; opening one
+ does not change who anyone speaks as. Workspace sessions persist; Welcome is
+ private to this server run and is removed on shutdown.
+ 
+-A workspace character's model provider and visual style are edited from that
+-character's Settings screen: Characters → the character → the row naming it
+-above the description.
++A workspace character's settings are edited from Characters → the character →
++Character settings: Provider, Reasoning effort, Provider web search, On-demand
++web search, Style, and Voice.
+ The provider picker requires a selection; No style clears only the visual style.
+ Saving restarts conversations that use the character and loses any answer being
+ generated. Forum and member configuration cannot override the character's
+-provider. Assistant's model provider, style, and voice can be changed from its
+-Settings screen too, but its built-in name and guide cannot be edited.
++provider. Assistant's settings can be changed from its Character settings too,
++but its built-in name and guide cannot be edited. Characters → Instructions
++edits the shared guide for every character.
++
++## Settings
++
++- Providers: model, base URL, API format (Responses, Chat completions,
++  Google (Gemini), or Anthropic), and credentials.
++- API Keys: saved keys that providers and services select.
++- Session settings: the provider and effort for session naming, and recipient
++  detection. Recipient detection selects who answers an unaddressed message and
++  also detects a request to save the conversation.
++- Notes settings: the provider and effort for note compression, web page and
++  YouTube import, and saved summaries; the audio service URL and key for note
++  audio on desktop.
++- Search API: on-demand web search, its provider and key, and page reading
++  through Firecrawl or web_reader.
++- Events: recent results of background jobs, such as note audio and compression.
++- Personas, Characters, Forums, Vaults, Styles, and Voices manage those items.
++
++A character's or forum's Files can hold a Note reference or a Folder reference,
++added by the item's CHA Ref ID (Copy Ref ID in Notes). A chat copies a
++referenced note when it first uses it. A folder reference needs the folder to be
++uploaded with Upload to store; characters on network providers then search it
++while they answer. `/detach <Ref ID>` removes only a folder attached in the
++chat, not a Files reference.
++
++The chat toolbar's Model and Effort change the selected character's provider
++and effort for the current session only; Default uses the character's settings.
++
++In Welcome, Assistant can inspect the vault configuration and, when asked,
++change characters, personas, forums, providers, styles, voices, and the
++session, notes, search, and voice settings. It cannot change its own settings
++or API keys. In other forums, it explains where to change them.
+ 
+ ## Commands
+ 
+diff --git a/resources/assistant-maintenance.md b/resources/assistant-maintenance.md
+index b1104a5d..66cd2827 100644
+--- a/resources/assistant-maintenance.md
++++ b/resources/assistant-maintenance.md
+@@ -55,7 +55,7 @@ stable ID. A display name is a label, not an ID or a reference target.
+ 
+ | Symptom or question | Relevant rows and references to follow |
+ | --- | --- |
+-| One character cannot answer, has the wrong model settings, name, or behavior | `characters/<groups>/<id>/character.toml`, `CHARACTER.md`, and its included fragments. Follow the global `provider`, `style`, and `voice` IDs to their definitions. Read character reasoning and search overrides alongside provider defaults. |
++| One character cannot answer, has the wrong model settings, name, or behavior | `characters/<groups>/<id>/character.toml`, `CHARACTER.md`, and its included fragments. Follow the global `provider`, `style`, and `voice` IDs to their definitions. Read character reasoning and search overrides alongside provider defaults. The chat toolbar's Model and Effort can override the provider and effort for one character in one session; `Default` uses the configuration. Your tools cannot read these session overrides, so ask the user what the toolbar shows. |
+ | Human identity, context, or message appearance is wrong | `personas/<groups>/<id>/persona.toml`, optional `PERSONA.md`, its includes, and its referenced style. Check the forum's `default_persona`. A persona is the human participant, not a character member; persona voice settings are obsolete. |
+ | Wrong starting recipient/persona, missing membership, or behavior differs by forum | `forums/<id>/config.toml`, `FORUM.md`, `members/character_defaults.toml`, and `members/<character-id>/character.toml` plus optional member `CHARACTER.md`. Follow the member ID to the global character and the default persona to its definition. |
+ | Connection, authentication, timeout, output limit, API format, or reasoning/search compatibility fails | `system/providers/<id>/config.toml` and the selecting global character. Inspect endpoint, protocol, model, mode, authentication reference, timeouts, and overrides together. Read relevant key metadata only. |
+@@ -63,7 +63,10 @@ stable ID. A display name is a label, not an ID or a reference target.
+ | Speech is missing or uses the wrong voice | `system/voices/<id>/config.toml`, the character's global `voice`, and `system/voice-output/config.toml`. Without an assignment, output uses `default_voice`, which is a voice display name. Check the selected voice provider, service settings, key metadata, and logs. Cached audio retains its old voice. |
+ | Dictation, hands-free sending, or transcription fails | `system/voice-input/config.toml`: provider, URL scheme, model, key reference, delay, prompt, and send phrase. Omitted provider means OpenAI; xAI uses WebSocket URLs and does not send delay or prompt. Also consider browser microphone access and secure-context requirements. |
+ | An unaddressed message reaches the wrong character or becomes a Self-note | `system/jev/config.toml`, forum membership/defaults, and recipient-detection logs. Jev classifies the intended recipient. An explicit `@Assistant` bypasses Jev in Welcome. |
+-| Search or page reading is unavailable | `system/web-search/config.toml`, character `web_search_tool`, and provider/character `web_search`. Check search and Firecrawl key metadata independently. Welcome uses the same on-demand search and page-reading settings. |
++| "Save this conversation" does not save a summary | `system/jev/config.toml` and `system/notes/config.toml`. Jev also detects a request to save the conversation. Outside Welcome, CHA then saves a session summary to Notes with the notes compression provider. Without Jev, the user can use Save summary in the session's sidebar menu. |
++| Search or page reading is unavailable | `system/web-search/config.toml`, character `web_search_tool`, and provider/character `web_search`. Page reading first uses `web_reader` when `web_reader_enabled` is true and `web_reader_url` is set. It uses Firecrawl when `read_provider = "firecrawl"`, also after a `web_reader` failure. `web_reader_api_key` is not used. Check search and Firecrawl key metadata independently. Welcome and web page import into Notes use the same page-reading settings. |
++| Note compression, web page or YouTube import, Save summary, or note audio fails | `system/notes/config.toml`: `compression_provider`, `compression_reasoning_effort`, `audio_url`, and `audio_api_key`. Compression, import formatting, and session summaries use the compression provider; they fail when it is omitted or unavailable. Effort defaults to `high`. Note audio needs the service URL and a saved key, and runs only on desktop. Use `assistant_events` for job outcomes. |
++| A note or folder in a character's or forum's Files has no effect | `file_references` in the global `character.toml` or the forum's `config.toml`: tables with `kind` (`note` or `folder`), `ref_id` (a CHA Ref ID such as `##00000A`), and the captured `name`. A character reference applies only to that character; a forum reference applies to every character in the forum. A chat copies a referenced note at first use, with compressed text when it exists, and keeps that copy. Notes over 256 KiB are omitted. A folder reference needs a ready store, a network-mode provider, and the upload's saved key. A direct OpenAI Responses or Google provider with the same saved key ID as the upload uses provider-hosted File Search; OpenAI gets at most two such stores. Other folders use the `search_attached_files` function tool with the upload's key, so the model must support function calls. A Gemini 2.5 model with native File Search omits the tool and those folders. Welcome does not use folder references. Check logs for omitted references. |
+ | Session naming fails or uses the wrong provider/effort | `system/session/config.toml`: `naming_provider` and `naming_reasoning_effort`. Omitted or unavailable naming provider falls back to Assistant's provider; effort defaults to `low`. Read naming logs and the selected provider. |
+ | Your own configuration or credentials are suspect | Read `system/assistant/character.toml`, its selected provider, and relevant `system/keys/` metadata. These are protected from your writes. Your prompt is an application resource, not a writable vault prompt file. |
+ 
+@@ -82,6 +85,16 @@ constraints in the supplied reference, including no `temperature` or
+ Native Anthropic requires `max_tokens`: CHA uses its configured value or the
+ default `64000`, including Test. Test adds no separate cap.
+ 
++For the direct Gemini API, a provider uses `api = "google"`, `https = true`,
++host `generativelanguage.googleapis.com`, port `443`, `base_path = "/v1beta"`,
++a Gemini model ID with an optional `models/` prefix, and a saved key. OpenAI
++OAuth is not available for `google` or `anthropic`. These two APIs ignore
++provider `reasoning_effort`, `reasoning_format`, `cache_retention`,
++`openrouter_targets`, and provider-hosted `web_search`, with warnings;
++Anthropic also ignores `temperature`. Character, chat-toolbar, session-naming,
++and notes effort have no effect with them, so do not change effort as a repair
++for these providers.
++
+ Provider `mode` defaults to `test`, `https` to `false`, `api` to `responses`,
+ `timeout_s` to `600`, and `idle_timeout_s` to `60`. Inspect the actual values
+ before attributing a network problem to the service. Character reasoning and
+@@ -390,7 +403,11 @@ effort affects consumers that inherit it; explicit character overrides remain
+ in effect. Change a character's provider in its global definition, never a
+ legacy member `provider` field, which has no runtime effect.
+ 
+-Use only the supported configuration roots in the location map. Paths must be
++Use only the supported configuration roots in the location map. Do not add `file_references`
++entries with apply: only the owner's Files list (New file → Note reference or
++Folder reference) checks that the Ref ID exists in this vault, matches the
++kind, and has a ready store for a folder, and captures the current name. An
++authorized replacement can remove an entry. Paths must be
+ canonical stored names with supported extensions: no absolute paths, traversal,
+ backslashes, empty components, or filesystem links. A `.toml` or `.md` suffix
+ alone does not grant write access. No deletion operation, stable-ID rename,
+@@ -628,8 +645,8 @@ references intact; creation makes undo unavailable.
+ Credentials require manual action. Do not request, read, write, or copy secret
+ values, passwords, or OAuth files. Native code also rejects any new pair of
+ credential destination and key reference, including an unresolved reference.
+-Model provider destinations are scheme/host/port; Jev and voice input use
+-their URL's scheme/host/port; voice output uses its fixed service name. Search
++Model provider destinations are scheme/host/port; Jev, voice input, and note
++audio use their URL's scheme/host/port; voice output uses its fixed service name. Search
+ provider/key and Firecrawl/key pairs are separate. A provider copy or key-reference
+ change is allowed only when every resulting pair already existed. A new
+ destination/key pair, including one introduced by a host, scheme, port, or
+diff --git a/src/workspace/workspace_config_store.cpp b/src/workspace/workspace_config_store.cpp
+index b17f1c04..df96f7ec 100644
+--- a/src/workspace/workspace_config_store.cpp
++++ b/src/workspace/workspace_config_store.cpp
+@@ -1059,6 +1059,7 @@ bool is_writable_config_root(std::string_view path) {
+         "system/jev/",
+         "system/web-search/",
+         "system/session/",
++        "system/notes/",
+         "system/voice-input/",
+         "system/voice-output/",
+     };
+@@ -1232,6 +1233,7 @@ std::set<CredentialPair> credential_destination_pairs(
+         const bool provider = is_provider_config(row.name);
+         if (!provider
+             && row.name != "system/jev/config.toml"
++            && row.name != "system/notes/config.toml"
+             && row.name != "system/voice-input/config.toml"
+             && row.name != "system/voice-output/config.toml"
+             && row.name != "system/web-search/config.toml") {
+@@ -1270,6 +1272,10 @@ std::set<CredentialPair> credential_destination_pairs(
+             add_credential_pair(
+                 pairs, url_credential_destination(text(table, "web_reader_url")),
+                 resolve_key_reference(workspace, text(table, "web_reader_api_key"), {}));
++        } else if (row.name == "system/notes/config.toml") {
++            add_credential_pair(
++                pairs, url_credential_destination(text(table, "audio_url")),
++                resolve_key_reference(workspace, text(table, "audio_api_key"), {}));
+         } else {
+             add_credential_pair(pairs, url_credential_destination(text(table, "url")), key(table));
+         }

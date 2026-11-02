@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+let s=await session('Forum capability tests',C.lab);C.answers=[];let i=0;for(const text of ['Where do I choose the model that compresses notes?','How do I give Writer a folder of documents?']){i++;C.caseIds=['F-01','F-04'];await submit(s,'/clear');await checkpoint('F0'+i+'-before');await submit(s,'@Assistant '+text);C.answers.push(await rpc('session.snapshot',s));await checkpoint('F0'+i+'-after');}

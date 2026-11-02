@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+await checkpoint('W12-before');await ask('answer','Does Lab use my Huge note and Long note? What happens if I edit Long note later?');await checkpoint('W12-after');

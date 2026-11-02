@@ -1,0 +1,14 @@
+{
+  "removed_paths": [
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Followup.sqlite3",
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Followup.sqlite3-wal",
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Followup.sqlite3-shm",
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Followup.sqlite3.cha-main-lock",
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Followup.sqlite3.cha-lock",
+    "/Users/mpopov/Library/Application Support/CHA/Assistant-Capability-Followup.sqlite3.cha-sessions",
+    "/Users/mpopov/Library/Application Support/CHA/ass-followup-vault.toml"
+  ],
+  "original_host_settings_restored": true,
+  "private_baseline_export_deleted": true,
+  "purpose": "Recreate a fully empty fixture so W-02 has no old compression events or compressed notes"
+}

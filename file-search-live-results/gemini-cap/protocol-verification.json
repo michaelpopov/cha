@@ -1,0 +1,13 @@
+[
+  {
+    "protocol": "chat_completions",
+    "model": "mistral-large-latest",
+    "calls": [
+      "8JN5sN13R"
+    ],
+    "results": [
+      "8JN5sN13R"
+    ],
+    "results_have_calls": true
+  }
+]

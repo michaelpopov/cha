@@ -1,0 +1,18 @@
+{
+  "commit": "ba361de6ef5b40893e1d84a320d72ec509fd99dc",
+  "observer": "observer.patch",
+  "working_tree": "measured-working-tree.patch",
+  "full_unit_tests": {
+    "passed": 861,
+    "skipped": 2
+  },
+  "application_tests": {
+    "passed": 613
+  },
+  "summary_live_script_syntax": "passed",
+  "final_build": "cmake --build --preset ninja: passed",
+  "final_focused_tests": {
+    "passed": 93,
+    "observer_removed": true
+  }
+}

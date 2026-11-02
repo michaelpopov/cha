@@ -1,0 +1,34 @@
+[
+  {
+    "kind": "application defect",
+    "status": "fixed",
+    "source": "src/workspace/workspace_config_store.cpp:750",
+    "description": "Import inferred valid characters only from characters/*/character.toml and removed built-in Assistant from forum membership. Assistant-only forums could then be pruned along with orphaned sessions. Seed the set with the always-present built-in Assistant.",
+    "validation": "Import regression fails before fix; all 38 WorkspaceConfigStoreTest cases and four full native suites pass after fix.",
+    "causality": "Discovered during the follow-up config-only reset; it did not cause the original 21 failures, whose Lab membership was created after import."
+  },
+  {
+    "kind": "application prompt gap",
+    "status": "fixed",
+    "source": "resources/application-guide.md:44",
+    "description": "Ordinary Assistant lacked the full Character settings \u2192 Files \u2192 New file \u2192 reference-type navigation. Added the actual UI path, checked against CharacterScreens.tsx and FileScreens.tsx.",
+    "validation": "Rebuilt embedded resource. F-04 rerun includes the complete navigation."
+  },
+  {
+    "kind": "visible error copy",
+    "status": "fixed after explicit user approval",
+    "source": "src/notes/notes_operations.cpp:32,288,690",
+    "description": "Updated all three approved error strings to name Notes settings / Settings \u2192 Search API.",
+    "validation": "Build succeeded; four affected bridge tests pass; exact approved strings match the UI screen labels."
+  },
+  {
+    "kind": "test fixture/runner",
+    "status": "fixed",
+    "description": "Separate Assistant and compression providers; use a listed reasoning model for low-effort compression; fresh DB for missing-provider case; restore/check membership; check clear_input so rejected @handles are not accepted tests; reopen target before each submit; per-case unique debug logs; independent exports around each write-capable case without reopening the store/clearing undo."
+  },
+  {
+    "kind": "test interpretation",
+    "status": "documented, product decision retained",
+    "description": "W-07 requires confirmation beyond the explicit user request, conflicting with maintenance authorization and the unused-settings rule. W-18 was tested independently rather than forcing a refusal into the application. W-13 needed no real Firecrawl key. Existing URL stripping was verified in source/history/tests and left unchanged."
+  }
+]

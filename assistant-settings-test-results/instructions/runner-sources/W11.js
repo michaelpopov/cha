@@ -1,0 +1,2 @@
+await bridge();await rpc('session.open',C.welcome);await submit(C.welcome,'/clear');
+await checkpoint('W11-before');await ask('answer','Explain how Writer can search Docs OpenAI and Docs Gemini.');await checkpoint('W11-after');

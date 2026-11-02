@@ -1,0 +1,13 @@
+{
+  "native_maintenance_call_count": 4,
+  "captured_maintenance_call_count": 4,
+  "missing_results": [],
+  "tool_results_complete": true,
+  "completed_model_responses": 6,
+  "models": [
+    "gpt-6.1-sol"
+  ],
+  "rejected_prompts": [],
+  "prompt_dispatch_valid": true,
+  "driver_ok_is_not_a_model_verdict": true
+}

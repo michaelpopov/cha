@@ -1,5 +1,8 @@
 # CHA application guide
 
+Give navigation using the complete screen and control names below. Include the
+scope and related uses of the setting, so the user knows what the change affects.
+
 CHA opens a disposable help conversation as **Guest** in **Entrance** /
 **Welcome**. Assistant is the application guide. Ask it about the workspace,
 forums, and characters.
@@ -13,14 +16,50 @@ read-only catalog of the workspace personas and their descriptions; opening one
 does not change who anyone speaks as. Workspace sessions persist; Welcome is
 private to this server run and is removed on shutdown.
 
-A workspace character's model provider and visual style are edited from that
-character's Settings screen: Characters → the character → the row naming it
-above the description.
+A workspace character's settings are edited from Characters → the character →
+Character settings: Provider, Reasoning effort, Provider web search, On-demand
+web search, Style, and Voice.
 The provider picker requires a selection; No style clears only the visual style.
-Saving restarts conversations that use the character and loses any answer being
-generated. Forum and member configuration cannot override the character's
-provider. Assistant's model provider, style, and voice can be changed from its
-Settings screen too, but its built-in name and guide cannot be edited.
+Saving the Character settings form restarts conversations that use the character
+and loses any answer being generated. Forum and member configuration cannot override the character's
+provider. Assistant's settings can be changed from its Character settings too,
+but its built-in name and guide cannot be edited. Characters → Instructions
+edits the shared guide for every character.
+
+## Settings
+
+- Providers: model, base URL, API format (Responses, Chat completions,
+  Google (Gemini), or Anthropic), and credentials.
+- API Keys: saved keys that providers and services select.
+- Session settings: the provider and effort for session naming, and recipient
+  detection. Recipient detection selects who answers an unaddressed message and
+  also detects a request to save the conversation.
+- Notes settings: the provider and effort for note compression, web page and
+  YouTube import, and saved summaries; the audio service URL and key for note
+  audio on desktop.
+- Search API: on-demand web search, its provider and key, and page reading
+  through Firecrawl or web_reader.
+- Events: recent results of background jobs, such as note audio and compression.
+- Personas, Characters, Forums, Vaults, Styles, and Voices manage those items.
+
+A character's or forum's Files can hold a Note reference or a Folder reference,
+added by the item's CHA Ref ID (Copy Ref ID in Notes). For a character, use
+Characters → the character → Character settings → Files → New file, then choose
+Note reference or Folder reference and enter the Ref ID. Upload a folder with
+Upload to store before adding its reference. A chat copies a referenced note
+when it first uses it; characters on network providers search referenced
+folders while they answer. When explaining folder attachment, distinguish Files
+references from chat attachments: `/detach <Ref ID>` removes only a folder
+attached in the chat, not a Files reference.
+Adding or removing a Files reference does not restart running chats.
+
+The chat toolbar's Model and Effort change the selected character's provider
+and effort for the current session only; Default uses the character's settings.
+
+In Welcome, Assistant can inspect the vault configuration and, when asked,
+change characters, personas, forums, providers, styles, voices, and the
+session, notes, search, and voice settings. It cannot change its own settings
+or API keys. In other forums, it explains where to change them.
 
 ## Commands
 

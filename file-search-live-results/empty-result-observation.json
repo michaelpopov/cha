@@ -1,0 +1,118 @@
+[
+  {
+    "case": "C12-0",
+    "store": "fileSearchStores/cha-live-ga-20261102-49t4l6u3opvq",
+    "status": 200,
+    "finish_reason": "STOP",
+    "grounding_metadata_present": false,
+    "grounding_chunks_present": false,
+    "grounding_chunk_count": 0,
+    "usage_metadata": {
+      "promptTokenCount": 114,
+      "candidatesTokenCount": 618,
+      "totalTokenCount": 3750,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 114
+        }
+      ],
+      "toolUsePromptTokenCount": 2580,
+      "toolUsePromptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 2580
+        }
+      ],
+      "thoughtsTokenCount": 438,
+      "serviceTier": "standard"
+    }
+  },
+  {
+    "case": "C12-1",
+    "store": "fileSearchStores/cha-live-remotedeletion1-ch8y9xfjiurk",
+    "status": 200,
+    "finish_reason": "STOP",
+    "grounding_metadata_present": false,
+    "grounding_chunks_present": false,
+    "grounding_chunk_count": 0,
+    "usage_metadata": {
+      "promptTokenCount": 38,
+      "candidatesTokenCount": 701,
+      "totalTokenCount": 1854,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 38
+        }
+      ],
+      "toolUsePromptTokenCount": 369,
+      "toolUsePromptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 369
+        }
+      ],
+      "thoughtsTokenCount": 746,
+      "serviceTier": "standard"
+    }
+  },
+  {
+    "case": "C12-1",
+    "store": "fileSearchStores/cha-live-ga-20261102-49t4l6u3opvq",
+    "status": 200,
+    "finish_reason": "STOP",
+    "grounding_metadata_present": false,
+    "grounding_chunks_present": false,
+    "grounding_chunk_count": 0,
+    "usage_metadata": {
+      "promptTokenCount": 115,
+      "candidatesTokenCount": 494,
+      "totalTokenCount": 3217,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 115
+        }
+      ],
+      "toolUsePromptTokenCount": 2237,
+      "toolUsePromptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 2237
+        }
+      ],
+      "thoughtsTokenCount": 371,
+      "serviceTier": "standard"
+    }
+  },
+  {
+    "case": "C12-1",
+    "store": "fileSearchStores/cha-live-remotedeletion1-ch8y9xfjiurk",
+    "status": 200,
+    "finish_reason": "STOP",
+    "grounding_metadata_present": false,
+    "grounding_chunks_present": false,
+    "grounding_chunk_count": 0,
+    "usage_metadata": {
+      "promptTokenCount": 68,
+      "candidatesTokenCount": 663,
+      "totalTokenCount": 2352,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 68
+        }
+      ],
+      "toolUsePromptTokenCount": 1228,
+      "toolUsePromptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 1228
+        }
+      ],
+      "thoughtsTokenCount": 393,
+      "serviceTier": "standard"
+    }
+  }
+]

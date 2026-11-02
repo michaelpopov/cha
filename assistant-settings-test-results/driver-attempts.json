@@ -1,0 +1,6 @@
+{
+  "W08": "Error: session.submit: {\"code\":\"session_not_live\",\"message\":\"That session is not open.\"}",
+  "W10": "Error: session.submit: {\"code\":\"session_not_live\",\"message\":\"That session is not open.\"}",
+  "W15": "Error: session.submit: {\"code\":\"session_not_live\",\"message\":\"That session is not open.\"}",
+  "W16": "Error: session.submit: {\"message\":\"That session is not open.\",\"code\":\"session_not_live\"}"
+}

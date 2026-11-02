@@ -1,0 +1,4 @@
+{
+  "reason": "Calibration exposed the terminal code before the required budget boundary; no exhaustion pass claimed.",
+  "verdict": "not observed"
+}

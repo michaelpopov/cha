@@ -1,0 +1,80 @@
+[
+  {
+    "case": "F-01",
+    "request_count": 1,
+    "no_maintenance_tools": true,
+    "guide_present": true,
+    "tool_sets": [
+      [
+        "summary_search",
+        "summary_read",
+        "file_search"
+      ]
+    ]
+  },
+  {
+    "case": "F-02",
+    "request_count": 1,
+    "no_maintenance_tools": true,
+    "guide_present": true,
+    "tool_sets": [
+      [
+        "summary_search",
+        "summary_read",
+        "file_search"
+      ]
+    ]
+  },
+  {
+    "case": "F-03",
+    "request_count": 1,
+    "no_maintenance_tools": true,
+    "guide_present": true,
+    "tool_sets": [
+      [
+        "summary_search",
+        "summary_read",
+        "file_search"
+      ]
+    ]
+  },
+  {
+    "case": "F-04",
+    "request_count": 1,
+    "no_maintenance_tools": true,
+    "guide_present": true,
+    "tool_sets": [
+      [
+        "summary_search",
+        "summary_read",
+        "file_search"
+      ]
+    ]
+  },
+  {
+    "case": "F-05",
+    "request_count": 1,
+    "no_maintenance_tools": true,
+    "guide_present": true,
+    "tool_sets": [
+      [
+        "summary_search",
+        "summary_read",
+        "file_search"
+      ]
+    ]
+  },
+  {
+    "case": "F-06",
+    "request_count": 1,
+    "no_maintenance_tools": true,
+    "guide_present": true,
+    "tool_sets": [
+      [
+        "summary_search",
+        "summary_read",
+        "file_search"
+      ]
+    ]
+  }
+]

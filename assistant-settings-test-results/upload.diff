@@ -1,0 +1,27 @@
+--- before/characters/character_1/character.toml
++++ after/characters/character_1/character.toml
+@@ -1,3 +1,8 @@
+ description = 'Test character'
+ display_name = 'Writer'
+ provider = 'provider_1'
++
++[[file_references]]
++kind = 'folder'
++name = 'Docs Gemini'
++ref_id = '##000008'
+--- before/forums/forum_1/config.toml
++++ after/forums/forum_1/config.toml
+@@ -11,3 +11,13 @@
+ kind = 'note'
+ name = 'Huge note'
+ ref_id = '##000005'
++
++[[file_references]]
++kind = 'folder'
++name = 'Docs OpenAI'
++ref_id = '##000006'
++
++[[file_references]]
++kind = 'folder'
++name = 'Docs Removed'
++ref_id = '##00000A'

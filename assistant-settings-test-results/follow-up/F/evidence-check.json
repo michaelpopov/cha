@@ -1,0 +1,18 @@
+{
+  "native_maintenance_call_count": 0,
+  "captured_maintenance_call_count": 0,
+  "missing_results": [],
+  "tool_results_complete": true,
+  "completed_model_responses": 0,
+  "models": [],
+  "rejected_prompts": [
+    "@Assistant Where do I choose the model that compresses notes?",
+    "@Assistant Change Writer's provider to Gemini.",
+    "@Assistant What does Default mean in the chat toolbar?",
+    "@Assistant How do I give Writer a folder of documents?",
+    "@Assistant Which API formats can a provider use?",
+    "@Assistant Where are the shared instructions for all characters?"
+  ],
+  "prompt_dispatch_valid": false,
+  "driver_ok_is_not_a_model_verdict": true
+}

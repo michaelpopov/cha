@@ -1,0 +1,23 @@
+Visible error-message corrections — explicitly approved and applied
+
+1. Before:
+   Select a compression provider in Settings → Notes.
+   Approved replacement:
+   Select a compression provider in Settings → Notes settings.
+
+2. Before:
+   The conversation exceeds the model's context window. Select a model with a larger context window in Settings → Notes and try again.
+   Approved replacement:
+   The conversation exceeds the model's context window. Select a model with a larger context window in Settings → Notes settings and try again.
+
+3. Before:
+   Page reading is not configured. Enable web_reader or Firecrawl in Web search settings.
+   Approved replacement:
+   Page reading is not configured. Enable web_reader or Firecrawl in Settings → Search API.
+
+Source: src/notes/notes_operations.cpp, lines 32, 288 and 690.
+Actual screen labels: webapp/src/components/Settings.tsx, lines 51 and 55.
+Two existing compression assertions in tests/bridge/unit_bridge_router.cpp were updated to match.
+All three strings and the two assertions are now changed; four affected bridge tests pass.
+
+AGENTS.md requires a visual representation and explicit approval before visible UI changes.

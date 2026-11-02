@@ -1,0 +1,26 @@
+[
+  {
+    "output": "{\"stores\":[{\"folder\":\"Atlas lookup\",\"matches\":[{\"file_id\":\"file-K5oECz7uSjauvkMZMz4E9F\",\"filename\":\"Atlas lookup.md\",\"text\":\"Project Atlas entry lookup: search alias LIVE-2229539782 to continue.\"},{\"file_id\":\"file-Do6bfup3DsJ5wkTaYJM2HS\",\"filename\":\"lookup-0.md\",\"text\":\"Lookup alias LIVE-2229539782 next lookup alias is LIVE-1828244511.\"},{\"file_id\":\"file-W6iFuwk4p9s5HgaS1iNAkk\",\"filename\":\"lookup-11.md\",\"text\":\"Lookup alias LIVE-750832460 next lookup alias is LIVE-4051629998.\"},{\"file_id\":\"file-BGM1ajUrw7qqj1ronxTUfc\",\"filename\":\"lookup-4.md\",\"text\":\"Lookup alias LIVE-3624053347 next lookup alias is LIVE-20797843.\"},{\"file_id\":\"file-C9jSaHjMwvqrnf7q7tDWpW\",\"filename\":\"lookup-3.md\",\"text\":\"Lookup alias LIVE-1246468057 next lookup alias is LIVE-3624053347.\"}]}],\"truncated\":false}",
+    "query": "Project Atlas entry lookup alias",
+    "step": 0,
+    "terminal_visible": false
+  },
+  {
+    "output": "{\"stores\":[{\"folder\":\"Atlas lookup\",\"matches\":[{\"file_id\":\"file-K5oECz7uSjauvkMZMz4E9F\",\"filename\":\"Atlas lookup.md\",\"text\":\"Project Atlas entry lookup: search alias LIVE-2229539782 to continue.\"},{\"file_id\":\"file-Do6bfup3DsJ5wkTaYJM2HS\",\"filename\":\"lookup-0.md\",\"text\":\"Lookup alias LIVE-2229539782 next lookup alias is LIVE-1828244511.\"},{\"file_id\":\"file-J5YxvuyckAtVcWd6wSEVW3\",\"filename\":\"lookup-10.md\",\"text\":\"Lookup alias LIVE-264796074 next lookup alias is LIVE-750832460.\"},{\"file_id\":\"file-JJL1WkBxeUdNzrw9fzqJKp\",\"filename\":\"lookup-2.md\",\"text\":\"Lookup alias LIVE-214931195 next lookup alias is LIVE-1246468057.\"},{\"file_id\":\"file-UZne6od3F57CARSachGQQe\",\"filename\":\"lookup-12.md\",\"text\":\"Lookup alias LIVE-4051629998 next lookup alias is LIVE-3945318125.\"}]}],\"truncated\":false}",
+    "query": "LIVE-2229539782",
+    "step": 1,
+    "terminal_visible": false
+  },
+  {
+    "output": "{\"stores\":[{\"folder\":\"Atlas lookup\",\"matches\":[{\"file_id\":\"file-Do6bfup3DsJ5wkTaYJM2HS\",\"filename\":\"lookup-0.md\",\"text\":\"Lookup alias LIVE-2229539782 next lookup alias is LIVE-1828244511.\"},{\"file_id\":\"file-VErDj2yUR9ymPfBFGdDETb\",\"filename\":\"lookup-1.md\",\"text\":\"Lookup alias LIVE-1828244511 next lookup alias is LIVE-214931195.\"},{\"file_id\":\"file-J5YxvuyckAtVcWd6wSEVW3\",\"filename\":\"lookup-10.md\",\"text\":\"Lookup alias LIVE-264796074 next lookup alias is LIVE-750832460.\"},{\"file_id\":\"file-C9jSaHjMwvqrnf7q7tDWpW\",\"filename\":\"lookup-3.md\",\"text\":\"Lookup alias LIVE-1246468057 next lookup alias is LIVE-3624053347.\"},{\"file_id\":\"file-VCC6eHXwBfRRBdbfasdWTH\",\"filename\":\"lookup-7.md\",\"text\":\"Lookup alias LIVE-1249102268 next lookup alias is LIVE-1430966270.\"}]}],\"truncated\":false}",
+    "query": "LIVE-1828244511",
+    "step": 2,
+    "terminal_visible": false
+  },
+  {
+    "output": "{\"stores\":[{\"folder\":\"Atlas lookup\",\"matches\":[{\"file_id\":\"file-VErDj2yUR9ymPfBFGdDETb\",\"filename\":\"lookup-1.md\",\"text\":\"Lookup alias LIVE-1828244511 next lookup alias is LIVE-214931195.\"},{\"file_id\":\"file-JJL1WkBxeUdNzrw9fzqJKp\",\"filename\":\"lookup-2.md\",\"text\":\"Lookup alias LIVE-214931195 next lookup alias is LIVE-1246468057.\"},{\"file_id\":\"file-V43jwu4SzSeRKb99UCbdZb\",\"filename\":\"lookup-17.md\",\"text\":\"Lookup alias LIVE-3624874150 terminal answer code is LIVE-3733047851.\"},{\"file_id\":\"file-K5oECz7uSjauvkMZMz4E9F\",\"filename\":\"Atlas lookup.md\",\"text\":\"Project Atlas entry lookup: search alias LIVE-2229539782 to continue.\"},{\"file_id\":\"file-SYBEvYj5UPQyQLho66rFhy\",\"filename\":\"lookup-6.md\",\"text\":\"Lookup alias LIVE-2352105345 next lookup alias is LIVE-1249102268.\"}]}],\"truncated\":false}",
+    "query": "LIVE-214931195",
+    "step": 3,
+    "terminal_visible": true
+  }
+]

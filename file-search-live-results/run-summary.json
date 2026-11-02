@@ -1,0 +1,19 @@
+{
+  "utc_first_prepared": "2026-11-02T00:29:24.186000+00:00",
+  "utc_last_event": "2026-11-02T01:21:26.740000+00:00",
+  "measured_receiver_model_calls": 147,
+  "executed_folder_search_invocations": 85,
+  "measured_store_dispatches": 154,
+  "all_outgoing_credentials_match_active_expected_values": true,
+  "store_response_statuses": {
+    "200": 149,
+    "401": 1,
+    "400": 1,
+    "0": 1,
+    "404": 2
+  },
+  "direct_calibration_requests": 16,
+  "receiver_reported_input_tokens": 258293,
+  "receiver_reported_output_tokens": 48273,
+  "receiver_usage_caveat": "Reported counts only; cancelled or rejected calls can lack usage. Internal Gemini retrieval usage is retained in raw retrieval bodies, separately from receiver usage."
+}

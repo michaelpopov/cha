@@ -336,6 +336,80 @@ Json character_arguments(std::string version = "1", Json forum = "lobby") {
         {"provider_id", "test"}, {"profile", "# Scholar\nThink carefully.\n"}, {"forum_id", forum}};
 }
 
+TEST(AssistantService, NotesSettingsAreListedReadAndWritable) {
+    ServiceHarness harness;
+    const std::string path = "system/notes/config.toml";
+    EXPECT_TRUE(harness.run("vault_config_list", {{"prefix", "system/notes"}})["entries"].empty());
+    const auto missing = harness.run("vault_config_read", read_arguments(path));
+    ASSERT_EQ(missing["files"].size(), 1u);
+    EXPECT_EQ(missing["files"][0]["status"], "missing");
+
+    harness.store().apply_notes_update({.compression_provider_id = "test"});
+    const auto listed = harness.run("vault_config_list", {{"prefix", "system/notes"}});
+    ASSERT_EQ(listed["entries"].size(), 1u);
+    const auto& entry = listed["entries"][0];
+    EXPECT_EQ(entry["path"], path);
+    EXPECT_EQ(entry["readable"], true);
+    EXPECT_EQ(entry["writable"], true);
+    EXPECT_FALSE(entry.contains("protection_reason"));
+    const auto read = harness.run("vault_config_read", read_arguments(path));
+    EXPECT_EQ(read["version"], listed["version"]);
+    ASSERT_EQ(read["files"].size(), 1u);
+    EXPECT_EQ(read["files"][0]["status"], "ok");
+    const auto native = harness.store().read_config(std::vector<std::string>{path});
+    ASSERT_EQ(native.files.size(), 1u);
+    EXPECT_EQ(read["files"][0]["content"], native.files[0].content);
+    EXPECT_EQ(entry["bytes"], native.files[0].content.size());
+}
+
+TEST(AssistantService, NotesSettingsApplyAndUndo) {
+    ServiceHarness harness;
+    const std::string path = "system/notes/config.toml";
+    const std::string source = "compression_provider = \"test\"\ncompression_reasoning_effort = \"low\"\n";
+    auto create = replace_change(path, source, std::to_string(harness.store().config_revision()));
+    create["changes"][0]["operation"] = "create";
+    const auto created = harness.run("vault_config_apply", create);
+    ASSERT_EQ(created["committed"], true) << created;
+    ASSERT_EQ(created["changed"].size(), 1u);
+    EXPECT_EQ(created["changed"][0]["path"], path);
+    EXPECT_EQ(created["changed"][0]["old_bytes"], nullptr);
+    EXPECT_EQ(created["undo_available"], false);
+
+    auto set = set_arguments(created["version"], "medium", "compression_reasoning_effort");
+    set["changes"][0]["path"] = path;
+    const auto changed = harness.run("vault_config_apply", set);
+    ASSERT_EQ(changed["committed"], true) << changed;
+    EXPECT_EQ(changed["undo_available"], true);
+    EXPECT_GT(std::stoull(changed["version"].get<std::string>()),
+        std::stoull(created["version"].get<std::string>()));
+    EXPECT_EQ(harness.store().snapshot()->notes().compression_reasoning_effort, "medium");
+    const auto undone = harness.run("vault_config_apply", {
+        {"action", "undo"}, {"version", changed["version"]}, {"changes", nullptr}});
+    ASSERT_EQ(undone["committed"], true) << undone;
+    EXPECT_EQ(undone["undo_available"], false);
+    EXPECT_EQ(harness.run("vault_config_read", read_arguments(path))["files"][0]["content"], source);
+    EXPECT_EQ(harness.store().snapshot()->notes().compression_reasoning_effort, "low");
+    const auto revision = harness.store().config_revision();
+    const auto snapshot = harness.store().snapshot();
+    std::vector<std::string> paths;
+    for (const auto& entry : harness.store().list_config("").entries) paths.push_back(entry.path);
+    const auto before = harness.store().read_config(paths);
+    const auto unavailable = harness.run("vault_config_apply", {
+        {"action", "undo"}, {"version", undone["version"]}, {"changes", nullptr}});
+    EXPECT_EQ(unavailable["error"], "unavailable_undo");
+    EXPECT_EQ(unavailable["committed"], false);
+    EXPECT_EQ(harness.store().config_revision(), revision);
+    EXPECT_EQ(harness.store().snapshot(), snapshot);
+    EXPECT_EQ(harness.store().list_config("").entries.size(), paths.size());
+    const auto after = harness.store().read_config(paths);
+    ASSERT_EQ(after.files.size(), before.files.size());
+    for (std::size_t i = 0; i < before.files.size(); ++i) {
+        EXPECT_EQ(after.files[i].path, before.files[i].path);
+        EXPECT_EQ(after.files[i].status, before.files[i].status);
+        EXPECT_EQ(after.files[i].content, before.files[i].content);
+    }
+}
+
 TEST(AssistantService, PicturesCannotBeListedReadOrWritten) {
     ServiceHarness harness(true);
     for (const auto directory : {"characters/guide", "system/assistant"}) {

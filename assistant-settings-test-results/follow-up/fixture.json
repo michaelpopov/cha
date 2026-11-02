@@ -1,0 +1,31 @@
+{
+  "Claude Test": "character_3",
+  "Docs Gemini": {
+    "id": 8,
+    "ref_id": "##000008"
+  },
+  "Docs OpenAI": {
+    "id": 6,
+    "ref_id": "##000006"
+  },
+  "Docs Removed": {
+    "id": 10,
+    "ref_id": "##00000A"
+  },
+  "Gem": "character_2",
+  "Huge note": {
+    "id": 5,
+    "ref_id": "##000005"
+  },
+  "Long note": {
+    "id": 4,
+    "ref_id": "##000004"
+  },
+  "Writer": "character_1",
+  "anthropic": "provider_4",
+  "anthropic_credential": false,
+  "assistant": "provider_1",
+  "google": "provider_3",
+  "lab": "forum_1",
+  "openai": "provider_2"
+}

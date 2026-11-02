@@ -1,0 +1,32 @@
+[
+  {
+    "id": "vs_6ae7f234724c819197f6b3a5fb489015",
+    "inspection_kind": 3,
+    "kind": "store",
+    "message": "",
+    "result": 0,
+    "service": "openai"
+  },
+  {
+    "id": "fileSearchStores/cha-live-ga-20261102-h9vrn2dydlkn",
+    "inspection_kind": 1,
+    "kind": "store",
+    "message": "",
+    "result": 0,
+    "service": "google"
+  },
+  {
+    "id": "fileSearchStores/cha-bug-fix-healthy-empty-8mcsorjqtj75",
+    "inspection_kind": 1,
+    "kind": "store",
+    "message": "",
+    "result": 0,
+    "service": "google"
+  },
+  {
+    "id": "file-FqSnv5bjhjcSC82HJxFQdL",
+    "kind": "file",
+    "message": "",
+    "result": 0
+  }
+]

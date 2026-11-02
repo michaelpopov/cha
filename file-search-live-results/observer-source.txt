@@ -1,0 +1,17 @@
+#pragma once
+#include <nlohmann/json.hpp>
+#include <fstream>
+#include <mutex>
+#include <map>
+#include <atomic>
+#include <functional>
+#include <chrono>
+#include <cstdlib>
+namespace cha::live_observer {
+inline std::mutex mutex;
+inline std::string case_id;
+inline std::map<std::string,std::pair<std::string,std::string>> expected;
+inline std::atomic_uint64_t serial{};
+inline std::function<void()> first_bytes;
+inline void event(nlohmann::json j) {std::lock_guard lock(mutex);j["case"]=case_id;j["utc_epoch_ms"]=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();std::ofstream(std::getenv("CHA_LIVE_OBSERVER_FILE") ? std::getenv("CHA_LIVE_OBSERVER_FILE") : "/Users/mpopov/projects/cha/file-search-live-results/events.jsonl",std::ios::app)<<j.dump()<<'\n';}
+}

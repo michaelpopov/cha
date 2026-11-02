@@ -1,0 +1,16 @@
+--- before/characters/character_2/character.toml
++++ after/characters/character_2/character.toml
+@@ -1,3 +1,4 @@
+ description = 'Test character'
+ display_name = 'Gem'
+ provider = 'provider_3'
++reasoning_effort = 'high'
+--- before/system/notes/config.toml
++++ after/system/notes/config.toml
+@@ -1,4 +1,4 @@
+ audio_api_key = ''
+ audio_url = ''
+-compression_provider = 'provider_2'
+-compression_reasoning_effort = 'low'
++compression_provider = 'provider_3'
++compression_reasoning_effort = 'xhigh'
