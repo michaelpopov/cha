@@ -4820,7 +4820,7 @@ TEST_F(BridgeRouterTest, StoreUploadReportsEditablePreflightAndFolderDeleteRequi
     expected_status["completed"] = 0;
     expected_status["total"] = 0;
     expected_status["result"] = "preflight";
-    expected_status["error"] = "The selected service and saved API key are not eligible.";
+    expected_status["error"] = "The saved API key is missing or empty.";
     expected_status["known_cleanup_remains"] = false;
     EXPECT_EQ(status, expected_status);
     EXPECT_EQ(call("notes.folderDelete", {{"operation_id", id}})["ok"], false);
@@ -4881,23 +4881,16 @@ TEST_F(BridgeRouterTest, StoreChoicesMatchTheSharedWireFixture) {
     bootstrap_epoch();
     const auto openai = application_->create_api_key({.display_name = "OpenAI", .value = "openai-secret"}, epoch_);
     const auto google = application_->create_api_key({.display_name = "Google", .value = "google-secret"}, epoch_);
-    nlohmann::json provider = application_->get_provider("test", epoch_);
-    for (const char* field : {"id", "used_by", "writable"}) provider.erase(field);
-    provider["mode"] = "net"; provider["https"] = true; provider["port"] = 443;
-    provider["host"] = "api.openai.com"; provider["api"] = "responses";
-    provider["base_path"] = ""; provider["api_key"] = openai.id;
-    (void)application_->update_provider("test", provider, epoch_);
-    const auto google_provider = application_->create_provider({.display_name = "Google", .copy_from = "test"}, epoch_);
-    provider["host"] = "generativelanguage.googleapis.com"; provider["api"] = "google";
-    provider["base_path"] = "/v1beta"; provider["api_key"] = google.id;
-    (void)application_->update_provider(google_provider.id, provider, epoch_);
     auto actual = call("notes.storeChoices").at("result");
     auto expected = folder_store_wire_fixture().at("choices");
-    expected["choices"][0]["api_key_id"] = openai.id;
-    expected["choices"][1]["api_key_id"] = google.id;
-    const auto by_service = [](const auto& left, const auto& right) { return left.at("service") < right.at("service"); };
-    std::sort(actual["choices"].begin(), actual["choices"].end(), by_service);
-    std::sort(expected["choices"].begin(), expected["choices"].end(), by_service);
+    for (auto& choice : expected["choices"])
+        choice["api_key_id"] = choice["api_key_id"] == "api_key_1" ? openai.id : google.id;
+    const auto by_connection = [](const auto& left, const auto& right) {
+        return left.at("service") == right.at("service")
+            ? left.at("api_key_id") < right.at("api_key_id") : left.at("service") < right.at("service");
+    };
+    std::sort(actual["choices"].begin(), actual["choices"].end(), by_connection);
+    std::sort(expected["choices"].begin(), expected["choices"].end(), by_connection);
     EXPECT_EQ(actual, expected);
 }
 

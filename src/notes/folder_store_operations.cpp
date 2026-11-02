@@ -350,13 +350,10 @@ void NotesService::Impl::run_folder_store_upload(std::shared_ptr<FolderStoreCont
         if (settings.test_hooks.folder_store_worker_started) settings.test_hooks.folder_store_worker_started(control->operation_id, control->cancel_all);
         auto capture = guarded(*this, control, [&] {
             if (control->cancel_forward->load()) throw Cancelled{};
-            const auto snapshot = store->snapshot();
-            std::vector<ModelBackendConfig> configs;
-            for (const auto& provider : snapshot->providers()) configs.push_back(provider.config);
-            const auto choices = folder_store_choices_from_providers(configs, *api_keys);
-            if (std::none_of(choices.begin(), choices.end(), [&](const auto& choice) {
-                    return choice.service == control->service && choice.api_key_id == control->api_key_id;
-                })) throw FolderStoreError("The selected service and saved API key are not eligible.");
+            const auto info = api_keys->find(control->api_key_id);
+            if (!info || !info->has_value) {
+                throw FolderStoreError("The saved API key is missing or empty.");
+            }
             const auto transport = folder_store_transport ? folder_store_transport : folder_store_curl_transport;
             client = FolderStoreClient([this, control, transport](const auto& request, const auto& cancel) {
                 auto authorized = request;
@@ -670,13 +667,13 @@ void NotesService::Impl::interrupt_folder_stores() {
 std::vector<FolderStoreChoiceView> NotesService::folder_store_choices(std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    const auto snapshot = impl_->store->snapshot();
-    std::vector<ModelBackendConfig> configs;
-    for (const auto& provider : snapshot->providers()) configs.push_back(provider.config);
     std::vector<FolderStoreChoiceView> views;
-    for (const auto& choice : folder_store_choices_from_providers(configs, *impl_->api_keys)) {
-        views.push_back({.service = std::string(folder_store_service_name(choice.service)),
-            .api_key_id = choice.api_key_id, .api_key_name = choice.api_key_name});
+    for (const auto& key : impl_->api_keys->list()) {
+        if (!key.has_value) continue;
+        for (const auto service : {FolderStoreService::openai, FolderStoreService::google}) {
+            views.push_back({.service = std::string(folder_store_service_name(service)),
+                .api_key_id = key.id, .api_key_name = key.display_name});
+        }
     }
     return views;
 }

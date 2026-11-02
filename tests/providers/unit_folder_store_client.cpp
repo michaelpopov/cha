@@ -1,5 +1,8 @@
 #include "providers/folder_store_client.h"
+#include "providers/api_key_store.h"
 #include "support/test_workspace.h"
+#include "util/logging.h"
+#include <fstream>
 #include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
@@ -59,67 +62,58 @@ protected:
 
 TEST_F(FolderStoreClientTest, MatchesExactOpenAiAndGoogleEndpoints) {
     auto openai = openai_config(openai_key_);
-    auto matched = folder_store_match(openai, *keys_);
+    auto matched = folder_store_match(openai, keys_->list());
     ASSERT_TRUE(matched.service);
     EXPECT_EQ(*matched.service, FolderStoreService::openai);
     EXPECT_EQ(matched.api_key_id, openai_key_);
 
     openai.host = "API.OpenAI.COM";
-    EXPECT_TRUE(folder_store_match(openai, *keys_).service);
+    EXPECT_TRUE(folder_store_match(openai, keys_->list()).service);
 
     openai.host = "proxy.api.openai.com";
-    EXPECT_FALSE(folder_store_match(openai, *keys_).service);
+    EXPECT_FALSE(folder_store_match(openai, keys_->list()).service);
 
     openai = openai_config(openai_key_);
     openai.port = 8443;
-    EXPECT_FALSE(folder_store_match(openai, *keys_).service);
+    EXPECT_FALSE(folder_store_match(openai, keys_->list()).service);
     openai = openai_config(openai_key_);
     openai.https = false;
-    EXPECT_FALSE(folder_store_match(openai, *keys_).service);
+    EXPECT_FALSE(folder_store_match(openai, keys_->list()).service);
     openai = openai_config(openai_key_);
     openai.mode = Mode::test;
-    EXPECT_FALSE(folder_store_match(openai, *keys_).service);
+    EXPECT_FALSE(folder_store_match(openai, keys_->list()).service);
     openai = openai_config(openai_key_);
     openai.api = ProviderApi::chat_completions;
-    EXPECT_FALSE(folder_store_match(openai, *keys_).service);
+    EXPECT_FALSE(folder_store_match(openai, keys_->list()).service);
     openai = openai_config(openai_key_);
     openai.auth = ProviderAuth::openai_subscription;
-    EXPECT_FALSE(folder_store_match(openai, *keys_).service);
+    EXPECT_FALSE(folder_store_match(openai, keys_->list()).service);
     openai = openai_config(openai_key_);
     openai.base_path = "/v1";
-    EXPECT_FALSE(folder_store_match(openai, *keys_).service);
+    EXPECT_FALSE(folder_store_match(openai, keys_->list()).service);
 
     auto google = google_config(google_key_);
-    matched = folder_store_match(google, *keys_);
+    matched = folder_store_match(google, keys_->list());
     ASSERT_TRUE(matched.service);
     EXPECT_EQ(*matched.service, FolderStoreService::google);
 
     google.base_path = "/v1";
-    EXPECT_FALSE(folder_store_match(google, *keys_).service);
+    EXPECT_FALSE(folder_store_match(google, keys_->list()).service);
 }
 
-TEST_F(FolderStoreClientTest, ResolvesLegacyNamesAndDeduplicatesById) {
+TEST_F(FolderStoreClientTest, ResolvesLegacyNamesAndRejectsMissingKeys) {
     auto config = openai_config();
     config.api_key_id.clear();
     config.api_key_env = "OpenAI";
-    auto matched = folder_store_match(config, *keys_);
+    auto matched = folder_store_match(config, keys_->list());
     ASSERT_TRUE(matched.service);
     EXPECT_EQ(matched.api_key_id, openai_key_);
 
     config = openai_config({});
-    EXPECT_FALSE(folder_store_match(config, *keys_).service);
+    EXPECT_FALSE(folder_store_match(config, keys_->list()).service);
 
     config = openai_config("missing");
-    EXPECT_FALSE(folder_store_match(config, *keys_).service);
-
-    const std::vector<ModelBackendConfig> configs{
-        openai_config(openai_key_),
-        openai_config(openai_key_),
-        google_config(google_key_),
-        google_config(openai_key_),
-    };
-    const auto choices = folder_store_choices_from_providers(configs, *keys_);
-    ASSERT_EQ(choices.size(), 3U);
+    EXPECT_FALSE(folder_store_match(config, keys_->list()).service);
 }
 
 TEST_F(FolderStoreClientTest, ClassifiesEndpointsBeforeAuthenticationAndKeyValidation) {
@@ -127,10 +121,10 @@ TEST_F(FolderStoreClientTest, ClassifiesEndpointsBeforeAuthenticationAndKeyValid
         const auto expected = config.api == ProviderApi::responses
             ? FolderStoreService::openai : FolderStoreService::google;
         EXPECT_EQ(folder_store_endpoint_service(config), expected);
-        EXPECT_FALSE(folder_store_match(config, *keys_).service);
+        EXPECT_FALSE(folder_store_match(config, keys_->list()).service);
         config.auth = ProviderAuth::openai_subscription;
         EXPECT_EQ(folder_store_endpoint_service(config), expected);
-        EXPECT_FALSE(folder_store_match(config, *keys_).service);
+        EXPECT_FALSE(folder_store_match(config, keys_->list()).service);
         config.https = false;
         EXPECT_FALSE(folder_store_endpoint_service(config));
         config.https = true;
@@ -153,13 +147,205 @@ TEST_F(FolderStoreClientTest, ClassifiesEndpointsBeforeAuthenticationAndKeyValid
     EXPECT_FALSE(folder_store_endpoint_service(config));
 }
 
-TEST_F(FolderStoreClientTest, DistinctIdsDoNotMatchOnEqualValues) {
-    const auto other = keys_->create("OpenAI 2", "sk-test").id;
-    const std::vector<ModelBackendConfig> configs{
-        openai_config(openai_key_),
-        openai_config(other),
-    };
-    EXPECT_EQ(folder_store_choices_from_providers(configs, *keys_).size(), 2U);
+TEST(FolderStoreHttp, SearchesEachOpenAiStoreWithItsOwnKeyAndKeepsPartialFailures) {
+    std::vector<std::string> searched;
+    FolderStoreClient client([&](const auto& request, const auto&) {
+        searched.push_back(request.url);
+        EXPECT_EQ(request.method, "POST");
+        EXPECT_EQ(nlohmann::json::parse(request.body),
+            (nlohmann::json{{"query", "backup policy"}, {"max_num_results", 5}}));
+        if (request.url.ends_with("vs_bad/search")) {
+            EXPECT_EQ(request.headers[0].value, "Bearer secret-a");
+            return FolderStoreHttpResponse{.status = 401,
+                .body = R"({"error":{"message":"secret-a"}})"};
+        }
+        EXPECT_EQ(request.url, "https://api.openai.com/v1/vector_stores/vs_good/search");
+        EXPECT_EQ(request.headers[0].value, "Bearer secret-b");
+        return FolderStoreHttpResponse{.status = 200, .body = R"({"data":[{
+            "file_id":"file_1","filename":"Backups.md",
+            "content":[{"type":"text","text":"Back up daily."}]}],"has_more":false})"};
+    });
+    const std::vector<FolderStoreSearchTarget> targets{
+        {"Missing key", "vs_missing", ""}, {"Rejected", "vs_bad", "secret-a"},
+        {"Research", "vs_good", "secret-b"}};
+    const auto text = client.search_stores(targets, "backup policy", std::atomic_bool{false});
+    const auto output = nlohmann::json::parse(text);
+    ASSERT_EQ(output["stores"].size(), 3u);
+    EXPECT_TRUE(output["stores"][0].contains("error"));
+    EXPECT_TRUE(output["stores"][1].contains("error"));
+    EXPECT_EQ(output["stores"][2]["folder"], "Research");
+    EXPECT_EQ(output["stores"][2]["matches"][0]["filename"], "Backups.md");
+    EXPECT_EQ(output["stores"][2]["matches"][0]["text"], "Back up daily.");
+    EXPECT_EQ(text.find("secret-"), std::string::npos);
+    EXPECT_EQ(searched.size(), 2u);
+}
+
+TEST(FolderStoreHttp, AttachedSearchBoundsResultsAndRejectsMalformedResponsesAndUnsafeIds) {
+    int calls = 0;
+    FolderStoreClient client([&](const auto&, const auto&) {
+        ++calls;
+        if (calls == 1) return FolderStoreHttpResponse{.status = 200, .body = R"({"data":[{}]})"};
+        nlohmann::json data = nlohmann::json::array();
+        for (int i = 0; i < 5; ++i) data.push_back({{"file_id", "file_1"}, {"filename", "Note"},
+            {"content", nlohmann::json::array({{{"type", "text"}, {"text", std::string(10000, '\n')}}})}});
+        return FolderStoreHttpResponse{.status = 200, .body = nlohmann::json{{"data", data}}.dump()};
+    });
+    std::vector<FolderStoreSearchTarget> targets{{"Unsafe", "../files", "key"}, {"Bad", "vs_bad", "key"}};
+    for (int i = 0; i < 10; ++i) targets.push_back({"Long", "vs_long", "key"});
+    const auto text = client.search_stores(targets, "query", std::atomic_bool{false});
+    const auto output = nlohmann::json::parse(text);
+    EXPECT_TRUE(output["stores"][0].contains("error"));
+    EXPECT_TRUE(output["stores"][1].contains("error"));
+    EXPECT_TRUE(output["truncated"]);
+    EXPECT_LE(text.size(), 65536u);
+    EXPECT_LT(calls, 11);
+    EXPECT_EQ(client.search_stores(targets, " ", std::atomic_bool{false}).find("\"error\""), 1u);
+}
+
+TEST(FolderStoreHttp, AttachedSearchCancellationStopsBeforeNextStore) {
+    std::atomic_bool cancel{false};
+    int calls = 0;
+    FolderStoreClient client([&](const auto&, const auto&) {
+        ++calls;
+        cancel = true;
+        return FolderStoreHttpResponse{.status = 200, .body = R"({"data":[]})"};
+    });
+    const std::vector<FolderStoreSearchTarget> targets{{"One", "vs_one", "key"}, {"Two", "vs_two", "key"}};
+    EXPECT_NE(client.search_stores(targets, "query", cancel).find("cancelled"), std::string::npos);
+    EXPECT_EQ(calls, 1);
+    (void)client.search_stores(targets, "query", cancel);
+    EXPECT_EQ(calls, 1);
+}
+
+TEST(FolderStoreHttp, MixedStoreSearchUsesEachSavedKeyAndOnlyReturnsGeminiGroundingText) {
+    int calls = 0;
+    FolderStoreClient client([&](const auto& request, const auto&) {
+        ++calls;
+        const auto body = nlohmann::json::parse(request.body);
+        if (request.url.ends_with("vs_one/search")) {
+            EXPECT_EQ(request.headers[0].value, "Bearer openai-secret");
+            return FolderStoreHttpResponse{.status = 200, .body = R"({"data":[]})"};
+        }
+        EXPECT_EQ(request.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
+        EXPECT_EQ(request.headers[0].name, "x-goog-api-key");
+        EXPECT_EQ(body["generationConfig"]["maxOutputTokens"], 2048);
+        EXPECT_EQ(body["contents"][0]["parts"][0]["text"], "backup policy");
+        if (calls == 1) {
+            EXPECT_EQ(request.headers[0].value, "gemini-secret-a");
+            EXPECT_EQ(body["tools"][0]["fileSearch"]["fileSearchStoreNames"], nlohmann::json::array({"fileSearchStores/one"}));
+            return FolderStoreHttpResponse{.status = 403, .body = R"({"error":{"message":"gemini-secret-a"}})"};
+        }
+        EXPECT_EQ(request.headers[0].value, "gemini-secret-b");
+        EXPECT_EQ(body["tools"][0]["fileSearch"]["fileSearchStoreNames"], nlohmann::json::array({"fileSearchStores/two"}));
+        return FolderStoreHttpResponse{.status = 200, .body = R"({"candidates":[{
+            "finishReason":"STOP","content":{"parts":[{"text":"SYNTHESIZED ANSWER"}]},
+            "groundingMetadata":{"groundingChunks":[{"retrievedContext":{
+                "title":"Backups.md","text":"Keep daily backups for 19 days."}}]}}]})"};
+    });
+    const std::vector<FolderStoreSearchTarget> stores{
+        {"Rejected", "fileSearchStores/one", "gemini-secret-a", FolderStoreService::google},
+        {"Research", "fileSearchStores/two", "gemini-secret-b", FolderStoreService::google},
+        {"OpenAI", "vs_one", "openai-secret"}};
+    const auto text = client.search_stores(stores, "backup policy", std::atomic_bool{false});
+    const auto result = nlohmann::json::parse(text);
+    ASSERT_EQ(result["stores"].size(), 3u);
+    EXPECT_TRUE(result["stores"][0].contains("error"));
+    EXPECT_EQ(result["stores"][1]["matches"][0]["filename"], "Backups.md");
+    EXPECT_EQ(result["stores"][1]["matches"][0]["text"], "Keep daily backups for 19 days.");
+    EXPECT_FALSE(result["stores"][2].contains("error"));
+    EXPECT_EQ(text.find("SYNTHESIZED"), std::string::npos);
+    EXPECT_EQ(text.find("secret"), std::string::npos);
+    EXPECT_EQ(calls, 3);
+}
+
+TEST(FolderStoreHttp, GeminiSearchReportsMissingOrInvalidGroundingInsteadOfUsingGeneratedAnswers) {
+    for (const auto response : {
+        R"({"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[{"text":"SYNTHESIZED"}]}}]})",
+        R"({"candidates":[{"finishReason":"SAFETY"}]})",
+        R"({"promptFeedback":{"blockReason":"SAFETY"}})",
+        R"({"candidates":[{"groundingMetadata":{"groundingChunks":{}}}]})",
+        R"({"candidates":[{"groundingMetadata":{"groundingChunks":[{"retrievedContext":{"text":42}}]}}]})",
+        R"({"candidates":[{"groundingMetadata":{"groundingChunks":[{"retrievedContext":{"mediaId":"image"}}]}}]})",
+    }) {
+        FolderStoreClient client([&](const auto&, const auto&) {
+            return FolderStoreHttpResponse{.status = 200, .body = response};
+        });
+        const std::vector<FolderStoreSearchTarget> stores{{"Gemini", "fileSearchStores/one", "key", FolderStoreService::google}};
+        const auto text = client.search_stores(stores, "query", std::atomic_bool{false});
+        const auto result = nlohmann::json::parse(text);
+        EXPECT_TRUE(result["stores"][0].contains("error")) << response;
+        EXPECT_TRUE(result["stores"][0]["matches"].empty());
+        EXPECT_EQ(text.find("SYNTHESIZED"), std::string::npos);
+    }
+}
+
+TEST(FolderStoreHttp, GeminiNormalEmptyResultsAreNotErrorsAndGenerationLimitDoesNotTruncatePassages) {
+    for (const auto reason : {"STOP", "MAX_TOKENS"}) {
+        for (const bool passages : {false, true}) {
+            FolderStoreClient client([&](const auto&, const auto&) {
+                nlohmann::json candidate{{"finishReason", reason},
+                    {"content", {{"parts", nlohmann::json::array({{{"text", "SYNTHESIZED"}}})}}}};
+                if (passages) candidate["groundingMetadata"]["groundingChunks"] = nlohmann::json::array({
+                    {{"retrievedContext", {{"title", "Note"}, {"text", "Source passage"}}}}});
+                return FolderStoreHttpResponse{.status = 200,
+                    .body = nlohmann::json{{"candidates", nlohmann::json::array({candidate})}}.dump()};
+            });
+            const std::vector<FolderStoreSearchTarget> targets{{"Gemini", "fileSearchStores/one", "key", FolderStoreService::google}};
+            const auto text = client.search_stores(targets, "query", std::atomic_bool{false});
+            const auto result = nlohmann::json::parse(text);
+            EXPECT_EQ(result["stores"][0].contains("error"), !passages && std::string_view(reason) == "MAX_TOKENS");
+            EXPECT_FALSE(result["truncated"].get<bool>());
+            EXPECT_EQ(result["stores"][0]["matches"].size(), passages ? 1u : 0u);
+            EXPECT_EQ(text.find("SYNTHESIZED"), std::string::npos);
+        }
+    }
+}
+
+TEST(FolderStoreHttp, SearchFailuresLogFolderAndSafeReasonWithoutCredentials) {
+    test::TestWorkspace workspace;
+    const auto path = workspace.root() / "search.log";
+    initialize_diagnostic_logging(path, "info");
+    FolderStoreClient client([](const auto&, const auto&) {
+        return FolderStoreHttpResponse{.status = 401, .body = R"({"error":{"message":"secret-value"}})"};
+    });
+    const std::vector<FolderStoreSearchTarget> targets{{"Research", "vs_one", "secret-value"}};
+    (void)client.search_stores(targets, "query", std::atomic_bool{false});
+    shutdown_diagnostic_logging();
+    std::ifstream file(path);
+    const std::string log{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    EXPECT_NE(log.find("Store search failed for Research: The saved API key was rejected."), std::string::npos);
+    EXPECT_EQ(log.find("secret-value"), std::string::npos);
+}
+
+TEST(FolderStoreHttp, GeminiSearchBoundsGroundingAndHandlesCancellationAndUnsafeNames) {
+    int calls = 0;
+    FolderStoreClient client([&](const auto&, const auto&) {
+        ++calls;
+        nlohmann::json chunks = nlohmann::json::array();
+        for (int i = 0; i < 7; ++i)
+            chunks.push_back({{"retrievedContext", {{"title", "Note"}, {"text", std::string(10000, 'x')}}}});
+        return FolderStoreHttpResponse{.status = 200, .body = nlohmann::json{{"candidates", nlohmann::json::array({
+            {{"finishReason", "STOP"}, {"groundingMetadata", {{"groundingChunks", chunks}}}}})}}.dump()};
+    });
+    std::vector<FolderStoreSearchTarget> stores{{"Unsafe", "fileSearchStores/../files", "key", FolderStoreService::google}};
+    for (int i = 0; i < 5; ++i) stores.push_back({"Gemini", "fileSearchStores/one", "key", FolderStoreService::google});
+    const auto text = client.search_stores(stores, "query", std::atomic_bool{false});
+    const auto result = nlohmann::json::parse(text);
+    EXPECT_TRUE(result["stores"][0].contains("error"));
+    EXPECT_EQ(result["stores"][1]["matches"].size(), 5u);
+    EXPECT_EQ(result["stores"][1]["matches"][0]["text"].get<std::string>().size(), 4096u);
+    EXPECT_TRUE(result["truncated"]);
+    EXPECT_LE(text.size(), 65536u);
+    EXPECT_LT(calls, 5);
+    std::atomic_bool cancel{false};
+    calls = 0;
+    FolderStoreClient cancelled([&](const auto&, const auto&) {
+        ++calls;
+        cancel = true;
+        return FolderStoreHttpResponse{.status = 200, .body = "{}"};
+    });
+    (void)cancelled.search_stores(std::span(stores).subspan(1), "query", cancel);
+    EXPECT_EQ(calls, 1);
 }
 
 TEST(FolderStoreHttp, OpenAiSequenceUsesFixedOriginsAndMarkdownMultipart) {
@@ -630,13 +816,11 @@ TEST_F(FolderStoreClientTest, AmbiguousLegacyNamesNeverChooseAnArbitrarySavedKey
     const auto duplicate = keys_->create("OpenAI", "same-secret");
     auto config = openai_config(""); config.api_key_env = "OpenAI";
     const auto saved = keys_->list();
-    for (const auto& matched : {folder_store_match(config, *keys_), folder_store_match(config, saved)}) {
-        EXPECT_FALSE(matched.service);
-        EXPECT_TRUE(matched.api_key_id.empty());
-        EXPECT_NE(matched.reason.find("ambiguous"), std::string::npos);
-    }
+    const auto matched = folder_store_match(config, saved);
+    EXPECT_FALSE(matched.service);
+    EXPECT_TRUE(matched.api_key_id.empty());
     config.api_key_id = duplicate.id;
-    EXPECT_EQ(folder_store_match(config, *keys_).api_key_id, duplicate.id);
+    EXPECT_EQ(folder_store_match(config, keys_->list()).api_key_id, duplicate.id);
     config.api_key_id = openai_key_;
     EXPECT_EQ(folder_store_match(config, saved).api_key_id, openai_key_);
 }

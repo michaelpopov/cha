@@ -4,6 +4,7 @@
 #include "workspace/workspace_config_store.h"
 #include "chat/transcript.h"
 #include "providers/api_key_store.h"
+#include "providers/folder_store_client.h"
 #include "providers/openai_oauth.h"
 #include "providers/web_search.h"
 #include "support/mock_http_server.h"
@@ -4130,6 +4131,170 @@ TEST(ProviderClientSummary, GoogleFileSearchCompatibilityAndRequestsWithoutSumma
     EXPECT_TRUE(client.prepare(input).summary_tool);
 }
 
+
+TEST(ProviderClientTools, OAuthAttachedFileSearchUsesExistingLoopAndReturnsPassages) {
+    SubscriptionOwner owner;
+    auto oauth = owner.make_connected();
+    auto definition = subscription_definition();
+    int rounds = 0, searches = 0;
+    ProviderClient client(shared_definition(definition), &oauth, [&](const auto& request, const auto&) {
+        const Json body = Json::parse(request.body);
+        EXPECT_EQ(body["tools"][0]["name"], "search_attached_files");
+        EXPECT_EQ(body.dump().find("vector_store_ids"), std::string::npos);
+        EXPECT_EQ(body.dump().find("store-secret"), std::string::npos);
+        EXPECT_NE(body["instructions"].get<std::string>().find("Folder search is available"), std::string::npos);
+        if (++rounds == 1) return tool_reply(ProviderApi::responses, true, Json::array({
+            search_call(ProviderApi::responses, "search-id", R"({"query":"backup policy"})", "search_attached_files")}));
+        const auto& result = body["input"].back();
+        EXPECT_EQ(result["type"], "function_call_output");
+        EXPECT_EQ(result["call_id"], "search-id");
+        EXPECT_NE(result["output"].get<std::string>().find("Back up daily"), std::string::npos);
+        return tool_reply(ProviderApi::responses, true, Json::array(), "Back up daily.");
+    });
+    Transcript transcript;
+    auto input = client_request(transcript, 1, "What is the backup policy?");
+    FolderStoreClient store_client([&](const auto& request, const auto&) {
+        EXPECT_EQ(request.url, "https://api.openai.com/v1/vector_stores/vs_research/search");
+        EXPECT_EQ(request.headers[0].value, "Bearer store-secret");
+        return FolderStoreHttpResponse{.status = 200, .body = R"({"data":[{
+            "file_id":"file_1","filename":"Backups.md",
+            "content":[{"type":"text","text":"Back up daily"}]}]})"};
+    });
+    const std::vector<FolderStoreSearchTarget> stores{{"Research", "vs_research", "store-secret"}};
+    input.folder_search = FolderSearchAccess{FolderStoreService::openai, {}, stores};
+    auto payload = client.prepare(input);
+    ASSERT_TRUE(payload.folder_search_tool);
+    payload.folder_search_tool = [&](std::string_view query, const auto& cancel) {
+        ++searches;
+        EXPECT_EQ(query, "backup policy");
+        return store_client.search_stores(input.folder_search->search_targets, query, cancel);
+    };
+    std::string answer;
+    const auto result = client.perform(payload, [&](GenerationDelta delta) { answer += delta.text; }, std::atomic_bool{false});
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+    EXPECT_EQ(searches, 1);
+    EXPECT_EQ(rounds, 2);
+    EXPECT_EQ(answer, "Back up daily.");
+    input.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
+    EXPECT_FALSE(client.prepare(input).folder_search_tool);
+    EXPECT_EQ(client.prepare(input).bytes.find("search_attached_files"), std::string::npos);
+}
+
+TEST(ProviderClientTools, OAuthAttachedSearchRejectsInvalidArgumentsAndStopsAtExistingCallLimit) {
+    SubscriptionOwner owner;
+    auto oauth = owner.make_connected();
+    int rounds = 0, searches = 0;
+    ProviderClient client(shared_definition(subscription_definition()), &oauth, [&](const auto& request, const auto&) {
+        const Json body = Json::parse(request.body);
+        if (++rounds == 1) {
+            auto calls = Json::array();
+            calls.push_back(search_call(ProviderApi::responses, "invalid", R"({"query":"","store_id":"vs_foreign"})", "search_attached_files"));
+            for (int i = 0; i < 4; ++i)
+                calls.push_back(search_call(ProviderApi::responses, std::to_string(i), R"({"query":"query"})", "search_attached_files"));
+            return tool_reply(ProviderApi::responses, true, calls);
+        }
+        EXPECT_FALSE(body.contains("tools"));
+        EXPECT_NE(body.dump().find("requires one non-empty query"), std::string::npos);
+        EXPECT_NE(body.dump().find("tool limit reached"), std::string::npos);
+        return tool_reply(ProviderApi::responses, true, Json::array(), "Answer");
+    });
+    Transcript transcript;
+    auto input = client_request(transcript, 1, "Question");
+    input.folder_search = FolderSearchAccess{FolderStoreService::openai, {}, {{"Research", "vs_one", "key"}}};
+    auto payload = client.prepare(input);
+    payload.folder_search_tool = [&](auto, const auto&) { ++searches; return "{}"; };
+    EXPECT_EQ(client.perform(payload, [](auto) {}, std::atomic_bool{false}).outcome, GenerationOutcome::completed);
+    EXPECT_EQ(searches, 3);
+    EXPECT_EQ(rounds, 2);
+}
+
+TEST(ProviderClientTools, MixedAttachedStoreSearchWorksAcrossToolCallingProtocols) {
+    for (const auto api : {ProviderApi::chat_completions, ProviderApi::responses,
+                          ProviderApi::anthropic, ProviderApi::google}) {
+        for (const bool stream : {false, true}) {
+            SCOPED_TRACE(std::string(to_string(api)) + (stream ? " streamed" : " buffered"));
+            auto definition = network_definition(443, stream);
+            definition.provider.config.api = api;
+            definition.provider.config.host = "api.moonshot.ai";
+            definition.provider.config.model = "kimi-3.1";
+            int rounds = 0, searches = 0;
+            ProviderClient client(shared_definition(definition), nullptr, [&](const ProviderHttpRequest& request, const auto&) {
+                const Json body = Json::parse(request.body);
+                if (api == ProviderApi::google) EXPECT_NE(request.url.find("kimi-3.1"), std::string::npos);
+                else EXPECT_EQ(body["model"], "kimi-3.1");
+                EXPECT_NE(summary_system_text(body, api).find("Folder search is available"), std::string::npos);
+                if (++rounds == 1) return summary_mock_reply(api, stream, Json::array({
+                    summary_mock_call(api, "files", "search_attached_files", {{"query", "backup policy"}})}));
+                EXPECT_NE(body.dump().find("Back up daily"), std::string::npos);
+                EXPECT_NE(body.dump().find("Gemini source passage"), std::string::npos);
+                EXPECT_EQ(body.dump().find("secret-"), std::string::npos);
+                EXPECT_NE(body.dump().find("files"), std::string::npos);
+                return summary_mock_reply(api, stream, Json::array(), "Daily backups.");
+            });
+            Transcript transcript;
+            auto input = client_request(transcript, 1, "Question");
+            FolderStoreClient stores([&](const auto& request, const auto&) {
+                if (request.url.find("generativelanguage.googleapis.com") != std::string::npos) {
+                    EXPECT_EQ(request.headers[0].value, "secret-google");
+                    return FolderStoreHttpResponse{.status = 200, .body = R"({"candidates":[{
+                        "finishReason":"STOP","groundingMetadata":{"groundingChunks":[{
+                        "retrievedContext":{"title":"Gemini note","text":"Gemini source passage"}}]}}]})"};
+                }
+                EXPECT_EQ(request.headers[0].value, "Bearer secret-openai");
+                return FolderStoreHttpResponse{.status = 200, .body = R"({"data":[{"file_id":"file_1",
+                    "filename":"OpenAI note","content":[{"type":"text","text":"Back up daily"}]}]})"};
+            });
+            const std::vector<FolderStoreSearchTarget> targets{
+                {"OpenAI", "vs_one", "secret-openai"},
+                {"Gemini", "fileSearchStores/one", "secret-google", FolderStoreService::google}};
+            input.folder_search = FolderSearchAccess{FolderStoreService::openai, {}, targets};
+            auto payload = client.prepare(input);
+            ASSERT_TRUE(payload.folder_search_tool);
+            payload.folder_search_tool = [&](auto query, const auto& cancel) {
+                ++searches;
+                EXPECT_EQ(query, "backup policy");
+                return stores.search_stores(input.folder_search->search_targets, query, cancel);
+            };
+            EXPECT_NE(payload.bytes.find("search_attached_files"), std::string::npos);
+            EXPECT_EQ(client.perform(payload, [](auto) {}, std::atomic_bool{false}).outcome, GenerationOutcome::completed);
+            EXPECT_EQ(searches, 1);
+            EXPECT_EQ(rounds, 2);
+            input.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
+            EXPECT_FALSE(client.prepare(input).folder_search_tool);
+        }
+    }
+}
+
+TEST(ProviderClientTools, AttachedSearchCoexistsWithHostedToolsAndRespectsGeminiFunctionRestriction) {
+    for (const auto api : {ProviderApi::responses, ProviderApi::google}) {
+        auto definition = network_definition(443, false);
+        auto& config = definition.provider.config;
+        config.api = api;
+        config.host = api == ProviderApi::responses ? "api.openai.com" : "generativelanguage.googleapis.com";
+        config.model = "test";
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Question");
+        input.folder_search = FolderSearchAccess{
+            api == ProviderApi::responses ? FolderStoreService::openai : FolderStoreService::google,
+            {api == ProviderApi::responses ? "vs_native" : "fileSearchStores/native"},
+            {{"Research", "vs_local", "key"}}};
+        ProviderClient client(shared_definition(definition));
+        const auto payload = client.prepare(input);
+        EXPECT_TRUE(payload.folder_search_tool);
+        EXPECT_NE(payload.bytes.find("search_attached_files"), std::string::npos);
+        EXPECT_NE(payload.bytes.find(api == ProviderApi::responses ? "vs_native" : "fileSearchStores/native"), std::string::npos);
+        if (api == ProviderApi::google) {
+            config.model = "gemini-2.5-flash";
+            ProviderClient restricted(shared_definition(definition));
+            const auto limited = restricted.prepare(input);
+            EXPECT_FALSE(limited.folder_search_tool);
+            EXPECT_EQ(limited.bytes.find("search_attached_files"), std::string::npos);
+            EXPECT_NE(limited.bytes.find("fileSearchStores/native"), std::string::npos);
+            input.folder_search->remote_store_ids.clear();
+            EXPECT_TRUE(restricted.prepare(input).folder_search_tool);
+        }
+    }
+}
 
 TEST(ProviderClientSummary, IgnoredSubscriptionHostedSearchSettingDoesNotSuppressSummaryFunctions) {
     SubscriptionOwner owner;

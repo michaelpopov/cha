@@ -46,6 +46,7 @@ struct RunSpec {
 struct FolderSearchAccess {
     FolderStoreService service;
     std::vector<std::string> remote_store_ids;
+    std::vector<FolderStoreSearchTarget> search_targets;
 };
 
 // Complete immutable input for backend preparation. Ordinary requests and

@@ -232,6 +232,36 @@ TEST_F(FolderStoreOperationsTest, UploadsAndRemovesThroughOpenAiFakeHttp) {
     (void)removed;
 }
 
+TEST_F(FolderStoreOperationsTest, UploadChoicesIncludeUnreferencedKeysForBothServices) {
+    const auto unused = application_->create_api_key(
+        {.display_name = "Unused", .value = "unused-test-key"}, epoch_).id;
+    const auto choices = application_->folder_store_choices(epoch_);
+    for (const auto& id : {key_, unused}) {
+        for (const auto service : {"openai", "google"}) {
+            EXPECT_EQ(std::count_if(choices.begin(), choices.end(), [&](const auto& choice) {
+                return choice.service == service && choice.api_key_id == id;
+            }), 1);
+        }
+    }
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        EXPECT_EQ(request.headers.front().value, "Bearer unused-test-key");
+        return openai_transport()(request, cancel);
+    });
+    (void)application_->start_folder_store_upload(folder_.id, "openai", unused, epoch_);
+    EXPECT_EQ(wait_status(folder_.id).result, "success");
+}
+
+TEST_F(FolderStoreOperationsTest, UploadDoesNotRequireCompatibleModelProvider) {
+    auto provider = application_->get_provider("test", epoch_);
+    nlohmann::json body = provider;
+    for (const char* field : {"id", "used_by", "writable"}) body.erase(field);
+    body["api"] = "chat_completions";
+    (void)application_->update_provider("test", body, epoch_);
+    application_->set_folder_store_transport_for_tests(openai_transport());
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, epoch_);
+    EXPECT_EQ(wait_status(folder_.id).result, "success");
+}
+
 TEST_F(FolderStoreOperationsTest, PreparationFailureIsDistinctAndLeavesNoStore) {
     const auto empty = application_->create_note_item({}, NoteItemKind::folder, "Empty", epoch_);
     application_->set_folder_store_transport_for_tests(openai_transport());
@@ -692,13 +722,7 @@ TEST_F(FolderStoreOperationsTest, GoogleDocumentCleanupFailureKeepsParentForRetr
 }
 
 TEST_F(FolderStoreOperationsTest, GoogleTransfersBeforePollingAndWaitsForLaggingCounts) {
-    auto provider = application_->get_provider("test", epoch_);
-    nlohmann::json body = provider;
-    for (const char* field : {"id", "used_by", "writable"}) body.erase(field);
-    body["host"] = "generativelanguage.googleapis.com";
-    body["api"] = "google";
-    body["base_path"] = "/v1beta";
-    (void)application_->update_provider("test", body, epoch_);
+    // Store uploads work independently of the configured OpenAI model provider.
     const auto second = application_->create_note_item(folder_.id, NoteItemKind::note, "Second", epoch_);
     application_->save_note(second.id, text_doc("second fact"), epoch_);
     int uploads = 0, counts = 0, polls = 0;
@@ -867,7 +891,7 @@ TEST_F(FolderStoreOperationsTest, RemoveUsesStoredKeyWhenNoProviderIsEligible) {
     for (const char* field : {"id", "used_by", "writable"}) body.erase(field);
     body["host"] = "proxy.example";
     (void)application_->update_provider("test", body, epoch_);
-    EXPECT_TRUE(application_->folder_store_choices(epoch_).empty());
+    EXPECT_FALSE(application_->folder_store_choices(epoch_).empty());
     application_->set_folder_store_transport_for_tests(openai_transport());
     (void)application_->start_folder_store_remove(folder_.id, id, epoch_);
     EXPECT_EQ(wait_status(folder_.id).result, "success");

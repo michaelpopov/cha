@@ -401,16 +401,16 @@ TEST_F(SessionOpenTest, FolderAccessResolvesPerTargetAndRefreshesAfterReplacemen
         ASSERT_TRUE(handle_text_input(controller, workspace_guest_id, note_item_ref_id(id)).clear_input);
     EXPECT_TRUE(requests.empty());
     const auto sent = controller.start_multicast(workspace_guest_id, "Question", {"Guide", "Writer"});
-    ASSERT_TRUE(sent.notice);
-    EXPECT_NE(sent.notice->find("different saved API key"), std::string::npos);
-    EXPECT_EQ(sent.notice->find("Writer"), std::string::npos);
-    EXPECT_NE(sent.notice->find("/detach " + note_item_ref_id(mismatched.id)), std::string::npos);
+    EXPECT_TRUE(!sent.notice || sent.notice->find("Folder access omitted:") == std::string::npos);
     for (int i = 0; i < 10 && controller.is_generating(); ++i) (void)controller.receive_events(100);
     ASSERT_FALSE(controller.is_generating());
     ASSERT_EQ(requests.size(), 2u);
     ASSERT_TRUE(requests[0].folder_search);
     EXPECT_EQ(requests[0].folder_search->remote_store_ids, (std::vector<std::string>{"vs_shared"}));
-    EXPECT_FALSE(requests[1].folder_search);
+    EXPECT_FALSE(requests[0].folder_search->search_targets.empty());
+    ASSERT_TRUE(requests[1].folder_search);
+    EXPECT_TRUE(requests[1].folder_search->remote_store_ids.empty());
+    EXPECT_FALSE(requests[1].folder_search->search_targets.empty());
     bool saw_error = false, saw_writer = false;
     for (const auto& entry : controller.view().transcript.entries) {
         if (entry.text.find("Provider rejected store count") != std::string::npos) {
@@ -537,7 +537,7 @@ protected:
     FullSessionId identity;
 };
 
-TEST_F(ReferencedFoldersTest, MulticastUnionsApplicableSourcesAndSilentlyFiltersOtherServices) {
+TEST_F(ReferencedFoldersTest, MulticastUnionsApplicableSourcesForNativeAndLocalSearch) {
     const auto a = folder("A", FolderStoreService::openai, "vs_a");
     const auto b = folder("B", FolderStoreService::google, "fileSearchStores/b");
     const auto c = folder("C", FolderStoreService::openai, "vs_c");
@@ -560,12 +560,11 @@ TEST_F(ReferencedFoldersTest, MulticastUnionsApplicableSourcesAndSilentlyFilters
     EXPECT_EQ(requests[0].folder_search->remote_store_ids, (std::vector<std::string>{"vs_a", "vs_e"}));
     EXPECT_EQ(requests[1].folder_search->remote_store_ids,
         (std::vector<std::string>{"fileSearchStores/b", "fileSearchStores/d"}));
-    ASSERT_TRUE(update.notice);
-    EXPECT_EQ(*update.notice, "Folder access omitted: Guide — C (" + note_item_ref_id(c.id)
-        + "): two-store OpenAI limit; sources: Guide Files.");
-    EXPECT_EQ(requests[0].folder_search_context, "A (" + note_item_ref_id(a.id)
-        + "); sources: Forum The Lobby Files, Guide Files; E (" + note_item_ref_id(e.id)
-        + "); sources: chat (/detach " + note_item_ref_id(e.id) + ")");
+    EXPECT_TRUE(!update.notice || update.notice->empty());
+    EXPECT_FALSE(requests[0].folder_search->search_targets.empty());
+    EXPECT_FALSE(requests[1].folder_search->search_targets.empty());
+    for (const auto& item : {a, b, c, e})
+        EXPECT_NE(requests[0].folder_search_context.find(item.name + " ("), std::string::npos);
     EXPECT_EQ(log().find("different service"), std::string::npos);
 }
 
@@ -621,12 +620,17 @@ TEST_F(ReferencedFoldersTest, ResolvesCurrentStoresEffectiveProviderAndSavedKeyO
     (void)send(*opened.controller);
     EXPECT_EQ(ids(), (std::vector<std::string>{"vs_new"}));
     EXPECT_EQ(requests.front().folder_search->remote_store_ids, (std::vector<std::string>{"vs_old"}));
-    config.api_key_id = google_key; // Equal key values under different saved IDs are ineligible.
+    config.api_key_id = google_key; // A different model key uses the store search tool.
     update_provider();
     update = send(*opened.controller);
     EXPECT_TRUE(ids().empty());
-    ASSERT_TRUE(update.notice);
-    EXPECT_NE(update.notice->find("different saved API key"), std::string::npos);
+    ASSERT_TRUE(requests.back().folder_search);
+    EXPECT_FALSE(requests.back().folder_search->search_targets.empty());
+    ASSERT_EQ(requests.back().folder_search->search_targets.size(), 1u);
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].remote_store_id, "vs_new");
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].api_key, "same-value");
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].folder_name, a.name + " (" + note_item_ref_id(a.id) + ")");
+    EXPECT_TRUE(!update.notice || update.notice->find("different saved API key") == std::string::npos);
     store_->delete_folder_store_record(store_->get_folder_store_by_folder(a.id)->id, "Removed");
     seed(a, FolderStoreService::google, "fileSearchStores/new");
     update = send(*opened.controller);
@@ -651,11 +655,15 @@ TEST_F(ReferencedFoldersTest, OpenAiCapacityMergesRemoteSourcesAndPreservesNumer
     ASSERT_TRUE(opened.controller->add_item(alias.id).input_consumed);
     auto update = send(*opened.controller);
     EXPECT_EQ(ids(), (std::vector<std::string>{"vs_shared", "vs_b"}));
-    ASSERT_TRUE(update.notice);
-    EXPECT_NE(update.notice->find("C (" + note_item_ref_id(c.id)
-        + "): two-store OpenAI limit; sources: Forum The Lobby Files, Guide Files"), std::string::npos);
-    EXPECT_NE(update.notice->find("Alias C (" + note_item_ref_id(alias_c.id)
-        + "): two-store OpenAI limit; sources: Forum The Lobby Files"), std::string::npos);
+    EXPECT_TRUE(!update.notice || update.notice->empty());
+    ASSERT_TRUE(requests.back().folder_search);
+    EXPECT_FALSE(requests.back().folder_search->search_targets.empty());
+    ASSERT_EQ(requests.back().folder_search->search_targets.size(), 1u);
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].remote_store_id, "vs_c");
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].api_key, "same-value");
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].folder_name, c.name + " (" + note_item_ref_id(c.id) + ")");
+    for (const auto& item : {a, b, c, alias, alias_c})
+        EXPECT_NE(requests.back().folder_search_context.find(item.name + " ("), std::string::npos);
     unreference(b);
     reference(a, FileReferenceOwner::character, "guide");
     (void)send(*opened.controller);
@@ -668,9 +676,59 @@ TEST_F(ReferencedFoldersTest, OpenAiCapacityMergesRemoteSourcesAndPreservesNumer
     (void)send(*opened.controller);
     // Higher priority C stays after B in the serialized payload.
     EXPECT_EQ(ids(), (std::vector<std::string>{"vs_b", "vs_c"}));
+    EXPECT_FALSE(requests.back().folder_search->search_targets.empty());
+    unreference(a);
+    (void)send(*opened.controller);
+    EXPECT_EQ(ids(), (std::vector<std::string>{"vs_b", "vs_c"}));
+    EXPECT_TRUE(requests.back().folder_search->search_targets.empty());
 }
 
-TEST_F(ReferencedFoldersTest, GoogleKeepsAllThreeStoresAndFiltersForeignFailuresBeforeReadinessOrKeys) {
+TEST_F(ReferencedFoldersTest, DeletedStoreKeyIsReportedAndExcludedFromSearchContext) {
+    ApiKeyStore keys(*store_);
+    const auto removed_key = keys.create("Temporary store key", "test-secret").id;
+    std::vector<NoteItem> unavailable;
+    for (const auto service : {FolderStoreService::openai, FolderStoreService::google}) {
+        const auto item = store_->create_note_item({}, NoteItemKind::folder,
+            service == FolderStoreService::openai ? "OpenAI unavailable" : "Gemini unavailable");
+        const auto record = store_->register_folder_store(item.id, service, removed_key, 1);
+        store_->save_folder_store_remote_id(record,
+            service == FolderStoreService::openai ? "vs_missing" : "fileSearchStores/missing");
+        store_->mark_folder_store_ready(record, "Ready");
+        reference(item);
+        reference(item, FileReferenceOwner::character, "guide");
+        unavailable.push_back(item);
+    }
+    const auto healthy = folder("Healthy", FolderStoreService::openai, "vs_healthy");
+    reference(healthy);
+    config.api = ProviderApi::chat_completions;
+    update_provider();
+    auto opened = open_folders();
+    (void)send(*opened.controller);
+    ASSERT_TRUE(requests.back().folder_search);
+    EXPECT_NE(requests.back().folder_search_context.find("OpenAI unavailable"), std::string::npos);
+    keys.remove(removed_key);
+    const auto update = send(*opened.controller);
+    ASSERT_TRUE(update.notice);
+    for (const auto& item : unavailable) {
+        EXPECT_NE(update.notice->find(item.name + " (" + note_item_ref_id(item.id)
+            + "): saved API key missing or empty; sources: Forum The Lobby Files, Guide Files"), std::string::npos);
+        EXPECT_EQ(requests.back().folder_search_context.find(item.name), std::string::npos);
+    }
+    ASSERT_TRUE(requests.back().folder_search);
+    EXPECT_FALSE(requests.back().folder_search->search_targets.empty());
+    ASSERT_EQ(requests.back().folder_search->search_targets.size(), 1u);
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].remote_store_id, "vs_healthy");
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].api_key, "same-value");
+    ASSERT_EQ(requests.front().folder_search->search_targets.size(), 3u);
+    EXPECT_EQ(requests.front().folder_search->search_targets[0].api_key, "test-secret");
+    EXPECT_NE(requests.back().folder_search_context.find("Healthy"), std::string::npos);
+    unreference(healthy);
+    (void)send(*opened.controller);
+    EXPECT_FALSE(requests.back().folder_search);
+    EXPECT_TRUE(requests.back().folder_search_context.empty());
+}
+
+TEST_F(ReferencedFoldersTest, GoogleKeepsNativeStoresAndReportsIncompleteOpenAiAttachments) {
     const auto a = folder("A", FolderStoreService::google, "fileSearchStores/a");
     const auto b = folder("B", FolderStoreService::google, "fileSearchStores/b");
     const auto c = folder("C", FolderStoreService::google, "fileSearchStores/c");
@@ -684,56 +742,101 @@ TEST_F(ReferencedFoldersTest, GoogleKeepsAllThreeStoresAndFiltersForeignFailures
     store_->mark_folder_store_incomplete(store_->get_folder_store_by_folder(other.id)->id);
     const auto update = send(*opened.controller, "Writer");
     EXPECT_EQ(ids(), (std::vector<std::string>{"fileSearchStores/a", "fileSearchStores/b", "fileSearchStores/c"}));
-    EXPECT_TRUE(!update.notice || update.notice->empty());
-    EXPECT_EQ(log().find("Other ("), std::string::npos);
+    ASSERT_TRUE(update.notice);
+    EXPECT_NE(update.notice->find("Other ("), std::string::npos);
+    EXPECT_NE(update.notice->find("no ready store"), std::string::npos);
 }
 
-TEST_F(ReferencedFoldersTest, ConnectionFailureKeepsForumOnlyLogOnlyAndCombinesDeliberateSources) {
-    const auto inherited = folder("Inherited");
-    const auto shared = folder("Shared");
-    const auto own = folder("Own");
-    const auto foreign = folder("Foreign", FolderStoreService::google);
-    const auto chat_only = folder("Chat only");
-    reference(inherited);
-    config.api = ProviderApi::chat_completions;
-    update_provider();
+TEST_F(ReferencedFoldersTest, NativeStoresAndOpenAiSearchToolCanBeUsedTogether) {
+    ApiKeyStore keys(*store_);
+    (void)keys.replace(openai_key, "openai-search-key");
+    (void)keys.replace(google_key, "google-search-key");
+    const auto openai = folder("OpenAI", FolderStoreService::openai, "vs_openai");
+    const auto google = folder("Gemini", FolderStoreService::google, "fileSearchStores/google");
+    reference(openai);
+    reference(google);
     auto opened = open_folders();
-    auto update = send(*opened.controller);
-    EXPECT_TRUE(ids().empty());
-    EXPECT_TRUE(!update.notice || update.notice->empty());
-    EXPECT_NE(log().find("this connection does not support folder search; Inherited"), std::string::npos);
-    reference(shared);
-    reference(shared, FileReferenceOwner::character, "guide");
+    (void)send(*opened.controller, "Writer");
+    ASSERT_TRUE(requests.back().folder_search);
+    EXPECT_EQ(requests.back().folder_search->service, FolderStoreService::google);
+    EXPECT_EQ(ids(), (std::vector<std::string>{"fileSearchStores/google"}));
+    EXPECT_FALSE(requests.back().folder_search->search_targets.empty());
+    ASSERT_EQ(requests.back().folder_search->search_targets.size(), 1u);
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].remote_store_id, "vs_openai");
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].api_key, "openai-search-key");
+    const auto second = store_->create_note_item({}, NoteItemKind::folder, "Second account");
+    const auto record = store_->register_folder_store(second.id, FolderStoreService::openai, google_key, 1);
+    store_->save_folder_store_remote_id(record, "vs_second");
+    store_->mark_folder_store_ready(record, "Ready");
+    reference(second);
+    (void)send(*opened.controller, "Guide");
+    ASSERT_TRUE(requests.back().folder_search);
+    EXPECT_EQ(ids(), (std::vector<std::string>{"vs_openai"}));
+    EXPECT_FALSE(requests.back().folder_search->search_targets.empty());
+    ASSERT_EQ(requests.back().folder_search->search_targets.size(), 2u);
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].service, FolderStoreService::google);
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].remote_store_id, "fileSearchStores/google");
+    EXPECT_EQ(requests.back().folder_search->search_targets[0].api_key, "google-search-key");
+    EXPECT_EQ(requests.back().folder_search->search_targets[1].remote_store_id, "vs_second");
+    EXPECT_EQ(requests.back().folder_search->search_targets[1].api_key, "google-search-key");
+}
+
+TEST_F(ReferencedFoldersTest, MixedAttachmentsWorkAcrossProviderProtocolsAndAuthentication) {
+    const auto inherited = folder("Inherited");
+    const auto own = folder("Own");
+    const auto chat = folder("Chat only");
+    const auto gemini = folder("Gemini", FolderStoreService::google, "fileSearchStores/gemini");
+    reference(inherited);
     reference(own, FileReferenceOwner::character, "guide");
-    reference(foreign, FileReferenceOwner::character, "guide");
-    ASSERT_TRUE(opened.controller->add_item(shared.id).input_consumed);
-    ASSERT_TRUE(opened.controller->add_item(chat_only.id).input_consumed);
-    update = send(*opened.controller);
-    ASSERT_TRUE(update.notice);
-    EXPECT_TRUE(update.notice->starts_with("Folder access omitted: Guide — this connection does not support folder search;"));
-    EXPECT_EQ(update.notice->find("Inherited"), std::string::npos);
-    EXPECT_NE(update.notice->find("Foreign"), std::string::npos); // Unknown endpoint cannot infer service.
-    EXPECT_NE(update.notice->find("Forum The Lobby Files, Guide Files, chat (/detach"), std::string::npos);
-    EXPECT_NE(update.notice->find("Chat only (" + note_item_ref_id(chat_only.id) + "): chat (/detach "),
-        std::string::npos);
-    config.api = ProviderApi::responses;
-    config.api_key_id = "missing";
-    update_provider();
-    update = send(*opened.controller);
-    ASSERT_TRUE(update.notice);
-    EXPECT_NE(update.notice->find("The saved API key was not found"), std::string::npos);
-    EXPECT_EQ(update.notice->find("Foreign"), std::string::npos);
-    EXPECT_NE(update.notice->find("Own"), std::string::npos);
+    reference(gemini);
+    auto opened = open_folders();
+    ASSERT_TRUE(opened.controller->add_item(chat.id).input_consumed);
+    for (const auto api : {ProviderApi::chat_completions, ProviderApi::responses,
+                          ProviderApi::anthropic, ProviderApi::google}) {
+        config.host = "api.moonshot.ai";
+        config.model = "kimi-3.1";
+        config.api = api;
+        update_provider();
+        const auto update = send(*opened.controller);
+        ASSERT_TRUE(requests.back().folder_search);
+        EXPECT_FALSE(requests.back().folder_search->search_targets.empty());
+        EXPECT_TRUE(ids().empty());
+        for (const auto& item : {inherited, own, chat, gemini})
+            EXPECT_NE(requests.back().folder_search_context.find(item.name), std::string::npos);
+        EXPECT_TRUE(!update.notice || update.notice->find("Folder access omitted:") == std::string::npos);
+    }
+}
+
+TEST_F(ReferencedFoldersTest, OAuthSearchUsesAttachedStoresWithoutMatchingModelKeyOrHostedLimit) {
+    for (int i = 0; i < 3; ++i) {
+        const auto item = folder("Attached " + std::to_string(i), FolderStoreService::openai,
+            "vs_" + std::to_string(i));
+        reference(item);
+    }
+    const auto other = store_->create_note_item({}, NoteItemKind::folder, "Other account");
+    const auto other_store = store_->register_folder_store(other.id, FolderStoreService::openai, google_key, 1);
+    store_->save_folder_store_remote_id(other_store, "vs_other");
+    store_->mark_folder_store_ready(other_store, "Ready");
+    reference(other, FileReferenceOwner::character, "guide");
+    const auto google = folder("Google", FolderStoreService::google);
+    reference(google);
+    (void)folder("Unattached", FolderStoreService::openai, "vs_unattached");
     config.auth = ProviderAuth::openai_subscription;
     config.host = "chatgpt.com";
     config.base_path = "/backend-api/codex";
     config.api_key_id.clear();
     config.cache_retention = CacheRetention::off;
     update_provider();
-    update = send(*opened.controller);
-    ASSERT_TRUE(update.notice);
-    EXPECT_NE(update.notice->find("this connection does not support folder search"), std::string::npos);
-    EXPECT_NE(update.notice->find("Foreign"), std::string::npos);
+    auto opened = open_folders();
+    const auto update = send(*opened.controller);
+    EXPECT_TRUE(!update.notice || update.notice->empty());
+    ASSERT_TRUE(requests.back().folder_search);
+    EXPECT_FALSE(requests.back().folder_search->search_targets.empty());
+    for (int i = 0; i < 3; ++i)
+        EXPECT_NE(requests.back().folder_search_context.find("Attached " + std::to_string(i)), std::string::npos);
+    EXPECT_NE(requests.back().folder_search_context.find("Other account"), std::string::npos);
+    EXPECT_NE(requests.back().folder_search_context.find("Google"), std::string::npos);
+    EXPECT_EQ(requests.back().folder_search_context.find("Unattached"), std::string::npos);
 }
 
 TEST_F(ReferencedFoldersTest, RenamesWarnForEveryOwnerAndProviderErrorsIdentifyAllSources) {
@@ -789,8 +892,7 @@ TEST_F(ReferencedFoldersTest, BadSourcesAreOmittedOnceAndValidPeersStillUseCapac
         "remote_" + std::to_string(folders[10].id)}));
     ASSERT_TRUE(update.notice);
     const std::vector<std::string> reasons{"folder unavailable", "folder unavailable", "could not read folder store",
-        "could not read folder store", "no ready store", "no ready store", "no ready store", "no ready store",
-        "different saved API key"};
+        "could not read folder store", "no ready store", "no ready store", "no ready store", "no ready store"};
     for (std::size_t i = 0; i < folders.size(); ++i) {
         EXPECT_EQ(item_reads[folders[i].id], 1);
         EXPECT_EQ(store_reads[folders[i].id], i < 3 ? 0 : 1);
@@ -804,7 +906,7 @@ TEST_F(ReferencedFoldersTest, BadSourcesAreOmittedOnceAndValidPeersStillUseCapac
     EXPECT_EQ(update.notice->find("two-store OpenAI limit"), std::string::npos);
 }
 
-TEST_F(ReferencedFoldersTest, FailedNativeConnectionReadsOnlyDeliberateStoresAndKeepsUnknownServices) {
+TEST_F(ReferencedFoldersTest, MissingModelKeyStillResolvesOpenAiStoresAndReportsUnavailableAttachments) {
     const auto inherited = folder("Inherited");
     const auto foreign = folder("Foreign", FolderStoreService::google);
     const auto absent = folder("Absent");
@@ -825,14 +927,17 @@ TEST_F(ReferencedFoldersTest, FailedNativeConnectionReadsOnlyDeliberateStoresAnd
     });
     const auto update = send(*controller);
     EXPECT_TRUE(ids().empty());
-    EXPECT_EQ(reads[inherited.id], 0);
-    EXPECT_EQ(item_reads[inherited.id], 0);
+    EXPECT_EQ(reads[inherited.id], 1);
+    EXPECT_EQ(item_reads[inherited.id], 1);
+    ASSERT_TRUE(requests.back().folder_search);
+    EXPECT_FALSE(requests.back().folder_search->search_targets.empty());
     EXPECT_EQ(reads[foreign.id], 1);
     EXPECT_EQ(reads[absent.id], 1);
     EXPECT_EQ(reads[broken.id], 1);
     ASSERT_TRUE(update.notice);
-    EXPECT_EQ(*update.notice, "Folder access omitted: Guide — The saved API key was not found; Absent ("
-        + note_item_ref_id(absent.id) + "): Guide Files; Broken (" + note_item_ref_id(broken.id) + "): Guide Files.");
+    EXPECT_EQ(*update.notice, "Folder access omitted: Guide — Absent ("
+        + note_item_ref_id(absent.id) + "): no ready store; sources: Guide Files; Broken ("
+        + note_item_ref_id(broken.id) + "): could not read folder store; sources: Guide Files.");
     EXPECT_NE(log().find("could not read folder store"), std::string::npos);
     unreference(absent, FileReferenceOwner::character, "guide");
     unreference(broken, FileReferenceOwner::character, "guide");
@@ -865,6 +970,45 @@ TEST_F(ReferencedFoldersTest, SessionNamingDoesNotResolveOrInheritOrdinaryFolder
     EXPECT_EQ(requests[1].run.target.id, "session-name");
     EXPECT_FALSE(requests[1].folder_search);
     EXPECT_TRUE(requests[1].folder_search_context.empty());
+}
+
+TEST_F(ReferencedFoldersTest, Gemini25ReportsEveryToolOnlyFolderAndRestoresTargetsWithoutNativeStores) {
+    const auto native = folder("Native Gemini", FolderStoreService::google, "fileSearchStores/native");
+    const auto openai = folder("OpenAI", FolderStoreService::openai, "vs_shared");
+    const auto alias = folder("OpenAI alias", FolderStoreService::openai, "vs_shared");
+    const auto other = store_->create_note_item({}, NoteItemKind::folder, "Other Gemini key");
+    const auto record = store_->register_folder_store(other.id, FolderStoreService::google, openai_key, 1);
+    store_->save_folder_store_remote_id(record, "fileSearchStores/other");
+    store_->mark_folder_store_ready(record, "Ready");
+    for (const auto& item : {native, openai, alias, other}) reference(item);
+    auto google = store_->snapshot()->find_provider(google_provider)->config;
+    google.model = "gemini-2.5-flash";
+    (void)store_->apply_provider_update(google_provider, "Google", google);
+    auto opened = open_folders();
+    const auto update = send(*opened.controller, "Writer");
+    EXPECT_EQ(ids(), (std::vector<std::string>{"fileSearchStores/native"}));
+    ASSERT_TRUE(requests.back().folder_search);
+    EXPECT_TRUE(requests.back().folder_search->search_targets.empty());
+    ASSERT_TRUE(update.notice);
+    for (const auto& item : {openai, alias, other}) {
+        EXPECT_NE(update.notice->find(item.name + " (" + note_item_ref_id(item.id)
+            + "): this Gemini model cannot combine native File Search with the folder search tool"), std::string::npos);
+        EXPECT_EQ(requests.back().folder_search_context.find(item.name), std::string::npos);
+    }
+    EXPECT_NE(requests.back().folder_search_context.find(native.name), std::string::npos);
+    unreference(native);
+    const auto restored = send(*opened.controller, "Writer");
+    EXPECT_TRUE(!restored.notice || restored.notice->empty());
+    ASSERT_TRUE(requests.back().folder_search);
+    EXPECT_TRUE(ids().empty());
+    const auto& targets = requests.back().folder_search->search_targets;
+    ASSERT_EQ(targets.size(), 2u);
+    EXPECT_EQ(targets[0].remote_store_id, "vs_shared");
+    EXPECT_EQ(targets[0].service, FolderStoreService::openai);
+    EXPECT_EQ(targets[1].remote_store_id, "fileSearchStores/other");
+    EXPECT_EQ(targets[1].service, FolderStoreService::google);
+    EXPECT_EQ(targets[0].api_key, "same-value");
+    EXPECT_EQ(targets[1].api_key, "same-value");
 }
 
 TEST_F(ReferencedFoldersTest, InheritedGoogleFoldersKeepGemini25FileSearchAndWarnWhenFunctionsAreRemoved) {

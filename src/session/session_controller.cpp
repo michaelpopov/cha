@@ -4,6 +4,7 @@
 
 #include "providers/maintenance.h"
 #include "providers/folder_store_client.h"
+#include "providers/google_api.h"
 #include "workspace/builtins.h"
 
 #include "storage/session_label.h"
@@ -1002,37 +1003,7 @@ std::optional<FolderSearchAccess> SessionController::resolve_folder_search(
     std::vector<ApiKeyInfo> keys;
     for (const auto& key : workspace.api_keys())
         keys.push_back({key.id, key.display_name, !key.value.empty()});
-    const auto service = folder_store_endpoint_service(config);
     const auto match = folder_store_match(config, keys);
-    if (!match.service) {
-        std::string reason = service && config.auth == ProviderAuth::none
-            ? match.reason : "this connection does not support folder search";
-        if (reason.ends_with('.')) reason.pop_back();
-        std::string deliberate, forum_only;
-        for (auto& [id, folder] : folders) {
-            if (!folder.character && !folder.chat) {
-                if (!forum_only.empty()) forum_only += "; ";
-                forum_only += folder.label() + ": " + folder.source_labels();
-                continue;
-            }
-            try {
-                if (service) {
-                    const auto record = read_store_(id);
-                    if (record && record->service != *service) continue;
-                }
-                (void)read_item(folder);
-            } catch (const std::exception&) {
-                warn(folder, "could not read folder store");
-            }
-            if (!deliberate.empty()) deliberate += "; ";
-            deliberate += folder.label() + ": " + folder.source_labels();
-            warn(folder, reason);
-        }
-        if (!forum_only.empty()) log_warn(log_prefix + reason + "; " + forum_only);
-        if (!deliberate.empty())
-            append_line(omissions, target.display_name + " — " + reason + "; " + deliberate + ".");
-        return {};
-    }
 
     struct Store {
         std::string remote_id;
@@ -1041,6 +1012,8 @@ std::optional<FolderSearchAccess> SessionController::resolve_folder_search(
         bool selected{true};
     };
     std::vector<Store> stores;
+    std::vector<FolderStoreSearchTarget> search_targets;
+    std::vector<const Folder*> tool_folders;
     std::string omitted;
     const auto omit = [&](const Folder& folder, std::string_view reason) {
         if (!omitted.empty()) omitted += "; ";
@@ -1066,15 +1039,29 @@ std::optional<FolderSearchAccess> SessionController::resolve_folder_search(
             omit(folder, "could not read folder store");
             continue;
         }
-        // Other-service folders are normal selection, even if their upload or key is unavailable.
-        if (record && record->service != *match.service) continue;
         if (!record || record->state != FolderStoreState::ready
             || !record->remote_store_id || record->remote_store_id->empty()) {
             omit(folder, "no ready store");
             continue;
         }
-        if (match.api_key_id != record->api_key_id) {
-            omit(folder, "different saved API key");
+        if (config.mode != Mode::net) {
+            omit(folder, "this connection does not support folder search");
+            continue;
+        }
+        const auto* key = workspace.find_api_key(record->api_key_id);
+        if (!key || key->value.empty()) {
+            omit(folder, "saved API key missing or empty");
+            continue;
+        }
+        const bool local_search = match.service != record->service || match.api_key_id != record->api_key_id;
+        if (local_search) {
+            const auto found = std::find_if(search_targets.begin(), search_targets.end(), [&](const auto& store) {
+                return store.service == record->service && store.remote_store_id == *record->remote_store_id;
+            });
+            if (found == search_targets.end()) {
+                search_targets.push_back({folder.label(), *record->remote_store_id, key->value, record->service});
+            }
+            tool_folders.push_back(&folder);
             continue;
         }
         const auto found = std::find_if(stores.begin(), stores.end(), [&](const Store& store) {
@@ -1087,7 +1074,18 @@ std::optional<FolderSearchAccess> SessionController::resolve_folder_search(
             found->priority = std::min(found->priority, folder.priority());
         }
     }
-    if (*match.service == FolderStoreService::openai && stores.size() > 2) {
+    if (match.service == FolderStoreService::google && !stores.empty()
+        && google_file_search_only_model(config.model)) {
+        for (const auto* folder : tool_folders)
+            omit(*folder, "this Gemini model cannot combine native File Search with the folder search tool");
+        search_targets.clear();
+    } else {
+        for (const auto* folder : tool_folders) {
+            if (!context.empty()) context += "; ";
+            context += folder->label() + "; sources: " + folder->source_labels();
+        }
+    }
+    if (match.service == FolderStoreService::openai && stores.size() > 2) {
         std::vector<Store*> ranked;
         for (auto& store : stores) ranked.push_back(&store);
         std::sort(ranked.begin(), ranked.end(), [](const Store* a, const Store* b) {
@@ -1105,19 +1103,20 @@ std::optional<FolderSearchAccess> SessionController::resolve_folder_search(
     std::vector<std::string> remote_ids;
     // Stores were discovered in numeric folder order; priority never reorders the payload.
     for (const auto& store : stores) {
-        if (!store.selected) {
-            for (const auto* folder : store.folders) omit(*folder, "two-store OpenAI limit");
-            continue;
+        if (store.selected) remote_ids.push_back(store.remote_id);
+        else {
+            const auto* key = workspace.find_api_key(match.api_key_id);
+            search_targets.push_back({store.folders.front()->label(), store.remote_id, key->value, FolderStoreService::openai});
         }
-        remote_ids.push_back(store.remote_id);
         for (const auto* folder : store.folders) {
             if (!context.empty()) context += "; ";
             context += folder->label() + "; sources: " + folder->source_labels();
         }
     }
     if (!omitted.empty()) append_line(omissions, target.display_name + " — " + omitted + ".");
-    if (remote_ids.empty()) return {};
-    return FolderSearchAccess{*match.service, std::move(remote_ids)};
+    if (remote_ids.empty() && search_targets.empty()) return {};
+    return FolderSearchAccess{match.service.value_or(FolderStoreService::openai),
+        std::move(remote_ids), std::move(search_targets)};
 }
 
 void SessionController::start_generation(

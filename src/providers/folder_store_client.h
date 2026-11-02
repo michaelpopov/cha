@@ -1,7 +1,7 @@
 #pragma once
 
 #include "characters/character_config.h"
-#include "providers/api_key_store.h"
+#include "providers/credentials.h"
 #include "storage/folder_store_storage.h"
 
 #include <atomic>
@@ -17,13 +17,6 @@ namespace cha {
 struct FolderStoreEligibility {
     std::optional<FolderStoreService> service;
     std::string api_key_id;
-    std::string reason;
-};
-
-struct FolderStoreChoice {
-    FolderStoreService service{FolderStoreService::openai};
-    std::string api_key_id;
-    std::string api_key_name;
 };
 
 struct FolderStoreHttpHeader {
@@ -82,18 +75,17 @@ struct FolderStoreRemoteResult {
 [[nodiscard]] std::optional<FolderStoreService> folder_store_endpoint_service(
     const ModelBackendConfig& config);
 [[nodiscard]] FolderStoreEligibility folder_store_match(
-    const ModelBackendConfig& config, const ApiKeyStore& keys);
-[[nodiscard]] FolderStoreEligibility folder_store_match(
     const ModelBackendConfig& config, std::span<const ApiKeyInfo> keys);
-[[nodiscard]] std::vector<FolderStoreChoice> folder_store_choices_from_providers(
-    std::span<const ModelBackendConfig> configs, const ApiKeyStore& keys);
-
 FolderStoreHttpResponse folder_store_curl_transport(
     const FolderStoreHttpRequest& request, const std::atomic_bool& cancel);
 
 class FolderStoreClient {
 public:
     explicit FolderStoreClient(FolderStoreTransport transport = {});
+
+    [[nodiscard]] std::string search_stores(
+        std::span<const FolderStoreSearchTarget> stores, std::string_view query,
+        const std::atomic_bool& cancel);
 
     [[nodiscard]] FolderStoreRemoteResult openai_create_store(
         std::string_view name, std::string_view key, const std::atomic_bool& cancel);
