@@ -4208,6 +4208,64 @@ TEST(ProviderClientTools, OAuthAttachedSearchRejectsInvalidArgumentsAndStopsAtEx
     EXPECT_EQ(rounds, 2);
 }
 
+TEST(ProviderClientTools, ChatCompletionsOmitsQueryMaxLengthAndRejectsOverlongFolderQueryLocally) {
+    auto definition = network_definition(443, false);
+    definition.provider.config.api = ProviderApi::chat_completions;
+    int rounds = 0, searches = 0;
+    ProviderClient client(shared_definition(definition), nullptr, [&](const ProviderHttpRequest& request, const auto&) {
+        const auto body = Json::parse(request.body);
+        if (++rounds == 1) {
+            Json functions = Json::object();
+            for (const auto& tool : body.at("tools")) {
+                EXPECT_EQ(tool["type"], "function");
+                const auto& function = tool.at("function");
+                functions[function.at("name").get<std::string>()] = function;
+            }
+            EXPECT_EQ(functions.size(), 3u);
+            for (const auto* name : {"summary_search", "search_attached_files"}) {
+                const auto& function = functions.at(name);
+                EXPECT_TRUE(function["strict"].get<bool>());
+                const auto& parameters = function.at("parameters");
+                EXPECT_EQ(parameters["type"], "object");
+                EXPECT_FALSE(parameters["additionalProperties"].get<bool>());
+                const auto& query = parameters.at("properties").at("query");
+                EXPECT_EQ(query["type"], "string");
+                EXPECT_FALSE(query.contains("maxLength"));
+                EXPECT_NE(query.at("description").get<std::string>().find(
+                    name == std::string_view("summary_search") ? "512 UTF-8 bytes" : "2048 UTF-8 bytes"), std::string::npos);
+            }
+            EXPECT_EQ(functions["summary_search"]["parameters"]["required"], Json::array({"query", "before_note_id"}));
+            EXPECT_EQ(functions["search_attached_files"]["parameters"]["required"], Json::array({"query"}));
+            const auto& cursor = functions["summary_search"]["parameters"]["properties"]["before_note_id"];
+            EXPECT_EQ(cursor["type"], Json::array({"integer", "null"}));
+            EXPECT_EQ(cursor["minimum"], 1);
+            EXPECT_EQ(cursor["maximum"], 9007199254740991LL);
+            EXPECT_EQ(functions["summary_read"]["parameters"]["required"], Json::array({"note_id"}));
+            return summary_mock_reply(ProviderApi::chat_completions, false, Json::array({
+                summary_mock_call(ProviderApi::chat_completions, "overlong", "search_attached_files", {{"query", std::string(2049, 'x')}})}));
+        }
+        const auto& output = body.at("messages").back();
+        EXPECT_EQ(output["role"], "tool");
+        EXPECT_EQ(output["tool_call_id"], "overlong");
+        EXPECT_EQ(Json::parse(output.at("content").get<std::string>())["error"],
+            "search_attached_files requires one non-empty query of at most 2048 bytes.");
+        return summary_mock_reply(ProviderApi::chat_completions, false, Json::array(), "Query rejected.");
+    });
+    Transcript transcript;
+    auto input = client_request(transcript, 1, "Search attached files");
+    input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
+    input.folder_search = FolderSearchAccess{FolderStoreService::openai, {}, {{"Research", "vs_one", "key"}}};
+    auto payload = client.prepare(input);
+    ASSERT_TRUE(payload.folder_search_tool);
+    payload.folder_search_tool = [&](auto, const auto&) { ++searches; return "{}"; };
+    GenerationStatistics statistics;
+    payload.statistics = &statistics;
+    EXPECT_EQ(client.perform(payload, [](auto) {}, std::atomic_bool{false}).outcome, GenerationOutcome::completed);
+    EXPECT_EQ(rounds, 2);
+    EXPECT_EQ(searches, 0);
+    EXPECT_EQ(statistics.tool_calls_rejected, 1u);
+}
+
 TEST(ProviderClientTools, MixedAttachedStoreSearchWorksAcrossToolCallingProtocols) {
     for (const auto api : {ProviderApi::chat_completions, ProviderApi::responses,
                           ProviderApi::anthropic, ProviderApi::google}) {

@@ -282,22 +282,125 @@ TEST(FolderStoreHttp, GeminiSearchReportsMissingOrInvalidGroundingInsteadOfUsing
 TEST(FolderStoreHttp, GeminiNormalEmptyResultsAreNotErrorsAndGenerationLimitDoesNotTruncatePassages) {
     for (const auto reason : {"STOP", "MAX_TOKENS"}) {
         for (const bool passages : {false, true}) {
-            FolderStoreClient client([&](const auto&, const auto&) {
-                nlohmann::json candidate{{"finishReason", reason},
-                    {"content", {{"parts", nlohmann::json::array({{{"text", "SYNTHESIZED"}}})}}}};
-                if (passages) candidate["groundingMetadata"]["groundingChunks"] = nlohmann::json::array({
-                    {{"retrievedContext", {{"title", "Note"}, {"text", "Source passage"}}}}});
-                return FolderStoreHttpResponse{.status = 200,
-                    .body = nlohmann::json{{"candidates", nlohmann::json::array({candidate})}}.dump()};
-            });
-            const std::vector<FolderStoreSearchTarget> targets{{"Gemini", "fileSearchStores/one", "key", FolderStoreService::google}};
-            const auto text = client.search_stores(targets, "query", std::atomic_bool{false});
-            const auto result = nlohmann::json::parse(text);
-            EXPECT_EQ(result["stores"][0].contains("error"), !passages && std::string_view(reason) == "MAX_TOKENS");
-            EXPECT_FALSE(result["truncated"].get<bool>());
-            EXPECT_EQ(result["stores"][0]["matches"].size(), passages ? 1u : 0u);
-            EXPECT_EQ(text.find("SYNTHESIZED"), std::string::npos);
+            for (const bool metadata : {false, true}) {
+                if (passages && !metadata) continue;
+                SCOPED_TRACE(std::string(reason) + (passages ? " grounded" : " empty")
+                    + (metadata ? " with metadata" : " without metadata"));
+                int searches = 0, inspections = 0;
+                FolderStoreClient client([&](const auto& request, const auto&) {
+                    EXPECT_EQ(request.headers[0].name, "x-goog-api-key");
+                    EXPECT_EQ(request.headers[0].value, "store-key");
+                    if (request.method == "GET") {
+                        ++inspections;
+                        EXPECT_EQ(request.url, "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/one");
+                        EXPECT_TRUE(request.body.empty());
+                        return FolderStoreHttpResponse{.status = 200,
+                            .body = R"({"name":"fileSearchStores/one","activeDocumentsCount":"1"})"};
+                    }
+                    ++searches;
+                    EXPECT_EQ(request.method, "POST");
+                    EXPECT_EQ(request.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
+                    EXPECT_EQ(nlohmann::json::parse(request.body)["tools"][0]["fileSearch"]["fileSearchStoreNames"],
+                        nlohmann::json::array({"fileSearchStores/one"}));
+                    nlohmann::json candidate{{"finishReason", reason},
+                        {"content", {{"parts", nlohmann::json::array({{{"text", "SYNTHESIZED"}}})}}}};
+                    if (metadata) candidate["groundingMetadata"]["groundingChunks"] = nlohmann::json::array();
+                    if (passages) candidate["groundingMetadata"]["groundingChunks"] = nlohmann::json::array({
+                        {{"retrievedContext", {{"title", "Note"}, {"text", "Source passage"}}}}});
+                    return FolderStoreHttpResponse{.status = 200,
+                        .body = nlohmann::json{{"candidates", nlohmann::json::array({candidate})}}.dump()};
+                });
+                const std::vector<FolderStoreSearchTarget> targets{{"Gemini", "fileSearchStores/one", "store-key", FolderStoreService::google}};
+                const auto text = client.search_stores(targets, "query", std::atomic_bool{false});
+                const auto result = nlohmann::json::parse(text);
+                EXPECT_EQ(result["stores"][0].contains("error"), !passages && std::string_view(reason) == "MAX_TOKENS");
+                EXPECT_FALSE(result["truncated"].get<bool>());
+                EXPECT_EQ(result["stores"][0]["matches"].size(), passages ? 1u : 0u);
+                if (passages) EXPECT_EQ(result["stores"][0]["matches"][0]["text"], "Source passage");
+                EXPECT_EQ(text.find("SYNTHESIZED"), std::string::npos);
+                EXPECT_EQ(searches, 1);
+                EXPECT_EQ(inspections, !passages && std::string_view(reason) == "STOP" ? 1 : 0);
+            }
         }
+    }
+}
+
+TEST(FolderStoreHttp, GeminiEmptySearchInspectionReportsSafeFailuresAndKeepsHealthyPeer) {
+    for (const long status : {404, 403}) {
+        SCOPED_TRACE(status);
+        test::TestWorkspace workspace;
+        const auto path = workspace.root() / "search.log";
+        initialize_diagnostic_logging(path, "info");
+        std::vector<std::string> requests;
+        FolderStoreClient client([&](const auto& request, const auto&) {
+            requests.push_back(request.method + " " + request.url);
+            EXPECT_EQ(request.headers[0].name, "x-goog-api-key");
+            if (request.method == "GET") {
+                EXPECT_EQ(request.url, "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/one");
+                EXPECT_EQ(request.headers[0].value, "secret-one");
+                return FolderStoreHttpResponse{.status = status,
+                    .body = status == 404
+                        ? R"({"error":{"code":404,"status":"NOT_FOUND","message":"secret-one"}})"
+                        : R"({"error":{"status":"PERMISSION_DENIED","message":"secret-one"}})"};
+            }
+            EXPECT_EQ(request.method, "POST");
+            EXPECT_EQ(request.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
+            const auto store = nlohmann::json::parse(request.body)["tools"][0]["fileSearch"]["fileSearchStoreNames"][0];
+            if (store == "fileSearchStores/one") {
+                EXPECT_EQ(request.headers[0].value, "secret-one");
+                return FolderStoreHttpResponse{.status = 200, .body = R"({"candidates":[{"finishReason":"STOP"}]})"};
+            }
+            EXPECT_EQ(store, "fileSearchStores/two");
+            EXPECT_EQ(request.headers[0].value, "secret-two");
+            return FolderStoreHttpResponse{.status = 200, .body = R"({"candidates":[{"finishReason":"STOP",
+                "groundingMetadata":{"groundingChunks":[{"retrievedContext":{"title":"Peer.md","text":"Healthy source"}}]}}]})"};
+        });
+        const std::vector<FolderStoreSearchTarget> targets{
+            {"Unavailable", "fileSearchStores/one", "secret-one", FolderStoreService::google},
+            {"Healthy", "fileSearchStores/two", "secret-two", FolderStoreService::google}};
+        const auto text = client.search_stores(targets, "query", std::atomic_bool{false});
+        shutdown_diagnostic_logging();
+        const auto result = nlohmann::json::parse(text);
+        ASSERT_EQ(result["stores"].size(), 2u);
+        const std::string message = status == 404 ? "The remote resource was not found."
+            : "The saved API key cannot access this resource. Check its project and permissions.";
+        EXPECT_EQ(result["stores"][0]["error"], message);
+        EXPECT_TRUE(result["stores"][0]["matches"].empty());
+        EXPECT_FALSE(result["stores"][1].contains("error"));
+        EXPECT_EQ(result["stores"][1]["matches"][0]["text"], "Healthy source");
+        EXPECT_EQ(requests.size(), 3u);
+        std::ifstream file(path);
+        const std::string log{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+        EXPECT_NE(log.find("Store search failed for Unavailable: " + message), std::string::npos);
+        EXPECT_EQ(log.find("secret-"), std::string::npos);
+        EXPECT_EQ(text.find("secret-"), std::string::npos);
+    }
+}
+
+TEST(FolderStoreHttp, GeminiInspectionCancellationStopsBeforeNextStore) {
+    // Both the cancellation flag and a transport cancellation must stop the search.
+    for (const bool flag : {false, true}) {
+        std::atomic_bool cancel{false};
+        int searches = 0, inspections = 0;
+        FolderStoreClient client([&](const auto& request, const auto& cancellation) {
+            EXPECT_EQ(&cancellation, &cancel);
+            if (request.method == "GET") {
+                ++inspections;
+                if (flag) {
+                    cancel = true;
+                    return FolderStoreHttpResponse{.status = 200, .body = R"({"name":"fileSearchStores/one"})"};
+                }
+                return FolderStoreHttpResponse{.cancelled = true};
+            }
+            ++searches;
+            return FolderStoreHttpResponse{.status = 200, .body = R"({"candidates":[{"finishReason":"STOP"}]})"};
+        });
+        const std::vector<FolderStoreSearchTarget> targets{
+            {"One", "fileSearchStores/one", "key-one", FolderStoreService::google},
+            {"Two", "fileSearchStores/two", "key-two", FolderStoreService::google}};
+        EXPECT_EQ(client.search_stores(targets, "query", cancel), R"({"error":"Search cancelled."})");
+        EXPECT_EQ(searches, 1);
+        EXPECT_EQ(inspections, 1);
     }
 }
 

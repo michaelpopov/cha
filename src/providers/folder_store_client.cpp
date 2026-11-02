@@ -461,9 +461,16 @@ std::string FolderStoreClient::search_stores(
                     entry["matches"].push_back({{"filename", utf8_prefix(context.value("title", std::string{}), 256)},
                         {"text", prefix}});
                 }
-                // A normal completed search may return no passages; an incomplete one is unverified.
-                if (entry["matches"].empty() && reason != "STOP")
-                    throw FolderStoreError("Gemini returned no source passages; the search could not be verified.");
+                if (entry["matches"].empty()) {
+                    if (reason != "STOP")
+                        throw FolderStoreError("Gemini returned no source passages; the search could not be verified.");
+                    // Empty completed searches can also hide an unavailable store.
+                    const auto inspection = google_inspect_store(store.remote_store_id, store.api_key, cancel);
+                    if (cancel.load() || inspection.kind == FolderStoreRemoteKind::cancelled)
+                        return R"({"error":"Search cancelled."})";
+                    if (inspection.kind != FolderStoreRemoteKind::ok)
+                        throw FolderStoreError(inspection.message);
+                }
             } else {
                 const auto& data = body.at("data");
                 if (!data.is_array()) throw std::runtime_error("Invalid search results");

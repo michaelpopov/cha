@@ -313,7 +313,7 @@ def inspect(lane, capture, rounds):
         tools = {item.get('name'): item for item in declarations}
         check(scenario + ': both unmodified production summary tool schemas sent with web disabled',
               set(tools) == {'summary_search', 'summary_read'}
-              and 'maxLength' in dump(tools) and 'maximum' in dump(tools)
+              and 'maximum' in dump(tools)
               and 'minimum' in dump(tools) and 'additionalProperties' in dump(tools)
               and '["integer", "null"]' in dump(tools))
         verified, found = verify_continuations(api, matching, scenario, note_id, capture['tag'], capture['code'])
