@@ -10,6 +10,7 @@ import {
   type CSSProperties,
   type Dispatch,
   type PointerEvent,
+  type SetStateAction,
 } from 'react';
 
 import {
@@ -40,6 +41,7 @@ import { noteInSubtree } from '../notes/tree';
 import { notesExtensions } from '../notes/editor';
 import { summaryDocument, summaryConversionError } from '../notes/summaryImport';
 import { useNoteLeave } from '../notes/useNoteLeave';
+import { useNoteImports, type NoteImports } from '../notes/useNoteImports';
 import type { NoteSaveHandle } from '../notes/useNoteSave';
 import { reloadApplication, writeAppRoute } from '../state/route';
 import { useLiveSession, type SessionEventsConnector } from '../useLiveSession';
@@ -115,10 +117,10 @@ interface ScreenProps extends ChatActions {
   client: ChaClient & NotesClient;
   draft: string;
   notesDraft: string;
-  onNotesDraftChange(next: string): void;
+  onNotesDraftChange: Dispatch<SetStateAction<string>>;
   noteItems: readonly NoteItem[];
   noteActions: NoteActions | null;
-  onSetNoteReadOnly: SetNoteReadOnly;
+  noteImports: NoteImports;
   editorLiveRef: { current: Editor | null };
   leave: {
     decisionOpen: boolean;
@@ -134,6 +136,7 @@ interface ScreenProps extends ChatActions {
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
   onRetrySessionOpen(): void;
   onBrowseSessions(): void;
+  onBackgroundError(message: string): void;
   catalogRevision: number;
 }
 
@@ -207,7 +210,7 @@ function ScreenContent({
   onNotesDraftChange,
   noteItems,
   noteActions,
-  onSetNoteReadOnly,
+  noteImports,
   editorLiveRef,
   leave,
   onRegisterSave,
@@ -220,6 +223,7 @@ function ScreenContent({
   onSubmitInput,
   onAttachTextFile,
   onUncoverConversation,
+  onBackgroundError,
   catalogRevision,
   view,
 }: ScreenProps & { view: AppState['mainView'] }) {
@@ -403,7 +407,8 @@ function ScreenContent({
       <MergeVaultScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-vault': return (
-      <VaultScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
+      <VaultScreen client={client} dispatch={dispatch} navigate={navigate} state={state}
+        onBackgroundError={onBackgroundError} />
     );
     case 'settings-providers': return (
       <ProvidersScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
@@ -478,7 +483,7 @@ function ScreenContent({
         leave={leave}
         noteItems={noteItems}
         noteActions={noteActions}
-        onSetNoteReadOnly={onSetNoteReadOnly}
+        imports={noteImports}
         noteRequest={state.noteRequest}
         destination={state.noteDestination}
         importSource={state.noteImportSource}
@@ -615,6 +620,9 @@ export function App({
   const [drafts, setDrafts] = useState(emptyPromptDrafts);
   const [submissionErrors, setSubmissionErrors] = useState<{ id: number; message: string }[]>([]);
   const nextSubmissionError = useRef(0);
+  const reportBackgroundError = useCallback((message: string) => {
+    setSubmissionErrors((errors) => [...errors, { id: ++nextSubmissionError.current, message }]);
+  }, []);
   const { chatVisible: chatSlotVisible } = workspaceVisibility(state);
   const composerPresent = chatSlotVisible && state.bootstrapStatus === 'ready' && state.sessionOperation === 'idle';
   const composerKey = `${state.bootstrap?.vault_name}/${state.activeConversation?.forumId}/${state.activeConversation?.sessionId}/${composerPresent}`;
@@ -780,6 +788,21 @@ export function App({
   }, []);
   const [noteItems, setNoteItems] = useState<NoteItem[]>([]);
   const [noteActions, setNoteActions] = useState<NoteActions | null>(null);
+  const noteImports = useNoteImports({
+    client,
+    epoch: state.notesEpoch,
+    leave: noteLeave,
+    openNote: () => ({ id: activeNoteIdRef.current, editor: editorLiveRef.current, save: noteSaveRef.current }),
+    updated: item => {
+      setNoteItems(items => items.map(note => note.id === item.id ? item : note));
+      noteActions?.updated(item);
+    },
+    refresh: () => { noteActions?.refresh(); },
+    cancelOpen: () => disposeEditorRef.current(),
+    reload: id => {
+      if (activeNoteIdRef.current === id && notesVisibleRef.current) dispatch({ type: 'open-note', noteId: id });
+    },
+  });
 
   const activeChatKey = state.activeConversation
     ? chatDraftKey(
@@ -792,8 +815,8 @@ export function App({
   const editChat = useCallback((text: string) => {
     setDrafts((current) => editChatDraft(current, activeChatKey, text));
   }, [activeChatKey]);
-  const editNotes = useCallback((text: string) => {
-    setDrafts((current) => editNotesDraft(current, text));
+  const editNotes = useCallback((text: SetStateAction<string>) => {
+    setDrafts((current) => editNotesDraft(current, typeof text === 'function' ? text(current.notes) : text));
   }, []);
 
   const {
@@ -1476,7 +1499,7 @@ export function App({
                 leave={noteLeave}
                 noteItems={noteItems}
                 noteActions={noteActions}
-                onSetNoteReadOnly={setNoteReadOnly}
+                noteImports={noteImports}
                 notesDraft={drafts.notes}
                 onDraftChange={editChat}
                 onNotesDraftChange={editNotes}
@@ -1497,6 +1520,7 @@ export function App({
                 onSubmitInput={submitInput}
                 onAttachTextFile={attachTextFile}
                 onUncoverConversation={uncoverConversation}
+                onBackgroundError={reportBackgroundError}
                 state={state}
               />
             )}

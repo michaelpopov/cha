@@ -4,6 +4,7 @@
 #include "storage/workspace_session_database.h"
 #include "util/crypto.h"
 #include "util/curl.h"
+#include "util/logging.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 #include "util/text.h"
@@ -1042,50 +1043,67 @@ R2DatabaseTransfer R2DatabaseUpload::upload(
     const std::function<bool()>& cancelled,
     std::string_view expected_etag,
     const std::function<void(std::string_view)>& save_etag) {
-    if (cancelled && cancelled()) throw std::runtime_error("R2 upload cancelled");
-    require_r2_uploader(database_, storage, cancelled);
-    {
-        storage::SqliteDatabase database(
-            copy_, storage::SqliteDatabase::Mode::read_write, password_);
-        // Older vaults can lack this optional cache table.
-        create_entry_audio_table(database);
-        database.execute("DELETE FROM entry_audio");
-        database.execute("VACUUM");
-    }
-    checkpoint_workspace_session_database(copy_, password_);
-    if (inspect_workspace_session_database(copy_, password_)
-        != WorkspaceDatabaseState::valid_v2) {
-        throw std::runtime_error("Cannot upload invalid CHA database copy");
-    }
-
     const std::string database_name = utf8_path(database_.filename());
-    // This machine's absolute path means nothing elsewhere; a bare file name
-    // resolves beside the definition, so a manually copied pair still opens.
-    toml::table portable = toml::parse(vault_contents_);
-    portable.insert_or_assign("data", database_name);
-    const R2DatabaseTransfer database_upload = upload_file(
-        copy_, database_name, "application/vnd.sqlite3", storage, cancelled,
-        expected_etag);
-    if (database_upload.etag.empty()) {
-        throw std::runtime_error("R2 upload response did not include an ETag");
+    const auto started = std::chrono::steady_clock::now();
+    log_info("R2 vault upload started: database=" + database_name);
+    try {
+        if (cancelled && cancelled()) throw std::runtime_error("R2 upload cancelled");
+        require_r2_uploader(database_, storage, cancelled);
+        {
+            storage::SqliteDatabase database(
+                copy_, storage::SqliteDatabase::Mode::read_write, password_);
+            // Older vaults can lack this optional cache table.
+            create_entry_audio_table(database);
+            database.execute("DELETE FROM entry_audio");
+            database.execute("DELETE FROM note_audio");
+            database.execute("VACUUM");
+        }
+        checkpoint_workspace_session_database(copy_, password_);
+        if (inspect_workspace_session_database(copy_, password_)
+            != WorkspaceDatabaseState::valid_v2) {
+            throw std::runtime_error("Cannot upload invalid CHA database copy");
+        }
+
+        // This machine's absolute path means nothing elsewhere; a bare file name
+        // resolves beside the definition, so a manually copied pair still opens.
+        toml::table portable = toml::parse(vault_contents_);
+        portable.insert_or_assign("data", database_name);
+        const R2DatabaseTransfer database_upload = upload_file(
+            copy_, database_name, "application/vnd.sqlite3", storage, cancelled,
+            expected_etag);
+        if (database_upload.etag.empty()) {
+            throw std::runtime_error("R2 upload response did not include an ETag");
+        }
+        log_info("R2 database upload completed: database=" + database_name
+            + " byte_count=" + std::to_string(database_upload.byte_count)
+            + " etag=" + database_upload.etag);
+        // The database is already in R2, even if the companion upload fails.
+        if (save_etag) {
+            save_etag(database_upload.etag);
+        } else {
+            save_r2_vault_etag(vault_, database_upload.etag);
+        }
+        portable.insert_or_assign("r2_etag", database_upload.etag);
+        TemporaryPath vault_upload(unique_sibling(vault_, "upload"));
+        write_toml_file(vault_upload.get(), portable);
+        const R2DatabaseTransfer vault_upload_result = upload_file(
+            vault_upload.get(), database_name + ".toml", "application/toml",
+            storage, cancelled);
+        log_info("R2 vault upload completed: database=" + database_name
+            + " database_bytes=" + std::to_string(database_upload.byte_count)
+            + " definition_bytes=" + std::to_string(vault_upload_result.byte_count)
+            + " duration_ms=" + std::to_string(std::chrono::duration_cast<
+                std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count()));
+        return {
+            .byte_count = database_upload.byte_count
+                + vault_upload_result.byte_count,
+            .etag = database_upload.etag,
+        };
+    } catch (const std::exception& error) {
+        log_error("R2 vault upload failed: database=" + database_name
+            + " error=" + error.what());
+        throw;
     }
-    // The database is already in R2, even if the companion upload fails.
-    if (save_etag) {
-        save_etag(database_upload.etag);
-    } else {
-        save_r2_vault_etag(vault_, database_upload.etag);
-    }
-    portable.insert_or_assign("r2_etag", database_upload.etag);
-    TemporaryPath vault_upload(unique_sibling(vault_, "upload"));
-    write_toml_file(vault_upload.get(), portable);
-    const R2DatabaseTransfer vault_upload_result = upload_file(
-        vault_upload.get(), database_name + ".toml", "application/toml",
-        storage, cancelled);
-    return {
-        .byte_count = database_upload.byte_count
-            + vault_upload_result.byte_count,
-        .etag = database_upload.etag,
-    };
 }
 
 R2DatabaseTransfer upload_database_to_r2(

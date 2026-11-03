@@ -44,6 +44,11 @@ function notifyMicrophoneOwner() {
   for (const listener of microphoneListeners) listener();
 }
 
+// Speech or typing may continue during a send. Clear only the sent prefix.
+export function withoutSentPrompt(current: string, sent: string): string {
+  return current.startsWith(sent) ? current.slice(sent.length).replace(/^[ \t]+/, '') : current;
+}
+
 export interface PromptVoiceControls {
   available: boolean;
   state: 'idle' | 'starting' | 'recording' | 'finishing';
@@ -366,10 +371,7 @@ export function PromptInput({
       const result = await onSubmitRef.current(submitted);
       if (composerEpoch.current !== epoch) return;
       if (result.clear_input) {
-        // Speech or typing may continue during the send. Clear only its prefix.
-        const current = draftRef.current;
-        updateDraft(current.startsWith(submitted)
-          ? current.slice(submitted.length).replace(/^[ \t]+/, '') : current);
+        updateDraft(withoutSentPrompt(draftRef.current, submitted));
       } else {
         setVoiceSendPending(false);
       }

@@ -672,6 +672,33 @@ describe('Settings screens', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it.each([false, true])('reports an upload failure outside the page only after it closed (closed=%s)', async closed => {
+    let reject!: (failure: Error) => void;
+    const onBackgroundError = vi.fn();
+    const view = render(
+      <VaultScreen
+        client={fixtureClient({
+          listVaults: async () => vaults,
+          checkVaultUpload: async () => ({ etag: 'matching-etag', status: 'match', context_epoch: 1 }),
+          uploadVault: () => new Promise<number>((_resolve, fail) => { reject = fail; }),
+        })}
+        dispatch={vi.fn()} navigate={vi.fn()} onBackgroundError={onBackgroundError}
+        state={activeVaultState()}
+      />,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Upload' }));
+    await screen.findByRole('button', { name: 'Uploading…' });
+    if (closed) view.unmount();
+    await act(async () => reject(new ChaError('invalid_argument', 'R2 upload failed with HTTP status 503')));
+    if (closed) {
+      expect(onBackgroundError).toHaveBeenCalledExactlyOnceWith('Upload failed. R2 upload failed with HTTP status 503');
+    } else {
+      expect(await screen.findByRole('alert')).toHaveTextContent('R2 upload failed with HTTP status 503');
+      expect(onBackgroundError).not.toHaveBeenCalled();
+    }
+  });
+
   it.each([
     { status: 'mismatch' as const, etag: 'changed-etag', message: /does not match the version recorded locally/i },
     { status: 'mismatch' as const, etag: null, message: /no longer exists\. Upload it again\?/i },

@@ -6,6 +6,7 @@
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "app/application_config.h"
+#include "util/logging.h"
 
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
@@ -29,6 +30,14 @@ std::string file_bytes(const std::filesystem::path& path) {
 void write_bytes(const std::filesystem::path& path, std::string_view bytes) {
     std::ofstream(path, std::ios::binary) << bytes;
 }
+
+struct UploadLogging {
+    explicit UploadLogging(const std::filesystem::path& path) {
+        shutdown_diagnostic_logging();
+        initialize_diagnostic_logging(path, "info");
+    }
+    ~UploadLogging() { shutdown_diagnostic_logging(); }
+};
 
 std::string mock_url(int port) {
     return "http://127.0.0.1:" + std::to_string(port)
@@ -67,6 +76,8 @@ std::filesystem::path write_vault(
 
 TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
     test::TestWorkspace workspace;
+    const auto log_file = workspace.root() / "upload.log";
+    UploadLogging logging(log_file);
     const std::filesystem::path database =
         test::import_test_database(
             workspace.root(), workspace.root() / "workspace copy.sqlite3");
@@ -98,6 +109,14 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
             database, vault, key, R2DatabaseLease::acquire, {}, {},
             "previous-etag");
     server.join();
+
+    const auto log = file_bytes(log_file);
+    EXPECT_NE(log.find("R2 vault upload started: database=workspace copy.sqlite3"), std::string::npos);
+    EXPECT_NE(log.find("R2 database upload completed: database=workspace copy.sqlite3"), std::string::npos);
+    EXPECT_NE(log.find("R2 vault upload completed: database=workspace copy.sqlite3"), std::string::npos);
+    EXPECT_EQ(log.find("R2 vault upload failed:"), std::string::npos);
+    EXPECT_EQ(log.find(key.access_key_id), std::string::npos);
+    EXPECT_EQ(log.find(key.secret_key), std::string::npos);
 
     ASSERT_EQ(server.requests().size(), 3U);
     const auto& uploader_request = server.requests()[0];
@@ -266,10 +285,15 @@ TEST(R2DatabaseTransfer, UploadOmitsAudioCompactsTheCopyAndPreservesTheOriginal)
                 INSERT INTO entries (session_key, entry_id, epoch, kind,
                     participant_id, display_name, text, status)
                     VALUES (1000, 1, 1, 2, '', 'You', 'Keep this transcript', 0);
+                INSERT INTO note_items (id, kind, name, content_json)
+                    VALUES (1000, 'note', 'Audio note', X'7B7D');
             )sql");
             auto insert = source.prepare("INSERT INTO entry_audio VALUES (1000, 1, ?1, 'audio/mpeg')");
             insert.bind_blob(1, audio);
             insert.run();
+            auto note_clip = source.prepare("INSERT INTO note_audio VALUES (1000, 0, 'audio/mp4', ?1)");
+            note_clip.bind_blob(1, audio);
+            note_clip.run();
         }
         if (!password.empty()) {
             protect_workspace_session_database(database, password);
@@ -311,6 +335,15 @@ TEST(R2DatabaseTransfer, UploadOmitsAudioCompactsTheCopyAndPreservesTheOriginal)
         auto audio_count = copy.prepare("SELECT count(*) FROM entry_audio");
         ASSERT_TRUE(audio_count.step());
         EXPECT_EQ(audio_count.integer(0), 0);
+        auto note_clip = source.prepare("SELECT audio FROM note_audio");
+        ASSERT_TRUE(note_clip.step());
+        EXPECT_EQ(note_clip.blob(0), audio);
+        auto note_clip_count = copy.prepare("SELECT count(*) FROM note_audio");
+        ASSERT_TRUE(note_clip_count.step());
+        EXPECT_EQ(note_clip_count.integer(0), 0);
+        auto note = copy.prepare("SELECT name FROM note_items WHERE id = 1000");
+        ASSERT_TRUE(note.step());
+        EXPECT_EQ(note.text(0), "Audio note");
         auto transcript = copy.prepare("SELECT text FROM entries WHERE session_key = 1000");
         ASSERT_TRUE(transcript.step());
         EXPECT_EQ(transcript.text(0), "Keep this transcript");
@@ -436,6 +469,8 @@ TEST(R2DatabaseTransfer, SavesDatabaseEtagWhenCompanionUploadFails) {
     for (const bool previously_uploaded : {false, true}) {
         SCOPED_TRACE(previously_uploaded);
         test::TestWorkspace workspace;
+        const auto log_file = workspace.root() / "upload.log";
+        UploadLogging logging(log_file);
         const auto database = test::import_test_database(workspace.root());
         const auto vault = write_vault(database);
         if (previously_uploaded) {
@@ -456,6 +491,14 @@ TEST(R2DatabaseTransfer, SavesDatabaseEtagWhenCompanionUploadFails) {
                 previously_uploaded ? "previous-etag" : ""),
             R2HttpStatusError);
         server.join();
+
+        const auto log = file_bytes(log_file);
+        EXPECT_NE(log.find("R2 database upload completed:"), std::string::npos);
+        EXPECT_NE(log.find("R2 vault upload failed:"), std::string::npos);
+        EXPECT_NE(log.find("R2 upload failed with HTTP status 503"), std::string::npos);
+        EXPECT_EQ(log.find("R2 vault upload completed:"), std::string::npos);
+        EXPECT_EQ(log.find(key.access_key_id), std::string::npos);
+        EXPECT_EQ(log.find(key.secret_key), std::string::npos);
 
         const VaultDefinition saved = load_vault_definition_file(workspace.root(), vault);
         EXPECT_EQ(saved.r2_etag, "new-database-etag");

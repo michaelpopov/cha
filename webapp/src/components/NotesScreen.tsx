@@ -1,4 +1,5 @@
 import type { NoteImportSource } from '../notes/importSource';
+import type { NoteImports } from '../notes/useNoteImports';
 import { useNoteAudio } from '../notes/useNoteAudio';
 import { ChaError } from '../api/client';
 import { sortAnnotationGroups, type AnnotationDestination } from '../notes/annotationSource';
@@ -13,6 +14,7 @@ import {
   type Dispatch,
   type MutableRefObject,
   type ReactNode,
+  type SetStateAction,
 } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -22,17 +24,15 @@ import {
   type NoteItem,
   type NotesClient,
 } from '../api/client';
-import { readTextFile, textFileAccept } from '../textFile';
+import { textFileAccept } from '../textFile';
 import {
   addNoteComment,
-  appendNoteHtml,
   createNotesEditor,
   deleteNoteComment,
   importPictureFile,
   insertPromptParagraph,
   noteHeadings,
   noteCommentRange,
-  replaceNoteHtml,
   selectNoteEnd,
   selectNoteHeading,
   withIsolatedHistory,
@@ -40,9 +40,9 @@ import {
 } from '../notes/editor';
 import { noteClipboardCommand } from '../notes/clipboard';
 import { selectNoteHighlight, type NoteHighlight } from '../notes/highlights';
-import { notePageHtml, notePageName, promptPageUrl } from '../notes/pageImport';
-import { noteFileHtml, noteFileTooLarge, promptFilePath } from '../notes/fileImport';
-import { availableNoteName, noteItemPath } from '../notes/tree';
+import { promptPageUrl } from '../notes/pageImport';
+import { promptFilePath } from '../notes/fileImport';
+import { noteItemPath } from '../notes/tree';
 import type { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveFailedMessage, useNoteSave, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { NavigationAction } from '../state/view';
@@ -60,9 +60,9 @@ import {
   TextFormatIcon,
   TextLinesIcon,
 } from './Icons';
-import { menuKeys, type NoteActions, type SetNoteReadOnly } from './NotesTree';
+import { menuKeys, type NoteActions } from './NotesTree';
 import { NoteHighlights } from './NoteHighlights';
-import { PromptInput } from './PromptInput';
+import { PromptInput, withoutSentPrompt } from './PromptInput';
 
 type LeaveHandle = Pick<
   ReturnType<typeof useNoteLeave>,
@@ -71,7 +71,6 @@ type LeaveHandle = Pick<
 
 type Phase = 'empty' | 'loading' | 'ready' | 'error';
 
-const defaultNoteName = /^New note(?: [1-9]\d*)?$/u;
 // A source note that was deleted cannot open again, so this error has no Retry.
 const missingSourceMessage = 'This note is no longer available.';
 
@@ -244,7 +243,7 @@ function FormatBar({
   const headingsMenu = useRef<HTMLDivElement | null>(null);
   const pictureInput = useRef<HTMLInputElement | null>(null);
   const fontAnchor = useRef<{ block: Element; share: number } | null>(null);
-  const editable = editor.isEditable && !editor.isDestroyed;
+  const editable = !frozen && editor.isEditable && !editor.isDestroyed;
   const canUndo = editable && editor.can().undo();
   const canRedo = editable && editor.can().redo();
   const historyAvailable = canUndo || canRedo;
@@ -839,10 +838,10 @@ export function NotesScreen({
   noteRequest,
   destination,
   importSource,
+  imports,
   activeNoteId,
   noteItems,
   noteActions = null,
-  onSetNoteReadOnly,
   draft,
   onDraftChange,
   navigate,
@@ -859,12 +858,12 @@ export function NotesScreen({
   noteRequest: number;
   destination?: AnnotationDestination;
   importSource?: NoteImportSource;
+  imports: NoteImports;
   activeNoteId: number | null;
   noteItems: readonly NoteItem[];
   noteActions?: NoteActions | null;
-  onSetNoteReadOnly: SetNoteReadOnly;
   draft: string;
-  onDraftChange(next: string): void;
+  onDraftChange: Dispatch<SetStateAction<string>>;
   navigate: Dispatch<NavigationAction>;
   editorLiveRef: MutableRefObject<Editor | null>;
   leave: LeaveHandle;
@@ -880,7 +879,10 @@ export function NotesScreen({
   const [playbackSpeed, setPlaybackSpeed] = useState(10);
   const [openError, setOpenError] = useState<string | null>(null);
   const [promptError, setPromptError] = useState<string | null>(null);
-  const [importing, setImporting] = useState<string | null>(null);
+  const importState = imports.state(activeNoteId);
+  const importing = importState?.stage ?? null;
+  const replacing = importing !== null && importState?.replacing === true;
+  const importError = promptError ?? importState?.error;
   const [promptPending, setPromptPending] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -952,15 +954,22 @@ export function NotesScreen({
       await client.saveNoteScrollPosition(activeNoteId, Math.max(0, Math.round(host.scrollTop)));
     },
   });
+  // A file import replaces the note, so the screen stays frozen as during a save.
+  const frozen = save.frozen || replacing;
 
   useLayoutEffect(() => {
     onRegisterSave(save);
     return () => onRegisterSave(null);
   });
 
+  // The passive cleanup below destroys the old editor later. Until then, a
+  // background import must not see it as the editor of the newly opened note.
+  useLayoutEffect(() => () => {
+    editorLiveRef.current = null;
+  }, [activeNoteId, noteRequest, notesEpoch, editorLiveRef]);
+
   useEffect(() => {
     setCommandError(null);
-    setImporting(null);
     setPromptError(null);
     if (activeNoteId === null) {
       setPhase('empty');
@@ -1103,6 +1112,13 @@ export function NotesScreen({
     };
   }, [editor, editorLiveRef, phase, readOnly]);
 
+  // Text typed while a file import runs would be replaced by the file.
+  // This effect must follow the one above, which does not know about imports.
+  useEffect(() => {
+    if (phase !== 'ready' || !editor || editor.isDestroyed || save.frozen) return;
+    editor.setEditable(!readOnly && !replacing, false);
+  }, [editor, phase, readOnly, replacing]);
+
   useEffect(() => {
     setFindOpen(false);
     setFindTerm('');
@@ -1123,16 +1139,8 @@ export function NotesScreen({
     // Consume the opening even if it already has content; later edits must not retry it.
     handledImportRequest.current = request;
     if (editor.isEmpty) {
-      if (importSource.kind === 'page') void loadNotePage(importSource.url);
-      else {
-        const current = editor;
-        const noteId = activeNoteId;
-        const epoch = notesEpoch;
-        void loadNoteFile(importSource.path).then(result => {
-          if (result === null && sameEditorContext(current, noteId, epoch))
-            setPromptError('The file could not be loaded. Check the path and permissions.');
-        });
-      }
+      if (importSource.kind === 'page') void imports.page(activeNoteId, importSource.url);
+      else void imports.file(activeNoteId, importSource.path, true);
     }
   }, [importSource, phase, editing, editor, activeNoteId, notesEpoch, noteRequest, save.frozen, importing]);
 
@@ -1211,7 +1219,7 @@ export function NotesScreen({
     const current = editorRef.current;
     if (!current || current.isDestroyed) return;
     const copying = command === 'Copy' || command === 'Copy All' || command === 'Copy JSON';
-    if (!copying && (save.frozen || (immutable && ['Highlight', 'Add comment', 'Delete comment'].includes(command))
+    if (!copying && (frozen || (immutable && ['Highlight', 'Add comment', 'Delete comment'].includes(command))
       || (!current.isEditable && command !== 'Highlight'
         && command !== 'Add comment' && command !== 'Delete comment'))) return;
     const noteId = noteIdRef.current;
@@ -1258,7 +1266,7 @@ export function NotesScreen({
 
   function chooseHighlight(highlight: NoteHighlight) {
     const current = editorRef.current;
-    if (!current || current.isDestroyed || save.frozen) return;
+    if (!current || current.isDestroyed || frozen) return;
     if (!selectNoteHighlight(current, highlight)) {
       setCommandError('This highlight has changed or was removed.');
       return;
@@ -1300,121 +1308,36 @@ export function NotesScreen({
     });
   }
 
-  async function renameImportedNote(
-    note: NoteItem, title: string, source: 'page' | 'file', stillCurrent: () => boolean,
-  ) {
-    try {
-      const name = availableNoteName(itemsRef.current, note.parent_id, title, note.id);
-      const renamed = await client.renameNoteItem(note.id, name);
-      if (stillCurrent()) noteActions?.updated(renamed);
-    } catch (failure: unknown) {
-      if (stillCurrent()) {
-        setPromptError(`The ${source} was imported, but the note could not be renamed. `
-          + publicErrorMessage(failure, 'Try renaming the note again.'));
-      }
-    }
+  // The prompt that sent an import can close before the import finishes. Then
+  // remove the sent text from the shared draft, so it is not sent again.
+  function clearSentPrompt(sent: string) {
+    onDraftChange((current) => withoutSentPrompt(current, sent));
   }
 
-  async function lockImportedNote(noteId: number) {
-    const current = editorRef.current;
-    const epoch = epochRef.current;
-    const sameNote = () => editorRef.current === current
-      && noteIdRef.current === noteId && epochRef.current === epoch;
-    setImporting('Saving note…');
-    try {
-      const locked = await onSetNoteReadOnly(noteId, true);
-      if (sameNote()) noteActions?.updated(locked);
-    } catch (failure: unknown) {
-      if (sameNote()) {
-        setPromptError('The content was imported, but the note could not be made read-only. '
-          + publicErrorMessage(failure, 'Try Make read-only from the note menu.'));
-      }
-    }
-    return sameNote();
-  }
-
-  async function loadNoteFile(file: File | string): Promise<boolean | null> {
+  async function loadNoteFile(file: File | string, sent?: string): Promise<boolean | null> {
     const current = editorRef.current;
     const noteId = noteIdRef.current;
     const epoch = epochRef.current;
     if (importing !== null || !current || noteId === null || !sameEditorContext(current, noteId, epoch)) return false;
-    const stillCurrent = () => sameEditorContext(current, noteId, epoch);
-    setImporting('Retrieving content…');
     setPromptError(null);
-    try {
-      let source;
-      if (typeof file === 'string') {
-        source = await client.readNoteTextFile(file);
-      } else {
-        try {
-          source = { name: file.name, text: await readTextFile(file, noteFileTooLarge) };
-        } catch (failure: unknown) {
-          if (stillCurrent()) setPromptError((failure as Error).message);
-          return false;
-        }
-      }
-      if (!stillCurrent()) return false;
-      // A prompt can start with a path and still be ordinary text.
-      if (!source) return null;
-      const { html, title, preserveWhitespace } = noteFileHtml(source);
-      setImporting('');
-      const accepted = await replaceNoteHtml(current, html,
-        (url) => {
-          if (stillCurrent()) setImporting('Loading pictures…');
-          return client.readNotePicture(url);
-        }, stillCurrent, preserveWhitespace);
-      if (!accepted || !stillCurrent()) return false;
-      const note = itemsRef.current.find((item) => item.id === noteId);
-      if (title && note && defaultNoteName.test(note.name)) {
-        await renameImportedNote(note, title, 'file', stillCurrent);
-      }
-      if (!stillCurrent()) return false;
-      return await lockImportedNote(noteId);
-    } catch (failure: unknown) {
-      if (stillCurrent()) setPromptError(publicErrorMessage(failure, 'The file could not be loaded. Try again.'));
-      return false;
-    } finally {
-      if (sameEditorIdentity(current, noteId, epoch)) setImporting(null);
-    }
+    const result = await imports.file(noteId, file);
+    if (sameEditorIdentity(current, noteId, epoch)) return result;
+    if (result === true && sent !== undefined) clearSentPrompt(sent);
+    return false;
   }
 
-  async function loadNotePage(url: string): Promise<{ clear_input: boolean }> {
+  async function loadNotePage(url: string, sent: string): Promise<{ clear_input: boolean }> {
     const current = editorRef.current;
     const noteId = noteIdRef.current;
     const epoch = epochRef.current;
     if (importing !== null || !current || noteId === null || !sameEditorContext(current, noteId, epoch)) {
       return { clear_input: false };
     }
-    const stillCurrent = () => sameEditorContext(current, noteId, epoch);
-    setImporting('Retrieving content…');
     setPromptError(null);
-    try {
-      const page = await client.readNotePage(url, stage => {
-        if (stillCurrent()) setImporting(stage === 'formatting_transcript' ? 'Formatting transcript…' : 'Formatting article…');
-      });
-      if (!stillCurrent()) return { clear_input: false };
-      setImporting('');
-      const title = notePageName(page.title);
-      const note = itemsRef.current.find((item) => item.id === noteId);
-      const wasEmpty = current.isEmpty;
-      const rename = wasEmpty && defaultNoteName.test(note?.name ?? '');
-      const accepted = await appendNoteHtml(current, notePageHtml(page),
-        (url) => {
-          if (stillCurrent()) setImporting('Loading pictures…');
-          return client.readNotePicture(url);
-        }, stillCurrent);
-      if (!accepted || !stillCurrent()) return { clear_input: false };
-      if (rename && title && note) await renameImportedNote(note, title, 'page', stillCurrent);
-      if (!stillCurrent()) return { clear_input: false };
-      return { clear_input: wasEmpty ? await lockImportedNote(noteId) : true };
-    } catch (failure: unknown) {
-      if (stillCurrent()) {
-        setPromptError(publicErrorMessage(failure, 'Could not retrieve the web page. Try again.'));
-      }
-      return { clear_input: false };
-    } finally {
-      if (sameEditorIdentity(current, noteId, epoch)) setImporting(null);
-    }
+    const result = await imports.page(noteId, url);
+    if (sameEditorIdentity(current, noteId, epoch)) return { clear_input: result === true };
+    if (result === true) clearSentPrompt(sent);
+    return { clear_input: false };
   }
 
   function onFindTerm(value: string) {
@@ -1481,7 +1404,7 @@ export function NotesScreen({
         <FormatBar
           editor={editor}
           onHighlight={chooseHighlight}
-          frozen={save.frozen}
+          frozen={frozen}
           immutable={immutable}
           fontSize={fontSize}
           onFontSizeChange={setFontSize}
@@ -1563,13 +1486,16 @@ export function NotesScreen({
           {importing && <span>{importing}</span>}
         </div>
       )}
-      {promptError && (
+      {importError && (
         <div className="cha-notes-status cha-error-message" role="alert">
-          <p>{promptError}</p>
+          <p>{importError}</p>
           <button
             aria-label="Dismiss error"
             className="cha-button"
-            onClick={() => setPromptError(null)}
+            onClick={() => {
+              setPromptError(null);
+              if (activeNoteId !== null) imports.dismiss(activeNoteId);
+            }}
             title="Dismiss error"
             type="button"
           >
@@ -1597,12 +1523,12 @@ export function NotesScreen({
           }
           const filePath = promptFilePath(text);
           if (filePath) {
-            const imported = await loadNoteFile(filePath);
+            const imported = await loadNoteFile(filePath, text);
             if (imported !== null) return { clear_input: imported };
             if (!sameEditorContext(current, noteId, epoch)) return { clear_input: false };
           }
           const url = promptPageUrl(text);
-          if (url) return loadNotePage(url);
+          if (url) return loadNotePage(url, text);
           const accepted = insertPromptParagraph(current, text);
           if (
             !accepted
@@ -1643,7 +1569,7 @@ export function NotesScreen({
           }}>Play from here</button>}
           {menuCommands.map((command) => (
             <button
-              disabled={command !== 'Copy' && command !== 'Copy JSON' && (save.frozen || (immutable && ['Highlight', 'Add comment', 'Delete comment'].includes(command))
+              disabled={command !== 'Copy' && command !== 'Copy JSON' && (frozen || (immutable && ['Highlight', 'Add comment', 'Delete comment'].includes(command))
                 || (readOnly && command !== 'Highlight'
                   && command !== 'Add comment' && command !== 'Delete comment'))}
               key={command}

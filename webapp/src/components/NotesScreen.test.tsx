@@ -2,7 +2,7 @@ import type { AnnotationDestination } from '../notes/annotationSource';
 import type { Editor } from '@tiptap/core';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { StrictMode, useRef, useState } from 'react';
+import { StrictMode, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -17,6 +17,7 @@ import { pictureTypeMessage } from '../notes/pictures';
 import { noteHeadings, selectNoteEnd, withIsolatedHistory } from '../notes/editor';
 import { noteHighlights } from '../notes/highlights';
 import { useNoteLeave } from '../notes/useNoteLeave';
+import { useNoteImports } from '../notes/useNoteImports';
 import { noteSaveDelayMs, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { AppAction } from '../state/view';
 import { fixtureClient } from '../test/fixtures';
@@ -61,6 +62,7 @@ function Harness({
   readNotePicture = async () => new Uint8Array(),
   renameNoteItem = async (id: number, name: string) => ({ ...plan, id, name }),
   draft = '',
+  after,
 }: {
   initialId?: number | null;
   destination?: AnnotationDestination;
@@ -78,6 +80,7 @@ function Harness({
   readNotePicture?: (url: string) => Promise<Uint8Array>;
   renameNoteItem?: (id: number, name: string) => Promise<NoteItem>;
   draft?: string;
+  after?: (noteId: number | null) => ReactNode;
 }) {
   const [noteId, setNoteId] = useState(initialId);
   const [request, setRequest] = useState(1);
@@ -91,7 +94,11 @@ function Harness({
   const saveNoteRef = useRef(saveNote);
   getNoteRef.current = getNote;
   saveNoteRef.current = saveNote;
+  const itemsRef = useRef(items);
+  itemsRef.current = items.some(item => item.id === essay.id) ? items : [...items, essay];
   const client = useRef(fixtureClient({
+    listNoteItems: async () => itemsRef.current,
+    setNoteReadOnly: onSetNoteReadOnly,
     getNote: (id) => getNoteRef.current(id),
     saveNote: (id, document) => saveNoteRef.current(id, document),
     saveNoteScrollPosition,
@@ -103,6 +110,14 @@ function Harness({
   })).current;
   const leave = useNoteLeave(() => saveRef.current, {
     disposeEditor: () => disposeRef.current(),
+  });
+  const imports = useNoteImports({
+    client, epoch: 1, leave,
+    openNote: () => ({ id: noteId, editor: editorLiveRef.current, save: saveRef.current }),
+    updated: () => undefined,
+    refresh: () => undefined,
+    cancelOpen: () => disposeRef.current(),
+    reload: id => dispatch({ type: 'open-note', noteId: id }),
   });
   function dispatch(action: AppAction) {
     onNavigate(action);
@@ -130,10 +145,11 @@ function Harness({
         noteRequest={request}
         notesEpoch={1}
         onDraftChange={setText}
-        onSetNoteReadOnly={onSetNoteReadOnly}
+        imports={imports}
         onRegisterDispose={(dispose) => { disposeRef.current = dispose; }}
         onRegisterSave={(save) => { saveRef.current = save; }}
       />
+      {after?.(noteId)}
     </div>
   );
 }
@@ -293,7 +309,7 @@ describe('Notes screen', () => {
     expect(readSource).toHaveBeenCalledOnce();
   });
 
-  it.each([false, true])('ignores a late shortcut result in another note (failure=%s)', async fail => {
+  it.each([false, true])('keeps late shortcut results and errors away from the other note (failure=%s)', async fail => {
     let finish!: (page: NotePage) => void;
     let reject!: (failure: Error) => void;
     const readNotePage = vi.fn(() => new Promise<NotePage>((ok, no) => { finish = ok; reject = no; }));
@@ -310,10 +326,25 @@ describe('Notes screen', () => {
       else finish({ url: 'https://example.org/article', title: 'Late title', markdown: 'Late article' });
     });
     expect(editor.getText()).toBe('Essay text');
-    expect(renameNoteItem).not.toHaveBeenCalled();
+    if (fail) expect(renameNoteItem).not.toHaveBeenCalled();
+    else expect(renameNoteItem).toHaveBeenCalledExactlyOnceWith(plan.id, 'Late title');
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByText('Loading content…')).toBeNull();
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this');
+  });
+
+  it('does not offer the previous editor to the newly opened note before effects run', async () => {
+    const seen: Array<[number | null, Editor | null]> = [];
+    function Probe({ noteId }: { noteId: number | null }) {
+      useLayoutEffect(() => { seen.push([noteId, liveEditor?.current ?? null]); });
+      return null;
+    }
+    render(<Harness after={(noteId) => <Probe noteId={noteId} />} />);
+    const first = await openedEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
+    await openedEditor();
+    expect(seen.some(([id]) => id === essay.id)).toBe(true);
+    expect(seen.filter(([id, editor]) => id === essay.id && editor === first)).toEqual([]);
   });
 
   it.each(['page', 'path', 'upload'])('shows shared loading status for a manual %s import and disables overlap', async source => {
@@ -456,7 +487,7 @@ describe('Notes screen', () => {
     expect(editor.getText()).toBe('Alpha beta');
   });
 
-  it('replaces a note from the picker, keeps the prompt, saves, and undoes in one step', async () => {
+  it('replaces a note from the picker, keeps the prompt, and saves', async () => {
     const saveNote = vi.fn(async () => undefined);
     const renameNoteItem = vi.fn();
     render(<Harness draft="Keep this draft" saveNote={saveNote} renameNoteItem={renameNoteItem} />);
@@ -472,15 +503,38 @@ describe('Notes screen', () => {
     expect(editor.view.dom.querySelector('strong')?.textContent).toBe('Body');
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep this draft');
     expect(renameNoteItem).not.toHaveBeenCalled();
-    await waitFor(() => expect(editor.can().undo()).toBe(true));
-    fireEvent.click(historyAction('Undo'));
-    expect(editor.getText()).toBe('Alpha');
-    await waitFor(() => expect(editor.can().redo()).toBe(true));
-    fireEvent.click(historyAction('Redo'));
-    expect(editor.getText({ blockSeparator: '\n' })).toBe('Imported\nBody');
+    await waitFor(() => expect(screen.queryByText('Loading content…')).toBeNull());
     const document = editor.getJSON();
     fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
     await waitFor(() => expect(saveNote).toHaveBeenCalledWith(plan.id, document));
+  });
+
+  it.each([false, true])('freezes the note while a file replaces it (save fails=%s)', async fails => {
+    let finishPicture!: (bytes: Uint8Array) => void;
+    const readNotePicture = vi.fn(() => new Promise<Uint8Array>(resolve => { finishPicture = resolve; }));
+    const saveNote = vi.fn(async () => {
+      if (fails) throw new ChaError('internal_error', 'Save failed.');
+      return { annotation_created: false } as never;
+    });
+    const lock = vi.fn(async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }));
+    render(<Harness importPath="/plan.md" saveNote={saveNote} onSetNoteReadOnly={lock} readNotePicture={readNotePicture}
+      readNoteTextFile={async () => ({ name: '/plan.md', text: 'File body\n\n![Photo](https://example.org/photo.png)' })}
+      getNote={async id => ({ id, document: documentWith('') })} />);
+    const editor = await openedEditor();
+    await waitFor(() => expect(readNotePicture).toHaveBeenCalledOnce());
+    expect(screen.getByText('Loading content…')).toHaveTextContent('Loading pictures…');
+    expect(editor.isEditable).toBe(false);
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Highlight' })).toBeDisabled();
+    await act(async () => finishPicture(new Uint8Array()));
+    await waitFor(() => expect(screen.queryByText('Loading content…')).toBeNull());
+    expect(editor.getText()).toContain('File body');
+    expect(lock).toHaveBeenCalledTimes(fails ? 0 : 1);
+    // After a lock, App applies the read-only item. This harness does not.
+    if (fails) {
+      expect(editor.isEditable).toBe(true);
+      expect(screen.getByRole('button', { name: 'Highlight' })).toBeEnabled();
+    }
   });
 
   it('automatically imports a file into a new note without changing the prompt', async () => {
@@ -512,7 +566,7 @@ describe('Notes screen', () => {
     expect(readNoteTextFile).toHaveBeenCalledOnce();
   });
 
-  it.each(['content', 'null', 'error'] as const)('ignores a late file %s result in another note', async result => {
+  it.each(['content', 'null', 'error'] as const)('keeps a late file %s result away from the other note', async result => {
     let finish!: (value: TextFileRequest | null) => void;
     let reject!: (error: Error) => void;
     const readNoteTextFile = vi.fn(() => new Promise<TextFileRequest | null>((ok, no) => { finish = ok; reject = no; }));
@@ -530,8 +584,13 @@ describe('Notes screen', () => {
       else finish(result === 'null' ? null : { name: '/tmp/plan.md', text: '# Late title\n\nLate content' });
     });
     expect(editor.getText()).toBe('Essay text');
-    expect(renameNoteItem).not.toHaveBeenCalled();
-    expect(onSetNoteReadOnly).not.toHaveBeenCalled();
+    if (result === 'content') {
+      expect(renameNoteItem).toHaveBeenCalledExactlyOnceWith(plan.id, 'Late title');
+      expect(onSetNoteReadOnly).toHaveBeenCalledExactlyOnceWith(plan.id, true);
+    } else {
+      expect(renameNoteItem).not.toHaveBeenCalled();
+      expect(onSetNoteReadOnly).not.toHaveBeenCalled();
+    }
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByText('Loading content…')).toBeNull();
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep draft');
@@ -654,21 +713,31 @@ describe('Notes screen', () => {
     expect(editor.getText()).toContain('/tmp/build.log fails, why?');
   });
 
-  it('does not import into another note after switching while a path loads', async () => {
-    let finish!: (file: TextFileRequest) => void;
-    const readNoteTextFile = vi.fn(() => new Promise<TextFileRequest>((resolve) => { finish = resolve; }));
+  it.each([
+    ['/tmp/plan.md', false], ['/tmp/plan.md', true], ['https://example.org/article', false],
+  ] as const)('saves %s only into its note after a switch and clears only the sent prompt (edited=%s)', async (sent, edited) => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const readNoteTextFile = vi.fn(async () => { await pending; return { name: '/tmp/plan.md', text: '# Late' }; });
+    const readNotePage = vi.fn(async () => { await pending; return { url: sent, title: 'Late', markdown: 'Late article' }; });
     const renameNoteItem = vi.fn();
-    render(<Harness items={[{ ...plan, name: 'New note' }]} draft="/tmp/plan.md"
-      readNoteTextFile={readNoteTextFile} renameNoteItem={renameNoteItem} />);
+    const lock = vi.fn(async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }));
+    render(<Harness items={[{ ...plan, name: 'New note' }]} draft={sent} onSetNoteReadOnly={lock}
+      getNote={async id => ({ id, document: documentWith(id === essay.id ? 'Essay text' : '') })}
+      readNoteTextFile={readNoteTextFile} readNotePage={readNotePage} renameNoteItem={renameNoteItem} />);
     await openedEditor();
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' });
-    await waitFor(() => expect(readNoteTextFile).toHaveBeenCalledOnce());
+    await waitFor(() => expect(readNoteTextFile.mock.calls.length + readNotePage.mock.calls.length).toBe(1));
     fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
     const editor = await openedEditor();
-    await act(async () => finish({ name: '/tmp/plan.md', text: '# Late' }));
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(sent);
+    if (edited) fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Other text' } });
+    await act(async () => finish());
+    await waitFor(() => expect(lock).toHaveBeenCalledExactlyOnceWith(plan.id, true));
+    await act(async () => undefined);
     expect(editor.getText()).toBe('Essay text');
-    expect(renameNoteItem).not.toHaveBeenCalled();
-    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('/tmp/plan.md');
+    expect(renameNoteItem).toHaveBeenCalledExactlyOnceWith(plan.id, 'Late');
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue(edited ? 'Other text' : '');
     fireEvent.click(screen.getByRole('button', { name: 'Content' }));
     expect(screen.getByRole('menuitem', { name: 'Upload' })).toBeEnabled();
   });

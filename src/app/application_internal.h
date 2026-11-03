@@ -85,6 +85,9 @@ struct Application::Impl {
         R2DatabaseTransfer upload_database(
             std::optional<std::string> expected_etag,
             std::uint64_t epoch);
+        std::shared_ptr<OperationReply> start_database_upload(
+            std::optional<std::string> expected_etag,
+            std::uint64_t epoch);
         R2DatabaseTransfer download_database(std::uint64_t epoch);
         WorkspaceConfigTransfer import_configuration(std::uint64_t epoch);
         WorkspaceConfigTransfer export_configuration(std::uint64_t epoch);
@@ -99,6 +102,16 @@ struct Application::Impl {
             bool download_parent,
             const std::function<bool()>& cancelled);
         void publish_vault(VaultDefinition vault);
+        R2DatabaseUpload prepare_upload(
+            std::uint64_t epoch, VaultDefinition& vault, R2StorageKey& storage);
+        // Takes the upload, so the copy is removed before the result is
+        // reported. Clears vault_upload_running when it returns or throws.
+        R2DatabaseTransfer finish_upload(
+            R2DatabaseUpload upload,
+            const VaultDefinition& vault,
+            const R2StorageKey& storage,
+            std::string_view expected_etag,
+            const std::function<bool()>& cancelled);
         std::chrono::milliseconds maintenance_grace() const;
         std::uint64_t publish_epoch(
             PendingContextNotice& notice,
@@ -155,6 +168,8 @@ struct Application::Impl {
     XaiVoiceSessions xai_voice{background_jobs};
     mutable std::timed_mutex lifecycle_mutex;
     std::atomic_bool stopping_flag{};
+    // Set from the maintenance copy of an R2 upload until its transfer ends.
+    std::atomic_bool vault_upload_running{};
     bool running{};
     bool stopped{};
     std::atomic_bool unusable{};

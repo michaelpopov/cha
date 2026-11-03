@@ -159,41 +159,102 @@ describe('Notes in the application', () => {
     expect(JSON.stringify(notes.documents.get(9))).toContain('File content');
   });
 
-  it('abandons the first pending URL when creating another and keeps the second loading status', async () => {
+  it.each([false, true])('saves concurrent imports to their original notes across repeated switches (second finishes first=%s)', async secondFirst => {
     const finishes: ((page: NotePage) => void)[] = [];
-    const readNotePage = vi.fn(() => new Promise<NotePage>(resolve => { finishes.push(resolve); }));
+    const reports: NonNullable<Parameters<NotesClient['readNotePage']>[1]>[] = [];
+    const readNotePage = vi.fn<NotesClient['readNotePage']>((_url, report) => {
+      reports.push(report!);
+      return new Promise(resolve => { finishes.push(resolve); });
+    });
     const notes = importClient(readNotePage);
     render(<App client={notes.client} />);
     await openNotes();
-    await createUrlNote('https://example.org/first');
+    await createUrlNote('https://youtu.be/first');
     await waitFor(() => expect(readNotePage).toHaveBeenCalledTimes(1));
-    const firstEditor = noteEditor();
-    await createUrlNote('https://example.org/second');
+    const original = noteEditor();
+    await createUrlNote('https://youtu.be/second');
     await waitFor(() => expect(readNotePage).toHaveBeenCalledTimes(2));
-    const secondEditor = noteEditor();
-    expect(firstEditor.isDestroyed).toBe(true);
-    await act(async () => finishes[0]({ url: 'https://example.org/first', title: 'Old title', markdown: 'Old content' }));
-    expect(secondEditor.isEmpty).toBe(true);
-    expect(screen.getByText('Loading content…')).toBeInTheDocument();
-    expect(notes.renameNoteItem).not.toHaveBeenCalled();
-    expect(notes.setNoteReadOnly).not.toHaveBeenCalled();
-    expect(notes.saveNote).not.toHaveBeenCalled();
-    await act(async () => finishes[1]({ url: 'https://example.org/second', title: 'Second title', markdown: 'Second content' }));
-    await screen.findByRole('treeitem', { name: 'Second title' });
-    await waitFor(() => expect(secondEditor.isEditable).toBe(false));
-    expect(notes.documents.has(9)).toBe(false);
-    expect(notes.documents.get(10)).toEqual(secondEditor.getJSON());
-    expect(notes.renameNoteItem).toHaveBeenCalledExactlyOnceWith(10, 'Second title');
-    expect(notes.setNoteReadOnly).toHaveBeenCalledExactlyOnceWith(10, true);
+    expect(original.isDestroyed).toBe(true);
     fireEvent.click(screen.getByRole('treeitem', { name: 'New note' }));
     await waitFor(() => expect(noteEditor().isEditable).toBe(true));
-    expect(noteEditor().isEmpty).toBe(true);
+    fireEvent.click(screen.getByRole('treeitem', { name: 'New note 1' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    fireEvent.click(screen.getByRole('treeitem', { name: 'New note' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    act(() => { reports[0]('formatting_transcript'); reports[1]('formatting_article'); });
+    expect(screen.getByText('Loading content…')).toHaveTextContent('Formatting transcript…');
+    const pages = [
+      { url: 'https://youtu.be/first', title: 'First title', markdown: 'First content' },
+      { url: 'https://youtu.be/second', title: 'Second title', markdown: 'Second content' },
+    ];
+    for (const index of secondFirst ? [1, 0] : [0, 1]) {
+      await act(async () => finishes[index](pages[index]));
+      await waitFor(() => expect(notes.setNoteReadOnly).toHaveBeenCalledWith(9 + index, true));
+    }
+    expect(noteEditor().getText()).toContain('First content');
+    expect(noteEditor().getText()).not.toContain('Second content');
+    expect(JSON.stringify(notes.documents.get(9))).toContain('First content');
+    expect(JSON.stringify(notes.documents.get(10))).toContain('Second content');
+    expect(notes.renameNoteItem).toHaveBeenCalledWith(9, 'First title');
+    expect(notes.renameNoteItem).toHaveBeenCalledWith(10, 'Second title');
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Second title' }));
+    await waitFor(() => expect(noteEditor().getText()).toContain('Second content'));
+    expect(noteEditor().isEditable).toBe(false);
     expect(readNotePage).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('Loading content…')).toBeNull();
+  });
+
+  it.each([false, true])('preserves edits made after returning to an importing note (finish while hidden=%s)', async hidden => {
+    let finish!: (page: NotePage) => void;
+    const readNotePage = vi.fn(() => new Promise<NotePage>(resolve => { finish = resolve; }));
+    const notes = importClient(readNotePage);
+    render(<App client={notes.client} />);
+    await openNotes();
+    await createUrlNote('https://youtu.be/video');
+    await waitFor(() => expect(readNotePage).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved plan');
+    fireEvent.click(screen.getByRole('treeitem', { name: 'New note' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    act(() => typeInNote('My edits'));
+    if (hidden) {
+      fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' }));
+      await screen.findByText('Saved plan');
+    }
+    await act(async () => finish({ url: 'https://youtu.be/video', title: 'Video', markdown: 'Imported transcript' }));
+    await waitFor(() => expect(JSON.stringify(notes.documents.get(9))).toContain('Imported transcript'));
+    expect(JSON.stringify(notes.documents.get(9))).toContain('My edits');
+    expect(notes.setNoteReadOnly).not.toHaveBeenCalled();
+    if (hidden) {
+      expect(noteEditor().getText()).toBe('Saved plan');
+      fireEvent.click(screen.getByRole('treeitem', { name: 'New note' }));
+    }
+    await waitFor(() => expect(noteEditor().getText()).toContain('Imported transcript'));
+    expect(noteEditor().getText()).toContain('My edits');
+    expect(readNotePage).toHaveBeenCalledOnce();
+  });
+
+  it('assigns distinct titles when concurrent imports finish together', async () => {
+    const finishes: ((page: NotePage) => void)[] = [];
+    const notes = importClient(() => new Promise(resolve => { finishes.push(resolve); }));
+    render(<App client={notes.client} />);
+    await openNotes();
+    await createUrlNote('https://youtu.be/first');
+    await waitFor(() => expect(finishes).toHaveLength(1));
+    await createUrlNote('https://youtu.be/second');
+    await waitFor(() => expect(finishes).toHaveLength(2));
+    await act(async () => finishes.forEach((finish, index) => finish({ url: `https://youtu.be/${index}`,
+      title: 'Shared title', markdown: `Content ${index}` })));
+    await waitFor(() => expect(notes.setNoteReadOnly).toHaveBeenCalledTimes(2));
+    expect(notes.renameNoteItem).toHaveBeenCalledWith(9, 'Shared title');
+    expect(notes.renameNoteItem).toHaveBeenCalledWith(10, 'Shared title 1');
+    expect(JSON.stringify(notes.documents.get(9))).toContain('Content 0');
+    expect(JSON.stringify(notes.documents.get(10))).toContain('Content 1');
   });
 
   it.each([
     ['page', false], ['page', true], ['file', false], ['file', true],
-  ] as const)('abandons a hidden empty %s note and does not restart it on remount (finish while hidden=%s)', async (kind, finishHidden) => {
+  ] as const)('saves a hidden %s import and does not restart it on remount (finish while hidden=%s)', async (kind, finishHidden) => {
     let finish!: () => void;
     const pending = new Promise<void>(resolve => { finish = resolve; });
     const readNotePage = vi.fn(async () => { await pending; return { url: 'https://example.org/article', title: 'Late title', markdown: 'Late content' }; });
@@ -221,14 +282,15 @@ describe('Notes in the application', () => {
     const resolve = async () => act(async () => finish());
     if (finishHidden) await resolve();
     act(() => bus.layout('split'));
-    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    await waitFor(() => expect(document.querySelector('.ProseMirror')).not.toBeNull());
     if (!finishHidden) await resolve();
-    expect(noteEditor().isEmpty).toBe(true);
+    await waitFor(() => expect(noteEditor().isEditable).toBe(false));
+    expect(noteEditor().getText()).toContain('Late content');
     expect(screen.queryByText('Loading content…')).toBeNull();
     expect(readSource).toHaveBeenCalledOnce();
-    expect(notes.renameNoteItem).not.toHaveBeenCalled();
-    expect(notes.setNoteReadOnly).not.toHaveBeenCalled();
-    expect(notes.saveNote).not.toHaveBeenCalled();
+    expect(notes.renameNoteItem).toHaveBeenCalledExactlyOnceWith(9, 'Late title');
+    expect(notes.setNoteReadOnly).toHaveBeenCalledExactlyOnceWith(9, true);
+    expect(notes.documents.get(9)).toEqual(noteEditor().getJSON());
   });
 
   it('generates direct read-only folder notes in tree order and restores folder focus', async () => {
@@ -380,6 +442,7 @@ describe('Notes in the application', () => {
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
       getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      saveNote: async () => undefined,
       readNotePage,
     })} contextEvents={bus} />);
     await openNotes();
@@ -629,6 +692,26 @@ describe('Notes in the application', () => {
       expect(noteEditor().isEditable).toBe(false);
       expect(noteEditor().getText()).toContain('Imported');
     });
+  });
+
+  it('undoes an uploaded file in one step after Make editable', async () => {
+    const notes = importClient(vi.fn());
+    render(<App client={notes.client} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    fireEvent.change(screen.getByLabelText('Text file', { selector: 'input' }), {
+      target: { files: [new File(['# Imported\n\n**Body**'], 'plan.md')] },
+    });
+    await waitFor(() => expect(notes.setNoteReadOnly).toHaveBeenCalledExactlyOnceWith(plan.id, true));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make editable' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'History' })).toBeEnabled());
+    fireEvent.click(historyAction('Undo'));
+    expect(noteEditor().getText()).toBe('Saved plan');
+    fireEvent.click(historyAction('Redo'));
+    expect(noteEditor().getText({ blockSeparator: '\n' })).toBe('Imported\nBody');
   });
 
   it('keeps a note with text editable after a web import', async () => {
@@ -984,6 +1067,32 @@ describe('Notes in the application', () => {
     expect(JSON.stringify(transferred)).toContain(operation === 'Discard then Copy' ? 'Saved plan' : 'Saved plan final edit');
     if (operation === 'Discard then Copy') expect(JSON.stringify(transferred)).not.toContain('final edit');
     expect(saveNote).toHaveBeenCalledOnce();
+  });
+
+  it('reports an upload that fails after the vault page closed', async () => {
+    let reject!: (failure: Error) => void;
+    const vault = { display_name: 'Personal', protected: false, active: true, can_delete: false,
+      data_path: '/data/personal.sqlite3', mirror_path: null, modify_path: null };
+    render(<App client={fixtureClient({
+      getBootstrap: async () => ({ ...bootstrapFixture, capabilities: { can_transfer_r2: true, can_modify: false } }),
+      listNoteItems: async () => [plan], getNote: async (id) => ({ id, document: noteDocument('Saved plan') }),
+      listVaults: async () => [vault],
+      checkVaultUpload: async () => ({ status: 'match', etag: 'known', context_epoch: 1 }),
+      uploadVault: () => new Promise<number>((_resolve, fail) => { reject = fail; }),
+    })} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Vaults' }));
+    fireEvent.click(await within(await screen.findByRole('region', { name: 'Vaults settings' })).findByRole('button', { name: /Personal/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Upload' }));
+    await screen.findByRole('button', { name: 'Uploading…' });
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved plan');
+    expect(screen.queryByRole('button', { name: 'Uploading…' })).toBeNull();
+    await act(async () => reject(new ChaError('invalid_argument', 'R2 upload failed with HTTP status 503')));
+    expect(await screen.findByText('Upload failed. R2 upload failed with HTTP status 503')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss message error' }));
+    expect(screen.queryByText(/Upload failed/)).toBeNull();
   });
 
   it.each(['success', 'failure', 'cancel'] as const)('guards vault switching and draft reset on %s', async (outcome) => {

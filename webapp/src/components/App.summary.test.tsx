@@ -31,7 +31,10 @@ async function openTarget(wait = true) {
   fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
   await screen.findByRole('treeitem', { name: bootstrapFixture.vault_name });
   fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-  if (wait) await screen.findByText('Old body');
+  if (wait) {
+    await screen.findByText('Old body');
+    await waitFor(() => expect(editor().isEditable).toBe(true));
+  }
 }
 beforeEach(() => window.history.replaceState(null, '', '/'));
 afterEach(() => vi.useRealTimers());

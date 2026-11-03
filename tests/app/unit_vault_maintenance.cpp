@@ -21,6 +21,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <iomanip>
 #include <iterator>
@@ -386,7 +387,9 @@ TEST(ApplicationVault, UploadIncludesFinalSavedNotesWithoutScanningDamagedConten
     ASSERT_EQ(server.requests().size(), 3U);
     const auto uploaded = pair.workspace_a.root() / "uploaded-notes.sqlite3";
     std::ofstream(uploaded, std::ios::binary) << request_body(server.requests()[1]);
-    EXPECT_EQ(stored_notes(uploaded), saved);
+    auto expected = saved;
+    expected["audio"] = nlohmann::json::array();
+    EXPECT_EQ(stored_notes(uploaded), expected);
 }
 
 TEST(ApplicationVault, DownloadReplacesNotesAndOverwritesOneBackupIncludingOlderSchema2) {
@@ -551,7 +554,7 @@ TEST(ApplicationVault, PicturesFollowTheCurrentVaultAndRejectStaleEpochs) {
     EXPECT_EQ(restored->content_base64, "QQ==");
 }
 
-TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndCanFinishAfterAVaultSwitch) {
+TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndRefusesMaintenanceUntilItEnds) {
     TwoVaults pair;
     const std::string response = "HTTP/1.1 200 OK\r\nETag: \"uploaded-etag\"\r\n"
         "Content-Length: 0\r\nConnection: close\r\n\r\n";
@@ -577,20 +580,35 @@ TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndCanFinishAfterAVaul
         const auto session = application->create_session(
             "lobby", "Created during upload", application->context_epoch());
         EXPECT_FALSE(session.id.empty());
-        return application->switch_vault("B", {}, application->context_epoch());
+        const std::vector<std::pair<std::string, std::function<void()>>> maintenance{
+            {"switch", [&] { (void)application->switch_vault("B", {}, application->context_epoch()); }},
+            {"download", [&] { (void)application->download_database(application->context_epoch()); }},
+            {"upload", [&] { (void)application->upload_database({}, application->context_epoch()); }},
+            {"forum delete", [&] { application->delete_forum("lobby", application->context_epoch()); }},
+        };
+        for (const auto& [name, operation] : maintenance) {
+            SCOPED_TRACE(name);
+            try {
+                operation();
+                ADD_FAILURE() << "Maintenance during the upload should be refused";
+            } catch (const ApplicationError& error) {
+                EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+                EXPECT_STREQ(error.what(), "A vault upload is running. Try again when it finishes.");
+            }
+        }
     });
     const auto usable = use_vault.wait_for(2s);
     server.resume_responses();
     EXPECT_EQ(usable, std::future_status::ready);
-    EXPECT_EQ(use_vault.get().state, ApplicationState::running);
+    use_vault.get();
     EXPECT_EQ(upload.get().etag, "uploaded-etag");
     server.join();
-    EXPECT_EQ(application->current_vault().get().name, "B");
-    EXPECT_FALSE(application->current_vault().get().r2_etag);
-    const auto registry = application->vault_snapshot();
-    EXPECT_EQ(registry.vaults.front().r2_etag, "uploaded-etag");
+    EXPECT_EQ(application->current_vault().get().name, "A");
+    EXPECT_EQ(application->current_vault().get().r2_etag, "uploaded-etag");
     EXPECT_EQ(read_toml_file(pair.command.vault.source, "vault")["r2_etag"].value<std::string>(),
         "uploaded-etag");
+    EXPECT_EQ(application->switch_vault("B", {}, application->context_epoch()).state,
+        ApplicationState::running);
     const auto copy_path = pair.workspace_a.root() / "uploaded.sqlite3";
     std::ofstream(copy_path, std::ios::binary) << request_body(server.requests()[1]);
     storage::SqliteDatabase copy(copy_path, storage::SqliteDatabase::Mode::read_only);
@@ -619,6 +637,8 @@ TEST(ApplicationVault, FailedCompanionUploadKeepsTheVaultUsableAndRemembersTheDa
         "uploaded-etag");
     EXPECT_NO_THROW((void)application->create_session(
         "lobby", "After upload failure", application->context_epoch()));
+    EXPECT_EQ(application->switch_vault("B", {}, application->context_epoch()).state,
+        ApplicationState::running);
     for (const auto& directory : {pair.workspace_a.root(), pair.command.config_directory}) {
         for (const auto& entry : std::filesystem::directory_iterator(directory)) {
             EXPECT_EQ(entry.path().filename().string().find(".upload."), std::string::npos);

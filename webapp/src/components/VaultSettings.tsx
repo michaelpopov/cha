@@ -368,8 +368,15 @@ export function NewVaultScreen({ client, navigate }: SettingsScreenProps) {
   );
 }
 
-export function VaultScreen({ client, dispatch, navigate, state }: SettingsScreenProps) {
+export function VaultScreen({ client, dispatch, navigate, state, onBackgroundError }: SettingsScreenProps & {
+  onBackgroundError?(message: string): void;
+}) {
   const selectedName = state.inspectedVaultName;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const [detail, setDetail] = useState<VaultDetail | null>(null);
   const [vaultCount, setVaultCount] = useState(0);
   const [enableProtection, setEnableProtection] = useState(false);
@@ -485,7 +492,10 @@ export function VaultScreen({ client, dispatch, navigate, state }: SettingsScree
       setOperationComplete(`${past} ${bytes ? formatBytes(count) : `${count.toLocaleString()} files`}.`);
     } catch (failure: unknown) {
       const label = operation[0].toUpperCase() + operation.slice(1);
-      setOperationError(publicErrorMessage(failure, `${label} failed.`));
+      // Other screens work during an upload, so it can fail after this page closed.
+      if (operation === 'upload' && !mounted.current) {
+        onBackgroundError?.(`Upload failed. ${publicErrorMessage(failure, 'Try again.')}`);
+      } else setOperationError(publicErrorMessage(failure, `${label} failed.`));
     } finally {
       setPendingOperation(null);
     }

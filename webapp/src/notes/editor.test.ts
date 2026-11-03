@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 import {
   addNoteComment,
+  appendNoteHtml,
   canonicalNoteLink,
   createNotesEditor,
   deleteNoteComment,
@@ -1486,6 +1487,20 @@ describe('pictures and clipboard', () => {
     await vi.waitFor(() => expect(created.view.dom.querySelectorAll('img[src]')).toHaveLength(20));
     expect(created.getText().match(/Text/g)).toHaveLength(5);
     expect(undoDepth(created.state)).toBe(5);
+  });
+
+  it('does not make a picture paste wait for a background import', async () => {
+    let finishImport: ((bytes: Uint8Array) => void) | undefined;
+    const prepared = editor();
+    const imported = appendNoteHtml(prepared, '<p>Article</p><img src="https://example.org/a.png">',
+      () => new Promise<Uint8Array>((resolve) => { finishImport = resolve; }), () => true);
+    await vi.waitFor(() => expect(finishImport).toBeDefined());
+    const pasted = editor({ readPicture: async () => new Uint8Array(pngHeader) });
+    pasted.view.pasteHTML('<p>Pasted</p><img src="https://example.org/b.png">');
+    await vi.waitFor(() => expect(pasted.view.dom.querySelectorAll('img[src]')).toHaveLength(1));
+    expect(pasted.getText()).toContain('Pasted');
+    finishImport!(new Uint8Array(pngHeader));
+    await expect(imported).resolves.toBe(true);
   });
 
   it.each([

@@ -247,6 +247,10 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         || app.state.load() != ApplicationState::running) {
         throw std::runtime_error("CHA application is unavailable");
     }
+    if (app.vault_upload_running) {
+        throw ApplicationError(ErrorCode::invalid_argument,
+            "A vault upload is running. Try again when it finishes.");
+    }
     app.notes->cancel_compressions_locked();
     app.notes->cancel_summaries_locked();
     app.notes->interrupt_folder_stores_locked();
@@ -1000,47 +1004,102 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge(
     return result;
 }
 
+// The copy is made in maintenance. From then until finish_upload ends, other
+// maintenance is refused, so the saved ETag still describes the active vault.
+R2DatabaseUpload Application::Impl::VaultMaintenance::prepare_upload(
+    std::uint64_t epoch, VaultDefinition& vault, R2StorageKey& storage) {
+    bool reserved = false;
+    try {
+        return maintain_database(epoch, [&](auto&, auto&) {
+            const std::optional<R2StorageKey> r2 = app.api_keys->r2();
+            if (!r2) throw ApplicationError(
+                ErrorCode::invalid_argument, "The active vault has no R2 key");
+            vault = app.current_vault_.get();
+            storage = *r2;
+            R2DatabaseUpload upload(vault.data, vault.source, app.active_password);
+            app.vault_upload_running = true;
+            reserved = true;
+            return upload;
+        }, false);
+    } catch (...) {
+        if (reserved) app.vault_upload_running = false;
+        throw;
+    }
+}
+
+R2DatabaseTransfer Application::Impl::VaultMaintenance::finish_upload(
+    R2DatabaseUpload upload, const VaultDefinition& vault, const R2StorageKey& storage,
+    std::string_view expected_etag, const std::function<bool()>& cancelled) {
+    struct EndUpload {
+        std::atomic_bool& running;
+        ~EndUpload() { running = false; }
+    } end{app.vault_upload_running};
+    return upload.upload(storage, cancelled, expected_etag, [this, &vault](std::string_view etag) {
+        const std::lock_guard lifecycle(app.lifecycle_mutex);
+        const auto configured = std::find_if(
+            app.command.vaults.begin(), app.command.vaults.end(),
+            [&](const VaultDefinition& candidate) {
+                return candidate.source == vault.source;
+            });
+        if (configured == app.command.vaults.end()
+            || app.current_vault_.get().source != vault.source
+            || !app.store->is_main()) return;
+        save_r2_vault_etag(vault.source, etag);
+        configured->r2_etag = std::string(etag);
+        app.command.vault = *configured;
+        publish_vault(*configured);
+    });
+}
+
 R2DatabaseTransfer Application::Impl::VaultMaintenance::upload_database(
     std::optional<std::string> expected_etag,
     std::uint64_t epoch) {
+    const std::string etag = expected_etag.value_or("");
     VaultDefinition vault;
     R2StorageKey storage;
-    auto upload = maintain_database(epoch, [&](auto&, auto&) {
-        const std::optional<R2StorageKey> r2 = app.api_keys->r2();
-        if (!r2) throw ApplicationError(
-            ErrorCode::invalid_argument, "The active vault has no R2 key");
-        vault = app.current_vault_.get();
-        storage = *r2;
-        return R2DatabaseUpload(vault.data, vault.source, app.active_password);
-    }, false);
-    return upload.upload(
-        storage, [this] { return app.stopping_flag.load(); },
-        expected_etag.value_or(""), [this, &vault](std::string_view etag) {
-            const std::lock_guard lifecycle(app.lifecycle_mutex);
-            const auto configured = std::find_if(
-                app.command.vaults.begin(), app.command.vaults.end(),
-                [&](const VaultDefinition& candidate) {
-                    return candidate.source == vault.source;
-                });
-            // The user may switch, edit, or delete a vault during the upload.
-            if (configured == app.command.vaults.end()) return;
-            std::optional<SessionLease> main;
-            if (app.current_vault_.get().source == vault.source) {
-                if (!app.store->is_main()) return;
-            } else {
-                try { main.emplace(SessionLease::acquire_main(vault.data)); }
-                catch (const SessionBusyError&) {
-                    log_warn("Another main process owns the uploaded vault; its ETag was not saved");
-                    return;
-                }
-            }
-            save_r2_vault_etag(vault.source, etag);
-            configured->r2_etag = std::string(etag);
-            if (app.current_vault_.get().source == vault.source) {
-                app.command.vault = *configured;
-                publish_vault(*configured);
-            }
-        });
+    auto upload = prepare_upload(epoch, vault, storage);
+    return finish_upload(std::move(upload), vault, storage, etag,
+        [this] { return app.stopping_flag.load(); });
+}
+
+// The bridge worker makes the copy. The transfer can take minutes, so it runs
+// as a background job and the worker can serve other requests meanwhile.
+std::shared_ptr<OperationReply>
+Application::Impl::VaultMaintenance::start_database_upload(
+    std::optional<std::string> expected_etag,
+    std::uint64_t epoch) {
+    const std::string etag = expected_etag.value_or("");
+    VaultDefinition vault;
+    R2StorageKey storage;
+    auto upload = std::make_shared<R2DatabaseUpload>(prepare_upload(epoch, vault, storage));
+    auto reply = std::make_shared<OperationReply>();
+    const auto transfer = [this, reply, upload, vault, storage, etag](std::atomic_bool& cancel) {
+        try {
+            const auto transferred = finish_upload(std::move(*upload), vault, storage, etag,
+                [this, &cancel] { return cancel.load() || app.stopping_flag.load(); });
+            reply->complete({{"byte_count", transferred.byte_count},
+                {"context_epoch", app.published_epoch.load()}});
+        } catch (const R2HttpStatusError& error) {
+            reply->fail(ErrorCode::invalid_argument, error.what());
+        } catch (const std::exception&) {
+            // R2DatabaseUpload logs the reason; the reply stays generic.
+            reply->fail(app.state.load() == ApplicationState::running
+                    ? ErrorCode::internal_error : ErrorCode::application_unavailable,
+                "The request could not be completed.");
+        }
+    };
+    bool launched = false;
+    try {
+        launched = app.background_jobs.launch(transfer);
+    } catch (...) {
+        app.vault_upload_running = false;
+        throw;
+    }
+    if (!launched) {
+        app.vault_upload_running = false;
+        reply->fail(ErrorCode::application_unavailable, "The request could not be completed.");
+    }
+    return reply;
 }
 
 R2UploadCheck

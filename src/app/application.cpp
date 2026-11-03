@@ -1761,6 +1761,13 @@ R2DatabaseTransfer Application::upload_database(
         std::move(expected_etag), epoch);
 }
 
+std::shared_ptr<OperationReply> Application::start_database_upload(
+    std::optional<std::string> expected_etag,
+    std::uint64_t epoch) {
+    return impl_->vault_maintenance.start_database_upload(
+        std::move(expected_etag), epoch);
+}
+
 R2DatabaseTransfer Application::download_database(std::uint64_t epoch) {
     return impl_->vault_maintenance.download_database(epoch);
 }

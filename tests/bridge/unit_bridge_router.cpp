@@ -1,4 +1,5 @@
 #include "app/application.h"
+#include "app/current_vault.h"
 #include "bridge/bridge_router.h"
 #include "providers/api_key_store.h"
 #include "storage/note_storage.h"
@@ -1996,6 +1997,59 @@ TEST_F(BridgeRouterTest, MaintenanceUploadConflictExplainsHowToRetry) {
     ASSERT_EQ(server.requests().size(), 2U);
     EXPECT_NE(server.requests()[1].find("If-Match: \"previous-etag\""),
         std::string::npos);
+}
+
+TEST_F(BridgeRouterTest, UploadTransferLetsOtherRequestsRunAndRefusesMaintenance) {
+    bootstrap_epoch();
+    MockHttpServer server({
+        etag_response("uploader-etag"),
+        etag_response("uploaded-etag"),
+        etag_response("vault-etag"),
+    });
+    server.pause_before_response(2);
+    (void)application_->save_r2_storage({
+        .display_name = "Backups",
+        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/bucket/",
+        .access_key_id = "access",
+        .secret_key = std::string("secret"),
+    }, epoch_);
+    server.start();
+    const auto upload_id = next_id_++;
+    router_->handle_request(connection_, request_json(
+        connection_, upload_id, epoch_, "vault.upload", {{"etag", nullptr}}).dump());
+    // The worker makes the copy; the paused database transfer runs in the background.
+    router_->run_tasks();
+    ASSERT_TRUE(server.wait_for_requests(2, 2s));
+    epoch_ = application_->context_epoch();
+
+    EXPECT_TRUE(call("app.bootstrap")["ok"]);
+    EXPECT_TRUE(call("notes.list")["ok"]);
+    const auto download = call("vault.download");
+    ASSERT_FALSE(download["ok"]);
+    EXPECT_EQ(download["error"]["code"], "invalid_argument");
+    EXPECT_EQ(download["error"]["message"],
+        "A vault upload is running. Try again when it finishes.");
+
+    server.resume_responses();
+    nlohmann::json uploaded;
+    for (const auto deadline = std::chrono::steady_clock::now() + 5s;
+         uploaded.empty() && std::chrono::steady_clock::now() < deadline;) {
+        const auto batch = wait_delivery(*router_, connection_);
+        if (!batch) continue;
+        ack_delivery(*router_, connection_, *batch);
+        uploaded = reply_with_id(*batch, upload_id);
+    }
+    server.join();
+    ASSERT_FALSE(uploaded.empty());
+    ASSERT_TRUE(uploaded["ok"]);
+    EXPECT_GT(uploaded["result"]["byte_count"].get<std::uint64_t>(), 0U);
+    EXPECT_EQ(uploaded["result"]["context_epoch"], epoch_);
+    EXPECT_EQ(uploaded["context_epoch"], epoch_);
+    EXPECT_EQ(application_->current_vault().get().r2_etag, "uploaded-etag");
+    for (const auto& entry : std::filesystem::directory_iterator(
+             application_->current_vault().get().data.parent_path())) {
+        EXPECT_EQ(entry.path().filename().string().find(".upload."), std::string::npos);
+    }
 }
 
 TEST_F(BridgeRouterTest, ExportReplacesExistingDestinationContents) {

@@ -690,12 +690,15 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     void start_background(
         std::string connection_id,
         std::uint64_t id,
-        std::shared_ptr<app::OperationReply> reply, bool summary = false) {
+        std::shared_ptr<app::OperationReply> reply, bool summary = false,
+        std::optional<std::uint64_t> context_epoch = {}) {
         {
             std::lock_guard lock(mutex);
             auto connection = find_connection(connection_id);
             if (connection && connection->outstanding.contains(id)) {
-                connection->outstanding.at(id).operation = reply;
+                auto& outstanding = connection->outstanding.at(id);
+                outstanding.operation = reply;
+                if (context_epoch) outstanding.context_epoch = *context_epoch;
             } else {
                 reply->abandon();
                 application.release_request_resources(connection_id, id);
@@ -1014,16 +1017,14 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 if (!params.contains("etag")) {
                     throw std::invalid_argument("The request was not valid.");
                 }
-                const auto transferred = run_maintenance(
+                auto upload = run_maintenance(
                     [&] {
-                        return application.upload_database(
+                        return application.start_database_upload(
                             nullable_string(params, "etag"), epoch);
                     });
-                result = {
-                    {"byte_count", transferred.byte_count},
-                    {"context_epoch", epoch},
-                };
-                break;
+                // The copy changed the context; the reply belongs to the new one.
+                start_background(connection_id, id, std::move(upload), false, epoch);
+                return;
             }
             case Method::vault_upload_check: {
                 require_only_keys(params, {});
@@ -1947,6 +1948,11 @@ void BridgeRouter::expire_timeouts() {
         for (auto& [connection, request_id] : expired) {
             const auto found = connection->outstanding.find(request_id);
             if (found == connection->outstanding.end()) continue;
+            log_warn("Request timed out: method="
+                + std::string(method_name(found->second.method))
+                + " connection_id=" + connection->id
+                + " request_id=" + std::to_string(request_id)
+                + " context_epoch=" + std::to_string(found->second.context_epoch));
             if (found->second.reply) found->second.reply->abandon();
             if (found->second.operation) found->second.operation->abandon();
             const auto epoch = found->second.context_epoch;

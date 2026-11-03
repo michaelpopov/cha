@@ -51,8 +51,9 @@ const notesHighlightMeta = 'notesHighlight';
 const notesCommentMeta = 'notesComment';
 const notesDeleteCommentMeta = 'notesDeleteComment';
 const noteCommentColor = '#b3d9ff';
-// Overlapping imports share the four picture download slots.
-let noteImportTail = Promise.resolve();
+// Overlapping imports share four picture download slots. Background page and
+// file imports have their own slots, so a paste or drop does not wait for them.
+const noteImportTails = { editor: Promise.resolve(), background: Promise.resolve() };
 
 // Tiptap 3.30.3 types `capturedTransaction` as private. The capture path
 // still reads and writes that runtime field.
@@ -484,9 +485,10 @@ async function importNoteSlice(
   const available = () => !editor.isDestroyed && editor.isEditable && stillCurrent();
   if (!available()) return false;
   const tracked = trackSelectionBookmark(editor, at);
-  const previousImport = noteImportTail;
+  const queue = place === 'end' || place === 'replace' ? 'background' : 'editor';
+  const previousImport = noteImportTails[queue];
   let finishImport!: () => void;
-  noteImportTail = new Promise<void>((resolve) => { finishImport = resolve; });
+  noteImportTails[queue] = new Promise<void>((resolve) => { finishImport = resolve; });
   try {
     await previousImport;
     if (!available()) return false;
@@ -522,77 +524,86 @@ async function importNoteSlice(
       });
       return Fragment.fromArray(nodes);
     };
-    let content = embed(slice.content);
-    if (place === 'replace' && !content.textBetween(0, content.size).trim() && !hasPicture(content)) {
-      throw new ChaError('invalid_argument', noteFileNoText);
-    }
-    if (!content.size) {
-      if (place === 'end') throw new Error('The page has no readable text.');
-      return false;
-    }
-    const build = () => {
-      const tr = editor.state.tr;
-      if (place === 'end' || place === 'replace') {
-        const doc = editor.state.doc;
-        const empty = doc.childCount === 1 && doc.firstChild?.type.name === 'paragraph'
-          && doc.firstChild.content.size === 0;
-        tr.replaceWith(empty || place === 'replace' ? 0 : doc.content.size, doc.content.size, content);
-      } else {
-        const open = Slice.maxOpen(content);
-        const selection = tracked.current().resolve(editor.state.doc);
-        tr.setSelection(selection).replaceSelection(
-          new Slice(content, Math.min(slice.openStart, open.openStart), Math.min(slice.openEnd, open.openEnd)),
-        );
-        if (place === 'paste') {
-          let end: number | undefined;
-          tr.mapping.maps.at(-1)?.forEach((_from, _to, _newFrom, newTo) => { end ??= newTo; });
-          if (end !== undefined) {
-            const live = editor.state.selection;
-            const movedOutside = live.from < selection.from || live.to > selection.to;
-            // Keep a selection moved elsewhere; otherwise leave a caret after
-            // the slice, including a final picture that the next paste must keep.
-            tr.setSelection(movedOutside
-              ? live.map(tr.doc, tr.mapping)
-              : new GapCursor(tr.doc.resolve(end)).getBookmark().resolve(tr.doc));
-            tr.setMeta(notesPasteSelectionMeta, { from: selection, to: end });
-          }
-        }
-      }
-      closeHistory(tr);
-      tr.setMeta(notesIsolatedMeta, true);
-      tr.setMeta('preventAutolink', true);
-      tr.setMeta(notesPictureFallbackMeta, withoutLastPicture);
-      tr.setStoredMarks([]);
-      // Paste rules and scrolling expect ProseMirror's paste and drop metadata.
-      if (place === 'paste' || place === 'drop') tr.setMeta('uiEvent', place).scrollIntoView();
-      return tr;
-    };
-    // The size gate can retry after paste rules, without changing existing pictures.
-    const withoutLastPicture = (): Transaction | null => {
-      let removed = false;
-      const omitLastPicture = (fragment: Fragment): Fragment => {
-        const nodes = [...fragment.content];
-        for (let index = nodes.length - 1; index >= 0 && !removed; index -= 1) {
-          const node = nodes[index];
-          if (node.type.name === 'image') {
-            nodes.splice(index, 1);
-            removed = true;
-          } else if (!node.isLeaf) {
-            nodes[index] = node.copy(omitLastPicture(node.content));
-          }
-        }
-        return Fragment.fromArray(nodes);
-      };
-      content = omitLastPicture(content);
-      return removed && content.size ? build() : null;
-    };
-    const before = editor.state.doc;
-    editor.view.dispatch(build());
-    return !editor.state.doc.eq(before) || (place === 'replace' && editor.state.doc.content.eq(content));
+    return insertNoteSlice(editor, slice, embed(slice.content), place, () => tracked.current());
   } finally {
     tracked.stop();
     finishImport();
   }
+}
+
+function insertNoteSlice(
+  editor: Editor,
+  slice: Slice,
+  content: Fragment,
+  place: 'end' | 'replace' | 'paste' | 'drop',
+  at: () => SelectionBookmark = () => editor.state.selection.getBookmark(),
+): boolean {
+  if (place === 'replace' && !content.textBetween(0, content.size).trim() && !hasPicture(content)) {
+    throw new ChaError('invalid_argument', noteFileNoText);
+  }
+  if (!content.size) {
+    if (place === 'end') throw new Error('The page has no readable text.');
+    return false;
+  }
+  const build = () => {
+    const tr = editor.state.tr;
+    if (place === 'end' || place === 'replace') {
+      const doc = editor.state.doc;
+      const empty = doc.childCount === 1 && doc.firstChild?.type.name === 'paragraph'
+        && doc.firstChild.content.size === 0;
+      tr.replaceWith(empty || place === 'replace' ? 0 : doc.content.size, doc.content.size, content);
+    } else {
+      const open = Slice.maxOpen(content);
+      const selection = at().resolve(editor.state.doc);
+      tr.setSelection(selection).replaceSelection(
+        new Slice(content, Math.min(slice.openStart, open.openStart), Math.min(slice.openEnd, open.openEnd)),
+      );
+      if (place === 'paste') {
+        let end: number | undefined;
+        tr.mapping.maps.at(-1)?.forEach((_from, _to, _newFrom, newTo) => { end ??= newTo; });
+        if (end !== undefined) {
+          const live = editor.state.selection;
+          const movedOutside = live.from < selection.from || live.to > selection.to;
+          // Keep a selection moved elsewhere; otherwise leave a caret after
+          // the slice, including a final picture that the next paste must keep.
+          tr.setSelection(movedOutside
+            ? live.map(tr.doc, tr.mapping)
+            : new GapCursor(tr.doc.resolve(end)).getBookmark().resolve(tr.doc));
+          tr.setMeta(notesPasteSelectionMeta, { from: selection, to: end });
+        }
+      }
+    }
+    closeHistory(tr);
+    tr.setMeta(notesIsolatedMeta, true);
+    tr.setMeta('preventAutolink', true);
+    tr.setMeta(notesPictureFallbackMeta, withoutLastPicture);
+    tr.setStoredMarks([]);
+    // Paste rules and scrolling expect ProseMirror's paste and drop metadata.
+    if (place === 'paste' || place === 'drop') tr.setMeta('uiEvent', place).scrollIntoView();
+    return tr;
+  };
+  // The size gate can retry after paste rules, without changing existing pictures.
+  const withoutLastPicture = (): Transaction | null => {
+    let removed = false;
+    const omitLastPicture = (fragment: Fragment): Fragment => {
+      const nodes = [...fragment.content];
+      for (let index = nodes.length - 1; index >= 0 && !removed; index -= 1) {
+        const node = nodes[index];
+        if (node.type.name === 'image') {
+          nodes.splice(index, 1);
+          removed = true;
+        } else if (!node.isLeaf) {
+          nodes[index] = node.copy(omitLastPicture(node.content));
+        }
+      }
+      return Fragment.fromArray(nodes);
+    };
+    content = omitLastPicture(content);
+    return removed && content.size ? build() : null;
+  };
+  const before = editor.state.doc;
+  editor.view.dispatch(build());
+  return !editor.state.doc.eq(before) || (place === 'replace' && editor.state.doc.content.eq(content));
 }
 
 export async function appendNoteHtml(
@@ -606,6 +617,13 @@ export async function appendNoteHtml(
   body.innerHTML = html;
   const content = PmDOMParser.fromSchema(editor.schema).parse(body).content;
   return importNoteSlice(editor, new Slice(content, 0, 0), readPicture, stillCurrent, 'end', byteLimit);
+}
+
+// Pictures are already embedded by the background import. Merge into the latest
+// document synchronously, so the save cannot race navigation or user edits.
+export function insertImportedDocument(editor: Editor, document: Record<string, unknown>, replace: boolean): boolean {
+  const content = editor.schema.nodeFromJSON(document).content;
+  return insertNoteSlice(editor, new Slice(content, 0, 0), content, replace ? 'replace' : 'end');
 }
 
 export const noteFileNoText = 'The file has no readable text.';
