@@ -32,6 +32,33 @@ describe('native CHA client', () => {
     create.mockReturnValueOnce({ ...saved, kind: 'file' });
     await expect(client.createFileReference(request)).rejects.toBeInstanceOf(ChaProtocolError);
   });
+  it('offers folder transfer only with the native functions and shows their messages', async () => {
+    const host = window as Window & {
+      __CHA_NATIVE_EXPORT_NOTE_FOLDER__?: (suggestedName: string, folderId: number) => Promise<void>;
+      __CHA_NATIVE_IMPORT_NOTE_FOLDER__?: (parentId: number | null) => Promise<void>;
+    };
+    const client = createNativeChaClient(createFakeNativeBridge({}));
+    expect(client.noteFolderTransfer).toBeUndefined();
+    const exportFolder = vi.fn(async () => undefined);
+    const importFolder = vi.fn()
+      .mockRejectedValueOnce(new Error('This file is not a CHA folder export.'))
+      .mockRejectedValueOnce(new Error('unavailable'));
+    host.__CHA_NATIVE_EXPORT_NOTE_FOLDER__ = exportFolder;
+    host.__CHA_NATIVE_IMPORT_NOTE_FOLDER__ = importFolder;
+    try {
+      await client.noteFolderTransfer!.exportFolder('Study.sqlite', 1);
+      expect(exportFolder).toHaveBeenCalledExactlyOnceWith('Study.sqlite', 1);
+      await expect(client.noteFolderTransfer!.importFolder(null))
+        .rejects.toEqual(new ChaError('invalid_argument', 'This file is not a CHA folder export.'));
+      await expect(client.noteFolderTransfer!.importFolder(2))
+        .rejects.toEqual(new ChaError('invalid_argument', 'The file operation is not available. Try again.'));
+      expect(importFolder).toHaveBeenLastCalledWith(2);
+    } finally {
+      delete host.__CHA_NATIVE_EXPORT_NOTE_FOLDER__;
+      delete host.__CHA_NATIVE_IMPORT_NOTE_FOLDER__;
+    }
+  });
+
   it('reads event snapshots without changing their order or contents', async () => {
     const items = [{ id: 2, recorded_at: 0, severity: 'info', message: '日本語' },
       { id: 1, recorded_at: 10, severity: 'success', message: 'Done' }];
@@ -190,7 +217,7 @@ describe('native CHA client', () => {
   });
 
   it('accepts annotation metadata and the creation flag', async () => {
-    const annotation = { id: 9, parent_id: null, kind: 'annotation', name: 'ANNOTATIONS', read_only: true, is_summary: false, summary_linked: false, has_compressed: false };
+    const annotation = { id: 9, parent_id: null, kind: 'annotation', name: 'ANNOTATIONS', read_only: true, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false };
     const client = createNativeChaClient(createFakeNativeBridge({
       'notes.list': () => ({ items: [annotation] }),
       'notes.save': () => ({ annotation_created: true }),
@@ -567,8 +594,8 @@ describe('native CHA client', () => {
 });
 
 describe('notes native client', () => {
-  const folder = { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Plan' };
-  const note = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: 1, kind: 'note', name: 'Draft' };
+  const folder = { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Plan' };
+  const note = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 1, kind: 'note', name: 'Draft' };
   const document = { type: 'doc', content: [{ type: 'paragraph' }] };
 
   it('reads compressed text with the original note document', async () => {
@@ -739,8 +766,8 @@ describe('notes native client', () => {
     const write = vi.fn(() => ({ id: 12 }));
     const client = clientFor({ 'notes.importBook': write });
     expect(await client.importEpub(epubFile(), [
-      { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Research' },
-      { id: 2, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: 1, kind: 'folder', name: 'Book' },
+      { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Research' },
+      { id: 2, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 1, kind: 'folder', name: 'Book' },
     ], 1)).toBe(12);
     expect(write).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ parent_id: 1, name: 'Book 1' }));
   });
@@ -988,7 +1015,7 @@ describe('native folder store contract', () => {
 });
 
 it('validates the summary contract and sends only run-owned commit fields', async () => {
-  const item = { id: 4, parent_id: 2, kind: 'note', name: 'Summary', has_compressed: false,
+  const item = { id: 4, parent_id: 2, kind: 'note', name: 'Summary', has_compressed: false, has_audio: false,
     read_only: true, is_summary: true, summary_linked: true };
   const generated = { run_id: 1, parent_id: 2, target_note_id: null, markdown: 'Summary' };
   const generate = vi.fn(() => generated);

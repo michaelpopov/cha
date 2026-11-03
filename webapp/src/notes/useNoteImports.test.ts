@@ -11,7 +11,7 @@ import { useNoteLeave } from './useNoteLeave';
 import type { NoteSaveHandle } from './useNoteSave';
 
 const note: NoteItem = { id: 9, parent_id: null, kind: 'note', name: 'New note', read_only: false,
-  is_summary: false, summary_linked: false, has_compressed: false };
+  is_summary: false, summary_linked: false, has_compressed: false, has_audio: false };
 const page: NotePage = { url: 'https://youtu.be/video', title: 'Video', markdown: 'Transcript' };
 
 function pending<T>() {

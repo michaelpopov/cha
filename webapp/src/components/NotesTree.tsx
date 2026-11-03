@@ -144,6 +144,7 @@ export function NotesTree({
   const [listError, setListError] = useState<string | null>(null);
   const [listing, setListing] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [folderTransfer, setFolderTransfer] = useState<'export' | 'import' | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [compressionSubmitting, setCompressionSubmitting] = useState(false);
@@ -196,7 +197,7 @@ export function NotesTree({
   for (const key of index.children.vault) index.rows[key].parentKey = 'vault';
   dataRef.current = index;
   const signature = vaultName + '\n' + items.map((item) => (
-    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}:${item.is_summary}:${item.summary_linked}:${JSON.stringify(item.forum_id)}`
+    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}:${item.has_audio}:${item.read_only}:${item.is_summary}:${item.summary_linked}:${JSON.stringify(item.forum_id)}`
   )).join('\n');
 
   const tree = useTree<NoteTreeRow>({
@@ -371,9 +372,11 @@ export function NotesTree({
       flushBackgroundRefresh();
     };
     window.addEventListener('cha-note-compression-changed', changed);
+    window.addEventListener('cha-note-audio-changed', requestBackgroundRefresh);
     return () => {
       pendingRefresh.current = false;
       window.removeEventListener('cha-note-compression-changed', changed);
+      window.removeEventListener('cha-note-audio-changed', requestBackgroundRefresh);
     };
   }, [client]);
 
@@ -516,6 +519,45 @@ export function NotesTree({
       busy.current = false;
       flushBackgroundRefresh();
       if (alive.current) setImporting(false);
+    }
+  }
+
+  async function exportFolder() {
+    const source = takeMenuSource();
+    const transfer = clientRef.current.noteFolderTransfer;
+    if (!source || !transfer || !canMutateNow()) return;
+    busy.current = true;
+    setFolderTransfer('export');
+    setError(null);
+    try {
+      // Characters that file systems reject become hyphens.
+      await transfer.exportFolder(`${source.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')}.sqlite`, source.id);
+    } catch (failure: unknown) {
+      if (alive.current) setError(publicErrorMessage(failure, 'The folder could not be exported.'));
+    } finally {
+      busy.current = false;
+      flushBackgroundRefresh();
+      if (alive.current) setFolderTransfer(null);
+    }
+  }
+
+  async function importFolder(parentId: number | null) {
+    closeMenu(true);
+    const transfer = clientRef.current.noteFolderTransfer;
+    if (!transfer || !canMutateNow()) return;
+    busy.current = true;
+    setFolderTransfer('import');
+    setError(null);
+    try {
+      await transfer.importFolder(parentId);
+      if (!alive.current) return;
+      await refreshListing(parentId, true);
+    } catch (failure: unknown) {
+      if (alive.current) setError(publicErrorMessage(failure, 'The folder could not be imported.'));
+    } finally {
+      busy.current = false;
+      flushBackgroundRefresh();
+      if (alive.current) setFolderTransfer(null);
     }
   }
 
@@ -845,6 +887,7 @@ export function NotesTree({
       )}
       {!loaded && !error && !listError && <p role="status">Loading notes…</p>}
       {importing && <p role="status">Importing EPUB…</p>}
+      {folderTransfer && <p role="status">{folderTransfer === 'export' ? 'Exporting folder…' : 'Importing folder…'}</p>}
       <input
         accept=".epub"
         aria-label="EPUB file"
@@ -875,7 +918,7 @@ export function NotesTree({
               key={item.getId()}
               {...props}
               aria-current={current ? 'true' : undefined}
-              className={`cha-notes-row${current ? ' is-current' : ''}${props.className ? ` ${props.className}` : ''}`}
+              className={`cha-notes-row${current ? ' is-current' : ''}${data.audioReady ? ' has-audio' : ''}${props.className ? ` ${props.className}` : ''}`}
               style={{ paddingLeft: `${0.45 + level * 0.85}rem` }}
             >
               <span aria-hidden="true" className="cha-notes-twist">
@@ -932,6 +975,14 @@ export function NotesTree({
               closeMenu(true);
               epubInput.current?.click();
             }} role="menuitem" type="button">Import EPUB…</button>
+          )}
+          {client.noteFolderTransfer && !menuManaged && !menuIsNote && (
+            <button disabled={menuFolderBusy} onClick={() => void importFolder(menuParentId)}
+              role="menuitem" type="button">Import folder…</button>
+          )}
+          {client.noteFolderTransfer && !menuIsNote && menu.sourceId !== 'vault' && (
+            <button disabled={menuFolderBusy && !menuManaged} onClick={() => void exportFolder()}
+              role="menuitem" type="button">Export folder…</button>
           )}
           {!menuManaged && menu.sourceId !== 'vault' && (
             <>

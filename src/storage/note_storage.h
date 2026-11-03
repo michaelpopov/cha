@@ -56,6 +56,7 @@ struct NoteItem {
     NoteItemKind kind{NoteItemKind::folder};
     std::string name;
     bool has_compressed{};
+    bool has_audio{};
     bool read_only{};
     std::optional<NoteStoreSummary> store;
     std::optional<std::string> forum_id;
@@ -180,5 +181,17 @@ nlohmann::json note_audio_info(storage::SqliteDatabase& database, std::int64_t i
 NoteAudioClip note_audio_clip(storage::SqliteDatabase& database, std::int64_t id, std::int64_t ordinal);
 void note_save_audio(storage::SqliteDatabase& database, std::int64_t id,
     const std::vector<std::filesystem::path>& clips);
+
+// Writes the folder, its sub-folders, notes, audio clips and ready stores to a
+// new SQLite file without a password. Annotations, summary and forum links are
+// left out. key_names maps an API key ID to its name; a store whose key is
+// missing is left out with a warning.
+void note_export_folder(storage::SqliteDatabase& database, std::int64_t folder_id,
+    const std::filesystem::path& destination, const std::map<std::string, std::string>& key_names);
+// Copies an exported folder into parent_id and returns the new folder ID.
+// key_ids maps a unique API key name to its ID in this vault.
+[[nodiscard]] std::int64_t note_import_folder(storage::SqliteDatabase& database,
+    std::optional<std::int64_t> parent_id, const std::filesystem::path& source,
+    const std::map<std::string, std::string>& key_ids);
 
 } // namespace cha

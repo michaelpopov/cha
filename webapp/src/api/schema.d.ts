@@ -821,6 +821,7 @@ export interface components {
             is_summary: boolean;
             summary_linked: boolean;
             has_compressed: boolean;
+            has_audio: boolean;
             read_only: boolean;
             name: string;
         };

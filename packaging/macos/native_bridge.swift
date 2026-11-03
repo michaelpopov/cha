@@ -100,6 +100,33 @@ func nativeBootstrapJavaScript(connectionId: String, view: NativeViewState = Nat
         }));
       });
     };
+    window.__CHA_NATIVE_EXPORT_NOTE_FOLDER__ = function(suggestedName, folderId) {
+      return new Promise(function(resolve, reject) {
+        var id = String(++window.__CHA_NATIVE_SAVE_SEQ__);
+        window.__CHA_NATIVE_SAVE_PENDING__[id] = {resolve: resolve, reject: reject};
+        window.__CHA_NATIVE_POST__(JSON.stringify({
+          native_action: "export_note_folder",
+          id: id,
+          connection_id: window.__CHA_NATIVE_CONNECTION_ID__,
+          context_epoch: window.__CHA_NATIVE_CONTEXT_EPOCH__,
+          suggested_name: suggestedName,
+          folder_id: folderId
+        }));
+      });
+    };
+    window.__CHA_NATIVE_IMPORT_NOTE_FOLDER__ = function(parentId) {
+      return new Promise(function(resolve, reject) {
+        var id = String(++window.__CHA_NATIVE_SAVE_SEQ__);
+        window.__CHA_NATIVE_SAVE_PENDING__[id] = {resolve: resolve, reject: reject};
+        window.__CHA_NATIVE_POST__(JSON.stringify({
+          native_action: "import_note_folder",
+          id: id,
+          connection_id: window.__CHA_NATIVE_CONNECTION_ID__,
+          context_epoch: window.__CHA_NATIVE_CONTEXT_EPOCH__,
+          parent_id: parentId
+        }));
+      });
+    };
     window.__CHA_NATIVE_SAVE_DONE__ = function(id, ok, message) {
       var pending = window.__CHA_NATIVE_SAVE_PENDING__[id];
       if (!pending) return;
@@ -185,6 +212,8 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
         isChaAssetOrigin(origin)
     }
     var saveSession: ((String, String, UInt64, String, String, String) -> Void)?
+    var exportNoteFolder: ((String, String, UInt64, String, Int64) -> Void)?
+    var importNoteFolder: ((String, String, UInt64, Int64) -> Void)?
     var onCloseReply: ((String, Int, String) -> Void)?
     var onPageClose: (() -> Void)?
     var currentView: (() -> NativeViewState)?
@@ -365,7 +394,8 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
                 onPageClose?()
                 return
             }
-            guard action == "save_session",
+            guard action == "save_session" || action == "export_note_folder"
+                    || action == "import_note_folder",
                   let id = object["id"] as? String,
                   let originatingConnection = object["connection_id"] as? String,
                   originatingConnection == connectionId,
@@ -373,8 +403,30 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
                   CFGetTypeID(epochNumber) != CFBooleanGetTypeID(),
                   epochNumber.doubleValue >= 1,
                   epochNumber.doubleValue <= 9_007_199_254_740_991,
-                  let contextEpoch = UInt64(exactly: epochNumber.doubleValue),
-                  let forumId = object["forum_id"] as? String,
+                  let contextEpoch = UInt64(exactly: epochNumber.doubleValue) else {
+                return
+            }
+            if action == "export_note_folder" {
+                guard let folderId = nativeAttemptId(object["folder_id"]) else { return }
+                exportNoteFolder?(
+                    originatingConnection,
+                    id,
+                    contextEpoch,
+                    object["suggested_name"] as? String ?? "folder.sqlite",
+                    Int64(folderId))
+                return
+            }
+            if action == "import_note_folder" {
+                // A null parent is the vault root.
+                var parentId = 0
+                if !(object["parent_id"] is NSNull) {
+                    guard let parent = nativeAttemptId(object["parent_id"]) else { return }
+                    parentId = parent
+                }
+                importNoteFolder?(originatingConnection, id, contextEpoch, Int64(parentId))
+                return
+            }
+            guard let forumId = object["forum_id"] as? String,
                   let sessionId = object["session_id"] as? String else {
                 return
             }

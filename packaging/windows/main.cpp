@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -408,6 +409,26 @@ std::wstring native_bootstrap_script(std::string_view connection_id, const nlohm
         L"context_epoch:window.__CHA_NATIVE_CONTEXT_EPOCH__,"
         L"suggested_name:suggestedName,"
         L"forum_id:forumId,session_id:sessionId"
+        L"}));});};"
+        L"window.__CHA_NATIVE_EXPORT_NOTE_FOLDER__=function(suggestedName,folderId){"
+        L"return new Promise(function(resolve,reject){"
+        L"var id=String(++window.__CHA_NATIVE_SAVE_SEQ__);"
+        L"window.__CHA_NATIVE_SAVE_PENDING__[id]={resolve:resolve,reject:reject};"
+        L"window.__CHA_NATIVE_POST__(JSON.stringify({"
+        L"native_action:'export_note_folder',id:id,"
+        L"connection_id:window.__CHA_NATIVE_CONNECTION_ID__,"
+        L"context_epoch:window.__CHA_NATIVE_CONTEXT_EPOCH__,"
+        L"suggested_name:suggestedName,folder_id:folderId"
+        L"}));});};"
+        L"window.__CHA_NATIVE_IMPORT_NOTE_FOLDER__=function(parentId){"
+        L"return new Promise(function(resolve,reject){"
+        L"var id=String(++window.__CHA_NATIVE_SAVE_SEQ__);"
+        L"window.__CHA_NATIVE_SAVE_PENDING__[id]={resolve:resolve,reject:reject};"
+        L"window.__CHA_NATIVE_POST__(JSON.stringify({"
+        L"native_action:'import_note_folder',id:id,"
+        L"connection_id:window.__CHA_NATIVE_CONNECTION_ID__,"
+        L"context_epoch:window.__CHA_NATIVE_CONTEXT_EPOCH__,"
+        L"parent_id:parentId"
         L"}));});};"
         L"window.__CHA_NATIVE_SAVE_DONE__=function(id,ok,message){"
         L"var pending=window.__CHA_NATIVE_SAVE_PENDING__[id];"
@@ -1379,29 +1400,70 @@ private:
             if (result == "ready") begin_shutdown();
             return true;
         }
-        if (!action->is_string() || action->get<std::string>() != "save_session") {
+        if (!action->is_string()
+            || (*action != "save_session" && *action != "export_note_folder"
+                && *action != "import_note_folder")) {
             return true;
         }
+        const std::string kind = action->get<std::string>();
         const auto string_field = [&](const char* name)
             -> std::optional<std::string> {
             const auto value = json.find(name);
             if (value == json.end() || !value->is_string()) return std::nullopt;
             return value->get<std::string>();
         };
+        const auto item_id = [&](const char* name) -> std::optional<int64_t> {
+            const auto value = json.find(name);
+            if (value == json.end() || !value->is_number_unsigned()
+                || value->get<uint64_t>() == 0
+                || value->get<uint64_t>() > 9007199254740991ULL) {
+                return std::nullopt;
+            }
+            return static_cast<int64_t>(value->get<uint64_t>());
+        };
         const auto id_value = string_field("id");
         const auto connection_value = string_field("connection_id");
-        const auto suggested_value = string_field("suggested_name");
-        const auto forum_value = string_field("forum_id");
-        const auto session_value = string_field("session_id");
-        if (!id_value || !connection_value || !suggested_value
-            || !forum_value || !session_value) {
+        if (!id_value || !connection_value) {
             return true;
         }
         const std::string& id = *id_value;
         const std::string& originating_connection = *connection_value;
-        const std::string& suggested = *suggested_value;
-        const std::string& forum_id = *forum_value;
-        const std::string& session_id = *session_value;
+        // Each action runs its runtime call on the chosen path in save_thread_.
+        std::function<int32_t(ChaRuntime*, uint64_t, const char*, char**)> operation;
+        std::string suggested;
+        if (kind == "save_session") {
+            const auto suggested_value = string_field("suggested_name");
+            const auto forum_value = string_field("forum_id");
+            const auto session_value = string_field("session_id");
+            if (!suggested_value || !forum_value || !session_value
+                || forum_value->empty() || session_value->empty()) {
+                return true;
+            }
+            suggested = *suggested_value;
+            operation = [forum_id = *forum_value, session_id = *session_value](
+                ChaRuntime* runtime, uint64_t epoch, const char* path, char** error) {
+                return cha_runtime_export_session(
+                    runtime, epoch, forum_id.c_str(), session_id.c_str(), path, error);
+            };
+        } else if (kind == "export_note_folder") {
+            const auto suggested_value = string_field("suggested_name");
+            const auto folder_id = item_id("folder_id");
+            if (!suggested_value || !folder_id) return true;
+            suggested = *suggested_value;
+            operation = [folder_id = *folder_id](
+                ChaRuntime* runtime, uint64_t epoch, const char* path, char** error) {
+                return cha_runtime_export_note_folder(runtime, epoch, folder_id, path, error);
+            };
+        } else {
+            // A null parent is the vault root.
+            const auto parent = json.find("parent_id");
+            const auto parent_id = item_id("parent_id");
+            if (parent == json.end() || (!parent->is_null() && !parent_id)) return true;
+            operation = [parent_id = parent_id.value_or(0)](
+                ChaRuntime* runtime, uint64_t epoch, const char* path, char** error) {
+                return cha_runtime_import_note_folder(runtime, epoch, parent_id, path, error);
+            };
+        }
         if (originating_connection != connection_id_
             || !json.contains("context_epoch")
             || !json["context_epoch"].is_number_unsigned()) {
@@ -1409,7 +1471,7 @@ private:
         }
         const uint64_t request_epoch = json["context_epoch"].get<uint64_t>();
         uint64_t epoch = 0;
-        if (forum_id.empty() || session_id.empty() || runtime_ == nullptr
+        if (runtime_ == nullptr
             || request_epoch == 0
             || request_epoch > 9007199254740991ULL
             || cha_runtime_context_epoch(runtime_, &epoch) == 0
@@ -1425,9 +1487,9 @@ private:
                 "Another save is in progress.");
             return true;
         }
-        ComPtr<IFileSaveDialog> dialog;
+        ComPtr<IFileDialog> dialog;
         HRESULT result = ::CoCreateInstance(
-            CLSID_FileSaveDialog,
+            kind == "import_note_folder" ? CLSID_FileOpenDialog : CLSID_FileSaveDialog,
             nullptr,
             CLSCTX_INPROC_SERVER,
             IID_PPV_ARGS(&dialog));
@@ -1435,9 +1497,15 @@ private:
             save_dialog_ = dialog;
             DWORD options = 0;
             dialog->GetOptions(&options);
-            dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
-            const std::wstring name = wide_from_utf8(suggested);
-            dialog->SetFileName(name.c_str());
+            if (kind == "import_note_folder") {
+                const COMDLG_FILTERSPEC types[] = {{L"SQLite files", L"*.sqlite"}};
+                dialog->SetFileTypes(1, types);
+                dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
+            } else {
+                dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
+                const std::wstring name = wide_from_utf8(suggested);
+                dialog->SetFileName(name.c_str());
+            }
             result = dialog->Show(window_);
             save_dialog_.Reset();
         }
@@ -1473,8 +1541,7 @@ private:
                 runtime,
                 window,
                 epoch,
-                forum_id,
-                session_id,
+                operation,
                 path,
                 originating_connection,
                 id,
@@ -1484,13 +1551,7 @@ private:
                 completed->id = id;
                 completed->context_epoch = request_epoch;
                 char* error = nullptr;
-                const int32_t status = cha_runtime_export_session(
-                    runtime,
-                    epoch,
-                    forum_id.c_str(),
-                    session_id.c_str(),
-                    path.c_str(),
-                    &error);
+                const int32_t status = operation(runtime, epoch, path.c_str(), &error);
                 completed->ok = status == 1;
                 completed->message = error ? error : "";
                 cha_string_free(error);
@@ -1926,7 +1987,7 @@ private:
     ComPtr<ICoreWebView2Environment> environment_;
     ComPtr<ICoreWebView2Controller> controller_;
     ComPtr<ICoreWebView2> webview_;
-    ComPtr<IFileSaveDialog> save_dialog_;
+    ComPtr<IFileDialog> save_dialog_;
     std::thread save_thread_;
     std::thread shutdown_thread_;
     bool smoke_test_{};

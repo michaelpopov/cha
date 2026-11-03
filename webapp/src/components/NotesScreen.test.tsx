@@ -24,8 +24,8 @@ import { fixtureClient } from '../test/fixtures';
 import { NotesScreen } from './NotesScreen';
 import { TransliterationProvider } from './TransliterationMode';
 
-const plan: NoteItem = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
-const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
+const plan: NoteItem = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Plan' };
+const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Essay' };
 
 function documentWith(text: string) {
   return {
@@ -776,13 +776,13 @@ describe('Notes screen', () => {
     [[], 'Title', 'Title'],
     [[], 'New note', 'New note'],
   ] as const)('chooses an available title among siblings %j', async (names, title, expected) => {
-    const folder: NoteItem = { id: 3, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Folder' };
+    const folder: NoteItem = { id: 3, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Folder' };
     const original = { ...plan, parent_id: folder.id, name: 'New note' };
     const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...original, id, name }));
     render(<Harness
       items={[folder, original,
-        { id: 20, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Title' },
-        ...names.map((name, index) => ({ id: 30 + index, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: folder.id, kind: 'note' as const, name })),
+        { id: 20, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Title' },
+        ...names.map((name, index) => ({ id: 30 + index, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: folder.id, kind: 'note' as const, name })),
       ]}
       getNote={async (id) => ({ id, document: documentWith('') })}
       readNotePage={async () => ({ url: 'https://example.org/', title, markdown: 'Article' })}

@@ -13,6 +13,7 @@ import {
   type NotePage,
   type TextFileRequest,
   type NotesClient,
+  type NoteFolderTransfer,
   type NoteCompressionStartResult,
   type NoteCompressionStatus,
   type NoteAudioInfo,
@@ -199,7 +200,8 @@ function isFolderStoreOperation(value: unknown): value is FolderStoreOperation {
 
 function isNoteItem(value: unknown): value is NoteItem {
   return isRecord(value)
-    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'read_only', 'is_summary', 'summary_linked',
+    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'has_audio', 'read_only', 'is_summary',
+      'summary_linked',
       ...(Object.hasOwn(value, 'store') ? ['store'] : []),
       ...(Object.hasOwn(value, 'forum_id') ? ['forum_id'] : [])])
     && (!Object.hasOwn(value, 'store') || (value.kind === 'folder' && isFolderStoreSummary(value.store)))
@@ -209,6 +211,7 @@ function isNoteItem(value: unknown): value is NoteItem {
     && (value.kind === 'folder' || value.kind === 'note' || value.kind === 'annotation')
     && typeof value.name === 'string' && value.name.length > 0
     && typeof value.has_compressed === 'boolean'
+    && typeof value.has_audio === 'boolean'
     && typeof value.read_only === 'boolean'
     && typeof value.is_summary === 'boolean' && typeof value.summary_linked === 'boolean'
     && (!value.is_summary || value.kind === 'note') && (!value.summary_linked || value.is_summary);
@@ -272,6 +275,25 @@ function isAudioAccepted(value: unknown): value is NoteAudioAccepted {
 function isAudioBackgroundStatus(value: unknown): value is NoteAudioBackgroundStatus {
   return isRecord(value) && (value.pending === false ? Object.keys(value).length === 1
     : value.pending === true && Object.keys(value).length === 2 && isNoteId(value.attempt_id));
+}
+
+// The native host adds these functions. Without them, folder transfer is not available.
+function nativeNoteFolderTransfer(): NoteFolderTransfer | undefined {
+  const host = window as Window & {
+    __CHA_NATIVE_EXPORT_NOTE_FOLDER__?: (suggestedName: string, folderId: number) => Promise<void>;
+    __CHA_NATIVE_IMPORT_NOTE_FOLDER__?: (parentId: number | null) => Promise<void>;
+  };
+  const exportFolder = host.__CHA_NATIVE_EXPORT_NOTE_FOLDER__;
+  const importFolder = host.__CHA_NATIVE_IMPORT_NOTE_FOLDER__;
+  if (!exportFolder || !importFolder) return undefined;
+  // The host rejects with the runtime's message, or with "unavailable" when the vault changed.
+  const shown = (failure: unknown) => new ChaError('invalid_argument',
+    failure instanceof Error && failure.message !== 'unavailable'
+      ? failure.message : 'The file operation is not available. Try again.');
+  return {
+    exportFolder: (suggestedName, folderId) => exportFolder(suggestedName, folderId).catch((failure) => { throw shown(failure); }),
+    importFolder: (parentId) => importFolder(parentId).catch((failure) => { throw shown(failure); }),
+  };
 }
 
 export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesClient {
@@ -374,6 +396,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
   };
   return {
     get noteAudio() { return platform === 'macos' || platform === 'windows' ? noteAudio : undefined; },
+    get noteFolderTransfer() { return nativeNoteFolderTransfer(); },
     getBootstrap: async () => {
       platform = (await connectNativeBridge(bridge)).platform;
       const result = await bridge.invoke('app.bootstrap', {});

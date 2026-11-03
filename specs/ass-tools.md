@@ -193,7 +193,7 @@ Assistant, Guest, and Entrance.
 
 Every folder, note, and annotation, keyed by note ID. Each item is the
 existing `NoteItem` JSON (`id`, `parent_id`, `kind`, `name`, `has_compressed`,
-`read_only`, `is_summary`, `summary_linked`, `forum_id`, and the folder's
+`has_audio`, `read_only`, `is_summary`, `summary_linked`, `forum_id`, and the folder's
 `store` summary), plus:
 
 - `ref_id` from `note_item_ref_id`.

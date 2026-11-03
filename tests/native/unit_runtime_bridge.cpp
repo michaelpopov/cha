@@ -538,6 +538,38 @@ TEST_F(NativeRuntimeTest, ExportSessionWritesMarkdownThroughSaveFile) {
     EXPECT_NE(body.find("CHA session: Exported"), std::string::npos);
 }
 
+TEST_F(NativeRuntimeTest, NoteFolderExportAndImportReportSpecificErrors) {
+    auto bootstrap = call("app.bootstrap");
+    ASSERT_TRUE(bootstrap["ok"]);
+    epoch_ = bootstrap["result"]["context_epoch"].get<std::uint64_t>();
+    auto folder = call("notes.create", {{"parent_id", nullptr}, {"kind", "folder"}, {"name", "Stoics"}});
+    ASSERT_TRUE(folder["ok"]) << folder.dump();
+    const auto folder_id = folder["result"]["id"].get<std::int64_t>();
+    ASSERT_TRUE(call("notes.create", {{"parent_id", folder_id}, {"kind", "note"}, {"name", "Seneca"}})["ok"]);
+    auto target = call("notes.create", {{"parent_id", nullptr}, {"kind", "folder"}, {"name", "Target"}});
+    ASSERT_TRUE(target["ok"]);
+    const auto target_id = target["result"]["id"].get<std::int64_t>();
+    const auto file = cha::utf8_path(workspace_.root() / "Stoics.sqlite");
+    char* error = nullptr;
+    EXPECT_EQ(cha_runtime_export_note_folder(runtime_, epoch_, folder_id, file.c_str(), &error), 1);
+    cha_string_free(error);
+    error = nullptr;
+    EXPECT_EQ(cha_runtime_import_note_folder(runtime_, epoch_, 0, file.c_str(), &error), 0);
+    ASSERT_NE(error, nullptr);
+    EXPECT_STREQ(error, "An item with this name already exists here.");
+    cha_string_free(error);
+    error = nullptr;
+    EXPECT_EQ(cha_runtime_import_note_folder(runtime_, epoch_, target_id, file.c_str(), &error), 1);
+    cha_string_free(error);
+    const auto listed = call("notes.list");
+    ASSERT_TRUE(listed["ok"]) << listed.dump();
+    int copies = 0;
+    for (const auto& item : listed["result"]["items"]) {
+        if (item["name"] == "Stoics" && item["parent_id"] == target_id) ++copies;
+    }
+    EXPECT_EQ(copies, 1);
+}
+
 TEST_F(NativeRuntimeTest, CloseAndReopenConnectionDoesNotCrossResolve) {
     auto bootstrap = call("app.bootstrap");
     ASSERT_TRUE(bootstrap["ok"]);

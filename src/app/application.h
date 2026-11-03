@@ -550,6 +550,10 @@ public:
     [[nodiscard]] std::int64_t import_note_book(
         std::optional<std::int64_t> parent_id,
         std::string name, const std::vector<NoteImportEntry>& notes, std::uint64_t epoch);
+    void export_note_folder(
+        std::int64_t folder_id, const std::filesystem::path& destination, std::uint64_t epoch);
+    [[nodiscard]] std::int64_t import_note_folder(
+        std::optional<std::int64_t> parent_id, const std::filesystem::path& source, std::uint64_t epoch);
     [[nodiscard]] NoteItem create_note_item(
         std::optional<std::int64_t> parent_id,
         NoteItemKind kind,

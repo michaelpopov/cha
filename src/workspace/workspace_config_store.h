@@ -370,6 +370,10 @@ public:
     [[nodiscard]] std::int64_t import_note_book(
         std::optional<std::int64_t> parent_id,
         std::string_view name, const std::vector<NoteImportEntry>& notes);
+    void export_note_folder(std::int64_t folder_id, const std::filesystem::path& destination,
+        const std::map<std::string, std::string>& key_names);
+    [[nodiscard]] std::int64_t import_note_folder(std::optional<std::int64_t> parent_id,
+        const std::filesystem::path& source, const std::map<std::string, std::string>& key_ids);
     [[nodiscard]] NoteItem create_note_item(
         std::optional<std::int64_t> parent_id,
         NoteItemKind kind,

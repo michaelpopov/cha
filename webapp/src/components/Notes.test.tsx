@@ -11,8 +11,8 @@ import {
 import { bootstrapFixture, fixtureClient, forumDetailFixture, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
 
-const plan: NoteItem = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Plan' };
-const study: NoteItem = { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'folder', name: 'Study' };
+const plan: NoteItem = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Plan' };
+const study: NoteItem = { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Study' };
 
 function noteDocument(text: string) {
   return {
@@ -911,7 +911,7 @@ describe('Notes in the application', () => {
   });
 
   it.each(['immediate', 'delayed'])('focuses the new note editor with %s loading', async (loading) => {
-    const created: NoteItem = { id: 9, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'New note' };
+    const created: NoteItem = { id: 9, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'New note' };
     let items = [plan];
     let finishOpen!: () => void;
     const newDocument = { type: 'doc', content: [{ type: 'paragraph' }] };
@@ -964,7 +964,7 @@ describe('Notes in the application', () => {
   });
 
   it('saves before another note and before a Chat session', async () => {
-    const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
+    const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Essay' };
     const saveNote = vi.fn(async (_id: number, _document: Record<string, unknown>) => undefined);
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan, essay],
@@ -1521,7 +1521,7 @@ describe('Notes in the application', () => {
   });
 
   it('keeps an unrelated note editable and blocks navigation during deletion', async () => {
-    const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, parent_id: null, kind: 'note', name: 'Essay' };
+    const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Essay' };
     let finishDelete: () => void = () => {};
     const getNote = vi.fn(async (id: number) => ({
       id,

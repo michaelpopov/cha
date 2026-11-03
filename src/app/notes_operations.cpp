@@ -78,6 +78,16 @@ std::int64_t Application::import_note_book(
     return impl_->notes->import_note_book(parent_id, std::move(name), notes, epoch);
 }
 
+void Application::export_note_folder(
+    std::int64_t folder_id, const std::filesystem::path& destination, std::uint64_t epoch) {
+    impl_->notes->export_note_folder(folder_id, destination, epoch);
+}
+
+std::int64_t Application::import_note_folder(
+    std::optional<std::int64_t> parent_id, const std::filesystem::path& source, std::uint64_t epoch) {
+    return impl_->notes->import_note_folder(parent_id, source, epoch);
+}
+
 void Application::delete_note_item(std::int64_t id, std::uint64_t epoch) {
     impl_->notes->delete_note_item(id, epoch);
 }

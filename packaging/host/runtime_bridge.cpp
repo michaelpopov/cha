@@ -421,6 +421,64 @@ int32_t cha_runtime_export_session(
     }
 }
 
+// The folder export and import messages are specific, so the user sees them.
+int32_t cha_runtime_export_note_folder(
+    ChaRuntime* runtime,
+    uint64_t context_epoch,
+    int64_t folder_id,
+    const char* destination_utf8,
+    char** error) {
+    clear_error(error);
+    if (!runtime || !runtime->native_application
+        || !destination_utf8 || destination_utf8[0] == '\0') {
+        set_string(error, "That file operation is not available.");
+        return 0;
+    }
+    try {
+        runtime->native_application->export_note_folder(
+            folder_id, cha::path_from_utf8(destination_utf8), context_epoch);
+        return 1;
+    } catch (const cha::app::ApplicationError& denied) {
+        set_string(error, denied.what());
+        return 0;
+    } catch (const cha::WorkspaceRestartRequiredError& fatal) {
+        set_string(error, fatal.what());
+        return -1;
+    } catch (...) {
+        set_current_error(error);
+        return -1;
+    }
+}
+
+int32_t cha_runtime_import_note_folder(
+    ChaRuntime* runtime,
+    uint64_t context_epoch,
+    int64_t parent_id,
+    const char* source_utf8,
+    char** error) {
+    clear_error(error);
+    if (!runtime || !runtime->native_application
+        || !source_utf8 || source_utf8[0] == '\0') {
+        set_string(error, "That file operation is not available.");
+        return 0;
+    }
+    try {
+        (void)runtime->native_application->import_note_folder(
+            parent_id == 0 ? std::nullopt : std::optional<std::int64_t>(parent_id),
+            cha::path_from_utf8(source_utf8), context_epoch);
+        return 1;
+    } catch (const cha::app::ApplicationError& denied) {
+        set_string(error, denied.what());
+        return 0;
+    } catch (const cha::WorkspaceRestartRequiredError& fatal) {
+        set_string(error, fatal.what());
+        return -1;
+    } catch (...) {
+        set_current_error(error);
+        return -1;
+    }
+}
+
 int32_t cha_runtime_save_file(
     ChaRuntime* runtime,
     uint64_t context_epoch,

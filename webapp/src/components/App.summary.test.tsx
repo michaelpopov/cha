@@ -17,7 +17,7 @@ function deferred<T>() {
 const documentFor = (text: string) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
 const generated: SessionSummaryGenerated = { run_id: 1, target_note_id: 4, parent_id: 10, markdown: '# Short summary\n\nOverview.\n\n**Keywords:** topic\n\n# Long summary\n\nNew summary' };
 const summary: NoteItem = { id: 4, parent_id: null, name: 'Plan', kind: 'note', is_summary: true,
-  summary_linked: true, has_compressed: false, read_only: false };
+  summary_linked: true, has_compressed: false, has_audio: false, read_only: false };
 function editor(): Editor {
   const element = document.querySelector('.ProseMirror') as (HTMLElement & { chaEditor: Editor });
   if (!element?.chaEditor) throw new Error('Editor not ready');

@@ -1868,7 +1868,7 @@ components:
     NoteItem:
       type: object
       additionalProperties: false
-      required: [id, parent_id, kind, name, has_compressed, read_only, is_summary, summary_linked]
+      required: [id, parent_id, kind, name, has_compressed, has_audio, read_only, is_summary, summary_linked]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
         parent_id:
@@ -1882,6 +1882,8 @@ components:
         is_summary: {type: boolean}
         summary_linked: {type: boolean}
         has_compressed:
+          type: boolean
+        has_audio:
           type: boolean
         read_only:
           type: boolean

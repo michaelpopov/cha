@@ -2718,6 +2718,18 @@ std::int64_t WorkspaceConfigStore::import_note_book(
     return note_import_book(*impl_->database, parent_id, name, notes);
 }
 
+void WorkspaceConfigStore::export_note_folder(std::int64_t folder_id,
+    const std::filesystem::path& destination, const std::map<std::string, std::string>& key_names) {
+    const std::lock_guard lock(impl_->mutex);
+    note_export_folder(*impl_->database, folder_id, destination, key_names);
+}
+
+std::int64_t WorkspaceConfigStore::import_note_folder(std::optional<std::int64_t> parent_id,
+    const std::filesystem::path& source, const std::map<std::string, std::string>& key_ids) {
+    const std::lock_guard lock(impl_->mutex);
+    return note_import_folder(*impl_->database, parent_id, source, key_ids);
+}
+
 NoteContent WorkspaceConfigStore::get_note(std::int64_t id) const {
     const std::lock_guard lock(impl_->mutex);
     return note_get(*impl_->database, id);

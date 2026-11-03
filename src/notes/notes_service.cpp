@@ -160,6 +160,44 @@ std::int64_t NotesService::import_note_book(
     }
 }
 
+void NotesService::export_note_folder(std::int64_t folder_id, const std::filesystem::path& destination,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    if (impl_->folder_in_delete_subtree(folder_id)) {
+        throw ApplicationError(ErrorCode::invalid_argument, "This folder is being deleted.");
+    }
+    std::map<std::string, std::string> key_names;
+    for (const auto& key : impl_->api_keys->list()) key_names[key.id] = key.display_name;
+    try {
+        impl_->store->export_note_folder(folder_id, destination, key_names);
+    } catch (const NoteError& error) {
+        rethrow_note(error);
+    }
+}
+
+std::int64_t NotesService::import_note_folder(std::optional<std::int64_t> parent_id,
+    const std::filesystem::path& source, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    if (parent_id && impl_->folder_in_delete_subtree(*parent_id)) {
+        throw ApplicationError(ErrorCode::invalid_argument, "This folder is being deleted.");
+    }
+    // A name that more than one key uses cannot pick a key, so it is left out.
+    std::map<std::string, std::string> key_ids;
+    std::map<std::string, int> name_count;
+    for (const auto& key : impl_->api_keys->list()) {
+        key_ids[key.display_name] = key.id;
+        ++name_count[key.display_name];
+    }
+    std::erase_if(key_ids, [&](const auto& entry) { return name_count[entry.first] > 1; });
+    try {
+        return impl_->store->import_note_folder(parent_id, source, key_ids);
+    } catch (const NoteError& error) {
+        rethrow_note(error);
+    }
+}
+
 void NotesService::delete_note_item(std::int64_t id, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);

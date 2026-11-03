@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import UniformTypeIdentifiers
 import WebKit
 
 private let applicationName = "CHA"
@@ -420,6 +421,22 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                     forumId: forumId,
                     sessionId: sessionId)
             }
+            receiver.exportNoteFolder = {
+                [weak self] connectionId, id, contextEpoch, suggestedName, folderId in
+                self?.exportNativeNoteFolder(
+                    connectionId: connectionId,
+                    id: id,
+                    contextEpoch: contextEpoch,
+                    suggestedName: suggestedName,
+                    folderId: folderId)
+            }
+            receiver.importNoteFolder = { [weak self] connectionId, id, contextEpoch, parentId in
+                self?.importNativeNoteFolder(
+                    connectionId: connectionId,
+                    id: id,
+                    contextEpoch: contextEpoch,
+                    parentId: parentId)
+            }
             receiver.onCloseReply = { [weak self] connection, attempt, result in
                 self?.handleCloseReply(connection: connection, attempt: attempt, result: result)
             }
@@ -589,6 +606,60 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         forumId: String,
         sessionId: String
     ) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedName
+        runNativeFileOperation(
+            connectionId: connectionId, id: id, contextEpoch: contextEpoch, panel: panel
+        ) { runtime, epoch, path, error in
+            forumId.withCString { forum in
+                sessionId.withCString { session in
+                    cha_runtime_export_session(runtime, epoch, forum, session, path, error)
+                }
+            }
+        }
+    }
+
+    private func exportNativeNoteFolder(
+        connectionId: String,
+        id: String,
+        contextEpoch: UInt64,
+        suggestedName: String,
+        folderId: Int64
+    ) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedName
+        runNativeFileOperation(
+            connectionId: connectionId, id: id, contextEpoch: contextEpoch, panel: panel
+        ) { runtime, epoch, path, error in
+            cha_runtime_export_note_folder(runtime, epoch, folderId, path, error)
+        }
+    }
+
+    private func importNativeNoteFolder(
+        connectionId: String,
+        id: String,
+        contextEpoch: UInt64,
+        parentId: Int64
+    ) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "sqlite") ?? .data]
+        runNativeFileOperation(
+            connectionId: connectionId, id: id, contextEpoch: contextEpoch, panel: panel
+        ) { runtime, epoch, path, error in
+            cha_runtime_import_note_folder(runtime, epoch, parentId, path, error)
+        }
+    }
+
+    // Shows the panel, then runs the operation on the chosen path off the main thread.
+    private func runNativeFileOperation(
+        connectionId: String,
+        id: String,
+        contextEpoch: UInt64,
+        panel: NSSavePanel,
+        operation: @escaping (
+            OpaquePointer, UInt64, String, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
+        ) -> Int32
+    ) {
         guard !quitting, savePanel == nil, let runtime else {
             nativeBridge?.completeSave(
                 connectionId: connectionId,
@@ -607,9 +678,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 message: "unavailable")
             return
         }
-        let panel = NSSavePanel()
         savePanel = panel
-        panel.nameFieldStringValue = suggestedName
         panel.beginSheetModal(for: window) { [weak self] result in
             guard let self else { return }
             if self.savePanel === panel { self.savePanel = nil }
@@ -631,17 +700,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             DispatchQueue.global(qos: .userInitiated).async {
                 defer { operations.leave() }
                 var error: UnsafeMutablePointer<CChar>?
-                let status = forumId.withCString { forum in
-                    sessionId.withCString { session in
-                        cha_runtime_export_session(
-                            runtime,
-                            contextEpoch,
-                            forum,
-                            session,
-                            path,
-                            &error)
-                    }
-                }
+                let status = operation(runtime, contextEpoch, path, &error)
                 let message = error.map { String(cString: $0) } ?? ""
                 cha_string_free(error)
                 DispatchQueue.main.async {

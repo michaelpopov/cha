@@ -73,6 +73,21 @@ int32_t cha_runtime_export_session(
     const char* session_id,
     const char* destination_utf8,
     char** error);
+// Export a notes folder with its sub-folders, notes and audio clips to a new
+// SQLite file.
+int32_t cha_runtime_export_note_folder(
+    ChaRuntime* runtime,
+    uint64_t context_epoch,
+    int64_t folder_id,
+    const char* destination_utf8,
+    char** error);
+// Import a folder export into parent_id. A parent_id of 0 is the vault root.
+int32_t cha_runtime_import_note_folder(
+    ChaRuntime* runtime,
+    uint64_t context_epoch,
+    int64_t parent_id,
+    const char* source_utf8,
+    char** error);
 
 void cha_runtime_set_delivery_callback(
     ChaRuntime* runtime,

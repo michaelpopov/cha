@@ -3,6 +3,7 @@
 #include "storage/folder_store_storage.h"
 #include "storage/session_label.h"
 #include "util/logging.h"
+#include "util/path_name.h"
 #include "providers/web_search.h"
 #include "providers/maintenance.h"
 
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 
@@ -104,6 +106,7 @@ NoteItem read_item(storage::SqliteStatement& statement) {
     if (!statement.is_null(6)) item.forum_id = statement.text(6);
     item.is_summary = statement.integer(7) != 0;
     item.summary_linked = statement.integer(8) != 0;
+    item.has_audio = statement.integer(9) != 0;
     if (item.id <= 0 || item.id > note_id_limit) {
         throw std::runtime_error(
             "Note item " + std::to_string(item.id) + " has an invalid id");
@@ -181,7 +184,8 @@ std::optional<NoteItem> find_item(
     std::int64_t id) {
     storage::SqliteStatement statement = database.prepare(
         "SELECT n.id, n.parent_id, n.kind, n.name, n.compressed_text IS NOT NULL, n.read_only, n.forum_id, "
-        "s.note_id IS NOT NULL, s.session_key IS NOT NULL "
+        "s.note_id IS NOT NULL, s.session_key IS NOT NULL, "
+        "EXISTS (SELECT 1 FROM note_audio a WHERE a.note_id=n.id) "
         "FROM note_items n LEFT JOIN note_summaries s ON s.note_id=n.id WHERE n.id = ?1");
     statement.bind(1, id);
     if (!statement.step()) return std::nullopt;
@@ -658,6 +662,7 @@ void to_json(nlohmann::json& json, const NoteItem& item) {
         {"kind", kind_name(item.kind)},
         {"name", item.name},
         {"has_compressed", item.has_compressed},
+        {"has_audio", item.has_audio},
         {"read_only", item.read_only},
         {"is_summary", item.is_summary},
         {"summary_linked", item.summary_linked},
@@ -1106,7 +1111,8 @@ std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {
         storage::SqliteTransaction transaction(database);
         storage::SqliteStatement statement = database.prepare(
             "SELECT n.id, n.parent_id, n.kind, n.name, n.compressed_text IS NOT NULL, n.read_only, n.forum_id, "
-            "s.note_id IS NOT NULL, s.session_key IS NOT NULL "
+            "s.note_id IS NOT NULL, s.session_key IS NOT NULL, "
+            "EXISTS (SELECT 1 FROM note_audio a WHERE a.note_id=n.id) "
             "FROM note_items n LEFT JOIN note_summaries s ON s.note_id=n.id ORDER BY n.id");
         std::vector<NoteItem> items;
         while (statement.step()) items.push_back(read_item(statement));
@@ -1709,6 +1715,221 @@ bool note_audio_retire(storage::SqliteDatabase& database, std::int64_t attempt_i
     database.prepare("DELETE FROM note_audio_attempts WHERE id=?", attempt_id).run();
     transaction.commit();
     return true;
+}
+
+namespace {
+
+// "CHAF" marks a CHA folder export, so a vault database is not taken for one.
+constexpr std::int64_t folder_export_application_id = 0x43484146;
+constexpr std::string_view folder_export_schema = R"sql(
+CREATE TABLE note_items (
+    id INTEGER PRIMARY KEY,
+    parent_id INTEGER,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    content_json BLOB,
+    compressed_text TEXT,
+    read_only INTEGER NOT NULL,
+    scroll_top INTEGER NOT NULL
+) STRICT;
+CREATE TABLE note_audio (
+    note_id INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL,
+    mime_type TEXT NOT NULL,
+    audio BLOB NOT NULL,
+    PRIMARY KEY (note_id, ordinal)
+) STRICT;
+CREATE TABLE folder_stores (
+    folder_id INTEGER PRIMARY KEY,
+    service TEXT NOT NULL,
+    api_key_name TEXT NOT NULL,
+    remote_store_id TEXT NOT NULL,
+    note_count INTEGER NOT NULL,
+    uploaded_at INTEGER NOT NULL
+) STRICT;
+CREATE TABLE folder_store_files (
+    folder_id INTEGER NOT NULL,
+    file_id TEXT NOT NULL,
+    PRIMARY KEY (folder_id, file_id)
+) STRICT;
+)sql";
+constexpr std::string_view export_failed_message = "The folder could not be exported.";
+constexpr std::string_view import_failed_message = "The folder could not be imported.";
+constexpr std::string_view not_export_message = "This file is not a CHA folder export.";
+
+} // namespace
+
+void note_export_folder(storage::SqliteDatabase& database, std::int64_t folder_id,
+    const std::filesystem::path& destination, const std::map<std::string, std::string>& key_names) {
+    // Build beside the destination and replace it only after a complete write.
+    auto partial = destination;
+    partial += ".partial";
+    std::error_code ignored;
+    if (std::filesystem::equivalent(destination, path_from_utf8(database.path()), ignored)) {
+        fail(NoteFailure::invalid, "Choose a file other than the vault database.");
+    }
+    try {
+        std::filesystem::remove(partial);
+        storage::SqliteTransaction reading(database, storage::SqliteTransaction::Mode::read);
+        auto root = database.prepare("SELECT kind FROM note_items WHERE id = ?1", folder_id);
+        if (!root.step()) fail(NoteFailure::not_found, missing_item_message);
+        if (root.text(0) != "folder") fail(NoteFailure::invalid, "Only a folder can be exported.");
+        {
+            storage::SqliteDatabase file(partial, storage::SqliteDatabase::Mode::read_write_create);
+            file.execute("PRAGMA application_id = " + std::to_string(folder_export_application_id));
+            file.execute(folder_export_schema);
+            storage::SqliteTransaction writing(file);
+            auto items = database.prepare(
+                "WITH RECURSIVE tree(id) AS (SELECT ?1 "
+                "UNION ALL SELECT n.id FROM note_items n JOIN tree t ON n.parent_id = t.id "
+                "WHERE n.kind <> 'annotation') "
+                "SELECT n.id, IIF(n.id = ?1, NULL, n.parent_id), n.kind, n.name, n.content_json, "
+                "n.compressed_text, n.read_only, n.scroll_top FROM note_items n JOIN tree USING (id)",
+                folder_id);
+            while (items.step()) {
+                auto insert = file.prepare("INSERT INTO note_items VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)");
+                insert.bind(1, items.integer(0));
+                if (items.is_null(1)) insert.bind_null(2);
+                else insert.bind(2, items.integer(1));
+                insert.bind(3, items.text(2));
+                insert.bind(4, items.text(3));
+                if (items.is_null(4)) insert.bind_null(5);
+                else insert.bind_blob(5, items.blob(4));
+                if (items.is_null(5)) insert.bind_null(6);
+                else insert.bind(6, items.text(5));
+                insert.bind(7, items.integer(6));
+                insert.bind(8, items.integer(7));
+                insert.run();
+                auto clips = database.prepare(
+                    "SELECT ordinal, mime_type, audio FROM note_audio WHERE note_id = ?1", items.integer(0));
+                while (clips.step()) {
+                    auto clip = file.prepare("INSERT INTO note_audio VALUES (?1, ?2, ?3, ?4)",
+                        items.integer(0), clips.integer(0), clips.text(1));
+                    clip.bind_blob(4, clips.blob(2));
+                    clip.run();
+                }
+            }
+            for (const auto& store : folder_store_records_in_subtree(database, folder_id)) {
+                if (store.state != FolderStoreState::ready) continue;
+                const auto key = key_names.find(store.api_key_id);
+                if (key == key_names.end()) {
+                    log_warn("Folder export left out the store of “" + store.folder_name
+                        + "” because its API key " + store.api_key_id + " is missing.");
+                    continue;
+                }
+                file.prepare("INSERT INTO folder_stores VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    store.folder_id, folder_store_service_name(store.service), key->second,
+                    *store.remote_store_id, store.note_count, *store.uploaded_at).run();
+                for (const auto& file_id : store.file_ids) {
+                    file.prepare("INSERT INTO folder_store_files VALUES (?1, ?2)", store.folder_id, file_id).run();
+                }
+            }
+            writing.commit();
+        }
+        reading.commit();
+        std::filesystem::rename(partial, destination);
+    } catch (const NoteError&) {
+        std::filesystem::remove(partial, ignored);
+        throw;
+    } catch (const std::runtime_error& error) {
+        std::filesystem::remove(partial, ignored);
+        throw sql_failure(error, NoteFailure::saving, export_failed_message);
+    }
+}
+
+std::int64_t note_import_folder(storage::SqliteDatabase& database,
+    std::optional<std::int64_t> parent_id, const std::filesystem::path& source,
+    const std::map<std::string, std::string>& key_ids) {
+    std::unique_ptr<storage::SqliteDatabase> opened;
+    try {
+        opened = std::make_unique<storage::SqliteDatabase>(source, storage::SqliteDatabase::Mode::read_only);
+        if (opened->pragma_integer("application_id") != folder_export_application_id) opened.reset();
+    } catch (const std::runtime_error&) {
+        opened.reset();
+    }
+    if (!opened) fail(NoteFailure::invalid, not_export_message);
+    auto& file = *opened;
+    try {
+        storage::SqliteTransaction reading(file, storage::SqliteTransaction::Mode::read);
+        storage::SqliteTransaction writing(database);
+        if (parent_id) require_folder(database, *parent_id);
+        auto roots = file.prepare("SELECT id, kind, name FROM note_items WHERE parent_id IS NULL");
+        if (!roots.step() || roots.text(1) != "folder") fail(NoteFailure::invalid, not_export_message);
+        const auto root_id = roots.integer(0);
+        const auto root_name = roots.text(2);
+        if (roots.step()) fail(NoteFailure::invalid, not_export_message);
+        require_name(root_name);
+        if (name_taken(database, parent_id, root_name, 0)) fail(NoteFailure::invalid, duplicate_name_message);
+
+        // Parents come before children, so each parent already has its new ID.
+        std::map<std::int64_t, std::int64_t> new_ids;
+        std::vector<std::int64_t> folders;
+        const auto copy_item = [&](storage::SqliteStatement& row, std::optional<std::int64_t> new_parent) {
+            const auto kind = row.text(1);
+            if (kind != "folder" && kind != "note") fail(NoteFailure::invalid, not_export_message);
+            require_name(row.text(2));
+            auto insert = database.prepare(
+                "INSERT INTO note_items (parent_id, kind, name, content_json, compressed_text, read_only, scroll_top) "
+                "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)");
+            insert.bind(1, new_parent);
+            insert.bind(2, kind);
+            insert.bind(3, row.text(2));
+            if (row.is_null(3)) insert.bind_null(4);
+            else insert.bind_blob(4, row.blob(3));
+            if (row.is_null(4)) insert.bind_null(5);
+            else insert.bind(5, row.text(4));
+            insert.bind(6, row.integer(5));
+            insert.bind(7, row.integer(6));
+            insert.run();
+            const auto id = database.last_insert_rowid();
+            new_ids[row.integer(0)] = id;
+            if (kind == "folder") folders.push_back(row.integer(0));
+            auto clips = file.prepare("SELECT ordinal, mime_type, audio FROM note_audio WHERE note_id = ?1", row.integer(0));
+            while (clips.step()) {
+                auto clip = database.prepare("INSERT INTO note_audio (note_id, ordinal, mime_type, audio) VALUES (?1, ?2, ?3, ?4)",
+                    id, clips.integer(0), clips.text(1));
+                clip.bind_blob(4, clips.blob(2));
+                clip.run();
+            }
+        };
+        constexpr std::string_view columns =
+            "SELECT id, kind, name, content_json, compressed_text, read_only, scroll_top FROM note_items ";
+        auto root = file.prepare(std::string(columns) + "WHERE id = ?1", root_id);
+        (void)root.step();
+        copy_item(root, parent_id);
+        for (std::size_t i = 0; i < folders.size(); ++i) {
+            auto children = file.prepare(std::string(columns) + "WHERE parent_id = ?1 ORDER BY id", folders[i]);
+            while (children.step()) copy_item(children, new_ids.at(folders[i]));
+        }
+        for (const auto folder : folders) rebuild_folder_annotations(database, new_ids.at(folder), true);
+
+        auto stores = file.prepare(
+            "SELECT folder_id, service, api_key_name, remote_store_id, note_count, uploaded_at FROM folder_stores");
+        while (stores.step()) {
+            const auto folder = new_ids.find(stores.integer(0));
+            if (folder == new_ids.end()) fail(NoteFailure::invalid, not_export_message);
+            const auto key = key_ids.find(stores.text(2));
+            if (key == key_ids.end()) {
+                fail(NoteFailure::invalid,
+                    "The import needs exactly one API key named “" + stores.text(2) + "” in this vault.");
+            }
+            database.prepare(
+                "INSERT INTO folder_stores (folder_id, service, api_key_id, remote_store_id, state, note_count, uploaded_at) "
+                "VALUES (?1, ?2, ?3, ?4, 'ready', ?5, ?6)",
+                folder->second, stores.text(1), key->second, stores.text(3), stores.integer(4), stores.integer(5)).run();
+            const auto store_id = database.last_insert_rowid();
+            auto files = file.prepare("SELECT file_id FROM folder_store_files WHERE folder_id = ?1", stores.integer(0));
+            while (files.step()) {
+                database.prepare("INSERT INTO folder_store_files (store_id, file_id) VALUES (?1, ?2)",
+                    store_id, files.text(0)).run();
+            }
+        }
+        writing.commit();
+        reading.commit();
+        return new_ids.at(root_id);
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, NoteFailure::saving, import_failed_message);
+    }
 }
 
 } // namespace cha

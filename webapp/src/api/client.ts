@@ -156,12 +156,19 @@ export interface NoteAudioClient {
   release(resourceId: string): Promise<void>;
 }
 
+// Native Save and Open dialogs choose the file. Cancel resolves without a change.
+export interface NoteFolderTransfer {
+  exportFolder(suggestedName: string, folderId: number): Promise<void>;
+  importFolder(parentId: number | null): Promise<void>;
+}
+
 export interface NotesClient {
   generateSessionSummary(forumId: string, sessionId: string): Promise<SessionSummaryGenerated>;
   commitSessionSummary(runId: number, document: Record<string, unknown>): Promise<NoteItem>;
   abandonSessionSummary(runId: number, reason: 'conversion_failed' | 'commit_unknown'): Promise<void>;
   contextEpoch(): number;
   noteAudio?: NoteAudioClient;
+  noteFolderTransfer?: NoteFolderTransfer;
   importEpub: (file: File, items: readonly NoteItem[], parentId: number | null) => Promise<number>;
   readNotePage: (url: string, onProgress?: (stage: NotePageStage) => void) => Promise<NotePage>;
   readNoteTextFile: (path: string) => Promise<TextFileRequest | null>;

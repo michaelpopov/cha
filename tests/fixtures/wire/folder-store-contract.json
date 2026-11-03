@@ -7,6 +7,7 @@
     "is_summary": false,
     "summary_linked": false,
     "has_compressed": false,
+    "has_audio": false,
     "read_only": false,
     "store": {
       "service": "openai",

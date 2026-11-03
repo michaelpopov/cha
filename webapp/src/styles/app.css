@@ -2300,6 +2300,10 @@ select.cha-form-control {
   cursor: pointer;
 }
 
+.cha-notes-row.has-audio {
+  background: var(--note-comment-background);
+}
+
 .cha-notes-row.is-current {
   color: var(--accent-foreground);
   background: var(--accent);
