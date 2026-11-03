@@ -668,9 +668,6 @@ void to_json(nlohmann::json& json, const NoteItem& item) {
         {"summary_linked", item.summary_linked},
     };
     if (item.forum_id) json["forum_id"] = *item.forum_id;
-    if (item.kind == NoteItemKind::folder && item.store) {
-        json["store"] = {{"service", item.store->service}, {"id", item.store->id}, {"state", item.store->state}};
-    }
 }
 
 void to_json(nlohmann::json& json, const NoteContent& content) {
@@ -1458,10 +1455,6 @@ namespace {
 void delete_item(storage::SqliteDatabase& database, std::int64_t id) {
     const auto item = find_item(database, id);
     if (item && item->kind == NoteItemKind::annotation) fail(NoteFailure::invalid, not_note_message);
-    if (folder_store_owns_subtree(database, id)) {
-        fail(NoteFailure::invalid,
-            "This folder has a store. Remove the store before deleting it.");
-    }
     auto descendants = database.prepare(
         "WITH RECURSIVE tree(id) AS (SELECT id FROM note_items WHERE id=? "
         "UNION ALL SELECT n.id FROM note_items n JOIN tree t ON n.parent_id=t.id) "
@@ -1739,19 +1732,6 @@ CREATE TABLE note_audio (
     audio BLOB NOT NULL,
     PRIMARY KEY (note_id, ordinal)
 ) STRICT;
-CREATE TABLE folder_stores (
-    folder_id INTEGER PRIMARY KEY,
-    service TEXT NOT NULL,
-    api_key_name TEXT NOT NULL,
-    remote_store_id TEXT NOT NULL,
-    note_count INTEGER NOT NULL,
-    uploaded_at INTEGER NOT NULL
-) STRICT;
-CREATE TABLE folder_store_files (
-    folder_id INTEGER NOT NULL,
-    file_id TEXT NOT NULL,
-    PRIMARY KEY (folder_id, file_id)
-) STRICT;
 )sql";
 constexpr std::string_view export_failed_message = "The folder could not be exported.";
 constexpr std::string_view import_failed_message = "The folder could not be imported.";
@@ -1760,7 +1740,7 @@ constexpr std::string_view not_export_message = "This file is not a CHA folder e
 } // namespace
 
 void note_export_folder(storage::SqliteDatabase& database, std::int64_t folder_id,
-    const std::filesystem::path& destination, const std::map<std::string, std::string>& key_names) {
+    const std::filesystem::path& destination) {
     // Build beside the destination and replace it only after a complete write.
     auto partial = destination;
     partial += ".partial";
@@ -1809,21 +1789,6 @@ void note_export_folder(storage::SqliteDatabase& database, std::int64_t folder_i
                     clip.run();
                 }
             }
-            for (const auto& store : folder_store_records_in_subtree(database, folder_id)) {
-                if (store.state != FolderStoreState::ready) continue;
-                const auto key = key_names.find(store.api_key_id);
-                if (key == key_names.end()) {
-                    log_warn("Folder export left out the store of “" + store.folder_name
-                        + "” because its API key " + store.api_key_id + " is missing.");
-                    continue;
-                }
-                file.prepare("INSERT INTO folder_stores VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    store.folder_id, folder_store_service_name(store.service), key->second,
-                    *store.remote_store_id, store.note_count, *store.uploaded_at).run();
-                for (const auto& file_id : store.file_ids) {
-                    file.prepare("INSERT INTO folder_store_files VALUES (?1, ?2)", store.folder_id, file_id).run();
-                }
-            }
             writing.commit();
         }
         reading.commit();
@@ -1838,8 +1803,7 @@ void note_export_folder(storage::SqliteDatabase& database, std::int64_t folder_i
 }
 
 std::int64_t note_import_folder(storage::SqliteDatabase& database,
-    std::optional<std::int64_t> parent_id, const std::filesystem::path& source,
-    const std::map<std::string, std::string>& key_ids) {
+    std::optional<std::int64_t> parent_id, const std::filesystem::path& source) {
     std::unique_ptr<storage::SqliteDatabase> opened;
     try {
         opened = std::make_unique<storage::SqliteDatabase>(source, storage::SqliteDatabase::Mode::read_only);
@@ -1903,27 +1867,11 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
         }
         for (const auto folder : folders) rebuild_folder_annotations(database, new_ids.at(folder), true);
 
+        // Older exports can carry store links. CHA no longer links folders to stores.
         auto stores = file.prepare(
-            "SELECT folder_id, service, api_key_name, remote_store_id, note_count, uploaded_at FROM folder_stores");
-        while (stores.step()) {
-            const auto folder = new_ids.find(stores.integer(0));
-            if (folder == new_ids.end()) fail(NoteFailure::invalid, not_export_message);
-            const auto key = key_ids.find(stores.text(2));
-            if (key == key_ids.end()) {
-                fail(NoteFailure::invalid,
-                    "The import needs exactly one API key named “" + stores.text(2) + "” in this vault.");
-            }
-            database.prepare(
-                "INSERT INTO folder_stores (folder_id, service, api_key_id, remote_store_id, state, note_count, uploaded_at) "
-                "VALUES (?1, ?2, ?3, ?4, 'ready', ?5, ?6)",
-                folder->second, stores.text(1), key->second, stores.text(3), stores.integer(4), stores.integer(5)).run();
-            const auto store_id = database.last_insert_rowid();
-            auto files = file.prepare("SELECT file_id FROM folder_store_files WHERE folder_id = ?1", stores.integer(0));
-            while (files.step()) {
-                database.prepare("INSERT INTO folder_store_files (store_id, file_id) VALUES (?1, ?2)",
-                    store_id, files.text(0)).run();
-            }
-        }
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'folder_stores'");
+        if (stores.step() && file.prepare("SELECT 1 FROM folder_stores LIMIT 1").step())
+            log_warn("Folder import ignored the store data in “" + root_name + "”.");
         writing.commit();
         reading.commit();
         return new_ids.at(root_id);

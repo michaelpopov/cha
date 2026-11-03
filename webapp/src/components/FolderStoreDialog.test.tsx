@@ -3,18 +3,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChaError, type FolderStoreOperation, type NoteItem, type NotesClient } from '../api/client';
 import { fixtureClient } from '../test/fixtures';
 import { FolderStoreDialog } from './FolderStoreDialog';
-import type { DeleteNoteItem } from './NotesTree';
 
 type Operation = Extract<FolderStoreOperation, { present: true }>;
 const source: NoteItem = { id: 11, parent_id: null, kind: 'folder', name: 'Research', is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, read_only: false };
-const stored: NoteItem = { ...source, store: { service: 'openai', id: 77, state: 'incomplete' } };
 const choices = [
   { service: 'openai' as const, api_key_id: 'key1', api_key_name: 'Personal OpenAI' },
   { service: 'google' as const, api_key_id: 'key2', api_key_name: 'Personal Google' },
 ];
 const operation = (changes: Partial<Operation> = {}): Operation => ({
-  present: true, operation_id: 5, kind: 'upload', phase: 'uploading', completed: 1, total: 3,
-  error: '', result: '', terminal: false, known_cleanup_remains: false, folder_deleted: false, ...changes,
+  present: true, operation_id: 5, phase: 'uploading', completed: 1, total: 3,
+  error: '', result: '', terminal: false, known_cleanup_remains: false, ...changes,
 });
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -23,16 +21,9 @@ function deferred<T>() {
 }
 function setup(overrides: Partial<NotesClient> = {}, props: Partial<Parameters<typeof FolderStoreDialog>[0]> = {}) {
   const onClose = vi.fn();
-  const refresh = vi.fn(async () => undefined);
   const client = fixtureClient({ contextEpoch: () => 1, storeChoices: async () => ({ choices }), storeClose: async () => undefined, ...overrides });
-  const onDeleteItem = vi.fn<DeleteNoteItem>(async (_id, _listing, refresh, remove) => {
-    if (!await remove!()) return 'failed';
-    await refresh();
-    return 'deleted';
-  });
-  const result = render(<FolderStoreDialog client={client} source={source} mode="upload" epoch={1}
-    listing={[source]} refresh={refresh} onDeleteItem={onDeleteItem} onClose={onClose} {...props} />);
-  return { ...result, client, onClose, refresh, onDeleteItem };
+  const result = render(<FolderStoreDialog client={client} source={source} epoch={1} onClose={onClose} {...props} />);
+  return { ...result, client, onClose };
 }
 async function upload() {
   await waitFor(() => expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled());
@@ -82,7 +73,7 @@ describe('Folder store dialog', () => {
     const { onClose } = setup({ storeUpload: start, storeOperation: async () => state, storeClose: close, saveNote: save, getNote: get });
     await upload();
     expect(await screen.findByRole('status')).toHaveTextContent('Uploading 1 of 3 notes…');
-    expect(start).toHaveBeenCalledExactlyOnceWith(11, 'openai', 'key1', 1);
+    expect(start).toHaveBeenCalledExactlyOnceWith(11, 'openai', 'key1', source.name, '', 1);
     expect(screen.queryByLabelText('Provider')).not.toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
     state = operation({ phase: 'indexing', completed: 3 });
@@ -132,27 +123,12 @@ describe('Folder store dialog', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });
   it('keeps uncertainty visible until Close', async () => {
-    const { onClose, refresh } = setup({ storeOperation: async () => terminal({ result: 'warning', phase: 'warning', error: '' }) });
+    const { onClose } = setup({ storeOperation: async () => terminal({ result: 'warning', phase: 'warning', error: '' }) });
     expect(await screen.findByRole('alert')).toHaveTextContent('Some remote data could not be confirmed deleted.');
-    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled());
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-  });
-  it('removes an incomplete record with its captured ID and never offers Delete anyway', async () => {
-    let state: FolderStoreOperation = { present: false };
-    const remove = vi.fn(async () => { state = operation({ kind: 'remove', phase: 'removing' }); return { operation_id: 5 }; });
-    const { onClose } = setup({ storeOperation: async () => state, storeRemove: remove }, { source: stored, mode: 'remove' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith(11, 77, 1));
-    expect(screen.getByRole('status')).toHaveTextContent('Removing store…');
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
-    fireEvent(screen.getByRole('dialog'), new Event('cancel', { bubbles: true, cancelable: true }));
-    expect(onClose).not.toHaveBeenCalled();
-    state = terminal({ kind: 'remove', known_cleanup_remains: true, error: 'The saved API key is missing.' });
-    expect(await screen.findByRole('alert')).toHaveTextContent('The saved API key is missing.');
-    expect(screen.queryByRole('button', { name: 'Delete anyway' })).not.toBeInTheDocument();
   });
   it('recovers an accepted start after a timeout without a second allocation', async () => {
     let state: FolderStoreOperation = { present: false };
@@ -188,56 +164,6 @@ describe('Folder store dialog', () => {
     await act(async () => status.resolve(terminal({ result: 'success' })));
     expect(onClose).toHaveBeenCalled(); expect(close).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
   });
-  it('counts own, descendant, incomplete, and empty stores but excludes an ancestor', async () => {
-    const start = vi.fn();
-    const child = { ...stored, id: 12, parent_id: 11 };
-    const parent = { ...stored, id: 10 };
-    setup({ folderDelete: start }, { source: { ...stored, parent_id: 10 }, listing: [parent, { ...stored, parent_id: 10 }, child], mode: 'delete' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled());
-    expect(screen.getByText('2 remote stores will also be removed.')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(start).not.toHaveBeenCalled();
-  });
-  it.each(['Retry', 'Delete anyway'])('uses the same failed identity for %s under the delete guard', async action => {
-    let state: FolderStoreOperation = terminal({ kind: 'folder_delete', known_cleanup_remains: true });
-    const start = vi.fn(async () => { state = terminal({ kind: 'folder_delete', result: 'warning', phase: 'warning', folder_deleted: true, error: '' }); return { operation_id: 5 }; });
-    const { onDeleteItem, onClose, refresh } = setup({ storeOperation: async () => state, folderDelete: start }, { source: stored, mode: 'delete' });
-    await waitFor(() => expect(screen.getByRole('button', { name: action })).toBeEnabled());
-    expect(screen.getByText(/Remote data and charges may remain/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: action }));
-    await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith({ operation_id: 5, delete_anyway: action === 'Delete anyway' }, 1));
-    await waitFor(() => expect(refresh).toHaveBeenCalled());
-    expect(onDeleteItem).toHaveBeenCalledTimes(2);
-    expect(onClose).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('Some remote data');
-  });
-  it('Escape releases a failed deletion reservation and retains notes', async () => {
-    const close = vi.fn(async () => undefined); const start = vi.fn();
-    const { onClose } = setup({ storeOperation: async () => terminal({ kind: 'folder_delete', known_cleanup_remains: true }), storeClose: close, folderDelete: start }, { mode: 'delete' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled());
-    fireEvent(screen.getByRole('dialog'), new Event('cancel', { bubbles: true, cancelable: true }));
-    await waitFor(() => expect(close).toHaveBeenCalledExactlyOnceWith(5, 1));
-    expect(onClose).toHaveBeenCalledOnce(); expect(start).not.toHaveBeenCalled();
-  });
-  it('submits the confirmed count and keeps a pending delete under the editor guard', async () => {
-    let state: FolderStoreOperation = { present: false };
-    const start = vi.fn(async () => { state = operation({ kind: 'folder_delete', phase: 'removing' }); return { operation_id: 5 }; });
-    const { onClose, refresh } = setup({ storeOperation: async () => state, folderDelete: start }, { mode: 'delete', source: stored, listing: [stored] });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith({ folder_id: 11, confirmed_store_count: 1 }, 1));
-    expect(onClose).not.toHaveBeenCalled(); expect(refresh).not.toHaveBeenCalled();
-    state = terminal({ kind: 'folder_delete', result: 'folder_deleted', folder_deleted: true, error: '', phase: 'completed' });
-    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-  });
-  it('keeps a failed local delete visible and never treats it as committed', async () => {
-    const close = vi.fn();
-    const { onClose } = setup({ storeOperation: async () => terminal({ kind: 'folder_delete', error: 'The local transaction failed.' }), storeClose: close }, { mode: 'delete' });
-    expect(await screen.findByRole('alert')).toHaveTextContent('The local transaction failed.');
-    expect(onClose).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-  });
 });
 
 it('allows cancellation of an upload started in this dialog after acceptance', async () => {
@@ -266,14 +192,14 @@ it('reloads compatible choices after configuration changes reject submission', a
   expect(start).toHaveBeenCalledOnce();
 });
 
-it('keeps the failed reservation visible when Close fails', async () => {
-  const { onClose } = setup({ storeOperation: async () => terminal({ kind: 'folder_delete', known_cleanup_remains: true }),
-    storeClose: async () => { throw new ChaError('invalid_argument', 'Cleanup IDs could not be saved.'); } }, { mode: 'delete' });
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  expect(await screen.findByText('Cleanup IDs could not be saved.')).toBeInTheDocument();
+it('keeps a failed upload visible when Close fails', async () => {
+  const { onClose } = setup({ storeOperation: async () => terminal({ known_cleanup_remains: true }),
+    storeClose: async () => { throw new ChaError('invalid_argument', 'The operation is still running.'); } });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  expect(await screen.findByText('The operation is still running.')).toBeInTheDocument();
   expect(onClose).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Retry cleanup' })).toBeInTheDocument();
 });
 
 it('does not poll while editable or after terminal failure', async () => {
@@ -355,88 +281,124 @@ it('does not clear a cancellation error when the next status read succeeds', asy
   expect(screen.getByRole('alert')).toHaveTextContent('Could not confirm cancellation.');
 });
 
-it('offers cleanup retry after a failed Remove', async () => {
-  setup({ storeOperation: async () => terminal({ kind: 'remove', known_cleanup_remains: true,
-    error: 'Could not remove “Research” from OpenAI: The saved API key is missing or empty.' }) }, { source: stored, mode: 'remove' });
-  expect(await screen.findByRole('alert')).toHaveTextContent('Could not remove “Research” from OpenAI');
-  expect(screen.getByRole('button', { name: 'Retry cleanup' })).toBeInTheDocument();
-});
-
-it('retains a failed Delete anyway attempt after its local transaction is rejected', async () => {
-  const start = vi.fn<NotesClient['folderDelete']>().mockRejectedValue(new ChaError('internal_error', 'The local transaction failed.'));
-  const { onClose } = setup({ storeOperation: async () => terminal({ kind: 'folder_delete', known_cleanup_remains: true }), folderDelete: start }, { mode: 'delete' });
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Delete anyway' })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Delete anyway' }));
-  expect(await screen.findByText('The local transaction failed.')).toBeInTheDocument();
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled());
-  expect(start).toHaveBeenCalledExactlyOnceWith({ operation_id: 5, delete_anyway: true }, 1);
-  expect(onClose).not.toHaveBeenCalled();
-});
-
-it.each(['upload', 'remove'] as const)('retries cleanup after Close fails for a recovered %s without requiring upload keys', async kind => {
-  let state: FolderStoreOperation = terminal({ kind, known_cleanup_remains: true });
-  const close = vi.fn(async (id: number) => {
-    if (id === 5) throw new ChaError('invalid_argument', 'Cleanup IDs could not be saved. Retry cleanup or try Close again.');
-  });
+it('retries cleanup of a recovered upload with the same operation and without upload keys', async () => {
+  let state: FolderStoreOperation = terminal({ known_cleanup_remains: true });
+  const close = vi.fn(async () => undefined);
   const accepted = deferred<{ operation_id: number }>();
-  const remove = vi.fn(async () => accepted.promise);
+  const cleanup = vi.fn(async () => accepted.promise);
   const upload = vi.fn(); const getChoices = vi.fn();
-  const { onClose } = setup({ storeOperation: async () => state, storeRemove: remove, storeClose: close,
-    storeUpload: upload, storeChoices: getChoices }, { source: kind === 'upload' ? source : stored, listing: [stored] });
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-  expect(await screen.findByText('Cleanup IDs could not be saved. Retry cleanup or try Close again.')).toBeInTheDocument();
-  const retry = screen.getByRole('button', { name: 'Retry cleanup' });
+  const { onClose } = setup({ storeOperation: async () => state, storeCleanup: cleanup, storeClose: close,
+    storeUpload: upload, storeChoices: getChoices });
+  const retry = await screen.findByRole('button', { name: 'Retry cleanup' });
+  await waitFor(() => expect(retry).toBeEnabled());
   fireEvent.click(retry);
   fireEvent.click(retry);
-  await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith(11, 77, 1));
+  await waitFor(() => expect(cleanup).toHaveBeenCalledExactlyOnceWith(5, 1));
   expect(retry).toBeDisabled();
-  expect(close).toHaveBeenCalledExactlyOnceWith(5, 1);
   expect(upload).not.toHaveBeenCalled(); expect(getChoices).not.toHaveBeenCalled();
-  state = operation({ operation_id: 6, kind: 'remove', phase: 'removing' });
-  await act(async () => accepted.resolve({ operation_id: 6 }));
-  expect(screen.getByRole('dialog', { name: 'Remove folder from store' })).toBeInTheDocument();
-  expect(screen.getByRole('status')).toHaveTextContent('Removing store…');
+  state = operation({ phase: 'cleaning' });
+  await act(async () => accepted.resolve({ operation_id: 5 }));
+  expect(screen.getByRole('dialog', { name: 'Upload folder to store' })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Cleaning up…');
   expect(screen.queryByRole('button', { name: 'Retry cleanup' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Delete anyway' })).not.toBeInTheDocument();
-  state = terminal({ operation_id: 6, kind: 'remove', phase: 'warning', result: 'warning', error: '' });
+  state = terminal({ phase: 'warning', result: 'warning', error: '' });
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Some remote data could not be confirmed deleted.'));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled());
   expect(onClose).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-  expect(close).toHaveBeenLastCalledWith(6, 1);
+  expect(close).toHaveBeenCalledExactlyOnceWith(5, 1);
 });
 
 it('keeps cleanup retry available when its start fails', async () => {
-  const remove = vi.fn(async () => { throw new ChaError('operation_cancelled', 'The operation could not be started.'); });
-  const { onClose } = setup({ storeOperation: async () => terminal({ known_cleanup_remains: true }), storeRemove: remove },
-    { listing: [stored] });
+  const cleanup = vi.fn(async () => { throw new ChaError('operation_cancelled', 'The operation could not be started.'); });
+  const { onClose } = setup({ storeOperation: async () => terminal({ known_cleanup_remains: true }), storeCleanup: cleanup });
   await waitFor(() => expect(screen.getByRole('button', { name: 'Retry cleanup' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Retry cleanup' }));
   expect(await screen.findByText('The operation could not be started.')).toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Retry cleanup' })).toBeEnabled());
-  expect(remove).toHaveBeenCalledExactlyOnceWith(11, 77, 1);
+  expect(cleanup).toHaveBeenCalledExactlyOnceWith(5, 1);
   expect(onClose).not.toHaveBeenCalled();
 });
 
 it('does not retry cleanup for an operation replaced since the displayed failure', async () => {
   let state: FolderStoreOperation = terminal({ known_cleanup_remains: true });
-  const remove = vi.fn();
-  setup({ storeOperation: async () => state, storeRemove: remove }, { listing: [stored] });
+  const cleanup = vi.fn();
+  setup({ storeOperation: async () => state, storeCleanup: cleanup });
   await waitFor(() => expect(screen.getByRole('button', { name: 'Retry cleanup' })).toBeEnabled());
   state = terminal({ operation_id: 9, known_cleanup_remains: true });
   fireEvent.click(screen.getByRole('button', { name: 'Retry cleanup' }));
   expect(await screen.findByText('The store operation changed. Close this dialog and reopen the folder menu.')).toBeInTheDocument();
-  expect(remove).not.toHaveBeenCalled();
+  expect(cleanup).not.toHaveBeenCalled();
 });
 
-it('does not use a stale source store when the current listing has no store', async () => {
-  const remove = vi.fn();
-  setup({ storeOperation: async () => terminal({ kind: 'remove', known_cleanup_remains: true }), storeRemove: remove },
-    { source: stored, listing: [source], mode: 'remove' });
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Retry cleanup' })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Retry cleanup' }));
-  expect(await screen.findByText('The folder store was not found. Refresh the notes list and reopen the folder menu.')).toBeInTheDocument();
-  expect(remove).not.toHaveBeenCalled();
+it('submits normalized name and exact description, preserving draft after a start error', async () => {
+  const start = vi.fn(async () => { throw new ChaError('invalid_argument', 'Try again.'); });
+  setup({ storeUpload: start });
+  await screen.findByLabelText('Name');
+  expect(screen.getByLabelText('Name')).toHaveValue(source.name);
+  const description = '  First paragraph 😀\n\nВторой абзац\n ';
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: ' \tChosen name\t ' } });
+  fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: description } });
+  expect(screen.getByLabelText('Description (optional)')).toHaveAttribute('rows', '6');
+  await upload();
+  await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith(11, 'openai', 'key1', 'Chosen name', description, 1));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled());
+  expect(screen.getByLabelText('Name')).toHaveValue(' \tChosen name\t ');
+  expect(screen.getByLabelText('Description (optional)')).toHaveValue(description);
+});
+
+it.each([
+  [' \t ', 'Enter a store name.'],
+  ['a'.repeat(513), 'Name must be 512 characters or fewer.'],
+])('explains an invalid prefilled name immediately', async (name, message) => {
+  setup({}, { source: { ...source, name } });
+  expect(await screen.findByRole('alert')).toHaveTextContent(message);
+  expect(screen.getByLabelText('Name')).toHaveAttribute('aria-invalid', 'true');
+  expect(screen.getByLabelText('Name')).toHaveAccessibleDescription(message);
+  expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
+});
+
+it('revalidates provider limits without changing text', async () => {
+  setup();
+  await screen.findByLabelText('Name');
+  const name = 'я'.repeat(300);
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: name } });
+  expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled();
+  fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'google' } });
+  expect(screen.getByRole('alert')).toHaveTextContent('Name is too long for Google. Use a shorter name.');
+  expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'openai' } });
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Name')).toHaveValue(name);
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: '😀'.repeat(128) } });
+  fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'я'.repeat(511) + '\n😀' } });
+  expect(screen.getByRole('alert')).toHaveTextContent('Description must be 512 characters or fewer for OpenAI.');
+  fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'google' } });
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled();
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: ' \t' + '😀'.repeat(128) + ' ' } });
+  expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled();
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: '😀'.repeat(128) + 'a' } });
+  expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'openai' } });
+  fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'я'.repeat(510) + '\n😀' } });
+  expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled();
+});
+
+it('disables all fields during start and retains the draft after preflight', async () => {
+  const accepted = deferred<{ operation_id: number }>();
+  let state: FolderStoreOperation = { present: false };
+  setup({ storeUpload: () => accepted.promise, storeOperation: async () => state,
+    storeClose: async () => { state = { present: false }; } });
+  await screen.findByLabelText('Name');
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Draft name' } });
+  fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'Draft\n\nDescription' } });
+  await upload();
+  for (const label of ['Provider', 'API key', 'Name', 'Description (optional)']) expect(screen.getByLabelText(label)).toBeDisabled();
+  state = terminal({ result: 'preflight', error: 'All saved notes are empty.' });
+  await act(async () => { accepted.resolve({ operation_id: 5 }); });
+  await screen.findByText('All saved notes are empty.');
+  expect(screen.getByLabelText('Name')).toHaveValue('Draft name');
+  expect(screen.getByLabelText('Description (optional)')).toHaveValue('Draft\n\nDescription');
 });

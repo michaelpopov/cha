@@ -34,7 +34,8 @@ OpenedSession open_session(
             [&config] { return config.snapshot(); },
             [&config](std::int64_t id) { return config.get_note_text(id, /*prefer_compressed=*/ true); },
             [&config](std::int64_t id) { return config.get_note_item(id); },
-            [&config](std::int64_t id) { return config.get_folder_store_by_folder(id); },
+            // CHA no longer links folders to stores. A later stage supplies chat stores.
+            [](std::int64_t) { return std::optional<SessionController::FolderSearchStore>{}; },
             forum->default_character_id,
             forum->default_persona_id,
             prepared.database_path,

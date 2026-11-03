@@ -1367,7 +1367,7 @@ TEST(AssistantInspect, SettingsMatchReadersAndReadsAreReadOnly) {
     const auto application = harness.run("assistant_inspect", inspect_arguments("application"));
     EXPECT_EQ(application["items"][0]["version"], "synthetic");
     for (const std::string_view topic : {"providers", "styles", "voices", "characters",
-             "personas", "forums", "services", "keys", "notes", "stores"}) {
+             "personas", "forums", "services", "keys", "notes"}) {
         const auto result = harness.run("assistant_inspect", inspect_arguments(topic));
         ASSERT_FALSE(result.contains("error")) << topic << result.dump();
         EXPECT_TRUE(result["items"].is_array());
@@ -1396,26 +1396,10 @@ TEST(AssistantInspect, SettingsMatchReadersAndReadsAreReadOnly) {
     EXPECT_EQ(harness.store().list_events().size(), events);
 }
 
-TEST(AssistantInspect, UnattachedStoresAndNoteContentExclusion) {
+TEST(AssistantInspect, StoresTopicIsGoneAndNoteContentIsExcluded) {
     ServiceHarness harness;
     auto& store = harness.store();
-    const auto openai_folder = store.create_note_item({}, NoteItemKind::folder, "OpenAI upload");
-    const auto google_folder = store.create_note_item({}, NoteItemKind::folder, "Google upload");
-    const auto ready = store.register_folder_store(
-        openai_folder.id, FolderStoreService::openai, "saved-key", 7);
-    store.save_folder_store_remote_id(ready, "remote-store");
-    store.add_folder_store_file_id(ready, "remote-file");
-    store.mark_folder_store_ready(ready, "synthetic upload");
-    const auto incomplete = store.register_folder_store(
-        google_folder.id, FolderStoreService::google, "old-key", 3);
-    store.set_folder_store_uncertainty(incomplete, true);
-
-    const auto stores = harness.run("assistant_inspect", inspect_arguments("stores"));
-    ASSERT_EQ(stores["items"].size(), 2U);
-    EXPECT_EQ(stores["items"][0]["remote_store_id"], "remote-store");
-    EXPECT_EQ(stores["items"][0]["note_count"], 7);
-    EXPECT_EQ(stores["items"][1]["state"], "incomplete");
-    EXPECT_EQ(stores["items"][1]["remote_outcome_unknown"], true);
+    EXPECT_TRUE(harness.run("assistant_inspect", inspect_arguments("stores")).contains("error"));
 
     const auto note = store.create_note_item({}, NoteItemKind::note, "Private note");
     const Json text{{"type", "text"}, {"text", "DOCUMENT_SENTINEL"}};
@@ -1493,24 +1477,6 @@ TEST(AssistantInspect, PagesPastDeletedAndOversizedItems) {
         after = page["next_after"];
     }
     EXPECT_EQ(count, 242U);
-
-    const auto first = store.create_note_item({}, NoteItemKind::folder, "Large store");
-    const auto second = store.create_note_item({}, NoteItemKind::folder, "Next store");
-    const auto large = store.register_folder_store(first.id, FolderStoreService::openai, "saved", 1);
-    store.add_folder_store_file_id(large, std::string(100 * 1024, 'x'));
-    const auto next = store.register_folder_store(second.id, FolderStoreService::google, "saved", 1);
-    page = harness.run("assistant_inspect", inspect_arguments("stores"));
-    ASSERT_EQ(page["items"].size(), 1U);
-    EXPECT_FALSE(page["items"][0].contains("too_large"));
-    EXPECT_FALSE(page["next_after"].is_null());
-
-    store.add_folder_store_file_id(large, std::string(270 * 1024, 'z'));
-    page = harness.run("assistant_inspect", inspect_arguments("stores"));
-    ASSERT_EQ(page["items"].size(), 1U);
-    EXPECT_EQ(page["items"][0], (Json{{"id", large}, {"too_large", true}}));
-    page = harness.run("assistant_inspect", inspect_arguments("stores", page["next_after"]));
-    ASSERT_EQ(page["items"].size(), 1U);
-    EXPECT_EQ(page["items"][0]["id"], next);
 }
 
 } // namespace

@@ -1766,8 +1766,6 @@ TEST_F(JevRouting, NavigationKeepsPendingSessionAndCompletionWakesOwnerExactlyOn
 TEST_F(JevRouting, DetectionFailurePreservesFolderOmissionNoticeForFallbackTargets) {
     storage::SqliteDatabase db(journal.path(), storage::SqliteDatabase::Mode::read_write);
     const auto folder = note_create(db, {}, NoteItemKind::folder, "Research");
-    const auto record = folder_store_register(db, folder.id, FolderStoreService::openai, config.api_key_id, 1);
-    folder_store_save_remote_id(db, record, "vs_research"); folder_store_mark_ready(db, record);
     const auto ref = note_item_ref_id(folder.id);
     ASSERT_TRUE(send(ref).clear_input);
     decision = {JevOutcome::failure, {}, "timeout"};

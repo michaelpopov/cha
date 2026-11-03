@@ -81,6 +81,14 @@ std::string_view safe_error_reason(const Json& error) {
     return {};
 }
 
+// Google reports a wrong or expired API key as 400 INVALID_ARGUMENT.
+bool google_key_rejected(const Json& body) {
+    if (!json_error_object(body) || !body["error"].contains("details") || !body["error"]["details"].is_array()) return false;
+    return std::any_of(body["error"]["details"].begin(), body["error"]["details"].end(), [](const Json& detail) {
+        return detail.is_object() && detail.contains("reason") && detail["reason"] == "API_KEY_INVALID";
+    });
+}
+
 bool structured_not_found(const Json& body) {
     if (!json_error_object(body)) return false;
     const auto& error = body["error"];
@@ -132,6 +140,11 @@ FolderStoreRemoteResult classify(
     if (response.status == 404 && structured_not_found(body)) {
         result.kind = FolderStoreRemoteKind::not_found;
         result.message = "The remote resource was not found.";
+        return result;
+    }
+    if (response.status == 400 && google_key_rejected(body)) {
+        result.kind = FolderStoreRemoteKind::failed;
+        result.message = "The saved API key was rejected.";
         return result;
     }
     if ((response.status == 400 || (allocating && response.status == 409))
@@ -515,13 +528,15 @@ std::string FolderStoreClient::search_stores(
 }
 
 FolderStoreRemoteResult FolderStoreClient::openai_create_store(
-    std::string_view name, std::string_view key, const std::atomic_bool& cancel) {
+    std::string_view name, std::string_view description, std::string_view key, const std::atomic_bool& cancel) {
     FolderStoreHttpRequest request;
     request.method = "POST";
     request.url = std::string(openai_origin) + "/vector_stores";
     request.headers.push_back({"Authorization", "Bearer " + std::string(key)});
     request.headers.push_back({"Content-Type", "application/json"});
-    request.body = Json{{"name", name}}.dump();
+    Json body{{"name", name}};
+    if (!description.empty()) body["description"] = description;
+    request.body = body.dump();
     auto result = classify(transport_(request, cancel), true);
     if (result.kind == FolderStoreRemoteKind::ok && !safe_component(result.id)) {
         result.kind = FolderStoreRemoteKind::failed;
@@ -661,7 +676,8 @@ FolderStoreRemoteResult FolderStoreClient::google_upload_document(
     std::string_view markdown,
     std::string_view key,
     const std::atomic_bool& cancel,
-    const std::atomic_bool& cancel_forward) {
+    const std::atomic_bool& cancel_forward,
+    std::string_view mime_type, const Json& custom_metadata) {
     if (!google_store_valid(store_name)) return invalid_response("The remote store name is invalid.");
     if (cancel_forward.load()) return {.kind = FolderStoreRemoteKind::cancelled, .message = "The request was cancelled."};
     FolderStoreHttpRequest start;
@@ -673,9 +689,15 @@ FolderStoreRemoteResult FolderStoreClient::google_upload_document(
     start.headers.push_back({"X-Goog-Upload-Command", "start"});
     start.headers.push_back(
         {"X-Goog-Upload-Header-Content-Length", std::to_string(markdown.size())});
-    start.headers.push_back({"X-Goog-Upload-Header-Content-Type", "text/markdown"});
+    start.headers.push_back({"X-Goog-Upload-Header-Content-Type", std::string(mime_type)});
     start.headers.push_back({"Content-Type", "application/json"});
-    start.body = Json{{"displayName", display_name}}.dump();
+    Json body{{"displayName", display_name}};
+    // Note uploads keep their original start body; only the metadata document sends these fields.
+    if (!custom_metadata.is_null()) {
+        body["mimeType"] = mime_type;
+        body["customMetadata"] = custom_metadata;
+    }
+    start.body = body.dump();
     start.capture_headers = true;
     auto started = transport_(start, cancel);
     // A successful resumable start returns its session URL in a header and may
@@ -696,7 +718,7 @@ FolderStoreRemoteResult FolderStoreClient::google_upload_document(
     upload.headers.push_back({"x-goog-api-key", std::string(key)});
     upload.headers.push_back({"X-Goog-Upload-Command", "upload, finalize"});
     upload.headers.push_back({"X-Goog-Upload-Offset", "0"});
-    upload.headers.push_back({"Content-Type", "text/markdown"});
+    upload.headers.push_back({"Content-Type", std::string(mime_type)});
     upload.headers.push_back({"Content-Length", std::to_string(markdown.size())});
     upload.body = std::string(markdown);
     // A user cancel stops the next transfer, but an already-sent finalize must
@@ -715,6 +737,24 @@ FolderStoreRemoteResult FolderStoreClient::google_upload_document(
         if (result.message.empty()) result.message = "Indexing did not complete.";
     }
     return result;
+}
+
+FolderStoreRemoteResult FolderStoreClient::google_upload_store_metadata(
+    std::string_view store_name, std::string_view name, std::string_view description,
+    std::string_view key, const std::atomic_bool& cancel, const std::atomic_bool& cancel_forward) {
+    const auto pieces = [](std::string_view text) {
+        auto values = Json::array();
+        while (!text.empty()) {
+            auto prefix = utf8_prefix(text, 200);
+            text.remove_prefix(prefix.size());
+            values.push_back(std::move(prefix));
+        }
+        return values;
+    };
+    auto metadata = Json::array({{{"key", "name"}, {"stringListValue", {{"values", pieces(name)}}}}});
+    if (!description.empty()) metadata.push_back({{"key", "description"}, {"stringListValue", {{"values", pieces(description)}}}});
+    return google_upload_document(store_name, "DESCRIPTION.txt", "x", key, cancel, cancel_forward,
+        "text/plain", metadata);
 }
 
 FolderStoreRemoteResult FolderStoreClient::google_inspect_operation(

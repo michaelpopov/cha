@@ -94,11 +94,30 @@ protected:
             *store_);
     }
 
+    // CHA keeps no folder-store link, so chat search tests supply their stores.
+    SessionController::StoreReader read_stores() {
+        return [this](std::int64_t id) -> std::optional<SessionController::FolderSearchStore> {
+            const auto found = stores_.find(id);
+            if (found == stores_.end()) return std::nullopt;
+            return found->second;
+        };
+    }
+    std::unique_ptr<SessionController> open_with_stores(const FullSessionId& identity, Providers& providers) {
+        const auto prepared = sessions_->prepare(identity);
+        return SessionController::from_workspace([this] { return store_->snapshot(); },
+            [this](auto id) { return store_->get_note_text(id, true); },
+            [this](auto id) { return store_->get_note_item(id); }, read_stores(),
+            "guide", std::string(workspace_guest_id), prepared.database_path, prepared.session_key,
+            prepared.database_password, providers, std::make_shared<test::TestNotifier>(),
+            prepared.restore, prepared.identity);
+    }
+
     test::TestWorkspace fixture_;
     std::filesystem::path database_;
     Providers providers_;
     std::unique_ptr<WorkspaceConfigStore> store_;
     std::unique_ptr<SessionRepository> sessions_;
+    std::map<std::int64_t, SessionController::FolderSearchStore> stores_;
 };
 
 TEST_F(SessionOpenTest, OpensStoredSessionFromThePublishedWorkspace) {
@@ -382,21 +401,15 @@ TEST_F(SessionOpenTest, FolderAccessResolvesPerTargetAndRefreshesAfterReplacemen
     const auto folder = store_->create_note_item({}, NoteItemKind::folder, "Research");
     const auto duplicate = store_->create_note_item({}, NoteItemKind::folder, "Alias");
     const auto mismatched = store_->create_note_item({}, NoteItemKind::folder, "Other key");
-    const auto seed = [&](std::int64_t id, FolderStoreService service, const std::string& key, const std::string& remote) {
-        const auto record = store_->register_folder_store(id, service, key, 1);
-        store_->save_folder_store_remote_id(record, remote);
-        store_->mark_folder_store_ready(record, "Ready");
-        return record;
-    };
-    const auto original = seed(folder.id, FolderStoreService::openai, openai.id, "vs_shared");
-    seed(duplicate.id, FolderStoreService::openai, openai.id, "vs_shared");
-    seed(mismatched.id, FolderStoreService::openai, google.id, "vs_other");
+    stores_[folder.id] = {FolderStoreService::openai, openai.id, "vs_shared"};
+    stores_[duplicate.id] = {FolderStoreService::openai, openai.id, "vs_shared"};
+    stores_[mismatched.id] = {FolderStoreService::openai, google.id, "vs_other"};
     std::vector<GenerationRequest> requests;
     bool reject = true;
     Providers providers([&](auto) { return std::make_unique<FolderRequestBackend>(requests, reject); }, [](auto work) { work(); });
     const auto stored = sessions_->create("lobby", "Stores");
-    auto opened = open_session(*sessions_, stored.identity, providers, std::make_shared<test::TestNotifier>(), *store_);
-    auto& controller = *opened.controller;
+    const auto opened = open_with_stores(stored.identity, providers);
+    auto& controller = *opened;
     for (const auto id : {folder.id, duplicate.id, mismatched.id})
         ASSERT_TRUE(handle_text_input(controller, workspace_guest_id, note_item_ref_id(id)).clear_input);
     EXPECT_TRUE(requests.empty());
@@ -420,8 +433,7 @@ TEST_F(SessionOpenTest, FolderAccessResolvesPerTargetAndRefreshesAfterReplacemen
         saw_writer |= entry.participant_id == "writer" && entry.text == "Answer";
     }
     EXPECT_TRUE(saw_error); EXPECT_TRUE(saw_writer);
-    store_->delete_folder_store_record(original, "Removed");
-    seed(folder.id, FolderStoreService::google, google.id, "fileSearchStores/new");
+    stores_[folder.id] = {FolderStoreService::google, google.id, "fileSearchStores/new"};
     (void)store_->rename_note_item(folder.id, "Renamed");
     (void)controller.submit_prompt(workspace_guest_id, "Next", "Writer");
     for (int i = 0; i < 10 && controller.is_generating(); ++i) (void)controller.receive_events(100);
@@ -484,12 +496,8 @@ protected:
         seed(item, service, remote.empty() ? "remote_" + std::to_string(item.id) : remote);
         return item;
     }
-    std::int64_t seed(const NoteItem& item, FolderStoreService service, const std::string& remote) {
-        const auto id = store_->register_folder_store(item.id, service,
-            service == FolderStoreService::openai ? openai_key : google_key, 1);
-        store_->save_folder_store_remote_id(id, remote);
-        store_->mark_folder_store_ready(id, "Ready");
-        return id;
+    void seed(const NoteItem& item, FolderStoreService service, const std::string& remote) {
+        stores_[item.id] = {service, service == FolderStoreService::openai ? openai_key : google_key, remote};
     }
     void reference(const NoteItem& item, FileReferenceOwner owner = FileReferenceOwner::forum,
                    std::string_view id = "lobby") {
@@ -499,8 +507,11 @@ protected:
                      std::string_view id = "lobby") {
         store_->delete_file_reference(owner, id, FileReferenceKind::folder, note_item_ref_id(item.id));
     }
-    OpenedSession open_folders() {
-        return open_session(*sessions_, identity, *providers, std::make_shared<test::TestNotifier>(), *store_);
+    struct OpenedFolders {
+        std::unique_ptr<SessionController> controller;
+    };
+    OpenedFolders open_folders() {
+        return {open_with_stores(identity, *providers)};
     }
     std::unique_ptr<SessionController> open_with_readers(
         SessionController::ItemReader read_item, SessionController::StoreReader read_store) {
@@ -611,7 +622,7 @@ TEST_F(ReferencedFoldersTest, ResolvesCurrentStoresEffectiveProviderAndSavedKeyO
     auto opened = open_folders();
     (void)send(*opened.controller);
     EXPECT_EQ(ids(), (std::vector<std::string>{"vs_old"}));
-    store_->delete_folder_store_record(store_->get_folder_store_by_folder(a.id)->id, "Removed");
+    stores_.erase(a.id);
     auto update = send(*opened.controller);
     EXPECT_TRUE(ids().empty());
     ASSERT_TRUE(update.notice);
@@ -631,7 +642,7 @@ TEST_F(ReferencedFoldersTest, ResolvesCurrentStoresEffectiveProviderAndSavedKeyO
     EXPECT_EQ(requests.back().folder_search->search_targets[0].api_key, "same-value");
     EXPECT_EQ(requests.back().folder_search->search_targets[0].folder_name, a.name + " (" + note_item_ref_id(a.id) + ")");
     EXPECT_TRUE(!update.notice || update.notice->find("different saved API key") == std::string::npos);
-    store_->delete_folder_store_record(store_->get_folder_store_by_folder(a.id)->id, "Removed");
+    stores_.erase(a.id);
     seed(a, FolderStoreService::google, "fileSearchStores/new");
     update = send(*opened.controller);
     EXPECT_TRUE(ids().empty());
@@ -690,10 +701,8 @@ TEST_F(ReferencedFoldersTest, DeletedStoreKeyIsReportedAndExcludedFromSearchCont
     for (const auto service : {FolderStoreService::openai, FolderStoreService::google}) {
         const auto item = store_->create_note_item({}, NoteItemKind::folder,
             service == FolderStoreService::openai ? "OpenAI unavailable" : "Gemini unavailable");
-        const auto record = store_->register_folder_store(item.id, service, removed_key, 1);
-        store_->save_folder_store_remote_id(record,
-            service == FolderStoreService::openai ? "vs_missing" : "fileSearchStores/missing");
-        store_->mark_folder_store_ready(record, "Ready");
+        stores_[item.id] = {service, removed_key,
+            service == FolderStoreService::openai ? "vs_missing" : "fileSearchStores/missing"};
         reference(item);
         reference(item, FileReferenceOwner::character, "guide");
         unavailable.push_back(item);
@@ -739,7 +748,7 @@ TEST_F(ReferencedFoldersTest, GoogleKeepsNativeStoresAndReportsIncompleteOpenAiA
     reference(other, FileReferenceOwner::character, "writer");
     auto opened = open_folders();
     ASSERT_TRUE(opened.controller->add_item(other.id).input_consumed);
-    store_->mark_folder_store_incomplete(store_->get_folder_store_by_folder(other.id)->id);
+    stores_.erase(other.id);
     const auto update = send(*opened.controller, "Writer");
     EXPECT_EQ(ids(), (std::vector<std::string>{"fileSearchStores/a", "fileSearchStores/b", "fileSearchStores/c"}));
     ASSERT_TRUE(update.notice);
@@ -765,9 +774,7 @@ TEST_F(ReferencedFoldersTest, NativeStoresAndOpenAiSearchToolCanBeUsedTogether) 
     EXPECT_EQ(requests.back().folder_search->search_targets[0].remote_store_id, "vs_openai");
     EXPECT_EQ(requests.back().folder_search->search_targets[0].api_key, "openai-search-key");
     const auto second = store_->create_note_item({}, NoteItemKind::folder, "Second account");
-    const auto record = store_->register_folder_store(second.id, FolderStoreService::openai, google_key, 1);
-    store_->save_folder_store_remote_id(record, "vs_second");
-    store_->mark_folder_store_ready(record, "Ready");
+    stores_[second.id] = {FolderStoreService::openai, google_key, "vs_second"};
     reference(second);
     (void)send(*opened.controller, "Guide");
     ASSERT_TRUE(requests.back().folder_search);
@@ -814,9 +821,7 @@ TEST_F(ReferencedFoldersTest, OAuthSearchUsesAttachedStoresWithoutMatchingModelK
         reference(item);
     }
     const auto other = store_->create_note_item({}, NoteItemKind::folder, "Other account");
-    const auto other_store = store_->register_folder_store(other.id, FolderStoreService::openai, google_key, 1);
-    store_->save_folder_store_remote_id(other_store, "vs_other");
-    store_->mark_folder_store_ready(other_store, "Ready");
+    stores_[other.id] = {FolderStoreService::openai, google_key, "vs_other"};
     reference(other, FileReferenceOwner::character, "guide");
     const auto google = folder("Google", FolderStoreService::google);
     reference(google);
@@ -876,14 +881,12 @@ TEST_F(ReferencedFoldersTest, BadSourcesAreOmittedOnceAndValidPeersStillUseCapac
         auto item = store_->get_note_item(id);
         if (id == folders[1].id) item->kind = NoteItemKind::note;
         return item;
-    }, [&](auto id) -> std::optional<FolderStoreRecord> {
+    }, [&](auto id) -> std::optional<SessionController::FolderSearchStore> {
         ++store_reads[id];
         if (id == folders[3].id) throw std::runtime_error("injected store failure");
-        if (id == folders[4].id) return {};
-        auto record = store_->get_folder_store_by_folder(id);
-        if (id == folders[5].id) record->state = FolderStoreState::incomplete;
-        if (id == folders[6].id) record->remote_store_id.reset();
-        if (id == folders[7].id) record->remote_store_id = "";
+        if (id == folders[4].id || id == folders[5].id) return {};
+        auto record = read_stores()(id);
+        if (id == folders[6].id || id == folders[7].id) record->remote_store_id.clear();
         if (id == folders[8].id) record->api_key_id = google_key;
         return record;
     });
@@ -913,17 +916,17 @@ TEST_F(ReferencedFoldersTest, MissingModelKeyStillResolvesOpenAiStoresAndReports
     const auto broken = folder("Broken");
     reference(inherited);
     for (const auto& item : {foreign, absent, broken}) reference(item, FileReferenceOwner::character, "guide");
-    store_->delete_folder_store_record(store_->get_folder_store_by_folder(absent.id)->id, "Removed");
+    stores_.erase(absent.id);
     config.api_key_id = "missing";
     update_provider();
     std::map<std::int64_t, int> reads, item_reads;
     auto controller = open_with_readers([&](auto id) {
         ++item_reads[id];
         return store_->get_note_item(id);
-    }, [&](auto id) -> std::optional<FolderStoreRecord> {
+    }, [&](auto id) {
         ++reads[id];
         if (id == broken.id) throw std::runtime_error("injected lookup failure");
-        return store_->get_folder_store_by_folder(id);
+        return read_stores()(id);
     });
     const auto update = send(*controller);
     EXPECT_TRUE(ids().empty());
@@ -956,7 +959,7 @@ TEST_F(ReferencedFoldersTest, SessionNamingDoesNotResolveOrInheritOrdinaryFolder
         return store_->get_note_item(id);
     }, [&](auto id) {
         ++store_reads;
-        return store_->get_folder_store_by_folder(id);
+        return read_stores()(id);
     });
     controller->enable_auto_naming("New session");
     (void)send(*controller);
@@ -977,9 +980,7 @@ TEST_F(ReferencedFoldersTest, Gemini25ReportsEveryToolOnlyFolderAndRestoresTarge
     const auto openai = folder("OpenAI", FolderStoreService::openai, "vs_shared");
     const auto alias = folder("OpenAI alias", FolderStoreService::openai, "vs_shared");
     const auto other = store_->create_note_item({}, NoteItemKind::folder, "Other Gemini key");
-    const auto record = store_->register_folder_store(other.id, FolderStoreService::google, openai_key, 1);
-    store_->save_folder_store_remote_id(record, "fileSearchStores/other");
-    store_->mark_folder_store_ready(record, "Ready");
+    stores_[other.id] = {FolderStoreService::google, openai_key, "fileSearchStores/other"};
     for (const auto& item : {native, openai, alias, other}) reference(item);
     auto google = store_->snapshot()->find_provider(google_provider)->config;
     google.model = "gemini-2.5-flash";
@@ -1028,43 +1029,25 @@ TEST_F(ReferencedFoldersTest, InheritedGoogleFoldersKeepGemini25FileSearchAndWar
     EXPECT_NE(log().find("Omitting optional CHA custom functions: gemini-2.5-flash"), std::string::npos);
 }
 
-TEST_F(SessionOpenTest, FolderAttachRechecksThePersistentJournalAfterCallbackAndRollsBackNotices) {
+TEST_F(SessionOpenTest, FolderAttachNeedsNoStoreAndRollsBackWhenItsNoticeFails) {
     const auto folder = store_->create_note_item({}, NoteItemKind::folder, "Research");
-    const auto record = store_->register_folder_store(folder.id, FolderStoreService::openai, "saved", 1);
-    store_->save_folder_store_remote_id(record, "vs_test");
-    store_->mark_folder_store_ready(record, "Ready");
     const auto stored = sessions_->create("lobby", "Race");
-    auto prepared = sessions_->prepare(stored.identity);
-    bool invalidate = true;
-    auto controller = SessionController::from_workspace([&] { return store_->snapshot(); },
-        [&](auto id) { return store_->get_note_text(id, true); },
-        [&](auto id) { return store_->get_note_item(id); }, [&](auto id) {
-            auto current = store_->get_folder_store_by_folder(id);
-            if (invalidate) store_->mark_folder_store_incomplete(record);
-            return current;
-        },
-        "guide", std::string(workspace_guest_id),
-        prepared.database_path, prepared.session_key, prepared.database_password, providers_,
-        std::make_shared<test::TestNotifier>(), prepared.restore, prepared.identity, 0, {});
-    EXPECT_FALSE(controller->add_item(folder.id).input_consumed);
+    const auto prepared = sessions_->prepare(stored.identity);
+    const auto controller = open_with_stores(stored.identity, providers_);
     SessionJournal journal(prepared.database_path, prepared.session_key);
-    EXPECT_TRUE(journal.folder_ids().empty());
-    EXPECT_TRUE(controller->view().transcript.entries.empty());
-    invalidate = false;
-    store_->mark_folder_store_ready(record, "Ready");
     storage::SqliteDatabase failure_db(prepared.database_path, storage::SqliteDatabase::Mode::read_write);
     failure_db.execute("CREATE TRIGGER reject_folder_notice BEFORE INSERT ON entries BEGIN SELECT RAISE(ABORT, 'notice failure'); END");
     EXPECT_FALSE(controller->add_item(folder.id).input_consumed);
     EXPECT_TRUE(journal.folder_ids().empty());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
     failure_db.execute("DROP TRIGGER reject_folder_notice");
     EXPECT_TRUE(controller->add_item(folder.id).input_consumed);
     EXPECT_EQ(journal.folder_ids(), (std::vector<std::int64_t>{folder.id}));
 }
 
-TEST_F(SessionOpenTest, WelcomeMaintenanceSkipsFolderLookupAndReadyAttachUsesTheActiveVault) {
+TEST_F(SessionOpenTest, WelcomeMaintenanceSkipsFolderLookupAndAttachUsesTheActiveVault) {
     const auto folder = store_->create_note_item({}, NoteItemKind::folder, "Research");
-    const auto record = store_->register_folder_store(folder.id, FolderStoreService::openai, "saved", 1);
-    store_->save_folder_store_remote_id(record, "vs_test"); store_->mark_folder_store_ready(record, "Ready");
+    stores_[folder.id] = {FolderStoreService::openai, "saved", "vs_test"};
     (void)store_->create_file_reference(FileReferenceOwner::character, workspace_assistant_id,
         FileReferenceKind::folder, note_item_ref_id(folder.id));
     auto prepared = sessions_->prepare({std::string(entrance_id), std::string(welcome_id)});
@@ -1075,7 +1058,7 @@ TEST_F(SessionOpenTest, WelcomeMaintenanceSkipsFolderLookupAndReadyAttachUsesThe
     auto controller = SessionController::from_workspace([&] { return store_->snapshot(); },
         [&](auto id) { return store_->get_note_text(id, true); },
         [&](auto id) { ++lookups; return store_->get_note_item(id); }, [&](auto id) {
-            ++lookups; return store_->get_folder_store_by_folder(id);
+            ++lookups; return read_stores()(id);
         },
         std::string(workspace_assistant_id), std::string(workspace_guest_id),
         prepared.database_path, prepared.session_key, prepared.database_password, providers,
@@ -1096,7 +1079,7 @@ TEST_F(SessionOpenTest, ProductionControllersRequireExplicitActiveVaultReaders) 
     const auto prepared = sessions_->prepare(stored.identity);
     for (const bool missing_item : {false, true}) {
         SessionController::ItemReader read_item = [&](auto id) { return store_->get_note_item(id); };
-        SessionController::StoreReader read_store = [&](auto id) { return store_->get_folder_store_by_folder(id); };
+        SessionController::StoreReader read_store = read_stores();
         if (missing_item) read_item = {};
         else read_store = {};
         EXPECT_THROW((void)SessionController::from_workspace([&] { return store_->snapshot(); },

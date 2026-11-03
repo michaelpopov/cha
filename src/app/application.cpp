@@ -1447,7 +1447,7 @@ std::vector<ApiKeyDetail> Application::list_api_keys(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::list_api_keys(*impl_->store->snapshot(), *impl_->api_keys, impl_->store->folder_store_usage());
+    return settings::list_api_keys(*impl_->store->snapshot(), *impl_->api_keys);
 }
 
 ApiKeyDetail Application::create_api_key(
@@ -1456,7 +1456,7 @@ ApiKeyDetail Application::create_api_key(
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::create_api_key(
-        *impl_->store->snapshot(), *impl_->api_keys, create, impl_->store->folder_store_usage());
+        *impl_->store->snapshot(), *impl_->api_keys, create);
 }
 
 ApiKeyDetail Application::rename_api_key(
@@ -1466,7 +1466,7 @@ ApiKeyDetail Application::rename_api_key(
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::rename_api_key(
-        *impl_->store->snapshot(), *impl_->api_keys, api_key_id, display_name, impl_->store->folder_store_usage());
+        *impl_->store->snapshot(), *impl_->api_keys, api_key_id, display_name);
 }
 
 ApiKeyDetail Application::replace_api_key_value(
@@ -1476,7 +1476,7 @@ ApiKeyDetail Application::replace_api_key_value(
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::replace_api_key_value(
-        *impl_->store->snapshot(), *impl_->api_keys, api_key_id, value, impl_->store->folder_store_usage());
+        *impl_->store->snapshot(), *impl_->api_keys, api_key_id, value);
 }
 
 void Application::delete_api_key(

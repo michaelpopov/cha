@@ -1646,11 +1646,6 @@ TEST(ChaWebAdapter, StopAfterASavedRepairStoresTheNotice) {
 TEST_F(ChaWebAdapterTest, SharedFolderReferenceAndDetachCommandsDoNotGenerateAnAnswer) {
     const auto epoch = application_->context_epoch();
     const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Research", epoch);
-    {
-        storage::SqliteDatabase db(database_, storage::SqliteDatabase::Mode::read_write);
-        const auto record = folder_store_register(db, folder.id, FolderStoreService::openai, "saved", 1);
-        folder_store_save_remote_id(db, record, "vs_test"); folder_store_mark_ready(db, record);
-    }
     const auto id = create_session();
     const auto uri = session_path("lobby", id);
     const auto ref = note_item_ref_id(folder.id);

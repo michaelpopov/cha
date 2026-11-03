@@ -44,12 +44,6 @@ private:
     std::string message_;
 };
 
-struct NoteStoreSummary {
-    std::string service;
-    std::int64_t id{};
-    std::string state;
-};
-
 struct NoteItem {
     std::int64_t id{};
     std::optional<std::int64_t> parent_id;
@@ -58,7 +52,6 @@ struct NoteItem {
     bool has_compressed{};
     bool has_audio{};
     bool read_only{};
-    std::optional<NoteStoreSummary> store;
     std::optional<std::string> forum_id;
     bool is_summary{};
     bool summary_linked{};
@@ -182,16 +175,12 @@ NoteAudioClip note_audio_clip(storage::SqliteDatabase& database, std::int64_t id
 void note_save_audio(storage::SqliteDatabase& database, std::int64_t id,
     const std::vector<std::filesystem::path>& clips);
 
-// Writes the folder, its sub-folders, notes, audio clips and ready stores to a
-// new SQLite file without a password. Annotations, summary and forum links are
-// left out. key_names maps an API key ID to its name; a store whose key is
-// missing is left out with a warning.
+// Writes the folder, its sub-folders, notes and audio clips to a new SQLite file
+// without a password. Annotations, summary and forum links are left out.
 void note_export_folder(storage::SqliteDatabase& database, std::int64_t folder_id,
-    const std::filesystem::path& destination, const std::map<std::string, std::string>& key_names);
+    const std::filesystem::path& destination);
 // Copies an exported folder into parent_id and returns the new folder ID.
-// key_ids maps a unique API key name to its ID in this vault.
 [[nodiscard]] std::int64_t note_import_folder(storage::SqliteDatabase& database,
-    std::optional<std::int64_t> parent_id, const std::filesystem::path& source,
-    const std::map<std::string, std::string>& key_ids);
+    std::optional<std::int64_t> parent_id, const std::filesystem::path& source);
 
 } // namespace cha

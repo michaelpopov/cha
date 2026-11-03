@@ -61,19 +61,6 @@ TEST_F(NotesServiceTest, SavesLoadsRenamesAndKeepsScrollPosition) {
     EXPECT_EQ(found->name, "Renamed");
 }
 
-TEST_F(NotesServiceTest, ListingIncludesSavedFolderStoreSummary) {
-    const auto folder = store->create_note_item({}, NoteItemKind::folder, "Library");
-    (void)store->create_note_item(folder.id, NoteItemKind::note, "Document");
-    const auto id = store->register_folder_store(folder.id, FolderStoreService::openai, "key-id", 1);
-    const auto items = notes.list_note_items(1);
-    const auto found = std::find_if(items.begin(), items.end(), [&](const auto& row) { return row.id == folder.id; });
-    ASSERT_NE(found, items.end());
-    ASSERT_TRUE(found->store);
-    EXPECT_EQ(found->store->id, id);
-    EXPECT_EQ(found->store->service, "openai");
-    EXPECT_EQ(found->store->state, "incomplete");
-}
-
 TEST_F(NotesServiceTest, ImportsIntoTheSelectedFolderAndDeletesOnlyThatSubtree) {
     const auto folder = notes.create_note_item({}, NoteItemKind::folder, "Books", 1);
     const auto other = notes.create_note_item({}, NoteItemKind::note, "Keep", 1);
@@ -87,15 +74,6 @@ TEST_F(NotesServiceTest, ImportsIntoTheSelectedFolderAndDeletesOnlyThatSubtree) 
     EXPECT_NO_THROW((void)notes.get_note(other.id, 1));
     try { (void)notes.get_note(chapter->id, 1); FAIL(); }
     catch (const ApplicationError& error) { EXPECT_EQ(error.code, ErrorCode::not_found); }
-}
-
-TEST_F(NotesServiceTest, RejectsOrdinaryDeletionOfAStoredFolder) {
-    const auto folder = notes.create_note_item({}, NoteItemKind::folder, "Library", 1);
-    const auto note = notes.create_note_item(folder.id, NoteItemKind::note, "Document", 1);
-    (void)store->register_folder_store(folder.id, FolderStoreService::openai, "key-id", 1);
-    try { notes.delete_note_item(folder.id, 1); FAIL(); }
-    catch (const ApplicationError& error) { EXPECT_EQ(error.code, ErrorCode::invalid_argument); }
-    EXPECT_NO_THROW((void)notes.get_note(note.id, 1));
 }
 
 TEST_F(NotesServiceTest, TranslatesMissingAndOversizedDocumentErrors) {

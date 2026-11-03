@@ -8,12 +8,7 @@
     "summary_linked": false,
     "has_compressed": false,
     "has_audio": false,
-    "read_only": false,
-    "store": {
-      "service": "openai",
-      "id": 7,
-      "state": "ready"
-    }
+    "read_only": false
   },
   "choices": {
     "choices": [
@@ -45,17 +40,15 @@
   "no_operation": {
     "present": false
   },
-  "failed_delete": {
+  "failed_upload": {
     "present": true,
     "operation_id": 7,
-    "kind": "folder_delete",
     "phase": "failed",
     "completed": 1,
     "total": 2,
-    "error": "Cleanup failed. Retry or delete anyway.",
+    "error": "Could not confirm remote cleanup.",
     "result": "error",
     "terminal": true,
-    "known_cleanup_remains": true,
-    "folder_deleted": false
+    "known_cleanup_remains": true
   }
 }

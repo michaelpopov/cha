@@ -238,10 +238,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
         storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
         return note_find_item(database, id);
     };
-    StoreReader read_store = [path = database_path](std::int64_t id) {
-        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
-        return folder_store_get_by_folder(database, id);
-    };
+    StoreReader read_store = [](std::int64_t) { return std::optional<FolderSearchStore>{}; };
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(read_workspace),
         std::move(read_note),
@@ -506,25 +503,19 @@ ControllerUpdate SessionController::add_item(
         const auto item = read_item_(item_id);
         if (!duplicate && (!item || item->kind != NoteItemKind::folder))
             return add_note(item_id, std::move(submission));
-        const auto ready = [this](std::int64_t id) {
+        const auto exists = [this](std::int64_t id) {
             const auto folder = read_item_(id);
-            const auto store = read_store_(id);
-            return folder && folder->kind == NoteItemKind::folder && store
-                && store->state == FolderStoreState::ready && store->remote_store_id;
+            return folder && folder->kind == NoteItemKind::folder;
         };
-        if (!duplicate && !ready(item_id))
-            return {.notice = "Upload this folder to a store before adding it to the conversation."};
         if (submission && submission->expired()) return {.notice = "Submission expired"};
         const bool welcome = identity_.forum_id == workspace_entrance_id && identity_.session_id == welcome_id;
         auto entry = journal_.add_folder(item_id, item ? item->name : "", next_entry_id_,
-            welcome ? std::function<bool(std::int64_t)>(ready) : std::function<bool(std::int64_t)>{});
+            welcome ? std::function<bool(std::int64_t)>(exists) : std::function<bool(std::int64_t)>{});
         ++next_entry_id_;
         transcript_.add_entry(std::move(entry));
         ControllerUpdate update{.state = SnapshotRequired{}, .input_consumed = true, .notice = ""};
         publish_recent(update);
         return update;
-    } catch (const std::invalid_argument&) {
-        return {.notice = "Upload this folder to a store before adding it to the conversation."};
     } catch (const std::exception& error) {
         log_warn("Could not add folder to chat: " + std::string(error.what()));
         return {.notice = "The folder could not be added to this chat. Try again."};
@@ -1003,15 +994,14 @@ std::optional<FolderSearchAccess> SessionController::resolve_folder_search(
             omit(folder, "folder unavailable");
             continue;
         }
-        std::optional<FolderStoreRecord> record;
+        std::optional<FolderSearchStore> record;
         try {
             record = read_store_(id);
         } catch (const std::exception&) {
             omit(folder, "could not read folder store");
             continue;
         }
-        if (!record || record->state != FolderStoreState::ready
-            || !record->remote_store_id || record->remote_store_id->empty()) {
+        if (!record || record->remote_store_id.empty()) {
             omit(folder, "no ready store");
             continue;
         }
@@ -1027,19 +1017,19 @@ std::optional<FolderSearchAccess> SessionController::resolve_folder_search(
         const bool local_search = match.service != record->service || match.api_key_id != record->api_key_id;
         if (local_search) {
             const auto found = std::find_if(search_targets.begin(), search_targets.end(), [&](const auto& store) {
-                return store.service == record->service && store.remote_store_id == *record->remote_store_id;
+                return store.service == record->service && store.remote_store_id == record->remote_store_id;
             });
             if (found == search_targets.end()) {
-                search_targets.push_back({folder.label(), *record->remote_store_id, key->value, record->service});
+                search_targets.push_back({folder.label(), record->remote_store_id, key->value, record->service});
             }
             tool_folders.push_back(&folder);
             continue;
         }
         const auto found = std::find_if(stores.begin(), stores.end(), [&](const Store& store) {
-            return store.remote_id == *record->remote_store_id;
+            return store.remote_id == record->remote_store_id;
         });
         if (found == stores.end()) {
-            stores.push_back({*record->remote_store_id, {&folder}, folder.priority()});
+            stores.push_back({record->remote_store_id, {&folder}, folder.priority()});
         } else {
             found->folders.push_back(&folder);
             found->priority = std::min(found->priority, folder.priority());

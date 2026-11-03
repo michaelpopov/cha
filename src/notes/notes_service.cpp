@@ -51,19 +51,7 @@ std::vector<NoteItem> NotesService::list_note_items(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     try {
-        auto items = impl_->store->list_note_items();
-        const auto stores = impl_->store->list_folder_stores();
-        for (auto& item : items) {
-            if (item.kind != NoteItemKind::folder) continue;
-            for (const auto& store : stores) {
-                if (store.folder_id == item.id) {
-                    item.store = NoteStoreSummary{std::string(folder_store_service_name(store.service)), store.id,
-                        store.state == FolderStoreState::ready ? "ready" : "incomplete"};
-                    break;
-                }
-            }
-        }
-        return items;
+        return impl_->store->list_note_items();
     } catch (const NoteError& error) {
         rethrow_note(error);
     }
@@ -135,9 +123,6 @@ NoteItem NotesService::create_note_item(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    if (parent_id && impl_->folder_in_delete_subtree(*parent_id)) {
-        throw ApplicationError(ErrorCode::invalid_argument, "This folder is being deleted.");
-    }
     try {
         return impl_->store->create_note_item(parent_id, kind, name);
     } catch (const NoteError& error) {
@@ -150,9 +135,6 @@ std::int64_t NotesService::import_note_book(
     std::string name, const std::vector<NoteImportEntry>& notes, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    if (parent_id && impl_->folder_in_delete_subtree(*parent_id)) {
-        throw ApplicationError(ErrorCode::invalid_argument, "This folder is being deleted.");
-    }
     try {
         return impl_->store->import_note_book(parent_id, name, notes);
     } catch (const NoteError& error) {
@@ -164,13 +146,8 @@ void NotesService::export_note_folder(std::int64_t folder_id, const std::filesys
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    if (impl_->folder_in_delete_subtree(folder_id)) {
-        throw ApplicationError(ErrorCode::invalid_argument, "This folder is being deleted.");
-    }
-    std::map<std::string, std::string> key_names;
-    for (const auto& key : impl_->api_keys->list()) key_names[key.id] = key.display_name;
     try {
-        impl_->store->export_note_folder(folder_id, destination, key_names);
+        impl_->store->export_note_folder(folder_id, destination);
     } catch (const NoteError& error) {
         rethrow_note(error);
     }
@@ -180,19 +157,8 @@ std::int64_t NotesService::import_note_folder(std::optional<std::int64_t> parent
     const std::filesystem::path& source, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    if (parent_id && impl_->folder_in_delete_subtree(*parent_id)) {
-        throw ApplicationError(ErrorCode::invalid_argument, "This folder is being deleted.");
-    }
-    // A name that more than one key uses cannot pick a key, so it is left out.
-    std::map<std::string, std::string> key_ids;
-    std::map<std::string, int> name_count;
-    for (const auto& key : impl_->api_keys->list()) {
-        key_ids[key.display_name] = key.id;
-        ++name_count[key.display_name];
-    }
-    std::erase_if(key_ids, [&](const auto& entry) { return name_count[entry.first] > 1; });
     try {
-        return impl_->store->import_note_folder(parent_id, source, key_ids);
+        return impl_->store->import_note_folder(parent_id, source);
     } catch (const NoteError& error) {
         rethrow_note(error);
     }
@@ -202,9 +168,8 @@ void NotesService::delete_note_item(std::int64_t id, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     try {
-        if (impl_->store->folder_store_owns_subtree(id) || impl_->folder_store_blocks_delete(id)) {
-            throw ApplicationError(ErrorCode::invalid_argument,
-                "This folder has a store or an active operation. Use folder delete after that operation finishes.");
+        if (impl_->folder_store_blocks_delete(id)) {
+            throw ApplicationError(ErrorCode::invalid_argument, "A store operation is running for this folder.");
         }
         const auto folder_ids = impl_->store->folder_ids_in_subtree(id);
         // Capture affected controls before the delete. After it commits, retirement

@@ -257,13 +257,8 @@ VoiceDetail voice_detail(
 
 ApiKeyDetail api_key_detail(
     const ApiKeyInfo& key,
-    const Workspace& workspace, std::span<const FolderStoreKeyUsage> stores) {
+    const Workspace& workspace) {
     std::vector<std::string> used_by = providers_using_key(workspace, key);
-    for (const auto& store : stores) {
-        if (store.api_key_id == key.id)
-            used_by.push_back("Folder store: " + store.folder_name + " ("
-                + (store.service == FolderStoreService::openai ? "OpenAI" : "Google") + ")");
-    }
     if (workspace.voice_input()
         && key.id == workspace.voice_input()->api_key_id) {
         used_by.emplace_back("Voice input");
@@ -868,10 +863,10 @@ std::optional<VoiceOutputRuntime> get_voice_output_runtime(
 
 std::vector<ApiKeyDetail> list_api_keys(
     const Workspace& workspace,
-    const ApiKeyStore& api_keys, std::span<const FolderStoreKeyUsage> stores) {
+    const ApiKeyStore& api_keys) {
     std::vector<ApiKeyDetail> result;
     for (const ApiKeyInfo& key : api_keys.list()) {
-        result.push_back(api_key_detail(key, workspace, stores));
+        result.push_back(api_key_detail(key, workspace));
     }
     return result;
 }
@@ -879,12 +874,12 @@ std::vector<ApiKeyDetail> list_api_keys(
 ApiKeyDetail create_api_key(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
-    const CreateApiKeyRequest& create, std::span<const FolderStoreKeyUsage> stores) {
+    const CreateApiKeyRequest& create) {
     return with_settings_edit([&] {
         try {
             return api_key_detail(
                 api_keys.create(create.display_name, create.value),
-                workspace, stores);
+                workspace);
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid API key.");
         }
@@ -895,11 +890,11 @@ ApiKeyDetail rename_api_key(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
-    std::string_view display_name, std::span<const FolderStoreKeyUsage> stores) {
+    std::string_view display_name) {
     return with_settings_edit([&] {
         try {
             return api_key_detail(
-                api_keys.rename(id, display_name), workspace, stores);
+                api_keys.rename(id, display_name), workspace);
         } catch (const std::out_of_range&) {
             fail(ErrorCode::not_found, "That API key was not found.");
         } catch (const std::invalid_argument&) {
@@ -912,11 +907,11 @@ ApiKeyDetail replace_api_key_value(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
-    std::string_view value, std::span<const FolderStoreKeyUsage> stores) {
+    std::string_view value) {
     return with_settings_edit([&] {
         try {
             return api_key_detail(
-                api_keys.replace(id, value), workspace, stores);
+                api_keys.replace(id, value), workspace);
         } catch (const std::out_of_range&) {
             fail(ErrorCode::not_found, "That API key was not found.");
         } catch (const std::invalid_argument&) {

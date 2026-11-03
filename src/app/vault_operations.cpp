@@ -2,7 +2,6 @@
 
 #include "app/application_internal.h"
 #include "app/workspace_operations.h"
-#include "storage/folder_store_storage.h"
 #include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
 #include "util/logging.h"
@@ -531,11 +530,6 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
                 candidate.data,
                 source_password,
                 create.password);
-            storage::SqliteDatabase destination(
-                candidate.data, storage::SqliteDatabase::Mode::read_write, create.password);
-            storage::SqliteTransaction transaction(destination);
-            folder_store_clear_ownership(destination);
-            transaction.commit();
         } else {
             create_workspace_session_database_from_configuration(
                 app.current_vault_.get().data,

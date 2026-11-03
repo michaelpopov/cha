@@ -613,27 +613,6 @@ Json inspect_notes(const WorkspaceConfigStore& store) {
     return items;
 }
 
-Json inspect_stores(const WorkspaceConfigStore& store) {
-    Json items = Json::array();
-    for (const auto& record : store.list_folder_stores()) {
-        items.push_back({
-            {"id", record.id},
-            {"folder_id", record.folder_id},
-            {"ref_id", note_item_ref_id(record.folder_id)},
-            {"folder_name", record.folder_name},
-            {"service", folder_store_service_name(record.service)},
-            {"api_key_id", record.api_key_id},
-            {"remote_store_id", optional_json(record.remote_store_id)},
-            {"state", record.state == FolderStoreState::ready ? "ready" : "incomplete"},
-            {"note_count", record.note_count},
-            {"uploaded_at", optional_json(record.uploaded_at)},
-            {"remote_outcome_unknown", record.remote_outcome_unknown},
-            {"file_ids", record.file_ids},
-        });
-    }
-    return items;
-}
-
 Json inspect_sessions(
     const AssistantService::Links& links,
     const std::string& forum_id) {
@@ -664,7 +643,7 @@ std::string inspect_tool(
     const Json& after = parsed["after"];
     const bool single_item = topic == "application" || topic == "services";
     const bool session_topic = topic == "sessions" || topic == "session_entries";
-    const bool numeric_key = topic == "notes" || topic == "stores" || topic == "session_entries";
+    const bool numeric_key = topic == "notes" || topic == "session_entries";
     if ((session_topic ? !forum_id.is_string() : !forum_id.is_null())
         || (topic == "session_entries" ? !session_id.is_string() : !session_id.is_null())
         || (single_item ? !after.is_null() : !after.is_null() && !after.is_string())) {
@@ -705,12 +684,9 @@ std::string inspect_tool(
         items.push_back(inspect_services(*workspace, *links.api_keys, *links.oauth));
     } else if (topic == "keys") {
         if (!links.api_keys) return tool_error("unavailable", "Key metadata is unavailable.");
-        items = app::settings::list_api_keys(
-            *workspace, *links.api_keys, links.store->folder_store_usage());
+        items = app::settings::list_api_keys(*workspace, *links.api_keys);
     } else if (topic == "notes") {
         items = inspect_notes(*links.store);
-    } else if (topic == "stores") {
-        items = inspect_stores(*links.store);
     } else if (session_topic) {
         if (!links.repository || !links.sessions) {
             return tool_error("unavailable", "Session metadata is unavailable.");

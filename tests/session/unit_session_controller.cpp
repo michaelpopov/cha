@@ -731,12 +731,8 @@ TEST_F(ReferencedNotesTest, OmissionsShareTheExistingNoticeWithFoldersAndRetryOn
     reference(missing, FileReferenceOwner::forum, "lobby");
     for (const auto& item : {broken, large, wrong, compressed, empty})
         reference(item, FileReferenceOwner::character, "guide");
-    const auto folder_store = store->register_folder_store(folder.id, FolderStoreService::openai, "saved", 1);
-    store->save_folder_store_remote_id(folder_store, "vs_folder");
-    store->mark_folder_store_ready(folder_store, "Ready");
     (void)store->create_file_reference(FileReferenceOwner::character, "guide", FileReferenceKind::folder,
         note_item_ref_id(folder.id));
-    store->delete_folder_store_record(folder_store, "Removed");
     store->delete_note_item(missing.id);
     store->save_compressed_note(large.id, std::string(256 * 1024 + 1, 'x'));
     store->save_compressed_note(compressed.id, "Fits");
@@ -747,7 +743,7 @@ TEST_F(ReferencedNotesTest, OmissionsShareTheExistingNoticeWithFoldersAndRetryOn
     }
     const auto prepared = sessions->prepare(identity);
     SessionJournal journal(prepared.database_path, prepared.session_key);
-    (void)journal.add_folder(folder.id, folder.name, 1, [](auto) { return true; });
+    (void)journal.add_folder(folder.id, folder.name, 1);
     auto opened = open();
     const auto update = opened.controller->submit_prompt("reader", "First", "Guide");
     ASSERT_TRUE(update.input_consumed);
@@ -792,7 +788,7 @@ TEST_F(ReferencedNotesTest, MulticastReadsASharedReferenceOnceAndOwnsFixedPrompt
             store->save_compressed_note(id, "Later version");
             return selected;
         }, [&](auto id) { return store->get_note_item(id); },
-        [&](auto id) { return store->get_folder_store_by_folder(id); },
+        [](auto) { return std::optional<SessionController::FolderSearchStore>{}; },
         "guide", "reader", prepared.database_path, prepared.session_key, prepared.database_password,
         *providers, std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}), prepared.restore, identity);
     ASSERT_TRUE(controller->start_multicast("reader", "Both", {}).input_consumed);

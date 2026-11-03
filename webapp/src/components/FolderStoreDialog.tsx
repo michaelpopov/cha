@@ -4,17 +4,12 @@ import {
   ChaError, publicErrorMessage, type FolderStoreChoice, type FolderStoreOperation,
   type FolderStoreService, type NoteItem, type NotesClient,
 } from '../api/client';
-import { noteInSubtree } from '../notes/tree';
-import type { DeleteNoteItem } from './NotesTree';
 
 type Operation = Extract<FolderStoreOperation, { present: true }>;
-type Mode = 'upload' | 'remove' | 'delete';
 const warning = 'Local removal completed. Some remote data could not be confirmed deleted. See Events for manual-cleanup details.';
-const providerName = (service: FolderStoreService) => service === 'openai' ? 'OpenAI' : 'Google';
 
-export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, listing, refresh, onDeleteItem, onClose }: {
-  client: NotesClient; source: NoteItem; mode: Mode; epoch: number; listing: readonly NoteItem[];
-  refresh(): Promise<void>; onDeleteItem: DeleteNoteItem; onClose(): void;
+export function FolderStoreDialog({ client, source, epoch, onClose }: {
+  client: NotesClient; source: NoteItem; epoch: number; onClose(): void;
 }) {
   const element = useRef<HTMLDialogElement>(null);
   const alive = useRef(false);
@@ -22,16 +17,23 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
   const operation = useRef<Operation | null>(null);
   const cancelling = useRef(false);
   const [op, setOp] = useState<Operation | null>(null);
-  const [mode, setMode] = useState(requestedMode);
   const [choices, setChoices] = useState<FolderStoreChoice[]>([]);
-  const [service, setService] = useState<FolderStoreService>(source.store?.service ?? 'openai');
+  const [service, setService] = useState<FolderStoreService>('openai');
   const [key, setKey] = useState('');
+  const [name, setName] = useState(source.name);
+  const [description, setDescription] = useState('');
+  const normalizedName = name.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g, '');
+  const nameError = !normalizedName ? 'Enter a store name.'
+    : service === 'google' && new TextEncoder().encode(normalizedName).length > 512
+      ? 'Name is too long for Google. Use a shorter name.'
+      : service === 'openai' && [...normalizedName].length > 512 ? 'Name must be 512 characters or fewer.' : null;
+  const descriptionError = service === 'openai' && [...description].length > 512
+    ? 'Description must be 512 characters or fewer for OpenAI.' : null;
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const count = listing.filter(item => item.store && noteInSubtree(listing, source.id, item.id)).length;
   const eligible = choices.filter(choice => choice.service === service);
 
   function current() {
@@ -43,7 +45,7 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
   }
   function publish(next: Operation | null) {
     // A status read started before Cancel may return after cancellation was accepted.
-    if (next?.kind === 'upload' && !next.terminal && next.operation_id === operation.current?.operation_id
+    if (next && !next.terminal && next.operation_id === operation.current?.operation_id
       && operation.current.phase === 'cleaning') next = { ...next, phase: 'cleaning' };
     operation.current = next;
     setOp(next);
@@ -56,10 +58,6 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
     setChoices(unique);
     const keys = unique.filter(choice => choice.service === service);
     setKey(keys.length === 1 ? keys[0].api_key_id : '');
-  }
-  async function reload() {
-    await refresh();
-    return current();
   }
   async function acknowledge(next: Operation) {
     await client.storeClose(next.operation_id, epoch);
@@ -76,58 +74,44 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
     publish(result);
     return result;
   }
-  async function follow(first: Operation): Promise<boolean> {
+  async function follow(first: Operation) {
     let next = first;
     while (current()) {
       publish(next);
-      if (next.terminal) return next.folder_deleted;
+      if (next.terminal) return;
       await new Promise(resolve => setTimeout(resolve, 500));
-      if (!current()) return false;
+      if (!current()) return;
       try {
         const result = await read(first.operation_id);
-        if (!result) return false;
+        if (!result) return;
         next = result;
       } catch (failure) {
-        if (!current()) return false;
+        if (!current()) return;
         if (failure instanceof ChaError && failure.code === 'invalid_argument') throw failure;
         setStatusError(publicErrorMessage(failure, 'Could not read store status. Checking again…'));
       }
     }
-    return false;
   }
   async function finish() {
     if (!current()) return;
     const next = operation.current;
     if (!next?.terminal) return;
-    // Local deletion is reconciled by App before acknowledging its identity.
     if (next.result === 'preflight') {
       await acknowledge(next);
       if (!current()) return;
       publish(null);
       setError(next.error || 'The saved notes could not be uploaded.');
       await loadChoices();
-    } else if (next.result === 'success' || next.result === 'cancelled' || next.result === 'folder_deleted') {
-      if (!next.folder_deleted && !await reload()) return;
+    } else if (next.result === 'success' || next.result === 'cancelled') {
       await acknowledge(next);
       if (current()) onClose();
-    } else if (!next.folder_deleted) {
-      await reload();
     }
   }
-  async function guardedDelete(run: () => Promise<boolean>) {
-    let ran = false;
-    const result = await onDeleteItem(source.id, listing, refresh, () => { ran = true; return run(); });
-    if (current() && !ran && result !== 'busy') throw new ChaError('invalid_argument', 'The delete attempt could not start. Close and reopen the folder menu.');
-    if (current() && result === 'busy') throw new ChaError('invalid_argument', 'A notes action is already in progress.');
-    if (current() && result === 'refresh-failed') setError('The folder was deleted, but the notes list could not be refreshed.');
-  }
   async function recover(result: Operation) {
-    setMode(result.kind === 'folder_delete' ? 'delete' : result.kind);
     publish(result);
     setPending(false);
     setLoading(false);
-    if (result.kind === 'folder_delete') await guardedDelete(() => follow(result));
-    else await follow(result);
+    await follow(result);
     await finish();
   }
 
@@ -145,7 +129,7 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
         const result = await client.storeOperation(source.id, epoch);
         if (disposed || !current()) return;
         if (result.present) await recover(result);
-        else if (requestedMode === 'upload') await loadChoices();
+        else await loadChoices();
       } catch (failure) {
         if (current()) { setBlocked(true); setError(publicErrorMessage(failure, 'Could not recover store status. Close and reopen the folder menu.')); }
       } finally {
@@ -165,37 +149,25 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
     if (!loading) element.current?.querySelector<HTMLElement>('select:not(:disabled), button:not(:disabled)')?.focus();
   }, [loading, op?.terminal, op?.phase]);
 
-  async function submit(action: 'submit' | 'delete-anyway' | 'cleanup' = 'submit') {
-    const nextMode = action === 'cleanup' ? 'remove' : mode;
-    if (busy.current || blocked || loading || (nextMode === 'upload' && !key) || !current()) return;
+  async function submit(action: 'upload' | 'cleanup' = 'upload') {
+    if (busy.current || blocked || loading || (action === 'upload' && (!key || nameError || descriptionError)) || !current()) return;
     busy.current = true; setPending(true); setError(null);
     const failed = operation.current;
     try {
-      const start = async () => {
-        let storeId = source.store?.id;
-        if (action === 'cleanup') {
-          if (!failed?.terminal || failed.kind === 'folder_delete' || !failed.known_cleanup_remains) return false;
-          const previous = await read(failed.operation_id);
-          if (!previous) return false;
-          if (!previous.terminal || !previous.known_cleanup_remains)
-            throw new ChaError('invalid_argument', 'The store operation changed. Close this dialog and reopen the folder menu.');
-          storeId = listing.find(item => item.id === source.id)?.store?.id;
-          if (!storeId) throw new ChaError('invalid_argument', 'The folder store was not found. Refresh the notes list and reopen the folder menu.');
-        }
-        const accepted = nextMode === 'delete'
-          ? await client.folderDelete(failed ? { operation_id: failed.operation_id, delete_anyway: action === 'delete-anyway' }
-            : { folder_id: source.id, confirmed_store_count: count }, epoch)
-          : nextMode === 'upload' ? await client.storeUpload(source.id, service, key, epoch)
-            : await client.storeRemove(source.id, storeId!, epoch);
-        if (!current()) return false;
-        const result = await read(accepted.operation_id);
-        if (!result) return false;
-        setMode(nextMode);
-        setPending(false);
-        return follow(result);
-      };
-      if (nextMode === 'delete') await guardedDelete(start);
-      else await start();
+      if (action === 'cleanup') {
+        if (!failed?.terminal || !failed.known_cleanup_remains) return;
+        const previous = await read(failed.operation_id);
+        if (!previous) return;
+        if (!previous.terminal || !previous.known_cleanup_remains)
+          throw new ChaError('invalid_argument', 'The store operation changed. Close this dialog and reopen the folder menu.');
+      }
+      const accepted = action === 'cleanup' ? await client.storeCleanup(failed!.operation_id, epoch)
+        : await client.storeUpload(source.id, service, key, normalizedName, description, epoch);
+      if (!current()) return;
+      const result = await read(accepted.operation_id);
+      if (!result) return;
+      setPending(false);
+      await follow(result);
       await finish();
     } catch (failure) {
       if (!current()) return;
@@ -207,8 +179,7 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
         if (result.present) await recover(result);
         else {
           if (operation.current) { publish(null); setBlocked(true); }
-          await reload(); // Includes count mismatch: require a new confirmation.
-          if (current() && mode === 'upload') await loadChoices();
+          await loadChoices();
         }
       } catch {
         if (current()) setBlocked(true);
@@ -233,7 +204,7 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
   async function cancel() {
     const next = operation.current;
     if (!next || next.terminal) { await close(); return; }
-    if (cancelling.current || pending || next.kind !== 'upload' || next.phase === 'cleaning' || !current()) return;
+    if (cancelling.current || pending || next.phase === 'cleaning' || !current()) return;
     cancelling.current = true;
     setPending(true);
     try {
@@ -245,22 +216,18 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
     } finally { cancelling.current = false; if (current()) setPending(false); }
   }
   const active = !!op && !op.terminal;
-  const failedDelete = mode === 'delete' && !!op?.terminal && !op.folder_deleted;
-  const canRetryCleanup = !!op?.terminal && op.kind !== 'folder_delete' && op.known_cleanup_remains;
+  const canRetryCleanup = !!op?.terminal && op.known_cleanup_remains;
   const editable = !loading && !blocked && !op;
-  const canCancel = active && op.kind === 'upload' && !['cleaning', 'removing'].includes(op.phase);
+  const canCancel = active && op.phase !== 'cleaning';
   const status = op?.phase === 'uploading' ? `Uploading ${op.completed} of ${op.total} notes…`
     : op?.phase === 'indexing' ? 'Indexing notes…'
-      : op?.phase === 'cleaning' ? 'Cleaning up…'
-        : op?.phase === 'preparing' ? 'Preparing notes…'
-          : mode === 'delete' ? 'Removing remote stores…' : 'Removing store…';
-  return createPortal(<dialog ref={element} className="cha-dialog cha-folder-store-dialog"
-    aria-label={mode === 'upload' ? 'Upload folder to store' : mode === 'remove' ? 'Remove folder from store' : `Delete “${source.name}”`}
+      : op?.phase === 'preparing' ? 'Preparing notes…' : 'Cleaning up…';
+  return createPortal(<dialog ref={element} className="cha-dialog cha-folder-store-dialog" aria-label="Upload folder to store"
     onCancel={event => { event.preventDefault(); if (canCancel) void cancel(); else if (!active) void close(); }}>
     <form className="cha-notes-create" onSubmit={event => { event.preventDefault(); if (editable) void submit(); }}>
       {loading && !op && <p role="status">Checking store…</p>}
       {active && <p role="status">{status}</p>}
-      {editable && mode === 'upload' && <>
+      {editable && <>
         <label>Provider<select className="cha-form-control" value={service} disabled={pending} onChange={event => {
           const selected = event.target.value as FolderStoreService;
           setService(selected); setError(null);
@@ -271,28 +238,28 @@ export function FolderStoreDialog({ client, source, mode: requestedMode, epoch, 
           <option value="">Select API key</option>
           {eligible.map(choice => <option key={choice.api_key_id} value={choice.api_key_id}>{choice.api_key_name}</option>)}
         </select></label>
+        <label>Name<input className="cha-form-control" value={name} disabled={pending}
+          aria-invalid={!!nameError} aria-describedby={nameError ? 'store-name-error' : undefined}
+          onChange={event => setName(event.target.value)} /></label>
+        {nameError && <p id="store-name-error" className="cha-error-message" role="alert">{nameError}</p>}
+        <label>Description (optional)<textarea className="cha-form-control" rows={6} value={description} disabled={pending}
+          aria-invalid={!!descriptionError} aria-describedby={descriptionError ? 'store-description-error' : undefined}
+          onChange={event => setDescription(event.target.value)} /></label>
+        {descriptionError && <p id="store-description-error" className="cha-error-message" role="alert">{descriptionError}</p>}
         {eligible.length === 0 && <p className="cha-error-message" role="alert">Add a compatible provider and saved key in Settings.</p>}
       </>}
-      {editable && mode === 'remove' && <p>Remove “{source.name}” from {providerName(source.store!.service)}?</p>}
-      {editable && mode === 'delete' && <><p>Delete “{source.name}” and all its notes?</p>
-        {count > 0 && <p>{count} remote {count === 1 ? 'store will' : 'stores will'} also be removed.</p>}</>}
       {op?.terminal && op.result === 'warning' && <p role="alert">{warning}</p>}
       {op?.terminal && op.error && <p className="cha-error-message" role="alert">{op.error}</p>}
-      {failedDelete && <p>Delete anyway removes the local folder and notes. Remote data and charges may remain.</p>}
       {statusError && <p className="cha-error-message" role="alert">{statusError}</p>}
       {error && <p className="cha-error-message" role="alert">{error}</p>}
       <div className="cha-dialog-actions">
         {canCancel && <button className="cha-button" type="button" disabled={pending} onClick={() => void cancel()}>Cancel</button>}
         {!active && <button className="cha-button cha-button-ghost" type="button" disabled={pending || loading} onClick={() => void close()}>
-          {editable || failedDelete ? 'Cancel' : 'Close'}</button>}
-        {editable && <button className="cha-button cha-button-primary" type="submit" disabled={pending || mode === 'upload' && !key}>
-          {mode === 'upload' ? 'Upload' : mode === 'remove' ? 'Remove' : 'Delete'}</button>}
+          {editable ? 'Cancel' : 'Close'}</button>}
+        {editable && <button className="cha-button cha-button-primary" type="submit" disabled={pending || !key || !!nameError || !!descriptionError}>
+          Upload</button>}
         {canRetryCleanup && !blocked && <button className="cha-button cha-button-primary" type="button" disabled={pending || loading}
           onClick={() => void submit('cleanup')}>Retry cleanup</button>}
-        {failedDelete && !blocked && <>
-          <button className="cha-button" type="button" disabled={pending} onClick={() => void submit()}>Retry</button>
-          <button className="cha-button cha-button-primary" type="button" disabled={pending} onClick={() => void submit('delete-anyway')}>Delete anyway</button>
-        </>}
       </div>
     </form>
   </dialog>, document.body);

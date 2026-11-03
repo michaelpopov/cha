@@ -404,7 +404,7 @@ credentials are unavailable, the operator can run the daemon's command-line
 
 Read current settings with defaults and active-vault metadata. All four arguments
 are required. Topics: `application`, `providers`, `styles`, `voices`, `characters`,
-`personas`, `forums`, `services`, `keys`, `notes`, `stores`, `sessions`, and
+`personas`, `forums`, `services`, `keys`, `notes`, `sessions`, and
 `session_entries`. Set forum_id for sessions and session_entries, and session_id
 only for session_entries; use null for other IDs. Entrance has no stored sessions.
 Use null after for the first page, then pass next_after for the same topic and
@@ -421,11 +421,9 @@ Settings topics use the Settings readers and their defaults. Saved source text
 is separately available through vault_config_read; saved host values may differ
 from process values until restart.
 
-Questions about uploaded folders start with `stores`, including incomplete and
-unattached uploads. Its state and note_count are saved upload metadata, not a
-fresh provider check or the current folder count. `characters`, `forums`, and
-`sessions` show where folders are used. Keep uploaded stores, Files references,
-and chat attachments distinct. `notes` includes folders and annotations, Ref
+CHA keeps no record of uploaded stores; the upload Events name them.
+`characters`, `forums`, and `sessions` show where folders are used. Keep Files
+references and chat attachments distinct. `notes` includes folders and annotations, Ref
 IDs, audio clip metadata, and saved pending audio attempt details. `sessions`
 includes live flags, saved toolbar overrides, attachment metadata and counts;
 `session_entries` includes entry metadata and byte lengths. Events and pending
@@ -496,8 +494,8 @@ legacy member `provider` field, which has no runtime effect.
 
 Use only the supported configuration roots in the location map. Do not add `file_references`
 entries with apply: only the owner's Files list (New file → Note reference or
-Folder reference) checks that the Ref ID exists in this vault, matches the
-kind, and has a ready store for a folder, and captures the current name. An
+Folder reference) checks that the Ref ID exists in this vault and matches the
+kind, and captures the current name. An
 authorized replacement can remove an entry. Paths must be
 canonical stored names with supported extensions: no absolute paths, traversal,
 backslashes, empty components, or filesystem links. A `.toml` or `.md` suffix

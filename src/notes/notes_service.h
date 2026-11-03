@@ -98,26 +98,15 @@ public:
         std::int64_t folder_id,
         std::string service,
         std::string api_key_id,
+        std::string name,
+        std::string description,
         std::uint64_t epoch);
-    [[nodiscard]] FolderStoreStart start_folder_store_remove(
-        std::int64_t folder_id,
-        std::int64_t expected_store_id,
-        std::uint64_t epoch);
+    [[nodiscard]] FolderStoreStart retry_folder_store_cleanup(
+        std::int64_t operation_id, std::uint64_t epoch);
     [[nodiscard]] FolderStoreOperationStatus folder_store_operation_status(
         std::int64_t folder_id, std::uint64_t epoch);
     void cancel_folder_store_upload(std::int64_t operation_id, std::uint64_t epoch);
     void close_folder_store_operation(std::int64_t operation_id, std::uint64_t epoch);
-    [[nodiscard]] FolderStoreStart start_folder_delete(
-        std::int64_t folder_id, std::int64_t confirmed_store_count, std::uint64_t epoch);
-    [[nodiscard]] FolderStoreStart retry_folder_delete(
-        std::int64_t operation_id, std::uint64_t epoch);
-    void delete_folder_anyway(std::int64_t operation_id, std::uint64_t epoch);
-    [[nodiscard]] std::optional<FolderStoreRecord> folder_store_record(
-        std::int64_t folder_id, std::uint64_t epoch);
-    [[nodiscard]] std::vector<FolderStoreRecord> list_folder_stores(std::uint64_t epoch);
-    [[nodiscard]] std::int64_t folder_store_count_in_subtree(
-        std::int64_t folder_id, std::uint64_t epoch);
-    [[nodiscard]] std::vector<FolderStoreKeyUsage> folder_store_usage(std::uint64_t epoch);
     void set_folder_store_transport_for_tests(FolderStoreTransport transport);
     void interrupt_folder_stores_locked();
 

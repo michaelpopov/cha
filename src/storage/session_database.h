@@ -99,13 +99,13 @@ public:
     void save_note_reference(const NoteText& note, std::string_view character_id);
     [[nodiscard]] TranscriptEntry add_text_file(
         std::string_view name, std::string_view text, EntryId entry_id);
-    // Persistent attach rechecks readiness on this journal connection when
-    // welcome_ready is empty. Welcome supplies a vault callback instead.
+    // Persistent attach rechecks that the folder exists on this journal
+    // connection when welcome_exists is empty. Welcome supplies a vault callback.
     [[nodiscard]] TranscriptEntry add_folder(
         std::int64_t folder_id,
         std::string_view folder_name,
         EntryId entry_id,
-        std::function<bool(std::int64_t)> welcome_ready = {});
+        std::function<bool(std::int64_t)> welcome_exists = {});
     [[nodiscard]] TranscriptEntry detach_folder(
         std::int64_t folder_id,
         std::string_view folder_name,

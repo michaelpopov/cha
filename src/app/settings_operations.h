@@ -140,22 +140,21 @@ void disable_jev(WorkspaceConfigStore& store);
 
 [[nodiscard]] std::vector<ApiKeyDetail> list_api_keys(
     const Workspace& workspace,
-    const ApiKeyStore& api_keys,
-    std::span<const FolderStoreKeyUsage> stores);
+    const ApiKeyStore& api_keys);
 [[nodiscard]] ApiKeyDetail create_api_key(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
-    const CreateApiKeyRequest& create, std::span<const FolderStoreKeyUsage> stores);
+    const CreateApiKeyRequest& create);
 [[nodiscard]] ApiKeyDetail rename_api_key(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
-    std::string_view display_name, std::span<const FolderStoreKeyUsage> stores);
+    std::string_view display_name);
 [[nodiscard]] ApiKeyDetail replace_api_key_value(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
-    std::string_view value, std::span<const FolderStoreKeyUsage> stores);
+    std::string_view value);
 void delete_api_key(ApiKeyStore& api_keys, std::string_view id);
 
 [[nodiscard]] std::optional<R2StorageDetail> get_r2_storage(

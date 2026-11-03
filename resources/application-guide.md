@@ -44,8 +44,7 @@ edits the shared guide for every character.
 A character's or forum's Files can hold a Note reference or a Folder reference,
 added by the item's CHA Ref ID (Copy Ref ID in Notes). For a character, use
 Characters → the character → Character settings → Files → New file, then choose
-Note reference or Folder reference and enter the Ref ID. Upload a folder with
-Upload to store before adding its reference. A chat copies a referenced note
+Note reference or Folder reference and enter the Ref ID. A chat copies a referenced note
 when it first uses it; characters on network providers search referenced
 folders while they answer. When explaining folder attachment, distinguish Files
 references from chat attachments: `/detach <Ref ID>` removes only a folder
@@ -56,7 +55,7 @@ The chat toolbar's Model and Effort change the selected character's provider
 and effort for the current session only; Default uses the character's settings.
 
 In Welcome, Assistant can inspect application settings, vault registrations,
-notes and folders, uploaded stores, and session metadata without reading note
+notes and folders, and session metadata without reading note
 or conversation text. When asked, it can change characters, personas, forums,
 providers, styles, voices, and the session, notes, search, and voice settings.
 It cannot change its own settings or API keys. In other forums, it explains

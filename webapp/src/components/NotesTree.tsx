@@ -88,7 +88,6 @@ export type DeleteNoteItem = (
   sourceId: number,
   listing: readonly NoteItem[],
   refresh: () => Promise<void>,
-  remove?: () => Promise<boolean>,
 ) => Promise<NoteDeleteResult>;
 
 export type NoteActions = {
@@ -133,7 +132,7 @@ export function NotesTree({
   vaultName: string;
   onRegisterNoteActions?(actions: NoteActions | null): void;
 }) {
-  const [storeRun, setStoreRun] = useState<{ source: NoteItem; mode: 'upload' | 'remove' | 'delete'; epoch: number } | null>(null);
+  const [storeRun, setStoreRun] = useState<{ source: NoteItem; epoch: number } | null>(null);
   const storeRunRef = useRef(storeRun);
   storeRunRef.current = storeRun;
   const [audioRun, setAudioRun] = useState<{ targets: NoteAudioTarget[]; epoch: number; folderMode: boolean } | null>(null);
@@ -674,7 +673,6 @@ export function NotesTree({
   }
 
   async function startDelete() {
-    const epoch = menu?.epoch;
     const source = takeMenuSource();
     if (!source || source.kind === 'annotation' || !canMutateNow()) return;
     const captured: DeleteDialogState = {
@@ -685,16 +683,6 @@ export function NotesTree({
       error: null,
       pending: false,
     };
-    if (source.kind === 'folder' && (itemsRef.current.some(item => item.store && noteInSubtree(itemsRef.current, source.id, item.id)) || menu?.storeStatus?.present)) {
-      try {
-        if (epoch === undefined || clientRef.current.contextEpoch() !== epoch)
-          throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
-        setStoreRun({ source, mode: 'delete', epoch });
-      } catch (failure) {
-        setError(publicErrorMessage(failure, 'The connection to CHA ended.'));
-      }
-      return;
-    }
     busy.current = true;
     const gen = generation.current;
     let confirm = true;
@@ -861,7 +849,7 @@ export function NotesTree({
   const menuIsNote = menu !== null && index.rows[menu.sourceId]?.kind !== 'folder';
   const menuManaged = menu !== null && index.rows[menu.sourceId]?.forumId !== undefined;
   const menuFolderBusy = menu !== null && !menuIsNote && menu.sourceId !== 'vault'
-    && (menu.storeStatus === null || menu.storeStatus.present && (!menu.storeStatus.terminal || menu.storeStatus.kind === 'folder_delete'));
+    && (menu.storeStatus === null || menu.storeStatus.present && !menu.storeStatus.terminal);
   const menuParentId = menu?.sourceId === 'vault' ? null : Number(menu?.sourceId);
   const containerProps = tree.getContainerProps('Notes');
 
@@ -1016,7 +1004,7 @@ export function NotesTree({
                 <button disabled={!index.rows[menu.sourceId]?.hasCompressed}
                   onClick={showCompressed} role="menuitem" type="button">Show compressed</button>
               )}
-              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button disabled={!menuIsNote && menu.storeStatus === null} onClick={() => startDelete()} role="menuitem" type="button">Delete</button>}
+              {index.rows[menu.sourceId]?.kind !== 'annotation' && <button onClick={() => startDelete()} role="menuitem" type="button">Delete</button>}
             </>
           )}
           {menu.sourceId !== 'vault' && (
@@ -1026,18 +1014,13 @@ export function NotesTree({
             disabled={menu.storeStatus === null}
             onClick={() => {
               const source = takeMenuSource();
-              if (source) setStoreRun({ source, mode: menu.storeStatus?.present && menu.storeStatus.kind === 'folder_delete' ? 'delete' : source.store ? 'remove' : 'upload', epoch: menu.epoch });
-            }}>{items.find(item => String(item.id) === menu.sourceId)?.store ? 'Remove from store' : 'Upload to store'}</button>}
+              if (source) setStoreRun({ source, epoch: menu.epoch });
+            }}>Upload to store</button>}
         </div>,
         document.body,
       )}
-      {storeRun && <FolderStoreDialog client={client} source={storeRun.source} mode={storeRun.mode}
-        epoch={storeRun.epoch} listing={items} onDeleteItem={onDeleteItem}
-        refresh={async () => {
-          if (await refreshListing(storeRun.source.id) === 'failed')
-            throw new Error('The notes list could not be refreshed.');
-        }}
-        onClose={() => setStoreRun(null)} />}
+      {storeRun && <FolderStoreDialog client={client} source={storeRun.source}
+        epoch={storeRun.epoch} onClose={() => setStoreRun(null)} />}
       {audioRun !== null && client.noteAudio && <NoteAudioDialog client={client.noteAudio}
         targets={audioRun.targets} epoch={audioRun.epoch} folderMode={audioRun.folderMode}
         prepare={async id => {

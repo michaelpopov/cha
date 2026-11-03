@@ -2912,7 +2912,7 @@ TEST(ProviderClientTools, InspectSchemaAcrossAllApis) {
                                                               : "parameters";
         const auto& schema = function.at(schema_field);
         EXPECT_EQ(schema["required"], Json::array({"topic", "forum_id", "session_id", "after"}));
-        EXPECT_EQ(schema["properties"]["topic"]["enum"].size(), 13U);
+        EXPECT_EQ(schema["properties"]["topic"]["enum"].size(), 12U);
     }
 }
 
@@ -2941,7 +2941,7 @@ void expect_maintenance_tools(const Json& body) {
         } else if (function["name"] == "assistant_inspect") {
             EXPECT_EQ(schema["required"],
                 Json::array({"topic", "forum_id", "session_id", "after"}));
-            EXPECT_EQ(schema["properties"]["topic"]["enum"].size(), 13U);
+            EXPECT_EQ(schema["properties"]["topic"]["enum"].size(), 12U);
             for (const auto field : {"forum_id", "session_id", "after"}) {
                 EXPECT_EQ(schema["properties"][field]["type"], Json::array({"string", "null"}));
             }

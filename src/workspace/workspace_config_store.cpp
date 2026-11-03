@@ -2128,8 +2128,6 @@ FileReference WorkspaceConfigStore::create_file_reference(
             throw std::invalid_argument("This Ref ID belongs to a folder. Select Folder reference.");
         if (!folder && kind == FileReferenceKind::folder)
             throw std::invalid_argument("This Ref ID belongs to a note. Select Note reference.");
-        if (folder && !folder_store_folder_is_ready(*impl_->database, *id))
-            throw std::invalid_argument("Upload this folder to a store before adding its reference.");
         result.name = item->name;
         editor.create_file_reference(owner, owner_id, result);
         return std::vector<std::string>{};
@@ -2719,15 +2717,15 @@ std::int64_t WorkspaceConfigStore::import_note_book(
 }
 
 void WorkspaceConfigStore::export_note_folder(std::int64_t folder_id,
-    const std::filesystem::path& destination, const std::map<std::string, std::string>& key_names) {
+    const std::filesystem::path& destination) {
     const std::lock_guard lock(impl_->mutex);
-    note_export_folder(*impl_->database, folder_id, destination, key_names);
+    note_export_folder(*impl_->database, folder_id, destination);
 }
 
 std::int64_t WorkspaceConfigStore::import_note_folder(std::optional<std::int64_t> parent_id,
-    const std::filesystem::path& source, const std::map<std::string, std::string>& key_ids) {
+    const std::filesystem::path& source) {
     const std::lock_guard lock(impl_->mutex);
-    return note_import_folder(*impl_->database, parent_id, source, key_ids);
+    return note_import_folder(*impl_->database, parent_id, source);
 }
 
 NoteContent WorkspaceConfigStore::get_note(std::int64_t id) const {
@@ -2780,49 +2778,10 @@ void WorkspaceConfigStore::delete_note_item(std::int64_t id) {
     note_delete(*impl_->database, id);
 }
 
-std::optional<FolderStoreRecord> WorkspaceConfigStore::get_folder_store(
-    std::int64_t store_id) const {
-    const std::lock_guard lock(impl_->mutex);
-    return folder_store_get(*impl_->database, store_id);
-}
-
-std::optional<FolderStoreRecord> WorkspaceConfigStore::get_folder_store_by_folder(
-    std::int64_t folder_id) const {
-    const std::lock_guard lock(impl_->mutex);
-    return folder_store_get_by_folder(*impl_->database, folder_id);
-}
-
-std::vector<FolderStoreRecord> WorkspaceConfigStore::list_folder_stores() const {
-    const std::lock_guard lock(impl_->mutex);
-    return folder_store_list(*impl_->database);
-}
-
-std::vector<FolderStoreRecord> WorkspaceConfigStore::folder_stores_in_subtree(
-    std::int64_t folder_id) const {
-    const std::lock_guard lock(impl_->mutex);
-    return folder_store_records_in_subtree(*impl_->database, folder_id);
-}
-
-std::int64_t WorkspaceConfigStore::folder_store_count_in_subtree(
-    std::int64_t folder_id) const {
-    const std::lock_guard lock(impl_->mutex);
-    return cha::folder_store_count_in_subtree(*impl_->database, folder_id);
-}
-
-bool WorkspaceConfigStore::folder_store_owns_subtree(std::int64_t folder_id) const {
-    const std::lock_guard lock(impl_->mutex);
-    return cha::folder_store_owns_subtree(*impl_->database, folder_id);
-}
-
 std::vector<std::int64_t> WorkspaceConfigStore::folder_ids_in_subtree(
     std::int64_t folder_id) const {
     const std::lock_guard lock(impl_->mutex);
     return folder_store_folder_ids_in_subtree(*impl_->database, folder_id);
-}
-
-std::vector<FolderStoreKeyUsage> WorkspaceConfigStore::folder_store_usage() const {
-    const std::lock_guard lock(impl_->mutex);
-    return cha::folder_store_usage(*impl_->database);
 }
 
 std::optional<NoteItem> WorkspaceConfigStore::get_note_item(std::int64_t id) const {
@@ -2843,117 +2802,6 @@ FolderStoreCapture WorkspaceConfigStore::capture_folder_store(
     auto capture = folder_store_capture(*impl_->database, folder_id, service);
     transaction.commit();
     return capture;
-}
-
-std::int64_t WorkspaceConfigStore::register_folder_store(
-    std::int64_t folder_id,
-    FolderStoreService service,
-    std::string_view api_key_id,
-    std::int64_t note_count) {
-    const std::lock_guard lock(impl_->mutex);
-    storage::SqliteTransaction transaction(*impl_->database);
-    const auto id = folder_store_register(
-        *impl_->database, folder_id, service, api_key_id, note_count);
-    transaction.commit();
-    return id;
-}
-
-void WorkspaceConfigStore::set_folder_store_uncertainty(
-    std::int64_t store_id, bool unknown) {
-    const std::lock_guard lock(impl_->mutex);
-    storage::SqliteTransaction transaction(*impl_->database);
-    folder_store_set_uncertainty(*impl_->database, store_id, unknown);
-    transaction.commit();
-}
-
-void WorkspaceConfigStore::save_folder_store_remote_id(
-    std::int64_t store_id, std::string_view remote_store_id) {
-    const std::lock_guard lock(impl_->mutex);
-    storage::SqliteTransaction transaction(*impl_->database);
-    folder_store_save_remote_id(*impl_->database, store_id, remote_store_id);
-    transaction.commit();
-}
-
-void WorkspaceConfigStore::add_folder_store_file_id(
-    std::int64_t store_id, std::string_view file_id) {
-    const std::lock_guard lock(impl_->mutex);
-    storage::SqliteTransaction transaction(*impl_->database);
-    folder_store_add_file_id(*impl_->database, store_id, file_id);
-    transaction.commit();
-}
-
-void WorkspaceConfigStore::remove_folder_store_file_id(
-    std::int64_t store_id, std::string_view file_id, std::string_view warning) {
-    const std::lock_guard lock(impl_->mutex);
-    storage::SqliteTransaction transaction(*impl_->database);
-    if (!warning.empty()) {
-        event_append_in_transaction(*impl_->database, EventSeverity::warning, warning);
-    }
-    folder_store_remove_file_id(*impl_->database, store_id, file_id);
-    transaction.commit();
-}
-
-void WorkspaceConfigStore::clear_folder_store_remote_id(
-    std::int64_t store_id, std::string_view warning) {
-    const std::lock_guard lock(impl_->mutex);
-    storage::SqliteTransaction transaction(*impl_->database);
-    if (!warning.empty()) {
-        event_append_in_transaction(*impl_->database, EventSeverity::warning, warning);
-    }
-    folder_store_clear_remote_store_id(*impl_->database, store_id);
-    transaction.commit();
-}
-
-void WorkspaceConfigStore::mark_folder_store_ready(
-    std::int64_t store_id, std::string_view success_message) {
-    const std::lock_guard lock(impl_->mutex);
-    storage::SqliteTransaction transaction(*impl_->database);
-    folder_store_mark_ready(*impl_->database, store_id);
-    event_append_in_transaction(*impl_->database, EventSeverity::success, success_message);
-    transaction.commit();
-}
-
-void WorkspaceConfigStore::mark_folder_store_incomplete(std::int64_t store_id) {
-    const std::lock_guard lock(impl_->mutex);
-    storage::SqliteTransaction transaction(*impl_->database);
-    folder_store_mark_incomplete(*impl_->database, store_id);
-    transaction.commit();
-}
-
-void WorkspaceConfigStore::mark_folder_stores_incomplete_in_subtree(
-    std::int64_t folder_id) {
-    const std::lock_guard lock(impl_->mutex);
-    storage::SqliteTransaction transaction(*impl_->database);
-    folder_store_mark_subtree_incomplete(*impl_->database, folder_id);
-    transaction.commit();
-}
-
-void WorkspaceConfigStore::delete_folder_store_record(
-    std::int64_t store_id, std::string_view outcome_message, EventSeverity severity) {
-    const std::lock_guard lock(impl_->mutex);
-    storage::SqliteTransaction transaction(*impl_->database);
-    if (!outcome_message.empty()) {
-        event_append_in_transaction(*impl_->database, severity, outcome_message);
-    }
-    folder_store_delete_record(*impl_->database, store_id);
-    transaction.commit();
-}
-
-void WorkspaceConfigStore::delete_folder_subtree_locally(
-    std::int64_t folder_id,
-    const std::vector<std::string>& warnings,
-    const std::vector<std::int64_t>& remaining_store_ids) {
-    const std::lock_guard lock(impl_->mutex);
-    storage::SqliteTransaction transaction(*impl_->database);
-    for (const auto& warning : warnings) {
-        event_append_in_transaction(*impl_->database, EventSeverity::warning, warning);
-    }
-    for (const auto store_id : remaining_store_ids) {
-        folder_store_delete_record(*impl_->database, store_id);
-    }
-    folder_store_delete_session_folders_in_subtree(*impl_->database, folder_id);
-    note_delete_in_transaction(*impl_->database, folder_id);
-    transaction.commit();
 }
 
 std::optional<WorkspaceCharacterPicture> WorkspaceConfigStore::get_character_picture(

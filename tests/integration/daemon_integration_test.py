@@ -100,11 +100,6 @@ def maintenance_reply(body, prompt):
     """Scripted Welcome repair. Ordinary HOLD/FAIL text stays on the other path."""
     results = tool_results(body)
     last = results[-1] if results else None
-    if "INSPECT_UPLOADED_FOLDERS" in prompt:
-        if last is None:
-            return tool_reply([("inspect1", "assistant_inspect", {
-                "topic": "stores", "forum_id": None, "session_id": None, "after": None})])
-        return text_reply("Uploaded folders: " + ", ".join(item["folder_name"] for item in last["items"]))
     if HOST_CONFIG in prompt:
         if last is None:
             return tool_reply([("list1", "host_config_list", {})])
@@ -191,7 +186,7 @@ class FakeProvider:
                     provider.prompts.append(prompt)
                     provider.bodies.append(body.decode())
                     provider.changed.notify_all()
-                if any(word in prompt for word in (REPAIR, UNDO, FAIL_AFTER, HOST_CONFIG, "INSPECT_UPLOADED_FOLDERS")):
+                if any(word in prompt for word in (REPAIR, UNDO, FAIL_AFTER, HOST_CONFIG)):
                     status, reply = maintenance_reply(body, prompt)
                 else:
                     if HOLD in prompt:
@@ -749,20 +744,6 @@ class ChaWebIntegration(DaemonHarness):
         self.wait_ready()
         self.assertEqual((config / "app.toml").read_text(),
                          original + "\n# Saved by Assistant\n")
-
-    def test_welcome_inspects_uploaded_folder_without_references(self):
-        self.use_provider()
-        with sqlite3.connect(self.directory / "alice-net" / "test.sqlite3") as database:
-            folder = database.execute(
-                "INSERT INTO note_items(kind,name) VALUES ('folder','Unattached upload')").lastrowid
-            database.execute(
-                "INSERT INTO folder_stores(folder_id,service,api_key_id,remote_store_id,state,note_count,uploaded_at) "
-                "VALUES (?,'openai','synthetic-key','synthetic-store','ready',3,1)", (folder,))
-        self.welcome_turn("INSPECT_UPLOADED_FOLDERS Which folders are uploaded?")
-        results = [item for body in self.provider.bodies for item in tool_results(body)]
-        stores = [item for result in results if result.get("topic") == "stores" for item in result["items"]]
-        self.assertTrue(any(item["folder_name"] == "Unattached upload"
-                            and item["remote_store_id"] == "synthetic-store" for item in stores))
 
     def test_welcome_repair_notice_survives_failure_and_restart(self):
         self.use_provider()

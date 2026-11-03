@@ -2221,19 +2221,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, MergeNormalizesSavedKeyNextId) {
     const std::filesystem::path source_database =
         import_source_database(source_workspace);
     const auto store = open_store();
-    const auto folder = store->create_note_item({}, NoteItemKind::folder, "Research");
-    const auto store_id = store->register_folder_store(folder.id, FolderStoreService::openai, "api_key_1", 1);
-    store->save_folder_store_remote_id(store_id, "vs_local");
-    store->add_folder_store_file_id(store_id, "file_local");
-    store->mark_folder_store_ready(store_id, "Uploaded");
     merge_from(*store, source_database);
-    const auto ownership = store->get_folder_store_by_folder(folder.id);
-    ASSERT_TRUE(ownership);
-    EXPECT_EQ(ownership->id, store_id);
-    EXPECT_EQ(ownership->state, FolderStoreState::ready);
-    EXPECT_EQ(ownership->api_key_id, "api_key_1");
-    EXPECT_EQ(ownership->remote_store_id, "vs_local");
-    EXPECT_EQ(ownership->file_ids, std::vector<std::string>({"file_local"}));
 
     EXPECT_EQ(
         stored_config(database(), "system/keys/config.toml"),
@@ -4119,29 +4107,14 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, FileReferencesCaptureNamesAndSurviveSour
     EXPECT_TRUE(store->snapshot()->find_forum("lobby")->file_references.empty());
 }
 
-TEST_F(RuntimeWorkspaceConfigStoreTest, FolderFileReferencesRequireTheExactReadyStoreOnlyAtCreation) {
+TEST_F(RuntimeWorkspaceConfigStoreTest, FolderFileReferencesNeedNoStore) {
     const auto store = open_store();
-    for (const auto service : {FolderStoreService::openai, FolderStoreService::google}) {
-        const auto folder = store->create_note_item({}, NoteItemKind::folder,
-            std::string(folder_store_service_name(service)));
-        const auto child = store->create_note_item(folder.id, NoteItemKind::folder, "Child");
-        const auto ref = note_item_ref_id(folder.id);
-        EXPECT_THROW(store->create_file_reference(FileReferenceOwner::forum,
-            "lobby", FileReferenceKind::folder, ref), std::invalid_argument);
-        const auto id = store->register_folder_store(folder.id, service, "test-key", 1);
-        store->save_folder_store_remote_id(id, "remote-store");
-        EXPECT_THROW(store->create_file_reference(FileReferenceOwner::forum,
-            "lobby", FileReferenceKind::folder, ref), std::invalid_argument);
-        store->mark_folder_store_ready(id, "Ready");
-        EXPECT_NO_THROW((void)store->create_file_reference(FileReferenceOwner::forum,
-            "lobby", FileReferenceKind::folder, ref));
-        EXPECT_THROW(store->create_file_reference(FileReferenceOwner::forum,
-            "lobby", FileReferenceKind::folder, note_item_ref_id(child.id)), std::invalid_argument);
-        store->mark_folder_store_incomplete(id);
-        EXPECT_NO_THROW(store->delete_file_reference(FileReferenceOwner::forum,
-            "lobby", FileReferenceKind::folder, ref));
-        EXPECT_TRUE(store->get_folder_store(id).has_value());
-    }
+    const auto folder = store->create_note_item({}, NoteItemKind::folder, "Research");
+    const auto ref = note_item_ref_id(folder.id);
+    EXPECT_NO_THROW((void)store->create_file_reference(FileReferenceOwner::forum,
+        "lobby", FileReferenceKind::folder, ref));
+    EXPECT_NO_THROW(store->delete_file_reference(FileReferenceOwner::forum,
+        "lobby", FileReferenceKind::folder, ref));
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, FileReferenceFailuresPreserveCommittedMetadata) {

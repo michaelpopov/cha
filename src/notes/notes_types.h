@@ -19,14 +19,12 @@ struct FolderStoreStart {
 struct FolderStoreOperationStatus {
     bool present{};
     std::int64_t operation_id{};
-    std::string kind;
     std::string phase;
     std::int64_t completed{};
     std::int64_t total{};
     std::string error;
     std::string result;
     bool known_cleanup_remains{};
-    bool folder_deleted{};
     bool terminal{};
 };
 

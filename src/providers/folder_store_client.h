@@ -4,6 +4,8 @@
 #include "providers/credentials.h"
 #include "storage/folder_store_storage.h"
 
+#include <nlohmann/json.hpp>
+
 #include <atomic>
 #include <functional>
 #include <optional>
@@ -88,7 +90,7 @@ public:
         const std::atomic_bool& cancel);
 
     [[nodiscard]] FolderStoreRemoteResult openai_create_store(
-        std::string_view name, std::string_view key, const std::atomic_bool& cancel);
+        std::string_view name, std::string_view description, std::string_view key, const std::atomic_bool& cancel);
     [[nodiscard]] FolderStoreRemoteResult openai_upload_file(
         std::string_view filename,
         std::string_view markdown,
@@ -117,7 +119,12 @@ public:
         std::string_view markdown,
         std::string_view key,
         const std::atomic_bool& cancel,
-        const std::atomic_bool& cancel_forward);
+        const std::atomic_bool& cancel_forward,
+        std::string_view mime_type = "text/markdown",
+        const nlohmann::json& custom_metadata = nullptr);
+    [[nodiscard]] FolderStoreRemoteResult google_upload_store_metadata(
+        std::string_view store_name, std::string_view name, std::string_view description,
+        std::string_view key, const std::atomic_bool& cancel, const std::atomic_bool& cancel_forward);
     [[nodiscard]] FolderStoreRemoteResult google_inspect_operation(
         std::string_view operation,
         std::string_view key,

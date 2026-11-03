@@ -768,12 +768,6 @@ export interface components {
         NoteItemKind: "folder" | "note" | "annotation";
         /** @enum {string} */
         FolderStoreService: "openai" | "google";
-        FolderStoreSummary: {
-            service: components["schemas"]["FolderStoreService"];
-            id: components["schemas"]["NoteId"];
-            /** @enum {string} */
-            state: "incomplete" | "ready";
-        };
         FolderStoreChoice: {
             service: components["schemas"]["FolderStoreService"];
             api_key_id: components["schemas"]["Identifier"];
@@ -793,30 +787,19 @@ export interface components {
             present: true;
             operation_id: components["schemas"]["NoteId"];
             /** @enum {string} */
-            kind: "upload" | "remove" | "folder_delete";
-            /** @enum {string} */
-            phase: "preparing" | "uploading" | "indexing" | "cleaning" | "removing" | "completed" | "failed" | "cancelled" | "warning";
+            phase: "preparing" | "uploading" | "indexing" | "cleaning" | "completed" | "failed" | "cancelled" | "warning";
             completed: number;
             total: number;
             error: string;
             /** @enum {string} */
-            result: "" | "preflight" | "error" | "success" | "cancelled" | "warning" | "folder_deleted";
+            result: "" | "preflight" | "error" | "success" | "cancelled" | "warning";
             terminal: boolean;
             known_cleanup_remains: boolean;
-            folder_deleted: boolean;
-        };
-        FolderDeleteRequest: {
-            folder_id: components["schemas"]["NoteId"];
-            confirmed_store_count: number;
-        } | {
-            operation_id: components["schemas"]["NoteId"];
-            delete_anyway?: boolean;
         };
         NoteItem: {
             id: components["schemas"]["NoteId"];
             parent_id: number | null;
             kind: components["schemas"]["NoteItemKind"];
-            store?: components["schemas"]["FolderStoreSummary"];
             forum_id?: string;
             is_summary: boolean;
             summary_linked: boolean;

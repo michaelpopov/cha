@@ -47,7 +47,13 @@ public:
     using ActivationHook = std::function<void(std::size_t)>;
     using NoteReader = std::function<NoteText(std::int64_t)>;
     using ItemReader = std::function<std::optional<NoteItem>(std::int64_t)>;
-    using StoreReader = std::function<std::optional<FolderStoreRecord>(std::int64_t)>;
+    // A ready store that chat search can use for an attached folder.
+    struct FolderSearchStore {
+        FolderStoreService service{FolderStoreService::openai};
+        std::string api_key_id;
+        std::string remote_store_id;
+    };
+    using StoreReader = std::function<std::optional<FolderSearchStore>(std::int64_t)>;
 
     [[nodiscard]] static std::unique_ptr<SessionController> from_workspace(
         WorkspaceReader read_workspace,

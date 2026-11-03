@@ -1092,7 +1092,7 @@ export function App({
     }
   }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
 
-  const deleteNoteItem = useCallback<DeleteNoteItem>(async (sourceId, listing, refresh, remove) => {
+  const deleteNoteItem = useCallback<DeleteNoteItem>(async (sourceId, listing, refresh) => {
     if (!noteLeave.beginNoteAction()) return 'busy';
     const epoch = notesEpochRef.current;
     const noteId = activeNoteIdRef.current;
@@ -1109,9 +1109,7 @@ export function App({
         await save.waitInFlight();
       }
       if (notesEpochRef.current !== epoch) return 'failed';
-      if (remove) {
-        if (!await remove()) return 'failed';
-      } else await client.deleteNoteItem(sourceId);
+      await client.deleteNoteItem(sourceId);
       deleted = true;
       if (affected && sameNote()) {
         noteSaveRef.current?.dispose();

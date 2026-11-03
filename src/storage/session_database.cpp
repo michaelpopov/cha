@@ -744,20 +744,17 @@ TranscriptEntry SessionJournal::add_folder(
     std::int64_t folder_id,
     std::string_view folder_name,
     EntryId entry_id,
-    std::function<bool(std::int64_t)> welcome_ready) {
+    std::function<bool(std::int64_t)> welcome_exists) {
     Transaction transaction(impl_->database);
     Statement existing = impl_->database.prepare(
         "SELECT 1 FROM session_folders WHERE session_key = ?1 AND folder_id = ?2",
         impl_->session_key, folder_id);
     const bool already = existing.step();
     if (!already) {
-        const bool ready = welcome_ready
-            ? welcome_ready(folder_id)
-            : folder_store_folder_is_ready(impl_->database, folder_id);
-        if (!ready) {
-            throw std::invalid_argument(
-                "That folder does not have a ready store.");
-        }
+        const bool exists = welcome_exists
+            ? welcome_exists(folder_id)
+            : folder_store_require_folder(impl_->database, folder_id).has_value();
+        if (!exists) throw std::invalid_argument("That folder does not exist.");
         session_folder_insert(impl_->database, impl_->session_key, folder_id);
     }
     TranscriptEntry entry = make_notice_entry(entry_id, already

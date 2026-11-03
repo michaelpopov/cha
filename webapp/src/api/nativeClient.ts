@@ -5,7 +5,6 @@ import {
   backgroundAudioStartRejected,
   type NoteItem,
   type SessionSummaryGenerated,
-  type FolderStoreSummary,
   type FolderStoreChoices,
   type FolderStoreStart,
   type FolderStoreOperation,
@@ -163,12 +162,6 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
   return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }
 
-function isFolderStoreSummary(value: unknown): value is FolderStoreSummary {
-  return isRecord(value) && hasExactKeys(value, ['service', 'id', 'state'])
-    && (value.service === 'openai' || value.service === 'google')
-    && isNoteId(value.id) && (value.state === 'ready' || value.state === 'incomplete');
-}
-
 function isFolderStoreChoices(value: unknown): value is FolderStoreChoices {
   return isRecord(value) && hasExactKeys(value, ['choices']) && Array.isArray(value.choices)
     && value.choices.every(choice => isRecord(choice)
@@ -185,26 +178,22 @@ function isFolderStoreStart(value: unknown): value is FolderStoreStart {
 function isFolderStoreOperation(value: unknown): value is FolderStoreOperation {
   if (!isRecord(value)) return false;
   if (value.present === false) return hasExactKeys(value, ['present']);
-  return value.present === true && hasExactKeys(value, ['present', 'operation_id', 'kind', 'phase',
-    'completed', 'total', 'error', 'result', 'terminal', 'known_cleanup_remains', 'folder_deleted'])
+  return value.present === true && hasExactKeys(value, ['present', 'operation_id', 'phase',
+    'completed', 'total', 'error', 'result', 'terminal', 'known_cleanup_remains'])
     && isNoteId(value.operation_id)
-    && ['upload', 'remove', 'folder_delete'].includes(value.kind as string)
-    && ['preparing', 'uploading', 'indexing', 'cleaning', 'removing', 'completed', 'failed', 'cancelled', 'warning'].includes(value.phase as string)
+    && ['preparing', 'uploading', 'indexing', 'cleaning', 'completed', 'failed', 'cancelled', 'warning'].includes(value.phase as string)
     && Number.isSafeInteger(value.completed) && (value.completed as number) >= 0
     && Number.isSafeInteger(value.total) && (value.total as number) >= 0
     && typeof value.error === 'string'
-    && ['', 'preflight', 'error', 'success', 'cancelled', 'warning', 'folder_deleted'].includes(value.result as string)
-    && typeof value.terminal === 'boolean' && typeof value.known_cleanup_remains === 'boolean'
-    && typeof value.folder_deleted === 'boolean';
+    && ['', 'preflight', 'error', 'success', 'cancelled', 'warning'].includes(value.result as string)
+    && typeof value.terminal === 'boolean' && typeof value.known_cleanup_remains === 'boolean';
 }
 
 function isNoteItem(value: unknown): value is NoteItem {
   return isRecord(value)
     && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'has_audio', 'read_only', 'is_summary',
       'summary_linked',
-      ...(Object.hasOwn(value, 'store') ? ['store'] : []),
       ...(Object.hasOwn(value, 'forum_id') ? ['forum_id'] : [])])
-    && (!Object.hasOwn(value, 'store') || (value.kind === 'folder' && isFolderStoreSummary(value.store)))
     && (!Object.hasOwn(value, 'forum_id') || (value.kind === 'folder' && typeof value.forum_id === 'string'))
     && isNoteId(value.id)
     && isNoteParent(value.parent_id)
@@ -974,10 +963,10 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     exportVault: () => transferVault('vault.export', 'file_count'),
     listNoteItems: async () => (await call('notes.list', {}, isNoteItemList)).items,
     storeChoices: epoch => storeCall('notes.storeChoices', {}, epoch, isFolderStoreChoices),
-    storeUpload: (folderId, service, apiKeyId, epoch) => storeCall('notes.storeUpload',
-      { folder_id: folderId, service, api_key_id: apiKeyId }, epoch, isFolderStoreStart),
-    storeRemove: (folderId, storeId, epoch) => storeCall('notes.storeRemove',
-      { folder_id: folderId, store_id: storeId }, epoch, isFolderStoreStart),
+    storeUpload: (folderId, service, apiKeyId, name, description, epoch) => storeCall('notes.storeUpload',
+      { folder_id: folderId, service, api_key_id: apiKeyId, name, description }, epoch, isFolderStoreStart),
+    storeCleanup: (operationId, epoch) => storeCall('notes.storeCleanup',
+      { operation_id: operationId }, epoch, isFolderStoreStart),
     storeOperation: (folderId, epoch) => storeCall('notes.storeOperation', { folder_id: folderId }, epoch, isFolderStoreOperation),
     storeCancel: async (operationId, epoch) => {
       await storeCall('notes.storeCancel', { operation_id: operationId }, epoch, isEmptyResult);
@@ -985,7 +974,6 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     storeClose: async (operationId, epoch) => {
       await storeCall('notes.storeClose', { operation_id: operationId }, epoch, isEmptyResult);
     },
-    folderDelete: (request, epoch) => storeCall('notes.folderDelete', request, epoch, isFolderStoreStart),
     importEpub: async (file, items, parentId) => {
       const epoch = bridge.contextEpoch();
       const request = prepareEpubImport(await readFileBytes(file).bytes, file.name, items, parentId);

@@ -495,11 +495,12 @@ TEST(TextInput, DecodesCaseSensitiveBase62ReferencesAndPreservesMissingNoteDraft
         EXPECT_FALSE(missing.clear_input);
         EXPECT_EQ(missing.session.notice, "That note was not found.");
     }
+    // A folder needs no store to be attached.
     const auto folder = handle_text_input(*controller, "operator", "##000002");
-    EXPECT_FALSE(folder.clear_input);
-    EXPECT_EQ(folder.session.notice, "Upload this folder to a store before adding it to the conversation.");
+    EXPECT_TRUE(folder.clear_input);
     EXPECT_FALSE(controller->is_generating());
-    EXPECT_EQ(controller->view().transcript.entries.size(), 3U);
+    ASSERT_EQ(controller->view().transcript.entries.size(), 4U);
+    EXPECT_EQ(controller->view().transcript.entries.back().text, "Added folder “Folder” to this chat.");
 }
 
 TEST(TextInput, KeepsNotesScopedToTheirChatInTheSameDatabase) {
@@ -713,8 +714,6 @@ TEST(TextInput, FolderReferencesAndDetachUseTheJournalWithoutGeneratingOrCopying
     storage::SqliteDatabase db(temporary.path, storage::SqliteDatabase::Mode::read_write);
     const auto folder = note_create(db, {}, NoteItemKind::folder, "Research");
     const auto note = note_create(db, {}, NoteItemKind::note, "Note");
-    const auto store = folder_store_register(db, folder.id, FolderStoreService::openai, "saved", 1);
-    folder_store_save_remote_id(db, store, "vs_test"); folder_store_mark_ready(db, store);
     auto controller = test::from_test_workspace(std::vector<CharacterDefinition>{definition()}, temporary.path, notifier()).release();
     auto attached = handle_text_input(*controller, "operator", " \n" + note_item_ref_id(folder.id) + "\t ");
     EXPECT_TRUE(attached.clear_input);
@@ -722,7 +721,6 @@ TEST(TextInput, FolderReferencesAndDetachUseTheJournalWithoutGeneratingOrCopying
     SessionJournal journal(temporary.path);
     EXPECT_EQ(journal.folder_ids(), (std::vector<std::int64_t>{folder.id}));
     EXPECT_TRUE(journal.notes_prompt().empty());
-    folder_store_mark_incomplete(db, store);
     EXPECT_TRUE(handle_text_input(*controller, "operator", note_item_ref_id(folder.id)).clear_input);
     EXPECT_NE(controller->view().transcript.entries.back().text.find("already attached"), std::string::npos);
     EXPECT_TRUE(handle_text_input(*controller, "operator", note_item_ref_id(note.id)).clear_input);
@@ -739,7 +737,6 @@ TEST(TextInput, FolderReferencesAndDetachUseTheJournalWithoutGeneratingOrCopying
     (void)controller->cover_conversation(); (void)controller->uncover_conversation();
     EXPECT_FALSE(journal.folder_ids().empty());
     // Even an association whose metadata is gone can be removed using its Ref ID.
-    folder_store_delete_record(db, store);
     db.prepare("DELETE FROM note_items WHERE id=?", folder.id).run();
     EXPECT_TRUE(handle_text_input(*controller, "operator", "/detach " + note_item_ref_id(folder.id)).clear_input);
     EXPECT_TRUE(journal.folder_ids().empty());

@@ -486,7 +486,7 @@ TEST_F(NoteStorageTest, SummaryUpgradeOfBlobNotesIsAdditiveIdempotentAndUsable) 
     EXPECT_EQ(copy.text(0), "Saved chat copy");
 }
 
-TEST_F(NoteStorageTest, SummaryValidationAndForumRemovalAndManagedStoreAdmission) {
+TEST_F(NoteStorageTest, SummaryValidationAndForumRemoval) {
     summary_source(*database_);
     const FullSessionId source{"a", "source"};
     const auto target = note_summary_target(*database_, source);
@@ -495,7 +495,6 @@ TEST_F(NoteStorageTest, SummaryValidationAndForumRemovalAndManagedStoreAdmission
         EXPECT_THROW((void)note_commit_summary(*database_, source, target, invalid), NoteError);
     }
     EXPECT_THROW((void)note_create(*database_, target.parent_id, NoteItemKind::note, "Ordinary"), NoteError);
-    EXPECT_THROW((void)folder_store_register(*database_, target.parent_id, FolderStoreService::openai, "key", 1), FolderStoreError);
     const auto saved = note_commit_summary(*database_, source, target, summary_document());
     {
         storage::SqliteTransaction tx(*database_);
@@ -597,26 +596,17 @@ TEST_F(NoteStorageTest, ForumsPreserveLegacyNoteContentAndAnnotationsAtomically)
     EXPECT_NE(note_get(*database_, annotation->id).document.dump().find("Forums (saved)"), std::string::npos);
 }
 
-TEST_F(NoteStorageTest, ForumsPreserveLegacyStoreAndEmptyFolderIdentity) {
+TEST_F(NoteStorageTest, ForumsPreserveLegacyAndEmptyFolderIdentity) {
     create_event_history_schema(*database_);
     create_folder_store_schema(*database_);
     const auto legacy = note_create(*database_, {}, NoteItemKind::folder, "Forums");
     const auto child = note_create(*database_, legacy.id, NoteItemKind::note, "Chapter");
-    const auto store_id = folder_store_register(*database_, legacy.id, FolderStoreService::openai, "key", 1);
-    folder_store_save_remote_id(*database_, store_id, "vs_saved");
-    folder_store_add_file_id(*database_, store_id, "file_saved");
-    folder_store_mark_ready(*database_, store_id);
     {
         storage::SqliteTransaction tx(*database_);
         note_sync_forums(*database_, {{"a", "Research"}});
         tx.commit();
     }
-    const auto saved = folder_store_get_by_folder(*database_, legacy.id);
-    ASSERT_TRUE(saved);
-    EXPECT_EQ(saved->id, store_id);
-    EXPECT_EQ(saved->remote_store_id, "vs_saved");
-    EXPECT_EQ(saved->file_ids, std::vector<std::string>{"file_saved"});
-    EXPECT_EQ(saved->state, FolderStoreState::ready);
+    EXPECT_FALSE(note_find_item(*database_, legacy.id)->forum_id);
     EXPECT_EQ(note_find_item(*database_, child.id)->parent_id, legacy.id);
     // An empty legacy folder is preserved, too, rather than adopted.
     database_->execute("DELETE FROM note_items WHERE forum_id IS NOT NULL");
@@ -852,7 +842,7 @@ protected:
     std::unique_ptr<Database> target_;
 };
 
-TEST_F(NoteFolderExportTest, CopiesSubtreeContentAudioAndReadyStoresIntoAnotherVault) {
+TEST_F(NoteFolderExportTest, CopiesSubtreeContentAndAudioIntoAnotherVault) {
     const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Stoics");
     const auto letters = note_create(*database_, folder.id, NoteItemKind::folder, "Letters");
     const auto drafts = note_create(*database_, folder.id, NoteItemKind::folder, "Drafts");
@@ -867,18 +857,14 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAudioAndReadyStoresIntoAnotherV
     const auto first = workspace_.root() / "first.m4a", second = workspace_.root() / "second.m4a";
     { std::ofstream(first, std::ios::binary) << "first clip"; std::ofstream(second, std::ios::binary) << "second clip"; }
     note_save_audio(*database_, seneca.id, {first, second});
-    const auto ready = folder_store_register(*database_, letters.id, FolderStoreService::openai, "1", 1);
-    folder_store_save_remote_id(*database_, ready, "vs_letters");
-    folder_store_add_file_id(*database_, ready, "file_a");
-    folder_store_add_file_id(*database_, ready, "file_b");
-    folder_store_mark_ready(*database_, ready);
-    (void)folder_store_register(*database_, drafts.id, FolderStoreService::openai, "1", 1);
 
-    note_export_folder(*database_, folder.id, file_, {{"1", "OpenAI"}});
+    note_export_folder(*database_, folder.id, file_);
     EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(file_) += ".partial"));
+    EXPECT_FALSE(Database(file_, Database::Mode::read_only).prepare(
+        "SELECT 1 FROM sqlite_master WHERE name = 'folder_stores'").step());
 
     const auto parent = note_create(*target_, {}, NoteItemKind::folder, "Imported");
-    const auto root = note_import_folder(*target_, parent.id, file_, {{"OpenAI", "7"}});
+    const auto root = note_import_folder(*target_, parent.id, file_);
     const auto imported = target_item(parent.id, "Stoics");
     ASSERT_TRUE(imported);
     EXPECT_EQ(imported->id, root);
@@ -908,55 +894,46 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAudioAndReadyStoresIntoAnotherV
         ++sources;
     }
     EXPECT_GT(sources, 0);
-    const auto store = folder_store_get_by_folder(*target_, copied_letters->id);
-    ASSERT_TRUE(store);
-    EXPECT_EQ(store->state, FolderStoreState::ready);
-    EXPECT_EQ(store->api_key_id, "7");
-    EXPECT_EQ(store->remote_store_id, "vs_letters");
-    EXPECT_EQ(store->note_count, 1);
-    EXPECT_EQ(store->file_ids, (std::vector<std::string>{"file_a", "file_b"}));
-    EXPECT_FALSE(folder_store_get_by_folder(*target_, copied_drafts->id));
 }
 
-TEST_F(NoteFolderExportTest, ImportRejectsDuplicateNamesMissingKeysAndOtherFilesWithoutChanges) {
+TEST_F(NoteFolderExportTest, ImportRejectsDuplicateNamesAndOtherFilesWithoutChanges) {
     const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Stoics");
     (void)note_create(*database_, folder.id, NoteItemKind::note, "Seneca");
-    const auto store = folder_store_register(*database_, folder.id, FolderStoreService::google, "1", 1);
-    folder_store_save_remote_id(*database_, store, "stores/one");
-    folder_store_mark_ready(*database_, store);
-    note_export_folder(*database_, folder.id, file_, {{"1", "Gemini"}});
+    note_export_folder(*database_, folder.id, file_);
 
     (void)note_create(*target_, {}, NoteItemKind::folder, "Stoics");
     expect_note_error(NoteFailure::invalid, "An item with this name already exists here.",
-        [&] { (void)note_import_folder(*target_, {}, file_, {{"Gemini", "3"}}); });
+        [&] { (void)note_import_folder(*target_, {}, file_); });
     const auto parent = note_create(*target_, {}, NoteItemKind::folder, "Imported");
-    expect_note_error(NoteFailure::invalid, "The import needs exactly one API key named “Gemini” in this vault.",
-        [&] { (void)note_import_folder(*target_, parent.id, file_, {{"OpenAI", "3"}}); });
     EXPECT_EQ(item_count(*target_), 2);
     expect_note_error(NoteFailure::invalid, "This file is not a CHA folder export.",
-        [&] { (void)note_import_folder(*target_, parent.id, path_, {}); });
+        [&] { (void)note_import_folder(*target_, parent.id, path_); });
     const auto text = workspace_.root() / "text.sqlite";
     std::ofstream(text) << "not a database";
     expect_note_error(NoteFailure::invalid, "This file is not a CHA folder export.",
-        [&] { (void)note_import_folder(*target_, parent.id, text, {}); });
+        [&] { (void)note_import_folder(*target_, parent.id, text); });
     EXPECT_EQ(item_count(*target_), 2);
 }
 
-TEST_F(NoteFolderExportTest, ExportLeavesOutStoresWithMissingKeysAndRefusesNotesAndTheVaultFile) {
+TEST_F(NoteFolderExportTest, ImportIgnoresOlderStoreDataAndExportRefusesNotesAndTheVaultFile) {
     const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Stoics");
     const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Seneca");
-    const auto store = folder_store_register(*database_, folder.id, FolderStoreService::openai, "9", 1);
-    folder_store_save_remote_id(*database_, store, "vs_old");
-    folder_store_mark_ready(*database_, store);
-    note_export_folder(*database_, folder.id, file_, {});
-    const auto root = note_import_folder(*target_, {}, file_, {});
+    note_export_folder(*database_, folder.id, file_);
+    {
+        // Older exports carried store links with API key names.
+        Database older(file_, Database::Mode::read_write);
+        older.execute("CREATE TABLE folder_stores (folder_id INTEGER PRIMARY KEY, service TEXT NOT NULL, "
+            "api_key_name TEXT NOT NULL, remote_store_id TEXT NOT NULL, note_count INTEGER NOT NULL, "
+            "uploaded_at INTEGER NOT NULL) STRICT");
+        older.prepare("INSERT INTO folder_stores VALUES (?1, 'openai', 'Missing key', 'vs_old', 1, 1)", folder.id).run();
+    }
+    const auto root = note_import_folder(*target_, {}, file_);
     EXPECT_TRUE(target_item(root, "Seneca"));
-    EXPECT_FALSE(folder_store_get_by_folder(*target_, root));
     expect_note_error(NoteFailure::invalid, "Only a folder can be exported.",
-        [&] { note_export_folder(*database_, note.id, workspace_.root() / "note.sqlite", {}); });
+        [&] { note_export_folder(*database_, note.id, workspace_.root() / "note.sqlite"); });
     EXPECT_FALSE(std::filesystem::exists(workspace_.root() / "note.sqlite"));
     expect_note_error(NoteFailure::invalid, "Choose a file other than the vault database.",
-        [&] { note_export_folder(*database_, folder.id, path_, {}); });
+        [&] { note_export_folder(*database_, folder.id, path_); });
     EXPECT_EQ(note_list(*database_).size(), 2u);
 }
 

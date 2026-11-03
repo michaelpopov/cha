@@ -165,14 +165,14 @@ void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
     append_tool(body, api, Json{
         {"name", "assistant_inspect"},
         {"description", "Read settings, the vault registry, notes and folders, "
-            "OpenAI and Gemini stores, and session metadata. Never returns session "
+            "and session metadata. Never returns session "
             "or note text, or credentials. Follow next_after for further pages."},
         {"strict", true},
         {"parameters", function_parameters(
             {
                 {"topic", Json{{"type", "string"}, {"enum", Json::array({
                     "application", "providers", "styles", "voices", "characters",
-                    "personas", "forums", "services", "keys", "notes", "stores",
+                    "personas", "forums", "services", "keys", "notes",
                     "sessions", "session_entries"})}}},
                 {"forum_id", nullable_string(
                     "Exact forum ID for sessions and session_entries; otherwise null")},

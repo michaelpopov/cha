@@ -1785,17 +1785,6 @@ components:
       type: string
       enum: [openai, google]
 
-    FolderStoreSummary:
-      type: object
-      additionalProperties: false
-      required: [service, id, state]
-      properties:
-        service: {$ref: "#/components/schemas/FolderStoreService"}
-        id: {$ref: "#/components/schemas/NoteId"}
-        state:
-          type: string
-          enum: [incomplete, ready]
-
     FolderStoreChoice:
       type: object
       additionalProperties: false
@@ -1830,40 +1819,21 @@ components:
             present: {const: false}
         - type: object
           additionalProperties: false
-          required: [present, operation_id, kind, phase, completed, total, error, result, terminal, known_cleanup_remains, folder_deleted]
+          required: [present, operation_id, phase, completed, total, error, result, terminal, known_cleanup_remains]
           properties:
             present: {const: true}
             operation_id: {$ref: "#/components/schemas/NoteId"}
-            kind:
-              type: string
-              enum: [upload, remove, folder_delete]
             phase:
               type: string
-              enum: [preparing, uploading, indexing, cleaning, removing, completed, failed, cancelled, warning]
+              enum: [preparing, uploading, indexing, cleaning, completed, failed, cancelled, warning]
             completed: {type: integer, minimum: 0, maximum: 9007199254740991}
             total: {type: integer, minimum: 0, maximum: 9007199254740991}
             error: {type: string}
             result:
               type: string
-              enum: ["", preflight, error, success, cancelled, warning, folder_deleted]
+              enum: ["", preflight, error, success, cancelled, warning]
             terminal: {type: boolean}
             known_cleanup_remains: {type: boolean}
-            folder_deleted: {type: boolean}
-
-    FolderDeleteRequest:
-      oneOf:
-        - type: object
-          additionalProperties: false
-          required: [folder_id, confirmed_store_count]
-          properties:
-            folder_id: {$ref: "#/components/schemas/NoteId"}
-            confirmed_store_count: {type: integer, minimum: 0, maximum: 9007199254740991}
-        - type: object
-          additionalProperties: false
-          required: [operation_id]
-          properties:
-            operation_id: {$ref: "#/components/schemas/NoteId"}
-            delete_anyway: {type: boolean}
 
     NoteItem:
       type: object
@@ -1876,7 +1846,6 @@ components:
           minimum: 1
           maximum: 9007199254740991
         kind: {$ref: "#/components/schemas/NoteItemKind"}
-        store: {$ref: "#/components/schemas/FolderStoreSummary"}
         forum_id:
           type: string
         is_summary: {type: boolean}

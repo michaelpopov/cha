@@ -190,11 +190,8 @@ TEST(BridgeProtocol, RejectsUnknownMethodsAndKeepsVersionFixed) {
 
 
 TEST(BridgeProtocol, FolderStoreListingMatchesTheSharedWireContract) {
-    NoteItem folder{.id = 11, .kind = NoteItemKind::folder, .name = "Research",
-        .store = NoteStoreSummary{"openai", 7, "ready"}};
+    const NoteItem folder{.id = 11, .kind = NoteItemKind::folder, .name = "Research"};
     EXPECT_EQ(nlohmann::json(folder), load_fixture("folder-store-contract.json")["folder"]);
-    folder.store.reset();
-    EXPECT_FALSE(nlohmann::json(folder).contains("store"));
 }
 
 } // namespace

@@ -67,29 +67,16 @@ int main(int argc, char** argv) {
     if (file_references) {
         cha::storage::SqliteDatabase db(database, cha::storage::SqliteDatabase::Mode::read_write);
         (void)cha::note_create(db, {}, cha::NoteItemKind::note, "Reference note");
-        for (const auto service : {cha::FolderStoreService::openai, cha::FolderStoreService::google}) {
-            const auto folder = cha::note_create(db, {}, cha::NoteItemKind::folder,
-                service == cha::FolderStoreService::openai ? "OpenAI reference folder" : "Gemini reference folder");
-            cha::storage::SqliteTransaction tx(db);
-            const auto id = cha::folder_store_register(db, folder.id, service, "missing_native_test_key", 1);
-            cha::folder_store_save_remote_id(db, id, "native_reference_fixture_not_a_real_resource");
-            cha::folder_store_mark_ready(db, id);
-            tx.commit();
-        }
+        for (const auto* name : {"OpenAI reference folder", "Gemini reference folder"})
+            (void)cha::note_create(db, {}, cha::NoteItemKind::folder, name);
     }
     if (folder_stores) {
         cha::storage::SqliteDatabase db(database, cha::storage::SqliteDatabase::Mode::read_write);
-        const auto empty = cha::note_create(db, {}, cha::NoteItemKind::folder, "UI store empty");
+        (void)cha::note_create(db, {}, cha::NoteItemKind::folder, "UI store empty");
         const auto failed = cha::note_create(db, {}, cha::NoteItemKind::folder, "UI store failure");
         const auto note = cha::note_create(db, failed.id, cha::NoteItemKind::note, "UI store note");
         (void)cha::note_save(db, note.id, nlohmann::json::parse(
             R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Native store editor fixture"}]}]})"));
-        cha::storage::SqliteTransaction tx(db);
-        (void)cha::folder_store_register(db, empty.id, cha::FolderStoreService::openai, "missing_native_test_key", 1);
-        const auto id = cha::folder_store_register(db, failed.id, cha::FolderStoreService::openai, "missing_native_test_key", 1);
-        // Synthetic ownership: the missing key prevents all network requests.
-        cha::folder_store_save_remote_id(db, id, "vs_native_ui_fixture_not_a_real_resource");
-        tx.commit();
     }
     {
         std::ofstream app(destination / "app.toml");

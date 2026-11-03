@@ -475,7 +475,7 @@ TEST(FolderStoreHttp, OpenAiSequenceUsesFixedOriginsAndMarkdownMultipart) {
         return response;
     });
     std::atomic_bool cancel{false};
-    EXPECT_EQ(client.openai_create_store("Research ##00000B", "sk", cancel).id, "vs_1");
+    EXPECT_EQ(client.openai_create_store("Research ##00000B", "", "sk", cancel).id, "vs_1");
     EXPECT_EQ(client.openai_upload_file("note-1.md", "# Note", "sk", cancel).id, "file_1");
     EXPECT_EQ(client.openai_attach_file("vs_1", "file_1", "sk", cancel).kind, FolderStoreRemoteKind::ok);
     EXPECT_EQ(client.openai_inspect_file("vs_1", "file_1", "sk", cancel).status, "completed");
@@ -733,7 +733,7 @@ TEST(FolderStoreHttp, MalformedSuccessAndErrorBodiesDoNotClaimReadinessOrDeletio
     std::atomic_bool cancel{false};
     for (const auto& body : {"<html>proxy</html>", "null", "[]", "{}", R"({"status":"mystery"})"}) {
         FolderStoreClient client([&](const auto&, const auto&) { return FolderStoreHttpResponse{.status = 200, .body = body}; });
-        EXPECT_EQ(client.openai_create_store("Folder", "key", cancel).kind, FolderStoreRemoteKind::failed);
+        EXPECT_EQ(client.openai_create_store("Folder", "", "key", cancel).kind, FolderStoreRemoteKind::failed);
         EXPECT_EQ(client.openai_inspect_file("vs_1", "file_1", "key", cancel).kind, FolderStoreRemoteKind::failed);
         EXPECT_EQ(client.openai_delete_store("vs_1", "key", cancel).kind, FolderStoreRemoteKind::failed);
     }
@@ -871,6 +871,8 @@ TEST(FolderStoreHttp, HttpErrorsKeepSafeReasonsWithoutChangingCleanupUncertainty
         {429, {{"code", "insufficient_quota"}}, "The provider account has insufficient quota. Check its billing and quota settings.", true},
         {429, {{"code", "rate_limit_exceeded"}}, "The provider rate limit was reached. Try again later.", true},
         {400, {{"code", 400}, {"status", "INVALID_ARGUMENT"}}, "The provider rejected the file or request parameters. Check the note content and configuration.", false},
+        {400, {{"code", 400}, {"status", "INVALID_ARGUMENT"}, {"details", nlohmann::json::array({{{"@type", "type.googleapis.com/google.rpc.ErrorInfo"}, {"reason", "API_KEY_INVALID"}}})}},
+            "The saved API key was rejected.", false},
         {403, {{"code", 403}, {"status", "PERMISSION_DENIED"}}, "The saved API key cannot access this resource. Check its project and permissions.", false},
         {429, {{"code", 429}, {"status", "RESOURCE_EXHAUSTED"}}, "The provider quota or rate limit was reached. Check its quota settings or try again later.", true},
         {413, nlohmann::json::object(), "The provider's file-size limit was exceeded. Reduce the note size before uploading again.", true},
@@ -886,7 +888,7 @@ TEST(FolderStoreHttp, HttpErrorsKeepSafeReasonsWithoutChangingCleanupUncertainty
             return FolderStoreHttpResponse{.status = item.status,
                 .body = nlohmann::json{{"error", error}}.dump()};
         });
-        for (const auto& result : {client.openai_create_store("Folder", "key", cancel),
+        for (const auto& result : {client.openai_create_store("Folder", "", "key", cancel),
                  client.google_create_store("Folder", "key", cancel)}) {
             EXPECT_NE(result.kind, FolderStoreRemoteKind::ok);
             EXPECT_EQ(result.message, item.expected);
@@ -903,12 +905,12 @@ TEST(FolderStoreHttp, UsesOpenAiIdAndGoogleNameWhenBothFieldsExist) {
                 ? R"({"id":"vs_1","name":"Research ##00000B","object":"vector_store","status":"completed"})"
                 : R"({"id":"ignored","name":"fileSearchStores/store1","displayName":"Research"})"};
     });
-    EXPECT_EQ(client.openai_create_store("Research", "key", cancel).id, "vs_1");
+    EXPECT_EQ(client.openai_create_store("Research", "", "key", cancel).id, "vs_1");
     EXPECT_EQ(client.google_create_store("Research", "key", cancel).id, "fileSearchStores/store1");
     FolderStoreClient missing([](const auto&, const auto&) {
         return FolderStoreHttpResponse{.status = 200, .body = R"({"name":"display-name-without-id"})"};
     });
-    const auto failed = missing.openai_create_store("Research", "key", cancel);
+    const auto failed = missing.openai_create_store("Research", "", "key", cancel);
     EXPECT_EQ(failed.kind, FolderStoreRemoteKind::failed);
     EXPECT_TRUE(failed.id.empty());
     EXPECT_TRUE(failed.unknown_allocation);
@@ -926,6 +928,69 @@ TEST_F(FolderStoreClientTest, AmbiguousLegacyNamesNeverChooseAnArbitrarySavedKey
     EXPECT_EQ(folder_store_match(config, keys_->list()).api_key_id, duplicate.id);
     config.api_key_id = openai_key_;
     EXPECT_EQ(folder_store_match(config, saved).api_key_id, openai_key_);
+}
+
+
+TEST(FolderStoreHttp, OpenAiNativeDescriptionAndEmptyOmission) {
+    std::atomic_bool cancel{false};
+    const std::string description = "  Первый paragraph 😀\n\n第二段\n ";
+    int calls = 0;
+    FolderStoreClient client([&](const auto& request, const auto&) {
+        const auto body = nlohmann::json::parse(request.body);
+        EXPECT_EQ(body.at("name"), "Chosen name");
+        if (calls++ == 0) EXPECT_EQ(body.at("description"), description);
+        else EXPECT_FALSE(body.contains("description"));
+        EXPECT_FALSE(body.contains("metadata"));
+        return FolderStoreHttpResponse{.status = 200, .body = R"({"id":"vs_1"})"};
+    });
+    EXPECT_EQ(client.openai_create_store("Chosen name", description, "key", cancel).kind, FolderStoreRemoteKind::ok);
+    EXPECT_EQ(client.openai_create_store("Chosen name", "", "key", cancel).kind, FolderStoreRemoteKind::ok);
+    EXPECT_EQ(calls, 2);
+}
+
+TEST(FolderStoreHttp, GoogleMetadataUsesByteSafeOrderedListsAndPlainText) {
+    std::atomic_bool cancel{false};
+    for (const std::string& description : {std::string{}, std::string("short"), std::string(199, 'a'),
+            std::string(200, 'a'), std::string(201, 'a'), std::string(199, 'a') + "😀é中\n\n" + std::string(700, 'z')}) {
+        SCOPED_TRACE(description.size());
+        const std::string name = std::string(199, 'n') + "😀é中";
+        int calls = 0;
+        FolderStoreClient client([&](const auto& request, const auto&) {
+            const auto header = [&](std::string_view key) {
+                for (const auto& h : request.headers) if (h.name == key) return h.value;
+                return std::string{};
+            };
+            if (calls++ == 0) {
+                const auto body = nlohmann::json::parse(request.body);
+                EXPECT_EQ(body.at("displayName"), "DESCRIPTION.txt");
+                EXPECT_EQ(body.at("mimeType"), "text/plain");
+                EXPECT_EQ(header("X-Goog-Upload-Header-Content-Type"), "text/plain");
+                EXPECT_EQ(header("X-Goog-Upload-Header-Content-Length"), "1");
+                const auto& metadata = body.at("customMetadata");
+                EXPECT_EQ(metadata.size(), description.empty() ? 1U : 2U);
+                for (const auto& entry : metadata) {
+                    std::string reconstructed;
+                    for (const auto& piece : entry.at("stringListValue").at("values")) {
+                        const auto text = piece.template get<std::string>();
+                        EXPECT_LE(text.size(), 200U);
+                        EXPECT_FALSE(text.empty());
+                        // Strict JSON decoding/encoding also checks every piece is valid UTF-8.
+                        EXPECT_NO_THROW((void)nlohmann::json(text).dump());
+                        reconstructed += text;
+                    }
+                    EXPECT_EQ(reconstructed, entry.at("key") == "name" ? name : description);
+                }
+                return FolderStoreHttpResponse{.status = 200, .headers = {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}}};
+            }
+            EXPECT_EQ(request.body, "x");
+            EXPECT_EQ(header("Content-Type"), "text/plain");
+            EXPECT_EQ(header("Content-Length"), "1");
+            return FolderStoreHttpResponse{.status = 200, .body = R"({"name":"fileSearchStores/test/upload/operations/op1","done":true})"};
+        });
+        EXPECT_EQ(client.google_upload_store_metadata("fileSearchStores/test", name, description, "key", cancel, cancel).kind,
+            FolderStoreRemoteKind::ok);
+        EXPECT_EQ(calls, 2);
+    }
 }
 
 } // namespace
