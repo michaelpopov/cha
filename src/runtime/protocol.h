@@ -518,12 +518,19 @@ struct ApiKeyDetail {
     std::string id;
     std::string display_name;
     bool has_value{};
+    std::string cloud_store{"none"};
     std::vector<std::string> used_by;
 };
 
 struct CreateApiKeyRequest {
     std::string display_name;
     std::string value;
+    std::string cloud_store{"none"};
+};
+
+struct ReplaceApiKeyValueRequest {
+    std::optional<std::string> value;
+    std::string cloud_store{"none"};
 };
 
 struct R2StorageDetail {

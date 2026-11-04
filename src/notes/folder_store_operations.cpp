@@ -1,7 +1,6 @@
 #include "notes/notes_service_internal.h"
 
 #include "util/logging.h"
-#include "util/text.h"
 #include "workspace/builtins.h"
 
 #include <nlohmann/json.hpp>
@@ -478,11 +477,8 @@ std::vector<FolderStoreChoiceView> NotesService::folder_store_choices(std::uint6
     impl_->require_admitted(epoch);
     std::vector<FolderStoreChoiceView> views;
     for (const auto& key : impl_->api_keys->list()) {
-        if (!key.has_value) continue;
-        for (const auto service : {FolderStoreService::openai, FolderStoreService::google}) {
-            views.push_back({.service = std::string(folder_store_service_name(service)),
-                .api_key_id = key.id, .api_key_name = key.display_name});
-        }
+        if (!key.has_value || key.cloud_store == "none") continue;
+        views.push_back({.service = key.cloud_store, .api_key_id = key.id, .api_key_name = key.display_name});
     }
     return views;
 }
@@ -495,22 +491,23 @@ FolderStoreStart NotesService::start_folder_store_upload(std::int64_t folder_id,
     FolderStoreService parsed;
     try { parsed = parse_folder_store_service(service); }
     catch (const FolderStoreError& error) { throw ApplicationError(ErrorCode::invalid_argument, error.what()); }
-    // Validate UTF-8 before counting or sending any user metadata to a provider.
-    const auto code_points = [](std::string_view value, std::string_view field) {
-        try { (void)nlohmann::json(value).dump(); }
-        catch (const nlohmann::json::type_error&) {
-            throw ApplicationError(ErrorCode::invalid_argument, std::string(field) + " must be valid UTF-8.");
-        }
-        return std::count_if(value.begin(), value.end(), [](unsigned char c) { return (c & 0xc0) != 0x80; });
+    const auto identifier_char = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
     };
-    name = std::string(trim_view(name));
-    const auto name_points = code_points(name, "Name");
-    const auto description_points = code_points(description, "Description");
     if (name.empty()) throw ApplicationError(ErrorCode::invalid_argument, "Enter a store name.");
-    if (parsed == FolderStoreService::google && name.size() > 512)
-        throw ApplicationError(ErrorCode::invalid_argument, "Name is too long for Google. Use a shorter name.");
-    if (parsed == FolderStoreService::openai && name_points > 512)
-        throw ApplicationError(ErrorCode::invalid_argument, "Name must be 512 characters or fewer.");
+    if (!std::ranges::all_of(name, identifier_char))
+        throw ApplicationError(ErrorCode::invalid_argument, "Name can contain only Latin letters, digits, and _.");
+    if (name.front() >= '0' && name.front() <= '9')
+        throw ApplicationError(ErrorCode::invalid_argument, "Name must start with a letter or _.");
+    if (name.size() > 64)
+        throw ApplicationError(ErrorCode::invalid_argument, "Name must be 64 characters or fewer.");
+    // Validate UTF-8 before counting or sending the description to a provider.
+    try { (void)nlohmann::json(description).dump(); }
+    catch (const nlohmann::json::type_error&) {
+        throw ApplicationError(ErrorCode::invalid_argument, "Description must be valid UTF-8.");
+    }
+    const auto description_points = std::count_if(description.begin(), description.end(),
+        [](unsigned char c) { return (c & 0xc0) != 0x80; });
     if (parsed == FolderStoreService::openai && description_points > 512)
         throw ApplicationError(ErrorCode::invalid_argument, "Description must be 512 characters or fewer for OpenAI.");
     if (folder_id <= 0 || folder_id > note_id_limit) throw ApplicationError(ErrorCode::invalid_argument, "A store can only belong to a real folder.");
@@ -518,6 +515,9 @@ FolderStoreStart NotesService::start_folder_store_upload(std::int64_t folder_id,
     if (!folder) throw ApplicationError(ErrorCode::invalid_argument, "A store can only belong to a real folder.");
     if (folder->forum_id) throw ApplicationError(ErrorCode::invalid_argument, "This folder is managed by CHA.");
     if (impl_->folder_store_reserved(folder_id)) throw ApplicationError(ErrorCode::invalid_argument, "A store operation is already running for this folder.");
+    const auto key = impl_->api_keys->find(api_key_id);
+    if (key && key->cloud_store != folder_store_service_name(parsed))
+        throw ApplicationError(ErrorCode::invalid_argument, "Set cloud store API key");
     auto control = std::make_shared<Impl::FolderStoreControl>();
     control->operation_id = impl_->next_folder_store_operation++;
     control->epoch = epoch;

@@ -827,7 +827,7 @@ describe('Settings screens', () => {
 
   it('creates an API key without retaining its value on screen', async () => {
     const createApiKey = vi.fn(async ({ display_name }: { display_name: string }) => ({
-      id: 'api_key_1', display_name, has_value: true, used_by: [],
+      id: 'api_key_1', display_name, has_value: true, cloud_store: 'none' as const, used_by: [],
     }));
     const dispatch = vi.fn();
     render(
@@ -842,12 +842,36 @@ describe('Settings screens', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save API key' }));
 
     expect(createApiKey).toHaveBeenCalledWith({
-      display_name: 'OpenRouter', value: 'sk-secret',
+      display_name: 'OpenRouter', value: 'sk-secret', cloud_store: 'none',
     });
     expect(dispatch).toHaveBeenCalledWith({
       type: 'inspect-api-key', apiKeyId: 'api_key_1', apiKeyName: 'OpenRouter',
     });
     expect(screen.getByLabelText('API key')).toHaveValue('');
+  });
+
+  it('creates an API key with a cloud store', async () => {
+    const createApiKey = vi.fn(async ({ display_name }: { display_name: string }) => ({
+      id: 'api_key_1', display_name, has_value: true, cloud_store: 'openai' as const, used_by: [],
+    }));
+    const dispatch = vi.fn();
+    render(
+      <NewApiKeyScreen
+        client={fixtureClient({ createApiKey })}
+        dispatch={dispatch} navigate={dispatch}
+        state={initialAppState}
+      />,
+    );
+    await userEvent.type(screen.getByLabelText('Name'), 'OpenAI');
+    expect(screen.getByLabelText('Cloud store')).toHaveValue('none');
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['None', 'OpenAI', 'Gemini']);
+    await userEvent.type(screen.getByLabelText('API key'), 'sk-secret');
+    await userEvent.selectOptions(screen.getByLabelText('Cloud store'), 'openai');
+    await userEvent.click(screen.getByRole('button', { name: 'Save API key' }));
+
+    expect(createApiKey).toHaveBeenCalledWith({
+      display_name: 'OpenAI', value: 'sk-secret', cloud_store: 'openai',
+    });
   });
 
   it('creates R2 credentials without retaining the secret on screen', async () => {
@@ -954,7 +978,7 @@ describe('Settings screens', () => {
         client={fixtureClient({
           getProvider: async () => provider,
           listApiKeys: async () => [{
-            id: 'api_key_1', display_name: 'Router key', has_value: true, used_by: [],
+            id: 'api_key_1', display_name: 'Router key', has_value: true, cloud_store: 'none', used_by: [],
           }],
           updateProvider,
         })}
@@ -1120,7 +1144,7 @@ describe('Settings screens', () => {
       <ProviderScreen
         client={fixtureClient({
           getProvider: async () => configured,
-          listApiKeys: async () => [{ id: 'api_key_1', display_name: 'Google key', has_value: true, used_by: [] }],
+          listApiKeys: async () => [{ id: 'api_key_1', display_name: 'Google key', has_value: true, cloud_store: 'none', used_by: [] }],
           updateProvider, testProvider,
         })}
         dispatch={vi.fn()} navigate={vi.fn()}
@@ -1480,12 +1504,12 @@ describe('Settings screens', () => {
           listApiKeys: async () => [{
             id: 'api_key_1',
             display_name: 'OpenAI',
-            has_value: true,
+            has_value: true, cloud_store: 'none',
             used_by: ['Voice input'],
           }, {
             id: 'api_key_2',
             display_name: 'FishAudio',
-            has_value: true,
+            has_value: true, cloud_store: 'none',
             used_by: ['Voice output'],
           }],
           listVoices: async () => [voiceDetailFixture],
@@ -1567,7 +1591,7 @@ describe('Settings screens', () => {
     render(<VoiceSettingsScreen
       client={fixtureClient({
         listVoices: async () => [voiceDetailFixture],
-        listApiKeys: async () => [{ id: 'key', display_name: 'Key', has_value: true, used_by: [] }],
+        listApiKeys: async () => [{ id: 'key', display_name: 'Key', has_value: true, cloud_store: 'none', used_by: [] }],
         getVoiceInputSettings: async () => ({
           provider: 'openai',
           url: 'https://api.openai.com/v1/realtime/calls', model: 'gpt-live-transcribe',
@@ -1611,9 +1635,9 @@ describe('Settings screens', () => {
       client={fixtureClient({
         listVoices: async () => [],
         listApiKeys: async () => [{
-          id: 'openai-key', display_name: 'OpenAI', has_value: true, used_by: [],
+          id: 'openai-key', display_name: 'OpenAI', has_value: true, cloud_store: 'none', used_by: [],
         }, {
-          id: 'xai-key', display_name: 'xAI', has_value: true, used_by: [],
+          id: 'xai-key', display_name: 'xAI', has_value: true, cloud_store: 'none', used_by: [],
         }],
         getVoiceInputSettings: async () => ({
           provider: 'openai',
@@ -1675,7 +1699,7 @@ describe('Settings screens', () => {
       client={fixtureClient({
         listVoices: async () => [],
         listApiKeys: async () => [{
-          id: 'xai-key', display_name: 'xAI', has_value: true, used_by: [],
+          id: 'xai-key', display_name: 'xAI', has_value: true, cloud_store: 'none', used_by: [],
         }],
         getVoiceInputSettings: async () => null,
         getVoiceOutputSettings: async () => null,
@@ -1757,8 +1781,8 @@ describe('Settings screens', () => {
     const saveVoiceOutputSettings = vi.fn(async (settings) => settings);
     const client = fixtureClient({
       getVoiceOutputSettings: async () => fish,
-      listApiKeys: async () => [{ id: 'fish-key', display_name: 'Fish', has_value: true, used_by: [] },
-        { id: 'eleven-key', display_name: 'Eleven', has_value: true, used_by: [] }],
+      listApiKeys: async () => [{ id: 'fish-key', display_name: 'Fish', has_value: true, cloud_store: 'none', used_by: [] },
+        { id: 'eleven-key', display_name: 'Eleven', has_value: true, cloud_store: 'none', used_by: [] }],
       listVoices: async () => [{ ...voiceDetailFixture, display_name: 'Reader' }],
       saveVoiceOutputSettings,
     });
@@ -1807,8 +1831,8 @@ describe('Settings screens', () => {
     render(<VoiceSettingsScreen client={fixtureClient({
       getVoiceOutputSettings: async () => fish, saveVoiceOutputSettings,
       listVoices: async () => [{ ...voiceDetailFixture, display_name: 'Reader' }],
-      listApiKeys: async () => [{ id: 'fish-key', display_name: 'Fish', has_value: true, used_by: [] },
-        { id: 'eleven-key', display_name: 'Eleven', has_value: true, used_by: [] }],
+      listApiKeys: async () => [{ id: 'fish-key', display_name: 'Fish', has_value: true, cloud_store: 'none', used_by: [] },
+        { id: 'eleven-key', display_name: 'Eleven', has_value: true, cloud_store: 'none', used_by: [] }],
     })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
     await userEvent.selectOptions(await screen.findByLabelText('Output provider'), 'elevenlabs');
     await userEvent.type(screen.getByLabelText('Output model name'), 'x');
@@ -2121,7 +2145,7 @@ describe('Settings screens', () => {
     render(
       <ApiKeysScreen
         client={fixtureClient({ listApiKeys: async () => [{
-          id: 'api_key_1', display_name: 'Google', has_value: true, used_by: ['Gemini'],
+          id: 'api_key_1', display_name: 'Google', has_value: true, cloud_store: 'none', used_by: ['Gemini'],
         }] })}
         dispatch={dispatch} navigate={dispatch}
         state={initialAppState}
@@ -2139,7 +2163,7 @@ describe('Settings screens', () => {
       <ApiKeyScreen
         client={fixtureClient({
           listApiKeys: async () => [{
-            id: 'api_key_1', display_name: 'Google', has_value: true, used_by: [],
+            id: 'api_key_1', display_name: 'Google', has_value: true, cloud_store: 'none', used_by: [],
           }],
           deleteApiKey,
         })}
@@ -2163,13 +2187,13 @@ describe('Settings screens', () => {
 
   it('shows the replacement field, provider usage, and save and remove actions for an API key', async () => {
     const replaceApiKeyValue = vi.fn(async () => ({
-      id: 'api_key_1', display_name: 'Google', has_value: true, used_by: ['Gemini'],
+      id: 'api_key_1', display_name: 'Google', has_value: true, cloud_store: 'none' as const, used_by: ['Gemini'],
     }));
     render(
       <ApiKeyScreen
         client={fixtureClient({
           listApiKeys: async () => [{
-            id: 'api_key_1', display_name: 'Google', has_value: true, used_by: ['Gemini'],
+            id: 'api_key_1', display_name: 'Google', has_value: true, cloud_store: 'none', used_by: ['Gemini'],
           }],
           replaceApiKeyValue,
         })}
@@ -2188,24 +2212,63 @@ describe('Settings screens', () => {
     expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
     expect(screen.queryByText('Saved locally')).not.toBeInTheDocument();
     expect(screen.getByText('Used by')).toBeInTheDocument();
-    expect(screen.getByText('Gemini')).toBeInTheDocument();
+    expect(screen.getByText('Gemini', { selector: 'li' })).toBeInTheDocument();
     expect(screen.queryByText('Replace value')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove API key' })).toBeInTheDocument();
 
     await userEvent.type(value, 'replacement-secret');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(replaceApiKeyValue).toHaveBeenCalledWith('api_key_1', 'replacement-secret');
+    expect(replaceApiKeyValue).toHaveBeenCalledWith('api_key_1', {
+      value: 'replacement-secret', cloud_store: 'none',
+    });
+  });
+
+  it('saves the cloud store of an API key without a new value', async () => {
+    const replaceApiKeyValue = vi.fn(async () => ({
+      id: 'api_key_1', display_name: 'OpenAI', has_value: true, cloud_store: 'google' as const, used_by: [],
+    }));
+    render(
+      <ApiKeyScreen
+        client={fixtureClient({
+          listApiKeys: async () => [{
+            id: 'api_key_1', display_name: 'OpenAI', has_value: true, cloud_store: 'openai', used_by: [],
+          }],
+          replaceApiKeyValue,
+        })}
+        dispatch={vi.fn()} navigate={vi.fn()}
+        state={{
+          ...initialAppState,
+          inspectedApiKey: { id: 'api_key_1', name: 'OpenAI' },
+        }}
+      />,
+    );
+
+    const cloudStore = await screen.findByLabelText('Cloud store');
+    expect(cloudStore).toHaveValue('openai');
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toBeDisabled();
+
+    await userEvent.selectOptions(cloudStore, 'none');
+    expect(save).toBeEnabled();
+    await userEvent.selectOptions(cloudStore, 'openai');
+    expect(save).toBeDisabled();
+
+    await userEvent.selectOptions(cloudStore, 'google');
+    await userEvent.click(save);
+    expect(replaceApiKeyValue).toHaveBeenCalledWith('api_key_1', { cloud_store: 'google' });
+    expect(screen.getByLabelText('Cloud store')).toHaveValue('google');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 
   it('renames an API key from the shared editable title', async () => {
     const renameApiKey = vi.fn(async (_id, displayName) => ({
-      id: 'api_key_1', display_name: displayName, has_value: true, used_by: [],
+      id: 'api_key_1', display_name: displayName, has_value: true, cloud_store: 'none' as const, used_by: [],
     }));
     const dispatch = vi.fn();
     render(
       <ApiKeyScreen
         client={fixtureClient({ renameApiKey, listApiKeys: async () => [{
-          id: 'api_key_1', display_name: 'Google', has_value: true, used_by: [],
+          id: 'api_key_1', display_name: 'Google', has_value: true, cloud_store: 'none', used_by: [],
         }] })}
         dispatch={dispatch} navigate={dispatch}
         state={{
@@ -2289,7 +2352,7 @@ describe('web search settings', () => {
     const saveWebSearchSettings = vi.fn(async (settings) => settings);
     const listProviders = vi.fn(async () => { throw new Error('Not needed'); });
     render(<WebSearchSettingsScreen client={fixtureClient({
-      listApiKeys: async () => [{ id: 'key-1', display_name: 'Search key', has_value: true, used_by: [] }],
+      listApiKeys: async () => [{ id: 'key-1', display_name: 'Search key', has_value: true, cloud_store: 'none', used_by: [] }],
       listProviders,
       saveWebSearchSettings,
     })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
@@ -2323,7 +2386,7 @@ describe('web search settings', () => {
     const saveWebSearchSettings = vi.fn(async (settings) => settings);
     render(<WebSearchSettingsScreen client={fixtureClient({
       listApiKeys: async () => [
-        { id: 'fc', display_name: 'Firecrawl key', has_value: true, used_by: [] },
+        { id: 'fc', display_name: 'Firecrawl key', has_value: true, cloud_store: 'none', used_by: [] },
       ],
       listProviders: async () => [],
       saveWebSearchSettings,
@@ -2357,8 +2420,8 @@ describe('web search settings', () => {
     const saveWebSearchSettings = vi.fn(async (settings) => settings);
     render(<WebSearchSettingsScreen client={fixtureClient({
       listApiKeys: async () => [
-        { id: 'fc', display_name: 'Firecrawl key', has_value: true, used_by: [] },
-        { id: 'reader', display_name: 'web_reader key', has_value: true, used_by: [] },
+        { id: 'fc', display_name: 'Firecrawl key', has_value: true, cloud_store: 'none', used_by: [] },
+        { id: 'reader', display_name: 'web_reader key', has_value: true, cloud_store: 'none', used_by: [] },
       ],
       saveWebSearchSettings,
     })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
@@ -2403,7 +2466,7 @@ describe('web search settings', () => {
     const user = userEvent.setup();
     const saveWebSearchSettings = vi.fn(async (settings) => settings);
     render(<WebSearchSettingsScreen client={fixtureClient({
-      listApiKeys: async () => [{ id: 'key-1', display_name: 'Search key', has_value: true, used_by: [] }],
+      listApiKeys: async () => [{ id: 'key-1', display_name: 'Search key', has_value: true, cloud_store: 'none', used_by: [] }],
       listProviders: async () => [],
       saveWebSearchSettings,
     })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
@@ -2567,7 +2630,7 @@ describe('session settings', () => {
     const deleteApiKey = vi.fn(async () => {});
     render(<SessionSettingsScreen client={fixtureClient({
       getJevSettings: async () => null,
-      listApiKeys: async () => [{ id: 'key-1', display_name: 'OpenRouter', has_value: true, used_by: [] }],
+      listApiKeys: async () => [{ id: 'key-1', display_name: 'OpenRouter', has_value: true, cloud_store: 'none', used_by: [] }],
       saveJevSettings, disableJev, deleteApiKey,
     })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
     expect(await screen.findByLabelText('URL')).toHaveValue('https://openrouter.ai/api/alpha/decisions');
@@ -2588,7 +2651,7 @@ describe('session settings', () => {
     const user = userEvent.setup();
     render(<SessionSettingsScreen client={fixtureClient({
       getJevSettings: async () => ({ url: 'https://openrouter.ai/api/alpha/decisions', model: 'typesafe/jev-1.13', api_key: 'key-1' }),
-      listApiKeys: async () => [{ id: 'key-1', display_name: 'OpenRouter', has_value: true, used_by: [] }],
+      listApiKeys: async () => [{ id: 'key-1', display_name: 'OpenRouter', has_value: true, cloud_store: 'none', used_by: [] }],
       saveJevSettings: async () => { throw new ChaError('invalid_argument', 'Invalid URL'); },
     })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
     const url = await screen.findByLabelText('URL');

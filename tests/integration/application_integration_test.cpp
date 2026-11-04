@@ -197,7 +197,7 @@ protected:
         application_->set_web_search_url_override_for_tests(
             "http://127.0.0.1:" + std::to_string(port) + "/search");
         const auto key = call("apiKey.create",
-            {{"display_name", "Search"}, {"value", "integration-search-key"}});
+            {{"display_name", "Search"}, {"value", "integration-search-key"}, {"cloud_store", "none"}});
         (void)call("webSearch.save", {{"tool_enabled", true},
             {"provider", "brave"}, {"api_key", key.at("id")}});
     }

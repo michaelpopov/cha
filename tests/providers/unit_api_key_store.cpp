@@ -67,7 +67,7 @@ TEST_F(ApiKeyStoreTest, CreatesUpdatesReloadsAndRemovesASecret) {
     EXPECT_EQ(renamed.display_name, "Router");
     EXPECT_FALSE(store.find_by_name("OpenRouter"));
     EXPECT_EQ(store.value_by_name("Router"), "secret-one");
-    EXPECT_EQ(store.replace(created.id, "secret-two").id, created.id);
+    EXPECT_EQ(store.replace(created.id, "secret-two", "none").id, created.id);
 
     reopen();
     ApiKeyStore reopened(*config, path);
@@ -85,6 +85,24 @@ TEST_F(ApiKeyStoreTest, CreatesUpdatesReloadsAndRemovesASecret) {
     reopened.remove(created.id);
     EXPECT_TRUE(reopened.list().empty());
     EXPECT_THROW((void)reopened.value(created.id), std::runtime_error);
+}
+
+TEST_F(ApiKeyStoreTest, SavesCloudStoreWithOrWithoutANewValue) {
+    ApiKeyStore store(*config, path);
+    const ApiKeyInfo created = store.create("OpenAI", "secret-one", "openai");
+    EXPECT_EQ(created.cloud_store, "openai");
+    EXPECT_EQ(store.rename(created.id, "Router").cloud_store, "openai");
+
+    EXPECT_EQ(store.replace(created.id, std::nullopt, "none").cloud_store, "none");
+    EXPECT_EQ(store.value(created.id), "secret-one");
+    EXPECT_EQ(store.replace(created.id, "secret-two", "google").cloud_store, "google");
+    EXPECT_THROW((void)store.replace(created.id, std::nullopt, "anthropic"), std::invalid_argument);
+
+    reopen();
+    ApiKeyStore reopened(*config, path);
+    ASSERT_TRUE(reopened.find(created.id));
+    EXPECT_EQ(reopened.find(created.id)->cloud_store, "google");
+    EXPECT_EQ(reopened.value(created.id), "secret-two");
 }
 
 TEST_F(ApiKeyStoreTest, NeverReusesRemovedIds) {

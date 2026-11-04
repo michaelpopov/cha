@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { publicErrorMessage, type ApiKeyDetail, type ChaClient } from '../api/client';
+import { publicErrorMessage, type ApiKeyDetail, type ChaClient, type CloudStore } from '../api/client';
 import { DetailRefreshProvider, StaleNotice, useFormReload } from '../detailRefresh';
 import { useLoad } from '../useLoad';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -38,6 +38,7 @@ export function ApiKeysScreen({ client, navigate }: SettingsScreenProps) {
 export function NewApiKeyScreen({ client, navigate }: SettingsScreenProps) {
   const [name, setName] = useState('');
   const [value, setValue] = useState('');
+  const [cloudStore, setCloudStore] = useState<CloudStore>('none');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -46,7 +47,7 @@ export function NewApiKeyScreen({ client, navigate }: SettingsScreenProps) {
     setSaving(true);
     setError(null);
     try {
-      const created = await client.createApiKey({ display_name: name.trim(), value });
+      const created = await client.createApiKey({ display_name: name.trim(), value, cloud_store: cloudStore });
       setValue('');
       navigate({ type: 'inspect-api-key', apiKeyId: created.id, apiKeyName: created.display_name });
     } catch (failure: unknown) {
@@ -58,7 +59,7 @@ export function NewApiKeyScreen({ client, navigate }: SettingsScreenProps) {
     <section className="cha-screen cha-navigation" aria-label="New API key settings">
       <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
       <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
-        <fieldset disabled={saving}><TransliteratingInput autoFocus autoComplete="off" className="cha-form-control" id="cha-new-api-key-name" label="Name" onValueChange={setName} placeholder="e.g. OpenRouter" value={name} /><label>API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setValue(event.target.value)} placeholder="Paste key" type="password" value={value} /></label></fieldset>
+        <fieldset disabled={saving}><TransliteratingInput autoFocus autoComplete="off" className="cha-form-control" id="cha-new-api-key-name" label="Name" onValueChange={setName} placeholder="e.g. OpenRouter" value={name} /><label>API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setValue(event.target.value)} placeholder="Paste key" type="password" value={value} /></label><label>Cloud store<select className="cha-form-control" onChange={(event) => setCloudStore(event.target.value as CloudStore)} value={cloudStore}><option value="none">None</option><option value="openai">OpenAI</option><option value="google">Gemini</option></select></label></fieldset>
         {error && <p className="cha-error-message" role="alert">{error}</p>}
         <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => navigate({ type: 'show-settings-api-keys' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !value || saving} type="submit">{saving ? 'Saving…' : 'Save API key'}</button></div>
       </form>
@@ -70,6 +71,7 @@ export function ApiKeyScreen({ client, dispatch, navigate, state }: SettingsScre
   const id = state.inspectedApiKey.id;
   const [key, setKey] = useState<ApiKeyDetail | null>(null);
   const [replacement, setReplacement] = useState('');
+  const [cloudStore, setCloudStore] = useState<CloudStore>('none');
   const [busy, setBusy] = useState<'name' | 'value' | 'delete' | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +80,7 @@ export function ApiKeyScreen({ client, dispatch, navigate, state }: SettingsScre
   function applyKey(loaded: ApiKeyDetail) {
     setKey(loaded);
     setReplacement('');
+    setCloudStore(loaded.cloud_store);
     dispatch({
       type: 'api-key-detail-loaded',
       apiKeyId: loaded.id,
@@ -115,17 +118,22 @@ export function ApiKeyScreen({ client, dispatch, navigate, state }: SettingsScre
     return () => { current = false; };
   }, [client, dispatch, id, reload.epoch, reload.attempt]);
 
+  const changed = replacement !== '' || (key !== null && cloudStore !== key.cloud_store);
   async function replace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!id || !replacement || busy) return;
+    if (!id || !changed || busy) return;
     setBusy('value'); setError(null);
     try {
-      const updated = await client.replaceApiKeyValue(id, replacement);
+      const updated = await client.replaceApiKeyValue(
+        id,
+        replacement ? { value: replacement, cloud_store: cloudStore } : { cloud_store: cloudStore },
+      );
       setKey(updated);
       setReplacement('');
+      setCloudStore(updated.cloud_store);
       reload.remember(updated);
     }
-    catch (failure: unknown) { setError(publicErrorMessage(failure, 'The API key value could not be replaced.')); }
+    catch (failure: unknown) { setError(publicErrorMessage(failure, 'The API key could not be saved.')); }
     finally { setBusy(null); }
   }
   async function remove() {
@@ -135,7 +143,7 @@ export function ApiKeyScreen({ client, dispatch, navigate, state }: SettingsScre
     try { await client.deleteApiKey(id); navigate({ type: 'show-settings-api-keys' }); }
     catch (failure: unknown) { setError(publicErrorMessage(failure, 'The API key could not be removed.')); setBusy(null); }
   }
-  reload.markDirty(replacement !== '');
+  reload.markDirty(changed);
   return (
     <section className="cha-screen cha-navigation" aria-label="API key settings">
       <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
@@ -159,7 +167,7 @@ export function ApiKeyScreen({ client, dispatch, navigate, state }: SettingsScre
       {id && !key && !error && <p className="cha-state-message" role="status">Loading API key…</p>}
       {error && (!key || reload.refreshFailed) && <LoadFailure message={error} retry={reload.retry} />}
       {key && <form className="cha-settings-form" onSubmit={(event) => void replace(event)}>
-        <fieldset disabled={busy !== null}><label>New API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setReplacement(event.target.value)} placeholder="Paste replacement key" type="password" value={replacement} /></label><div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!replacement || busy !== null || reload.blocked} type="submit">{busy === 'value' ? 'Saving…' : 'Save'}</button></div></fieldset>
+        <fieldset disabled={busy !== null}><label>New API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setReplacement(event.target.value)} placeholder="Paste replacement key" type="password" value={replacement} /></label><label>Cloud store<select className="cha-form-control" onChange={(event) => setCloudStore(event.target.value as CloudStore)} value={cloudStore}><option value="none">None</option><option value="openai">OpenAI</option><option value="google">Gemini</option></select></label><div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!changed || busy !== null || reload.blocked} type="submit">{busy === 'value' ? 'Saving…' : 'Save'}</button></div></fieldset>
         <UsedBy empty="Nothing references this key." items={key.used_by} />
         {error && !reload.refreshFailed && <p className="cha-error-message" role="alert">{error}</p>}
         {reload.stale && <StaleNotice onReload={() => reload.accept(applyKey)} />}

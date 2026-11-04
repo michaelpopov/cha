@@ -822,9 +822,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       { api_key_id: apiKeyId, display_name: displayName },
       isApiKeyDetail,
     ),
-    replaceApiKeyValue: (apiKeyId, value) => call(
+    replaceApiKeyValue: (apiKeyId, request) => call(
       'apiKey.replaceValue',
-      { api_key_id: apiKeyId, value },
+      { api_key_id: apiKeyId, ...request },
       isApiKeyDetail,
     ),
     deleteApiKey: async (apiKeyId) => {

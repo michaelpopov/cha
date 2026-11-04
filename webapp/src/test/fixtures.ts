@@ -335,13 +335,13 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     getVoiceOutputRuntime: async () => null,
     listApiKeys: async () => [],
     createApiKey: async ({ display_name }) => ({
-      id: 'api_key_1', display_name, has_value: true, used_by: [],
+      id: 'api_key_1', display_name, has_value: true, cloud_store: 'none', used_by: [],
     }),
     renameApiKey: async (id, display_name) => ({
-      id, display_name, has_value: true, used_by: [],
+      id, display_name, has_value: true, cloud_store: 'none', used_by: [],
     }),
     replaceApiKeyValue: async (id) => ({
-      id, display_name: 'API key', has_value: true, used_by: [],
+      id, display_name: 'API key', has_value: true, cloud_store: 'none', used_by: [],
     }),
     deleteApiKey: async () => undefined,
     getR2Storage: async () => null,

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ChaError, publicErrorMessage, type FolderStoreChoice, type FolderStoreOperation,
-  type FolderStoreService, type NoteItem, type NotesClient,
+  type NoteItem, type NotesClient,
 } from '../api/client';
 
 type Operation = Extract<FolderStoreOperation, { present: true }>;
@@ -18,23 +18,21 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
   const cancelling = useRef(false);
   const [op, setOp] = useState<Operation | null>(null);
   const [choices, setChoices] = useState<FolderStoreChoice[]>([]);
-  const [service, setService] = useState<FolderStoreService>('openai');
   const [key, setKey] = useState('');
-  const [name, setName] = useState(source.name);
+  const choice = choices.find(item => item.api_key_id === key);
+  const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const normalizedName = name.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g, '');
-  const nameError = !normalizedName ? 'Enter a store name.'
-    : service === 'google' && new TextEncoder().encode(normalizedName).length > 512
-      ? 'Name is too long for Google. Use a shorter name.'
-      : service === 'openai' && [...normalizedName].length > 512 ? 'Name must be 512 characters or fewer.' : null;
-  const descriptionError = service === 'openai' && [...description].length > 512
+  const nameError = !name ? null
+    : !/^[A-Za-z0-9_]+$/.test(name) ? 'Name can contain only Latin letters, digits, and _.'
+      : /^[0-9]/.test(name) ? 'Name must start with a letter or _.'
+        : name.length > 64 ? 'Name must be 64 characters or fewer.' : null;
+  const descriptionError = choice?.service === 'openai' && [...description].length > 512
     ? 'Description must be 512 characters or fewer for OpenAI.' : null;
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const eligible = choices.filter(choice => choice.service === service);
 
   function current() {
     if (!alive.current) return false;
@@ -56,8 +54,7 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
     const unique = result.choices.filter((choice, i, all) => all.findIndex(other =>
       other.service === choice.service && other.api_key_id === choice.api_key_id) === i);
     setChoices(unique);
-    const keys = unique.filter(choice => choice.service === service);
-    setKey(keys.length === 1 ? keys[0].api_key_id : '');
+    setKey(unique.length === 1 ? unique[0].api_key_id : '');
   }
   async function acknowledge(next: Operation) {
     await client.storeClose(next.operation_id, epoch);
@@ -150,7 +147,7 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
   }, [loading, op?.terminal, op?.phase]);
 
   async function submit(action: 'upload' | 'cleanup' = 'upload') {
-    if (busy.current || blocked || loading || (action === 'upload' && (!key || nameError || descriptionError)) || !current()) return;
+    if (busy.current || blocked || loading || (action === 'upload' && (!choice || !name || nameError || descriptionError)) || !current()) return;
     busy.current = true; setPending(true); setError(null);
     const failed = operation.current;
     try {
@@ -162,7 +159,7 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
           throw new ChaError('invalid_argument', 'The store operation changed. Close this dialog and reopen the folder menu.');
       }
       const accepted = action === 'cleanup' ? await client.storeCleanup(failed!.operation_id, epoch)
-        : await client.storeUpload(source.id, service, key, normalizedName, description, epoch);
+        : await client.storeUpload(source.id, choice!.service, key, name, description, epoch);
       if (!current()) return;
       const result = await read(accepted.operation_id);
       if (!result) return;
@@ -228,15 +225,9 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
       {loading && !op && <p role="status">Checking store…</p>}
       {active && <p role="status">{status}</p>}
       {editable && <>
-        <label>Provider<select className="cha-form-control" value={service} disabled={pending} onChange={event => {
-          const selected = event.target.value as FolderStoreService;
-          setService(selected); setError(null);
-          const keys = choices.filter(choice => choice.service === selected);
-          setKey(keys.length === 1 ? keys[0].api_key_id : '');
-        }}><option value="openai">OpenAI</option><option value="google">Google</option></select></label>
         <label>API key<select className="cha-form-control" value={key} disabled={pending} onChange={event => setKey(event.target.value)}>
           <option value="">Select API key</option>
-          {eligible.map(choice => <option key={choice.api_key_id} value={choice.api_key_id}>{choice.api_key_name}</option>)}
+          {choices.map(item => <option key={item.api_key_id} value={item.api_key_id}>{item.api_key_name}</option>)}
         </select></label>
         <label>Name<input className="cha-form-control" value={name} disabled={pending}
           aria-invalid={!!nameError} aria-describedby={nameError ? 'store-name-error' : undefined}
@@ -246,7 +237,7 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
           aria-invalid={!!descriptionError} aria-describedby={descriptionError ? 'store-description-error' : undefined}
           onChange={event => setDescription(event.target.value)} /></label>
         {descriptionError && <p id="store-description-error" className="cha-error-message" role="alert">{descriptionError}</p>}
-        {eligible.length === 0 && <p className="cha-error-message" role="alert">Add a compatible provider and saved key in Settings.</p>}
+        {choices.length === 0 && <p className="cha-error-message" role="alert">Set cloud store API key</p>}
       </>}
       {op?.terminal && op.result === 'warning' && <p role="alert">{warning}</p>}
       {op?.terminal && op.error && <p className="cha-error-message" role="alert">{op.error}</p>}
@@ -256,7 +247,7 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
         {canCancel && <button className="cha-button" type="button" disabled={pending} onClick={() => void cancel()}>Cancel</button>}
         {!active && <button className="cha-button cha-button-ghost" type="button" disabled={pending || loading} onClick={() => void close()}>
           {editable ? 'Cancel' : 'Close'}</button>}
-        {editable && <button className="cha-button cha-button-primary" type="submit" disabled={pending || !key || !!nameError || !!descriptionError}>
+        {editable && <button className="cha-button cha-button-primary" type="submit" disabled={pending || !choice || !name || !!nameError || !!descriptionError}>
           Upload</button>}
         {canRetryCleanup && !blocked && <button className="cha-button cha-button-primary" type="button" disabled={pending || loading}
           onClick={() => void submit('cleanup')}>Retry cleanup</button>}

@@ -34,9 +34,16 @@ public:
     [[nodiscard]] std::optional<R2StorageKey> r2() const;
     [[nodiscard]] std::optional<R2StorageInfo> r2_info() const;
 
-    ApiKeyInfo create(std::string_view display_name, std::string_view value);
+    ApiKeyInfo create(
+        std::string_view display_name,
+        std::string_view value,
+        std::string_view cloud_store = "none");
     ApiKeyInfo rename(std::string_view id, std::string_view display_name);
-    ApiKeyInfo replace(std::string_view id, std::string_view value);
+    // Keeps the saved value when value is not given.
+    ApiKeyInfo replace(
+        std::string_view id,
+        std::optional<std::string_view> value,
+        std::string_view cloud_store);
     void remove(std::string_view id);
     R2StorageInfo save_r2(
         std::string_view display_name,

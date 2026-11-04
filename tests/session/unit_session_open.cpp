@@ -758,8 +758,8 @@ TEST_F(ReferencedFoldersTest, GoogleKeepsNativeStoresAndReportsIncompleteOpenAiA
 
 TEST_F(ReferencedFoldersTest, NativeStoresAndOpenAiSearchToolCanBeUsedTogether) {
     ApiKeyStore keys(*store_);
-    (void)keys.replace(openai_key, "openai-search-key");
-    (void)keys.replace(google_key, "google-search-key");
+    (void)keys.replace(openai_key, "openai-search-key", "none");
+    (void)keys.replace(google_key, "google-search-key", "none");
     const auto openai = folder("OpenAI", FolderStoreService::openai, "vs_openai");
     const auto google = folder("Gemini", FolderStoreService::google, "fileSearchStores/google");
     reference(openai);

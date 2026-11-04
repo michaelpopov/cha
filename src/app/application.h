@@ -476,7 +476,7 @@ public:
         std::uint64_t epoch);
     [[nodiscard]] ApiKeyDetail replace_api_key_value(
         std::string_view api_key_id,
-        std::string value,
+        ReplaceApiKeyValueRequest request,
         std::uint64_t epoch);
     void delete_api_key(std::string_view api_key_id, std::uint64_t epoch);
 

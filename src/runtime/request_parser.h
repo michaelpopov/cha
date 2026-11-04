@@ -47,7 +47,8 @@ VoiceInputSettings parse_voice_input_settings(const nlohmann::json& json);
 VoiceOutputSettings parse_voice_output_settings(const nlohmann::json& json);
 CreateApiKeyRequest parse_create_api_key_request(const nlohmann::json& json);
 std::string parse_rename_display_name(const nlohmann::json& json);
-std::string parse_replace_secret_value(const nlohmann::json& json);
+ReplaceApiKeyValueRequest parse_replace_api_key_value_request(
+    const nlohmann::json& json);
 SaveR2StorageRequest parse_save_r2_storage_request(const nlohmann::json& json);
 
 } // namespace cha

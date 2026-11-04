@@ -1472,6 +1472,36 @@ TEST_F(
 
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
+    ApiKeyCloudStoreDefaultsToNoneAndIsSavedInKeyFile) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute(
+            "INSERT INTO config (name, content) VALUES "
+            "('system/keys/config.toml', 'next_id = 2\n'), "
+            "('system/keys/api_key_1/config.toml', "
+            "'display_name = ''Models''\ntype = ''models''\nvalue = ''secret''\n')");
+    }
+    const auto store = open_store();
+    ASSERT_NE(store->snapshot()->find_api_key("api_key_1"), nullptr);
+    EXPECT_EQ(store->snapshot()->find_api_key("api_key_1")->cloud_store, "none");
+
+    store->apply_api_key_update("api_key_1", "Models", "secret", "google");
+    EXPECT_EQ(store->snapshot()->find_api_key("api_key_1")->cloud_store, "google");
+    EXPECT_NE(
+        config_contents(database()).at("system/keys/api_key_1/config.toml")
+            .find("cloud_store = 'google'"),
+        std::string::npos);
+
+    store->apply_api_key_create("api_key_2", "Other", "other-secret");
+    EXPECT_EQ(store->snapshot()->find_api_key("api_key_2")->cloud_store, "none");
+    EXPECT_NE(
+        config_contents(database()).at("system/keys/api_key_2/config.toml")
+            .find("cloud_store = 'none'"),
+        std::string::npos);
+}
+
+TEST_F(
+    RuntimeWorkspaceConfigStoreTest,
     ApiKeyCreateRollsBackKeyWhenCounterInsertFails) {
     {
         Database handle(database(), Database::Mode::read_write);

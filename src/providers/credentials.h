@@ -8,12 +8,14 @@ struct ApiKeyInfo {
     std::string id;
     std::string display_name;
     bool has_value{};
+    std::string cloud_store{"none"};
 };
 
 struct SavedApiKey {
     std::string id;
     std::string display_name;
     std::string value;
+    std::string cloud_store{"none"};
 };
 
 struct R2StorageKey {

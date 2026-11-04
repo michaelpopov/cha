@@ -546,7 +546,7 @@ describe('native CHA client', () => {
     const key = {
       id: 'api_key_1',
       display_name: 'Router',
-      has_value: true,
+      has_value: true, cloud_store: 'none',
       used_by: ['Test'],
     };
     const r2 = {

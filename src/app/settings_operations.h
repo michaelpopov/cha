@@ -154,7 +154,7 @@ void disable_jev(WorkspaceConfigStore& store);
     const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
-    std::string_view value);
+    const ReplaceApiKeyValueRequest& request);
 void delete_api_key(ApiKeyStore& api_keys, std::string_view id);
 
 [[nodiscard]] std::optional<R2StorageDetail> get_r2_storage(

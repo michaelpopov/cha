@@ -341,11 +341,13 @@ public:
     void apply_api_key_create(
         std::string_view id,
         std::string_view display_name,
-        std::string_view value);
+        std::string_view value,
+        std::string_view cloud_store = "none");
     void apply_api_key_update(
         std::string_view id,
         std::string_view display_name,
-        std::string_view value);
+        std::string_view value,
+        std::string_view cloud_store);
     void apply_api_key_delete(std::string_view id);
     void apply_r2_storage_create(const R2StorageKey& key);
     void apply_r2_storage_update(const R2StorageKey& key);

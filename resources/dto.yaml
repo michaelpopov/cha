@@ -908,7 +908,7 @@ components:
     ApiKeyDetail:
       type: object
       additionalProperties: false
-      required: [id, display_name, has_value, used_by]
+      required: [id, display_name, has_value, cloud_store, used_by]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -916,6 +916,8 @@ components:
           type: string
         has_value:
           type: boolean
+        cloud_store:
+          $ref: "#/components/schemas/CloudStore"
         used_by:
           type: array
           items:
@@ -924,12 +926,14 @@ components:
     CreateApiKeyRequest:
       type: object
       additionalProperties: false
-      required: [display_name, value]
+      required: [display_name, value, cloud_store]
       properties:
         display_name:
           type: string
         value:
           type: string
+        cloud_store:
+          $ref: "#/components/schemas/CloudStore"
 
     RenameApiKeyRequest:
       type: object
@@ -942,10 +946,16 @@ components:
     ReplaceApiKeyValueRequest:
       type: object
       additionalProperties: false
-      required: [value]
+      required: [cloud_store]
       properties:
         value:
           type: string
+        cloud_store:
+          $ref: "#/components/schemas/CloudStore"
+
+    CloudStore:
+      type: string
+      enum: [none, openai, google]
 
     R2StorageDetail:
       type: object

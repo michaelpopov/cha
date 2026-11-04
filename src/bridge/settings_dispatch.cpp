@@ -176,7 +176,7 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         const std::string id = require_identifier(params, "api_key_id");
         result = application.replace_api_key_value(
             id,
-            parse_replace_secret_value(
+            parse_replace_api_key_value_request(
                 without_key(params, "api_key_id")),
             epoch);
         break;

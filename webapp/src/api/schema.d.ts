@@ -415,18 +415,23 @@ export interface components {
             id: components["schemas"]["Identifier"];
             display_name: string;
             has_value: boolean;
+            cloud_store: components["schemas"]["CloudStore"];
             used_by: string[];
         };
         CreateApiKeyRequest: {
             display_name: string;
             value: string;
+            cloud_store: components["schemas"]["CloudStore"];
         };
         RenameApiKeyRequest: {
             display_name: string;
         };
         ReplaceApiKeyValueRequest: {
-            value: string;
+            value?: string;
+            cloud_store: components["schemas"]["CloudStore"];
         };
+        /** @enum {string} */
+        CloudStore: "none" | "openai" | "google";
         R2StorageDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;

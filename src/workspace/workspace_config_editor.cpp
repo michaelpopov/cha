@@ -25,11 +25,16 @@ namespace {
 
 toml::table api_key_table(
     std::string_view display_name,
-    std::string_view value) {
+    std::string_view value,
+    std::string_view cloud_store) {
+    if (cloud_store != "none" && cloud_store != "openai" && cloud_store != "google") {
+        throw std::invalid_argument("Invalid API key");
+    }
     toml::table table;
     table.insert("display_name", std::string(display_name));
     table.insert("type", "models");
     table.insert("value", std::string(value));
+    table.insert("cloud_store", std::string(cloud_store));
     return table;
 }
 
@@ -608,7 +613,8 @@ void WorkspaceConfigEditor::write_voice_output(const WorkspaceVoiceOutput& setti
 void WorkspaceConfigEditor::create_api_key(
     std::string_view id,
     std::string_view display_name,
-    std::string_view value) {
+    std::string_view value,
+    std::string_view cloud_store) {
     const std::filesystem::path directory =
         workspace_.root_ / "system" / "keys" / std::string(id);
     const std::filesystem::path path = directory / "config.toml";
@@ -626,7 +632,7 @@ void WorkspaceConfigEditor::create_api_key(
         throw std::invalid_argument("Duplicate API key");
     }
 
-    write_toml(path, api_key_table(display_name, value));
+    write_toml(path, api_key_table(display_name, value, cloud_store));
     write_next_api_key_id(saved_key_suffix(id, path) + 1);
     (void)load_saved_key(source_, directory, {workspace_.root_});
 }
@@ -634,7 +640,8 @@ void WorkspaceConfigEditor::create_api_key(
 void WorkspaceConfigEditor::write_api_key(
     std::string_view id,
     std::string_view display_name,
-    std::string_view value) {
+    std::string_view value,
+    std::string_view cloud_store) {
     if (workspace_.find_api_key(id) == nullptr) {
         throw std::out_of_range("Unknown API key");
     }
@@ -647,7 +654,7 @@ void WorkspaceConfigEditor::write_api_key(
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid API key");
     }
-    write_toml(path, api_key_table(display_name, value));
+    write_toml(path, api_key_table(display_name, value, cloud_store));
     (void)load_saved_key(source_, directory, {workspace_.root_});
 }
 

@@ -292,6 +292,7 @@ ApiKeyDetail api_key_detail(
         .id = key.id,
         .display_name = key.display_name,
         .has_value = key.has_value,
+        .cloud_store = key.cloud_store,
         .used_by = std::move(used_by),
     };
 }
@@ -878,7 +879,8 @@ ApiKeyDetail create_api_key(
     return with_settings_edit([&] {
         try {
             return api_key_detail(
-                api_keys.create(create.display_name, create.value),
+                api_keys.create(
+                    create.display_name, create.value, create.cloud_store),
                 workspace);
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid API key.");
@@ -907,11 +909,12 @@ ApiKeyDetail replace_api_key_value(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
-    std::string_view value) {
+    const ReplaceApiKeyValueRequest& request) {
     return with_settings_edit([&] {
         try {
             return api_key_detail(
-                api_keys.replace(id, value), workspace);
+                api_keys.replace(id, request.value, request.cloud_store),
+                workspace);
         } catch (const std::out_of_range&) {
             fail(ErrorCode::not_found, "That API key was not found.");
         } catch (const std::invalid_argument&) {

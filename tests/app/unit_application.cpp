@@ -250,7 +250,7 @@ TEST_F(NoteAudioBackground, UploadFailuresRetainAcceptanceUntilSubmissionSucceed
         EXPECT_FALSE(attempt->batch_id);
         EXPECT_TRUE(application->background_note_audio_status(note.id, epoch)["pending"]);
         EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
-        if (index == 3) application->api_keys().replace(key_id, "new-key");
+        if (index == 3) application->api_keys().replace(key_id, "new-key", "none");
     };
     configure(server.port()); activate(); upload.start(); server.start();
     (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
@@ -302,7 +302,7 @@ TEST_F(NoteAudioBackground, RejectedCreationRetriesTheSameFileWithoutUploadingAg
         audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
     on_wait = [&](auto index) {
         ASSERT_TRUE(application->store().get_note_audio_attempt_for_note(note.id));
-        if (index == 1) application->api_keys().replace(key_id, "new-key");
+        if (index == 1) application->api_keys().replace(key_id, "new-key", "none");
     };
     configure(server.port()); activate(); upload.start(); server.start();
     (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
@@ -841,7 +841,7 @@ TEST_F(NoteAudioBackground, RetainsReadsBeyondThreeFailuresAndResolvesTheSameKey
         audio_http_error(401), audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
     saved_attempt(server.port());
     on_wait = [&](auto index) {
-        if (index == 5) application->api_keys().replace(key_id, "new-key");
+        if (index == 5) application->api_keys().replace(key_id, "new-key", "none");
     };
     server.start(); activate();
     ASSERT_TRUE(finished());
@@ -1074,7 +1074,7 @@ TEST_F(NoteAudioBackground, VaultSwitchesRecoverOnlyTheCurrentAttemptWithOverlap
     epoch = application->switch_vault("Other", {}, epoch).context_epoch;
     const auto other_note = application->create_note_item({}, NoteItemKind::note, "Other chapter", epoch);
     (void)application->set_note_read_only(other_note.id, true, epoch);
-    (void)application->replace_api_key_value(key_id, "other-key", epoch);
+    (void)application->replace_api_key_value(key_id, {.value = "other-key"}, epoch);
     const auto other_attempt = *application->store().accept_note_audio(other_note.id, 1,
         "http://127.0.0.1:" + std::to_string(other.port()), key_id, [](const auto&) {});
     ASSERT_TRUE(application->store().register_note_audio(other_attempt.id, other_batch, "Kore"));

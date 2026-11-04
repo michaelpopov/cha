@@ -38,6 +38,7 @@ ApiKeyInfo info(const SavedApiKey& key) {
         .id = key.id,
         .display_name = key.display_name,
         .has_value = !key.value.empty(),
+        .cloud_store = key.cloud_store,
     };
 }
 
@@ -213,7 +214,8 @@ std::optional<R2StorageInfo> ApiKeyStore::r2_info() const {
 
 ApiKeyInfo ApiKeyStore::create(
     std::string_view display_name,
-    std::string_view value) {
+    std::string_view value,
+    std::string_view cloud_store) {
     const std::lock_guard lock(mutex_);
     const std::shared_ptr<const Workspace> current = config_->snapshot();
     const std::uint64_t assigned_id = current->next_api_key_id();
@@ -223,7 +225,7 @@ ApiKeyInfo ApiKeyStore::create(
         throw std::runtime_error("API key ID space exhausted");
     }
     const std::string id = "api_key_" + std::to_string(assigned_id);
-    config_->apply_api_key_create(id, display_name, value);
+    config_->apply_api_key_create(id, display_name, value, cloud_store);
     return published_api_key(*config_, id);
 }
 
@@ -234,18 +236,21 @@ ApiKeyInfo ApiKeyStore::rename(
     const std::shared_ptr<const Workspace> current = config_->snapshot();
     const SavedApiKey* key = current->find_api_key(id);
     if (key == nullptr) throw std::out_of_range("Unknown API key");
-    config_->apply_api_key_update(id, display_name, key->value);
+    config_->apply_api_key_update(
+        id, display_name, key->value, key->cloud_store);
     return published_api_key(*config_, id);
 }
 
 ApiKeyInfo ApiKeyStore::replace(
     std::string_view id,
-    std::string_view value) {
+    std::optional<std::string_view> value,
+    std::string_view cloud_store) {
     const std::lock_guard lock(mutex_);
     const std::shared_ptr<const Workspace> current = config_->snapshot();
     const SavedApiKey* key = current->find_api_key(id);
     if (key == nullptr) throw std::out_of_range("Unknown API key");
-    config_->apply_api_key_update(id, key->display_name, value);
+    config_->apply_api_key_update(
+        id, key->display_name, value.value_or(key->value), cloud_store);
     return published_api_key(*config_, id);
 }
 

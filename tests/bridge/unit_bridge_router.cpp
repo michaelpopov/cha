@@ -814,7 +814,7 @@ TEST_F(BridgeRouterTest, InfoBootstrapCreateOpenSubmitStopSnapshotAndClose) {
 TEST_F(BridgeRouterTest, RecipientDetectionSettingsApplyToExistingSessionAndMissingKeyFallsBack) {
     bootstrap_epoch();
     EXPECT_TRUE(call("jev.get")["result"].is_null());
-    const auto key = call("apiKey.create", {{"display_name", "OpenRouter"}, {"value", "test-secret"}});
+    const auto key = call("apiKey.create", {{"display_name", "OpenRouter"}, {"value", "test-secret"}, {"cloud_store", "none"}});
     ASSERT_TRUE(key["ok"]);
     auto created = call("session.create", {{"forum_id", "lobby"}, {"label", "Jev"}});
     ASSERT_TRUE(created["ok"]);
@@ -896,7 +896,7 @@ TEST_F(BridgeRouterTest, SavesNotesSettingsAndIgnoresUnusedFields) {
 TEST_F(BridgeRouterTest, PageReadingSettingsRetainKeyAndAreIndependentOfSearch) {
     bootstrap_epoch();
     auto settings = call("webSearch.get")["result"];
-    const auto firecrawl = call("apiKey.create", {{"display_name", "Firecrawl"}, {"value", "fc-secret"}});
+    const auto firecrawl = call("apiKey.create", {{"display_name", "Firecrawl"}, {"value", "fc-secret"}, {"cloud_store", "none"}});
     ASSERT_TRUE(firecrawl["ok"]);
     settings["read_provider"] = "firecrawl";
     EXPECT_FALSE(call("webSearch.save", settings)["ok"]);
@@ -937,13 +937,13 @@ TEST_F(BridgeRouterTest, WebReaderSettingsWorkWithoutKeysAndValidateTheBaseUrl) 
         EXPECT_FALSE(call("webSearch.save", invalid)["ok"]);
         EXPECT_EQ(call("webSearch.get")["result"], settings);
     }
-    const auto firecrawl = call("apiKey.create", {{"display_name", "Firecrawl"}, {"value", "fc-secret"}});
+    const auto firecrawl = call("apiKey.create", {{"display_name", "Firecrawl"}, {"value", "fc-secret"}, {"cloud_store", "none"}});
     ASSERT_TRUE(firecrawl["ok"]);
     settings["firecrawl_api_key"] = firecrawl["result"]["id"];
     settings["read_provider"] = "firecrawl";
     ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
     EXPECT_EQ(call("apiKey.list")["result"][0]["used_by"], nlohmann::json::array({"Page reading"}));
-    const auto reader = call("apiKey.create", {{"display_name", "web_reader"}, {"value", "reader-secret"}});
+    const auto reader = call("apiKey.create", {{"display_name", "web_reader"}, {"value", "reader-secret"}, {"cloud_store", "none"}});
     ASSERT_TRUE(reader["ok"]);
     settings["web_reader_api_key"] = reader["result"]["id"];
     ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
@@ -991,7 +991,7 @@ TEST_F(BridgeRouterTest, WebSearchSettingsRoundTripAndIgnoreObsoletePreliminaryS
     EXPECT_FALSE(call("webSearch.save", enabled)["ok"]);
     EXPECT_EQ(call("webSearch.get")["result"], disabled);
     const auto key = call("apiKey.create", {
-        {"display_name", "Search"}, {"value", "test-secret"}});
+        {"display_name", "Search"}, {"value", "test-secret"}, {"cloud_store", "none"}});
     ASSERT_TRUE(key["ok"]);
     enabled["api_key"] = key["result"]["id"];
     enabled["provider"] = "tavily";
@@ -2357,6 +2357,36 @@ TEST_F(BridgeRouterTest, StopRemainsAdmittedWhenOrdinaryWorkIsFull) {
     ack_delivery(*router_, connection_, *batch);
 }
 
+TEST_F(BridgeRouterTest, SavesApiKeyCloudStoreWithOrWithoutANewValue) {
+    bootstrap_epoch();
+    EXPECT_FALSE(call(
+        "apiKey.create",
+        {{"display_name", "OpenAI"}, {"value", "secret-one"}})["ok"]);
+    auto reply = call(
+        "apiKey.create",
+        {{"display_name", "OpenAI"}, {"value", "secret-one"}, {"cloud_store", "openai"}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"].at("cloud_store"), "openai");
+    const std::string id = reply["result"].at("id");
+
+    reply = call("apiKey.replaceValue", {{"api_key_id", id}, {"cloud_store", "none"}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"].at("cloud_store"), "none");
+    EXPECT_EQ(application_->api_keys().value(id), "secret-one");
+
+    reply = call(
+        "apiKey.replaceValue",
+        {{"api_key_id", id}, {"value", "secret-two"}, {"cloud_store", "google"}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"].at("cloud_store"), "google");
+    EXPECT_EQ(application_->api_keys().value(id), "secret-two");
+    EXPECT_FALSE(call(
+        "apiKey.replaceValue", {{"api_key_id", id}, {"value", "secret-three"}})["ok"]);
+    EXPECT_FALSE(call(
+        "apiKey.replaceValue", {{"api_key_id", id}, {"cloud_store", "anthropic"}})["ok"]);
+    EXPECT_EQ(application_->api_keys().find(id)->cloud_store, "google");
+}
+
 TEST_F(BridgeRouterTest, ListsProvidersAndApiKeyMetadataWithoutSecrets) {
     bootstrap_epoch();
     auto reply = call("provider.list");
@@ -2366,7 +2396,7 @@ TEST_F(BridgeRouterTest, ListsProvidersAndApiKeyMetadataWithoutSecrets) {
 
     reply = call(
         "apiKey.create",
-        {{"display_name", "Router"}, {"value", "private-router-secret"}});
+        {{"display_name", "Router"}, {"value", "private-router-secret"}, {"cloud_store", "none"}});
     ASSERT_TRUE(reply["ok"]);
     EXPECT_EQ(reply.dump().find("private-router-secret"), std::string::npos);
     EXPECT_TRUE(reply["result"].at("has_value").get<bool>());
@@ -2506,7 +2536,7 @@ TEST_F(BridgeRouterTest, SpeechAndAudioMethodsUseOpaqueResources) {
     server.start();
     bootstrap_epoch();
     const auto key = call("apiKey.create", {
-        {"display_name", "Fish"}, {"value", "fish-secret"},
+        {"display_name", "Fish"}, {"value", "fish-secret"}, {"cloud_store", "none"},
     });
     ASSERT_TRUE(key["ok"]);
     const auto voice = call("voice.create", {
@@ -3756,7 +3786,7 @@ TEST_F(BridgeRouterTest, CompressionResolvesTheCurrentKeyBeforeItsRequest) {
         changed = true;
         // The acceptance notice runs under the lifecycle lock, before the worker
         // can send. Editing the store directly avoids reacquiring that lock.
-        application_->store().apply_api_key_update(key.id, key.display_name, "replacement-secret");
+        application_->store().apply_api_key_update(key.id, key.display_name, "replacement-secret", "none");
     });
     EXPECT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
     application_->set_note_compression_changed({});
@@ -3794,7 +3824,7 @@ TEST_F(BridgeRouterTest, WaitingCompressionUsesReplacementKeysAndNeverSubstitute
         if (deleted) {
             application_->api_keys().remove(key.id);
             (void)application_->create_api_key({.display_name = key.display_name, .value = "different-key"}, epoch_);
-        } else application_->api_keys().replace(key.id, "replacement-secret");
+        } else application_->api_keys().replace(key.id, "replacement-secret", "none");
         ASSERT_TRUE(call("notes.compressCancel", {{"id", a.id}})["ok"]);
         wait_compression(b.id); first.join();
         if (deleted) {
@@ -3828,7 +3858,7 @@ TEST_F(BridgeRouterTest, CompressionResolvesTheKeyAgainBeforeRetrying) {
         compression_wait_ = [&](int seconds) {
             EXPECT_EQ(seconds, 10);
             if (deleted) application_->api_keys().remove(key.id);
-            else application_->api_keys().replace(key.id, "replacement-secret");
+            else application_->api_keys().replace(key.id, "replacement-secret", "none");
         };
         ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
         wait_compression(note.id); server.join();
@@ -4857,8 +4887,10 @@ TEST_F(BridgeRouterTest, StoreUploadReportsEditablePreflightAndOrdinaryFolderDel
 
 TEST_F(BridgeRouterTest, StoreChoicesMatchTheSharedWireFixture) {
     bootstrap_epoch();
-    const auto openai = application_->create_api_key({.display_name = "OpenAI", .value = "openai-secret"}, epoch_);
-    const auto google = application_->create_api_key({.display_name = "Google", .value = "google-secret"}, epoch_);
+    const auto openai = application_->create_api_key(
+        {.display_name = "OpenAI", .value = "openai-secret", .cloud_store = "openai"}, epoch_);
+    const auto google = application_->create_api_key(
+        {.display_name = "Google", .value = "google-secret", .cloud_store = "google"}, epoch_);
     auto actual = call("notes.storeChoices").at("result");
     auto expected = folder_store_wire_fixture().at("choices");
     for (auto& choice : expected["choices"])

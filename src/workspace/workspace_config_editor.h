@@ -62,11 +62,13 @@ public:
     void create_api_key(
         std::string_view id,
         std::string_view display_name,
-        std::string_view value);
+        std::string_view value,
+        std::string_view cloud_store);
     void write_api_key(
         std::string_view id,
         std::string_view display_name,
-        std::string_view value);
+        std::string_view value,
+        std::string_view cloud_store);
     void delete_api_key(std::string_view id);
     void create_r2_storage(const R2StorageKey& key);
     void write_r2_storage(const R2StorageKey& key);

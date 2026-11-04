@@ -2564,9 +2564,10 @@ void WorkspaceConfigStore::apply_voice_output_update(
 void WorkspaceConfigStore::apply_api_key_create(
     std::string_view id,
     std::string_view display_name,
-    std::string_view value) {
+    std::string_view value,
+    std::string_view cloud_store) {
     (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
-        editor.create_api_key(id, display_name, value);
+        editor.create_api_key(id, display_name, value, cloud_store);
         return std::vector<std::string>{};
     });
 }
@@ -2574,9 +2575,10 @@ void WorkspaceConfigStore::apply_api_key_create(
 void WorkspaceConfigStore::apply_api_key_update(
     std::string_view id,
     std::string_view display_name,
-    std::string_view value) {
+    std::string_view value,
+    std::string_view cloud_store) {
     (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
-        editor.write_api_key(id, display_name, value);
+        editor.write_api_key(id, display_name, value, cloud_store);
         return std::vector<std::string>{};
     });
 }
@@ -2617,7 +2619,8 @@ void WorkspaceConfigStore::apply_key_migration(
     std::uint64_t next_id) {
     (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
         for (const SavedApiKey& key : api_keys) {
-            editor.create_api_key(key.id, key.display_name, key.value);
+            editor.create_api_key(
+                key.id, key.display_name, key.value, key.cloud_store);
         }
         if (r2_storage) editor.create_r2_storage(*r2_storage);
         editor.write_next_api_key_id(next_id);

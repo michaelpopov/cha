@@ -537,6 +537,7 @@ void to_json(nlohmann::json& json, const ApiKeyDetail& value) {
         {"id", value.id},
         {"display_name", value.display_name},
         {"has_value", value.has_value},
+        {"cloud_store", value.cloud_store},
         {"used_by", value.used_by},
     };
 }

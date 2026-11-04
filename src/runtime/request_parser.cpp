@@ -616,12 +616,13 @@ VoiceOutputSettings parse_voice_output_settings(const nlohmann::json& json) {
 }
 
 CreateApiKeyRequest parse_create_api_key_request(const nlohmann::json& json) {
-    if (!json.is_object() || json.size() != 2) {
+    if (!json.is_object() || json.size() != 3) {
         throw std::invalid_argument("Invalid API key");
     }
     return {
         .display_name = required_field<std::string>(json, "display_name"),
         .value = required_field<std::string>(json, "value"),
+        .cloud_store = required_field<std::string>(json, "cloud_store"),
     };
 }
 
@@ -632,11 +633,19 @@ std::string parse_rename_display_name(const nlohmann::json& json) {
     return required_field<std::string>(json, "display_name");
 }
 
-std::string parse_replace_secret_value(const nlohmann::json& json) {
-    if (!json.is_object() || json.size() != 1) {
+ReplaceApiKeyValueRequest parse_replace_api_key_value_request(
+    const nlohmann::json& json) {
+    if (!json.is_object()
+        || json.size() != (json.contains("value") ? 2U : 1U)) {
         throw std::invalid_argument("Invalid API key");
     }
-    return required_field<std::string>(json, "value");
+    ReplaceApiKeyValueRequest request{
+        .cloud_store = required_field<std::string>(json, "cloud_store"),
+    };
+    if (json.contains("value")) {
+        request.value = required_field<std::string>(json, "value");
+    }
+    return request;
 }
 
 SaveR2StorageRequest parse_save_r2_storage_request(const nlohmann::json& json) {

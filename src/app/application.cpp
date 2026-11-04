@@ -1471,12 +1471,12 @@ ApiKeyDetail Application::rename_api_key(
 
 ApiKeyDetail Application::replace_api_key_value(
     std::string_view api_key_id,
-    std::string value,
+    ReplaceApiKeyValueRequest request,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::replace_api_key_value(
-        *impl_->store->snapshot(), *impl_->api_keys, api_key_id, value);
+        *impl_->store->snapshot(), *impl_->api_keys, api_key_id, request);
 }
 
 void Application::delete_api_key(

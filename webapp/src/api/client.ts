@@ -72,6 +72,8 @@ export type VoiceOutputSettings = components['schemas']['VoiceOutputSettings'];
 export type VoiceOutputRuntime = components['schemas']['VoiceOutputRuntime'];
 export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
 export type CreateApiKeyRequest = components['schemas']['CreateApiKeyRequest'];
+export type ReplaceApiKeyValueRequest = components['schemas']['ReplaceApiKeyValueRequest'];
+export type CloudStore = components['schemas']['CloudStore'];
 export type R2StorageDetail = components['schemas']['R2StorageDetail'];
 export type SaveR2StorageRequest = components['schemas']['SaveR2StorageRequest'];
 export type VaultUploadCheck = {
@@ -309,7 +311,7 @@ export interface ChaClient {
   listApiKeys(): Promise<ApiKeyDetail[]>;
   createApiKey(request: CreateApiKeyRequest): Promise<ApiKeyDetail>;
   renameApiKey(apiKeyId: string, displayName: string): Promise<ApiKeyDetail>;
-  replaceApiKeyValue(apiKeyId: string, value: string): Promise<ApiKeyDetail>;
+  replaceApiKeyValue(apiKeyId: string, request: ReplaceApiKeyValueRequest): Promise<ApiKeyDetail>;
   deleteApiKey(apiKeyId: string): Promise<void>;
   getR2Storage(): Promise<R2StorageDetail | null>;
   saveR2Storage(request: SaveR2StorageRequest): Promise<R2StorageDetail>;
@@ -570,6 +572,7 @@ export function isVoiceDetail(value: unknown): value is VoiceDetail {
 export function isApiKeyDetail(value: unknown): value is ApiKeyDetail {
   return isRecord(value) && hasIdentity(value)
     && typeof value.has_value === 'boolean'
+    && isOneOf(value.cloud_store, ['none', 'openai', 'google'])
     && Array.isArray(value.used_by)
     && value.used_by.every((name) => typeof name === 'string');
 }

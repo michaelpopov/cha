@@ -105,7 +105,8 @@ protected:
         };
         application_ = Application::open(make_command(workspace_, database_), {}, settings);
         epoch_ = application_->context_epoch();
-        key_ = application_->create_api_key({.display_name = "OpenAI", .value = "sk-test"}, epoch_).id;
+        key_ = application_->create_api_key(
+            {.display_name = "OpenAI", .value = "sk-test", .cloud_store = "openai"}, epoch_).id;
         auto provider = application_->get_provider("test", epoch_);
         nlohmann::json body = provider;
         for (const char* field : {"id", "used_by", "writable"}) body.erase(field);
@@ -213,16 +214,17 @@ TEST_F(FolderStoreOperationsTest, UploadsThroughOpenAiFakeHttpAndOnlyAnEventReco
     EXPECT_EQ(wait_status(folder_.id).result, "success");
 }
 
-TEST_F(FolderStoreOperationsTest, UploadChoicesIncludeUnreferencedKeysForBothServices) {
+TEST_F(FolderStoreOperationsTest, UploadChoicesIncludeUnreferencedKeysForTheirService) {
     const auto unused = application_->create_api_key(
-        {.display_name = "Unused", .value = "unused-test-key"}, epoch_).id;
+        {.display_name = "Unused", .value = "unused-test-key", .cloud_store = "openai"}, epoch_).id;
+    const auto gemini = application_->create_api_key(
+        {.display_name = "Gemini", .value = "gemini-test-key", .cloud_store = "google"}, epoch_).id;
     const auto choices = application_->folder_store_choices(epoch_);
-    for (const auto& id : {key_, unused}) {
-        for (const auto service : {"openai", "google"}) {
-            EXPECT_EQ(std::count_if(choices.begin(), choices.end(), [&](const auto& choice) {
-                return choice.service == service && choice.api_key_id == id;
-            }), 1);
-        }
+    ASSERT_EQ(choices.size(), 3U);
+    for (const auto& [id, service] : {std::pair{key_, "openai"}, {unused, "openai"}, {gemini, "google"}}) {
+        EXPECT_EQ(std::ranges::count_if(choices, [&](const auto& choice) {
+            return choice.service == service && choice.api_key_id == id;
+        }), 1);
     }
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
         EXPECT_EQ(request.headers.front().value, "Bearer unused-test-key");
@@ -230,6 +232,41 @@ TEST_F(FolderStoreOperationsTest, UploadChoicesIncludeUnreferencedKeysForBothSer
     });
     (void)application_->start_folder_store_upload(folder_.id, "openai", unused, "Research", "", epoch_);
     EXPECT_EQ(wait_status(folder_.id).result, "success");
+}
+
+TEST_F(FolderStoreOperationsTest, UploadChoicesOmitKeysWithoutCloudStore) {
+    const auto model_only = application_->create_api_key(
+        {.display_name = "Model only", .value = "model-test-key"}, epoch_).id;
+    const auto has_key = [&](const std::string& id) {
+        const auto choices = application_->folder_store_choices(epoch_);
+        return std::ranges::any_of(choices, [&](const auto& choice) { return choice.api_key_id == id; });
+    };
+    EXPECT_FALSE(has_key(model_only));
+    EXPECT_TRUE(has_key(key_));
+
+    (void)application_->replace_api_key_value(model_only, {.cloud_store = "google"}, epoch_);
+    EXPECT_TRUE(has_key(model_only));
+    (void)application_->replace_api_key_value(key_, {.cloud_store = "none"}, epoch_);
+    EXPECT_FALSE(has_key(key_));
+}
+
+TEST_F(FolderStoreOperationsTest, UploadRefusesKeyForAnotherCloudStore) {
+    int requests = 0;
+    application_->set_folder_store_transport_for_tests([&](const auto&, const auto&) { ++requests; return json_ok("{}"); });
+    const auto refuse = [&](std::string service) {
+        try {
+            (void)application_->start_folder_store_upload(folder_.id, service, key_, "Research", "", epoch_);
+            FAIL() << "Expected a key for another cloud store to fail admission";
+        } catch (const ApplicationError& error) {
+            EXPECT_EQ(error.what(), std::string("Set cloud store API key"));
+        }
+        EXPECT_FALSE(application_->folder_store_operation_status(folder_.id, epoch_).present);
+    };
+    refuse("google");
+    (void)application_->replace_api_key_value(key_, {.cloud_store = "none"}, epoch_);
+    refuse("openai");
+    refuse("google");
+    EXPECT_EQ(requests, 0);
 }
 
 TEST_F(FolderStoreOperationsTest, UploadDoesNotRequireCompatibleModelProvider) {
@@ -375,7 +412,7 @@ TEST_F(FolderStoreOperationsTest, LostAllocationResponseStopsWithoutAutomaticRep
         response.error = "secret-key echoed with note body";
         return response;
     });
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Chosen \"name\"\nnext", "private description", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Chosen_name", "private description", epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "error");
     EXPECT_EQ(calls, 1);
@@ -386,7 +423,7 @@ TEST_F(FolderStoreOperationsTest, LostAllocationResponseStopsWithoutAutomaticRep
     const auto events = application_->list_events(epoch_);
     EXPECT_TRUE(std::any_of(events.begin(), events.end(), [](const auto& event) {
         return event.message.find("Unconfirmed allocation") != std::string::npos
-            && event.message.find("name=\"Chosen \\\"name\\\"\\nnext\"") != std::string::npos
+            && event.message.find("name=\"Chosen_name\"") != std::string::npos
             && event.message.find("private description") == std::string::npos;
     }));
 }
@@ -548,6 +585,7 @@ TEST_F(FolderStoreOperationsTest, GoogleDocumentCleanupFailureKeepsParentForRetr
         }
         return json_ok("{}");
     });
+    (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
     const auto first = application_->start_folder_store_upload(folder_.id, "google", key_, "Research", "", epoch_);
     EXPECT_EQ(wait_status(folder_.id).result, "error");
     EXPECT_TRUE(application_->folder_store_operation_status(folder_.id, epoch_).known_cleanup_remains);
@@ -582,6 +620,7 @@ TEST_F(FolderStoreOperationsTest, GoogleTransfersBeforePollingAndWaitsForLagging
         ++counts;
         return json_ok(counts == 1 ? R"({"activeDocumentsCount":"1","pendingDocumentsCount":"1"})" : R"({"activeDocumentsCount":"3"})");
     });
+    (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
     (void)application_->start_folder_store_upload(folder_.id, "google", key_, "Research", "", epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "success");
@@ -621,6 +660,7 @@ TEST_F(FolderStoreOperationsTest, GoogleCancelDuringResumableStartDoesNotUploadN
         ADD_FAILURE() << "Unexpected request after cancellation: " << request.url;
         return json_ok("{}");
     });
+    (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
     (void)application_->start_folder_store_upload(folder_.id, "google", key_, "Research", "", epoch_);
     const auto done = wait_status(folder_.id);
     EXPECT_EQ(done.result, "cancelled");
@@ -659,6 +699,7 @@ TEST_F(FolderStoreOperationsTest, GoogleCancelDuringFinalizeWaitsForResponseAndC
         ADD_FAILURE() << "Unexpected request after cancellation: " << request.url;
         return json_ok("{}");
     });
+    (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
     (void)application_->start_folder_store_upload(folder_.id, "google", key_, "Research", "", epoch_);
     const auto done = wait_status(folder_.id);
     EXPECT_EQ(done.result, "cancelled");
@@ -693,7 +734,7 @@ TEST_F(FolderStoreOperationsTest, SavedSnapshotSurvivesSourceEditsAndUsesCurrent
     bool uploaded = false;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
         if (request.method == "POST" && request.url.ends_with("/vector_stores")) {
-            (void)application_->replace_api_key_value(key_, "replacement-key", epoch_);
+            (void)application_->replace_api_key_value(key_, {.value = "replacement-key", .cloud_store = "openai"}, epoch_);
             application_->save_note(note.id, text_doc("edited after capture"), epoch_);
             application_->delete_note_item(note.id, epoch_);
         } else {
@@ -896,34 +937,26 @@ TEST_F(FolderStoreOperationsTest, MetadataValidationPrecedesReservationAndRemote
         EXPECT_FALSE(application_->folder_store_operation_status(folder_.id, epoch_).present);
         EXPECT_EQ(requests, 0);
     };
-    reject("openai", " \t\n\r\v\f", "", "Enter a store name.");
-    reject("openai", std::string(513, 'a'), "", "Name must be 512 characters or fewer.");
-    reject("google", std::string(513, 'a'), "", "Name is too long for Google. Use a shorter name.");
-    std::string cyrillic, emoji;
-    for (int i = 0; i < 256; ++i) cyrillic += "я";
-    for (int i = 0; i < 128; ++i) emoji += "😀";
-    reject("openai", cyrillic + cyrillic + "x", "", "Name must be 512 characters or fewer.");
-    reject("google", cyrillic + cyrillic.substr(0, 88), "", "Name is too long for Google. Use a shorter name.");
-    reject("google", cyrillic + "x", "", "Name is too long for Google. Use a shorter name.");
-    reject("google", emoji + "x", "", "Name is too long for Google. Use a shorter name.");
+    reject("openai", "", "", "Enter a store name.");
+    for (const auto& service : {"openai", "google"}) {
+        for (const auto& name : {std::string(" Research"), std::string("Research notes"), std::string("Research\n"),
+                 std::string("research-notes"), std::string("я"), std::string("bad\xff", 4)})
+            reject(service, name, "", "Name can contain only Latin letters, digits, and _.");
+        reject(service, "2026_notes", "", "Name must start with a letter or _.");
+        reject(service, "a" + std::string(64, '1'), "", "Name must be 64 characters or fewer.");
+    }
     reject("openai", "name", std::string(511, 'x') + "\n😀", "Description must be 512 characters or fewer for OpenAI.");
     reject("openai", "name", std::string(511, 'x') + "\n\n", "Description must be 512 characters or fewer for OpenAI.");
-    reject("openai", std::string("bad\xff", 4), "", "Name must be valid UTF-8.");
     reject("google", "name", std::string("\xc0\xaf", 2), "Description must be valid UTF-8.");
     // A missing key gives asynchronous preflight failure, proving local admission
     // accepts the boundary without allocating a remote store.
     for (const auto& service : {"openai", "google"}) {
-        for (const auto& name : {std::string(512, 'a'), cyrillic, emoji}) {
+        for (const auto& name : {std::string(64, 'a'), std::string("_"), std::string("Z_9")}) {
             const auto started = application_->start_folder_store_upload(folder_.id, service, "missing",
-                " \t" + name + "\r\n", service == std::string("openai") ? std::string(510, 'a') + "\n😀" : std::string(2000, 'a'), epoch_);
+                name, service == std::string("openai") ? std::string(510, 'a') + "\n😀" : std::string(2000, 'a'), epoch_);
             EXPECT_EQ(wait_status(folder_.id).result, "preflight");
             application_->close_folder_store_operation(started.operation_id, epoch_);
         }
-    }
-    for (const auto& name : {cyrillic + cyrillic, emoji + emoji + emoji + emoji}) {
-        const auto started = application_->start_folder_store_upload(folder_.id, "openai", "missing", name, "", epoch_);
-        EXPECT_EQ(wait_status(folder_.id).result, "preflight");
-        application_->close_folder_store_operation(started.operation_id, epoch_);
     }
     EXPECT_EQ(requests, 0);
 }
@@ -938,12 +971,12 @@ TEST_F(FolderStoreOperationsTest, ChosenMetadataSurvivesFolderRenameBeforeCaptur
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
         if (request.url.ends_with("/vector_stores") && request.method == "POST") {
             const auto body = nlohmann::json::parse(request.body);
-            EXPECT_EQ(body.at("name"), "Chosen name");
+            EXPECT_EQ(body.at("name"), "Chosen_name");
             EXPECT_EQ(body.at("description"), " first\n\n第二段 😀 ");
         }
         return transport(request, cancel);
     });
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, " \tChosen name\r", " first\n\n第二段 😀 ", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Chosen_name", " first\n\n第二段 😀 ", epoch_);
     ASSERT_TRUE(gate.wait_entered());
     (void)application_->rename_note_item(folder_.id, "Renamed", epoch_);
     gate.release();
@@ -975,6 +1008,7 @@ TEST_F(FolderStoreOperationsTest, GoogleMetadataFailuresCleanStoreAndKeepMetadat
             }
             return json_ok(R"({"activeDocumentsCount":"3"})");
         });
+        (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
         const auto started = application_->start_folder_store_upload(folder_.id, "google", key_, "Chosen", "private description", epoch_);
         const auto status = wait_status(folder_.id);
         EXPECT_EQ(status.result, stage == "missing" ? "cancelled" : "error");
@@ -1008,6 +1042,7 @@ TEST_F(FolderStoreOperationsTest, StoreCreationRejectionIsSafeAndRetainsOtherErr
         return FolderStoreHttpResponse{.status = 400, .body = R"({"error":{"code":400,"status":"INVALID_ARGUMENT","message":"private description",)"
             R"("details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID"}]}})"};
     });
+    (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
     const auto started = application_->start_folder_store_upload(folder_.id, "google", key_, "Name", "private description", epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "error");

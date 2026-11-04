@@ -587,14 +587,20 @@ LoadedKey load_saved_key(
 
     if (type == "models") {
         static constexpr std::string_view fields[]{
-            "display_name", "type", "value"};
+            "display_name", "type", "value", "cloud_store"};
         warn_unknown_fields(table, path, fields, "Key config", warnings);
         std::string value = required_string(table, path, "value");
         validate_saved_key_text(value, 16 * 1024, "value", path, false);
+        std::string cloud_store = table["cloud_store"].value_or(std::string("none"));
+        if (cloud_store != "none" && cloud_store != "openai" && cloud_store != "google") {
+            warnings.emit(path, "Ignoring unsupported cloud store; using none");
+            cloud_store = "none";
+        }
         return SavedApiKey{
             .id = id,
             .display_name = display_name,
             .value = std::move(value),
+            .cloud_store = std::move(cloud_store),
         };
     }
     if (type == "R2") {

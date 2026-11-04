@@ -138,6 +138,7 @@ TEST(WebWireFixtures, SerializesBootstrapSnapshotCommandsErrorsAndAppends) {
             .id = "api_key_1",
             .display_name = "Router",
             .has_value = true,
+            .cloud_store = "openai",
             .used_by = {"Test"},
         }),
         load_fixture("api-key-detail.json"));
