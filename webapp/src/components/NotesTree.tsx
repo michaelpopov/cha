@@ -1007,7 +1007,7 @@ export function NotesTree({
               {index.rows[menu.sourceId]?.kind !== 'annotation' && <button onClick={() => startDelete()} role="menuitem" type="button">Delete</button>}
             </>
           )}
-          {menu.sourceId !== 'vault' && (
+          {menuIsNote && (
             <button onClick={() => void copyReference()} role="menuitem" type="button">Copy Ref ID</button>
           )}
           {!menuManaged && !menuIsNote && menu.sourceId !== 'vault' && <button role="menuitem" type="button"

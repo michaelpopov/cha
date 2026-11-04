@@ -47,12 +47,15 @@ async function nativeParity() {
       value: { writeText: async value => { copied = value; } } });
     await click('Notes');
     const refs = {};
-    for (const name of ['Reference note', 'OpenAI reference folder', 'Gemini reference folder']) {
-      copied = null;
-      await click('Actions for ' + name);
-      await click('Copy Ref ID');
-      refs[name] = await until('copied reference', () => copied);
-    }
+    await click('Actions for Reference note');
+    await click('Copy Ref ID');
+    refs['Reference note'] = await until('copied reference', () => copied);
+    // Folders have no Copy Ref ID. The fixture creates both folders right after the note.
+    const base62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+    const noteId = [...refs['Reference note'].slice(2)].reduce((id, digit) => id * 62 + base62.indexOf(digit), 0);
+    const ref = id => '##' + [5, 4, 3, 2, 1, 0].map(power => base62[Math.floor(id / 62 ** power) % 62]).join('');
+    refs['OpenAI reference folder'] = ref(noteId + 1);
+    refs['Gemini reference folder'] = ref(noteId + 2);
     await click('Settings', document.querySelector('aside'));
     await click('Characters');
     await click('Guide');

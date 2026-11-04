@@ -1207,17 +1207,13 @@ describe('Notes tree', () => {
 });
 
 describe('Folder store tree actions', () => {
-  it('offers only Upload to store and copies the stable folder ref', async () => {
-    userEvent.setup();
-    const write = vi.spyOn(navigator.clipboard, 'writeText').mockReset().mockResolvedValue();
+  it('offers only Upload to store and no folder ref', async () => {
     renderTree({ items: [study] });
     await screen.findByRole('treeitem', { name: 'Study' });
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
     await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Upload to store' })).toBeEnabled());
-    expect(screen.queryByRole('menuitem', { name: 'Remove from store' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy Ref ID' }));
-    expect(write).toHaveBeenCalledWith('##000001');
-    expect(screen.getByRole('treeitem', { name: 'Study' })).toHaveFocus();
+    for (const name of ['Remove from store', 'Copy Ref ID'])
+      expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument();
   });
   it('excludes the synthetic root from folder store and reference actions', async () => {
     renderTree();
@@ -1250,19 +1246,18 @@ describe('Folder store tree actions', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete folder' }));
     await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith(1));
   });
-  it('keeps store actions disabled after a failed status read while allowing identity copy', async () => {
+  it('keeps store actions disabled after a failed status read', async () => {
     renderTree({ items: [study], notes: client({ listNoteItems: async () => [study], storeOperation: async () => { throw new Error('private body'); } }) });
     await screen.findByRole('treeitem', { name: 'Study' });
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not read store status');
     expect(screen.getByRole('menuitem', { name: 'Upload to store' })).toBeDisabled();
     expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeEnabled();
-    expect(screen.getByRole('menuitem', { name: 'Copy Ref ID' })).toBeEnabled();
     expect(document.body).not.toHaveTextContent('private body');
   });
 });
 
-it('disables conflicting folder actions while an upload is active and keeps reference copy available', async () => {
+it('disables conflicting folder actions while an upload is active', async () => {
   renderTree({ items: [study], notes: client({ listNoteItems: async () => [study], storeOperation: async () => ({
     present: true, operation_id: 8, phase: 'indexing', completed: 2, total: 2,
     terminal: false, error: '', result: '', known_cleanup_remains: false,
@@ -1272,17 +1267,17 @@ it('disables conflicting folder actions while an upload is active and keeps refe
   await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Upload to store' })).toBeEnabled());
   for (const name of ['New note', 'New folder', 'Import EPUB…', 'Rename', 'Compress'])
     expect(screen.getByRole('menuitem', { name })).toBeDisabled();
-  expect(screen.getByRole('menuitem', { name: 'Copy Ref ID' })).toBeEnabled();
 });
 
-it.each(['mouse', 'keyboard'])('shows only Copy Ref ID for both managed folders via %s', async (entry) => {
+it.each(['mouse', 'keyboard'])('shows only Export folder for both managed folders via %s', async (entry) => {
   const items: NoteItem[] = [
     { ...study, name: 'Forums', forum_id: '' },
     { ...philosophy, name: 'Research', forum_id: 'research' },
   ];
   const compressionStatus = vi.fn(async () => ({ pending: false }));
   const storeOperation = vi.fn(async () => ({ present: false as const }));
-  renderTree({ notes: client({ listNoteItems: async () => items, compressionStatus, storeOperation }) });
+  const noteFolderTransfer = { exportFolder: vi.fn(async () => undefined), importFolder: vi.fn(async () => undefined) };
+  renderTree({ notes: client({ listNoteItems: async () => items, compressionStatus, storeOperation, noteFolderTransfer }) });
   await screen.findByText('Forums');
   fireEvent.click(screen.getByRole('treeitem', { name: /Forums/ }));
   for (const name of ['Forums', 'Research']) {
@@ -1292,7 +1287,7 @@ it.each(['mouse', 'keyboard'])('shows only Copy Ref ID for both managed folders 
       fireEvent.keyDown(row, { key: 'F10', code: 'F10', shiftKey: true });
     } else fireEvent.click(within(row).getByRole('button', { name: `Actions for ${name}` }));
     const menu = await screen.findByRole('menu');
-    expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Copy Ref ID']);
+    expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Export folder…']);
     expect(within(menu).getByRole('menuitem')).toHaveFocus();
     fireEvent.keyDown(menu, { key: 'Escape' });
   }
@@ -1308,9 +1303,11 @@ it('moves a menu up only as far as needed to show all of its commands', async ()
     return { x: 0, y: top, top, left: 0, right: 160, bottom: top + height, width: 160, height, toJSON: () => ({}) };
   });
   try {
-    renderTree({ items: [study, { ...aardvark, name: 'Forums', kind: 'folder', forum_id: '' }] });
-    // Study has 8 commands: 768 - (8 * 39 + 13) - 8 = 435. Forums has 1 command and fits below its row.
-    for (const [name, top] of [['Study', '435px'], ['Forums', '500px']]) {
+    const items: NoteItem[] = [study, { ...aardvark, name: 'Forums', kind: 'folder', forum_id: '' }];
+    const noteFolderTransfer = { exportFolder: vi.fn(async () => undefined), importFolder: vi.fn(async () => undefined) };
+    renderTree({ items, notes: client({ listNoteItems: async () => items, noteFolderTransfer }) });
+    // Study has 9 commands: 768 - (9 * 39 + 13) - 8 = 396. Forums has 1 command and fits below its row.
+    for (const [name, top] of [['Study', '396px'], ['Forums', '500px']]) {
       fireEvent.click(await screen.findByRole('button', { name: `Actions for ${name}` }));
       expect(await screen.findByRole('menu')).toHaveStyle({ top });
       fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
