@@ -288,6 +288,10 @@ void NotesService::Impl::run_folder_store_upload(std::shared_ptr<FolderStoreCont
             });
             return store->capture_folder_store(control->root_id, control->service);
         });
+        const auto existing = client.list_stores(control->service, current_key(*this, control, true), *control->cancel_forward);
+        require_result(existing.result);
+        if (std::ranges::any_of(existing.stores, [&](const auto& store) { return store.name == control->store_name; }))
+            throw FolderStoreError("A store with this name already exists.");
         guarded(*this, control, [&] {
             if (control->cancel_forward->load()) throw Cancelled{};
             control->folder_name = capture.folder.name;
@@ -484,23 +488,13 @@ std::vector<FolderStoreChoiceView> NotesService::folder_store_choices(std::uint6
 }
 
 FolderStoreStart NotesService::start_folder_store_upload(std::int64_t folder_id,
-    std::string service, std::string api_key_id, std::string name, std::string description, std::uint64_t epoch) {
+    std::string service, std::string api_key_id, std::string description, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     impl_->store->require_main();
     FolderStoreService parsed;
     try { parsed = parse_folder_store_service(service); }
     catch (const FolderStoreError& error) { throw ApplicationError(ErrorCode::invalid_argument, error.what()); }
-    const auto identifier_char = [](char c) {
-        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-    };
-    if (name.empty()) throw ApplicationError(ErrorCode::invalid_argument, "Enter a store name.");
-    if (!std::ranges::all_of(name, identifier_char))
-        throw ApplicationError(ErrorCode::invalid_argument, "Name can contain only Latin letters, digits, and _.");
-    if (name.front() >= '0' && name.front() <= '9')
-        throw ApplicationError(ErrorCode::invalid_argument, "Name must start with a letter or _.");
-    if (name.size() > 64)
-        throw ApplicationError(ErrorCode::invalid_argument, "Name must be 64 characters or fewer.");
     // Validate UTF-8 before counting or sending the description to a provider.
     try { (void)nlohmann::json(description).dump(); }
     catch (const nlohmann::json::type_error&) {
@@ -526,7 +520,7 @@ FolderStoreStart NotesService::start_folder_store_upload(std::int64_t folder_id,
     control->vault_name = impl_->current_vault_name();
     control->service = parsed;
     control->api_key_id = std::move(api_key_id);
-    control->store_name = std::move(name);
+    control->store_name = folder->name + " " + note_item_ref_id(folder_id);
     control->store_description = std::move(description);
     impl_->folder_store_controls[folder_id] = control;
     if (!impl_->launch_folder_store_control(control, [owner = impl_.get(), control] { owner->run_folder_store_upload(control); })) {
@@ -586,6 +580,92 @@ void NotesService::close_folder_store_operation(std::int64_t operation_id, std::
     if (!control->terminal) throw ApplicationError(ErrorCode::invalid_argument, "The operation is still running.");
     // Remaining resource IDs are already in Events and the log.
     impl_->release_folder_store_control_locked(control);
+}
+
+namespace {
+
+void require_cloud_result(const FolderStoreRemoteResult& result) {
+    if (result.kind == FolderStoreRemoteKind::ok && !result.operation_error) return;
+    if (result.kind == FolderStoreRemoteKind::cancelled)
+        throw ApplicationError(ErrorCode::operation_cancelled, "The operation was cancelled.");
+    const auto message = result.message.empty() ? std::string("The provider request failed.") : result.message;
+    throw ApplicationError(
+        result.kind == FolderStoreRemoteKind::not_found ? ErrorCode::not_found : ErrorCode::invalid_argument, message);
+}
+
+} // namespace
+
+std::shared_ptr<OperationReply> NotesService::Impl::launch_cloud_store(std::string_view api_key_id,
+    std::uint64_t epoch, bool deleting, CloudStoreWork work) {
+    FolderStoreService service;
+    std::string key;
+    FolderStoreTransport transport;
+    {
+        const std::lock_guard lock(lifecycle_mutex);
+        require_admitted(epoch);
+        if (deleting) store->require_main();
+        const auto info = api_keys->find(api_key_id);
+        if (!info) throw ApplicationError(ErrorCode::not_found, "That API key was not found.");
+        if (info->cloud_store == "none") throw ApplicationError(ErrorCode::invalid_argument, "Set cloud store API key");
+        if (!info->has_value) throw ApplicationError(ErrorCode::invalid_argument, "The saved API key is missing or empty.");
+        service = parse_folder_store_service(info->cloud_store);
+        key = api_keys->value(api_key_id);
+        transport = folder_store_transport ? folder_store_transport : folder_store_curl_transport;
+    }
+    auto reply = std::make_shared<OperationReply>();
+    if (!background_jobs.launch([reply, epoch, service, key = std::move(key), transport = std::move(transport),
+            work = std::move(work), &published_epoch = published_epoch](std::atomic_bool& cancel) {
+            // Cancel, an abandoned reply, or a vault change stops the next provider call.
+            FolderStoreClient client([&](const FolderStoreHttpRequest& request, const std::atomic_bool& stop) {
+                if (stop.load() || reply->abandoned() || published_epoch.load() != epoch)
+                    return FolderStoreHttpResponse{.cancelled = true};
+                return transport(request, stop);
+            });
+            try {
+                reply->complete(work(client, service, key, cancel));
+            } catch (const ApplicationError& error) {
+                reply->fail(error.code, error.what());
+            } catch (const std::exception& error) {
+                log_warn("Cloud store request failed: " + std::string(error.what()));
+                reply->fail(ErrorCode::internal_error, "The cloud store request failed.");
+            }
+        })) {
+        reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
+    }
+    return reply;
+}
+
+std::shared_ptr<OperationReply> NotesService::list_cloud_stores(std::string_view api_key_id, std::uint64_t epoch) {
+    return impl_->launch_cloud_store(api_key_id, epoch, false,
+        [](FolderStoreClient& client, FolderStoreService service, const std::string& key, const std::atomic_bool& cancel) {
+            const auto listed = client.list_stores(service, key, cancel);
+            require_cloud_result(listed.result);
+            auto items = nlohmann::json::array();
+            for (const auto& store : listed.stores) items.push_back({{"id", store.id}, {"name", store.name}});
+            return nlohmann::json{{"items", std::move(items)}};
+        });
+}
+
+std::shared_ptr<OperationReply> NotesService::get_cloud_store(
+    std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch) {
+    return impl_->launch_cloud_store(api_key_id, epoch, false,
+        [id = std::string(store_id)](FolderStoreClient& client, FolderStoreService service, const std::string& key,
+            const std::atomic_bool& cancel) {
+            const auto detail = client.get_store(service, id, key, cancel);
+            require_cloud_result(detail.result);
+            return nlohmann::json{{"id", detail.id}, {"name", detail.name},
+                {"description", detail.description}, {"created_at", detail.created_at}};
+        });
+}
+
+std::shared_ptr<OperationReply> NotesService::delete_cloud_store(
+    std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch) {
+    return impl_->launch_cloud_store(api_key_id, epoch, true,
+        [id = std::string(store_id)](FolderStoreClient& client, FolderStoreService service, const std::string& key,
+            const std::atomic_bool& cancel) {
+            require_cloud_result(client.delete_store(service, id, key, cancel));
+            return nlohmann::json::object();
+        });
 }
 
 void NotesService::set_folder_store_transport_for_tests(FolderStoreTransport transport) {

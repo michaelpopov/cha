@@ -64,6 +64,11 @@ export function SettingsNavigation({ navigate }: { navigate: Dispatch<Navigation
           label="API Keys"
           onClick={() => navigate({ type: 'show-settings-api-keys' })}
         />
+        <SettingsRow
+          icon={<DatabaseIcon />}
+          label="Cloud stores"
+          onClick={() => navigate({ type: 'show-settings-cloud-stores' })}
+        />
       </div>
     </section>
   );

@@ -122,6 +122,10 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::api_key_rename, "apiKey.rename"},
     {Method::api_key_replace_value, "apiKey.replaceValue"},
     {Method::api_key_delete, "apiKey.delete"},
+    {Method::cloud_store_list, "cloudStore.list"},
+    {Method::cloud_store_get, "cloudStore.get"},
+    {Method::cloud_store_delete, "cloudStore.delete"},
+    {Method::cloud_store_cancel, "cloudStore.cancel"},
     {Method::r2_storage_get, "r2Storage.get"},
     {Method::r2_storage_save, "r2Storage.save"},
     {Method::r2_storage_delete, "r2Storage.delete"},
@@ -191,7 +195,8 @@ bool is_control_method(Method method) noexcept {
         || method == Method::speech_release
         || method == Method::audio_release
         || method == Method::voice_input_cancel
-        || method == Method::voice_input_xai_cancel;
+        || method == Method::voice_input_xai_cancel
+        || method == Method::cloud_store_cancel;
 }
 
 bool requires_context_epoch(Method method) noexcept {

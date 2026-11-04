@@ -130,6 +130,11 @@ void OperationReply::abandon() const {
     ready_callback_ = {};
 }
 
+bool OperationReply::abandoned() const {
+    std::lock_guard lock(mutex_);
+    return abandoned_;
+}
+
 std::string_view application_state_name(ApplicationState state) noexcept {
     switch (state) {
     case ApplicationState::running:

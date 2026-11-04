@@ -23,6 +23,8 @@ import {
   ChaError,
   ChaProtocolError,
   isApiKeyDetail,
+  isCloudStoreDetail,
+  isCloudStoreList,
   isCharacterDetail,
   isFileReference,
   isCharacterPicture,
@@ -830,6 +832,20 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     deleteApiKey: async (apiKeyId) => {
       await call('apiKey.delete', { api_key_id: apiKeyId }, isRecord);
     },
+    listCloudStores: (apiKeyId) => call('cloudStore.list', { api_key_id: apiKeyId }, isCloudStoreList),
+    getCloudStore: (apiKeyId, storeId) => call(
+      'cloudStore.get',
+      { api_key_id: apiKeyId, store_id: storeId },
+      isCloudStoreDetail,
+    ),
+    deleteCloudStore: async (apiKeyId, storeId, signal) => {
+      const result = await bridge.invoke(
+        'cloudStore.delete',
+        { api_key_id: apiKeyId, store_id: storeId },
+        { signal, cancelMethod: 'cloudStore.cancel' },
+      );
+      if (!isRecord(result)) throw new ChaProtocolError();
+    },
     getR2Storage: () => call(
       'r2Storage.get',
       {},
@@ -963,8 +979,8 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     exportVault: () => transferVault('vault.export', 'file_count'),
     listNoteItems: async () => (await call('notes.list', {}, isNoteItemList)).items,
     storeChoices: epoch => storeCall('notes.storeChoices', {}, epoch, isFolderStoreChoices),
-    storeUpload: (folderId, service, apiKeyId, name, description, epoch) => storeCall('notes.storeUpload',
-      { folder_id: folderId, service, api_key_id: apiKeyId, name, description }, epoch, isFolderStoreStart),
+    storeUpload: (folderId, service, apiKeyId, description, epoch) => storeCall('notes.storeUpload',
+      { folder_id: folderId, service, api_key_id: apiKeyId, description }, epoch, isFolderStoreStart),
     storeCleanup: (operationId, epoch) => storeCall('notes.storeCleanup',
       { operation_id: operationId }, epoch, isFolderStoreStart),
     storeOperation: (folderId, epoch) => storeCall('notes.storeOperation', { folder_id: folderId }, epoch, isFolderStoreOperation),

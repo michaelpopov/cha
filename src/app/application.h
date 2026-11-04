@@ -591,7 +591,6 @@ public:
         std::int64_t folder_id,
         std::string service,
         std::string api_key_id,
-        std::string name,
         std::string description,
         std::uint64_t epoch);
     [[nodiscard]] FolderStoreStart retry_folder_store_cleanup(
@@ -601,6 +600,13 @@ public:
     void cancel_folder_store_upload(std::int64_t operation_id, std::uint64_t epoch);
     void close_folder_store_operation(std::int64_t operation_id, std::uint64_t epoch);
     void set_folder_store_transport_for_tests(FolderStoreTransport transport);
+    // Cloud stores in Settings. Results follow CloudStoreList and CloudStoreDetail.
+    [[nodiscard]] std::shared_ptr<OperationReply> list_cloud_stores(
+        std::string_view api_key_id, std::uint64_t epoch);
+    [[nodiscard]] std::shared_ptr<OperationReply> get_cloud_store(
+        std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch);
+    [[nodiscard]] std::shared_ptr<OperationReply> delete_cloud_store(
+        std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch);
 
     void save_file(
         std::uint64_t epoch,

@@ -13,6 +13,7 @@ export function ConfirmDialog({
   title,
   className = 'cha-dialog',
   initialFocus = 'confirm',
+  pending = false,
 }: {
   confirmLabel: string;
   message: string;
@@ -21,6 +22,8 @@ export function ConfirmDialog({
   title: string;
   className?: string;
   initialFocus?: 'cancel' | 'confirm';
+  // Disables the confirm button only; Cancel and Escape still call onCancel.
+  pending?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement | null>(null);
 
@@ -49,6 +52,7 @@ export function ConfirmDialog({
         </button>
         <button
           className="cha-button cha-button-danger"
+          disabled={pending}
           onClick={onConfirm}
           type="button"
         >

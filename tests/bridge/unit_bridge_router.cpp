@@ -2387,6 +2387,118 @@ TEST_F(BridgeRouterTest, SavesApiKeyCloudStoreWithOrWithoutANewValue) {
     EXPECT_EQ(application_->api_keys().find(id)->cloud_store, "google");
 }
 
+TEST_F(BridgeRouterTest, CloudStoreMethodsUseTheSelectedKeyAndItsService) {
+    bootstrap_epoch();
+    const auto created = call("apiKey.create",
+        {{"display_name", "OpenAI"}, {"value", "sk-cloud"}, {"cloud_store", "openai"}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string key = created["result"]["id"];
+    std::mutex mutex;
+    std::vector<std::string> requests;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        const std::lock_guard lock(mutex);
+        requests.push_back(request.method + " " + request.url);
+        EXPECT_EQ(request.headers.front().value, "Bearer sk-cloud");
+        if (request.url.ends_with("/vector_stores?limit=100"))
+            return FolderStoreHttpResponse{.status = 200,
+                .body = R"({"data":[{"id":"vs_1","name":"Research"},{"id":"vs_2","name":null}],"has_more":false})"};
+        if (request.method == "GET" && request.url.ends_with("/vector_stores/vs_1"))
+            return FolderStoreHttpResponse{.status = 200,
+                .body = R"({"id":"vs_1","name":"Research","description":"Notes","created_at":1793697300})"};
+        if (request.url.ends_with("/files?limit=100"))
+            return FolderStoreHttpResponse{.status = 200, .body = R"({"data":[],"has_more":false})"};
+        return FolderStoreHttpResponse{.status = 200, .body = R"({"deleted":true})"};
+    });
+
+    auto reply = call("cloudStore.list", {{"api_key_id", key}});
+    ASSERT_TRUE(reply["ok"]) << reply.dump();
+    EXPECT_EQ(reply["result"], nlohmann::json::parse(
+        R"({"items":[{"id":"vs_1","name":"Research"},{"id":"vs_2","name":""}]})"));
+    reply = call("cloudStore.get", {{"api_key_id", key}, {"store_id", "vs_1"}});
+    ASSERT_TRUE(reply["ok"]) << reply.dump();
+    EXPECT_EQ(reply["result"], nlohmann::json::parse(
+        R"({"id":"vs_1","name":"Research","description":"Notes","created_at":"2026-11-03T09:15:00Z"})"));
+    reply = call("cloudStore.delete", {{"api_key_id", key}, {"store_id", "vs_1"}});
+    ASSERT_TRUE(reply["ok"]) << reply.dump();
+    EXPECT_EQ(reply["result"], nlohmann::json::object());
+    {
+        const std::lock_guard lock(mutex);
+        EXPECT_EQ(requests.back(), "DELETE https://api.openai.com/v1/vector_stores/vs_1");
+    }
+
+    EXPECT_EQ(call("cloudStore.get", {{"api_key_id", key}, {"store_id", "../files"}})["error"]["code"], "invalid_argument");
+    EXPECT_EQ(call("cloudStore.list", {{"api_key_id", "api_key_999"}})["error"]["code"], "not_found");
+    EXPECT_FALSE(call("cloudStore.list", {{"api_key_id", key}, {"extra", 1}})["ok"]);
+    ASSERT_TRUE(call("apiKey.replaceValue", {{"api_key_id", key}, {"cloud_store", "none"}})["ok"]);
+    const auto before = [&] { const std::lock_guard lock(mutex); return requests.size(); }();
+    reply = call("cloudStore.list", {{"api_key_id", key}});
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    EXPECT_EQ(reply["error"]["message"], "Set cloud store API key");
+    const std::lock_guard lock(mutex);
+    EXPECT_EQ(requests.size(), before);
+}
+
+TEST_F(BridgeRouterTest, CloudStoreCancelStopsDeletionBeforeTheNextProviderCall) {
+    bootstrap_epoch();
+    const auto created = call("apiKey.create",
+        {{"display_name", "OpenAI"}, {"value", "sk-cloud"}, {"cloud_store", "openai"}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string key = created["result"]["id"];
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered = false, released = false, cancelled = false;
+    std::vector<std::string> requests;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        std::unique_lock lock(mutex);
+        if (cancelled) ADD_FAILURE() << "Provider call after Cancel: " << request.url;
+        requests.push_back(request.method + " " + request.url);
+        if (request.method == "GET")
+            return FolderStoreHttpResponse{.status = 200,
+                .body = R"({"data":[{"id":"file_1"},{"id":"file_2"}],"has_more":false})"};
+        entered = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return released; });
+        return FolderStoreHttpResponse{.status = 200, .body = R"({"deleted":true})"};
+    });
+    const auto delete_id = next_id_++;
+    router_->handle_request(connection_, request_json(connection_, delete_id, epoch_, "cloudStore.delete",
+        {{"api_key_id", key}, {"store_id", "vs_1"}}).dump());
+    router_->run_tasks();
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(changed.wait_for(lock, 5s, [&] { return entered; }));
+    }
+    const auto cancel_id = next_id_++;
+    router_->handle_request(connection_, request_json(connection_, cancel_id, epoch_, "cloudStore.cancel",
+        {{"request_id", delete_id}}).dump());
+    std::map<std::uint64_t, nlohmann::json> replies;
+    for (const auto deadline = std::chrono::steady_clock::now() + 5s;
+         replies.size() < 2 && std::chrono::steady_clock::now() < deadline;) {
+        const auto batch = wait_delivery(*router_, connection_);
+        if (!batch) break;
+        ack_delivery(*router_, connection_, *batch);
+        for (const auto id : {delete_id, cancel_id}) {
+            auto reply = reply_with_id(*batch, id);
+            if (!reply.empty()) replies[id] = std::move(reply);
+        }
+    }
+    ASSERT_EQ(replies.size(), 2u);
+    EXPECT_TRUE(replies[cancel_id]["ok"]);
+    EXPECT_EQ(replies[delete_id]["error"]["code"], "operation_cancelled");
+    {
+        const std::lock_guard lock(mutex);
+        cancelled = true;
+        released = true;
+    }
+    changed.notify_all();
+    // The worker finishes its current call and starts no other provider call.
+    std::this_thread::sleep_for(100ms);
+    const std::lock_guard lock(mutex);
+    EXPECT_EQ(requests, (std::vector<std::string>{
+        "GET https://api.openai.com/v1/vector_stores/vs_1/files?limit=100",
+        "DELETE https://api.openai.com/v1/files/file_1"}));
+}
+
 TEST_F(BridgeRouterTest, ListsProvidersAndApiKeyMetadataWithoutSecrets) {
     bootstrap_epoch();
     auto reply = call("provider.list");
@@ -3590,7 +3702,7 @@ TEST_F(BridgeRouterTest, SummaryCanGenerateWhileBulkCompressionWaitsAndRejectsIn
     EXPECT_FALSE(call("sessionSummary.abandon", {{"run_id", 1}, {"reason", "arbitrary text"}})["ok"]);
     const auto items = application_->list_note_items(epoch_);
     for (const auto& item : items) if (item.forum_id)
-        expect_note_error(call("notes.storeUpload", {{"name", "Research"}, {"description", ""}, {"folder_id", item.id}, {"service", "openai"}, {"api_key_id", "unused"}}),
+        expect_note_error(call("notes.storeUpload", {{"description", ""}, {"folder_id", item.id}, {"service", "openai"}, {"api_key_id", "unused"}}),
             "invalid_argument", "This folder is managed by CHA.");
     ASSERT_TRUE(call("notes.compressCancel", {{"id", note.id}})["ok"]);
     summary.join();
@@ -4812,9 +4924,9 @@ TEST_F(BridgeRouterTest, StoreMethodsRejectMalformedInputsAndListNoStoreLinks) {
     EXPECT_EQ(listed.dump().find("private-value"), std::string::npos);
     for (const auto& [method, params] : std::vector<std::pair<std::string, nlohmann::json>>{
         {"notes.storeChoices", {{"unused", true}}},
-        {"notes.storeUpload", {{"name", "Research"}, {"description", ""}, {"folder_id", child.id}, {"service", "openai"}, {"api_key_id", "bad/key"}}},
-        {"notes.storeUpload", {{"name", "Research"}, {"description", ""}, {"folder_id", 0}, {"service", "openai"}, {"api_key_id", key.id}}},
-        {"notes.storeUpload", {{"name", "Research"}, {"description", ""}, {"folder_id", child.id}, {"service", "other"}, {"api_key_id", key.id}}},
+        {"notes.storeUpload", {{"description", ""}, {"folder_id", child.id}, {"service", "openai"}, {"api_key_id", "bad/key"}}},
+        {"notes.storeUpload", {{"description", ""}, {"folder_id", 0}, {"service", "openai"}, {"api_key_id", key.id}}},
+        {"notes.storeUpload", {{"description", ""}, {"folder_id", child.id}, {"service", "other"}, {"api_key_id", key.id}}},
         {"notes.storeCleanup", {{"operation_id", 999}}},
         {"notes.storeCleanup", {{"operation_id", 1.5}}},
         {"notes.storeCleanup", {{"operation_id", 1}, {"folder_id", folder.id}}},
@@ -4839,8 +4951,8 @@ TEST_F(BridgeRouterTest, StoreUploadReportsEditablePreflightAndOrdinaryFolderDel
     const auto fixture = folder_store_wire_fixture();
     const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Empty", epoch_);
     const nlohmann::json metadata_request{{"folder_id", folder.id}, {"service", "openai"},
-        {"api_key_id", "missing"}, {"name", "Research"}, {"description", ""}};
-    for (const auto* field : {"name", "description"}) {
+        {"api_key_id", "missing"}, {"description", ""}};
+    for (const auto* field : {"description"}) {
         auto missing = metadata_request;
         missing.erase(field);
         EXPECT_EQ(call("notes.storeUpload", missing)["error"]["code"], "invalid_argument");
@@ -4854,7 +4966,7 @@ TEST_F(BridgeRouterTest, StoreUploadReportsEditablePreflightAndOrdinaryFolderDel
     unknown["extra"] = true;
     EXPECT_EQ(call("notes.storeUpload", unknown)["error"]["code"], "invalid_argument");
     EXPECT_FALSE(application_->folder_store_operation_status(folder.id, epoch_).present);
-    const auto accepted = call("notes.storeUpload", {{"name", "Research"}, {"description", ""}, {"folder_id", folder.id}, {"service", "openai"}, {"api_key_id", "missing"}});
+    const auto accepted = call("notes.storeUpload", {{"description", ""}, {"folder_id", folder.id}, {"service", "openai"}, {"api_key_id", "missing"}});
     ASSERT_EQ(accepted["ok"], true);
     nlohmann::json status;
     for (const auto deadline = std::chrono::steady_clock::now() + 3s; std::chrono::steady_clock::now() < deadline;) {

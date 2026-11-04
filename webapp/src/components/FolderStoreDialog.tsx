@@ -20,12 +20,7 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
   const [choices, setChoices] = useState<FolderStoreChoice[]>([]);
   const [key, setKey] = useState('');
   const choice = choices.find(item => item.api_key_id === key);
-  const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const nameError = !name ? null
-    : !/^[A-Za-z0-9_]+$/.test(name) ? 'Name can contain only Latin letters, digits, and _.'
-      : /^[0-9]/.test(name) ? 'Name must start with a letter or _.'
-        : name.length > 64 ? 'Name must be 64 characters or fewer.' : null;
   const descriptionError = choice?.service === 'openai' && [...description].length > 512
     ? 'Description must be 512 characters or fewer for OpenAI.' : null;
   const [loading, setLoading] = useState(true);
@@ -147,7 +142,7 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
   }, [loading, op?.terminal, op?.phase]);
 
   async function submit(action: 'upload' | 'cleanup' = 'upload') {
-    if (busy.current || blocked || loading || (action === 'upload' && (!choice || !name || nameError || descriptionError)) || !current()) return;
+    if (busy.current || blocked || loading || (action === 'upload' && (!choice || descriptionError)) || !current()) return;
     busy.current = true; setPending(true); setError(null);
     const failed = operation.current;
     try {
@@ -159,7 +154,7 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
           throw new ChaError('invalid_argument', 'The store operation changed. Close this dialog and reopen the folder menu.');
       }
       const accepted = action === 'cleanup' ? await client.storeCleanup(failed!.operation_id, epoch)
-        : await client.storeUpload(source.id, choice!.service, key, name, description, epoch);
+        : await client.storeUpload(source.id, choice!.service, key, description, epoch);
       if (!current()) return;
       const result = await read(accepted.operation_id);
       if (!result) return;
@@ -229,10 +224,6 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
           <option value="">Select API key</option>
           {choices.map(item => <option key={item.api_key_id} value={item.api_key_id}>{item.api_key_name}</option>)}
         </select></label>
-        <label>Name<input className="cha-form-control" value={name} disabled={pending}
-          aria-invalid={!!nameError} aria-describedby={nameError ? 'store-name-error' : undefined}
-          onChange={event => setName(event.target.value)} /></label>
-        {nameError && <p id="store-name-error" className="cha-error-message" role="alert">{nameError}</p>}
         <label>Description (optional)<textarea className="cha-form-control" rows={6} value={description} disabled={pending}
           aria-invalid={!!descriptionError} aria-describedby={descriptionError ? 'store-description-error' : undefined}
           onChange={event => setDescription(event.target.value)} /></label>
@@ -247,7 +238,7 @@ export function FolderStoreDialog({ client, source, epoch, onClose }: {
         {canCancel && <button className="cha-button" type="button" disabled={pending} onClick={() => void cancel()}>Cancel</button>}
         {!active && <button className="cha-button cha-button-ghost" type="button" disabled={pending || loading} onClick={() => void close()}>
           {editable ? 'Cancel' : 'Close'}</button>}
-        {editable && <button className="cha-button cha-button-primary" type="submit" disabled={pending || !choice || !name || !!nameError || !!descriptionError}>
+        {editable && <button className="cha-button cha-button-primary" type="submit" disabled={pending || !choice || !!descriptionError}>
           Upload</button>}
         {canRetryCleanup && !blocked && <button className="cha-button cha-button-primary" type="button" disabled={pending || loading}
           onClick={() => void submit('cleanup')}>Retry cleanup</button>}

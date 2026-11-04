@@ -1,4 +1,5 @@
 #include "app/application.h"
+#include "storage/folder_store_storage.h"
 #include "storage/sqlite_storage.h"
 #include "support/test_workspace.h"
 #include "workspace/workspace_config_store.h"
@@ -59,6 +60,12 @@ FolderStoreHttpResponse json_ok(std::string body, std::vector<FolderStoreHttpHea
     response.body = std::move(body);
     response.headers = std::move(headers);
     return response;
+}
+
+// Upload preflight lists the key's stores before it creates a store.
+bool store_list_request(const FolderStoreHttpRequest& request) {
+    return request.method == "GET" && (request.url.find("/vector_stores?limit=") != std::string::npos
+        || request.url.find("/fileSearchStores?pageSize=") != std::string::npos);
 }
 
 class Gate {
@@ -143,8 +150,12 @@ protected:
         return application_->folder_store_operation_status(folder_id, epoch_);
     }
 
+    // Upload names the store after the folder and the folder's item reference.
+    std::string store_name() const { return "Research " + note_item_ref_id(folder_.id); }
+
     FolderStoreTransport openai_transport(bool fail_index = false, bool not_found = false) {
         return [=](const FolderStoreHttpRequest& request, const std::atomic_bool&) {
+            if (store_list_request(request)) return json_ok(R"({"data":[]})");
             if (request.method == "DELETE") {
                 if (not_found) {
                     FolderStoreHttpResponse response;
@@ -197,7 +208,7 @@ protected:
 TEST_F(FolderStoreOperationsTest, UploadsThroughOpenAiFakeHttpAndOnlyAnEventRecordsTheStore) {
     application_->set_folder_store_transport_for_tests(openai_transport());
     const auto started = application_->start_folder_store_upload(
-        folder_.id, "openai", key_, "Research", "", epoch_);
+        folder_.id, "openai", key_, "", epoch_);
     EXPECT_GT(started.operation_id, 0);
     const auto status = wait_status(folder_.id);
     ASSERT_TRUE(status.present);
@@ -210,7 +221,7 @@ TEST_F(FolderStoreOperationsTest, UploadsThroughOpenAiFakeHttpAndOnlyAnEventReco
     }));
     // The folder keeps no link, so the next upload creates another store.
     application_->close_folder_store_operation(started.operation_id, epoch_);
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     EXPECT_EQ(wait_status(folder_.id).result, "success");
 }
 
@@ -230,7 +241,7 @@ TEST_F(FolderStoreOperationsTest, UploadChoicesIncludeUnreferencedKeysForTheirSe
         EXPECT_EQ(request.headers.front().value, "Bearer unused-test-key");
         return openai_transport()(request, cancel);
     });
-    (void)application_->start_folder_store_upload(folder_.id, "openai", unused, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", unused, "", epoch_);
     EXPECT_EQ(wait_status(folder_.id).result, "success");
 }
 
@@ -255,7 +266,7 @@ TEST_F(FolderStoreOperationsTest, UploadRefusesKeyForAnotherCloudStore) {
     application_->set_folder_store_transport_for_tests([&](const auto&, const auto&) { ++requests; return json_ok("{}"); });
     const auto refuse = [&](std::string service) {
         try {
-            (void)application_->start_folder_store_upload(folder_.id, service, key_, "Research", "", epoch_);
+            (void)application_->start_folder_store_upload(folder_.id, service, key_, "", epoch_);
             FAIL() << "Expected a key for another cloud store to fail admission";
         } catch (const ApplicationError& error) {
             EXPECT_EQ(error.what(), std::string("Set cloud store API key"));
@@ -269,6 +280,49 @@ TEST_F(FolderStoreOperationsTest, UploadRefusesKeyForAnotherCloudStore) {
     EXPECT_EQ(requests, 0);
 }
 
+TEST_F(FolderStoreOperationsTest, UploadRefusesANameThatAStoreOfTheKeyAlreadyHas) {
+    std::vector<std::string> requests;
+    ASSERT_TRUE(store_name().starts_with("Research ##"));
+    ASSERT_EQ(store_name().size(), std::string("Research ##000000").size());
+    std::string list_body = nlohmann::json{{"data", {{{"id", "vs_old"}, {"name", store_name()}}}}, {"has_more", false}}.dump();
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        requests.push_back(request.method + " " + request.url);
+        if (store_list_request(request)) {
+            EXPECT_EQ(request.headers.front().value, "Bearer sk-test");
+            return json_ok(list_body);
+        }
+        return openai_transport()(request, cancel);
+    });
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
+    auto status = wait_status(folder_.id);
+    EXPECT_EQ(status.result, "preflight");
+    EXPECT_EQ(status.error, "A store with this name already exists.");
+    EXPECT_EQ(requests, std::vector<std::string>{"GET https://api.openai.com/v1/vector_stores?limit=100"});
+    application_->close_folder_store_operation(status.operation_id, epoch_);
+
+    list_body = R"({"error":{"message":"private"}})";
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (store_list_request(request)) return FolderStoreHttpResponse{.status = 401, .body = list_body};
+        ADD_FAILURE() << "Unexpected request after a failed store list: " << request.url;
+        return openai_transport()(request, cancel);
+    });
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
+    status = wait_status(folder_.id);
+    EXPECT_EQ(status.result, "preflight");
+    EXPECT_EQ(status.error, "The saved API key was rejected.");
+    application_->close_folder_store_operation(status.operation_id, epoch_);
+
+    list_body = nlohmann::json{{"data", {{{"id", "vs_folder"}, {"name", "Research"}},
+        {{"id", "vs_case"}, {"name", "research " + note_item_ref_id(folder_.id)}},
+        {{"id", "vs_unnamed"}, {"name", nullptr}}}}, {"has_more", false}}.dump();
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (store_list_request(request)) return json_ok(list_body);
+        return openai_transport()(request, cancel);
+    });
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
+    EXPECT_EQ(wait_status(folder_.id).result, "success");
+}
+
 TEST_F(FolderStoreOperationsTest, UploadDoesNotRequireCompatibleModelProvider) {
     auto provider = application_->get_provider("test", epoch_);
     nlohmann::json body = provider;
@@ -276,14 +330,14 @@ TEST_F(FolderStoreOperationsTest, UploadDoesNotRequireCompatibleModelProvider) {
     body["api"] = "chat_completions";
     (void)application_->update_provider("test", body, epoch_);
     application_->set_folder_store_transport_for_tests(openai_transport());
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     EXPECT_EQ(wait_status(folder_.id).result, "success");
 }
 
 TEST_F(FolderStoreOperationsTest, PreparationFailureIsDistinctAndLeavesNoStore) {
     const auto empty = application_->create_note_item({}, NoteItemKind::folder, "Empty", epoch_);
     application_->set_folder_store_transport_for_tests(openai_transport());
-    const auto started = application_->start_folder_store_upload(empty.id, "openai", key_, "Research", "", epoch_);
+    const auto started = application_->start_folder_store_upload(empty.id, "openai", key_, "", epoch_);
     const auto status = wait_status(empty.id);
     EXPECT_EQ(status.result, "preflight");
     (void)started;
@@ -299,7 +353,7 @@ TEST_F(FolderStoreOperationsTest, IndexFailureCleansOwnedFiles) {
             }
             return openai_transport(true)(request, cancel);
         });
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.phase, "failed");
     EXPECT_NE(status.error.find("Note “Log”"), std::string::npos);
@@ -313,7 +367,7 @@ TEST_F(FolderStoreOperationsTest, GenericNotFoundKeepsTheIdForRetryCleanup) {
         if (request.method == "DELETE") return FolderStoreHttpResponse{.status = 404, .body = "<html>nope</html>"};
         return openai_transport(true)(request, cancel);
     });
-    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     const auto failed = wait_status(folder_.id);
     EXPECT_EQ(failed.result, "error");
     EXPECT_TRUE(failed.known_cleanup_remains);
@@ -336,6 +390,7 @@ TEST_F(FolderStoreOperationsTest, CancelDuringIndexingCleansUp) {
         [](const FolderStoreHttpRequest& request, const std::atomic_bool&) {
             FolderStoreHttpResponse response;
             response.status = 200;
+            if (store_list_request(request)) return json_ok(R"({"data":[]})");
             if (request.method == "DELETE") return json_ok(R"({"deleted":true})");
             if (request.url.find("/vector_stores") != std::string::npos
                 && request.url.find("/files") == std::string::npos && request.method == "POST") {
@@ -347,7 +402,7 @@ TEST_F(FolderStoreOperationsTest, CancelDuringIndexingCleansUp) {
             }
             return json_ok(R"({"id":"vsf_1","status":"in_progress"})");
         });
-    const auto started = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto started = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     {
         std::unique_lock lock(wait_mutex_);
         ASSERT_TRUE(wait_cv_.wait_for(lock, 2s, [&] { return waits_ > 0; }));
@@ -362,7 +417,7 @@ TEST_F(FolderStoreOperationsTest, CancelDuringIndexingCleansUp) {
 
 TEST_F(FolderStoreOperationsTest, FolderDeleteNeverCallsTheProvider) {
     application_->set_folder_store_transport_for_tests(openai_transport());
-    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     ASSERT_EQ(wait_status(folder_.id).result, "success");
     application_->close_folder_store_operation(operation.operation_id, epoch_);
     int requests = 0;
@@ -377,7 +432,7 @@ TEST_F(FolderStoreOperationsTest, DrainDoesNotJoinAWorkerWaitingForTheLifecycleL
     settings.test_hooks.folder_store_before_lifetime_lock = [gate] { gate->arrive_and_wait(); };
     reopen(settings);
     application_->set_folder_store_transport_for_tests(openai_transport());
-    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     ASSERT_TRUE(gate->wait_entered());
     const auto started = std::chrono::steady_clock::now();
     (void)application_->create_vault({.display_name = "Other"}, epoch_);
@@ -406,13 +461,14 @@ TEST_F(FolderStoreOperationsTest, ChildVaultCopyKeepsChatFolderRefs) {
 
 TEST_F(FolderStoreOperationsTest, LostAllocationResponseStopsWithoutAutomaticReplay) {
     int calls = 0;
-    application_->set_folder_store_transport_for_tests([&](const auto&, const auto&) {
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        if (store_list_request(request)) return json_ok(R"({"data":[]})");
         ++calls;
         FolderStoreHttpResponse response;
         response.error = "secret-key echoed with note body";
         return response;
     });
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Chosen_name", "private description", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "private description", epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "error");
     EXPECT_EQ(calls, 1);
@@ -421,9 +477,9 @@ TEST_F(FolderStoreOperationsTest, LostAllocationResponseStopsWithoutAutomaticRep
     EXPECT_NE(status.error.find("Some remote data could not be confirmed deleted."), std::string::npos);
     EXPECT_EQ(status.error.find("secret-key"), std::string::npos);
     const auto events = application_->list_events(epoch_);
-    EXPECT_TRUE(std::any_of(events.begin(), events.end(), [](const auto& event) {
+    EXPECT_TRUE(std::any_of(events.begin(), events.end(), [&](const auto& event) {
         return event.message.find("Unconfirmed allocation") != std::string::npos
-            && event.message.find("name=\"Chosen_name\"") != std::string::npos
+            && event.message.find("name=" + nlohmann::json(store_name()).dump()) != std::string::npos
             && event.message.find("private description") == std::string::npos;
     }));
 }
@@ -433,7 +489,7 @@ TEST_F(FolderStoreOperationsTest, FailedCleanupKeepsTheReturnedIdsInEvents) {
         if (request.method == "DELETE") return FolderStoreHttpResponse{.status = 403};
         return openai_transport(true)(request, cancel);
     });
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_TRUE(status.known_cleanup_remains);
     EXPECT_EQ(status.error.find("vs_1"), std::string::npos);
@@ -451,7 +507,7 @@ TEST_F(FolderStoreOperationsTest, CancellationLetsSentAllocationFinishThenCleans
         if (request.method == "DELETE") { EXPECT_FALSE(cancel.load()); ++deleted; }
         return openai_transport()(request, cancel);
     });
-    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     ASSERT_TRUE(gate.wait_entered());
     EXPECT_EQ(application_->folder_store_operation_status(folder_.id, epoch_).phase, "uploading");
     application_->cancel_folder_store_upload(operation.operation_id, epoch_);
@@ -475,10 +531,10 @@ TEST_F(FolderStoreOperationsTest, PreflightReservationProtectsAncestors) {
     const auto parent = application_->create_note_item({}, NoteItemKind::folder, "Parent", epoch_);
     const auto child = application_->create_note_item(parent.id, NoteItemKind::folder, "Child", epoch_);
     application_->set_folder_store_transport_for_tests(openai_transport());
-    const auto operation = application_->start_folder_store_upload(child.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(child.id, "openai", key_, "", epoch_);
     ASSERT_TRUE(gate.wait_entered());
     EXPECT_THROW(application_->delete_note_item(parent.id, epoch_), ApplicationError);
-    EXPECT_THROW((void)application_->start_folder_store_upload(child.id, "openai", key_, "Research", "", epoch_), ApplicationError);
+    EXPECT_THROW((void)application_->start_folder_store_upload(child.id, "openai", key_, "", epoch_), ApplicationError);
     application_->cancel_folder_store_upload(operation.operation_id, epoch_);
     gate.release();
     EXPECT_EQ(wait_status(child.id).result, "cancelled");
@@ -487,7 +543,7 @@ TEST_F(FolderStoreOperationsTest, PreflightReservationProtectsAncestors) {
 
 TEST_F(FolderStoreOperationsTest, ReadyCommitWinsOverLaterCancellationAndCloseAcknowledgesStatus) {
     application_->set_folder_store_transport_for_tests(openai_transport());
-    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     ASSERT_EQ(wait_status(folder_.id).result, "success");
     application_->cancel_folder_store_upload(operation.operation_id, epoch_);
     EXPECT_EQ(application_->folder_store_operation_status(folder_.id, epoch_).result, "success");
@@ -506,10 +562,11 @@ TEST_F(FolderStoreOperationsTest, CleanupAttemptsEveryFileAndRetryUsesOnlyRemain
             return FolderStoreHttpResponse{.status = request.url.ends_with("file_1") ? 401 : 200, .body = R"({"deleted":true})"};
         }
         if (request.multipart.size() == 2) return json_ok(R"({"id":"file_)" + std::to_string(++files) + R"("})");
+        if (store_list_request(request)) return json_ok(R"({"data":[]})");
         if (request.method == "GET") return json_ok(R"({"status":"failed"})");
         return openai_transport()(request, cancel);
     });
-    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     const auto failed = wait_status(folder_.id);
     EXPECT_TRUE(failed.known_cleanup_remains);
     EXPECT_EQ(failed.error.find("file_1"), std::string::npos);
@@ -537,7 +594,7 @@ TEST_F(FolderStoreOperationsTest, EarlierNotFoundWarningSurvivesCleanupRetry) {
         return FolderStoreHttpResponse{.status = request.url.ends_with("vs_1") ? 404 : 401,
             .body = R"({"error":{"type":"invalid_request_error","message":"No such resource"}})"};
     });
-    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     const auto failed = wait_status(folder_.id);
     EXPECT_EQ(failed.phase, "failed");
     EXPECT_TRUE(failed.known_cleanup_remains);
@@ -554,7 +611,7 @@ TEST_F(FolderStoreOperationsTest, LaunchFailureReleasesAdmissionWithoutRemoteEff
     RuntimeSettings settings;
     settings.test_hooks.folder_store_before_launch = [] { throw std::runtime_error("launch failure"); };
     reopen(settings);
-    EXPECT_THROW((void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_), ApplicationError);
+    EXPECT_THROW((void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_), ApplicationError);
     EXPECT_FALSE(application_->folder_store_operation_status(folder_.id, epoch_).present);
     application_->delete_note_item(folder_.id, epoch_);
 }
@@ -586,7 +643,7 @@ TEST_F(FolderStoreOperationsTest, GoogleDocumentCleanupFailureKeepsParentForRetr
         return json_ok("{}");
     });
     (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
-    const auto first = application_->start_folder_store_upload(folder_.id, "google", key_, "Research", "", epoch_);
+    const auto first = application_->start_folder_store_upload(folder_.id, "google", key_, "", epoch_);
     EXPECT_EQ(wait_status(folder_.id).result, "error");
     EXPECT_TRUE(application_->folder_store_operation_status(folder_.id, epoch_).known_cleanup_remains);
     EXPECT_FALSE(parent_deleted);
@@ -604,6 +661,7 @@ TEST_F(FolderStoreOperationsTest, GoogleTransfersBeforePollingAndWaitsForLagging
     application_->save_note(second.id, text_doc("second fact"), epoch_);
     int uploads = 0, counts = 0, polls = 0;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        if (store_list_request(request)) return json_ok("{}");
         if (request.method == "DELETE") return json_ok("{}");
         if (request.url.find("/documents?") != std::string::npos) return json_ok("{}");
         if (request.url.ends_with("/v1beta/fileSearchStores")) return json_ok(R"({"name":"fileSearchStores/store1"})");
@@ -621,7 +679,7 @@ TEST_F(FolderStoreOperationsTest, GoogleTransfersBeforePollingAndWaitsForLagging
         return json_ok(counts == 1 ? R"({"activeDocumentsCount":"1","pendingDocumentsCount":"1"})" : R"({"activeDocumentsCount":"3"})");
     });
     (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
-    (void)application_->start_folder_store_upload(folder_.id, "google", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "google", key_, "", epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "success");
     EXPECT_EQ(status.completed, 2);
@@ -640,6 +698,7 @@ TEST_F(FolderStoreOperationsTest, GoogleCancelDuringResumableStartDoesNotUploadN
     (void)application_->update_provider("test", body, epoch_);
     int finalized = 0, deleted = 0;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        if (store_list_request(request)) return json_ok("{}");
         if (request.url.find("/documents?") != std::string::npos) return json_ok("{}");
         if (request.method == "DELETE") {
             ++deleted;
@@ -661,7 +720,7 @@ TEST_F(FolderStoreOperationsTest, GoogleCancelDuringResumableStartDoesNotUploadN
         return json_ok("{}");
     });
     (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
-    (void)application_->start_folder_store_upload(folder_.id, "google", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "google", key_, "", epoch_);
     const auto done = wait_status(folder_.id);
     EXPECT_EQ(done.result, "cancelled");
     EXPECT_EQ(finalized, 0);
@@ -678,6 +737,7 @@ TEST_F(FolderStoreOperationsTest, GoogleCancelDuringFinalizeWaitsForResponseAndC
     int finalized = 0;
     std::vector<std::string> deleted;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (store_list_request(request)) return json_ok("{}");
         if (request.url.find("/documents?") != std::string::npos)
             return json_ok(R"({"documents":[{"name":"fileSearchStores/test/documents/doc1"}]})");
         if (request.method == "DELETE") {
@@ -700,7 +760,7 @@ TEST_F(FolderStoreOperationsTest, GoogleCancelDuringFinalizeWaitsForResponseAndC
         return json_ok("{}");
     });
     (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
-    (void)application_->start_folder_store_upload(folder_.id, "google", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "google", key_, "", epoch_);
     const auto done = wait_status(folder_.id);
     EXPECT_EQ(done.result, "cancelled");
     EXPECT_EQ(finalized, 1);
@@ -715,7 +775,7 @@ TEST_F(FolderStoreOperationsTest, VaultSwitchDuringAllocationStopsTheWorker) {
         if (request.method == "POST") gate.arrive_and_wait();
         return openai_transport()(request, cancel);
     });
-    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     ASSERT_TRUE(gate.wait_entered());
     (void)application_->create_vault({.display_name = "Switched"}, epoch_);
     (void)application_->switch_vault("Switched", {}, epoch_);
@@ -728,11 +788,50 @@ TEST_F(FolderStoreOperationsTest, VaultSwitchDuringAllocationStopsTheWorker) {
     EXPECT_FALSE(application_->folder_store_operation_status(folder_.id, epoch_).present);
 }
 
+TEST_F(FolderStoreOperationsTest, VaultSwitchStopsCloudStoreDeletionBeforeTheNextProviderCall) {
+    Gate gate;
+    std::mutex mutex;
+    std::vector<std::string> requests;
+    bool switched = false;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        {
+            const std::lock_guard lock(mutex);
+            if (switched) ADD_FAILURE() << "Provider call after the vault switch: " << request.url;
+            requests.push_back(request.method + " " + request.url);
+        }
+        if (request.method == "GET") return json_ok(R"({"data":[{"id":"file_1"},{"id":"file_2"}],"has_more":false})");
+        gate.arrive_and_wait();
+        return json_ok(R"({"deleted":true})");
+    });
+    const auto reply = application_->delete_cloud_store(key_, "vs_1", epoch_);
+    ASSERT_TRUE(gate.wait_entered());
+    (void)application_->create_vault({.display_name = "Switched"}, epoch_);
+    (void)application_->switch_vault("Switched", {}, epoch_);
+    epoch_ = application_->context_epoch();
+    {
+        const std::lock_guard lock(mutex);
+        switched = true;
+    }
+    gate.release();
+    for (const auto deadline = std::chrono::steady_clock::now() + 5s;
+         !reply->peek() && std::chrono::steady_clock::now() < deadline;) std::this_thread::sleep_for(2ms);
+    const auto result = reply->peek();
+    ASSERT_TRUE(result);
+    const auto* failure = std::get_if<OperationReply::Failure>(&*result);
+    ASSERT_NE(failure, nullptr);
+    EXPECT_EQ(failure->code, ErrorCode::operation_cancelled);
+    const std::lock_guard lock(mutex);
+    EXPECT_EQ(requests, (std::vector<std::string>{
+        "GET https://api.openai.com/v1/vector_stores/vs_1/files?limit=100",
+        "DELETE https://api.openai.com/v1/files/file_1"}));
+}
+
 TEST_F(FolderStoreOperationsTest, SavedSnapshotSurvivesSourceEditsAndUsesCurrentKeyEachRequest) {
     const auto items = application_->list_note_items(epoch_);
     const auto note = *std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.parent_id == folder_.id && item.kind == NoteItemKind::note; });
     bool uploaded = false;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (store_list_request(request)) return json_ok(R"({"data":[]})");
         if (request.method == "POST" && request.url.ends_with("/vector_stores")) {
             (void)application_->replace_api_key_value(key_, {.value = "replacement-key", .cloud_store = "openai"}, epoch_);
             application_->save_note(note.id, text_doc("edited after capture"), epoch_);
@@ -747,7 +846,7 @@ TEST_F(FolderStoreOperationsTest, SavedSnapshotSurvivesSourceEditsAndUsesCurrent
         }
         return openai_transport()(request, cancel);
     });
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     EXPECT_EQ(wait_status(folder_.id).result, "success");
     EXPECT_TRUE(uploaded);
 }
@@ -758,7 +857,7 @@ TEST_F(FolderStoreOperationsTest, ShutdownDeadlineRetainsDependenciesUntilLateWo
         gate->arrive_and_wait();
         return json_ok(R"({"id":"vs_late"})");
     });
-    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     ASSERT_TRUE(gate->wait_entered());
     application_->request_shutdown();
     EXPECT_FALSE(application_->join_shutdown(0ms));
@@ -779,7 +878,7 @@ TEST_F(FolderStoreOperationsTest, IndexFailureStaysAnErrorWhenCancelArrivesDurin
         }
         return openai_transport(true)(request, cancel);
     });
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "error");
     EXPECT_EQ(status.phase, "failed");
@@ -795,10 +894,11 @@ TEST_F(FolderStoreOperationsTest, CancelCannotMissThePollWakeupAfterPredicateRea
     };
     reopen(settings);
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (store_list_request(request)) return json_ok(R"({"data":[]})");
         if (request.method == "GET") return json_ok(R"({"status":"in_progress"})");
         return openai_transport()(request, cancel);
     });
-    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     ASSERT_TRUE(gate->wait_entered());
     std::promise<void> cancelling;
     auto attempted = cancelling.get_future();
@@ -827,7 +927,7 @@ TEST_F(FolderStoreOperationsTest, StaleOperationIdsCannotCancelOrCloseReplacemen
         if (request.method == "DELETE") return FolderStoreHttpResponse{.status = 401};
         return openai_transport(true)(request, cancel);
     });
-    const auto first = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto first = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     ASSERT_EQ(wait_status(folder_.id).result, "error");
     auto gate = std::make_shared<Gate>();
     application_->set_folder_store_transport_for_tests([gate](const auto&, const auto&) {
@@ -856,7 +956,7 @@ TEST_F(FolderStoreOperationsTest, FailedRetryLaunchRetainsACompleteFailureStatus
         if (request.method == "DELETE") return FolderStoreHttpResponse{.status = 401};
         return openai_transport(true)(request, cancel);
     });
-    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    const auto operation = application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     ASSERT_EQ(wait_status(folder_.id).result, "error");
     *fail_launch = true;
     EXPECT_THROW((void)application_->retry_folder_store_cleanup(operation.operation_id, epoch_), ApplicationError);
@@ -875,13 +975,13 @@ TEST_F(FolderStoreOperationsTest, UploadFailureWithFinishedCleanupLeavesNoCleanu
         ++requests;
         return openai_transport(true)(request, cancel);
     });
-    const auto preflight = application_->start_folder_store_upload(folder_.id, "openai", "missing", "Research", "", epoch_);
+    const auto preflight = application_->start_folder_store_upload(folder_.id, "openai", "missing", "", epoch_);
     auto status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "preflight"); EXPECT_FALSE(status.known_cleanup_remains);
     EXPECT_EQ(requests, 0);
     application_->close_folder_store_operation(preflight.operation_id, epoch_);
     // A failed remote upload whose own cleanup succeeded also leaves no cleanup.
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "error"); EXPECT_FALSE(status.known_cleanup_remains);
 }
@@ -891,7 +991,7 @@ TEST_F(FolderStoreOperationsTest, SecondaryProcessCannotMutateOperations) {
     const auto epoch = secondary->context_epoch();
     EXPECT_NO_THROW((void)secondary->folder_store_choices(epoch));
     EXPECT_FALSE(secondary->folder_store_operation_status(folder_.id, epoch).present);
-    EXPECT_THROW((void)secondary->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch), SecondaryProcessError);
+    EXPECT_THROW((void)secondary->start_folder_store_upload(folder_.id, "openai", key_, "", epoch), SecondaryProcessError);
     EXPECT_THROW((void)secondary->retry_folder_store_cleanup(1, epoch), SecondaryProcessError);
     EXPECT_THROW(secondary->cancel_folder_store_upload(1, epoch), SecondaryProcessError);
     EXPECT_THROW(secondary->close_folder_store_operation(1, epoch), SecondaryProcessError);
@@ -901,7 +1001,7 @@ TEST_F(FolderStoreOperationsTest, SecondaryProcessCannotMutateOperations) {
 
 TEST_F(FolderStoreOperationsTest, FailedIndexingKeepsNotFoundCleanupWarningInStatus) {
     application_->set_folder_store_transport_for_tests(openai_transport(true, true));
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "error");
     EXPECT_TRUE(status.terminal);
@@ -919,7 +1019,7 @@ TEST_F(FolderStoreOperationsTest, FailedFileAllocationKeepsUncertaintyInStatusAf
         }
         return openai_transport()(request, cancel);
     });
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Research", "", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "error");
     EXPECT_FALSE(status.known_cleanup_remains);
@@ -929,34 +1029,24 @@ TEST_F(FolderStoreOperationsTest, FailedFileAllocationKeepsUncertaintyInStatusAf
 TEST_F(FolderStoreOperationsTest, MetadataValidationPrecedesReservationAndRemoteAllocation) {
     int requests = 0;
     application_->set_folder_store_transport_for_tests([&](const auto&, const auto&) { ++requests; return json_ok("{}"); });
-    const auto reject = [&](std::string service, std::string name, std::string description, std::string message) {
+    const auto reject = [&](std::string service, std::string description, std::string message) {
         try {
-            (void)application_->start_folder_store_upload(folder_.id, service, key_, name, description, epoch_);
+            (void)application_->start_folder_store_upload(folder_.id, service, key_, description, epoch_);
             FAIL() << "Expected invalid metadata to fail admission";
         } catch (const ApplicationError& error) { EXPECT_EQ(error.what(), message); }
         EXPECT_FALSE(application_->folder_store_operation_status(folder_.id, epoch_).present);
         EXPECT_EQ(requests, 0);
     };
-    reject("openai", "", "", "Enter a store name.");
-    for (const auto& service : {"openai", "google"}) {
-        for (const auto& name : {std::string(" Research"), std::string("Research notes"), std::string("Research\n"),
-                 std::string("research-notes"), std::string("я"), std::string("bad\xff", 4)})
-            reject(service, name, "", "Name can contain only Latin letters, digits, and _.");
-        reject(service, "2026_notes", "", "Name must start with a letter or _.");
-        reject(service, "a" + std::string(64, '1'), "", "Name must be 64 characters or fewer.");
-    }
-    reject("openai", "name", std::string(511, 'x') + "\n😀", "Description must be 512 characters or fewer for OpenAI.");
-    reject("openai", "name", std::string(511, 'x') + "\n\n", "Description must be 512 characters or fewer for OpenAI.");
-    reject("google", "name", std::string("\xc0\xaf", 2), "Description must be valid UTF-8.");
+    reject("openai", std::string(511, 'x') + "\n😀", "Description must be 512 characters or fewer for OpenAI.");
+    reject("openai", std::string(511, 'x') + "\n\n", "Description must be 512 characters or fewer for OpenAI.");
+    reject("google", std::string("\xc0\xaf", 2), "Description must be valid UTF-8.");
     // A missing key gives asynchronous preflight failure, proving local admission
     // accepts the boundary without allocating a remote store.
     for (const auto& service : {"openai", "google"}) {
-        for (const auto& name : {std::string(64, 'a'), std::string("_"), std::string("Z_9")}) {
-            const auto started = application_->start_folder_store_upload(folder_.id, service, "missing",
-                name, service == std::string("openai") ? std::string(510, 'a') + "\n😀" : std::string(2000, 'a'), epoch_);
-            EXPECT_EQ(wait_status(folder_.id).result, "preflight");
-            application_->close_folder_store_operation(started.operation_id, epoch_);
-        }
+        const auto started = application_->start_folder_store_upload(folder_.id, service, "missing",
+            service == std::string("openai") ? std::string(510, 'a') + "\n😀" : std::string(2000, 'a'), epoch_);
+        EXPECT_EQ(wait_status(folder_.id).result, "preflight");
+        application_->close_folder_store_operation(started.operation_id, epoch_);
     }
     EXPECT_EQ(requests, 0);
 }
@@ -971,12 +1061,12 @@ TEST_F(FolderStoreOperationsTest, ChosenMetadataSurvivesFolderRenameBeforeCaptur
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
         if (request.url.ends_with("/vector_stores") && request.method == "POST") {
             const auto body = nlohmann::json::parse(request.body);
-            EXPECT_EQ(body.at("name"), "Chosen_name");
+            EXPECT_EQ(body.at("name"), store_name());
             EXPECT_EQ(body.at("description"), " first\n\n第二段 😀 ");
         }
         return transport(request, cancel);
     });
-    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "Chosen_name", " first\n\n第二段 😀 ", epoch_);
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, " first\n\n第二段 😀 ", epoch_);
     ASSERT_TRUE(gate.wait_entered());
     (void)application_->rename_note_item(folder_.id, "Renamed", epoch_);
     gate.release();
@@ -1009,7 +1099,7 @@ TEST_F(FolderStoreOperationsTest, GoogleMetadataFailuresCleanStoreAndKeepMetadat
             return json_ok(R"({"activeDocumentsCount":"3"})");
         });
         (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
-        const auto started = application_->start_folder_store_upload(folder_.id, "google", key_, "Chosen", "private description", epoch_);
+        const auto started = application_->start_folder_store_upload(folder_.id, "google", key_, "private description", epoch_);
         const auto status = wait_status(folder_.id);
         EXPECT_EQ(status.result, stage == "missing" ? "cancelled" : "error");
         EXPECT_GE(deletes, 1);
@@ -1025,11 +1115,12 @@ TEST_F(FolderStoreOperationsTest, GoogleMetadataFailuresCleanStoreAndKeepMetadat
 
 TEST_F(FolderStoreOperationsTest, StoreCreationRejectionIsSafeAndRetainsOtherErrorReasons) {
     for (const int status_code : {400, 401, 429}) {
-        application_->set_folder_store_transport_for_tests([&](const auto&, const auto&) {
+        application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+            if (store_list_request(request)) return json_ok(R"({"data":[]})");
             return FolderStoreHttpResponse{.status = status_code,
                 .body = R"({"error":{"message":"private description"}})"};
         });
-        const auto started = application_->start_folder_store_upload(folder_.id, "openai", key_, "Name", "private description", epoch_);
+        const auto started = application_->start_folder_store_upload(folder_.id, "openai", key_, "private description", epoch_);
         const auto status = wait_status(folder_.id);
         EXPECT_EQ(status.result, "error");
         EXPECT_EQ(status.error.find("private description"), std::string::npos);
@@ -1038,12 +1129,13 @@ TEST_F(FolderStoreOperationsTest, StoreCreationRejectionIsSafeAndRetainsOtherErr
         if (status_code == 429) EXPECT_TRUE(status.error.starts_with("The provider quota or rate limit was reached."));
         application_->close_folder_store_operation(started.operation_id, epoch_);
     }
-    application_->set_folder_store_transport_for_tests([](const auto&, const auto&) {
+    application_->set_folder_store_transport_for_tests([](const auto& request, const auto&) {
+        if (store_list_request(request)) return json_ok("{}");
         return FolderStoreHttpResponse{.status = 400, .body = R"({"error":{"code":400,"status":"INVALID_ARGUMENT","message":"private description",)"
             R"("details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID"}]}})"};
     });
     (void)application_->replace_api_key_value(key_, {.cloud_store = "google"}, epoch_);
-    const auto started = application_->start_folder_store_upload(folder_.id, "google", key_, "Name", "private description", epoch_);
+    const auto started = application_->start_folder_store_upload(folder_.id, "google", key_, "private description", epoch_);
     const auto status = wait_status(folder_.id);
     EXPECT_EQ(status.result, "error");
     EXPECT_EQ(status.error, "The saved API key was rejected.");

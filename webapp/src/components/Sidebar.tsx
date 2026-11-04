@@ -108,6 +108,9 @@ const settingsViews: MainView[] = [
   'settings-new-api-key',
   'settings-api-key',
   'settings-r2-storage',
+  'settings-cloud-stores',
+  'settings-cloud-store-key',
+  'settings-cloud-store',
 ];
 
 function SessionDialog({

@@ -432,6 +432,19 @@ export interface components {
         };
         /** @enum {string} */
         CloudStore: "none" | "openai" | "google";
+        CloudStoreItem: {
+            id: string;
+            name: string;
+        };
+        CloudStoreList: {
+            items: components["schemas"]["CloudStoreItem"][];
+        };
+        CloudStoreDetail: {
+            id: string;
+            name: string;
+            description: string;
+            created_at: string;
+        };
         R2StorageDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;

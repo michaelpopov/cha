@@ -7,8 +7,11 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
+#include <ctime>
+#include <functional>
 #include <memory>
 #include <set>
 #include <stdexcept>
@@ -190,6 +193,95 @@ std::string header_value(
         if (ascii_iequals(header.name, name)) return header.value;
     }
     return {};
+}
+
+FolderStoreHttpRequest get_request(FolderStoreService service, std::string_view key) {
+    FolderStoreHttpRequest request;
+    request.method = "GET";
+    if (service == FolderStoreService::openai) request.headers.push_back({"Authorization", "Bearer " + std::string(key)});
+    else request.headers.push_back({"x-goog-api-key", std::string(key)});
+    return request;
+}
+
+// Reads an absent or null field as empty text. Any other non-string fails.
+bool optional_text(const Json& object, std::string_view field, std::string& text) {
+    text.clear();
+    const auto found = object.find(field);
+    if (found == object.end() || found->is_null()) return true;
+    if (!found->is_string()) return false;
+    text = found->get<std::string>();
+    return true;
+}
+
+bool string_list(const Json& entry) {
+    if (!entry.contains("stringListValue") || !entry["stringListValue"].is_object()) return false;
+    const auto& list = entry["stringListValue"];
+    return list.contains("values") && list["values"].is_array()
+        && std::all_of(list["values"].begin(), list["values"].end(), [](const Json& value) { return value.is_string(); });
+}
+
+std::string utc_text(std::int64_t seconds) {
+    const std::time_t time = static_cast<std::time_t>(seconds);
+    std::tm utc{};
+#ifdef _WIN32
+    if (gmtime_s(&utc, &time) != 0) return {};
+#else
+    if (gmtime_r(&time, &utc) == nullptr) return {};
+#endif
+    std::array<char, 32> text{};
+    if (std::strftime(text.data(), text.size(), "%Y-%m-%dT%H:%M:%SZ", &utc) == 0) return {};
+    return text.data();
+}
+
+// Reads every page of a provider list. OpenAI pages with has_more and after;
+// Gemini pages with nextPageToken. Every OpenAI page has the list field; Gemini
+// omits an empty list. A not-found response is returned as such only for the
+// first page; on a later page the listing is invalid.
+FolderStoreRemoteResult read_pages(const FolderStoreTransport& transport, FolderStoreHttpRequest request,
+    const std::string& url, bool openai, std::string_view list_field,
+    const std::function<bool(const Json&)>& read_item, const std::atomic_bool& cancel) {
+    const auto invalid = [] { return invalid_response("The provider returned an invalid listing."); };
+    std::set<std::string> cursors;
+    std::string cursor;
+    bool first = true;
+    do {
+        request.url = url;
+        if (!cursor.empty()) {
+            const std::unique_ptr<char, decltype(&curl_free)> encoded(
+                curl_easy_escape(nullptr, cursor.data(), static_cast<int>(cursor.size())), curl_free);
+            if (!encoded) return invalid_response("The page cursor could not be encoded.");
+            request.url += (openai ? "&after=" : "&pageToken=") + std::string(encoded.get());
+        }
+        const auto response = cancel.load() ? FolderStoreHttpResponse{.cancelled = true} : transport(request, cancel);
+        auto result = classify(response, false);
+        if (result.kind == FolderStoreRemoteKind::not_found && !first) return invalid();
+        if (result.kind != FolderStoreRemoteKind::ok) return result;
+        if (result.operation_error) return invalid();
+        first = false;
+        const auto body = Json::parse(response.body, nullptr, false);
+        const auto list = body.find(list_field);
+        if (openai && list == body.end()) return invalid();
+        if (list != body.end()) {
+            if (!list->is_array()) return invalid();
+            for (const auto& item : *list) {
+                if (!item.is_object() || !read_item(item)) return invalid();
+            }
+        }
+        cursor.clear();
+        if (openai && body.contains("has_more")) {
+            if (!body["has_more"].is_boolean()) return invalid();
+            if (body["has_more"].get<bool>()) {
+                if (!body.contains("last_id") || !body["last_id"].is_string()
+                    || body["last_id"].get_ref<const std::string&>().empty()) return invalid();
+                cursor = body["last_id"].get<std::string>();
+            }
+        } else if (!openai && body.contains("nextPageToken")) {
+            if (!body["nextPageToken"].is_string()) return invalid();
+            cursor = body["nextPageToken"].get<std::string>();
+        }
+        if (!cursor.empty() && !cursors.insert(cursor).second) return invalid();
+    } while (!cursor.empty());
+    return {.kind = FolderStoreRemoteKind::ok};
 }
 
 bool google_upload_url_valid(std::string_view url) {
@@ -527,6 +619,124 @@ std::string FolderStoreClient::search_stores(
     return output.dump();
 }
 
+FolderStoreList FolderStoreClient::list_stores(
+    FolderStoreService service, std::string_view key, const std::atomic_bool& cancel) {
+    const bool openai = service == FolderStoreService::openai;
+    FolderStoreList found;
+    found.result = read_pages(transport_, get_request(service, key),
+        openai ? std::string(openai_origin) + "/vector_stores?limit=100"
+               : std::string(google_origin) + "/v1beta/fileSearchStores?pageSize=20",
+        openai, openai ? "data" : "fileSearchStores", [&](const Json& store) {
+            const auto id = store.find(openai ? "id" : "name");
+            if (id == store.end() || !id->is_string()) return false;
+            const auto& text = id->get_ref<const std::string&>();
+            if (openai ? !safe_component(text) : !google_store_valid(text)) return false;
+            std::string name;
+            if (!optional_text(store, openai ? "name" : "displayName", name)) return false;
+            found.stores.push_back({text, std::move(name)});
+            return true;
+        }, cancel);
+    if (found.result.kind != FolderStoreRemoteKind::ok) found.stores.clear();
+    return found;
+}
+
+FolderStoreDetail FolderStoreClient::get_store(
+    FolderStoreService service, std::string_view store_id, std::string_view key,
+    const std::atomic_bool& cancel) {
+    const bool openai = service == FolderStoreService::openai;
+    FolderStoreDetail detail;
+    if (openai ? !safe_component(store_id) : !google_store_valid(store_id)) {
+        detail.result = invalid_response("The remote store ID is invalid.");
+        return detail;
+    }
+    auto request = get_request(service, key);
+    request.url = openai ? std::string(openai_origin) + "/vector_stores/" + std::string(store_id)
+                         : std::string(google_origin) + "/v1beta/" + std::string(store_id);
+    const auto response = transport_(request, cancel);
+    detail.result = classify(response, false, openai ? "id" : "name");
+    if (detail.result.kind != FolderStoreRemoteKind::ok) return detail;
+    const auto invalid = [&] {
+        detail.result = invalid_response("The provider returned invalid store details.");
+        return detail;
+    };
+    if (detail.result.operation_error || detail.result.id != store_id) return invalid();
+    const auto body = Json::parse(response.body, nullptr, false);
+    detail.id = std::string(store_id);
+    if (openai) {
+        if (!optional_text(body, "name", detail.name) || !optional_text(body, "description", detail.description)
+            || !body.contains("created_at") || !body["created_at"].is_number_integer()) return invalid();
+        detail.created_at = utc_text(body["created_at"].get<std::int64_t>());
+        if (detail.created_at.empty()) return invalid();
+        return detail;
+    }
+    if (!optional_text(body, "displayName", detail.name) || !body.contains("createTime")
+        || !body["createTime"].is_string() || body["createTime"].get_ref<const std::string&>().empty()) return invalid();
+    detail.created_at = body["createTime"].get<std::string>();
+    // CHA stores the description on its DESCRIPTION.txt document (google_upload_store_metadata).
+    int candidates = 0;
+    std::string description;
+    const auto listed = read_pages(transport_, get_request(service, key),
+        std::string(google_origin) + "/v1beta/" + std::string(store_id) + "/documents?pageSize=20",
+        false, "documents", [&](const Json& document) {
+            if (!document.contains("displayName") || document["displayName"] != "DESCRIPTION.txt") return true;
+            if (!document.contains("customMetadata") || !document["customMetadata"].is_array()) return true;
+            const Json* name = nullptr;
+            const Json* text = nullptr;
+            for (const auto& entry : document["customMetadata"]) {
+                if (!entry.is_object() || !entry.contains("key")) continue;
+                if (entry["key"] == "name") name = &entry;
+                if (entry["key"] == "description") text = &entry;
+            }
+            if (name == nullptr || !string_list(*name)) return true;
+            ++candidates;
+            description.clear();
+            if (text != nullptr && string_list(*text)) {
+                for (const auto& piece : (*text)["stringListValue"]["values"]) description += piece.get<std::string>();
+            }
+            return true;
+        }, cancel);
+    if (listed.kind != FolderStoreRemoteKind::ok) {
+        detail.result = listed;
+        return detail;
+    }
+    if (candidates == 1) detail.description = std::move(description);
+    return detail;
+}
+
+FolderStoreRemoteResult FolderStoreClient::delete_store(
+    FolderStoreService service, std::string_view store_id, std::string_view key,
+    const std::atomic_bool& cancel) {
+    const auto deleted = [](FolderStoreRemoteResult result) {
+        // The store is absent after this request completed its child cleanup.
+        if (result.kind == FolderStoreRemoteKind::not_found) result = {.kind = FolderStoreRemoteKind::ok};
+        return result;
+    };
+    if (service == FolderStoreService::google) return deleted(google_delete_store(store_id, key, cancel, false));
+    if (!safe_component(store_id)) return invalid_response("The remote resource ID is invalid.");
+    // Finish the file listing before deleting anything so removals cannot shift pages.
+    std::vector<std::string> files;
+    auto listed = read_pages(transport_, get_request(service, key),
+        std::string(openai_origin) + "/vector_stores/" + std::string(store_id) + "/files?limit=100",
+        true, "data", [&](const Json& file) {
+            if (!file.contains("id") || !file["id"].is_string()
+                || !safe_component(file["id"].get_ref<const std::string&>())) return false;
+            files.push_back(file["id"].get<std::string>());
+            return true;
+        }, cancel);
+    if (listed.kind == FolderStoreRemoteKind::not_found) {
+        listed.message = "Store unavailable. File cleanup could not be verified.";
+        return listed;
+    }
+    if (listed.kind != FolderStoreRemoteKind::ok) return listed;
+    for (const auto& file : files) {
+        if (cancel.load()) return classify(FolderStoreHttpResponse{.cancelled = true}, false);
+        const auto result = openai_delete_file(file, key, cancel);
+        if (result.kind != FolderStoreRemoteKind::ok && result.kind != FolderStoreRemoteKind::not_found) return result;
+    }
+    if (cancel.load()) return classify(FolderStoreHttpResponse{.cancelled = true}, false);
+    return deleted(openai_delete_store(store_id, key, cancel));
+}
+
 FolderStoreRemoteResult FolderStoreClient::openai_create_store(
     std::string_view name, std::string_view description, std::string_view key, const std::atomic_bool& cancel) {
     FolderStoreHttpRequest request;
@@ -806,64 +1016,31 @@ FolderStoreRemoteResult FolderStoreClient::google_inspect_store(
 }
 
 FolderStoreRemoteResult FolderStoreClient::google_delete_store(
-    std::string_view store_name, std::string_view key, const std::atomic_bool& cancel) {
+    std::string_view store_name, std::string_view key, const std::atomic_bool& cancel, bool force_store) {
     if (!google_store_valid(store_name)) return invalid_response("The remote store name is invalid.");
     const auto store_url = std::string(google_origin) + "/v1beta/" + std::string(store_name);
     const auto document_prefix = std::string(store_name) + "/documents/";
-    FolderStoreHttpRequest request;
-    request.method = "GET";
-    request.headers.push_back({"x-goog-api-key", std::string(key)});
+    auto request = get_request(FolderStoreService::google, key);
     const auto send = [&] {
         if (cancel.load()) return FolderStoreHttpResponse{.cancelled = true};
         return transport_(request, cancel);
     };
 
     // Google's force-delete can remove the store while leaving its Documents
-    // readable. List even when the parent was deleted by an earlier attempt.
+    // readable. List even when the parent was deleted by an earlier attempt;
+    // a missing first page is an absent collection.
     // Finish pagination before deleting anything so removals cannot shift pages.
     std::vector<std::string> documents;
-    std::set<std::string> page_tokens;
-    std::string page_token;
-    do {
-        request.url = store_url + "/documents?pageSize=20";
-        if (!page_token.empty()) {
-            const std::unique_ptr<char, decltype(&curl_free)> encoded(
-                curl_easy_escape(nullptr, page_token.data(), static_cast<int>(page_token.size())), curl_free);
-            if (!encoded) return invalid_response("The document page token could not be encoded.");
-            request.url += "&pageToken=" + std::string(encoded.get());
-        }
-        const auto response = send();
-        auto result = classify(response, false, "name");
-        if (result.kind == FolderStoreRemoteKind::not_found && page_token.empty()) break;
-        if (result.kind != FolderStoreRemoteKind::ok) {
-            if (result.kind == FolderStoreRemoteKind::not_found)
-                return invalid_response("The provider's document listing disappeared during cleanup.");
-            return result;
-        }
-        if (result.operation_error) {
-            result.kind = FolderStoreRemoteKind::failed;
-            return result;
-        }
-        const auto body = Json::parse(response.body, nullptr, false);
-        if (body.contains("documents")) {
-            if (!body["documents"].is_array()) return invalid_response("The provider returned an invalid document listing.");
-            for (const auto& document : body["documents"]) {
-                if (!document.is_object() || !document.contains("name") || !document["name"].is_string())
-                    return invalid_response("The provider returned an invalid document name.");
-                const auto& name = document["name"].get_ref<const std::string&>();
-                if (!name.starts_with(document_prefix) || !safe_component(std::string_view(name).substr(document_prefix.size())))
-                    return invalid_response("The provider returned an invalid document name.");
-                documents.push_back(name);
-            }
-        }
-        page_token.clear();
-        if (body.contains("nextPageToken")) {
-            if (!body["nextPageToken"].is_string()) return invalid_response("The provider returned an invalid document page token.");
-            page_token = body["nextPageToken"].get<std::string>();
-            if (!page_token.empty() && !page_tokens.insert(page_token).second)
-                return invalid_response("The provider returned an invalid document page token.");
-        }
-    } while (!page_token.empty());
+    const auto listed = read_pages(transport_, request, store_url + "/documents?pageSize=20", false, "documents",
+        [&](const Json& document) {
+            if (!document.contains("name") || !document["name"].is_string()) return false;
+            const auto& name = document["name"].get_ref<const std::string&>();
+            if (!name.starts_with(document_prefix)
+                || !safe_component(std::string_view(name).substr(document_prefix.size()))) return false;
+            documents.push_back(name);
+            return true;
+        }, cancel);
+    if (listed.kind != FolderStoreRemoteKind::ok && listed.kind != FolderStoreRemoteKind::not_found) return listed;
 
     request.method = "DELETE";
     for (const auto& document : documents) {
@@ -874,9 +1051,19 @@ FolderStoreRemoteResult FolderStoreClient::google_delete_store(
     }
     // Keep the known parent ID until all document deletions succeed. An explicit
     // retry can discover the remaining documents without another persistent list.
-    request.url = store_url + "?force=true";
-    auto result = classify(send(), false, "name");
+    request.url = store_url + (force_store ? "?force=true" : "?force=false");
+    const auto response = send();
+    auto result = classify(response, false, "name");
     if (result.operation_error) result.kind = FolderStoreRemoteKind::failed;
+    if (!force_store && response.status == 400) {
+        // Documents added after the listing make a non-forced delete fail.
+        const auto body = Json::parse(response.body, nullptr, false);
+        if (json_error_object(body) && body["error"].contains("status")
+            && body["error"]["status"] == "FAILED_PRECONDITION") {
+            result.kind = FolderStoreRemoteKind::failed;
+            result.message = "The store still contains documents. Retry deletion.";
+        }
+    }
     return result;
 }
 

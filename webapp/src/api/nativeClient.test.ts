@@ -59,6 +59,40 @@ describe('native CHA client', () => {
     }
   });
 
+  it('lists, reads, and deletes cloud stores and cancels a pending delete through the bridge', async () => {
+    const detail = { id: 'vs_1', name: 'Research', description: 'Notes', created_at: '2026-11-03T09:15:00Z' };
+    const list = vi.fn(() => ({ items: [{ id: 'vs_1', name: 'Research' }] }));
+    const get = vi.fn(() => detail);
+    const bridge = createFakeNativeBridge({
+      'cloudStore.list': list,
+      'cloudStore.get': get,
+      'cloudStore.delete': () => new Promise(() => {}),
+    });
+    const client = createNativeChaClient(bridge);
+    expect(await client.listCloudStores('api_key_1')).toEqual({ items: [{ id: 'vs_1', name: 'Research' }] });
+    expect(list).toHaveBeenCalledExactlyOnceWith({ api_key_id: 'api_key_1' });
+    expect(await client.getCloudStore('api_key_1', 'vs_1')).toEqual(detail);
+    expect(get).toHaveBeenCalledExactlyOnceWith({ api_key_id: 'api_key_1', store_id: 'vs_1' });
+
+    const controller = new AbortController();
+    const deletion = client.deleteCloudStore('api_key_1', 'vs_1', controller.signal);
+    controller.abort();
+    await expect(deletion).rejects.toMatchObject({ name: 'AbortError' });
+    const sent = bridge.posts.find((post) => (post as { method?: string }).method === 'cloudStore.delete') as
+      { id: number; params: unknown };
+    expect(sent.params).toEqual({ api_key_id: 'api_key_1', store_id: 'vs_1' });
+    expect(bridge.posts).toContainEqual(expect.objectContaining({
+      method: 'cloudStore.cancel', params: { request_id: sent.id },
+    }));
+
+    const invalid = createNativeChaClient(createFakeNativeBridge({
+      'cloudStore.list': () => ({ items: [{ id: 1, name: 'Research' }] }),
+      'cloudStore.get': () => ({ ...detail, created_at: 1 }),
+    }));
+    await expect(invalid.listCloudStores('api_key_1')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(invalid.getCloudStore('api_key_1', 'vs_1')).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it('reads event snapshots without changing their order or contents', async () => {
     const items = [{ id: 2, recorded_at: 0, severity: 'info', message: '日本語' },
       { id: 1, recorded_at: 10, severity: 'success', message: 'Done' }];
@@ -940,8 +974,8 @@ describe('native folder store contract', () => {
     const epoch = client.contextEpoch();
     expect(await client.listNoteItems()).toEqual([contract.folder]);
     expect(await client.storeChoices(epoch)).toEqual(contract.choices);
-    expect(await client.storeUpload(11, 'openai', 'api_key_1', 'Research', '', epoch)).toEqual(contract.start);
-    expect(handlers['notes.storeUpload']).toHaveBeenCalledWith({ folder_id: 11, service: 'openai', api_key_id: 'api_key_1', name: 'Research', description: '' });
+    expect(await client.storeUpload(11, 'openai', 'api_key_1', '', epoch)).toEqual(contract.start);
+    expect(handlers['notes.storeUpload']).toHaveBeenCalledWith({ folder_id: 11, service: 'openai', api_key_id: 'api_key_1', description: '' });
     expect(await client.storeCleanup(7, epoch)).toEqual(contract.start);
     expect(handlers['notes.storeCleanup']).toHaveBeenCalledWith({ operation_id: 7 });
     expect(await client.storeOperation(11, epoch)).toEqual(contract.failed_upload);
@@ -949,7 +983,7 @@ describe('native folder store contract', () => {
     await client.storeCancel(7, epoch); await client.storeClose(7, epoch);
     expect(handlers['notes.storeCancel']).toHaveBeenCalledWith({ operation_id: 7 });
     expect(handlers['notes.storeClose']).toHaveBeenCalledWith({ operation_id: 7 });
-    await expect(client.storeUpload(11, 'openai', 'api_key_1', 'Research', '', epoch + 1)).rejects.toMatchObject({ code: 'vault_changed' });
+    await expect(client.storeUpload(11, 'openai', 'api_key_1', '', epoch + 1)).rejects.toMatchObject({ code: 'vault_changed' });
     expect(handlers['notes.storeUpload']).toHaveBeenCalledTimes(1);
   });
 
@@ -986,7 +1020,7 @@ describe('native folder store contract', () => {
 
   it.each([{ operation_id: 0 }, { operation_id: 1.5 }, { operation_id: 7, extra: true }, {}])('rejects malformed acceptance %j', async result => {
     const client = createNativeChaClient(createFakeNativeBridge({ 'notes.storeUpload': () => result }));
-    await expect(client.storeUpload(11, 'openai', 'api_key_1', 'Research', '', client.contextEpoch())).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.storeUpload(11, 'openai', 'api_key_1', '', client.contextEpoch())).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
   it.each([{ choices: [{ service: 'other', api_key_id: 'key', api_key_name: 'Name' }] },

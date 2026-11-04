@@ -25,8 +25,7 @@ function setup(overrides: Partial<NotesClient> = {}, props: Partial<Parameters<t
   return { ...result, client, onClose };
 }
 async function upload() {
-  const name = await screen.findByLabelText('Name');
-  if (!(name as HTMLInputElement).value) fireEvent.change(name, { target: { value: source.name } });
+  await screen.findByLabelText('API key');
   await waitFor(() => expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
 }
@@ -45,13 +44,12 @@ describe('Folder store dialog', () => {
     const start = vi.fn(async () => { throw new ChaError('invalid_argument', 'Try again.'); });
     setup({ storeUpload: start, storeChoices: async () => ({ choices: [openaiChoice, googleChoice] }) });
     await screen.findByLabelText('API key');
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Research' } });
     expect(screen.getByLabelText('API key')).toHaveValue('');
     expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
     fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'key2' } });
     expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
-    await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith(11, 'google', 'key2', 'Research', '', 1));
+    await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith(11, 'google', 'key2', '', 1));
   });
   it('directs missing keys to Settings and disables upload', async () => {
     setup({ storeChoices: async () => ({ choices: [] }) });
@@ -74,7 +72,7 @@ describe('Folder store dialog', () => {
     const { onClose } = setup({ storeUpload: start, storeOperation: async () => state, storeClose: close, saveNote: save, getNote: get });
     await upload();
     expect(await screen.findByRole('status')).toHaveTextContent('Uploading 1 of 3 notes…');
-    expect(start).toHaveBeenCalledExactlyOnceWith(11, 'openai', 'key1', source.name, '', 1);
+    expect(start).toHaveBeenCalledExactlyOnceWith(11, 'openai', 'key1', '', 1);
     expect(screen.queryByLabelText('API key')).not.toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
     state = operation({ phase: 'indexing', completed: 3 });
@@ -333,61 +331,31 @@ it('does not retry cleanup for an operation replaced since the displayed failure
   expect(cleanup).not.toHaveBeenCalled();
 });
 
-it('submits the exact name and description, preserving draft after a start error', async () => {
+it('submits the exact description, preserving draft after a start error', async () => {
   const start = vi.fn(async () => { throw new ChaError('invalid_argument', 'Try again.'); });
   setup({ storeUpload: start });
-  await screen.findByLabelText('Name');
+  await screen.findByLabelText('Description (optional)');
   const description = '  First paragraph 😀\n\nВторой абзац\n ';
-  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Chosen_name' } });
   fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: description } });
   expect(screen.getByLabelText('Description (optional)')).toHaveAttribute('rows', '6');
   await upload();
-  await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith(11, 'openai', 'key1', 'Chosen_name', description, 1));
+  await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith(11, 'openai', 'key1', description, 1));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled());
-  expect(screen.getByLabelText('Name')).toHaveValue('Chosen_name');
   expect(screen.getByLabelText('Description (optional)')).toHaveValue(description);
 });
 
-it('opens with an empty name, no error, and Upload unavailable', async () => {
+it('opens without a name field and allows upload with the only key', async () => {
   setup();
   await waitFor(() => expect(screen.getByLabelText('API key')).toHaveValue('key1'));
-  expect(screen.getByLabelText('Name')).toHaveValue('');
-  expect(screen.getByLabelText('Name')).toHaveAttribute('aria-invalid', 'false');
-  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
-});
-
-it.each([
-  ['Research notes', 'Name can contain only Latin letters, digits, and _.'],
-  [' Research', 'Name can contain only Latin letters, digits, and _.'],
-  ['research-notes', 'Name can contain only Latin letters, digits, and _.'],
-  ['Исследование', 'Name can contain only Latin letters, digits, and _.'],
-  ['2026 notes', 'Name can contain only Latin letters, digits, and _.'],
-  ['2026_notes', 'Name must start with a letter or _.'],
-  ['a'.repeat(65), 'Name must be 64 characters or fewer.'],
-])('explains an invalid name %j', async (name, message) => {
-  setup();
-  await waitFor(() => expect(screen.getByLabelText('API key')).toHaveValue('key1'));
-  fireEvent.change(screen.getByLabelText('Name'), { target: { value: name } });
-  expect(screen.getByRole('alert')).toHaveTextContent(message);
-  expect(screen.getByLabelText('Name')).toHaveAttribute('aria-invalid', 'true');
-  expect(screen.getByLabelText('Name')).toHaveAccessibleDescription(message);
-  expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
-});
-
-it.each(['a'.repeat(64), '_', 'Z_9', 'research_notes'])('accepts the valid name %j', async (name) => {
-  setup();
-  await waitFor(() => expect(screen.getByLabelText('API key')).toHaveValue('key1'));
-  fireEvent.change(screen.getByLabelText('Name'), { target: { value: name } });
+  expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled();
 });
 
 it('revalidates description limits for the service of the selected key without changing text', async () => {
   setup({ storeChoices: async () => ({ choices: [openaiChoice, googleChoice] }) });
-  await screen.findByLabelText('Name');
+  await screen.findByLabelText('API key');
   fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'key1' } });
-  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Research' } });
   fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'я'.repeat(511) + '\n😀' } });
   expect(screen.getByRole('alert')).toHaveTextContent('Description must be 512 characters or fewer for OpenAI.');
   fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'key2' } });
@@ -403,14 +371,12 @@ it('disables all fields during start and retains the draft after preflight', asy
   let state: FolderStoreOperation = { present: false };
   setup({ storeUpload: () => accepted.promise, storeOperation: async () => state,
     storeClose: async () => { state = { present: false }; } });
-  await screen.findByLabelText('Name');
-  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Draft_name' } });
+  await screen.findByLabelText('Description (optional)');
   fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'Draft\n\nDescription' } });
   await upload();
-  for (const label of ['API key', 'Name', 'Description (optional)']) expect(screen.getByLabelText(label)).toBeDisabled();
+  for (const label of ['API key', 'Description (optional)']) expect(screen.getByLabelText(label)).toBeDisabled();
   state = terminal({ result: 'preflight', error: 'All saved notes are empty.' });
   await act(async () => { accepted.resolve({ operation_id: 5 }); });
   await screen.findByText('All saved notes are empty.');
-  expect(screen.getByLabelText('Name')).toHaveValue('Draft_name');
   expect(screen.getByLabelText('Description (optional)')).toHaveValue('Draft\n\nDescription');
 });

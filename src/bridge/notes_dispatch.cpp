@@ -107,10 +107,10 @@ std::optional<nlohmann::json> dispatch_notes_operation(
         return nlohmann::json{{"choices", std::move(choices)}};
     }
     case Method::notes_store_upload: {
-        require_only_keys(params, {"folder_id", "service", "api_key_id", "name", "description"});
+        require_only_keys(params, {"folder_id", "service", "api_key_id", "description"});
         const auto start = application.start_folder_store_upload(require_positive_id(params, "folder_id"),
             require_string(params, "service"), require_identifier(params, "api_key_id"),
-            require_string(params, "name"), require_string(params, "description"), epoch);
+            require_string(params, "description"), epoch);
         return nlohmann::json{{"operation_id", start.operation_id}};
     }
     case Method::notes_store_cleanup:

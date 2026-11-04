@@ -86,6 +86,8 @@ bool deadline_exempt(Method method) noexcept {
     case Method::vault_r2_download:
     case Method::session_summary_generate:
     case Method::notes_read_page:
+    case Method::cloud_store_get:
+    case Method::cloud_store_delete:
         return true;
     default:
         return false;
@@ -1089,6 +1091,40 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 const auto snapshot = application.vault_snapshot();
                 result = app::vault::vault_detail_json(
                     created, snapshot.active.name, snapshot.vaults.size());
+                break;
+            }
+            case Method::cloud_store_list:
+                require_only_keys(params, {"api_key_id"});
+                start_background(connection_id, id,
+                    application.list_cloud_stores(require_identifier(params, "api_key_id"), epoch));
+                return;
+            case Method::cloud_store_get:
+                require_only_keys(params, {"api_key_id", "store_id"});
+                start_background(connection_id, id, application.get_cloud_store(
+                    require_identifier(params, "api_key_id"), require_string(params, "store_id"), epoch));
+                return;
+            case Method::cloud_store_delete:
+                require_only_keys(params, {"api_key_id", "store_id"});
+                start_background(connection_id, id, application.delete_cloud_store(
+                    require_identifier(params, "api_key_id"), require_string(params, "store_id"), epoch));
+                return;
+            case Method::cloud_store_cancel: {
+                require_only_keys(params, {"request_id"});
+                const auto target = require_safe_id(params, "request_id");
+                {
+                    std::lock_guard lock(mutex);
+                    if (auto connection = find_connection(connection_id)) {
+                        const auto found = connection->outstanding.find(target);
+                        if (found != connection->outstanding.end()
+                            && found->second.method == Method::cloud_store_delete) {
+                            // The worker sees the abandoned reply before its next provider call.
+                            const auto target_epoch = found->second.context_epoch;
+                            if (found->second.operation) found->second.operation->abandon();
+                            fail_request(connection, target, target_epoch, ErrorCode::operation_cancelled);
+                        }
+                    }
+                }
+                result = nlohmann::json::object();
                 break;
             }
             case Method::provider_test: {

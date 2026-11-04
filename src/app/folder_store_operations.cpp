@@ -7,8 +7,8 @@ std::vector<Application::FolderStoreChoiceView> Application::folder_store_choice
 }
 
 Application::FolderStoreStart Application::start_folder_store_upload(std::int64_t folder_id,
-    std::string service, std::string api_key_id, std::string name, std::string description, std::uint64_t epoch) {
-    return impl_->notes->start_folder_store_upload(folder_id, std::move(service), std::move(api_key_id), std::move(name), std::move(description), epoch);
+    std::string service, std::string api_key_id, std::string description, std::uint64_t epoch) {
+    return impl_->notes->start_folder_store_upload(folder_id, std::move(service), std::move(api_key_id), std::move(description), epoch);
 }
 
 Application::FolderStoreStart Application::retry_folder_store_cleanup(std::int64_t operation_id, std::uint64_t epoch) {
@@ -29,6 +29,20 @@ void Application::close_folder_store_operation(std::int64_t operation_id, std::u
 
 void Application::set_folder_store_transport_for_tests(FolderStoreTransport transport) {
     impl_->notes->set_folder_store_transport_for_tests(std::move(transport));
+}
+
+std::shared_ptr<OperationReply> Application::list_cloud_stores(std::string_view api_key_id, std::uint64_t epoch) {
+    return impl_->notes->list_cloud_stores(api_key_id, epoch);
+}
+
+std::shared_ptr<OperationReply> Application::get_cloud_store(
+    std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch) {
+    return impl_->notes->get_cloud_store(api_key_id, store_id, epoch);
+}
+
+std::shared_ptr<OperationReply> Application::delete_cloud_store(
+    std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch) {
+    return impl_->notes->delete_cloud_store(api_key_id, store_id, epoch);
 }
 
 } // namespace cha::app

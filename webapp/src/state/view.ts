@@ -66,7 +66,10 @@ export type MainView =
   | 'settings-api-keys'
   | 'settings-new-api-key'
   | 'settings-api-key'
-  | 'settings-r2-storage';
+  | 'settings-r2-storage'
+  | 'settings-cloud-stores'
+  | 'settings-cloud-store-key'
+  | 'settings-cloud-store';
 
 export type BootstrapStatus = 'loading' | 'ready' | 'failed' | 'incompatible';
 export type LayoutMode = 'single' | 'split';
@@ -142,6 +145,9 @@ export interface AppState {
   inspectedStyle: EditableInspection;
   inspectedVoice: EditableInspection;
   inspectedApiKey: { id: string | null; name: string | null };
+  // notice carries a deletion result to the store list.
+  inspectedCloudStoreKey: { id: string | null; name: string | null; notice: string | null };
+  inspectedCloudStore: { id: string | null; label: string | null };
   currentDefaultCharacterId: string | null;
   sessionOperation: 'idle' | 'pending' | 'failed';
   sessionOperationMessage: string | null;
@@ -184,6 +190,8 @@ export const initialAppState: AppState = {
   inspectedStyle: { id: null, name: null, writable: false },
   inspectedVoice: { id: null, name: null, writable: false },
   inspectedApiKey: { id: null, name: null },
+  inspectedCloudStoreKey: { id: null, name: null, notice: null },
+  inspectedCloudStore: { id: null, label: null },
   currentDefaultCharacterId: null,
   sessionOperation: 'idle',
   sessionOperationMessage: null,
@@ -297,6 +305,9 @@ export type AppAction =
   | { type: 'api-key-detail-loaded'; apiKeyId: string; apiKeyName: string }
   | { type: 'api-key-updated'; apiKeyId: string; apiKeyName: string }
   | { type: 'show-settings-r2-storage' }
+  | { type: 'show-settings-cloud-stores' }
+  | { type: 'inspect-cloud-store-key'; apiKeyId: string; apiKeyName: string; notice?: string }
+  | { type: 'inspect-cloud-store'; storeId: string; label: string }
   | { type: 'show-chat' }
   | { type: 'session-operation-started'; message: string }
   | { type: 'session-operation-failed'; message: string; retryable?: boolean }
@@ -378,6 +389,9 @@ export type NavigationAction = Extract<AppAction, {
     | 'show-settings-new-api-key'
     | 'inspect-api-key'
     | 'show-settings-r2-storage'
+    | 'show-settings-cloud-stores'
+    | 'inspect-cloud-store-key'
+    | 'inspect-cloud-store'
     | 'show-chat'
     | 'show-initial-conversation'
 }>;
@@ -1030,6 +1044,22 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, inspectedApiKey: { ...state.inspectedApiKey, name: action.apiKeyName } };
     case 'show-settings-r2-storage':
       return { ...state, mainView: 'settings-r2-storage', ...idleSessionOperation() };
+    case 'show-settings-cloud-stores':
+      return { ...state, mainView: 'settings-cloud-stores', ...idleSessionOperation() };
+    case 'inspect-cloud-store-key':
+      return {
+        ...state,
+        mainView: 'settings-cloud-store-key',
+        inspectedCloudStoreKey: { id: action.apiKeyId, name: action.apiKeyName, notice: action.notice ?? null },
+        ...idleSessionOperation(),
+      };
+    case 'inspect-cloud-store':
+      return {
+        ...state,
+        mainView: 'settings-cloud-store',
+        inspectedCloudStore: { id: action.storeId, label: action.label },
+        ...idleSessionOperation(),
+      };
     case 'show-chat':
       return { ...state, mainView: 'chat', ...idleSessionOperation() };
     case 'session-operation-started':
@@ -1257,6 +1287,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-api-keys': return 'API Keys';
     case 'settings-new-api-key': return 'New API key';
     case 'settings-r2-storage': return 'R2 storage';
+    case 'settings-cloud-stores': return 'Cloud stores';
     case 'character-file-reference':
     case 'forum-file-reference':
     case 'persona-detail':
@@ -1267,6 +1298,8 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-style':
     case 'settings-voice':
     case 'settings-api-key':
+    case 'settings-cloud-store-key':
+    case 'settings-cloud-store':
     case 'chat':
     case 'notes': return null;
   }

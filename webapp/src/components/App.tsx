@@ -93,6 +93,7 @@ import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions, ty
 import { Sidebar } from './Sidebar';
 import { TransliterationProvider } from './TransliterationMode';
 import { ApiKeyScreen, ApiKeysScreen, NewApiKeyScreen } from './ApiKeySettings';
+import { CloudStoreKeysScreen, CloudStoreScreen, CloudStoresScreen } from './CloudStoreSettings';
 import {
   DownloadVaultScreen,
   MergeVaultScreen,
@@ -467,6 +468,15 @@ function ScreenContent({
     );
     case 'settings-api-key': return (
       <ApiKeyScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
+    );
+    case 'settings-cloud-stores': return (
+      <CloudStoreKeysScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
+    );
+    case 'settings-cloud-store-key': return (
+      <CloudStoresScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
+    );
+    case 'settings-cloud-store': return (
+      <CloudStoreScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-r2-storage': return (
       <R2StorageScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />

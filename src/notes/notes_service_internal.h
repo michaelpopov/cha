@@ -137,6 +137,11 @@ struct NotesService::Impl {
     [[nodiscard]] bool folder_store_lifetime(const std::shared_ptr<FolderStoreControl>& control);
     void run_folder_store_upload(std::shared_ptr<FolderStoreControl> control);
     void run_folder_store_cleanup(std::shared_ptr<FolderStoreControl> control);
+    using CloudStoreWork = std::function<nlohmann::json(
+        FolderStoreClient&, FolderStoreService, const std::string& key, const std::atomic_bool& cancel)>;
+    // Resolves the key under lifecycle_mutex, then runs the work as a background job.
+    std::shared_ptr<OperationReply> launch_cloud_store(
+        std::string_view api_key_id, std::uint64_t epoch, bool deleting, CloudStoreWork work);
     bool launch_folder_store_control(
         const std::shared_ptr<FolderStoreControl>& control, std::function<void()> work);
 

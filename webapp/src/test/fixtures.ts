@@ -344,6 +344,11 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
       id, display_name: 'API key', has_value: true, cloud_store: 'none', used_by: [],
     }),
     deleteApiKey: async () => undefined,
+    listCloudStores: async () => ({ items: [] }),
+    getCloudStore: async (_apiKeyId, storeId) => ({
+      id: storeId, name: 'Store', description: '', created_at: '2026-11-03T09:15:00Z',
+    }),
+    deleteCloudStore: async () => undefined,
     getR2Storage: async () => null,
     saveR2Storage: async ({ display_name, url, access_key_id }) => ({
       id: 'api_key_1', display_name, url, access_key_id, has_secret_key: true,

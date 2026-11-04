@@ -37,6 +37,7 @@ public:
     void set_ready_callback(std::function<void()> callback);
     [[nodiscard]] std::optional<Result> peek() const;
     void abandon() const;
+    [[nodiscard]] bool abandoned() const;
 
 private:
     mutable std::mutex mutex_;

@@ -74,6 +74,8 @@ export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
 export type CreateApiKeyRequest = components['schemas']['CreateApiKeyRequest'];
 export type ReplaceApiKeyValueRequest = components['schemas']['ReplaceApiKeyValueRequest'];
 export type CloudStore = components['schemas']['CloudStore'];
+export type CloudStoreList = components['schemas']['CloudStoreList'];
+export type CloudStoreDetail = components['schemas']['CloudStoreDetail'];
 export type R2StorageDetail = components['schemas']['R2StorageDetail'];
 export type SaveR2StorageRequest = components['schemas']['SaveR2StorageRequest'];
 export type VaultUploadCheck = {
@@ -175,7 +177,7 @@ export interface NotesClient {
   readNotePicture: (url: string) => Promise<Uint8Array>;
   listNoteItems: () => Promise<NoteItem[]>;
   storeChoices: (epoch: number) => Promise<FolderStoreChoices>;
-  storeUpload: (folderId: number, service: FolderStoreService, apiKeyId: string, name: string, description: string, epoch: number) => Promise<FolderStoreStart>;
+  storeUpload: (folderId: number, service: FolderStoreService, apiKeyId: string, description: string, epoch: number) => Promise<FolderStoreStart>;
   storeCleanup: (operationId: number, epoch: number) => Promise<FolderStoreStart>;
   storeOperation: (folderId: number, epoch: number) => Promise<FolderStoreOperation>;
   storeCancel: (operationId: number, epoch: number) => Promise<void>;
@@ -313,6 +315,10 @@ export interface ChaClient {
   renameApiKey(apiKeyId: string, displayName: string): Promise<ApiKeyDetail>;
   replaceApiKeyValue(apiKeyId: string, request: ReplaceApiKeyValueRequest): Promise<ApiKeyDetail>;
   deleteApiKey(apiKeyId: string): Promise<void>;
+  listCloudStores(apiKeyId: string): Promise<CloudStoreList>;
+  getCloudStore(apiKeyId: string, storeId: string): Promise<CloudStoreDetail>;
+  // Aborting sends cloudStore.cancel; the native worker starts no further provider call.
+  deleteCloudStore(apiKeyId: string, storeId: string, signal?: AbortSignal): Promise<void>;
   getR2Storage(): Promise<R2StorageDetail | null>;
   saveR2Storage(request: SaveR2StorageRequest): Promise<R2StorageDetail>;
   deleteR2Storage(): Promise<void>;
@@ -575,6 +581,16 @@ export function isApiKeyDetail(value: unknown): value is ApiKeyDetail {
     && isOneOf(value.cloud_store, ['none', 'openai', 'google'])
     && Array.isArray(value.used_by)
     && value.used_by.every((name) => typeof name === 'string');
+}
+
+export function isCloudStoreList(value: unknown): value is CloudStoreList {
+  return isRecord(value) && Array.isArray(value.items) && value.items.every((item) => (
+    isRecord(item) && typeof item.id === 'string' && typeof item.name === 'string'));
+}
+
+export function isCloudStoreDetail(value: unknown): value is CloudStoreDetail {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string'
+    && typeof value.description === 'string' && typeof value.created_at === 'string';
 }
 
 function isVoiceInputProvider(value: unknown): value is 'openai' | 'xai' {

@@ -957,6 +957,39 @@ components:
       type: string
       enum: [none, openai, google]
 
+    CloudStoreItem:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+
+    CloudStoreList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/CloudStoreItem"}
+
+    CloudStoreDetail:
+      type: object
+      additionalProperties: false
+      required: [id, name, description, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        created_at:
+          type: string
+
     R2StorageDetail:
       type: object
       additionalProperties: false
