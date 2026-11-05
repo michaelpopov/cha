@@ -3766,9 +3766,10 @@ TEST(ProviderClientTools, ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetR
                 EXPECT_EQ(body["include"], Json::array({"reasoning.encrypted_content", "file_search_call.results"}));
                 EXPECT_EQ(body["tools"].back(), (Json{{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}));
                 if (++requests == 1) {
-                    EXPECT_EQ(body["tool_choice"], "required");
+                    EXPECT_EQ(body["tool_choice"], (Json{{"type", "web_search"}}));
                     auto calls = Json::array({{{"type", "file_search_call"}, {"id", "hosted"}, {"status", "completed"}, {"queries", {"fact"}},
                         {"results", Json::array({{{"file_id", "file_1"}, {"filename", "note.md"}, {"score", 0.9}, {"text", "retrieved fact"}}})}}});
+                    calls.push_back({{"type", "web_search_call"}, {"id", "hosted_web"}, {"status", "completed"}});
                     for (int i = 0; i < 4; ++i) calls.push_back(search_call(ProviderApi::responses, "call" + std::to_string(i)));
                     first_output = calls;
                     return tool_reply(ProviderApi::responses, stream, calls);
@@ -3776,6 +3777,7 @@ TEST(ProviderClientTools, ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetR
                 EXPECT_EQ(body["tools"], (Json::array({{{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}})));
                 EXPECT_EQ(body["tool_choice"], "auto");
                 EXPECT_EQ(body["input"][2], first_output[0]);
+                EXPECT_EQ(body["input"][3], first_output[1]);
                 EXPECT_EQ(body["input"][2]["results"][0]["text"], "retrieved fact");
                 EXPECT_EQ(body["input"][1]["encrypted_content"], "opaque reasoning");
                 EXPECT_NE(body["instructions"].dump().find("Forum Library search is available"), std::string::npos);
@@ -4095,10 +4097,13 @@ TEST(ProviderClientSummary, CallbackCancellationPreventsModelContinuation) {
 }
 
 TEST(ProviderClientSummary, RequiredHostedSearchExcludesSummariesForTheWholeGeneration) {
-    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+    for (const auto& [api, host] : {
+            std::pair{ProviderApi::chat_completions, "openrouter.ai"},
+            std::pair{ProviderApi::responses, "openrouter.ai"},
+            std::pair{ProviderApi::responses, "api.openai.com"}}) {
         auto definition = network_definition(443, false);
         definition.provider.config.api = api;
-        definition.provider.config.host = "openrouter.ai";
+        definition.provider.config.host = host;
         definition.provider.config.web_search = WebSearchMode::required;
         std::vector<Json> requests;
         ProviderClient client(shared_definition(definition), nullptr, [&](const ProviderHttpRequest& request, const auto&) {
@@ -4121,7 +4126,8 @@ TEST(ProviderClientSummary, RequiredHostedSearchExcludesSummariesForTheWholeGene
         EXPECT_EQ(client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false}).outcome, GenerationOutcome::completed);
         ASSERT_EQ(requests.size(), 3u);
         EXPECT_NE(requests[1].dump().find("Summary tools are unavailable"), std::string::npos);
-        EXPECT_EQ(requests.front()["tool_choice"], "required");
+        EXPECT_EQ(requests.front()["tool_choice"], (std::string_view(host) == "api.openai.com"
+            ? Json{{"type", "web_search"}} : Json("required")));
         EXPECT_EQ(requests.back()["tool_choice"], "auto");
     }
 }

@@ -201,7 +201,8 @@ std::string build_responses_request_body(
                 break;
             case WebSearchMode::required:
                 body["tools"] = Json::array({Json{{"type", web_search_type}}});
-                body["tool_choice"] = "required";
+                body["tool_choice"] = is_direct_openai_host(config.host)
+                    ? Json{{"type", "web_search"}} : Json("required");
                 break;
             default:
                 throw std::logic_error("Unknown web search mode");

@@ -1600,6 +1600,35 @@ TEST_F(BridgeRouterTest, ContextNotificationNamesOnlyTheOriginatingRequest) {
     ack_delivery(*router_, observer, *observer_batch);
 }
 
+TEST_F(BridgeRouterTest, SecondaryProcessCannotChangeForumLibrary) {
+    bootstrap_epoch();
+    const auto key = application_->create_api_key(
+        {.display_name = "Library", .value = "test-secret", .cloud_store = "openai"}, epoch_);
+    const ForumLibrary library{key.id, {"vs_original"}, std::nullopt};
+    (void)application_->update_forum_library("lobby", library, epoch_);
+    auto secondary = app::Application::open(make_command(workspace_, database_));
+    BridgeRouter router(*secondary);
+    const auto connection = router.open_connection();
+    for (const auto& replacement : {nlohmann::json(nullptr), nlohmann::json{
+            {"api_key_id", key.id}, {"store_ids", {"vs_replacement"}}, {"provider_id", nullptr}}}) {
+        const auto id = next_id_++;
+        router.handle_request(connection, request_json(connection, id, secondary->context_epoch(),
+            "forum.library.update", {{"forum_id", "lobby"}, {"library", replacement}}).dump());
+        const auto batch = wait_delivery(router, connection);
+        ASSERT_TRUE(batch);
+        const auto reply = reply_with_id(*batch, id);
+        ASSERT_FALSE(reply.empty());
+        EXPECT_EQ(reply["ok"], false);
+        EXPECT_EQ(reply["error"]["message"], "Settings can be changed only in the main CHA process.");
+        ack_delivery(router, connection, *batch);
+        const auto saved = application_->get_forum("lobby", epoch_).library;
+        ASSERT_TRUE(saved);
+        EXPECT_EQ(saved->api_key_id, library.api_key_id);
+        EXPECT_EQ(saved->store_ids, library.store_ids);
+    }
+    router.shutdown();
+}
+
 TEST_F(BridgeRouterTest, ForumDeletionPreservesItsReplyAcrossMaintenanceAndReportsOtherUsers) {
     bootstrap_epoch();
     for (const bool blocked : {true, false}) {

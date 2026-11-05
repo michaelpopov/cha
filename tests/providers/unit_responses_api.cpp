@@ -593,6 +593,24 @@ TEST(ResponsesApi, LibrarySearchCoexistsWithHostedWebAndFunctionsAndYieldsToMain
     }
 }
 
+TEST(ResponsesApi, RequiredOpenAiWebSearchCannotBeSatisfiedByLibrarySearch) {
+    for (const bool stream : {false, true}) {
+        Transcript transcript;
+        auto input = make_request(transcript, "Question");
+        input.library_store_ids = {"vs_one", "vs_two"};
+        input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
+        auto config = responses_config(WebSearchMode::required);
+        config.host = "api.openai.com";
+        config.stream = stream;
+        const auto body = Json::parse(build_responses_request_body(input, config, "System"));
+        EXPECT_EQ(body["tool_choice"], (Json{{"type", "web_search"}}));
+        EXPECT_EQ(body["tools"], (Json::array({{{"type", "web_search"}},
+            {{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}})));
+        EXPECT_EQ(body["include"], Json::array({"file_search_call.results"}));
+        EXPECT_NE(body["instructions"].get<std::string>().find("Summary search and reading are unavailable"), std::string::npos);
+    }
+}
+
 TEST(ResponsesApi, HostedSearchOutputIsRetainedWithoutBecomingALocalCall) {
     const auto output = Json::array({
         {{"type", "file_search_call"}, {"id", "fs_1"}, {"status", "completed"}, {"queries", {"fact"}},

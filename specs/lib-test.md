@@ -115,7 +115,7 @@ fakes, barriers, or transport seams.
 | Exact live-edit races; one starting Forum revision for all children (T01, T02) | `ForumLibraryTest.AllChildrenAndPreparedRepliesRetainTheirStartingRevision` in `tests/session/unit_session_open.cpp` |
 | Locally invalid Library through an editor bypass (T06) | `ForumLibraryTest.InvalidStoresKeepValidDefaultAndUseSharedValidationMessage`; `Workspace.MalformedLibraryIsIgnoredAndPreservedOnUnrelatedEdits` |
 | Stale-default and invalid-access log levels (T07) | `ForumLibraryTest.StaleDefaultIsSilentInSnapshotsAndWarnsOncePerGenerationTarget` |
-| Explicit store rejection, HTTP error statuses, truncated streams, interruptions, and retries (T08 rejection branch, T09) | `ProviderClient` tests in `tests/providers/unit_provider_client.cpp`, including `UnknownGoogleMixedModelFailureDoesNotRetryOrDropStoresOrFunctions`. Confirm that a retried request keeps its store IDs; add a test if none does. |
+| Explicit store rejection, HTTP error statuses, truncated streams, interruptions, and retries (T08 rejection branch, T09) | `ProviderClient` tests in `tests/providers/unit_provider_client.cpp`, including `UnknownGoogleMixedModelFailureDoesNotRetryOrDropStoresOrFunctions`. No production path retries a Library request automatically: chat generation does not retry, and Notes retries carry no Library. A manual retry builds a new request from the current Library. |
 | Cancellation at exact stages (T10) | `ProviderClient`, `ProviderClientTools`, and `SessionController` cancellation tests |
 | Tool and call limits with native search (T11) | `ProviderClientTools.ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetRound`; `GoogleApi.Gemini25AliasesUseFileSearchWithoutFunctions`; `GoogleApi.LibrarySearchCapabilitiesAndDeclarationOrderAreIndependent` |
 | Close, vault switch, and shutdown during a request (T12) | `SessionController` shutdown and cancellation tests in `tests/session/unit_session_controller.cpp` |
@@ -341,13 +341,19 @@ Use the production debug logging path at debug level. It keeps each round's
 full request body (`HTTP model request body`) and raw response
 (`HTTP model raw response`). Parse the log entry prefix, not substrings inside
 a logged prompt. Payload lines carry no request ID; join them by the thread ID
-in the prefix. Each provider request runs on its own thread, and its
-`Provider request started` line on that thread gives the Forum, session,
-character, request ID, model, API, and stream mode. Do not add new logging for
-this campaign. Verify each round has one complete request and its complete
+in the prefix. Each provider request runs on its own thread. On that thread,
+`Model round started` gives the provider ID and round, and
+`HTTP request started` gives the endpoint. A chat generation request also has
+a `Provider request started` line that gives the Forum, session, character,
+request ID, model, API, and stream mode. Requests that Notes operations make
+directly (session summary, note compression, and page formatting) have no such
+line. Identify each of them by the bridge call that started it and its reply,
+the provider ID, and the model in the logged request body. Run these cases one
+at a time, so that only one Notes request is in flight. Do not add new logging
+for this campaign. Verify each round has one complete request and its complete
 response or explicit cancellation/error. Do not pair concurrent requests by
-"last request seen". Unresolved pairing, a missing `Provider request started`
-line, or a truncated payload is EVIDENCE_MISSING.
+"last request seen". Unresolved pairing, a chat generation request without its
+`Provider request started` line, or a truncated payload is EVIDENCE_MISSING.
 
 The log rotates at 10 MB with three files. Copy the log files after every
 case, and run All-characters cases one at a time.
