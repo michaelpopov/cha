@@ -2325,6 +2325,14 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_members_and_persona(
     });
 }
 
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_library(
+    std::string_view forum_id, const std::optional<ForumLibrary>& library) {
+    return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_forum_library(forum_id, library);
+        return std::vector<std::string>{std::string(forum_id)};
+    });
+}
+
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_default_character(
     std::string_view forum_id,
     std::string_view character_id) {

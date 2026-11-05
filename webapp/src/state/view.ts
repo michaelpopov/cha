@@ -40,6 +40,7 @@ export type MainView =
   | 'forum-file'
   | 'new-forum-file'
   | 'forum-members'
+  | 'forum-library'
   | 'settings'
   | 'settings-vaults'
   | 'settings-new-vault'
@@ -258,6 +259,7 @@ export type AppAction =
   | { type: 'inspect-forum-file'; forumId: string; filename: string }
   | { type: 'show-new-forum-file' }
   | { type: 'show-forum-members' }
+  | { type: 'show-forum-library' }
   | { type: 'forum-detail-loaded'; forumId: string; writable: boolean }
   | { type: 'forum-updated'; forum: ForumDetail }
   | { type: 'forum-deleted'; forumId: string }
@@ -352,6 +354,7 @@ export type NavigationAction = Extract<AppAction, {
     | 'inspect-forum-file'
     | 'show-new-forum-file'
     | 'show-forum-members'
+    | 'show-forum-library'
     | 'forum-deleted'
     | 'show-settings'
     | 'show-settings-vaults'
@@ -784,6 +787,8 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return state.currentForumId && state.inspectedForum.writable
         ? { ...state, mainView: 'new-forum-file', ...idleSessionOperation() }
         : state;
+    case 'show-forum-library':
+      return { ...state, mainView: 'forum-library', ...idleSessionOperation() };
     case 'show-forum-members':
       return { ...state, mainView: 'forum-members', ...idleSessionOperation() };
     case 'forum-detail-loaded':
@@ -1242,6 +1247,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'forum-file': return state.inspectedForum.file ?? 'File';
     case 'new-forum-file': return 'New file';
     case 'forum-members': return 'Members';
+    case 'forum-library': return 'Library';
     case 'settings': return 'Settings';
     case 'settings-vaults': return 'Vaults';
     case 'settings-new-vault': return 'New vault';

@@ -29,6 +29,7 @@ CharacterSettingsUpdate parse_character_settings_update(const nlohmann::json& js
 CharacterDefinitionUpdate parse_character_definition_update(const nlohmann::json& json);
 PersonaUpdate parse_persona_update(const nlohmann::json& json);
 ForumUpdate parse_forum_update(const nlohmann::json& json);
+std::optional<ForumLibrary> parse_forum_library_update(const nlohmann::json& json);
 ForumMembersUpdate parse_forum_members_update(const nlohmann::json& json);
 void parse_empty_object(const nlohmann::json& json);
 CreateProviderRequest parse_create_provider_request(const nlohmann::json& json);

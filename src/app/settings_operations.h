@@ -47,7 +47,7 @@ namespace cha::app::settings {
     const OpenAiOAuthSnapshot& snapshot);
 
 [[nodiscard]] std::vector<ProviderSummary> list_providers(
-    const Workspace& workspace);
+    const Workspace& workspace, std::optional<std::string> api_key_id = std::nullopt);
 [[nodiscard]] ProviderDetail get_provider(
     const Workspace& workspace,
     std::string_view id,

@@ -5,8 +5,11 @@ import {
   useState,
   type FormEvent,
 } from 'react';
-import { publicErrorMessage, type ForumDetail, type ForumSummary } from '../api/client';
-import { StaleNotice, useDetailRefresh } from '../detailRefresh';
+import { publicErrorMessage, type ChaClient, type ForumLibrary, type ForumDetail, type ForumSummary } from '../api/client';
+import { useLoad } from '../useLoad';
+import { cloudStoreLabels } from './CloudStoreSettings';
+import { LoadFailure } from './SettingsShared';
+import { StaleNotice, useDetailRefresh, useFormReload } from '../detailRefresh';
 import { DetailActions, EditableTitle } from './DetailActions';
 import { ChevronLeftIcon, ChevronRightIcon, MoreIcon, PlusIcon } from './Icons';
 import { SystemPromptDialog } from './SystemPromptDialog';
@@ -325,14 +328,19 @@ export function ForumMembersScreen({
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Forum members navigation">
-      <button
-        className="cha-back-row"
-        onClick={() => navigate({ type: 'show-forum-detail' })}
-        type="button"
-      >
-        <ChevronLeftIcon />
-        <span>{forum?.display_name ?? 'Forum'}</span>
-      </button>
+      <div className="cha-detail-toolbar">
+        <button
+          className="cha-back-row"
+          onClick={() => navigate({ type: 'show-forum-detail' })}
+          type="button"
+        >
+          <ChevronLeftIcon />
+          <span>{forum?.display_name ?? 'Forum'}</span>
+        </button>
+        <button className="cha-detail-link" onClick={() => navigate({ type: 'show-forum-library' })} type="button">
+          <span>Library</span><ChevronRightIcon />
+        </button>
+      </div>
       {!forum && <p className="cha-state-message">No forum is selected.</p>}
       {forum && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
@@ -407,4 +415,144 @@ export function ForumMembersScreen({
       )}
     </section>
   );
+}
+
+const loadLibraryKeys = (client: ChaClient) => client.listApiKeys();
+const librarySignature = (library: ForumLibrary | null) => JSON.stringify(library && {
+  ...library, store_ids: [...library.store_ids].sort(),
+});
+
+export function ForumLibraryScreen(props: RosterDetailProps) {
+  const { client, state, navigate } = props;
+  const load = useCallback((id: string) => client.getForum(id), [client]);
+  return <RosterDetailScreen
+    {...props}
+    key={state.currentForumId}
+    subjectId={state.currentForumId}
+    ariaLabel="Forum library navigation"
+    backLabel="Members"
+    onBack={() => navigate({ type: 'show-forum-members' })}
+    copy={{ absent: 'No forum is selected.', loading: 'Loading library…', failed: 'Library could not be loaded.' }}
+    load={load}
+    render={(detail, update) => <ForumLibraryForm {...props} detail={detail} onSaved={update} />}
+  />;
+}
+
+function ForumLibraryForm({ client, dispatch, detail, onSaved }: RosterDetailProps & {
+  detail: ForumDetail; onSaved(detail: ForumDetail): void;
+}) {
+  const [draft, setDraft] = useState<ForumLibrary | null>(detail.library);
+  const [baseline, setBaseline] = useState(detail.library);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reload = useFormReload(detail.id);
+  const refresh = useDetailRefresh();
+  const dirty = librarySignature(draft) !== librarySignature(baseline);
+  reload.markDirty(dirty);
+  function apply(value: ForumDetail) {
+    setDraft(value.library);
+    setBaseline(value.library);
+    setError(null);
+  }
+  useEffect(() => { reload.loaded(detail, apply); }, [detail]);
+  const keys = useLoad(client, loadLibraryKeys, 'API keys could not be loaded.');
+  const eligible = keys.data?.filter((key) => key.has_value && ['openai', 'google'].includes(key.cloud_store)) ?? [];
+  const keyId = draft?.api_key_id ?? '';
+  const key = eligible.find(({ id }) => id === keyId);
+  // An unavailable saved key has no stores or providers to list.
+  const listedKeyId = key?.id ?? '';
+  const loadStores = useCallback(async (loader: ChaClient) => ({
+    keyId: listedKeyId, items: listedKeyId ? (await loader.listCloudStores(listedKeyId)).items : [],
+  }), [listedKeyId]);
+  const loadProviders = useCallback(async (loader: ChaClient) => ({
+    keyId: listedKeyId, items: listedKeyId ? await loader.listProviders(listedKeyId) : [],
+  }), [listedKeyId]);
+  const storesLoad = useLoad(client, loadStores, 'Cloud stores could not be loaded.');
+  const providersLoad = useLoad(client, loadProviders, 'Providers could not be loaded.');
+  const stores = storesLoad.data?.keyId === keyId ? storesLoad.data.items : null;
+  const providers = providersLoad.data?.keyId === keyId ? providersLoad.data.items : null;
+  const labels = stores ? cloudStoreLabels(stores) : [];
+  const missingStores = stores ? draft?.store_ids.filter((id) => !stores.some((store) => store.id === id)) ?? [] : [];
+  const unavailableProvider = draft?.provider_id && providers && !providers.some(({ id }) => id === draft.provider_id);
+  const valid = draft === null || (!!key && !!stores && !storesLoad.error
+    && draft.store_ids.length > 0 && missingStores.length === 0
+    && new Set(draft.store_ids).size === draft.store_ids.length
+    && (key.cloud_store !== 'openai' || draft.store_ids.length <= 2)
+    && (draft.provider_id === null || (!!providers && !providersLoad.error && !unavailableProvider)));
+  const blocked = saving || !detail.writable || reload.blocked || refresh.refreshing || refresh.failed;
+  const canSave = dirty && valid && !blocked;
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!canSave) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await client.updateForumLibrary(detail.id, draft);
+      reload.remember(saved);
+      apply(saved);
+      onSaved(saved);
+      dispatch({ type: 'forum-updated', forum: saved });
+    } catch (failure) {
+      setError(publicErrorMessage(failure, 'Library could not be saved.'));
+    } finally { setSaving(false); }
+  }
+  function toggle(id: string) {
+    setDraft((current) => current && ({ ...current, store_ids: current.store_ids.includes(id)
+      ? current.store_ids.filter((value) => value !== id) : [...current.store_ids, id] }));
+    setError(null);
+  }
+  return <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+    <label>API key
+      <select className="cha-form-control" disabled={saving || !detail.writable} value={keyId}
+        onChange={(event) => {
+          setDraft(event.target.value ? { api_key_id: event.target.value, store_ids: [], provider_id: null } : null);
+          setError(null);
+        }}>
+        <option value="">None</option>
+        {keyId && !key && <option value={keyId}>{keys.data ? `${keyId} — Unavailable` : keyId}</option>}
+        {eligible.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}
+      </select>
+    </label>
+    {keys.error && <LoadFailure message={keys.error} retry={keys.retry} />}
+    {keys.data && eligible.length === 0 && <p className="cha-state-message">No cloud store keys</p>}
+    {draft && <>
+      {keys.data && !key && <p className="cha-error-message" role="alert">Select an available API key or None to clear the Library.</p>}
+      {key && !stores && !storesLoad.error && <p className="cha-state-message" role="status">Loading cloud stores…</p>}
+      {key && storesLoad.error && <LoadFailure message={storesLoad.error} retry={storesLoad.retry} />}
+      {stores && <>
+        <div role="group" aria-label="Cloud stores">
+          <label>Cloud stores</label>
+          {stores.length === 0 && <p className="cha-state-message">No cloud stores</p>}
+          <div className="cha-member-list">
+            {[...stores.map((store, index) => ({ id: store.id, label: labels[index] })),
+              ...missingStores.map((id) => ({ id, label: `${id} — Unavailable` }))].map((store) => (
+              <div className="cha-member-row" key={store.id}><label>
+                <input type="checkbox" checked={draft.store_ids.includes(store.id)}
+                  disabled={saving || !detail.writable || (key?.cloud_store === 'openai' && draft.store_ids.length >= 2 && !draft.store_ids.includes(store.id))}
+                  onChange={() => toggle(store.id)} />
+                <span>{store.label}</span>
+              </label></div>
+            ))}
+          </div>
+        </div>
+        <label>Default provider
+          <select className="cha-form-control" disabled={saving || !detail.writable} value={draft.provider_id ?? ''}
+            onChange={(event) => { setDraft({ ...draft, provider_id: event.target.value || null }); setError(null); }}>
+            <option value="">None</option>
+            {draft.provider_id && !providers?.some(({ id }) => id === draft.provider_id)
+              && <option value={draft.provider_id}>{providers ? `${draft.provider_id} — Unavailable` : draft.provider_id}</option>}
+            {providers?.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}
+          </select>
+        </label>
+        {unavailableProvider && <p className="cha-error-message" role="alert">Select an available provider or None.</p>}
+        {providers && providers.length === 0 && <p className="cha-state-message">No providers for this API key</p>}
+        {providersLoad.error && <LoadFailure message={providersLoad.error} retry={providersLoad.retry} />}
+      </>}
+    </>}
+    {error && <p className="cha-error-message" role="alert">{error}</p>}
+    {reload.stale && <StaleNotice onReload={() => reload.accept(apply)} />}
+    <div className="cha-settings-form-actions">
+      <button className="cha-button cha-button-primary" disabled={!canSave} type="submit">{saving ? 'Saving…' : 'Save'}</button>
+    </div>
+  </form>;
 }

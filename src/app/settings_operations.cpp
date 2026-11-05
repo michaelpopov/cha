@@ -1,4 +1,5 @@
 #include "app/settings_operations.h"
+
 #include "providers/voice_output.h"
 #include "providers/voice_output_config.h"
 
@@ -321,9 +322,12 @@ OpenAiAuth openai_auth_from(const OpenAiOAuthSnapshot& snapshot) {
 }
 
 std::vector<ProviderSummary> list_providers(
-    const Workspace& workspace) {
+    const Workspace& workspace, std::optional<std::string> api_key_id) {
+    const auto* key = api_key_id ? workspace.find_api_key(*api_key_id) : nullptr;
+    if (api_key_id && !key) fail(ErrorCode::invalid_argument, "That API key was not found.");
     std::vector<ProviderSummary> result;
     for (const WorkspaceProvider& provider : workspace.providers()) {
+        if (key && !workspace::provider_uses_key_stores(workspace, provider, *key)) continue;
         result.push_back(provider_summary(provider));
     }
     return result;

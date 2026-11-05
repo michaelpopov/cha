@@ -256,6 +256,24 @@ ForumUpdate parse_forum_update(const nlohmann::json& json) {
     return update;
 }
 
+std::optional<ForumLibrary> parse_forum_library_update(const nlohmann::json& json) {
+    exact_keys(json, {"library"});
+    const auto& value = json.at("library");
+    if (value.is_null()) return std::nullopt;
+    exact_keys(value, {"api_key_id", "store_ids", "provider_id"});
+    if (!value.at("api_key_id").is_string() || !value.at("store_ids").is_array()
+        || !(value.at("provider_id").is_null() || value.at("provider_id").is_string()))
+        throw std::invalid_argument("Invalid web command");
+    ForumLibrary result;
+    result.api_key_id = value.at("api_key_id").get<std::string>();
+    for (const auto& id : value.at("store_ids")) {
+        if (!id.is_string()) throw std::invalid_argument("Invalid web command");
+        result.store_ids.push_back(id.get<std::string>());
+    }
+    if (!value.at("provider_id").is_null()) result.provider_id = value.at("provider_id").get<std::string>();
+    return result;
+}
+
 ForumMembersUpdate parse_forum_members_update(const nlohmann::json& json) {
     exact_keys(json, {"character_ids", "persona_id"});
     const nlohmann::json& ids = json.at("character_ids");

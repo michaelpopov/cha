@@ -22,6 +22,7 @@ export type PersonaDetail = components['schemas']['PersonaDetail'];
 export type CreatePersonaRequest = components['schemas']['CreatePersonaRequest'];
 export type UpdatePersonaRequest = components['schemas']['UpdatePersonaRequest'];
 export type ForumSystemPrompt = components['schemas']['ForumSystemPrompt'];
+export type ForumLibrary = components['schemas']['ForumLibrary'];
 export type ForumDetail = components['schemas']['ForumDetail'];
 export type ForumSummary = components['schemas']['ForumSummary'];
 export type CreateForumRequest = components['schemas']['CreateForumRequest'];
@@ -229,6 +230,7 @@ export interface ChaClient {
   createForum(request: CreateForumRequest): Promise<ForumDetail>;
   updateForum(forumId: string, update: UpdateForumRequest): Promise<ForumDetail>;
   deleteForum(forumId: string): Promise<void>;
+  updateForumLibrary(forumId: string, library: ForumLibrary | null): Promise<ForumDetail>;
   updateForumMembers(
     forumId: string,
     update: UpdateForumMembersRequest,
@@ -276,7 +278,7 @@ export interface ChaClient {
   downloadR2Vault(name: string): Promise<VaultDetail>;
   updateVault(vaultName: string, update: VaultUpdate): Promise<VaultDetail>;
   deleteVault(vaultName: string): Promise<void>;
-  listProviders(): Promise<ProviderSummary[]>;
+  listProviders(apiKeyId?: string): Promise<ProviderSummary[]>;
   createProvider(request: CreateProviderRequest): Promise<ProviderDetail>;
   getProvider(providerId: string): Promise<ProviderDetail>;
   testProvider(providerId: string, candidate: ProviderUpdate): Promise<void>;
@@ -492,9 +494,16 @@ function isForumSummary(value: unknown): boolean {
     && value.members.every(isRosterSummary);
 }
 
+export function isForumLibrary(value: unknown): value is ForumLibrary {
+  return isRecord(value) && typeof value.api_key_id === 'string'
+    && Array.isArray(value.store_ids) && value.store_ids.every((id) => typeof id === 'string')
+    && (value.provider_id === null || typeof value.provider_id === 'string');
+}
+
 export function isForumDetail(value: unknown): value is ForumDetail {
   return isForumSummary(value)
     && isRecord(value)
+    && (value.library === null || isForumLibrary(value.library))
     && typeof value.forum_markdown === 'string'
     && Array.isArray(value.markdown_files)
     && value.markdown_files.every((filename) => typeof filename === 'string')

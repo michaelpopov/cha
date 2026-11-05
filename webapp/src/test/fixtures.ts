@@ -140,6 +140,7 @@ export const personaDetailFixture: PersonaDetail = {
 // name the topbar already shows, so a test asserting the rendered FORUM.md
 // cannot pass on the title alone.
 export const forumDetailFixture: ForumDetail = {
+  library: null,
   markdown_files: ['FORUM.md'],
   id: 'lobby',
   display_name: 'The Lobby',
@@ -259,6 +260,7 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
       ...update,
     }),
     deleteForum: async () => undefined,
+    updateForumLibrary: async (_forumId, library) => ({ ...forumDetailFixture, library }),
     updateForumMembers: async (_forumId, update) => ({
       ...forumDetailFixture,
       default_persona_id: update.persona_id,

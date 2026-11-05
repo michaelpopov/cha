@@ -16,6 +16,9 @@
 
 namespace cha {
 
+bool safe_component(std::string_view value);
+bool google_store_valid(std::string_view value);
+
 struct FolderStoreEligibility {
     std::optional<FolderStoreService> service;
     std::string api_key_id;

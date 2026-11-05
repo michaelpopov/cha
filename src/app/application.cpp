@@ -1097,6 +1097,13 @@ void Application::delete_forum(
     impl_->vault_maintenance.delete_forum(forum_id, epoch);
 }
 
+ForumDetail Application::update_forum_library(
+    std::string_view forum_id, std::optional<ForumLibrary> library, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::update_forum_library(*impl_->store, forum_id, library);
+}
+
 ForumDetail Application::update_forum_members(
     std::string_view forum_id,
     ForumMembersUpdate update,
@@ -1151,10 +1158,10 @@ void Application::delete_forum_file(
 }
 
 std::vector<ProviderSummary> Application::list_providers(
-    std::uint64_t epoch) {
+    std::uint64_t epoch, std::optional<std::string> api_key_id) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::list_providers(*impl_->store->snapshot());
+    return settings::list_providers(*impl_->store->snapshot(), api_key_id);
 }
 
 ProviderDetail Application::get_provider(

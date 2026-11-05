@@ -1278,6 +1278,23 @@ void WorkspaceConfigEditor::write_forum_members(
     });
 }
 
+void WorkspaceConfigEditor::write_forum_library(
+    std::string_view forum_id, const std::optional<ForumLibrary>& library) {
+    const auto config = workspace_.forum_config_paths_.find(std::string(forum_id));
+    if (config == workspace_.forum_config_paths_.end()) throw std::invalid_argument("Invalid forum");
+    rewrite_toml(config->second, [&](toml::table& table) {
+        table.erase("library");
+        if (!library) return;
+        toml::array stores;
+        auto ids = library->store_ids;
+        std::ranges::sort(ids);
+        for (const auto& id : ids) stores.push_back(id);
+        toml::table value{{"api_key", library->api_key_id}, {"stores", std::move(stores)}};
+        if (library->provider_id) value.insert("provider", *library->provider_id);
+        table.insert("library", std::move(value));
+    });
+}
+
 void WorkspaceConfigEditor::write_forum_default_persona(
     std::string_view forum_id,
     std::string_view persona_id) {

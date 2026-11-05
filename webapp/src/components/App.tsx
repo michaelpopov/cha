@@ -77,6 +77,7 @@ import {
 import {
   ForumDetailScreen,
   ForumMembersScreen,
+  ForumLibraryScreen,
   ForumsScreen,
   NewForumScreen,
 } from './ForumScreens';
@@ -374,6 +375,9 @@ function ScreenContent({
         navigate={navigate}
         state={state}
       />
+    );
+    case 'forum-library': return (
+      <ForumLibraryScreen key={`${state.bootstrap?.vault_name}:${state.currentForumId}`} client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'forum-members': return (
       <ForumMembersScreen

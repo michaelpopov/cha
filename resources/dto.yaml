@@ -1274,11 +1274,41 @@ components:
         system_prompt:
           type: string
 
+    ForumLibrary:
+      type: object
+      additionalProperties: false
+      required: [api_key_id, store_ids, provider_id]
+      properties:
+        api_key_id:
+          type: string
+        store_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+        provider_id:
+          type: [string, "null"]
+
+    UpdateForumLibraryRequest:
+      type: object
+      additionalProperties: false
+      required: [library]
+      properties:
+        library:
+          oneOf:
+            - $ref: "#/components/schemas/ForumLibrary"
+            - type: "null"
+
     ForumDetail:
       type: object
       additionalProperties: false
-      required: [id, display_name, default_character_id, default_persona_id, default_persona_display_name, members, forum_markdown, markdown_files, writable]
+      required: [id, display_name, default_character_id, default_persona_id, default_persona_display_name, members, forum_markdown, markdown_files, writable, library]
       properties:
+        library:
+          oneOf:
+            - $ref: "#/components/schemas/ForumLibrary"
+            - type: "null"
         id:
           $ref: "#/components/schemas/Identifier"
         display_name:

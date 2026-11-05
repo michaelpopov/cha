@@ -249,6 +249,8 @@ public:
     void delete_forum(
         std::string_view forum_id,
         std::uint64_t epoch);
+    [[nodiscard]] ForumDetail update_forum_library(
+        std::string_view forum_id, std::optional<ForumLibrary> library, std::uint64_t epoch);
     [[nodiscard]] ForumDetail update_forum_members(
         std::string_view forum_id,
         ForumMembersUpdate update,
@@ -273,7 +275,7 @@ public:
         std::uint64_t epoch);
 
     [[nodiscard]] std::vector<ProviderSummary> list_providers(
-        std::uint64_t epoch);
+        std::uint64_t epoch, std::optional<std::string> api_key_id = std::nullopt);
     [[nodiscard]] ProviderDetail get_provider(
         std::string_view provider_id,
         std::uint64_t epoch);

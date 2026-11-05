@@ -294,6 +294,7 @@ public:
         std::string_view forum_id,
         std::span<const std::string> character_ids,
         std::string_view persona_id);
+    WorkspaceConfigEditResult apply_forum_library(std::string_view forum_id, const std::optional<ForumLibrary>& library);
     WorkspaceConfigEditResult apply_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id);

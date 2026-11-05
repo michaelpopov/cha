@@ -2537,5 +2537,49 @@ TEST(Workspace, ObsoleteFileReferencesLoadWithWarnings) {
     }
 }
 
+
+TEST(Workspace, LibraryRoundTripsAndSurvivesUnrelatedEdits) {
+    test::TestWorkspace fixture;
+    auto workspace = Workspace::load(fixture.root());
+    ASSERT_FALSE(workspace.find_forum("lobby")->library);
+    for (const auto& ids : {std::vector<std::string>{"vs_z", "vs_a"},
+            std::vector<std::string>{"fileSearchStores/z", "fileSearchStores/a"}}) {
+        for (const auto& provider : {std::optional<std::string>{}, std::optional<std::string>{"missing-provider"}}) {
+            edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+                editor.write_forum_library("lobby", ForumLibrary{"missing-key", ids, provider});
+            });
+            workspace = Workspace::load(fixture.root());
+            const auto library = workspace.find_forum("lobby")->library;
+            ASSERT_TRUE(library);
+            auto sorted = ids;
+            std::ranges::sort(sorted);
+            EXPECT_EQ(library->store_ids, sorted);
+            EXPECT_EQ(library->provider_id, provider);
+            edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+                editor.write_forum("lobby", "Renamed", "# Same forum");
+                editor.write_forum_default_persona("lobby", "reader");
+            });
+            workspace = Workspace::load(fixture.root());
+            EXPECT_EQ(workspace.find_forum("lobby")->library->api_key_id, "missing-key");
+        }
+    }
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) { editor.write_forum_library("lobby", std::nullopt); });
+    EXPECT_FALSE(Workspace::load(fixture.root()).find_forum("lobby")->library);
+    EXPECT_EQ(file_bytes(fixture.root() / "forums/lobby/config.toml").find("[library]"), std::string::npos);
+}
+
+TEST(Workspace, MalformedLibraryIsIgnoredAndPreservedOnUnrelatedEdits) {
+    test::TestWorkspace fixture;
+    const auto path = fixture.root() / "forums/lobby/config.toml";
+    std::ofstream(path, std::ios::app) << "\n[library]\napi_key = 123\nstores = ['vs_a']\n";
+    LoadWarningCollector warnings;
+    const auto workspace = Workspace::load(fixture.root(), &warnings);
+    EXPECT_FALSE(workspace.find_forum("lobby")->library);
+    ASSERT_FALSE(warnings.empty());
+    EXPECT_NE(warnings.back().message.find("Ignoring malformed Forum library"), std::string::npos);
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) { editor.write_forum("lobby", "Renamed", ""); });
+    EXPECT_NE(file_bytes(path).find("api_key = 123"), std::string::npos);
+}
+
 } // namespace
 } // namespace cha

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "workspace/forum_library.h"
 #include "util/text_source.h"
 
 #include "characters/character.h"
@@ -168,6 +169,7 @@ struct WorkspaceForumMember {
 };
 
 struct WorkspaceForum {
+    std::optional<ForumLibrary> library;
     std::string id;
     std::string display_name;
     std::optional<std::string> description;

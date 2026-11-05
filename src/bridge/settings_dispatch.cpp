@@ -27,8 +27,13 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         result = {{"items", application.list_events(epoch)}};
         break;
     case Method::provider_list:
-        require_only_keys(params, {});
-        result = application.list_providers(epoch);
+        if (params.contains("api_key_id")) {
+            require_only_keys(params, {"api_key_id"});
+            result = application.list_providers(epoch, require_identifier(params, "api_key_id"));
+        } else {
+            require_only_keys(params, {});
+            result = application.list_providers(epoch);
+        }
         break;
     case Method::provider_get:
         require_only_keys(params, {"provider_id"});

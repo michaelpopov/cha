@@ -580,6 +580,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     deleteForum: async (forumId) => {
       await call('forum.delete', { forum_id: forumId }, isRecord);
     },
+    updateForumLibrary: (forumId, library) => call(
+      'forum.library.update', { forum_id: forumId, library }, isForumDetail,
+    ),
     updateForumMembers: (forumId, update) => call(
       'forum.members.update',
       { forum_id: forumId, ...update },
@@ -682,9 +685,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     deleteVault: async (vaultName) => {
       await call('vault.delete', { vault_name: vaultName }, isRecord);
     },
-    listProviders: () => call(
+    listProviders: (apiKeyId) => call(
       'provider.list',
-      {},
+      apiKeyId ? { api_key_id: apiKeyId } : {},
       (value): value is ProviderSummary[] => Array.isArray(value)
         && value.every(isProviderSummary),
     ),

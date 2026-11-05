@@ -1165,6 +1165,7 @@ std::string workspace_inventory(const Workspace& workspace) {
 }
 
 struct LoadedForumConfig {
+    std::optional<ForumLibrary> library;
     std::string display_name;
     std::optional<std::string> description;
     std::string default_character_id;
@@ -1179,7 +1180,7 @@ LoadedForumConfig load_forum_config(
     const toml::table table = read_toml(source, path, "forum config");
     static constexpr std::string_view fields[]{
         "display_name", "description", "default_character", "default_agent",
-        "default_persona"};
+        "default_persona", "library"};
     warn_unknown_fields(table, path, fields, "Forum config", warnings);
     if (table.contains("default_character") && table.contains("default_agent")) {
         throw std::runtime_error(
@@ -1195,6 +1196,31 @@ LoadedForumConfig load_forum_config(
             table, path, "default_persona", "a string")
                                   .value_or(std::string(workspace_guest_id)),
     };
+    if (table.contains("library")) {
+        try {
+            const auto* library = table["library"].as_table();
+            if (!library) throw std::runtime_error("Library must be a table");
+            static constexpr std::string_view fields[]{"api_key", "stores", "provider"};
+            warn_unknown_fields(*library, path, fields, "Forum library", warnings);
+            ForumLibrary value;
+            const auto key = (*library)["api_key"].value<std::string>();
+            const auto* stores = (*library)["stores"].as_array();
+            if (!key || !stores) throw std::runtime_error("Invalid library fields");
+            value.api_key_id = *key;
+            for (const auto& store : *stores) {
+                auto id = store.value<std::string>();
+                if (!id) throw std::runtime_error("Library stores must be strings");
+                value.store_ids.push_back(*id);
+            }
+            if (library->contains("provider")) {
+                value.provider_id = (*library)["provider"].value<std::string>();
+                if (!value.provider_id) throw std::runtime_error("Library provider must be a string");
+            }
+            result.library = std::move(value);
+        } catch (const std::exception& error) {
+            warnings.emit(path, std::string("Ignoring malformed Forum library: ") + error.what());
+        }
+    }
     const std::string_view default_key = table.contains("default_character")
         ? "default_character" : "default_agent";
     if (table.contains(default_key)) {
@@ -1985,6 +2011,7 @@ LoadedForums load_forums(
             throw std::runtime_error("Forum '" + id + "' requires FORUM.md");
         }
         WorkspaceForum forum{
+            .library = config.library,
             .id = id,
             .display_name = config.display_name,
             .description = config.description,

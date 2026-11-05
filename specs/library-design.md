@@ -8,7 +8,7 @@ implement application changes.
 ## 1. Purpose and scope
 
 A Forum can have an optional Library: references to existing cloud stores and
-the provider to use when that Library is used in a later stage.
+an optional default provider for use with that Library in a later stage.
 
 The user confirmed these decisions:
 
@@ -17,9 +17,11 @@ The user confirmed these decisions:
 - A configured Library contains at least one store. OpenAI permits at most two
   selections in this application. Gemini has no application selection limit in
   this stage.
-- A provider configured with the selected key is required. When Library use is
-  implemented, this provider will override the provider for **all Forum
-  members when the Library is used**.
+- The default provider is optional. It starts as None. A selected provider must
+  be able to use the stores of the selected key (section 4). When Library use
+  is implemented, this provider will override the provider for **all Forum
+  members when the Library is used**. With None, members retain their normal
+  providers; the Library's key and store selections remain configured.
 - A Forum can have no Library. Users can remove an existing Library.
 
 This stage adds the Library settings screen, store discovery, validation, and
@@ -61,7 +63,7 @@ Members                              Library
 │ ☐ Carol                     ⋯ │    │ ☐ Archive                     │
 │                               │    │ ☑ Reference                   │
 │                        [Save] │    │                               │
-│                               │    │ Provider override             │
+│                               │    │ Default provider              │
 │                               │    │ [ Sol                      ▾] │
 │                               │    │                               │
 │                               │    │                        [Save] │
@@ -80,23 +82,25 @@ checkbox, navigation, error, and button styles.
 2. Selecting a key requests its stores from the provider. Show a loading state,
    then **Cloud stores** with one checkbox per store. Show all pages through
    the existing store-list operation. Do not list individual files.
-3. After at least one store is selected, show **Provider override**. It lists
-   configured providers that resolve to that saved key, using provider names
-   and IDs as option labels and values respectively. Start with **Select
-   provider** for a new selection; require an explicit choice even if there is
-   only one option. When editing, preselect the saved provider if available.
+3. When the store list appears, show **Default provider**, a combo box. It
+   lists the configured providers that can use the stores of the selected key
+   (section 4), with provider names and IDs as option labels and values
+   respectively. Its first option, **None**, means no default provider and is
+   selected for a new Library. When editing, preselect the saved provider. The
+   combo box stays visible when the user unchecks all stores.
 4. **Save** persists the complete Library or removes it when the key is None.
    Stay on Library after success, retaining the saved selections. The user can
    then return to Members or use the existing application navigation.
 
 Provider choices come from local configuration, not an external model-list
-API. They can be loaded when the key changes; keep the selection control
-hidden until stores have been selected.
+API. Load them together with the store list when a key is selected. A
+provider-list failure must not prevent saving with None.
 
 On first entry without a Library, select None. On entry with a Library,
-restore its key and provider, fetch the current stores, and check its saved
-store IDs. Changing the key clears the draft stores and provider before
-loading the new choices. Do not keep separate drafts for each key.
+restore its key and optional provider, fetch the current stores and providers,
+and check its saved store IDs. An absent provider selects None. Changing the
+key clears the draft stores, sets the provider to None, and loads the new
+stores and providers. Do not keep separate drafts for each key.
 
 For OpenAI, when two stores are selected, disable unchecked boxes. Checked
 boxes remain enabled so the user can change the selection. This is a product
@@ -111,8 +115,9 @@ not labels or list positions, identify selections. Preserve Gemini's full
 
 - Enable Save only when the draft differs from the saved value and is valid.
   Compare store selections as sets; checkbox order is not significant.
-- A non-None key requires at least one store and a selected provider. A None
-  key saves `library: null` and needs no remote request or provider selection.
+- A non-None key requires at least one store. The provider is optional; None
+  saves `provider_id: null`. A None key saves `library: null` and needs no
+  remote request or provider selection.
 - Selecting None clears the dependent draft fields. Saving it removes the
   Library property. Deselecting the last store with a key still selected is an
   incomplete draft; it does not silently remove the Library.
@@ -130,9 +135,11 @@ not labels or list positions, identify selections. Preserve Gemini's full
 | Store request pending | Show `Loading cloud stores…`; do not enable a nonempty save. |
 | Store list empty | Show `No cloud stores`; do not enable a nonempty save. |
 | Store request failed | Use the existing error and **Try again** control. Keep the draft. |
-| No provider uses the key | Show `No providers use this API key`; require configuration elsewhere before a nonempty save. |
+| No provider can use the key's stores | Show `No providers for this API key`. None remains available. |
+| Provider list failed | Show the existing error and **Try again** control. Saving with None is permitted; saving a selected provider requires a successful list. |
 | Saved store missing from a successful list | Keep a checked row identified by its ID and marked `Unavailable`. Let the user uncheck it; require its removal or replacement before a nonempty save. |
-| Saved key or provider no longer eligible | Show the saved ID as unavailable and an actionable error. Allow replacement or clearing; do not silently select another value. |
+| Saved key no longer eligible | Show the saved ID as unavailable and an actionable error. Allow replacement or clearing the Library; do not silently select another value. |
+| Saved provider no longer eligible | Keep it selected, show its ID marked `Unavailable`, and an actionable error. Allow replacement, None, or clearing the Library. |
 
 Do not treat a failed or incomplete list request as an empty list or proof that
 a store was deleted. Loading and errors do not erase saved settings. Selecting
@@ -167,11 +174,21 @@ stores = ["fileSearchStores/research-123"]
 provider = "gemini"
 ```
 
-All three values are references: saved key ID, remote store IDs, and configured
-provider ID. Never persist key values, store names, URLs, file lists, or a copy
-of provider configuration. The key's existing `cloud_store` property determines
-the service. The application already stores Gemini as `google` and displays
-it as **Gemini**; retain that convention.
+When the default provider is None, omit `provider` from the table:
+
+```toml
+[library]
+api_key = "api_key_1"
+stores = ["vs_research", "vs_reference"]
+```
+
+The values are references: saved key ID, remote store IDs, and, when selected,
+configured provider ID. An absent provider means None; do not persist a
+separate flag. Never
+persist key values, store names, URLs, file lists, or a copy of provider
+configuration. The key's existing `cloud_store` property determines the
+service. The application already stores Gemini as `google` and displays it as
+**Gemini**; retain that convention.
 
 Add a plain value type and optional Forum property:
 
@@ -179,7 +196,7 @@ Add a plain value type and optional Forum property:
 struct ForumLibrary {
     std::string api_key_id;
     std::vector<std::string> store_ids;
-    std::string provider_id;
+    std::optional<std::string> provider_id;
 };
 
 // WorkspaceForum
@@ -195,6 +212,11 @@ workspace edit and snapshot publication. Modify only submitted Forum fields.
 Library-only saves must preserve member files, persona, default character,
 description, and Markdown. All other Forum saves must preserve `[library]`.
 
+A Library save has no effect on sessions in this stage. Do not call
+`apply_edit()` for it. Other Forum edits call `apply_edit()`, which shuts down
+the Forum's live sessions with reason `reloading`; a Library save must not
+shut down or refresh them.
+
 There is no new database table, migration job, folder-to-store link, catalog,
 cache, background refresh, or remote resource ownership. Existing Forums need
 no conversion. Workspace persistence, backup, and reload use the existing
@@ -202,15 +224,16 @@ configuration path.
 
 ## 4. Client and bridge contracts
 
-Reuse existing operations, extending provider listing and Forum details/updates:
+Reuse existing operations, extend provider listing and Forum details, and add
+one Forum Library update method:
 
 | Operation | Request | Result or change |
 | --- | --- | --- |
 | `apiKey.list` | Existing request | Reuse key IDs, names, `has_value`, and `cloud_store`. |
 | `cloudStore.list` | `{ api_key_id }` | Reuse `{ items: [{ id, name }] }` and existing pagination. |
-| `provider.list` | Existing `{}` or optional `{ api_key_id }` | With a key filter, return only providers configured with that key. Keep the existing `ProviderSummary[]` result. |
+| `provider.list` | Existing `{}` or optional `{ api_key_id }` | With a key filter, return only providers that can use the cloud stores of that key (see below). Keep the existing `ProviderSummary[]` result. |
 | `forum.get` | Existing `{ forum_id }` | Add required nullable `library` to `ForumDetail`. |
-| `forum.update` | `{ forum_id, library }` plus existing optional fields | Omitted Library preserves it, `null` clears it, and an object replaces it. Return updated `ForumDetail`. |
+| `forum.library.update` | New `{ forum_id, library }` | `library` is required and nullable: `null` clears the Library, and an object replaces it. Return updated `ForumDetail`. |
 
 The Library wire shape is:
 
@@ -222,7 +245,21 @@ The Library wire shape is:
 }
 ```
 
-For example, clearing uses:
+`provider_id` is a required nullable field in the wire object: a provider ID
+selects the default provider, and `null` selects None. For example, saving a
+Library with None uses:
+
+```json
+{
+  "api_key_id": "api_key_1",
+  "store_ids": ["vs_reference", "vs_research"],
+  "provider_id": null
+}
+```
+
+Null `provider_id` preserves the Library; null `library` removes it.
+
+For example, `forum.library.update` clears the Library with:
 
 ```json
 {"forum_id": "brain-trust", "library": null}
@@ -232,26 +269,34 @@ Extend `ChaClient.listProviders()` with an optional key argument; callers that
 pass none retain current behavior. This avoids fetching every ProviderDetail
 and avoids adding key metadata to every ProviderSummary in bootstrap and chat.
 
-Resolve the filter in native code. Prefer `config.api_key_id`; only when it is
-absent, resolve the legacy `api_key_env` as a saved-key name, as provider
-credential loading already does. Compare resolved key IDs, not secret values
-or `used_by` display strings. Two saved keys with the same secret remain two
-different settings choices. Reject an unknown filter key; return an empty list
-when the key exists but no provider uses it.
+Resolve the filter in native code with the existing `folder_store_match()` in
+`src/providers/folder_store_client.cpp`. Keep a provider when the returned
+service equals the service of the key's `cloud_store` and the returned key ID
+equals the filter key. The function already accepts only the OpenAI Responses
+API at `api.openai.com` or the Gemini API at
+`generativelanguage.googleapis.com/v1beta`, over HTTPS on port 443, without
+subscription auth. It resolves `api_key_id` first and the legacy `api_key_env`
+name only when `api_key_id` is absent, rejects ambiguous names, and requires a
+key value. Sessions use the same check for folder search. Do not add a second
+key-resolution rule. Compare key IDs, not secret values or `used_by` display
+strings. Reject an unknown filter key; return an empty list when no provider
+matches.
 
-List all providers configured with the key, as requested. This phase does not
-add model-capability discovery or speculative protocol filtering. Key matching
-does not prove that a provider/model supports future Library execution; that
-check belongs to the execution design before Library use is enabled.
+This check covers the endpoint, API, and key only. It does not prove that a
+provider's model supports future Library execution; that check belongs to the
+execution design before Library use is enabled.
 
-Define the value and nullable property in `resources/dto.yaml`, update native
-serialization and request parsing, then regenerate `schema.d.ts`. The C++
-update request must distinguish omitted, null, and object values. Reject
-unknown fields and wrong types using the existing parser conventions.
+Define the value, nullable `provider_id`, nullable Library property, and the
+`forum.library.update` request in `resources/dto.yaml`, update native
+serialization and request parsing, then regenerate `schema.d.ts`. The
+request's `library` field is required and nullable, so the C++ request uses
+`std::optional<ForumLibrary>`. Reject unknown fields and wrong types using the
+existing parser conventions.
 
 Keep the existing context epoch, writable-Forum checks, main-vault mutation
-policy, workspace update notifications, and error conventions. No new bridge
-method or cancellation protocol is needed.
+policy, workspace update notifications, and error conventions. Add
+`forum.library.update` next to the existing `forum.members.update`; no other
+bridge method or cancellation protocol is needed.
 
 ## 5. Store discovery and validation
 
@@ -278,10 +323,12 @@ need not have created each store. Reuse fixed origins, native authentication,
 pagination checks, timeouts, and safe error mapping. Return no credentials or
 raw provider error bodies to the browser.
 
-Start a fresh request on screen entry with a configured key, on key change, and
-on explicit retry. Ignore replies after the selected key, Forum, or vault
-context changes. Reuse `useLoad` and detail-refresh patterns; do not add a
-persistent store cache or automatic polling.
+Reuse `useLoad` and the detail-refresh patterns. `useLoad` requests the list
+on screen entry with a configured key, on key change, and on explicit retry. It
+also requests the list again in the background at each detail-refresh epoch,
+for example after a Library save, as the Cloud stores screen does now. Accept
+this behavior. Ignore replies after the selected key, Forum, or vault context
+changes. Do not add a persistent store cache or automatic polling.
 
 ### Save validation
 
@@ -291,8 +338,13 @@ For a non-null Library, native code validates against the current workspace:
 2. The saved key exists, has a value, and has `cloud_store` set to `openai` or
    `google`.
 3. Store IDs are nonempty, unique, and valid for that service's resource format.
+   Use the existing `safe_component()` for OpenAI and `google_store_valid()`
+   for Gemini; declare them in `folder_store_client.h`. Do not write a second
+   format rule.
 4. There is at least one store; OpenAI has at most two.
-5. The provider exists and resolves to the selected saved key.
+5. If `provider_id` is non-null, the provider exists and `folder_store_match()`
+   returns the key's service and the selected key ID. If it is null, no
+   provider is required or validated.
 
 The screen additionally requires a successful store list for the selected key
 and permits saving only currently listed selected IDs. Native validation
@@ -311,17 +363,22 @@ Library configuration is unused by chat in this stage. Do not make opening a
 vault, starting a session, or unrelated settings changes fail because a
 Library has stale references.
 
-- On load, parse a well-formed Library even if its key or provider is missing.
-  Keep those IDs available for repair in the Library form; log warnings for
-  invalid local references, limits, or service mismatches.
+- On load, check only the structure of the table: field names and value
+  types, in the same way as `warn_unknown_fields()` in `load_forum_config()`.
+  Do not check key, provider, or store references, limits, or the service at
+  load; the Library form and save validation do this. Keep the IDs available
+  for repair in the Library form.
 - If the table cannot be parsed structurally, warn and ignore it in the typed
   snapshot. Preserve its source text on unrelated edits. The existing load
   warning identifies the configuration problem; the Library screen can save a
-  valid replacement.
+  valid replacement. Accepted limitation: the screen then shows None, and Save
+  stays disabled for an unchanged None, so the screen cannot remove the
+  malformed table. The user can save a valid Library or edit the file. Do not
+  add state for this case.
 - Do not query providers while loading a workspace or opening a session.
 - Changing a key's value or Cloud store property does not rewrite Library
-  settings. A now-incompatible store-ID format or provider association is an
-  invalid draft when the Library is edited again.
+  settings. A now-incompatible store-ID format, or a selected provider that no
+  longer matches, is an invalid draft when the Library is edited again.
 - Library references alone do not add deletion blocks for keys or providers.
   Existing restrictions caused by their other uses still apply. Deletion
   leaves the reference for repair; it never deletes remote stores or silently
@@ -337,45 +394,56 @@ or bootstrap lists.
 
 | Area | Work |
 | --- | --- |
-| `src/workspace/workspace.h`, `workspace.cpp` | Add and load the optional Forum Library; report nonfatal warnings. |
+| `src/workspace/workspace.h`, `workspace.cpp` | Add and load the optional Forum Library; warn only for structural problems. |
 | `src/workspace/workspace_config_editor.*`, `workspace_config_store.*` | Patch, clear, preserve, and publish the Library through existing edits. |
-| `src/runtime/protocol.*`, `request_parser.*`, `resources/dto.yaml` | Library value, nullable detail property, and three-state update field. |
-| `src/app/workspace_operations.*`, `application.*` | Validate and save Library through `forum.update`. |
-| `src/app/settings_operations.*`, `src/bridge/settings_dispatch.cpp` | Optional saved-key filter on `provider.list`, passed through the application. |
-| `src/bridge/workspace_dispatch.cpp` | Accept the extended Forum update. |
+| `src/runtime/protocol.*`, `request_parser.*`, `resources/dto.yaml` | Library value, nullable detail property, and `forum.library.update` request. |
+| `src/app/workspace_operations.*`, `application.*` | Validate and save Library through `forum.library.update`, without `apply_edit()`. |
+| `src/app/settings_operations.*`, `src/bridge/settings_dispatch.cpp` | Optional saved-key filter on `provider.list` with `folder_store_match()`, passed through the application. |
+| `src/providers/folder_store_client.*` | Declare `safe_component()` and `google_store_valid()` for save validation. |
+| `src/bridge/bridge_protocol.*`, `workspace_dispatch.cpp` | Add and dispatch `forum.library.update`. |
 | `webapp/src/api/client.ts`, `nativeClient.ts`, `schema.d.ts` | Extend client types, guards, and calls; regenerate schema types. |
-| `webapp/src/components/ForumScreens.tsx` | Add Members navigation and a Library form, using existing store labels. |
+| `webapp/src/components/ForumScreens.tsx` | Add **Library ›** to Members with the existing `cha-detail-toolbar` and `cha-detail-link` classes, and a Library form using existing store labels. |
 | `webapp/src/state/view.ts`, `components/App.tsx` | Add `forum-library`, its navigation action, rendering, and normal screen title. |
 
-Update applicable wire fixtures and frontend test fixtures. Add CSS only if
-existing navigation-row classes cannot place the two links. Do not change
-session execution or introduce a general settings-wizard abstraction.
+Update applicable wire fixtures and frontend test fixtures. No new CSS is
+needed: the Forum detail screen already places its back control and
+**Members ›** in one row with these classes. Do not change session execution
+or introduce a general settings-wizard abstraction.
 
 ## 7. Validation plan
 
 Implementation checks should cover behavior at the existing boundaries:
 
-- **Persistence:** absent Library, OpenAI and Gemini round trips, clearing,
-  restart, stable IDs after renames, and preservation during Forum/member/file
-  edits. Verify Library-only saves preserve all other Forum properties.
-- **Validation and parsing:** omitted/null/object updates; duplicates; empty
-  stores; three OpenAI stores; multiple Gemini stores; malformed resource IDs;
-  missing credentials; provider/key mismatch; read-only and stale contexts.
-- **Local compatibility:** legacy provider key-name resolution follows the
-  same precedence as credential loading. Unfiltered provider lists remain
-  unchanged. Stale or malformed unused Library config produces warnings and
-  does not break ordinary vault or session operations.
-- **UI:** both navigation links, key filtering, saved selections, required
-  provider choice, OpenAI's two-selection rule, Gemini selections, duplicate
-  store names, loading/empty/retry states, unavailable references, independent
+- **Persistence:** absent Library, OpenAI and Gemini round trips with and
+  without a default provider, clearing, restart, stable IDs after renames,
+  and preservation during Forum/member/file edits. Verify Library-only saves
+  preserve all other Forum properties and selecting None preserves the
+  Library's key and stores while removing its provider property.
+- **Validation and parsing:** null and object Library values and a missing
+  `library` field; duplicates; empty stores; three OpenAI stores; multiple
+  Gemini stores; malformed resource IDs; missing credentials; a provider that
+  fails `folder_store_match()`; null provider; read-only and stale contexts.
+- **Local compatibility:** the provider filter excludes providers that use the
+  key through another API or endpoint, such as Chat Completions, and follows
+  `folder_store_match()` for legacy and ambiguous key names. Unfiltered
+  provider lists remain unchanged. Malformed Library structure produces a
+  warning; stale references produce none. Neither breaks ordinary vault or
+  session operations.
+- **UI:** both navigation links, key filtering, saved selections, None as the
+  default provider, restored provider, key changes resetting the provider to
+  None, saving with None when no provider matches or the provider list fails,
+  and the combo box remaining visible after all stores are unchecked. Cover
+  OpenAI's two-selection rule, Gemini selections, duplicate store names,
+  loading/empty/retry states, unavailable references, independent
   Members/Library drafts, save failure, and clearing while discovery fails.
 - **Request races:** a late response for key A must not replace key B's stores
   or providers. Navigation, Forum changes, and vault changes must not apply an
   old response to a new form. Reuse existing refresh tests for dirty drafts.
 - **Scope:** saving, clearing, and deleting a Forum make zero remote mutation
   calls. Configuring a Library does not alter member providers or outgoing
-  model requests. Reuse existing provider pagination tests; add provider-client
-  tests only if that client changes.
+  model requests. A Library save while a session of the Forum is live leaves
+  that session running. Reuse existing provider pagination tests; add
+  provider-client tests only if that client changes.
 
 Run the affected native test suites and `npm run check` in `webapp` when the
 feature is implemented. No live provider write is needed to validate this
@@ -384,9 +452,11 @@ tests.
 
 ## 8. Later Library use
 
-The saved provider expresses the confirmed intent to override all members
-when the Library is used. It is not a request to rewrite their character or
-Forum-member configurations now.
+When present, the saved provider expresses the confirmed intent to override
+all members when the Library is used. When absent, members retain their normal
+providers; future Library use must handle their capabilities without silently
+enabling an override. Neither choice rewrites character or Forum-member
+configurations in this stage.
 
 The next execution design must define when a Library is used, provider/model
 compatibility, precedence relative to session provider choices, request/tool

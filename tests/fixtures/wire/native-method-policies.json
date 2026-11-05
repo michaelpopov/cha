@@ -46,6 +46,7 @@
   "forum.create": {"requires_context_epoch": true, "changes_context": false},
   "forum.update": {"requires_context_epoch": true, "changes_context": false},
   "forum.delete": {"requires_context_epoch": true, "changes_context": true},
+  "forum.library.update": {"requires_context_epoch": true, "changes_context": false},
   "forum.members.update": {"requires_context_epoch": true, "changes_context": false},
   "forum.file.get": {"requires_context_epoch": true, "changes_context": false},
   "forum.file.create": {"requires_context_epoch": true, "changes_context": false},

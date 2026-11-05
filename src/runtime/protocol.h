@@ -1,5 +1,6 @@
 #pragma once
 
+#include "workspace/forum_library.h"
 #include "runtime/error_code.h"
 #include "characters/character_config.h"
 #include "chat/character_metadata.h"
@@ -341,6 +342,7 @@ struct ForumMembersUpdate {
 };
 
 struct ForumDetail {
+    std::optional<ForumLibrary> library;
     ForumSummary summary;
     // FORUM.md verbatim, and empty for a forum that has none. The same file is
     // the forum's system prompt; publishing it whole is deliberate.
@@ -606,6 +608,7 @@ void to_json(nlohmann::json& json, const VoiceOption& value);
 void to_json(nlohmann::json& json, const CharacterPicture& value);
 void to_json(nlohmann::json& json, const CharacterDetail& value);
 void to_json(nlohmann::json& json, const PersonaDetail& value);
+void to_json(nlohmann::json& json, const ForumLibrary& value);
 void to_json(nlohmann::json& json, const ForumDetail& value);
 void to_json(nlohmann::json& json, const MarkdownFile& value);
 void to_json(nlohmann::json& json, const SessionExport& value);

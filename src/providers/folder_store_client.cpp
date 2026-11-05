@@ -18,14 +18,6 @@
 #include <utility>
 
 namespace cha {
-namespace {
-
-using Json = nlohmann::json;
-
-constexpr std::string_view openai_origin = "https://api.openai.com/v1";
-constexpr std::string_view google_origin = "https://generativelanguage.googleapis.com";
-constexpr std::string_view google_host = "generativelanguage.googleapis.com";
-
 bool safe_component(std::string_view value) {
     return !value.empty() && value.size() <= 512 && std::all_of(value.begin(), value.end(), [](unsigned char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
@@ -37,6 +29,14 @@ bool google_store_valid(std::string_view value) {
     constexpr std::string_view prefix = "fileSearchStores/";
     return value.starts_with(prefix) && safe_component(value.substr(prefix.size()));
 }
+
+namespace {
+
+using Json = nlohmann::json;
+
+constexpr std::string_view openai_origin = "https://api.openai.com/v1";
+constexpr std::string_view google_origin = "https://generativelanguage.googleapis.com";
+constexpr std::string_view google_host = "generativelanguage.googleapis.com";
 
 bool google_operation_valid(std::string_view value, std::string_view store = {}) {
     constexpr std::string_view middle = "/upload/operations/";

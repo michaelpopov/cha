@@ -558,7 +558,16 @@ export interface components {
         ForumSystemPrompt: {
             system_prompt: string;
         };
+        ForumLibrary: {
+            api_key_id: string;
+            store_ids: string[];
+            provider_id: string | null;
+        };
+        UpdateForumLibraryRequest: {
+            library: components["schemas"]["ForumLibrary"] | null;
+        };
         ForumDetail: {
+            library: components["schemas"]["ForumLibrary"] | null;
             id: components["schemas"]["Identifier"];
             display_name: string;
             description?: string;

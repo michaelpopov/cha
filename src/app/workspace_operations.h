@@ -138,6 +138,11 @@ void delete_forum(
     WorkspaceConfigStore& store,
     LiveSessionManager& live_sessions,
     std::string_view id);
+// True when the provider can use the cloud stores of the saved key.
+[[nodiscard]] bool provider_uses_key_stores(
+    const Workspace& workspace, const WorkspaceProvider& provider, const SavedApiKey& key);
+[[nodiscard]] ForumDetail update_forum_library(
+    WorkspaceConfigStore& store, std::string_view id, const std::optional<ForumLibrary>& library);
 [[nodiscard]] ForumDetail update_forum_members(
     WorkspaceConfigStore& store,
     LiveSessionManager& live_sessions,

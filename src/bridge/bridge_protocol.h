@@ -67,6 +67,7 @@ enum class Method {
     forum_update,
     forum_delete,
     forum_members_update,
+    forum_library_update,
     forum_file_get,
     forum_file_create,
     forum_file_update,

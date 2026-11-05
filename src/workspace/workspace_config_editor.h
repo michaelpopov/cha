@@ -132,6 +132,7 @@ public:
     void write_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id);
+    void write_forum_library(std::string_view forum_id, const std::optional<ForumLibrary>& library);
     void write_forum_default_persona(
         std::string_view forum_id,
         std::string_view persona_id);

@@ -194,6 +194,11 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
             epoch);
         break;
     }
+    case Method::forum_library_update: {
+        const auto id = require_identifier(params, "forum_id");
+        result = application.update_forum_library(id, parse_forum_library_update(without_key(params, "forum_id")), epoch);
+        break;
+    }
     case Method::forum_members_update: {
         const std::string id = require_identifier(params, "forum_id");
         result = application.update_forum_members(

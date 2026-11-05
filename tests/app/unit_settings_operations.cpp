@@ -825,5 +825,61 @@ TEST(ApplicationSettings, ProviderEditsRefreshSessionOnlyChoicesAndRestartRestor
     EXPECT_EQ(std::get<SessionSnapshot>(defaults).chat_settings.characters.front().reasoning_effort, "none");
 }
 
+
+TEST(ApplicationSettings, LibraryValidatesLocallyAndLeavesLiveSessionRunning) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    const auto key = application->create_api_key({.display_name = "Cloud", .value = "test-secret", .cloud_store = "openai"}, epoch);
+    const auto gemini = application->create_api_key({.display_name = "Gemini", .value = "test-secret", .cloud_store = "google"}, epoch);
+    const auto session = application->create_session("lobby", "Library test", epoch);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", session.id, epoch)));
+    const auto before = nlohmann::json(application->get_forum("lobby", epoch));
+    const ForumLibrary library{key.id, {"vs_z", "vs_a"}, std::nullopt};
+    auto saved = application->update_forum_library("lobby", library, epoch);
+    ASSERT_TRUE(saved.library);
+    EXPECT_EQ(saved.library->store_ids, (std::vector<std::string>{"vs_a", "vs_z"}));
+    auto after = nlohmann::json(saved);
+    after["library"] = nullptr;
+    EXPECT_EQ(after, before);
+    const auto sessions = application->list_sessions("lobby", epoch);
+    ASSERT_EQ(sessions.size(), 1U);
+    EXPECT_TRUE(sessions.front().live);
+    for (const auto& invalid : std::vector<ForumLibrary>{
+            {key.id, {}, {}}, {key.id, {"vs_a", "vs_a"}, {}},
+            {key.id, {"a", "b", "c"}, {}}, {key.id, {"../bad"}, {}},
+            {gemini.id, {"vs_a"}, {}}, {"missing", {"vs_a"}, {}},
+            {key.id, {"vs_a"}, "test"}}) {
+        EXPECT_THROW(application->update_forum_library("lobby", invalid, epoch), ApplicationError);
+    }
+    EXPECT_THROW(application->update_forum_library("builtin-entrance", library, epoch), ApplicationError);
+    EXPECT_THROW(application->update_forum_library("lobby", library, epoch + 1), ApplicationError);
+    EXPECT_TRUE(application->list_providers(epoch, key.id).empty());
+    EXPECT_THROW(application->list_providers(epoch, "missing"), ApplicationError);
+    auto body = provider_body(application->get_provider("test", epoch));
+    body["host"] = "api.openai.com";
+    body["port"] = 443;
+    body["https"] = true;
+    body["base_path"] = "";
+    body["api"] = "responses";
+    body["mode"] = "net";
+    body["api_key"] = key.id;
+    (void)application->update_provider("test", body, epoch);
+    ASSERT_EQ(application->list_providers(epoch, key.id).size(), 1U);
+    (void)application->update_forum_library("lobby", ForumLibrary{key.id, {"vs_a"}, "test"}, epoch);
+    (void)application->update_forum_library("lobby", library, epoch);
+    body["api"] = "chat_completions";
+    (void)application->update_provider("test", body, epoch);
+    EXPECT_TRUE(application->list_providers(epoch, key.id).empty());
+    EXPECT_EQ(application->list_providers(epoch).size(), 1U);
+    (void)application->update_forum_library("lobby", ForumLibrary{gemini.id,
+        {"fileSearchStores/a", "fileSearchStores/b", "fileSearchStores/c"}, {}}, epoch);
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    ASSERT_TRUE(application->get_forum("lobby", application->context_epoch()).library);
+    EXPECT_FALSE(application->update_forum_library("lobby", std::nullopt, application->context_epoch()).library);
+}
+
 } // namespace
 } // namespace cha::app

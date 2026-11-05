@@ -1,5 +1,7 @@
 #include "app/workspace_operations.h"
 
+#include "providers/folder_store_client.h"
+
 #include "app/application_result.h"
 #include "util/logging.h"
 #include "util/text.h"
@@ -248,6 +250,7 @@ ForumDetail forum_detail(
     const Workspace& workspace,
     const WorkspaceForum& forum) {
     ForumDetail detail{
+        .library = forum.library,
         .summary = forum_summary(forum, workspace),
         .forum_markdown = forum.prompt_template,
         .writable = workspace.forum_is_writable(forum.id),
@@ -721,6 +724,47 @@ void delete_forum(
     with_workspace_edit([&] {
         apply_edit(live_sessions, store.apply_forum_delete(id));
         return 0;
+    });
+}
+
+bool provider_uses_key_stores(
+    const Workspace& workspace, const WorkspaceProvider& provider, const SavedApiKey& key) {
+    if (key.cloud_store != "openai" && key.cloud_store != "google") return false;
+    std::vector<ApiKeyInfo> keys;
+    for (const auto& item : workspace.api_keys())
+        keys.push_back({item.id, item.display_name, !item.value.empty(), item.cloud_store});
+    const auto match = folder_store_match(provider.config, keys);
+    const auto service = key.cloud_store == "openai" ? FolderStoreService::openai : FolderStoreService::google;
+    return match.service == service && match.api_key_id == key.id;
+}
+
+ForumDetail update_forum_library(
+    WorkspaceConfigStore& store, std::string_view id, const std::optional<ForumLibrary>& library) {
+    const auto workspace = store.snapshot();
+    if (!workspace->find_forum(id) || !workspace->forum_is_writable(id))
+        fail(ErrorCode::not_found, "That forum was not found.");
+    if (library) {
+        const auto* key = workspace->find_api_key(library->api_key_id);
+        if (!key || key->value.empty() || (key->cloud_store != "openai" && key->cloud_store != "google"))
+            fail(ErrorCode::invalid_argument, "Select an available cloud store API key.");
+        const bool openai = key->cloud_store == "openai";
+        if (library->store_ids.empty() || (openai && library->store_ids.size() > 2))
+            fail(ErrorCode::invalid_argument, "Select cloud stores within the service limit.");
+        std::set<std::string> ids;
+        for (const auto& store_id : library->store_ids) {
+            if (!(openai ? safe_component(store_id) : google_store_valid(store_id)) || !ids.insert(store_id).second)
+                fail(ErrorCode::invalid_argument, "Invalid or duplicate cloud store ID.");
+        }
+        if (library->provider_id) {
+            const auto* provider = workspace->find_provider(*library->provider_id);
+            if (!provider || !provider_uses_key_stores(*workspace, *provider, *key))
+                fail(ErrorCode::invalid_argument, "Select a provider for this API key, or None.");
+        }
+    }
+    return with_workspace_edit([&] {
+        store.apply_forum_library(id, library);
+        const auto current = store.snapshot();
+        return forum_detail(*current, *current->find_forum(id));
     });
 }
 

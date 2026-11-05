@@ -57,6 +57,7 @@ const forumViews: MainView[] = [
   'forum-file',
   'new-forum-file',
   'forum-members',
+  'forum-library',
 ];
 
 const minimumForumsShare = 15;

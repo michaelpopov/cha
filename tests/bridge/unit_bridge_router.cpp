@@ -2462,6 +2462,8 @@ TEST_F(BridgeRouterTest, ListsProvidersAndApiKeyMetadataWithoutSecrets) {
     ASSERT_TRUE(reply["ok"]);
     ASSERT_FALSE(reply["result"].empty());
     EXPECT_EQ(reply["result"].front().at("id"), "test");
+    reply = call("provider.list", {{"api_key_id", "missing"}});
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
 
     reply = call(
         "apiKey.create",

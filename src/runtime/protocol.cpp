@@ -359,8 +359,14 @@ void to_json(nlohmann::json& json, const PersonaDetail& value) {
     json["writable"] = value.writable;
 }
 
+void to_json(nlohmann::json& json, const ForumLibrary& value) {
+    json = {{"api_key_id", value.api_key_id}, {"store_ids", value.store_ids},
+        {"provider_id", value.provider_id ? nlohmann::json(*value.provider_id) : nlohmann::json(nullptr)}};
+}
+
 void to_json(nlohmann::json& json, const ForumDetail& value) {
     json = nlohmann::json(value.summary);
+    json["library"] = value.library ? nlohmann::json(*value.library) : nlohmann::json(nullptr);
     json["forum_markdown"] = value.forum_markdown;
     json["markdown_files"] = value.markdown_files;
     json["writable"] = value.writable;

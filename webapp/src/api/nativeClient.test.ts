@@ -1047,3 +1047,22 @@ it('validates the summary contract and sends only run-owned commit fields', asyn
     await expect(bad.commitSessionSummary(1, document)).rejects.toBeInstanceOf(ChaProtocolError);
   }
 });
+
+it('sends Library replacements and clears, filters providers, and validates nullable Library wire values', async () => {
+  const { forumDetailFixture } = await import('../test/fixtures');
+  const save = vi.fn((params: unknown) => ({ ...forumDetailFixture, library: (params as { library: unknown }).library }));
+  const list = vi.fn(() => []);
+  const client = createNativeChaClient(createFakeNativeBridge({ 'forum.library.update': save, 'provider.list': list }));
+  const library = { api_key_id: 'api_key_1', store_ids: ['vs_a'], provider_id: null };
+  expect((await client.updateForumLibrary('lobby', library)).library).toEqual(library);
+  expect(save).toHaveBeenLastCalledWith({ forum_id: 'lobby', library });
+  expect((await client.updateForumLibrary('lobby', null)).library).toBeNull();
+  await client.listProviders('api_key_1');
+  expect(list).toHaveBeenLastCalledWith({ api_key_id: 'api_key_1' });
+  await client.listProviders();
+  expect(list).toHaveBeenLastCalledWith({});
+  const invalid = createNativeChaClient(createFakeNativeBridge({
+    'forum.get': () => ({ ...forumDetailFixture, library: { api_key_id: 'key', store_ids: ['a'] } }),
+  }));
+  await expect(invalid.getForum('lobby')).rejects.toBeInstanceOf(ChaProtocolError);
+});

@@ -80,13 +80,14 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
     // character and persona details do with their own Markdown.
     EXPECT_EQ(
         nlohmann::json(ForumDetail{
+            std::nullopt,
             {"forum", "Forum", std::nullopt, "guide", "reader", "Reader", {{"guide", "Guide"}}},
             "# House rules",
             {"FORUM.md"},
             true}),
         nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"}, {"default_persona_id", "reader"}, {"default_persona_display_name", "Reader"},
             {"members", {{{"id", "guide"}, {"display_name", "Guide"}, {"appearance", default_appearance()}}}},
-            {"forum_markdown", "# House rules"}, {"markdown_files", {"FORUM.md"}}, {"writable", true}}));
+            {"library", nullptr}, {"forum_markdown", "# House rules"}, {"markdown_files", {"FORUM.md"}}, {"writable", true}}));
     EXPECT_EQ(
         nlohmann::json(PersonaSummary{"reader", "Reader"}),
         nlohmann::json({{"display_name", "Reader"}, {"id", "reader"},
@@ -718,6 +719,31 @@ TEST(WebProtocol, ParsesSessionCharacterSettingsPatchesWithoutLosingResets) {
         {{"character_id", "guide"}, {"reasoning_effort", false}},
         {{"character_id", "guide"}, {"provider_id", "test"}, {"extra", nullptr}},
     }) EXPECT_THROW((void)parse_character_settings_command(body), std::invalid_argument);
+}
+
+
+TEST(WebProtocol, ParsesNullableForumLibraryAndRejectsWrongShape) {
+    EXPECT_FALSE(parse_forum_library_update({{"library", nullptr}}));
+    const nlohmann::json value = {{"api_key_id", "key"}, {"store_ids", {"vs_a"}}, {"provider_id", nullptr}};
+    auto parsed = parse_forum_library_update({{"library", value}});
+    ASSERT_TRUE(parsed);
+    EXPECT_EQ(parsed->store_ids, std::vector<std::string>{"vs_a"});
+    EXPECT_FALSE(parsed->provider_id);
+    auto provider = value;
+    provider["provider_id"] = "sol";
+    EXPECT_EQ(nlohmann::json(*parse_forum_library_update({{"library", provider}})), provider);
+    EXPECT_THROW(parse_forum_library_update(nlohmann::json::object()), std::invalid_argument);
+    for (const auto field : {"api_key_id", "store_ids", "provider_id"}) {
+        auto invalid = value;
+        invalid.erase(field);
+        EXPECT_THROW(parse_forum_library_update({{"library", invalid}}), std::invalid_argument);
+        invalid = value;
+        invalid[field] = false;
+        EXPECT_THROW(parse_forum_library_update({{"library", invalid}}), std::invalid_argument);
+    }
+    auto invalid = value;
+    invalid["extra"] = "x";
+    EXPECT_THROW(parse_forum_library_update({{"library", invalid}}), std::invalid_argument);
 }
 
 } // namespace

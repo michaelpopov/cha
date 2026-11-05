@@ -53,6 +53,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::forum_update, "forum.update"},
     {Method::forum_delete, "forum.delete"},
     {Method::forum_members_update, "forum.members.update"},
+    {Method::forum_library_update, "forum.library.update"},
     {Method::forum_file_get, "forum.file.get"},
     {Method::forum_file_create, "forum.file.create"},
     {Method::forum_file_update, "forum.file.update"},
