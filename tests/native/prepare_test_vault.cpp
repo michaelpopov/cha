@@ -13,7 +13,7 @@
 namespace {
 
 constexpr const char usage[] =
-    "usage: cha_prepare_test_vault [--provider-port PORT | --folder-stores | --file-references] CONFIG_DIR\n";
+    "usage: cha_prepare_test_vault [--provider-port PORT | --folder-stores] CONFIG_DIR\n";
 
 // Points the default character at an HTTP provider on 127.0.0.1:PORT and
 // turns off session naming, so every provider request is a character reply.
@@ -47,14 +47,13 @@ std::optional<int> parse_port(std::string_view text) {
 int main(int argc, char** argv) {
     std::optional<int> provider_port;
     const bool folder_stores = argc == 3 && std::string_view(argv[1]) == "--folder-stores";
-    const bool file_references = argc == 3 && std::string_view(argv[1]) == "--file-references";
     if (argc == 4 && std::string_view(argv[1]) == "--provider-port") {
         provider_port = parse_port(argv[2]);
         if (!provider_port) {
             std::cerr << usage;
             return 2;
         }
-    } else if (argc != 2 && !folder_stores && !file_references) {
+    } else if (argc != 2 && !folder_stores) {
         std::cerr << usage;
         return 2;
     }
@@ -64,12 +63,6 @@ int main(int argc, char** argv) {
     if (provider_port) use_net_provider(workspace, *provider_port);
     const std::filesystem::path database = destination / "test.sqlite3";
     (void)cha::test::import_test_database(workspace.root(), database);
-    if (file_references) {
-        cha::storage::SqliteDatabase db(database, cha::storage::SqliteDatabase::Mode::read_write);
-        (void)cha::note_create(db, {}, cha::NoteItemKind::note, "Reference note");
-        for (const auto* name : {"OpenAI reference folder", "Gemini reference folder"})
-            (void)cha::note_create(db, {}, cha::NoteItemKind::folder, name);
-    }
     if (folder_stores) {
         cha::storage::SqliteDatabase db(database, cha::storage::SqliteDatabase::Mode::read_write);
         (void)cha::note_create(db, {}, cha::NoteItemKind::folder, "UI store empty");

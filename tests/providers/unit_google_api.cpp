@@ -290,7 +290,7 @@ TEST(GoogleApi, FolderSearchCapabilitiesAndDeclarationOrderAreIndependent) {
         request.run.prompt_text = "Question";
         request.folder_search = FolderSearchAccess{FolderStoreService::google,
             {"fileSearchStores/one", "fileSearchStores/two", "fileSearchStores/three"}};
-        request.folder_search_context = "Research; sources: Forum Lobby Files, Guide Files";
+        request.folder_search_context = "Research (##00000B) (/detach ##00000B)";
         request.web_search_tool = [](auto, const auto&) { return "[]"; };
         request.web_read_tool = [](auto, const auto&, const auto&) { return "page"; };
         ModelBackendConfig config;

@@ -75,7 +75,7 @@ short-lived, the user can see it on screen, or Events already record its result:
 | Running application and vault registry | `ApplicationCommand`, `CurrentVault`, capabilities | None; `app.toml` shows only the startup selection | `application` topic. |
 | Notes and folders | `note_items`, `note_summaries`, `note_audio` | Notes with pending work only | `notes` topic. |
 | Folder stores | `folder_stores`, `folder_store_files` | None | `stores` topic. |
-| Sessions, overrides, attachments | `sessions`, `session_character_settings`, `session_folders`, `session_notes`, `session_note_scopes`, `session_files`, `note_summaries` | None | `sessions` topic. |
+| Sessions, overrides, attachments | `sessions`, `session_character_settings`, `session_folders`, `session_notes`, `session_files`, `note_summaries` | None | `sessions` topic. |
 | Entry metadata | `entries`, `turns`, `entry_audio` | None | `session_entries` topic. |
 | Events and logs | `event_history`; log files | `assistant_events`, `assistant_logs` | None. |
 
@@ -180,9 +180,9 @@ settings each provider API ignores; this tool does not calculate applicability.
 | `providers` | `settings::get_provider` for each provider: all `ProviderDetail` fields, including the saved key ID and `used_by`. |
 | `styles` | `settings::list_styles`. |
 | `voices` | `settings::list_voices`. |
-| `characters` | `app::workspace::character_detail` for each character, without `character_markdown`, `editable_markdown`, and the `available_*` option lists. The item keeps the provider, style, voice, effort and search overrides, `markdown_files`, Files references, and writable flags. |
+| `characters` | `app::workspace::character_detail` for each character, without `character_markdown`, `editable_markdown`, and the `available_*` option lists. The item keeps the provider, style, voice, effort and search overrides, `markdown_files`, and writable flags. |
 | `personas` | `app::workspace::persona_detail` for each persona, without `persona_markdown` and the `available_*` option lists. |
-| `forums` | `app::workspace::forum_detail` for each forum, without `forum_markdown`. The item keeps members, the default character and persona, `markdown_files`, and Files references. |
+| `forums` | `app::workspace::forum_detail` for each forum, without `forum_markdown`. The item keeps members, the default character and persona, and `markdown_files`. |
 | `services` | One item: `jev`, `session_naming`, `notes`, `web_search`, `voice_input`, and `voice_output` from their `settings::get_*` readers, with null for a service that is not configured; `r2_storage` from `settings::get_r2_storage`; and `openai_auth` with `status`, `attempt_expires_at`, and `error` from `settings::openai_auth_status`. The device code and verification URL stay in the login tool. |
 | `keys` | `settings::list_api_keys` with `store->folder_store_usage()`: ID, label, `has_value`, and `used_by`, including store uploads. |
 
@@ -231,8 +231,8 @@ Every active session of one forum, keyed by session ID:
   `SessionJournal::set_character_settings` writes each toolbar change at once,
   so the database is current for open and closed sessions.
 - `folders`: attached folder IDs with their Ref IDs.
-- `notes`: copied notes with `note_id`, `ref_id`, the captured `name`,
-  `explicitly_added`, `source_exists`, and the character `scopes`.
+- `notes`: copied notes with `note_id`, `ref_id`, the captured `name`, and
+  `source_exists`.
 - `files`: attached text file names with their byte lengths.
 - `summary_note_id`: the linked summary note, or null.
 
@@ -297,9 +297,8 @@ Update `resources/assistant-maintenance.md`:
   rows and the read limit.
 - Replace "Your tools cannot read them" for toolbar overrides with the
   `sessions` topic.
-- Questions about stores start with `stores`. `characters`, `forums`, and
-  `sessions` show where a store's folder is used. Keep uploaded stores, Files
-  references, and chat attachments distinct.
+- Questions about stores start with `stores`. `sessions` shows where a store's
+  folder is attached. Keep uploaded stores and chat attachments distinct.
 - Distinguish saved source (`vault_config_read`) from Settings values with
   defaults (settings topics).
 - Follow `next_after` when an answer needs the whole list. A partial list is

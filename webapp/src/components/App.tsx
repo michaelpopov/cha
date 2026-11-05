@@ -70,7 +70,6 @@ import {
 import {
   CharacterFileScreen,
   CharacterFilesScreen,
-  FileReferenceScreen,
   NewCharacterFileScreen,
   ForumFileScreen,
   NewForumFileScreen,
@@ -300,10 +299,6 @@ function ScreenContent({
         state={state}
       />
     );
-    case 'character-file-reference':
-      return <FileReferenceScreen kind="character" client={client} dispatch={dispatch} navigate={navigate} state={state} />;
-    case 'forum-file-reference':
-      return <FileReferenceScreen kind="forum" client={client} dispatch={dispatch} navigate={navigate} state={state} />;
     case 'character-file': return (
       <CharacterFileScreen
         client={client}

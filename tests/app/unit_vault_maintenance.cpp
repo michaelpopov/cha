@@ -1602,40 +1602,5 @@ TEST(ApplicationVault, SummaryProviderWorkersCancelBeforeSwitchOrRekey) {
     }
 }
 
-TEST(ApplicationVault, FileReferencesSurviveConfigurationCopyAndFollowFileReplacementOnMerge) {
-    TwoVaults pair;
-    auto application = Application::open(pair.command);
-    auto epoch = application->context_epoch();
-    const auto source = application->create_note_item({}, NoteItemKind::note, "Source name", epoch);
-    const auto ref = note_item_ref_id(source.id);
-    const auto saved = application->create_file_reference(FileReferenceOwner::character,
-        "guide", FileReferenceKind::note, ref, epoch);
-    const auto folder_id = application->create_note_item({}, NoteItemKind::folder, "Stored folder", epoch).id;
-    const auto folder_saved = application->create_file_reference(FileReferenceOwner::character,
-        "guide", FileReferenceKind::folder, note_item_ref_id(folder_id), epoch);
-    const auto fresh = application->create_vault({.display_name = "Fresh"}, epoch);
-    const auto full = application->create_vault({.display_name = "Full", .copy_from = "A"}, epoch);
-    for (const auto& vault : {fresh, full}) {
-        auto copy = WorkspaceConfigStore::open(vault.data);
-        EXPECT_EQ(copy->snapshot()->find_character("guide")->file_references,
-            (std::vector<FileReference>{saved, folder_saved}));
-        if (vault.name == fresh.name) {
-            EXPECT_FALSE(copy->get_note_item(source.id));
-            const auto destination = copy->create_note_item({}, NoteItemKind::note, "Destination name");
-            ASSERT_EQ(destination.id, source.id);
-            EXPECT_THROW((void)copy->create_file_reference(FileReferenceOwner::character,
-                "guide", FileReferenceKind::note, ref), std::invalid_argument);
-        }
-        else EXPECT_EQ(copy->get_note_item(source.id)->name, source.name);
-        copy->delete_file_reference(FileReferenceOwner::character, "guide", FileReferenceKind::note, ref);
-        copy->delete_file_reference(FileReferenceOwner::character, "guide", FileReferenceKind::folder, folder_saved.ref_id);
-        EXPECT_TRUE(copy->snapshot()->find_character("guide")->file_references.empty());
-    }
-    // B's same owner file has no array and replaces A's reference list in full.
-    (void)application->merge_vault("B", {}, epoch);
-    epoch = application->context_epoch();
-    EXPECT_TRUE(application->get_character("guide", epoch).file_references.empty());
-}
-
 } // namespace
 } // namespace cha::app

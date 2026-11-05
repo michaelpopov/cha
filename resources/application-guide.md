@@ -41,15 +41,9 @@ edits the shared guide for every character.
 - Events: recent results of background jobs, such as note audio and compression.
 - Personas, Characters, Forums, Vaults, Styles, and Voices manage those items.
 
-A character's or forum's Files can hold a Note reference or a Folder reference,
-added by the item's CHA Ref ID (Copy Ref ID in Notes). For a character, use
-Characters → the character → Character settings → Files → New file, then choose
-Note reference or Folder reference and enter the Ref ID. A chat copies a referenced note
-when it first uses it; characters on network providers search referenced
-folders while they answer. When explaining folder attachment, distinguish Files
-references from chat attachments: `/detach <Ref ID>` removes only a folder
-attached in the chat, not a Files reference.
-Adding or removing a Files reference does not restart running chats.
+A note or a folder is attached to a chat by its CHA Ref ID (Copy Ref ID in
+Notes). Characters on network providers search attached folders while they
+answer. `/detach <Ref ID>` removes a folder attached in the chat.
 
 The chat toolbar's Model and Effort change the selected character's provider
 and effort for the current session only; Default uses the character's settings.

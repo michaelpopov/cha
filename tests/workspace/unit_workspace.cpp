@@ -2519,59 +2519,22 @@ TEST(Workspace, SessionModelAndEffortUseConfiguredPrecedenceAndGuardSearch) {
         workspace.find_provider("other")->config.reasoning_effort);
 }
 
-TEST(Workspace, FileReferencesLoadWithoutSourcesAndValidateMetadata) {
+TEST(Workspace, ObsoleteFileReferencesLoadWithWarnings) {
     test::TestWorkspace fixture;
-    const auto path = fixture.root() / "characters/guide/character.toml";
-    const std::string original = "display_name = 'Guide'\nprovider = 'test'\n";
     const std::string references =
-        "\n[[file_references]]\nkind = 'note'\nref_id = '##00000A'\nname = 'ANNOTATIONS'\n"
-        "[[file_references]]\nkind = 'folder'\nref_id = '##00000B'\nname = 'A / Research'\n";
-    {
-        std::ofstream file(path, std::ios::app);
-        file << references;
+        "\n[[file_references]]\nkind = 'note'\nref_id = '##00000A'\nname = 'Note'\n";
+    std::ofstream(fixture.root() / "characters/guide/character.toml", std::ios::app) << references;
+    std::ofstream(fixture.root() / "forums/lobby/config.toml", std::ios::app) << references;
+    LoadWarningCollector warnings;
+    const Workspace workspace = Workspace::load(fixture.root(), &warnings);
+    EXPECT_NE(workspace.find_character("guide"), nullptr);
+    EXPECT_NE(workspace.find_forum("lobby"), nullptr);
+    for (const auto* path : {"characters/guide/character.toml", "forums/lobby/config.toml"}) {
+        SCOPED_TRACE(path);
+        const auto* warning = warning_on(warnings, path);
+        ASSERT_NE(warning, nullptr);
+        EXPECT_NE(warning->message.find("unsupported field 'file_references'"), std::string::npos);
     }
-    auto workspace = Workspace::load(fixture.root());
-    const auto& saved = workspace.find_character("guide")->file_references;
-    ASSERT_EQ(saved.size(), 2u);
-    EXPECT_EQ(saved[0].name, "A / Research");
-    EXPECT_EQ(saved[1].name, "ANNOTATIONS");
-    for (const std::string invalid : {
-             "file_references = 'wrong'\n",
-             "file_references = [42]\n",
-             "[[file_references]]\nkind='other'\nref_id='##00000A'\nname='Name'\n",
-             "[[file_references]]\nkind='note'\nref_id=' ##00000A'\nname='Name'\n",
-             "[[file_references]]\nkind='note'\nref_id=42\nname='Name'\n",
-             "[[file_references]]\nkind='note'\nref_id='##00000A'\nname=' Name'\n"}) {
-        SCOPED_TRACE(invalid);
-        { std::ofstream file(path); file << original << '\n' << invalid; }
-        EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
-    }
-    { std::ofstream file(path); file << original << references << references; }
-    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
-}
-
-TEST(Workspace, FileReferenceEditsPreserveUnknownFieldsAndUnrelatedOwnerSettings) {
-    test::TestWorkspace fixture;
-    const auto path = fixture.root() / "characters/guide/character.toml";
-    {
-        std::ofstream file(path, std::ios::app);
-        file << "\n[[file_references]]\nkind='note'\nref_id='##00000A'\nname='Original'\nextra=42\n";
-    }
-    const auto original = Workspace::load(fixture.root());
-    edit_fixture(original, [](auto& editor) {
-        editor.create_file_reference(FileReferenceOwner::character, "guide",
-            {FileReferenceKind::folder, "##00000B", "Folder"});
-    });
-    const auto updated = Workspace::load(fixture.root());
-    edit_fixture(updated, [](auto& editor) {
-        editor.delete_file_reference(FileReferenceOwner::character, "guide",
-            FileReferenceKind::folder, "##00000B");
-    });
-    const auto saved = toml::parse(*TextSource{}.read(path));
-    EXPECT_EQ(saved["file_references"][0]["extra"].value<int>(), 42);
-    EXPECT_EQ(saved["provider"].value<std::string>(), "test");
-    EXPECT_EQ(Workspace::load(fixture.root()).find_character("guide")->file_references,
-        original.find_character("guide")->file_references);
 }
 
 } // namespace

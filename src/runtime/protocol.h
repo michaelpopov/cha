@@ -5,7 +5,6 @@
 #include "chat/character_metadata.h"
 #include "session/controller_update.h"
 #include "session/generation_status.h"
-#include "workspace/file_reference.h"
 
 #include <cstdint>
 #include <functional>
@@ -311,7 +310,6 @@ struct CharacterDetail {
     std::vector<VoiceOption> available_voices;
     bool settings_writable{};
     bool writable{};
-    std::vector<FileReference> file_references;
 };
 
 struct PersonaDetail {
@@ -349,7 +347,6 @@ struct ForumDetail {
     std::string forum_markdown;
     std::vector<std::string> markdown_files;
     bool writable{};
-    std::vector<FileReference> file_references;
 };
 
 struct MarkdownFile {
@@ -611,7 +608,6 @@ void to_json(nlohmann::json& json, const CharacterDetail& value);
 void to_json(nlohmann::json& json, const PersonaDetail& value);
 void to_json(nlohmann::json& json, const ForumDetail& value);
 void to_json(nlohmann::json& json, const MarkdownFile& value);
-void to_json(nlohmann::json& json, const FileReference& value);
 void to_json(nlohmann::json& json, const SessionExport& value);
 void to_json(nlohmann::json& json, const ProviderSummary& value);
 void to_json(nlohmann::json& json, const CharacterChatSettings& value);

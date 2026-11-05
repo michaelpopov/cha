@@ -261,49 +261,6 @@ TEST_F(BridgeRouterTest, EventsListUsesEmptyParametersAndReturnsOnlyStoredRecord
     EXPECT_EQ(failed["error"]["message"], "Could not load events");
 }
 
-TEST_F(BridgeRouterTest, FileReferencesValidateRequestsAndLeaveLiveSessionsUnchanged) {
-    bootstrap_epoch();
-    const auto session = call("session.create", {{"forum_id", "lobby"}, {"label", "References"}});
-    ASSERT_TRUE(session["ok"]) << session;
-    const nlohmann::json identity{{"forum_id", "lobby"}, {"session_id", session["result"]["id"]}};
-    ASSERT_TRUE(call("session.open", identity)["ok"]);
-    const auto before = call("session.snapshot", identity)["result"];
-    const auto note = application_->create_note_item({}, NoteItemKind::note, "Introduction", epoch_);
-    const auto ref = note_item_ref_id(note.id);
-    nlohmann::json request{{"owner_type", "character"}, {"owner_id", "guide"},
-        {"kind", "note"}, {"ref_id", ref}};
-    const auto created = call("fileReference.create", request);
-    ASSERT_TRUE(created["ok"]) << created;
-    EXPECT_EQ(created["result"], (nlohmann::json{{"kind", "note"}, {"ref_id", ref}, {"name", note.name}}));
-    EXPECT_EQ(call("character.get", {{"character_id", "guide"}})["result"]["file_references"],
-        nlohmann::json::array({created["result"]}));
-    EXPECT_EQ(call("fileReference.create", request)["error"]["code"], "invalid_argument");
-    application_->delete_note_item(note.id, epoch_);
-    ASSERT_TRUE(call("fileReference.delete", request)["ok"]);
-    EXPECT_EQ(call("fileReference.delete", request)["error"]["code"], "not_found");
-    const auto after = call("session.snapshot", identity);
-    ASSERT_TRUE(after["ok"]) << after;
-    EXPECT_EQ(after["result"]["transcript"], before["transcript"]);
-    EXPECT_EQ(after["context_epoch"], epoch_);
-    auto invalid = request;
-    invalid["name"] = "Not accepted";
-    EXPECT_EQ(call("fileReference.create", invalid)["error"]["code"], "invalid_argument");
-    invalid = request;
-    invalid["kind"] = "text";
-    EXPECT_EQ(call("fileReference.create", invalid)["error"]["code"], "invalid_argument");
-    invalid = request;
-    invalid["owner_type"] = "session";
-    EXPECT_EQ(call("fileReference.create", invalid)["error"]["code"], "invalid_argument");
-    invalid = request;
-    invalid["owner_id"] = workspace_entrance_id;
-    invalid["owner_type"] = "forum";
-    EXPECT_EQ(call("fileReference.create", invalid)["error"]["code"], "not_found");
-    const auto epoch = epoch_;
-    ++epoch_;
-    EXPECT_EQ(call("fileReference.create", request)["error"]["code"], "vault_changed");
-    epoch_ = epoch;
-}
-
 TEST_F(BridgeRouterTest, NoteTextFileReadingUsesFullPathsAndValidatesTextWithoutChangingNotes) {
     bootstrap_epoch();
     const auto path = workspace_.root() / path_from_utf8("Plan с пробелами.md");

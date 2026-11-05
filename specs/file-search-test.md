@@ -200,7 +200,7 @@ Use these logical stores. Their names are labels, not fixed resource IDs.
 | --- | --- | --- |
 | O-A | OpenAI | Packaging facts, a source code, and multi-step lookup data. |
 | G-A | Gemini | Demand/budget facts and a different source code. |
-| O-B | OpenAI | A packaging-fact variant with its own code; independent-key access and private Character facts. |
+| O-B | OpenAI | A packaging-fact variant with its own code; independent-key access. |
 | G-B | Gemini | A demand/budget variant with its own code; independent-key access. |
 | Hidden | Either service | An unattached source with a unique fact that must remain inaccessible. |
 
@@ -251,8 +251,8 @@ provider definitions, keys, and host OAuth connection.
 
 Generate fresh random source codes and lookup aliases, and vary numeric facts
 once during fixture preparation. Keep the oracle outside CHA's chat history,
-Character/Forum instructions, note references, summaries, and model inputs.
-Only folder references should expose the test corpus through retrieval. A
+Character/Forum instructions, attached notes, summaries, and model inputs.
+Only attached folders should expose the test corpus through retrieval. A
 model may know the project and folder names, but not the answer values.
 Keep basic-case documents short and place each random code beside the facts
 it identifies. Check the first consumer request before retrieval: it must not
@@ -380,35 +380,33 @@ calibration that the A credential cannot search B's store and vice versa.
 Then confirm that CHA succeeds using each correct saved key. Do not substitute
 the consumer key, the first attached store's key, or another working key.
 
-### C05 — Attachment sources, union, and duplicate suppression
+### C05 — Attached folders and union
 
-Expose distinct fixtures through chat, Character Files, and Forum Files.
-Also expose one same folder through all three sources. Ask for the union of
-their facts with a third-party consumer.
+Attach distinct fixtures in one chat. Ask for the union of their facts with a
+third-party consumer.
 
-All eligible sources must be usable. Within one tool call there must be one
-retrieval per unique resolved store, despite the duplicate folder reference.
+All attached folders must be usable. Within one tool call there must be one
+retrieval per unique resolved store.
 Separate queries in later tool calls legitimately search the store again.
 Compare recorded store IDs, saved-key matches, and source names with the
 expected target set; do not infer deduplication from the final answer alone.
 
-### C06 — Character isolation and multicast
+### C06 — Multicast
 
-Give two Characters different private folders plus a shared Forum folder.
-Use third-party consumers so both store services remain cross-provider.
-Start a multicast question asking each Character for its private code and a
-shared fact. Record each request's target set, tool calls, and final answer.
+Attach folders from both store services in one chat. Use third-party consumers
+so both store services remain cross-provider. Start a multicast question asking
+two Characters for a fact from each folder. Record each request's target set,
+tool calls, and final answer.
 
-Each consumer must receive only its applicable folders and its own matching
-tool results. A shared conversation may later display another Character's
-answer, so privacy checks must inspect each independent request before such
-text is visible. A peer's private source must not be queried or delivered.
+Each consumer must receive the attached folders and only its own matching tool
+results. A shared conversation may later display another Character's answer,
+so inspect each independent request before such text is visible.
 
 ### C07 — Unattached resources stay inaccessible
 
 With ordinary attached fixtures available, ask for a fact from Hidden and
 mention its remote store ID. Do not reveal its answer code. Also issue a new
-chat request with no folder attachments and no inherited folder references.
+chat request with no folder attachments.
 
 The tool schema must expose only `query`, not arbitrary keys, URLs, or store
 IDs. No request may target Hidden. In the no-attachment case the tool must be
@@ -530,7 +528,7 @@ checking whether that entry fits the overall budget. The first entry that
 does not fit can therefore have a real remote request but no returned entry;
 CHA sets `truncated: true` and stops. Later stores are not searched. Compare
 observed dispatches with the ordered target list and this break point, not
-with the assumption that every attached store is queried. C05's deduplication
+with the assumption that every attached store is queried. C05's retrieval
 counts use small, non-truncated results instead.
 
 Verify valid JSON/UTF-8 and truncation flags for actual limits reached. Ask
@@ -605,7 +603,7 @@ Search with the folder search tool. It must be absent from the tool targets
 and failure context. No OpenAI store request may be dispatched. Native folder
 search availability must not be presented as access to the omitted folder.
 
-Remove the companion's references and use a fresh question. The same Gemini
+Detach the companion folder and use a fresh question. The same Gemini
 consumer must now call the custom tool, retrieve OpenAI source passages, and
 use them in its answer. This second leg is a required cross-provider pass.
 If no Gemini 2.5 model is accessible, mark the restriction case blocked.
@@ -680,7 +678,7 @@ function or every possible model continuation is absent.
    rejection, and model behavior distinct from CHA application defects.
 8. Delete owned remote documents/stores, including owned OpenAI Files, using
    the original authorized keys and confirm absence. Remove temporary local
-   references/keys and the test vault after preserving sanitized evidence.
+   keys and the test vault after preserving sanitized evidence.
    Restore the original active vault and remove only the observer diff; retain
    all pre-existing user changes, stores, credentials, and host OAuth state.
 

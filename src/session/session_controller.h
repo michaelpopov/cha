@@ -223,11 +223,6 @@ private:
         std::vector<CharacterMetadata> targets,
         SharedModelHistory history,
         ControllerUpdate& update);
-    void materialize_note_references(
-        std::span<const FileReference> references,
-        std::string_view owner,
-        std::string_view character_id,
-        std::string& omissions);
     [[nodiscard]] std::optional<FolderSearchAccess> resolve_folder_search(
         const Workspace& workspace,
         const CharacterMetadata& target,

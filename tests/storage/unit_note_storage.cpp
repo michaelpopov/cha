@@ -162,31 +162,35 @@ void summary_source(Database& database, std::string_view id = "source", std::str
     transaction.commit();
 }
 
-TEST_F(NoteStorageTest, NoteCopyScopeUpgradePreservesExistingExplicitCopiesAndIsRepeatable) {
+TEST_F(NoteStorageTest, OpenRemovesNoteReferenceCopiesAndKeepsAddedNotes) {
     summary_source(*database_);
-    database_->execute("DROP TABLE session_note_scopes");
-    database_->execute("ALTER TABLE session_notes DROP COLUMN explicitly_added");
-    database_->execute("INSERT INTO session_notes VALUES(1,10,'Old note','Saved text')");
+    // The schema that character and forum note references used.
+    database_->execute("ALTER TABLE session_notes ADD COLUMN explicitly_added INTEGER NOT NULL DEFAULT 1 "
+        "CHECK (explicitly_added IN (0, 1))");
+    database_->execute("CREATE TABLE session_note_scopes (session_key INTEGER NOT NULL, "
+        "note_id INTEGER NOT NULL, character_id TEXT NOT NULL, "
+        "PRIMARY KEY (session_key, note_id, character_id), FOREIGN KEY (session_key, note_id) "
+        "REFERENCES session_notes(session_key, note_id) ON DELETE CASCADE) STRICT");
+    database_->execute("INSERT INTO session_notes VALUES(1,10,'Added note','Saved text',1)");
+    database_->execute("INSERT INTO session_notes VALUES(1,11,'Reference copy','Copied text',0)");
+    database_->execute("INSERT INTO session_note_scopes VALUES(1,10,'guide'),(1,11,'')");
     for (int reopen = 0; reopen < 2; ++reopen) {
         database_.reset();
         database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
         storage::SqliteTransaction transaction(*database_);
         create_note_items_schema(*database_);
         transaction.commit();
-        auto copy = database_->prepare("SELECT name,text,explicitly_added FROM session_notes");
+        auto copy = database_->prepare("SELECT session_key,note_id,name,text FROM session_notes");
         ASSERT_TRUE(copy.step());
-        EXPECT_EQ(copy.text(0), "Old note");
-        EXPECT_EQ(copy.text(1), "Saved text");
-        EXPECT_EQ(copy.integer(2), 1);
-        EXPECT_TRUE(has_schema_object(*database_, "table", "session_note_scopes"));
+        EXPECT_EQ(copy.integer(1), 10);
+        EXPECT_EQ(copy.text(2), "Added note");
+        EXPECT_EQ(copy.text(3), "Saved text");
+        EXPECT_FALSE(copy.step());
+        EXPECT_THROW((void)database_->prepare("SELECT explicitly_added FROM session_notes"), std::runtime_error);
+        EXPECT_FALSE(has_schema_object(*database_, "table", "session_note_scopes"));
         EXPECT_FALSE(database_->prepare("PRAGMA foreign_key_check").step());
         EXPECT_EQ(database_->pragma_integer("user_version"), workspace_session_database_version);
     }
-    database_->execute("INSERT INTO session_note_scopes VALUES(1,10,'guide')");
-    EXPECT_THROW(database_->execute("INSERT INTO session_note_scopes VALUES(1,11,'guide')"), std::runtime_error);
-    EXPECT_THROW(database_->execute("UPDATE session_notes SET explicitly_added=2"), std::runtime_error);
-    database_->execute("DELETE FROM session_notes");
-    EXPECT_FALSE(database_->prepare("SELECT 1 FROM session_note_scopes").step());
 }
 
 TEST_F(NoteStorageTest, SummaryChaptersRejectInvalidReplacementWithoutChangingStoredNote) {

@@ -123,7 +123,7 @@ nlohmann::json session_folders(Database& database, std::int64_t session_key) {
 
 nlohmann::json session_notes(Database& database, std::int64_t session_key) {
     Statement statement = database.prepare(
-        "SELECT sn.note_id, sn.name, sn.explicitly_added, "
+        "SELECT sn.note_id, sn.name, "
         "EXISTS (SELECT 1 FROM note_items AS n WHERE n.id = sn.note_id) "
         "FROM session_notes AS sn WHERE sn.session_key = ?1 "
         "ORDER BY sn.note_id",
@@ -131,20 +131,11 @@ nlohmann::json session_notes(Database& database, std::int64_t session_key) {
     auto result = nlohmann::json::array();
     while (statement.step()) {
         const std::int64_t note_id = statement.integer(0);
-        auto scopes = nlohmann::json::array();
-        Statement scope = database.prepare(
-            "SELECT character_id FROM session_note_scopes "
-            "WHERE session_key = ?1 AND note_id = ?2 ORDER BY character_id",
-            session_key,
-            note_id);
-        while (scope.step()) scopes.push_back(scope.text(0));
         result.push_back({
             {"note_id", note_id},
             {"ref_id", note_item_ref_id(note_id)},
             {"name", statement.text(1)},
-            {"explicitly_added", statement.integer(2) != 0},
-            {"source_exists", statement.integer(3) != 0},
-            {"scopes", std::move(scopes)},
+            {"source_exists", statement.integer(2) != 0},
         });
     }
     return result;
@@ -262,7 +253,7 @@ void SessionRepository::MaintenanceGuard::retarget(
     repository_->release_pending();
     if (path_changed) {
         SessionJournal welcome(repository_->temporary_database_path_);
-        welcome.clear_vault_context();
+        welcome.clear_folder_associations();
     }
     repository_->database_path_ = std::move(database_path);
     repository_->database_password_ = std::move(database_password);

@@ -28,8 +28,7 @@ source review, and real CHA conversations for model behavior.
 | CAP-03 | Respect credential destination protection for the note audio URL scheme/host/port and `audio_api_key`. | Code change; maintenance boundaries |
 | CAP-04 | Understand and repair a direct Gemini provider: `api = "google"`, HTTPS, `generativelanguage.googleapis.com`, port 443, `base_path = "/v1beta"`, optional `models/` prefix, saved key, no OpenAI OAuth. | Maintenance provider rules |
 | CAP-05 | Know that `google` and `anthropic` ignore provider effort, reasoning format, cache retention, OpenRouter targets, and provider-hosted search; Anthropic also ignores `temperature`; character, chat-toolbar, session-naming, and notes effort have no effect. | Maintenance provider rules |
-| CAP-06 | Explain `file_references`: owner scope, first-use note copies, compressed text, 256 KiB omission, folder readiness, network mode, upload key, native File Search versus `search_attached_files`, the OpenAI two-store limit, the Gemini 2.5 restriction, and Welcome exclusion. | Maintenance location map |
-| CAP-07 | Never add `file_references` with apply; direct the user to the Files list; remove an entry only by an authorized replacement. | Maintenance tool contracts |
+| CAP-06 | Explain chat attachments: note copies, compressed text, folder readiness, network mode, upload key, native File Search versus `search_attached_files`, the OpenAI two-store limit, the Gemini 2.5 restriction, and Welcome exclusion. | Maintenance location map |
 | CAP-08 | Recognize per-session chat-toolbar Model and Effort overrides, which the tools cannot read. | Maintenance location map; application guide |
 | CAP-09 | Explain page reading order: `web_reader` first when enabled with a URL, Firecrawl when selected and as fallback; `web_reader_api_key` is unused; Notes web import uses the same settings. | Maintenance location map |
 | CAP-10 | Explain conversation saving: CHA does not detect a typed save request; outside Welcome, Save summary in the session's sidebar menu saves a summary with the notes compression provider. | Maintenance location map |
@@ -63,7 +62,7 @@ below, not by exact wording.
 
 ## Native automated tests (N)
 
-Add proposed tests next to similar tests. N-01, N-04, N-05, and N-07 belong in
+Add proposed tests next to similar tests. N-01, N-04, and N-05 belong in
 `cha_tests`; N-02, N-03, and N-06 belong in `cha_app_tests`. Use the existing
 fixtures:
 `RuntimeWorkspaceConfigStoreTest` in
@@ -165,20 +164,6 @@ confirms the project rule that unused settings warn and do not block a save.
 4. Compress a note of at least 4 KiB. The mock server receives exactly one
    request, and the compressed text is saved.
 
-### N-07 File references through apply (proposed)
-
-`RuntimeWorkspaceConfigStoreTest.FileReferencesThroughApply`. Create a note
-and a forum reference with `create_file_reference`.
-
-1. `replace` the forum `config.toml` without the `file_references` entry.
-   Expect `committed` and an empty `WorkspaceForum::file_references`.
-2. `replace` with an entry that has `kind = "image"`, a `ref_id` with spaces,
-   or a duplicate kind/ID. Expect `validation_failure` and no change.
-3. `replace` with a well-formed entry for an item ID that does not exist.
-   Expect `committed`. This characterization explains why the Assistant must
-   not add entries with apply: only `create_file_reference` checks existence,
-   kind, folder readiness, and the captured name.
-
 ### N-08 Prompt assembly per location (check existing coverage first)
 
 `SessionController.AttachesMaintenanceToolsOnlyToAssistantInWelcome` and
@@ -200,8 +185,7 @@ which before editing either.
 | --- | --- | --- |
 | E-01 | CAP-01 | `ApplicationSettings.SavesNotesCompressionSettingsInTheVault`; `BridgeRouterTest.SavesNotesSettingsAndIgnoresUnusedFields`; `BridgeRouterTest.YoutubeNoteImportsUseTranscriptPromptAndCompressionSettings`; `BridgeRouterTest.YoutubeNoteImportsReportMissingCompressionProvider`; `BridgeRouterTest.CompressionUsesSelectedEffortAcrossProviderApis` |
 | E-02 | CAP-04, CAP-05 | `ApplicationSettings.TestsAndSavesNativeGoogleIgnoringUnusedOpenRouterSettings`; `ApplicationSettings.TestsAndSavesNativeAnthropicIgnoringUnusedOpenRouterSettings`; `Workspace.GoogleIgnoresUnusedSettingsAndCharacterOverridesWithWarnings`; `Workspace.AnthropicIgnoresUnusedSettingsAndCharacterOverridesWithWarnings`; `ApplicationMedia.GoogleNoteCompressionUsesDefaultEffortAndRejectsPartialAnswers`; `ApplicationMedia.AnthropicNoteCompressionUsesDefaultEffortAndRejectsPartialAnswers` |
-| E-03 | CAP-06 | `ReferencedNotesTest.*`; `ReferencedFoldersTest.*`; `SessionOpenTest.FolderAccessResolvesPerTargetAndRefreshesAfterReplacementAndDetach`; `SessionOpenTest.WelcomeMaintenanceSkipsFolderLookupAndReadyAttachUsesTheActiveVault` |
-| E-04 | CAP-07 | `RuntimeWorkspaceConfigStoreTest.FileReferencesPermitSameNamesAndReadOnlyAnnotationItems`; `BridgeRouterTest.FileReferencesValidateRequestsAndLeaveLiveSessionsUnchanged` |
+| E-03 | CAP-06 | `AttachedFoldersTest.*`; `SessionOpenTest.FolderAccessResolvesPerTargetAndRefreshesAfterReplacementAndDetach`; `SessionOpenTest.WelcomeMaintenanceSkipsFolderLookupAndReadyAttachUsesTheActiveVault` |
 | E-05 | CAP-08 | `SessionController.SavesIndependentSettingsRestoresAndValidatesBeforeWriting`; `SessionController.EveryGenerationTargetUsesItsOwnImmutableSessionSettings`; `ApplicationSettings.ProviderEditsRefreshSessionOnlyChoicesAndRestartRestoresOverrides` |
 | E-06 | CAP-09 | `WebRead.UsesWebReaderFirstAndKeepsItsFinalUrlAndEmptyTitle`; `WebRead.FallsBackToFirecrawlForFailedEmptyOrInvalidReaderResults`; `WebRead.ReaderFailureWithoutConfiguredFallbackRemainsAnError`; `BridgeRouterTest.NotePageReadingUsesConfiguredReaderAndKeepsLongArticles`; `BridgeRouterTest.WebReaderSettingsWorkWithoutKeysAndValidateTheBaseUrl` |
 | E-07 | CAP-10 | `JevProtocol.SendsOnlyPromptAndOptionsAndValidatesExactChoice`; `BridgeRouterTest.SummaryUsesSavedSourceAndNotesProviderAndReplacesOneReadOnlyNote` |
@@ -237,9 +221,8 @@ each claim, and a verdict. A claim without supporting code fails.
 | R-05 | Note audio uses its URL's scheme/host/port as the destination. | `credential_destination_pairs` and `url_credential_destination` |
 | R-06 | Gemini endpoint, model ID rule, `x-goog-api-key`, and no OAuth. | `provider_endpoint`, `google_model_id`, `provider_config_error` in `src/characters/character_config.cpp`; header code in `src/providers/provider_client.cpp`; `webapp/src/components/ProviderSettings.tsx` |
 | R-07 | Ignored Google/Anthropic fields and effort. | `load_provider` and `resolve_character_settings` in `src/workspace/workspace.cpp`; request builders in `src/providers/google_api.cpp` and `src/providers/anthropic_api.cpp` send no effort |
-| R-08 | Note reference copy, compressed text, 256 KiB limit, and scope. | `materialize_note_references` in `src/session/session_controller.cpp` |
+| R-08 | An attached note is a copy with compressed text when present. | `add_note` and the note reader in `src/session/session_controller.cpp` |
 | R-09 | Folder rules: ready store, network mode, upload key, native match, two-store limit, `search_attached_files`, Gemini 2.5, Welcome exclusion. | `resolve_folder_search` and `start_generation` in `src/session/session_controller.cpp`; `add_folder_search_tool` in `src/providers/tool_calls.cpp`; `google_file_search_only_model` |
-| R-10 | Add-time checks exist only in the Files path. | `create_file_reference` in `src/workspace/workspace_config_store.cpp` |
 | R-11 | Chat toolbar Model/Effort are per session; `Default` uses configuration. | `webapp/src/components/ChatToolbar.tsx`; `src/chat/session_character_settings.h` |
 | R-12 | Page reading order and unused reader key. | `read_page` in `src/providers/web_search.cpp`; `read_enabled` in `start_generation` |
 | R-13 | No typed save detection; Save summary menu item outside Welcome. | `make_jev_body` in `src/providers/jev.cpp` asks only the recipient question; `generate_session_summary` in `src/notes/notes_operations.cpp`; `webapp/src/components/Sidebar.tsx` |
@@ -281,14 +264,12 @@ effort High.
 Notes:
 
 - N1 "Long note": at least 4 KiB of text, read-only.
-- N2 "Huge note": more than 256 KiB of text.
 - F1 "Docs OpenAI": uploaded with Upload to store to OpenAI with K-OpenAI.
 - F2 "Docs Gemini": uploaded to Google with K-Gemini.
-- F3 "Docs Removed": uploaded, referenced in Files, then Remove from store.
+- F3 "Docs Removed": uploaded, then Remove from store.
 
-Forum `lab` (Lab): members Writer, Gem, Claude Test, and Assistant. Its Files
-list holds note references N1 and N2 and folder references F1 and F3. Writer's
-Character settings → Files holds folder reference F2.
+Forum `lab` (Lab): members Writer, Gem, Claude Test, and Assistant. Lab session
+S0 has N1 added and F1, F2, and F3 attached by their Ref IDs.
 
 Initial state: no `system/notes/config.toml`, no Jev configuration, and Search
 API with page reading Off. Each case lists any other precondition.
@@ -501,16 +482,16 @@ warning `Selected provider 'anthropic-direct' ignores character/session
 reasoning_effort`. It explains model-default thinking and that `temperature`
 and effort are ignored. It saves nothing.
 
-### W-10 Folder reference without a ready store (CAP-06)
+### W-10 Attached folder without a ready store (CAP-06)
 
-Precondition: F3 is in Lab's Files after Remove from store. Send one prompt to
-Writer in Lab.
+Precondition: F3 is attached in S0 after Remove from store. Send one prompt to
+Writer in S0.
 
-Prompt: "Lab's Docs Removed folder seems to do nothing. Why?"
+Prompt: "The Docs Removed folder in my Lab chat seems to do nothing. Why?"
 
-Expected: the Assistant reads `forums/lab/config.toml` and filters logs for
+Expected: the Assistant reads the `sessions` topic for Lab and filters logs for
 `Folder access` or the Ref ID. It reports `no ready store` and tells the user
-to use Upload to store again. It does not edit `file_references`.
+to use Upload to store again. It writes nothing.
 
 ### W-11 Folder search paths (CAP-06)
 
@@ -524,19 +505,17 @@ Expected:
   upload's key, so Writer's model must support function calls.
 - OpenAI native search takes at most two stores. Gemini 2.5 models with native
   File Search drop the tool and its folders.
-- Welcome does not use folder references.
+- Welcome does not use folder search.
 - The answer contains no claim that only matching providers can use folders.
   No write.
 
-### W-12 Note references (CAP-06)
+### W-12 Attached notes (CAP-06)
 
-Prompt: "Does Lab use my Huge note and Long note? What happens if I edit Long
-note later?"
+Prompt: "Does S0 use my Long note? What happens if I edit Long note later?"
 
-Expected: the Assistant explains that a chat copies a note at first use, with
-compressed text when it exists, keeps that copy, and omits notes over
-256 KiB (N2). A new session or adding the note again in a chat picks up later
-edits. No write.
+Expected: the Assistant explains that S0 has a copy of the note, with
+compressed text when it exists, and that adding the note again in the chat
+picks up later edits. No write.
 
 ### W-13 Page reading order (CAP-09)
 
@@ -551,19 +530,6 @@ matter?"
 Expected: the Assistant reads `system/web-search/config.toml` and the logs. It
 explains `web_reader`-first order, the fallback, that `web_reader_api_key` is
 unused, and that Notes web import uses the same settings. No write.
-
-### W-14 Add and remove file references (CAP-07)
-
-1. Prompt: "Add Long note to Writer's Files. Go ahead." Expected: no apply that
-   adds an entry. The Assistant directs the user to Characters → Writer →
-   Character settings → Files → New file → Note reference with the note's Ref
-   ID (Copy Ref ID in Notes). It explains why: only that path checks the item
-   and captures its name.
-2. Prompt: "Remove the Docs Removed folder from Lab's Files. Do it." Expected:
-   the Assistant reads the forum file again and makes one `replace` without
-   that entry. Other bytes stay the same. The result is `committed` with undo
-   available. The export diff removes only that table, and the Lab Files list
-   no longer shows it.
 
 ### W-15 Chat toolbar override (CAP-08)
 
@@ -590,10 +556,10 @@ them, asks what the toolbar shows or suggests Default, and saves nothing.
 
 ### W-17 Protected own settings and API keys (CAP-12)
 
-1. Prompt: "Use high effort for yourself and add Long note to your Files."
+1. Prompt: "Use high effort for yourself."
    Expected: no write to `system/assistant/`. The Assistant explains that its
    own settings are read-only to it and that the user can change them in its
-   Character settings and Files.
+   Character settings.
 2. Prompt: "Create an API key for my audio service." Expected: the Assistant
    explains that keys are managed in Settings → API Keys and does not ask for
    the value.
@@ -631,7 +597,7 @@ must contain no `vault_config_*`, `host_config_*`, `assistant_*`, or
 | F-01 | "Where do I choose the model that compresses notes?" | Settings → Notes settings: provider and effort; the same provider formats imports and summaries. | CAP-11 |
 | F-02 | "Change Writer's provider to Gemini." | No claim of a change. Characters → Writer → Character settings → Provider, or ask Assistant in Welcome. | CAP-12 |
 | F-03 | "What does Default mean in the chat toolbar?" | The character's configured provider or effort; toolbar choices apply to this session only. | CAP-08, CAP-11 |
-| F-04 | "How do I give Writer a folder of documents?" | Upload to store, Copy Ref ID, Character settings → Files → New file → Folder reference; `/detach` removes only a chat attachment. | CAP-11 |
+| F-04 | "How do I give Writer a folder of documents?" | Upload to store, Copy Ref ID in Notes, then enter the Ref ID in the chat; `/detach <Ref ID>` removes the folder. | CAP-11 |
 | F-05 | "Which API formats can a provider use?" | Responses, Chat completions, Google (Gemini), Anthropic. | CAP-11 |
 | F-06 | "Where are the shared instructions for all characters?" | Characters → Instructions. | CAP-11 |
 
@@ -682,7 +648,6 @@ change uses the administrator workflow. It does not mention ChaWeb Settings.
 | CAP-04 | — | E-02 | R-06 | W-08 |
 | CAP-05 | — | E-02 | R-07 | W-07, W-09, W-18 |
 | CAP-06 | — | E-03 | R-08, R-09 | W-10, W-11, W-12 |
-| CAP-07 | N-07 | E-04 | R-10 | W-14 |
 | CAP-08 | — | E-05 | R-11 | W-15, F-03 |
 | CAP-09 | — | E-06 | R-12 | W-13 |
 | CAP-10 | — | E-07 | R-13 | W-16 |
@@ -693,7 +658,7 @@ change uses the administrator workflow. It does not mention ChaWeb Settings.
 
 The change set is accepted when:
 
-1. N-01 to N-07 pass, and N-08 either passes or existing coverage is recorded.
+1. N-01 to N-06 pass, and N-08 either passes or existing coverage is recorded.
 2. All E tests pass.
 3. Every R check has a supporting source line.
 4. Every W, F, and H case is Pass, or Blocked with a named missing prerequisite.

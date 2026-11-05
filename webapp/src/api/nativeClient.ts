@@ -26,7 +26,6 @@ import {
   isCloudStoreDetail,
   isCloudStoreList,
   isCharacterDetail,
-  isFileReference,
   isCharacterPicture,
   isCommandResult,
   isForumDetail,
@@ -469,10 +468,6 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       { character_id: characterId },
       isCharacterDetail,
     ),
-    createFileReference: (request) => call('fileReference.create', request, isFileReference),
-    deleteFileReference: async (request) => {
-      await call('fileReference.delete', request, isRecord);
-    },
     createCharacter: (request) => call(
       'character.create',
       request,

@@ -1048,17 +1048,7 @@ CREATE TABLE IF NOT EXISTS session_notes (
     note_id INTEGER NOT NULL CHECK (note_id > 0),
     name TEXT NOT NULL,
     text TEXT NOT NULL,
-    explicitly_added INTEGER NOT NULL DEFAULT 1 CHECK (explicitly_added IN (0, 1)),
     PRIMARY KEY (session_key, note_id)
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS session_note_scopes (
-    session_key INTEGER NOT NULL,
-    note_id INTEGER NOT NULL,
-    character_id TEXT NOT NULL,
-    PRIMARY KEY (session_key, note_id, character_id),
-    FOREIGN KEY (session_key, note_id)
-        REFERENCES session_notes(session_key, note_id) ON DELETE CASCADE
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS session_files (
@@ -1068,6 +1058,9 @@ CREATE TABLE IF NOT EXISTS session_files (
     PRIMARY KEY (session_key, name)
 ) STRICT;
 )sql");
+    // Character and forum note references were removed. Delete the copies
+    // that only they saved, so that chats do not show them as added notes.
+    database.execute("DROP TABLE IF EXISTS session_note_scopes");
     bool has_explicitly_added = false;
     {
         auto columns = database.prepare("PRAGMA table_info(session_notes)");
@@ -1075,9 +1068,10 @@ CREATE TABLE IF NOT EXISTS session_files (
             if (columns.text(1) == "explicitly_added") has_explicitly_added = true;
         }
     }
-    if (!has_explicitly_added) database.execute(
-        "ALTER TABLE session_notes ADD COLUMN explicitly_added INTEGER NOT NULL DEFAULT 1 "
-        "CHECK (explicitly_added IN (0, 1))");
+    if (has_explicitly_added) {
+        database.execute("DELETE FROM session_notes WHERE explicitly_added = 0");
+        database.execute("ALTER TABLE session_notes DROP COLUMN explicitly_added");
+    }
     bool has_forum_id = false;
     {
         auto columns = database.prepare("PRAGMA table_info(note_items)");

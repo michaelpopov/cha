@@ -19,19 +19,6 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
-  it('creates and deletes file references through metadata-only bridge calls', async () => {
-    const request = { owner_type: 'character' as const, owner_id: 'guide', kind: 'note' as const, ref_id: '##00000A' };
-    const saved = { kind: 'note', ref_id: '##00000A', name: 'Captured name' };
-    const create = vi.fn(() => saved);
-    const remove = vi.fn(() => ({}));
-    const client = createNativeChaClient(createFakeNativeBridge({ 'fileReference.create': create, 'fileReference.delete': remove }));
-    expect(await client.createFileReference(request)).toEqual(saved);
-    await client.deleteFileReference(request);
-    expect(create).toHaveBeenCalledExactlyOnceWith(request);
-    expect(remove).toHaveBeenCalledExactlyOnceWith(request);
-    create.mockReturnValueOnce({ ...saved, kind: 'file' });
-    await expect(client.createFileReference(request)).rejects.toBeInstanceOf(ChaProtocolError);
-  });
   it('offers folder transfer only with the native functions and shows their messages', async () => {
     const host = window as Window & {
       __CHA_NATIVE_EXPORT_NOTE_FOLDER__?: (suggestedName: string, folderId: number) => Promise<void>;

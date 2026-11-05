@@ -1056,35 +1056,6 @@ components:
         content_base64:
           type: string
 
-    FileReference:
-      type: object
-      additionalProperties: false
-      required: [kind, ref_id, name]
-      properties:
-        kind:
-          type: string
-          enum: [note, folder]
-        ref_id:
-          type: string
-        name:
-          type: string
-
-    FileReferenceRequest:
-      type: object
-      additionalProperties: false
-      required: [owner_type, owner_id, kind, ref_id]
-      properties:
-        owner_type:
-          type: string
-          enum: [character, forum]
-        owner_id:
-          $ref: "#/components/schemas/Identifier"
-        kind:
-          type: string
-          enum: [note, folder]
-        ref_id:
-          type: string
-
     CharacterDetail:
       type: object
       additionalProperties: false
@@ -1095,7 +1066,6 @@ components:
         - character_markdown
         - editable_markdown
         - markdown_files
-        - file_references
         - provider
         - style
         - voice_id
@@ -1124,10 +1094,6 @@ components:
         editable_markdown:
           type: string
           description: Verbatim Markdown accepted by the definition editor.
-        file_references:
-          type: array
-          items:
-            $ref: "#/components/schemas/FileReference"
         markdown_files:
           type: array
           description: Sorted filenames directly in the character directory, without content.
@@ -1311,7 +1277,7 @@ components:
     ForumDetail:
       type: object
       additionalProperties: false
-      required: [id, display_name, default_character_id, default_persona_id, default_persona_display_name, members, forum_markdown, markdown_files, file_references, writable]
+      required: [id, display_name, default_character_id, default_persona_id, default_persona_display_name, members, forum_markdown, markdown_files, writable]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -1331,10 +1297,6 @@ components:
             $ref: "#/components/schemas/CharacterSummary"
         forum_markdown:
           type: string
-        file_references:
-          type: array
-          items:
-            $ref: "#/components/schemas/FileReference"
         markdown_files:
           type: array
           items:

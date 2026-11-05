@@ -33,6 +33,5 @@
   ],
   "available_voices": [{"id": "brian", "label": "Brian"}],
   "settings_writable": true,
-  "writable": true,
-  "file_references": []
+  "writable": true
 }
