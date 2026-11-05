@@ -1,7 +1,6 @@
 #include "providers/provider_client.h"
 
 #include "providers/api_key_store.h"
-#include "providers/folder_store_client.h"
 
 #include "characters/character.h"
 #include "characters/character_config.h"
@@ -578,11 +577,6 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
     }
     if (input.summary_tool && summary_tools_available(Json::parse(prepared.bytes), config.api))
         prepared.summary_tool = input.summary_tool;
-    if (!input.maintenance_tool && input.folder_search && !input.folder_search->search_targets.empty()
-        && function_tool_available(Json::parse(prepared.bytes), config.api, "search_attached_files"))
-        prepared.folder_search_tool = [targets = input.folder_search->search_targets](std::string_view query, const std::atomic_bool& cancel) {
-            return FolderStoreClient{}.search_stores(targets, query, cancel);
-        };
     return prepared;
 }
 
@@ -649,7 +643,7 @@ GenerationResult ProviderClient::perform(
             + " received_answer=" + (round_received_answer ? "true" : "false"));
         if (result.outcome != GenerationOutcome::completed || result.tool_calls.empty())
             return result;
-        if (!maintenance && !payload.web_search_tool && !payload.web_read_tool && !payload.summary_tool && !payload.folder_search_tool) {
+        if (!maintenance && !payload.web_search_tool && !payload.web_read_tool && !payload.summary_tool) {
             statistics.tool_calls_rejected += result.tool_calls.size();
             return {GenerationOutcome::protocol_error,
                 "Model requested a tool when tools were unavailable", total};
@@ -661,7 +655,6 @@ GenerationResult ProviderClient::perform(
                 maintenance ? "Model kept requesting tools after the maintenance tool limit"
                     : payload.summary_tool ? "Model kept requesting tools after the overall tool limit"
                     : payload.web_read_tool ? "Model kept requesting tools after the web tool limit"
-                    : payload.folder_search_tool ? "Model kept requesting tools after the tool limit"
                     : "Model kept requesting web search after the search limit", total};
         }
         if (body.is_null()) body = Json::parse(payload.bytes);
@@ -693,8 +686,6 @@ GenerationResult ProviderClient::perform(
                     ? R"({"error":"limit","message":"Maintenance tool limit reached. Answer using the available results.","committed":false})"
                     : payload.summary_tool
                     ? R"({"error":"limit","message":"Overall tool limit reached. Answer using the available results."})"
-                    : payload.folder_search_tool
-                    ? R"({"error":"Overall tool limit reached. Answer using the available results."})"
                     : R"({"error":"Web tool limit reached. Answer using the available results."})";
                 continue;
             }
@@ -762,27 +753,6 @@ GenerationResult ProviderClient::perform(
                     else if (tool_failed(output)) ++statistics.summary.failed;
                     statistics.summary.result_bytes += output.size();
                 }
-                continue;
-            }
-            if (call.name == "search_attached_files") {
-                if (!payload.folder_search_tool) {
-                    ++statistics.tool_calls_rejected;
-                    output = R"({"error":"Attached file search is unavailable."})";
-                } else if (!arguments.is_object() || arguments.size() != 1
-                    || !arguments.contains("query") || !arguments["query"].is_string()
-                    || trim_view(arguments["query"].get_ref<const std::string&>()).empty()
-                    || arguments["query"].get_ref<const std::string&>().size() > 2048) {
-                    ++statistics.tool_calls_rejected;
-                    output = R"({"error":"search_attached_files requires one non-empty query of at most 2048 bytes."})";
-                } else {
-                    try {
-                        output = payload.folder_search_tool(arguments["query"].get_ref<const std::string&>(), cancellation);
-                    } catch (const std::exception&) {
-                        log_warn("Attached file search failed.");
-                        output = R"({"error":"Attached file search failed."})";
-                    }
-                }
-                if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
                 continue;
             }
             if (call.name == "web_search" || call.name == "web_read") {
@@ -930,7 +900,7 @@ GenerationResult ProviderClient::perform(
                     body["tool_choice"] = "auto";
                 }
             }
-            const bool folder_search = body.contains("tools") && std::any_of(
+            const bool library_search = body.contains("tools") && std::any_of(
                 body["tools"].begin(), body["tools"].end(), [&](const auto& tool) {
                     return google ? tool.contains("fileSearch") : responses && tool.value("type", "") == "file_search";
                 });
@@ -939,9 +909,9 @@ GenerationResult ProviderClient::perform(
                 ? "Maintenance tools are now unavailable because the tool limit was reached. "
                     "Answer the original request using the results already collected. "
                     "Earlier saved changes stay saved. Do not request more tools."
-                : folder_search
+                : library_search
                 ? "CHA ordinary tools are now unavailable because the tool limit was reached. "
-                    "Answer using collected results and available folder search. "
+                    "Answer using collected results and available Forum Library search. "
                     "State any gaps in verification and do not invent missing facts."
                 : "Ordinary tools are now unavailable because the tool limit was reached. "
                     "Answer the original request using the results already collected. "
@@ -1004,7 +974,7 @@ GenerationResult ProviderClient::perform_once(
 
     const std::string& request_body = payload.bytes;
     const bool maintenance = static_cast<bool>(payload.maintenance_tool);
-    const bool collect_tool_calls = maintenance || payload.web_search_tool || payload.web_read_tool || payload.summary_tool || payload.folder_search_tool;
+    const bool collect_tool_calls = maintenance || payload.web_search_tool || payload.web_read_tool || payload.summary_tool;
     const std::size_t argument_limit = maintenance
         ? maintenance_argument_limit : ordinary_tool_argument_limit;
     std::unique_ptr<StreamingResponseDecoder> decoder;

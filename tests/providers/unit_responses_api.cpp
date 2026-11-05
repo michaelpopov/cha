@@ -569,12 +569,11 @@ TEST(ResponsesApi, ReportsMalformedOrFailedNonStreamingBodies) {
 }
 
 
-TEST(ResponsesApi, FolderSearchCoexistsWithHostedWebAndFunctionsAndYieldsToMaintenance) {
+TEST(ResponsesApi, LibrarySearchCoexistsWithHostedWebAndFunctionsAndYieldsToMaintenance) {
     for (const auto mode : {WebSearchMode::off, WebSearchMode::automatic, WebSearchMode::required}) {
         Transcript transcript;
         auto input = make_request(transcript, "Question");
-        input.folder_search = FolderSearchAccess{FolderStoreService::openai, {"vs_one", "vs_two"}};
-        input.folder_search_context = "Research ##00000B /detach ##00000B";
+        input.library_store_ids = {"vs_one", "vs_two"};
         input.web_search_tool = [](auto, const auto&) { return "[]"; };
         input.web_read_tool = [](auto, const auto&, const auto&) { return "page"; };
         ModelBackendConfig config;
@@ -587,7 +586,7 @@ TEST(ResponsesApi, FolderSearchCoexistsWithHostedWebAndFunctionsAndYieldsToMaint
         EXPECT_EQ(body["tools"].size(), mode == WebSearchMode::off ? 3u : 4u);
         EXPECT_EQ(body["tools"].back(), (Json{{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}));
         EXPECT_EQ(body.dump().find("Research"), std::string::npos);
-        EXPECT_NE(body["instructions"].get<std::string>().find("Folder search is available"), std::string::npos);
+        EXPECT_NE(body["instructions"].get<std::string>().find("Forum Library search is available"), std::string::npos);
         input.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
         body = Json::parse(build_responses_request_body(input, config, "System"));
         for (const auto& tool : body["tools"]) EXPECT_NE(tool.value("type", ""), "file_search");
@@ -617,17 +616,13 @@ TEST(ResponsesApi, HostedSearchOutputIsRetainedWithoutBecomingALocalCall) {
     }
 }
 
-TEST(ResponsesApi, EmptyAndForeignFolderAccessDoNotAdvertiseOrSerializeFileSearch) {
-    for (const auto& access : {FolderSearchAccess{FolderStoreService::openai, {}},
-                             FolderSearchAccess{FolderStoreService::google, {"fileSearchStores/foreign"}}}) {
-        Transcript transcript;
-        auto input = make_request(transcript, "Question");
-        input.folder_search = access;
-        const auto body = Json::parse(build_responses_request_body(input, {}, "System"));
-        EXPECT_FALSE(body.contains("tools"));
-        EXPECT_EQ(body.dump().find("fileSearchStores/foreign"), std::string::npos);
-        EXPECT_EQ(body.dump().find("Folder search is available"), std::string::npos);
-    }
+TEST(ResponsesApi, EmptyLibraryDoesNotAdvertiseOrSerializeFileSearch) {
+    GenerationRequest input;
+    input.history = std::make_shared<const ModelHistory>();
+    input.run.prompt_text = "Question";
+    const auto body = Json::parse(build_responses_request_body(input, {}, "System"));
+    EXPECT_FALSE(body.contains("tools"));
+    EXPECT_EQ(body.dump().find("Forum Library search is available"), std::string::npos);
 }
 
 } // namespace

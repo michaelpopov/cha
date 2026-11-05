@@ -166,6 +166,7 @@ export const connectedAuth: OpenAiAuth = { status: 'connected' };
 
 export const snapshotFixture: SessionSnapshot = {
   chat_settings: {
+    model_locked: false,
     model_options: [{ id: 'test', display_name: 'Test', model: 'test-model', host: 'localhost' }],
     characters: [{ character_id: 'assistant', provider_id: 'test', reasoning_effort: 'none' }],
   },

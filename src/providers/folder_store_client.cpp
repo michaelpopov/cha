@@ -1,7 +1,6 @@
 #include "providers/folder_store_client.h"
 
 #include "util/curl.h"
-#include "util/logging.h"
 #include "util/text.h"
 
 #include <nlohmann/json.hpp>
@@ -351,9 +350,6 @@ FolderStoreEligibility folder_store_match(
     if (!service || config.auth != ProviderAuth::none) return result;
     result.api_key_id = resolve_key_id(config, keys);
     if (result.api_key_id.empty()) return result;
-    if (*service == FolderStoreService::openai && !config.openrouter_targets.empty()) {
-        log_warn("Ignoring unused OpenRouter targets for folder store access.");
-    }
     result.service = service;
     return result;
 }
@@ -506,118 +502,6 @@ FolderStoreHttpResponse folder_store_curl_transport(
 
 FolderStoreClient::FolderStoreClient(FolderStoreTransport transport)
     : transport_(transport ? std::move(transport) : folder_store_curl_transport) {}
-
-std::string FolderStoreClient::search_stores(
-    std::span<const FolderStoreSearchTarget> stores, std::string_view query,
-    const std::atomic_bool& cancel) {
-    if (trim_view(query).empty() || query.size() > 2048)
-        return R"({"error":"Search requires a non-empty query of at most 2048 bytes."})";
-    Json output{{"stores", Json::array()}, {"truncated", false}};
-    std::size_t result_bytes = 64;
-    for (const auto& store : stores) {
-        if (cancel.load()) return R"({"error":"Search cancelled."})";
-        Json entry{{"folder", utf8_prefix(store.folder_name, 256)}, {"matches", Json::array()}};
-        try {
-            if (store.api_key.empty()) throw FolderStoreError("The saved API key is missing or empty.");
-            FolderStoreHttpRequest request;
-            request.method = "POST";
-            const bool google = store.service == FolderStoreService::google;
-            if (google) {
-                if (!google_store_valid(store.remote_store_id)) throw FolderStoreError("The store ID is invalid.");
-                // Update this retrieval-only model when Google retires it.
-                request.url = std::string(google_origin) + "/v1beta/models/gemini-3.8-flash:generateContent";
-                request.headers = {{"x-goog-api-key", store.api_key}, {"Content-Type", "application/json"}};
-                // File Search needs generation to run. A one-token limit stops it before grounding is returned.
-                request.body = Json{
-                    {"contents", Json::array({{{"role", "user"}, {"parts", Json::array({{{"text", query}}})}}})},
-                    {"tools", Json::array({{{"fileSearch", {{"fileSearchStoreNames", {store.remote_store_id}}}}}})},
-                    {"generationConfig", {{"maxOutputTokens", 2048}}},
-                }.dump();
-            } else {
-                if (!safe_component(store.remote_store_id)) throw FolderStoreError("The store ID is invalid.");
-                request.url = std::string(openai_origin) + "/vector_stores/" + store.remote_store_id + "/search";
-                request.headers = {{"Authorization", "Bearer " + store.api_key}, {"Content-Type", "application/json"}};
-                request.body = Json{{"query", query}, {"max_num_results", 5}}.dump();
-            }
-            const auto response = transport_(request, cancel);
-            if (cancel.load() || response.cancelled) return R"({"error":"Search cancelled."})";
-            const auto status = classify(response, false);
-            if (status.kind != FolderStoreRemoteKind::ok || status.operation_error)
-                throw FolderStoreError(status.message.empty() ? "The store search failed." : status.message);
-            const auto body = Json::parse(response.body);
-            if (google) {
-                const auto& candidate = body.at("candidates").at(0);
-                const auto reason = candidate.value("finishReason", "");
-                if (reason != "STOP" && reason != "MAX_TOKENS")
-                    throw FolderStoreError("Gemini could not complete the retrieval request.");
-                const auto grounding = candidate.value("groundingMetadata", Json::object());
-                const auto chunks = grounding.value("groundingChunks", Json::array());
-                if (!chunks.is_array()) throw std::runtime_error("Invalid grounding chunks");
-                for (const auto& chunk : chunks) {
-                    const auto context = chunk.value("retrievedContext", Json::object());
-                    const auto text = context.value("text", std::string{});
-                    if (text.empty()) continue;
-                    if (entry["matches"].size() == 5) {
-                        output["truncated"] = true;
-                        break;
-                    }
-                    const auto prefix = utf8_prefix(text, 4096);
-                    if (prefix.size() != text.size()) output["truncated"] = true;
-                    entry["matches"].push_back({{"filename", utf8_prefix(context.value("title", std::string{}), 256)},
-                        {"text", prefix}});
-                }
-                if (entry["matches"].empty()) {
-                    if (reason != "STOP")
-                        throw FolderStoreError("Gemini returned no source passages; the search could not be verified.");
-                    // Empty completed searches can also hide an unavailable store.
-                    const auto inspection = google_inspect_store(store.remote_store_id, store.api_key, cancel);
-                    if (cancel.load() || inspection.kind == FolderStoreRemoteKind::cancelled)
-                        return R"({"error":"Search cancelled."})";
-                    if (inspection.kind != FolderStoreRemoteKind::ok)
-                        throw FolderStoreError(inspection.message);
-                }
-            } else {
-                const auto& data = body.at("data");
-                if (!data.is_array()) throw std::runtime_error("Invalid search results");
-                if (body.value("has_more", false) || data.size() > 5) output["truncated"] = true;
-                for (const auto& match : data) {
-                    if (entry["matches"].size() == 5) break;
-                    const auto filename = match.at("filename").get<std::string>();
-                    const auto file_id = match.at("file_id").get<std::string>();
-                    const auto& content = match.at("content");
-                    if (!content.is_array()) throw std::runtime_error("Invalid search content");
-                    std::string text;
-                    for (const auto& part : content) {
-                        if (part.at("type") != "text") continue;
-                        const auto& passage = part.at("text").get_ref<const std::string&>();
-                        if (!text.empty() && text.size() < 4096) text += '\n';
-                        const auto prefix = utf8_prefix(passage, 4096 - text.size());
-                        if (prefix.size() != passage.size()) output["truncated"] = true;
-                        text += prefix;
-                    }
-                    entry["matches"].push_back({{"filename", utf8_prefix(filename, 256)},
-                        {"file_id", utf8_prefix(file_id, 256)}, {"text", std::move(text)}});
-                }
-            }
-        } catch (const FolderStoreError& error) {
-            entry["error"] = error.what();
-        } catch (const std::exception&) {
-            entry["matches"] = Json::array();
-            entry["error"] = "The store search failed or returned invalid results.";
-        }
-        if (entry.contains("error"))
-            log_warn("Store search failed for " + entry["folder"].get<std::string>()
-                + ": " + entry["error"].get<std::string>());
-        const auto bytes = entry.dump().size() + 1;
-        if (result_bytes + bytes > 65536) {
-            output["truncated"] = true;
-            break;
-        }
-        result_bytes += bytes;
-        output["stores"].push_back(std::move(entry));
-    }
-    return output.dump();
-}
 
 FolderStoreList FolderStoreClient::list_stores(
     FolderStoreService service, std::string_view key, const std::atomic_bool& cancel) {

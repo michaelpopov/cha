@@ -283,14 +283,12 @@ TEST(GoogleApi, Gemini25AliasesUseFileSearchWithoutFunctions) {
     EXPECT_FALSE(google_file_search_only_model("gemini-3-flash"));
 }
 
-TEST(GoogleApi, FolderSearchCapabilitiesAndDeclarationOrderAreIndependent) {
+TEST(GoogleApi, LibrarySearchCapabilitiesAndDeclarationOrderAreIndependent) {
     for (const auto model : {"gemini-2.5-pro", "gemini-2.5-flash", "models/gemini-2.5-flash-lite", "gemini-3.8-flash", "gemini-4-argon", "unknown-model"}) {
         GenerationRequest request;
         request.history = std::make_shared<const ModelHistory>();
         request.run.prompt_text = "Question";
-        request.folder_search = FolderSearchAccess{FolderStoreService::google,
-            {"fileSearchStores/one", "fileSearchStores/two", "fileSearchStores/three"}};
-        request.folder_search_context = "Research (##00000B) (/detach ##00000B)";
+        request.library_store_ids = {"fileSearchStores/one", "fileSearchStores/two", "fileSearchStores/three"};
         request.web_search_tool = [](auto, const auto&) { return "[]"; };
         request.web_read_tool = [](auto, const auto&, const auto&) { return "page"; };
         ModelBackendConfig config;
@@ -307,7 +305,7 @@ TEST(GoogleApi, FolderSearchCapabilitiesAndDeclarationOrderAreIndependent) {
             EXPECT_EQ(body["tools"][0]["functionDeclarations"].size(), 2u);
         } else EXPECT_FALSE(body.contains("toolConfig"));
         EXPECT_NE(body["systemInstruction"].dump().find(only ? "Web search is unavailable" : "Web search is available"), std::string::npos);
-        EXPECT_NE(body["systemInstruction"].dump().find("Folder search is available"), std::string::npos);
+        EXPECT_NE(body["systemInstruction"].dump().find("Forum Library search is available"), std::string::npos);
         request.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
         body = Json::parse(build_google_request_body(request, config, "System"));
         for (const auto& tool : body["tools"]) EXPECT_FALSE(tool.contains("fileSearch"));
@@ -326,22 +324,17 @@ TEST(GoogleApi, FolderSearchCapabilitiesAndDeclarationOrderAreIndependent) {
         const auto instruction = body["systemInstruction"].dump();
         EXPECT_NE(instruction.find("Web search is unavailable"), std::string::npos);
         EXPECT_NE(instruction.find("Web page reading is unavailable"), std::string::npos);
-        EXPECT_NE(instruction.find("Folder search is available"), std::string::npos);
+        EXPECT_NE(instruction.find("Forum Library search is available"), std::string::npos);
     }
 }
 
-TEST(GoogleApi, EmptyAndForeignFolderAccessDoNotAdvertiseOrSerializeFileSearch) {
-    for (const auto& access : {FolderSearchAccess{FolderStoreService::google, {}},
-                             FolderSearchAccess{FolderStoreService::openai, {"vs_foreign"}}}) {
-        GenerationRequest request;
-        request.history = std::make_shared<const ModelHistory>();
-        request.run.prompt_text = "Question";
-        request.folder_search = access;
-        const auto body = Json::parse(build_google_request_body(request, {}, "System"));
-        EXPECT_FALSE(body.contains("tools"));
-        EXPECT_EQ(body.dump().find("vs_foreign"), std::string::npos);
-        EXPECT_EQ(body.dump().find("Folder search is available"), std::string::npos);
-    }
+TEST(GoogleApi, EmptyLibraryDoesNotAdvertiseOrSerializeFileSearch) {
+    GenerationRequest input;
+    input.history = std::make_shared<const ModelHistory>();
+    input.run.prompt_text = "Question";
+    const auto body = Json::parse(build_google_request_body(input, {}, "System"));
+    EXPECT_FALSE(body.contains("tools"));
+    EXPECT_EQ(body.dump().find("Forum Library search is available"), std::string::npos);
 }
 
 } // namespace

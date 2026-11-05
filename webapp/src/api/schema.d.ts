@@ -635,6 +635,7 @@ export interface components {
         /** @enum {string} */
         Effort: "none" | "low" | "medium" | "high" | "xhigh";
         ChatSettings: {
+            model_locked: boolean;
             model_options: components["schemas"]["ProviderSummary"][];
             characters: {
                 character_id: components["schemas"]["Identifier"];

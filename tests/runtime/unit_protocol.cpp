@@ -277,7 +277,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndEntryAppend) {
 
     const auto value = nlohmann::json(SnapshotEvent{std::move(snapshot)});
     const nlohmann::json expected = {
-        {"chat_settings", {{"model_options", nlohmann::json::array()}, {"characters", nlohmann::json::array()}}},
+        {"chat_settings", {{"model_locked", false}, {"model_options", nlohmann::json::array()}, {"characters", nlohmann::json::array()}}},
         {"default_character_id", "guide"},
         {"forum", {{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", ""}, {"default_persona_id", ""}, {"default_persona_display_name", ""}, {"members", nlohmann::json::array()}}},
         {"generation",

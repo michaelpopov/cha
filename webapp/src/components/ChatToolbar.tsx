@@ -38,7 +38,7 @@ export function ChatToolbar({ snapshot, disabled, onCharacter, onSettings }: {
           <option key={item.id} value={item.id}>{item.display_name}</option>
         ))}
       </select>
-      <select aria-label="Model" disabled={disabled} value={settings.provider_id}
+      <select aria-label="Model" disabled={disabled || snapshot.chat_settings.model_locked} value={settings.provider_id}
         onChange={(event) => onSettings(characterId, { provider_id: event.target.value || null })}>
         <option value="">Default</option>
         {snapshot.chat_settings.model_options.map((item) => (

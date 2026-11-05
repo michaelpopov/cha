@@ -797,6 +797,7 @@ export function isGenerationState(value: unknown): value is SessionSnapshot['gen
 
 export function isChatSettings(value: unknown): value is ChatSettings {
   return isRecord(value)
+    && typeof value.model_locked === 'boolean'
     && Array.isArray(value.model_options) && value.model_options.every(isProviderSummary)
     && Array.isArray(value.characters) && value.characters.every((item) => isRecord(item)
       && typeof item.character_id === 'string' && item.character_id.length > 0

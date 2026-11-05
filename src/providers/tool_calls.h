@@ -12,7 +12,6 @@ void add_summary_tools(nlohmann::json& body, ProviderApi api);
 bool summary_tools_available(const nlohmann::json& body, ProviderApi api);
 void add_web_search_tool(nlohmann::json& body, ProviderApi api);
 void add_web_read_tool(nlohmann::json& body, ProviderApi api);
-void add_folder_search_tool(nlohmann::json& body, ProviderApi api);
 bool function_tool_available(const nlohmann::json& body, ProviderApi api, std::string_view name);
 void add_maintenance_tools(nlohmann::json& body, ProviderApi api);
 void update_tool_instructions(nlohmann::json& body, ProviderApi api,

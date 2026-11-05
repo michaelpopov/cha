@@ -2568,6 +2568,74 @@ TEST(Workspace, LibraryRoundTripsAndSurvivesUnrelatedEdits) {
     EXPECT_EQ(file_bytes(fixture.root() / "forums/lobby/config.toml").find("[library]"), std::string::npos);
 }
 
+
+TEST(Workspace, LibraryEligibilityUsesTheSavedKeyIdentityAndNativeEndpoint) {
+    test::TestWorkspace fixture;
+    auto workspace = Workspace::load(fixture.root());
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.create_api_key("api_key_1", "OpenAI", "same-secret", "openai");
+        editor.create_api_key("api_key_2", "Google", "same-secret", "google");
+        editor.create_api_key("api_key_3", "Other OpenAI", "same-secret", "openai");
+        editor.create_api_key("api_key_4", "Disabled", "secret", "none");
+    });
+    workspace = Workspace::load(fixture.root());
+    const auto& key = *workspace.find_api_key("api_key_1");
+    WorkspaceProvider provider;
+    auto& config = provider.config;
+    config.host = "api.openai.com";
+    config.port = 443;
+    config.https = true;
+    config.mode = Mode::net;
+    config.api = ProviderApi::responses;
+    config.api_key_id = key.id;
+    EXPECT_TRUE(provider_uses_key_stores(workspace, provider, key));
+    EXPECT_FALSE(provider_uses_key_stores(workspace, provider, *workspace.find_api_key("api_key_3")));
+    auto empty_key = key;
+    empty_key.value.clear();
+    EXPECT_FALSE(provider_uses_key_stores(workspace, provider, empty_key));
+    const auto base = config;
+    for (int variant = 0; variant < 8; ++variant) {
+        SCOPED_TRACE(variant);
+        config = base;
+        switch (variant) {
+        case 0: config.api_key_id = "api_key_3"; break;
+        case 1: config.auth = ProviderAuth::openai_subscription; break;
+        case 2: config.api = ProviderApi::chat_completions; break;
+        case 3: config.host = "proxy.example.com"; break;
+        case 4: config.base_path = "/v1"; break;
+        case 5: config.https = false; break;
+        case 6: config.port = 8443; break;
+        case 7: config.mode = Mode::test; break;
+        }
+        EXPECT_FALSE(provider_uses_key_stores(workspace, provider, key));
+    }
+    config = base;
+    config.api_key_id.clear();
+    config.api_key_env = "OpenAI";
+    EXPECT_TRUE(provider_uses_key_stores(workspace, provider, key));
+    config.api_key_id = "missing"; // An explicit ID wins over a valid legacy name.
+    EXPECT_FALSE(provider_uses_key_stores(workspace, provider, key));
+    config.api_key_id = "api_key_4";
+    EXPECT_FALSE(provider_uses_key_stores(workspace, provider, *workspace.find_api_key("api_key_4")));
+    config = base;
+    config.host = "generativelanguage.googleapis.com";
+    config.base_path = "/v1beta";
+    config.api = ProviderApi::google;
+    config.api_key_id = "api_key_2";
+    EXPECT_TRUE(provider_uses_key_stores(workspace, provider, *workspace.find_api_key("api_key_2")));
+    EXPECT_FALSE(provider_uses_key_stores(workspace, provider, key));
+    EXPECT_FALSE(forum_library_problem(workspace, ForumLibrary{key.id, {"vs_a", "vs_b"}, {}}));
+    EXPECT_FALSE(forum_library_problem(workspace, ForumLibrary{"api_key_2",
+        {"fileSearchStores/one", "fileSearchStores/two", "fileSearchStores/three"}, {}}));
+    for (const auto& library : std::vector<ForumLibrary>{
+            {"missing", {"vs_a"}, {}}, {"api_key_4", {"vs_a"}, {}},
+            {key.id, {}, {}}, {key.id, {"vs_a", "vs_a"}, {}},
+            {key.id, {"a", "b", "c"}, {}}, {key.id, {"../bad"}, {}},
+            {"api_key_2", {"vs_a"}, {}}, {"api_key_2", {"fileSearchStores/../bad"}, {}}}) {
+        EXPECT_TRUE(forum_library_problem(workspace, library));
+    }
+}
+
 TEST(Workspace, MalformedLibraryIsIgnoredAndPreservedOnUnrelatedEdits) {
     test::TestWorkspace fixture;
     const auto path = fixture.root() / "forums/lobby/config.toml";

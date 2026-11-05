@@ -1486,8 +1486,10 @@ components:
     ChatSettings:
       type: object
       additionalProperties: false
-      required: [model_options, characters]
+      required: [model_locked, model_options, characters]
       properties:
+        model_locked:
+          type: boolean
         model_options:
           type: array
           items:

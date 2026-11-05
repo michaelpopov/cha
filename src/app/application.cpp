@@ -1101,7 +1101,7 @@ ForumDetail Application::update_forum_library(
     std::string_view forum_id, std::optional<ForumLibrary> library, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return workspace::update_forum_library(*impl_->store, forum_id, library);
+    return workspace::update_forum_library(*impl_->store, *impl_->live_sessions, forum_id, library);
 }
 
 ForumDetail Application::update_forum_members(
@@ -1428,8 +1428,11 @@ ApiKeyDetail Application::create_api_key(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::create_api_key(
+    auto result = settings::create_api_key(
         *impl_->store->snapshot(), *impl_->api_keys, create);
+    // Key changes can change the Forum default shown in open chats.
+    workspace::refresh_all_sessions(*impl_->live_sessions);
+    return result;
 }
 
 ApiKeyDetail Application::rename_api_key(
@@ -1438,8 +1441,10 @@ ApiKeyDetail Application::rename_api_key(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::rename_api_key(
+    auto result = settings::rename_api_key(
         *impl_->store->snapshot(), *impl_->api_keys, api_key_id, display_name);
+    workspace::refresh_all_sessions(*impl_->live_sessions);
+    return result;
 }
 
 ApiKeyDetail Application::replace_api_key_value(
@@ -1448,8 +1453,10 @@ ApiKeyDetail Application::replace_api_key_value(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::replace_api_key_value(
+    auto result = settings::replace_api_key_value(
         *impl_->store->snapshot(), *impl_->api_keys, api_key_id, request);
+    workspace::refresh_all_sessions(*impl_->live_sessions);
+    return result;
 }
 
 void Application::delete_api_key(
@@ -1458,6 +1465,7 @@ void Application::delete_api_key(
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     settings::delete_api_key(*impl_->api_keys, api_key_id);
+    workspace::refresh_all_sessions(*impl_->live_sessions);
 }
 
 std::optional<R2StorageDetail> Application::get_r2_storage(

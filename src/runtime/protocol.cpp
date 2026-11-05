@@ -403,6 +403,7 @@ void to_json(nlohmann::json& json, const CharacterChatSettings& value) {
 
 void to_json(nlohmann::json& json, const ChatSettings& value) {
     json = {
+        {"model_locked", value.model_locked},
         {"model_options", value.model_options},
         {"characters", value.characters},
     };

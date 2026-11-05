@@ -4,6 +4,7 @@
 #include "characters/model_context.h"
 #include "storage/session_label.h"
 #include "providers/voice_output_config.h"
+#include "providers/folder_store_client.h"
 #include "util/curl.h"
 #include "util/crypto.h"
 #include "util/path_name.h"
@@ -2441,8 +2442,52 @@ CharacterDefinition Workspace::character_definition(
     const SessionCharacterSettings* overrides) const {
     const auto* character = find_character(character_id);
     if (!character) throw std::invalid_argument("Unknown character");
+    const auto* forum = find_forum(identity.forum_id);
+    if (forum && forum->library && forum->library->provider_id
+        && !forum_default_provider(identity.forum_id)) {
+        const auto& library = *forum->library;
+        log_warn("Ignoring stale Forum default: forum=" + identity.forum_id
+            + " session=" + identity.session_id + " character=" + std::string(character_id)
+            + " provider=" + *library.provider_id + " key=" + library.api_key_id
+            + ": Provider is unavailable or cannot use an available Library key.");
+    }
     return character_definition(identity.forum_id, character_id,
         character_variants(*character, identity), overrides);
+}
+
+bool provider_uses_key_stores(
+    const Workspace& workspace, const WorkspaceProvider& provider, const SavedApiKey& key) {
+    if (key.value.empty() || (key.cloud_store != "openai" && key.cloud_store != "google")) return false;
+    std::vector<ApiKeyInfo> keys;
+    for (const auto& item : workspace.api_keys())
+        keys.push_back({item.id, item.display_name, !item.value.empty(), item.cloud_store});
+    const auto match = folder_store_match(provider.config, keys);
+    const auto service = key.cloud_store == "openai" ? FolderStoreService::openai : FolderStoreService::google;
+    return match.service == service && match.api_key_id == key.id;
+}
+
+std::optional<std::string> forum_library_problem(
+    const Workspace& workspace, const ForumLibrary& library) {
+    const auto* key = workspace.find_api_key(library.api_key_id);
+    if (!key || key->value.empty() || (key->cloud_store != "openai" && key->cloud_store != "google"))
+        return "Select an available cloud store API key.";
+    const bool openai = key->cloud_store == "openai";
+    if (library.store_ids.empty() || (openai && library.store_ids.size() > 2))
+        return "Select cloud stores within the service limit.";
+    std::unordered_set<std::string> ids;
+    for (const auto& id : library.store_ids) {
+        if (!(openai ? safe_component(id) : google_store_valid(id)) || !ids.insert(id).second)
+            return "Invalid or duplicate cloud store ID.";
+    }
+    return std::nullopt;
+}
+
+const WorkspaceProvider* Workspace::forum_default_provider(std::string_view forum_id) const {
+    const auto* forum = find_forum(forum_id);
+    if (!forum || !forum->library || !forum->library->provider_id) return nullptr;
+    const auto* key = find_api_key(forum->library->api_key_id);
+    const auto* provider = find_provider(*forum->library->provider_id);
+    return key && provider && provider_uses_key_stores(*this, *provider, *key) ? provider : nullptr;
 }
 
 ProviderSelection Workspace::resolve_character_settings(
@@ -2465,6 +2510,7 @@ ProviderSelection Workspace::resolve_character_settings(
             provider = selected;
         }
     }
+    if (const auto* selected = forum_default_provider(forum_id)) provider = selected;
     ProviderSelection result{provider->id, provider->config};
     if (character->reasoning_effort) {
         result.config.reasoning_effort = *character->reasoning_effort;

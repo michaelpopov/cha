@@ -3,7 +3,6 @@
 #include "chat/character_metadata.h"
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
-#include "providers/folder_store_types.h"
 
 #include <atomic>
 #include <functional>
@@ -42,12 +41,6 @@ struct RunSpec {
     std::int64_t created_at{};
 };
 
-struct FolderSearchAccess {
-    FolderStoreService service;
-    std::vector<std::string> remote_store_ids;
-    std::vector<FolderStoreSearchTarget> search_targets;
-};
-
 // Complete immutable input for backend preparation. Ordinary requests and
 // multicast children use the same representation.
 struct GenerationRequest {
@@ -62,9 +55,8 @@ struct GenerationRequest {
         std::string_view, std::string_view, const std::atomic_bool&)> maintenance_tool;
     // Auxiliary requests such as session naming do not need conversation tool rules.
     bool include_tool_instructions{true};
-    std::optional<FolderSearchAccess> folder_search;
-    // Local error context only; never serialized as a provider tool payload.
-    std::string folder_search_context;
+    // Native File Search store IDs for this provider. Empty means no Library.
+    std::vector<std::string> library_store_ids;
 };
 
 enum class ModelRole {

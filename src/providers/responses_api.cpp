@@ -214,14 +214,10 @@ std::string build_responses_request_body(
     if (input.web_read_tool) add_web_read_tool(body, config.api);
     if (!input.maintenance_tool) {
         if (input.summary_tool) add_summary_tools(body, config.api);
-        if (input.folder_search && !input.folder_search->search_targets.empty())
-            add_folder_search_tool(body, config.api);
-        if (!subscription && input.folder_search
-            && input.folder_search->service == FolderStoreService::openai
-            && !input.folder_search->remote_store_ids.empty()) {
+        if (!subscription && !input.library_store_ids.empty()) {
             if (!body.contains("tools")) body["tools"] = Json::array();
             body["tools"].push_back({{"type", "file_search"},
-                {"vector_store_ids", input.folder_search->remote_store_ids}});
+                {"vector_store_ids", input.library_store_ids}});
             if (!body.contains("tool_choice")) body["tool_choice"] = "auto";
             // Hosted results must be self-contained when replayed with store: false.
             if (!body.contains("include")) body["include"] = Json::array();

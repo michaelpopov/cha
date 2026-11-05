@@ -204,16 +204,9 @@ through the host's OAuth owner. Keep host repair separate from vault configurati
 An attached note is a copy in the chat. It uses compressed text when present,
 and later edits are picked up by adding the note again in the chat.
 
-Folder search uses these routes and limits:
-
-- A folder needs a ready store, a network-mode provider, and the upload's saved
-  key. Matching direct OpenAI Responses or Google providers with the same saved
-  key ID use provider-hosted File Search. OpenAI uses at most two native stores.
-- Other folders use `search_attached_files` with the upload's key; the answering
-  model must support function calls. Matching the answering provider is not a
-  requirement for access.
-- Gemini 2.5 with native File Search cannot combine it with this function tool;
-  CHA omits the tool and its folders. Welcome does not use folder search.
+A Forum Library gives native File Search to characters whose effective provider
+uses the Library's saved API key. A Forum default provider replaces the model
+for all characters. Attached folders do not give search access.
 
 ## Writing prompt content
 

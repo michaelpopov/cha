@@ -11,7 +11,6 @@
 #include "session/generation_status.h"
 #include "storage/session_database.h"
 #include "storage/note_storage.h"
-#include "storage/folder_store_storage.h"
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
 #include "util/text.h"
@@ -47,19 +46,11 @@ public:
     using ActivationHook = std::function<void(std::size_t)>;
     using NoteReader = std::function<NoteText(std::int64_t)>;
     using ItemReader = std::function<std::optional<NoteItem>(std::int64_t)>;
-    // A ready store that chat search can use for an attached folder.
-    struct FolderSearchStore {
-        FolderStoreService service{FolderStoreService::openai};
-        std::string api_key_id;
-        std::string remote_store_id;
-    };
-    using StoreReader = std::function<std::optional<FolderSearchStore>(std::int64_t)>;
 
     [[nodiscard]] static std::unique_ptr<SessionController> from_workspace(
         WorkspaceReader read_workspace,
         NoteReader read_note,
         ItemReader read_item,
-        StoreReader read_store,
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
@@ -186,7 +177,6 @@ private:
         WorkspaceReader read_workspace,
         NoteReader read_note,
         ItemReader read_item,
-        StoreReader read_store,
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
@@ -203,7 +193,7 @@ private:
 
     void initialize(SessionRestore restored, std::string_view initial_persona_id);
     [[nodiscard]] SharedCharacterDefinition definition_for(
-        std::string_view id) const;
+        const Workspace& workspace, std::string_view id) const;
     [[nodiscard]] SharedPersonaRoster current_personas() const;
     [[nodiscard]] ControllerGenerationView generation_view() const noexcept;
     ControllerUpdate busy_notice() const;
@@ -223,12 +213,6 @@ private:
         std::vector<CharacterMetadata> targets,
         SharedModelHistory history,
         ControllerUpdate& update);
-    [[nodiscard]] std::optional<FolderSearchAccess> resolve_folder_search(
-        const Workspace& workspace,
-        const CharacterMetadata& target,
-        const ModelBackendConfig& config,
-        std::string& context,
-        std::string& omissions);
     [[nodiscard]] ControllerUpdate start_resolved_multicast(
         std::string_view author_id,
         std::string text,
@@ -291,7 +275,6 @@ private:
     SessionJournal journal_;
     NoteReader read_note_;
     ItemReader read_item_;
-    StoreReader read_store_;
     // Production borrows its process-owned executor. Test-backed controllers
     // own their injected executor because no process composition root exists.
     std::shared_ptr<Providers> providers_owner_;

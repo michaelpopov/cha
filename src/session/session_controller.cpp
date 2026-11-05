@@ -3,8 +3,6 @@
 #include "storage/note_storage.h"
 
 #include "providers/maintenance.h"
-#include "providers/folder_store_client.h"
-#include "providers/google_api.h"
 #include "workspace/builtins.h"
 
 #include "storage/session_label.h"
@@ -189,7 +187,6 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
     WorkspaceReader read_workspace,
     NoteReader read_note,
     ItemReader read_item,
-    StoreReader read_store,
     CharacterId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path database_path,
@@ -205,7 +202,6 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
         std::move(read_workspace),
         std::move(read_note),
         std::move(read_item),
-        std::move(read_store),
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id), std::move(database_path),
         session_key, std::move(database_password), providers,
@@ -236,12 +232,10 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
         storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
         return note_find_item(database, id);
     };
-    StoreReader read_store = [](std::int64_t) { return std::optional<FolderSearchStore>{}; };
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(read_workspace),
         std::move(read_note),
         std::move(read_item),
-        std::move(read_store),
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id),
         std::move(database_path), session_key, {}, provider,
@@ -254,7 +248,6 @@ SessionController::SessionController(
     WorkspaceReader read_workspace,
     NoteReader read_note,
     ItemReader read_item,
-    StoreReader read_store,
     ParticipantId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path path,
@@ -298,7 +291,6 @@ SessionController::SessionController(
       journal_(std::move(path), session_key, database_password),
       read_note_(std::move(read_note)),
       read_item_(std::move(read_item)),
-      read_store_(std::move(read_store)),
       providers_owner_(std::move(providers_owner)),
       providers_(providers),
       notifier_(std::move(notifier)),
@@ -310,7 +302,6 @@ SessionController::SessionController(
     if (!notifier_) throw std::invalid_argument("Session controller requires a wake notifier");
     if (!read_note_) throw std::invalid_argument("Session controller requires a note reader");
     if (!read_item_) throw std::invalid_argument("Session controller requires an item reader");
-    if (!read_store_) throw std::invalid_argument("Session controller requires a store reader");
     initialize(std::move(restored), initial_default_persona_id);
 }
 
@@ -394,12 +385,11 @@ SharedPersonaRoster SessionController::current_personas() const {
 }
 
 SharedCharacterDefinition SessionController::definition_for(
-    std::string_view id) const {
-    const std::shared_ptr<const Workspace> current = workspace();
-    if (current->find_forum_member(identity_.forum_id, id) == nullptr) return {};
+    const Workspace& current, std::string_view id) const {
+    if (current.find_forum_member(identity_.forum_id, id) == nullptr) return {};
     const auto settings = character_settings_.find(id);
     return std::make_shared<const CharacterDefinition>(
-        current->character_definition(identity_, id,
+        current.character_definition(identity_, id,
             settings == character_settings_.end() ? nullptr : &settings->second));
 }
 
@@ -836,141 +826,6 @@ ControllerUpdate SessionController::finish_classification() {
     return update;
 }
 
-std::optional<FolderSearchAccess> SessionController::resolve_folder_search(
-    const Workspace& workspace,
-    const CharacterMetadata& target,
-    const ModelBackendConfig& config,
-    std::string& context,
-    std::string& omissions) {
-    struct Folder {
-        std::int64_t id{};
-        std::string name;
-
-        std::string label() const {
-            const auto ref = note_item_ref_id(id);
-            return name.empty() ? ref : name + " (" + ref + ")";
-        }
-        std::string detach_hint() const {
-            return " (/detach " + note_item_ref_id(id) + ")";
-        }
-    };
-    // Attached folders come in numeric order.
-    std::vector<Folder> folders;
-    for (const auto id : journal_.folder_ids()) folders.push_back({id, {}});
-    if (folders.empty()) return {};
-
-    const auto log_prefix = "Folder access in " + identity_.forum_id + "/" + identity_.session_id
-        + ": " + target.display_name + " (" + target.id + "): ";
-    const auto warn = [&](const Folder& folder, std::string_view reason) {
-        log_warn(log_prefix + folder.label() + ": " + std::string(reason));
-    };
-    std::vector<ApiKeyInfo> keys;
-    for (const auto& key : workspace.api_keys())
-        keys.push_back({key.id, key.display_name, !key.value.empty()});
-    const auto match = folder_store_match(config, keys);
-
-    struct Store {
-        std::string remote_id;
-        std::vector<const Folder*> folders;
-        bool selected{true};
-    };
-    std::vector<Store> stores;
-    std::vector<FolderStoreSearchTarget> search_targets;
-    std::vector<const Folder*> tool_folders;
-    std::string omitted;
-    const auto omit = [&](const Folder& folder, std::string_view reason) {
-        if (!omitted.empty()) omitted += "; ";
-        omitted += folder.label() + ": " + std::string(reason) + folder.detach_hint();
-        warn(folder, reason);
-    };
-    for (auto& folder : folders) {
-        std::optional<NoteItem> item;
-        try {
-            item = read_item_(folder.id);
-            if (item) folder.name = item->name;
-        } catch (const std::exception&) {
-            omit(folder, "could not read folder store");
-            continue;
-        }
-        if (!item || item->kind != NoteItemKind::folder) {
-            omit(folder, "folder unavailable");
-            continue;
-        }
-        std::optional<FolderSearchStore> record;
-        try {
-            record = read_store_(folder.id);
-        } catch (const std::exception&) {
-            omit(folder, "could not read folder store");
-            continue;
-        }
-        if (!record || record->remote_store_id.empty()) {
-            omit(folder, "no ready store");
-            continue;
-        }
-        if (config.mode != Mode::net) {
-            omit(folder, "this connection does not support folder search");
-            continue;
-        }
-        const auto* key = workspace.find_api_key(record->api_key_id);
-        if (!key || key->value.empty()) {
-            omit(folder, "saved API key missing or empty");
-            continue;
-        }
-        const bool local_search = match.service != record->service || match.api_key_id != record->api_key_id;
-        if (local_search) {
-            const auto found = std::find_if(search_targets.begin(), search_targets.end(), [&](const auto& store) {
-                return store.service == record->service && store.remote_store_id == record->remote_store_id;
-            });
-            if (found == search_targets.end()) {
-                search_targets.push_back({folder.label(), record->remote_store_id, key->value, record->service});
-            }
-            tool_folders.push_back(&folder);
-            continue;
-        }
-        const auto found = std::find_if(stores.begin(), stores.end(), [&](const Store& store) {
-            return store.remote_id == record->remote_store_id;
-        });
-        if (found == stores.end()) stores.push_back({record->remote_store_id, {&folder}});
-        else found->folders.push_back(&folder);
-    }
-    if (match.service == FolderStoreService::google && !stores.empty()
-        && google_file_search_only_model(config.model)) {
-        for (const auto* folder : tool_folders)
-            omit(*folder, "this Gemini model cannot combine native File Search with the folder search tool");
-        search_targets.clear();
-    } else {
-        for (const auto* folder : tool_folders) {
-            if (!context.empty()) context += "; ";
-            context += folder->label() + folder->detach_hint();
-        }
-    }
-    if (match.service == FolderStoreService::openai && stores.size() > 2) {
-        // The first two stores in numeric folder order use native File Search.
-        for (std::size_t i = 2; i < stores.size(); ++i) stores[i].selected = false;
-        for (const auto& store : stores) {
-            if (!store.selected) continue;
-            for (const auto* folder : store.folders)
-                log_info(log_prefix + folder->label() + ": selected for two-store OpenAI limit");
-        }
-    }
-    std::vector<std::string> remote_ids;
-    for (const auto& store : stores) {
-        if (store.selected) remote_ids.push_back(store.remote_id);
-        else {
-            const auto* key = workspace.find_api_key(match.api_key_id);
-            search_targets.push_back({store.folders.front()->label(), store.remote_id, key->value, FolderStoreService::openai});
-        }
-        for (const auto* folder : store.folders) {
-            if (!context.empty()) context += "; ";
-            context += folder->label() + folder->detach_hint();
-        }
-    }
-    if (!omitted.empty()) append_line(omissions, target.display_name + " — " + omitted + ".");
-    if (remote_ids.empty() && search_targets.empty()) return {};
-    return FolderSearchAccess{match.service.value_or(FolderStoreService::openai),
-        std::move(remote_ids), std::move(search_targets)};
-}
-
 void SessionController::start_generation(
     EntryIdentity author,
     std::string text,
@@ -987,9 +842,9 @@ void SessionController::start_generation(
         [this, &notes] { notes = journal_.notes_prompt(); });
     std::vector<ProviderRequestInput> inputs;
     inputs.reserve(targets.size());
-    std::string folder_omissions;
+    const auto* forum = current->find_forum(identity_.forum_id);
     for (CharacterMetadata& target : targets) {
-        SharedCharacterDefinition definition = definition_for(target.id);
+        SharedCharacterDefinition definition = definition_for(*current, target.id);
         if (!definition) {
             throw std::logic_error("Generation target has no character definition");
         }
@@ -1032,11 +887,21 @@ void SessionController::start_generation(
             }
             definition = std::move(copy);
         }
-        std::optional<FolderSearchAccess> folder_search;
-        std::string folder_context;
-        if (!maintenance) {
-            folder_search = resolve_folder_search(*current, target, definition->provider.config,
-                folder_context, folder_omissions);
+        std::vector<std::string> library_store_ids;
+        if (!maintenance && forum && forum->library) {
+            const auto& library = *forum->library;
+            const auto context = "Forum Library: forum=" + identity_.forum_id
+                + " session=" + identity_.session_id + " character=" + target.id
+                + " provider=" + definition->provider.id + " key=" + library.api_key_id + ": ";
+            if (const auto problem = forum_library_problem(*current, library)) {
+                log_warn(context + *problem);
+            } else if (provider_uses_key_stores(*current,
+                    *current->find_provider(definition->provider.id),
+                    *current->find_api_key(library.api_key_id))) {
+                library_store_ids = library.store_ids;
+            } else {
+                log_info(context + "Effective provider cannot use the Library key; omitting search.");
+            }
         }
         const RequestId request_id = next_request_id_++;
         const std::string cache_key = prompt_cache_key(identity_, target.id);
@@ -1064,8 +929,7 @@ void SessionController::start_generation(
                     .created_at = unix_now(),
                 },
                 .summary_tool = summaries ? summary_tool_ : SummaryTool{},
-                .folder_search = std::move(folder_search),
-                .folder_search_context = std::move(folder_context),
+                .library_store_ids = std::move(library_store_ids),
             },
             .web_search_tool = tool_enabled
                 ? std::optional<WorkspaceWebSearch>(current->web_search()) : std::nullopt,
@@ -1091,9 +955,6 @@ void SessionController::start_generation(
         generation_->requests.push_back(
             providers_.make_request(std::move(input), notifier_));
     }
-    if (!folder_omissions.empty())
-        append_line(generation_->terminal_notices, "Folder access omitted: " + folder_omissions);
-    if (!generation_->terminal_notices.empty()) update.notice = generation_->terminal_notices;
     // Sessions without Jev start naming alongside the reply.
     start_session_name(update);
 }

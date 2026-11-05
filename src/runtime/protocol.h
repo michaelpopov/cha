@@ -111,6 +111,7 @@ struct CharacterChatSettings {
 struct ChatSettings {
     std::vector<ProviderSummary> model_options;
     std::vector<CharacterChatSettings> characters;
+    bool model_locked{false};
     bool operator==(const ChatSettings&) const = default;
 };
 

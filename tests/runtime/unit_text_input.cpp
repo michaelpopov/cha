@@ -3,6 +3,7 @@
 #include "runtime/text_input.h"
 #include "storage/session_database.h"
 #include "storage/note_storage.h"
+#include "storage/folder_store_storage.h"
 #include "storage/sqlite_storage.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"

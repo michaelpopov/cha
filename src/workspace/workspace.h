@@ -188,6 +188,15 @@ struct HandleResolution {
     std::vector<const CharacterMetadata*> candidates;
 };
 
+class Workspace;
+
+// True when the provider can use the cloud stores of the saved key.
+[[nodiscard]] bool provider_uses_key_stores(
+    const Workspace& workspace, const WorkspaceProvider& provider, const SavedApiKey& key);
+// The reason the Library key or stores cannot be used, or nullopt.
+[[nodiscard]] std::optional<std::string> forum_library_problem(
+    const Workspace& workspace, const ForumLibrary& library);
+
 // A self-contained, eagerly loaded and validated view of workspace/. It owns
 // every value it publishes and never exposes filesystem-backed references.
 class Workspace final {
@@ -281,6 +290,8 @@ public:
         std::string_view handle) const;
     [[nodiscard]] std::string forum_handle_list(
         std::string_view forum_id) const;
+    // The Forum default provider when it is valid, or nullptr.
+    [[nodiscard]] const WorkspaceProvider* forum_default_provider(std::string_view forum_id) const;
     [[nodiscard]] ProviderSelection resolve_character_settings(
         std::string_view forum_id,
         std::string_view character_id,

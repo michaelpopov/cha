@@ -130,8 +130,7 @@ void ProviderRequest::close_with(GenerationEvent event) noexcept {
 void ProviderRequest::fail(std::string_view message) noexcept {
     close_with(GenerationFailed{
         input_.generation.run.request_id,
-        std::string(message) + (input_.generation.folder_search_context.empty() ? ""
-            : "\nFolder access: " + input_.generation.folder_search_context),
+        std::string(message),
     });
 }
 

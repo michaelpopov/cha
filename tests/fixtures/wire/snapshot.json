@@ -62,6 +62,7 @@
   },
   "lifecycle": "running",
   "chat_settings": {
+    "model_locked": false,
     "model_options": [
       {
         "id": "test",

@@ -327,7 +327,7 @@ std::vector<ProviderSummary> list_providers(
     if (api_key_id && !key) fail(ErrorCode::invalid_argument, "That API key was not found.");
     std::vector<ProviderSummary> result;
     for (const WorkspaceProvider& provider : workspace.providers()) {
-        if (key && !workspace::provider_uses_key_stores(workspace, provider, *key)) continue;
+        if (key && !provider_uses_key_stores(workspace, provider, *key)) continue;
         result.push_back(provider_summary(provider));
     }
     return result;

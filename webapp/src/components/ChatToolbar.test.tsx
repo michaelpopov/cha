@@ -10,6 +10,7 @@ function snapshot(): SessionSnapshot {
     ...snapshotFixture,
     characters: [snapshotFixture.characters[0], { ...snapshotFixture.characters[0], id: 'other', display_name: 'Other' }],
     chat_settings: {
+      model_locked: false,
       model_options: [
         { id: 'test', display_name: 'FW Kimi', model: 'a-very-long-service-model-id', host: 'example.com' },
         { id: 'other', display_name: 'Other preset', model: 'another-long-id', host: 'example.com' },
@@ -103,6 +104,16 @@ describe('Chat toolbar', () => {
     fireEvent.change(screen.getByLabelText('Effort'), { target: { value: 'high' } });
     expect(onSettings).toHaveBeenCalledWith('other', { reasoning_effort: 'high' });
     expect(value.default_character_id).toBe('*');
+  });
+
+  it('locks only the model while a Forum default applies', () => {
+    const value = snapshot();
+    value.chat_settings.model_locked = true;
+    render(<ChatToolbar snapshot={value} disabled={false} onCharacter={vi.fn()} onSettings={vi.fn()} />);
+    expect(screen.getByLabelText('Model')).toBeDisabled();
+    expect(screen.getByLabelText('Model')).toHaveDisplayValue('FW Kimi');
+    expect(screen.getByLabelText('Character')).toBeEnabled();
+    expect(screen.getByLabelText('Effort')).toBeEnabled();
   });
 
   it('keeps confirmed values visible while disabled', () => {

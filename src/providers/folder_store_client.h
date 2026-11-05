@@ -106,10 +106,6 @@ class FolderStoreClient {
 public:
     explicit FolderStoreClient(FolderStoreTransport transport = {});
 
-    [[nodiscard]] std::string search_stores(
-        std::span<const FolderStoreSearchTarget> stores, std::string_view query,
-        const std::atomic_bool& cancel);
-
     // Reads every page of the stores that the key can access. A store without
     // a name has an empty name.
     [[nodiscard]] FolderStoreList list_stores(

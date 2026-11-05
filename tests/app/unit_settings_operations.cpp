@@ -826,6 +826,91 @@ TEST(ApplicationSettings, ProviderEditsRefreshSessionOnlyChoicesAndRestartRestor
 }
 
 
+TEST(ApplicationSettings, LibraryRefreshesWithoutRestartAndMasksSavedChoices) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    auto epoch = application->context_epoch();
+    const auto key = application->create_api_key({.display_name = "Cloud", .value = "secret", .cloud_store = "openai"}, epoch);
+    const auto provider = application->create_provider({"Library model", "test"}, epoch);
+    auto body = provider_body(application->get_provider(provider.id, epoch));
+    body["host"] = "api.openai.com";
+    body["port"] = 443;
+    body["https"] = true;
+    body["base_path"] = "";
+    body["api"] = "responses";
+    body["mode"] = "net";
+    body["api_key"] = key.id;
+    body["model"] = "library-model";
+    (void)application->update_provider(provider.id, body, epoch);
+    const auto session = application->create_session("lobby", "Library", epoch);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", session.id, epoch)));
+    auto subscribed = application->subscribe("lobby", session.id,
+        {.connection_id = "library", .context_epoch = epoch, .subscription_id = "library"}, epoch);
+    ASSERT_TRUE(std::holds_alternative<SubscribeResult>(subscribed));
+    auto live = std::get<SubscribeResult>(subscribed).session;
+    const auto next = [](const auto& live) {
+        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (auto output = live->take_output()) {
+                SessionSnapshot snapshot = output->snapshot;
+                live->acknowledge_output();
+                return snapshot;
+            }
+            std::this_thread::sleep_for(1ms);
+        }
+        ADD_FAILURE() << "No Library presentation refresh";
+        return SessionSnapshot{};
+    };
+    EXPECT_FALSE(next(live).chat_settings.model_locked);
+    (void)application->update_forum_library("lobby", ForumLibrary{key.id, {"vs_a"}, provider.id}, epoch);
+    const auto locked = next(live);
+    EXPECT_TRUE(locked.chat_settings.model_locked);
+    EXPECT_EQ(locked.chat_settings.characters.front().provider_id, provider.id);
+    EXPECT_EQ(live->lifecycle(), LiveSessionState::running);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(application->submit("lobby", session.id,
+        SetCharacterSettingsCommand{.character_id = "guide", .provider_id = std::optional<std::string>("test"),
+            .reasoning_effort = std::optional<std::string>("high")}, epoch)));
+    const auto masked = next(live);
+    EXPECT_TRUE(masked.chat_settings.model_locked);
+    EXPECT_EQ(masked.chat_settings.characters.front().provider_id, provider.id);
+    EXPECT_EQ(masked.chat_settings.characters.front().reasoning_effort, "high");
+    (void)application->update_forum_library("lobby", ForumLibrary{key.id, {"vs_b"}, {}}, epoch);
+    const auto unlocked = next(live);
+    EXPECT_FALSE(unlocked.chat_settings.model_locked);
+    EXPECT_EQ(unlocked.chat_settings.characters.front().provider_id, "test");
+    (void)application->update_forum_library("lobby", std::nullopt, epoch);
+    EXPECT_FALSE(next(live).chat_settings.model_locked);
+    EXPECT_EQ(live->lifecycle(), LiveSessionState::running);
+    (void)application->update_forum_library("lobby", ForumLibrary{key.id, {"vs_b"}, provider.id}, epoch);
+    EXPECT_TRUE(next(live).chat_settings.model_locked);
+    // A key change that makes the default stale refreshes open chats too.
+    (void)application->replace_api_key_value(key.id, {.value = std::nullopt, .cloud_store = "none"}, epoch);
+    const auto stale = next(live);
+    EXPECT_FALSE(stale.chat_settings.model_locked);
+    EXPECT_EQ(stale.chat_settings.characters.front().provider_id, "test");
+    (void)application->replace_api_key_value(key.id, {.value = std::nullopt, .cloud_store = "openai"}, epoch);
+    EXPECT_TRUE(next(live).chat_settings.model_locked);
+    EXPECT_EQ(live->lifecycle(), LiveSessionState::running);
+    live.reset();
+    subscribed = SubscribeResult{};
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    epoch = application->context_epoch();
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", session.id, epoch)));
+    const auto reopened = application->snapshot("lobby", session.id, epoch);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(reopened));
+    const auto& settings = std::get<SessionSnapshot>(reopened).chat_settings;
+    EXPECT_TRUE(settings.model_locked);
+    EXPECT_EQ(settings.characters.front().provider_id, provider.id);
+    (void)application->update_forum_library("lobby", std::nullopt, epoch);
+    const auto cleared = application->snapshot("lobby", session.id, epoch);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(cleared));
+    EXPECT_EQ(std::get<SessionSnapshot>(cleared).chat_settings.characters.front().provider_id, "test");
+    EXPECT_EQ(std::get<SessionSnapshot>(cleared).chat_settings.characters.front().reasoning_effort, "high");
+    EXPECT_EQ(application->get_character("guide", epoch).provider, "test");
+}
+
 TEST(ApplicationSettings, LibraryValidatesLocallyAndLeavesLiveSessionRunning) {
     test::TestWorkspace workspace;
     const auto database = test::import_test_database(workspace.root());
@@ -851,12 +936,12 @@ TEST(ApplicationSettings, LibraryValidatesLocallyAndLeavesLiveSessionRunning) {
             {key.id, {"a", "b", "c"}, {}}, {key.id, {"../bad"}, {}},
             {gemini.id, {"vs_a"}, {}}, {"missing", {"vs_a"}, {}},
             {key.id, {"vs_a"}, "test"}}) {
-        EXPECT_THROW(application->update_forum_library("lobby", invalid, epoch), ApplicationError);
+        EXPECT_THROW((void)application->update_forum_library("lobby", invalid, epoch), ApplicationError);
     }
-    EXPECT_THROW(application->update_forum_library("builtin-entrance", library, epoch), ApplicationError);
-    EXPECT_THROW(application->update_forum_library("lobby", library, epoch + 1), ApplicationError);
+    EXPECT_THROW((void)application->update_forum_library("builtin-entrance", library, epoch), ApplicationError);
+    EXPECT_THROW((void)application->update_forum_library("lobby", library, epoch + 1), ApplicationError);
     EXPECT_TRUE(application->list_providers(epoch, key.id).empty());
-    EXPECT_THROW(application->list_providers(epoch, "missing"), ApplicationError);
+    EXPECT_THROW((void)application->list_providers(epoch, "missing"), ApplicationError);
     auto body = provider_body(application->get_provider("test", epoch));
     body["host"] = "api.openai.com";
     body["port"] = 443;

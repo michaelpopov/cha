@@ -88,6 +88,7 @@ SessionSnapshot to_snapshot(
             entry.text = remove_url_references(entry.text);
         }
     }
+    snapshot.chat_settings.model_locked = workspace.forum_default_provider(identity.forum_id) != nullptr;
     for (const auto& provider : workspace.providers()) {
         snapshot.chat_settings.model_options.push_back({
             .id = provider.id,
