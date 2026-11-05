@@ -2649,5 +2649,83 @@ TEST(Workspace, MalformedLibraryIsIgnoredAndPreservedOnUnrelatedEdits) {
     EXPECT_NE(file_bytes(path).find("api_key = 123"), std::string::npos);
 }
 
+TEST(Workspace, LibraryCatalogueRoundTripsAndPrunesWithoutShorteningSourceText) {
+    test::TestWorkspace fixture;
+    auto workspace = Workspace::load(fixture.root());
+    std::string description = "Book titles\nАвторы и издания 📚\n";
+    description += std::string(5000, 'x');
+    for (const std::string id : {"vs_a", "fileSearchStores/a"}) {
+        ForumLibrary library{"key", {id}, {}, {
+            {id, {"Name \"quoted\"", description}}, {"removed", {"Old", "Unselected"}}}};
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) { editor.write_forum_library("lobby", library); });
+        LoadWarningCollector warnings;
+        workspace = Workspace::load(fixture.root(), &warnings);
+        ASSERT_TRUE(workspace.find_forum("lobby")->library);
+        const auto& saved = *workspace.find_forum("lobby")->library;
+        ASSERT_EQ(saved.catalogue.size(), 1u);
+        EXPECT_EQ(saved.catalogue.at(id).name, "Name \"quoted\"");
+        EXPECT_EQ(saved.catalogue.at(id).description, description);
+        EXPECT_EQ(warning_on(warnings, "forums/lobby/config.toml"), nullptr);
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_forum("lobby", "Renamed", "# Notes");
+            editor.write_forum_default_persona("lobby", "reader");
+        });
+        workspace = Workspace::load(fixture.root());
+        EXPECT_EQ(workspace.find_forum("lobby")->library->catalogue.at(id).description, description);
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_forum_library("lobby", ForumLibrary{"other-key", {id}, {}});
+        });
+        workspace = Workspace::load(fixture.root());
+        EXPECT_TRUE(workspace.find_forum("lobby")->library->catalogue.empty());
+        EXPECT_EQ(file_bytes(fixture.root() / "forums/lobby/config.toml").find("catalogue"), std::string::npos);
+    }
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) { editor.write_forum_library("lobby", std::nullopt); });
+    EXPECT_EQ(file_bytes(fixture.root() / "forums/lobby/config.toml").find("catalogue"), std::string::npos);
+}
+
+TEST(Workspace, MalformedCatalogueIsIgnoredAsAWholeWithoutDroppingLibraryAccess) {
+    for (const std::string catalogue : {
+            "catalogue = false\n",
+            "[library.catalogue.vs_a]\nname = 'Valid'\ndescription = 'Text'\n[library.catalogue.vs_b]\nname = 7\ndescription = ''\n",
+            "[library.catalogue.vs_a]\nname = 'Missing description'\n",
+            "[library.catalogue.vs_a]\nname = ''\ndescription = ''\nextra = true\n",
+            "[library.catalogue]\nvs_a = 'wrong shape'\n"}) {
+        test::TestWorkspace fixture;
+        std::ofstream(fixture.root() / "forums/lobby/config.toml", std::ios::app)
+            << "\n[library]\napi_key = 'key'\nstores = ['vs_a', 'vs_b']\nprovider = 'test'\n" << catalogue;
+        LoadWarningCollector warnings;
+        const auto workspace = Workspace::load(fixture.root(), &warnings);
+        const auto& library = workspace.find_forum("lobby")->library;
+        ASSERT_TRUE(library) << catalogue;
+        EXPECT_EQ(library->api_key_id, "key");
+        EXPECT_EQ(library->store_ids, (std::vector<std::string>{"vs_a", "vs_b"}));
+        EXPECT_EQ(library->provider_id, "test");
+        EXPECT_TRUE(library->catalogue.empty());
+        const auto* warning = warning_on(warnings, "forums/lobby/config.toml");
+        ASSERT_NE(warning, nullptr);
+        EXPECT_NE(warning->message.find("Ignoring malformed Forum library catalogue"), std::string::npos);
+        EXPECT_EQ(std::ranges::count_if(warnings, [](const auto& item) {
+            return item.path == "forums/lobby/config.toml";
+        }), 1);
+    }
+}
+
+TEST(Workspace, LibraryCatalogueLoadsOldFilesEmptyEntriesAndIgnoresUnselectedIds) {
+    test::TestWorkspace fixture;
+    const auto config = fixture.root() / "forums/lobby/config.toml";
+    std::ofstream(config, std::ios::app) << "\n[library]\napi_key = 'key'\nstores = ['vs_a']\n";
+    auto workspace = Workspace::load(fixture.root());
+    ASSERT_TRUE(workspace.find_forum("lobby")->library);
+    EXPECT_TRUE(workspace.find_forum("lobby")->library->catalogue.empty());
+    std::ofstream(config, std::ios::app) <<
+        "[library.catalogue.vs_a]\nname = ''\ndescription = ''\n"
+        "[library.catalogue.unselected]\nname = 'Ignore'\ndescription = 'Me'\n";
+    workspace = Workspace::load(fixture.root());
+    const auto& catalogue = workspace.find_forum("lobby")->library->catalogue;
+    ASSERT_EQ(catalogue.size(), 1u);
+    EXPECT_TRUE(catalogue.at("vs_a").name.empty());
+    EXPECT_TRUE(catalogue.at("vs_a").description.empty());
+}
+
 } // namespace
 } // namespace cha

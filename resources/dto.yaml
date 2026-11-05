@@ -1277,7 +1277,7 @@ components:
     ForumLibrary:
       type: object
       additionalProperties: false
-      required: [api_key_id, store_ids, provider_id]
+      required: [api_key_id, store_ids, provider_id, catalogue]
       properties:
         api_key_id:
           type: string
@@ -1289,6 +1289,18 @@ components:
             type: string
         provider_id:
           type: [string, "null"]
+
+        catalogue:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required: [name, description]
+            properties:
+              name:
+                type: string
+              description:
+                type: string
 
     UpdateForumLibraryRequest:
       type: object

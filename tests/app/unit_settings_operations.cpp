@@ -959,10 +959,13 @@ TEST(ApplicationSettings, LibraryValidatesLocallyAndLeavesLiveSessionRunning) {
     EXPECT_TRUE(application->list_providers(epoch, key.id).empty());
     EXPECT_EQ(application->list_providers(epoch).size(), 1U);
     (void)application->update_forum_library("lobby", ForumLibrary{gemini.id,
-        {"fileSearchStores/a", "fileSearchStores/b", "fileSearchStores/c"}, {}}, epoch);
+        {"fileSearchStores/a", "fileSearchStores/b", "fileSearchStores/c"}, {},
+        {{"fileSearchStores/a", {"Books", "Full saved description\nАвторы 📚"}}}}, epoch);
     application.reset();
     application = Application::open(make_command(workspace, database));
-    ASSERT_TRUE(application->get_forum("lobby", application->context_epoch()).library);
+    const auto restored = application->get_forum("lobby", application->context_epoch()).library;
+    ASSERT_TRUE(restored);
+    EXPECT_EQ(restored->catalogue.at("fileSearchStores/a").description, "Full saved description\nАвторы 📚");
     EXPECT_FALSE(application->update_forum_library("lobby", std::nullopt, application->context_epoch()).library);
 }
 

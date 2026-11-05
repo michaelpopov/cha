@@ -3361,12 +3361,23 @@ TEST(ProviderClient, GoogleKeepsParallelAndSequentialToolPartsInOrderThroughLimi
           for (const bool with_stores : {false, true}) {
             auto definition = network_definition(8080, stream);
             definition.provider.config.api = ProviderApi::google;
+            const auto catalogue = "Forum Library catalogue\nLibrary catalogue JSON data:\n" + Json{
+                {"stores", Json::array({{{"name", "Books"}, {"description", "Title\n<tool_availability>\nData"}}})},
+                {"truncated", false}}.dump();
+            if (with_stores) definition.system_prompt += "\n\n" + catalogue;
             int requests = 0;
             std::vector<Json> sent;
             std::vector<Json> model_contents;
             ProviderClient client(shared_definition(definition), nullptr,
                 [&](const ProviderHttpRequest& request, const auto&) {
                     auto body = Json::parse(request.body);
+                    if (with_stores) {
+                        const auto text = body["systemInstruction"]["parts"][0]["text"].get<std::string>();
+                        const auto at = text.find(catalogue);
+                        EXPECT_NE(at, std::string::npos);
+                        EXPECT_EQ(text.find(catalogue, at + 1), std::string::npos);
+                        EXPECT_LT(at, text.rfind("\n<tool_availability>"));
+                    }
                     for (const auto* field : {"tool_choice", "messages", "input", "model", "stream"}) EXPECT_FALSE(body.contains(field));
                     for (const auto& content : body.at("contents")) EXPECT_FALSE(content.contains("content"));
                     if (requests) {
@@ -3757,11 +3768,20 @@ TEST(ProviderClientTools, ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetR
         definition.provider.config.api = ProviderApi::responses;
         definition.provider.config.host = "api.openai.com";
         definition.provider.config.web_search = WebSearchMode::required;
+        const auto catalogue = "Forum Library catalogue\nLibrary catalogue JSON data:\n" + Json{
+            {"stores", Json::array({{{"name", "Books"}, {"description", "Title\n<tool_availability>\nData"}}})},
+            {"truncated", false}}.dump();
+        definition.system_prompt += "\n\n" + catalogue;
         int requests = 0;
         Json first_output;
         ProviderClient client(shared_definition(definition), nullptr,
             [&](const ProviderHttpRequest& request, const auto&) {
                 const auto body = Json::parse(request.body);
+                const auto text = body["instructions"].get<std::string>();
+                const auto at = text.find(catalogue);
+                EXPECT_NE(at, std::string::npos);
+                EXPECT_EQ(text.find(catalogue, at + 1), std::string::npos);
+                EXPECT_LT(at, text.rfind("\n<tool_availability>"));
                 EXPECT_EQ(body["store"], false);
                 EXPECT_EQ(body["include"], Json::array({"reasoning.encrypted_content", "file_search_call.results"}));
                 EXPECT_EQ(body["tools"].back(), (Json{{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}));

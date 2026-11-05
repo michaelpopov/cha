@@ -1053,7 +1053,8 @@ it('sends Library replacements and clears, filters providers, and validates null
   const save = vi.fn((params: unknown) => ({ ...forumDetailFixture, library: (params as { library: unknown }).library }));
   const list = vi.fn(() => []);
   const client = createNativeChaClient(createFakeNativeBridge({ 'forum.library.update': save, 'provider.list': list }));
-  const library = { api_key_id: 'api_key_1', store_ids: ['vs_a'], provider_id: null };
+  const library = { api_key_id: 'api_key_1', store_ids: ['vs_a'], provider_id: null,
+    catalogue: { vs_a: { name: 'Books', description: 'Titles\nАвторы 📚' } } };
   expect((await client.updateForumLibrary('lobby', library)).library).toEqual(library);
   expect(save).toHaveBeenLastCalledWith({ forum_id: 'lobby', library });
   expect((await client.updateForumLibrary('lobby', null)).library).toBeNull();
@@ -1065,4 +1066,12 @@ it('sends Library replacements and clears, filters providers, and validates null
     'forum.get': () => ({ ...forumDetailFixture, library: { api_key_id: 'key', store_ids: ['a'] } }),
   }));
   await expect(invalid.getForum('lobby')).rejects.toBeInstanceOf(ChaProtocolError);
+  for (const catalogue of [undefined, null, [], 'bad', { vs_a: null }, { vs_a: {} },
+    { vs_a: { name: 'Missing' } }, { vs_a: { name: 3, description: '' } },
+    { vs_a: { name: 'Name', description: '' , extra: true } }]) {
+    const bad = createNativeChaClient(createFakeNativeBridge({
+      'forum.get': () => ({ ...forumDetailFixture, library: { ...library, catalogue } }),
+    }));
+    await expect(bad.getForum('lobby')).rejects.toBeInstanceOf(ChaProtocolError);
+  }
 });

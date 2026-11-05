@@ -361,7 +361,10 @@ void to_json(nlohmann::json& json, const PersonaDetail& value) {
 
 void to_json(nlohmann::json& json, const ForumLibrary& value) {
     json = {{"api_key_id", value.api_key_id}, {"store_ids", value.store_ids},
+        {"catalogue", nlohmann::json::object()},
         {"provider_id", value.provider_id ? nlohmann::json(*value.provider_id) : nlohmann::json(nullptr)}};
+    for (const auto& [id, entry] : value.catalogue)
+        json["catalogue"][id] = {{"name", entry.name}, {"description", entry.description}};
 }
 
 void to_json(nlohmann::json& json, const ForumDetail& value) {

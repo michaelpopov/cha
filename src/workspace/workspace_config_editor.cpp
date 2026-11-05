@@ -1291,6 +1291,15 @@ void WorkspaceConfigEditor::write_forum_library(
         for (const auto& id : ids) stores.push_back(id);
         toml::table value{{"api_key", library->api_key_id}, {"stores", std::move(stores)}};
         if (library->provider_id) value.insert("provider", *library->provider_id);
+        toml::table catalogue;
+        for (const auto& [id, entry] : library->catalogue) {
+            if (!std::ranges::binary_search(ids, id)) {
+                log_warn("Ignoring unselected Forum Library catalogue entry: " + id);
+                continue;
+            }
+            catalogue.insert(id, toml::table{{"name", entry.name}, {"description", entry.description}});
+        }
+        if (!catalogue.empty()) value.insert("catalogue", std::move(catalogue));
         table.insert("library", std::move(value));
     });
 }

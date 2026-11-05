@@ -1201,7 +1201,7 @@ LoadedForumConfig load_forum_config(
         try {
             const auto* library = table["library"].as_table();
             if (!library) throw std::runtime_error("Library must be a table");
-            static constexpr std::string_view fields[]{"api_key", "stores", "provider"};
+            static constexpr std::string_view fields[]{"api_key", "stores", "provider", "catalogue"};
             warn_unknown_fields(*library, path, fields, "Forum library", warnings);
             ForumLibrary value;
             const auto key = (*library)["api_key"].value<std::string>();
@@ -1216,6 +1216,25 @@ LoadedForumConfig load_forum_config(
             if (library->contains("provider")) {
                 value.provider_id = (*library)["provider"].value<std::string>();
                 if (!value.provider_id) throw std::runtime_error("Library provider must be a string");
+            }
+            if (library->contains("catalogue")) {
+                try {
+                    const auto* catalogue = (*library)["catalogue"].as_table();
+                    if (!catalogue) throw std::runtime_error("Catalogue must be a table");
+                    for (const auto& [id, node] : *catalogue) {
+                        const auto* entry = node.as_table();
+                        if (!entry || entry->size() != 2)
+                            throw std::runtime_error("Invalid catalogue entry");
+                        const auto name = (*entry)["name"].value<std::string>();
+                        const auto description = (*entry)["description"].value<std::string>();
+                        if (!name || !description) throw std::runtime_error("Invalid catalogue text");
+                        if (std::ranges::find(value.store_ids, id.str()) != value.store_ids.end())
+                            value.catalogue.emplace(id.str(), ForumLibraryCatalogueEntry{*name, *description});
+                    }
+                } catch (const std::exception& error) {
+                    value.catalogue.clear();
+                    warnings.emit(path, std::string("Ignoring malformed Forum library catalogue: ") + error.what());
+                }
             }
             result.library = std::move(value);
         } catch (const std::exception& error) {

@@ -724,16 +724,27 @@ TEST(WebProtocol, ParsesSessionCharacterSettingsPatchesWithoutLosingResets) {
 
 TEST(WebProtocol, ParsesNullableForumLibraryAndRejectsWrongShape) {
     EXPECT_FALSE(parse_forum_library_update({{"library", nullptr}}));
-    const nlohmann::json value = {{"api_key_id", "key"}, {"store_ids", {"vs_a"}}, {"provider_id", nullptr}};
+    const nlohmann::json value = {{"api_key_id", "key"}, {"store_ids", {"vs_a"}}, {"provider_id", nullptr}, {"catalogue", nlohmann::json::object()}};
     auto parsed = parse_forum_library_update({{"library", value}});
     ASSERT_TRUE(parsed);
     EXPECT_EQ(parsed->store_ids, std::vector<std::string>{"vs_a"});
     EXPECT_FALSE(parsed->provider_id);
+    auto populated = value;
+    populated["catalogue"] = {{"vs_a", {{"name", "Books"}, {"description", "Titles\nАвторы 📚"}}}};
+    EXPECT_EQ(nlohmann::json(*parse_forum_library_update({{"library", populated}})), populated);
+    for (const auto& entry : std::vector<nlohmann::json>{nullptr, false, "text", nlohmann::json::array(),
+            {{"name", "Missing"}}, {{"name", 7}, {"description", "Text"}},
+            {{"name", "Name"}, {"description", false}},
+            {{"name", "Name"}, {"description", "Text"}, {"extra", 1}}}) {
+        auto invalid = value;
+        invalid["catalogue"] = {{"vs_a", entry}};
+        EXPECT_THROW(parse_forum_library_update({{"library", invalid}}), std::invalid_argument);
+    }
     auto provider = value;
     provider["provider_id"] = "sol";
     EXPECT_EQ(nlohmann::json(*parse_forum_library_update({{"library", provider}})), provider);
     EXPECT_THROW(parse_forum_library_update(nlohmann::json::object()), std::invalid_argument);
-    for (const auto field : {"api_key_id", "store_ids", "provider_id"}) {
+    for (const auto field : {"api_key_id", "store_ids", "provider_id", "catalogue"}) {
         auto invalid = value;
         invalid.erase(field);
         EXPECT_THROW(parse_forum_library_update({{"library", invalid}}), std::invalid_argument);

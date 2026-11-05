@@ -198,6 +198,7 @@ export interface NotesClient {
 }
 
 export interface ChaClient {
+  contextEpoch(): number;
   noteAudio?: NoteAudioClient;
   getBootstrap(): Promise<Bootstrap>;
   getCharacterPicture(characterId: string, filename?: string): Promise<CharacterPicture | null>;
@@ -497,7 +498,9 @@ function isForumSummary(value: unknown): boolean {
 export function isForumLibrary(value: unknown): value is ForumLibrary {
   return isRecord(value) && typeof value.api_key_id === 'string'
     && Array.isArray(value.store_ids) && value.store_ids.every((id) => typeof id === 'string')
-    && (value.provider_id === null || typeof value.provider_id === 'string');
+    && (value.provider_id === null || typeof value.provider_id === 'string')
+    && isRecord(value.catalogue) && Object.values(value.catalogue).every((entry) => isRecord(entry)
+      && Object.keys(entry).length === 2 && typeof entry.name === 'string' && typeof entry.description === 'string');
 }
 
 export function isForumDetail(value: unknown): value is ForumDetail {

@@ -562,6 +562,12 @@ export interface components {
             api_key_id: string;
             store_ids: string[];
             provider_id: string | null;
+            catalogue: {
+                [key: string]: {
+                    name: string;
+                    description: string;
+                };
+            };
         };
         UpdateForumLibraryRequest: {
             library: components["schemas"]["ForumLibrary"] | null;

@@ -5,7 +5,7 @@ import {
   useState,
   type FormEvent,
 } from 'react';
-import { publicErrorMessage, type ChaClient, type ForumLibrary, type ForumDetail, type ForumSummary } from '../api/client';
+import { ChaError, publicErrorMessage, type ChaClient, type ForumLibrary, type ForumDetail, type ForumSummary } from '../api/client';
 import { useLoad } from '../useLoad';
 import { cloudStoreLabels } from './CloudStoreSettings';
 import { LoadFailure } from './SettingsShared';
@@ -419,7 +419,7 @@ export function ForumMembersScreen({
 
 const loadLibraryKeys = (client: ChaClient) => client.listApiKeys();
 const librarySignature = (library: ForumLibrary | null) => JSON.stringify(library && {
-  ...library, store_ids: [...library.store_ids].sort(),
+  api_key_id: library.api_key_id, store_ids: [...library.store_ids].sort(), provider_id: library.provider_id,
 });
 
 export function ForumLibraryScreen(props: RosterDetailProps) {
@@ -480,18 +480,45 @@ function ForumLibraryForm({ client, dispatch, detail, onSaved }: RosterDetailPro
     && (key.cloud_store !== 'openai' || draft.store_ids.length <= 2)
     && (draft.provider_id === null || (!!providers && !providersLoad.error && !unavailableProvider)));
   const blocked = saving || !detail.writable || reload.blocked || refresh.refreshing || refresh.failed;
-  const canSave = dirty && valid && !blocked;
+  const missingCatalogue = draft && draft.store_ids.some((id) => baseline?.api_key_id !== draft.api_key_id
+    || !Object.hasOwn(baseline.catalogue, id));
+  const canSave = (dirty || missingCatalogue) && valid && !blocked;
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!canSave) return;
     setSaving(true);
     setError(null);
     try {
-      const saved = await client.updateForumLibrary(detail.id, draft);
+      const epoch = client.contextEpoch();
+      const requireContext = () => {
+        if (client.contextEpoch() !== epoch)
+          throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
+      };
+      const forumId = detail.id;
+      const catalogue: ForumLibrary['catalogue'] = Object.create(null);
+      const failed: string[] = [];
+      if (draft) {
+        for (const id of draft.store_ids) {
+          if (baseline?.api_key_id === draft.api_key_id && Object.hasOwn(baseline.catalogue, id)) {
+            catalogue[id] = baseline.catalogue[id];
+            continue;
+          }
+          requireContext();
+          try {
+            const store = await client.getCloudStore(draft.api_key_id, id);
+            catalogue[id] = { name: store.name, description: store.description };
+          } catch {
+            failed.push(labels[stores?.findIndex((store) => store.id === id) ?? -1] || id);
+          }
+        }
+      }
+      requireContext();
+      const saved = await client.updateForumLibrary(forumId, draft && { ...draft, catalogue });
       reload.remember(saved);
       apply(saved);
       onSaved(saved);
       dispatch({ type: 'forum-updated', forum: saved });
+      if (failed.length) setError(`Library saved. Could not read ${failed.join(', ')}.`);
     } catch (failure) {
       setError(publicErrorMessage(failure, 'Library could not be saved.'));
     } finally { setSaving(false); }
@@ -505,7 +532,7 @@ function ForumLibraryForm({ client, dispatch, detail, onSaved }: RosterDetailPro
     <label>API key
       <select className="cha-form-control" disabled={saving || !detail.writable} value={keyId}
         onChange={(event) => {
-          setDraft(event.target.value ? { api_key_id: event.target.value, store_ids: [], provider_id: null } : null);
+          setDraft(event.target.value ? { api_key_id: event.target.value, store_ids: [], provider_id: null, catalogue: {} } : null);
           setError(null);
         }}>
         <option value="">None</option>

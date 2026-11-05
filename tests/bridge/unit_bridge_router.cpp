@@ -1610,7 +1610,7 @@ TEST_F(BridgeRouterTest, SecondaryProcessCannotChangeForumLibrary) {
     BridgeRouter router(*secondary);
     const auto connection = router.open_connection();
     for (const auto& replacement : {nlohmann::json(nullptr), nlohmann::json{
-            {"api_key_id", key.id}, {"store_ids", {"vs_replacement"}}, {"provider_id", nullptr}}}) {
+            {"api_key_id", key.id}, {"store_ids", {"vs_replacement"}}, {"provider_id", nullptr}, {"catalogue", nlohmann::json::object()}}}) {
         const auto id = next_id_++;
         router.handle_request(connection, request_json(connection, id, secondary->context_epoch(),
             "forum.library.update", {{"forum_id", "lobby"}, {"library", replacement}}).dump());
