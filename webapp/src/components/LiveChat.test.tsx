@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ChaError, type AudioDownloadBatchAcceptance, type AudioDownloadBatchRequest, type ChaClient, type SessionSnapshot } from '../api/client';
+import { ChaError, type AudioDownloadAcceptance, type AudioDownloadBatchAcceptance, type AudioDownloadBatchRequest, type ChaClient, type SessionSnapshot } from '../api/client';
 import type { NativeBridge } from '../api/nativeBridge';
 import type { SessionEventHandlers } from '../api/events';
 import { initialAppState } from '../state/view';
@@ -1000,6 +1000,7 @@ describe('live chat', () => {
           onAttachTextFile={vi.fn()}
           onUncoverConversation={vi.fn()}
           playbackPositions={new Map()}
+          playbackSpeed={10} onPlaybackSpeedChange={vi.fn()}
           state={{
             ...initialAppState,
             bootstrap: bootstrapFixture,
@@ -1798,6 +1799,159 @@ describe('session character toolbar integration', () => {
     expect(screen.getByLabelText('Model')).toBeEnabled();
     act(() => events.handlers[0].onSnapshot({ ...snapshotFixture, lifecycle: 'stopping' }));
     expect(screen.getByLabelText('Model')).toBeDisabled();
+  });
+});
+
+describe('chat audio playback controls', () => {
+  // Only the members that TextToSpeechSession uses on the blob path.
+  class FakeAudio extends EventTarget {
+    src = ''; currentTime = 0; duration = 10; readyState = 0; paused = true; ended = false;
+    defaultPlaybackRate = 1; playbackRate = 1;
+    startRates: number[][] = [];
+    load = vi.fn(() => { this.playbackRate = this.defaultPlaybackRate; });
+    play = vi.fn(async () => { this.startRates.push([this.defaultPlaybackRate, this.playbackRate]); this.paused = false; });
+    pause = vi.fn(() => { this.paused = true; });
+    removeAttribute = vi.fn();
+  }
+
+  function stubAudio() {
+    const created: FakeAudio[] = [];
+    vi.stubGlobal('Audio', class extends FakeAudio {
+      constructor() { super(); created.push(this); }
+    });
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = () => 'blob:audio';
+      static revokeObjectURL = () => undefined;
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, blob: async () => new Blob(['audio'], { type: 'audio/wav' }),
+    })));
+    return created;
+  }
+
+  const reply = { id: 1, kind: 'character' as const, participant_id: 'assistant', display_name: 'Assistant',
+    addressed_to: '', addressed_to_name: '', text: 'Answer', status: 'complete' as const, created_at: 1 };
+
+  it('plays a download that completes after a speed change at the latest speed', async () => {
+    const audios = stubAudio();
+    let accept!: (accepted: AudioDownloadAcceptance) => void;
+    const startAudioDownload = vi.fn(() => new Promise<AudioDownloadAcceptance>((resolve) => { accept = resolve; }));
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture, startAudioDownload,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, { ...snapshotFixture, transcript: [reply] });
+    fireEvent.click(await screen.findByRole('button', { name: "Generate audio for Assistant's response" }));
+    await waitFor(() => expect(startAudioDownload).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'Increase speed' }));
+    await act(async () => accept({ entry_id: 1, cached: false, state: 'queued' }));
+    await waitFor(() => expect(audios.at(-1)?.play).toHaveBeenCalled());
+    expect(audios.at(-1)!.startRates).toEqual([[1.5, 1.5]]);
+  });
+
+  it('starts each automatic reply at the selected speed', async () => {
+    const audios = stubAudio();
+    const jobs: Array<{ entry_id: number; state: 'queued' }> = [];
+    const startAudioDownloadBatch = vi.fn(async (_forum: string, _session: string, request: AudioDownloadBatchRequest) => {
+      const entries = request.entries.map(({ entry_id }) => ({ entry_id, cached: false, state: 'queued' as const }));
+      jobs.push(...entries);
+      return { entries };
+    });
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      getAudioDownloads: async () => ({ cached_entry_ids: [], downloads: [...jobs] }),
+      startAudioDownloadBatch,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, { ...snapshotFixture, transcript: [] });
+    const toggle = await screen.findByRole('button', { name: 'Auto audio response' });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole('button', { name: 'Increase speed' }));
+    act(() => events.handlers[0].onSnapshot({ ...snapshotFixture, transcript: [reply] }));
+    await waitFor(() => expect(audios.at(-1)?.play).toHaveBeenCalled());
+    const first = audios.at(-1)!;
+    expect(first.startRates).toEqual([[1.5, 1.5]]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Increase speed' }));
+    expect([first.defaultPlaybackRate, first.playbackRate]).toEqual([2, 2]);
+    act(() => events.handlers[0].onSnapshot({ ...snapshotFixture,
+      transcript: [reply, { ...reply, id: 2, text: 'Second answer' }] }));
+    act(() => { first.dispatchEvent(new Event('ended')); });
+    await waitFor(() => expect(audios.at(-1)).not.toBe(first));
+    await waitFor(() => expect(audios.at(-1)!.play).toHaveBeenCalled());
+    expect(audios.at(-1)!.startRates).toEqual([[2, 2]]);
+  });
+
+  it('pauses and continues started audio from a transcript click or Space', async () => {
+    const audios = stubAudio();
+    const events = drivableEvents();
+    render(<App client={fixtureClient({ getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture })}
+      connectSessionEvents={events.connect} />);
+    await attachInitial(events, { ...snapshotFixture, transcript: [{ ...reply, text: 'Answer\n\n```\ncode\n```' }] });
+    const transcript = screen.getByLabelText('Conversation transcript');
+    fireEvent.click(screen.getByText('Answer'));
+    fireEvent.keyDown(transcript, { key: ' ' });
+    fireEvent.click(await screen.findByRole('button', { name: "Generate audio for Assistant's response" }));
+    const stop = await screen.findByRole('button', { name: "Stop reading Assistant's response" });
+    const audio = audios.at(-1)!;
+    expect(audio.play).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByText('Answer'));
+    expect(audio.pause).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByText('Answer'), { detail: 2 });
+    fireEvent.click(screen.getByText('code'));
+    window.getSelection()!.selectAllChildren(screen.getByText('Answer'));
+    fireEvent.click(screen.getByText('Answer'));
+    window.getSelection()!.removeAllRanges();
+    expect(audio.play).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByText('Answer'));
+    expect(audio.play).toHaveBeenCalledTimes(2);
+
+    expect(fireEvent.keyDown(transcript, { key: ' ' })).toBe(false);
+    expect(audio.pause).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(transcript, { key: ' ', repeat: true });
+    fireEvent.keyDown(stop, { key: ' ' });
+    expect(audio.play).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(transcript, { key: ' ' });
+    expect(audio.play).toHaveBeenCalledTimes(3);
+    expect(stop).toHaveAccessibleName("Stop reading Assistant's response");
+  });
+
+  it('keeps automatic replies waiting while audio is paused', async () => {
+    const audios = stubAudio();
+    const jobs: Array<{ entry_id: number; state: 'queued' }> = [];
+    const startAudioDownloadBatch = vi.fn(async (_forum: string, _session: string, request: AudioDownloadBatchRequest) => {
+      const entries = request.entries.map(({ entry_id }) => ({ entry_id, cached: false, state: 'queued' as const }));
+      jobs.push(...entries);
+      return { entries };
+    });
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      getAudioDownloads: async () => ({ cached_entry_ids: [], downloads: [...jobs] }),
+      startAudioDownloadBatch,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, { ...snapshotFixture, transcript: [] });
+    const toggle = await screen.findByRole('button', { name: 'Auto audio response' });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    fireEvent.click(toggle);
+    act(() => events.handlers[0].onSnapshot({ ...snapshotFixture, transcript: [reply] }));
+    await screen.findByRole('button', { name: "Stop reading Assistant's response" });
+    const first = audios.at(-1)!;
+
+    fireEvent.click(screen.getByText('Answer'));
+    expect(first.pause).toHaveBeenCalledOnce();
+    act(() => events.handlers[0].onSnapshot({ ...snapshotFixture,
+      transcript: [reply, { ...reply, id: 2, text: 'Second answer' }] }));
+    await waitFor(() => expect(startAudioDownloadBatch).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    expect(audios).toEqual([first]);
+
+    fireEvent.click(screen.getByText('Answer'));
+    expect(first.play).toHaveBeenCalledTimes(2);
+    act(() => { first.dispatchEvent(new Event('ended')); });
+    await waitFor(() => expect(audios).toHaveLength(2));
   });
 });
 

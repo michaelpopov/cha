@@ -2363,6 +2363,13 @@ select.cha-form-control {
   max-width: 100%;
 }
 
+.cha-chat-playback-speed {
+  flex: none;
+  width: 4ch;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .cha-notes-toolbar-group {
   display: inline-flex;
   flex: none;

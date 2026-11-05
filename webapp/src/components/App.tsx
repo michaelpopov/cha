@@ -145,9 +145,12 @@ function Screen(props: ScreenProps) {
   const { state } = props;
   const { notesVisible, chatVisible } = workspaceVisibility(state);
   const [ratio, setRatio] = useState(0.5);
+  // Chat keeps its playback speed across sessions, as Notes keeps it across notes.
+  const [chatPlaybackSpeed, setChatPlaybackSpeed] = useState(10);
+  const content = { ...props, chatPlaybackSpeed, onChatPlaybackSpeedChange: setChatPlaybackSpeed };
   const workspaceRef = useRef<HTMLDivElement>(null);
   const split = notesVisible && chatVisible;
-  if (!notesVisible && !chatVisible) return <ScreenContent {...props} view={state.mainView} />;
+  if (!notesVisible && !chatVisible) return <ScreenContent {...content} view={state.mainView} />;
   function resize(clientX: number) {
     const bounds = workspaceRef.current?.getBoundingClientRect();
     if (!bounds || bounds.width <= 6) return;
@@ -160,7 +163,7 @@ function Screen(props: ScreenProps) {
     <div className="cha-workspace" ref={workspaceRef}
       style={split ? { gridTemplateColumns: `minmax(0, ${ratio}fr) 6px minmax(0, ${1 - ratio}fr)` } : undefined}>
       {notesVisible && <div key="notes" className="cha-workspace-panel is-notes">
-        <ScreenContent {...props} view="notes" />
+        <ScreenContent {...content} view="notes" />
       </div>}
       {split && <div key="divider" className="cha-workspace-divider" role="separator"
         aria-label="Resize notes and chat" aria-orientation="vertical" tabIndex={0}
@@ -187,7 +190,7 @@ function Screen(props: ScreenProps) {
           {state.layoutMode === 'single' && <TopBar title={navigationTitle(state)} />}
           <SessionOperationState state={state} onRetry={props.onRetrySessionOpen}
             onBrowseSessions={props.onBrowseSessions} />
-        </> : <ScreenContent {...props} view="chat" />}
+        </> : <ScreenContent {...content} view="chat" />}
       </div>}
     </div>
   );
@@ -226,13 +229,21 @@ function ScreenContent({
   onUncoverConversation,
   onBackgroundError,
   catalogRevision,
+  chatPlaybackSpeed,
+  onChatPlaybackSpeedChange,
   view,
-}: ScreenProps & { view: AppState['mainView'] }) {
+}: ScreenProps & {
+  view: AppState['mainView'];
+  chatPlaybackSpeed: number;
+  onChatPlaybackSpeedChange(speed: number): void;
+}) {
   switch (view) {
     case 'chat': return (
       <ChatScreen
         key={`${state.bootstrap?.vault_name}/${state.activeConversation?.forumId}/${state.activeConversation?.sessionId}`}
         playbackPositions={playbackPositions}
+        playbackSpeed={chatPlaybackSpeed}
+        onPlaybackSpeedChange={onChatPlaybackSpeedChange}
         client={client}
         dispatch={dispatch}
         navigate={navigate}

@@ -7,6 +7,8 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type KeyboardEvent,
+  type MouseEvent,
   type UIEvent,
 } from 'react';
 
@@ -68,6 +70,8 @@ export interface ChatActions {
 
 interface ChatScreenProps extends ChatActions {
   playbackPositions: Map<string, Map<number, number>>;
+  playbackSpeed: number;
+  onPlaybackSpeedChange(speed: number): void;
   client: ChaClient;
   draft: string;
   onDraftChange(next: string): void;
@@ -318,6 +322,8 @@ function endedMessage(snapshot: SessionSnapshot): string {
 
 export function ChatScreen({
   playbackPositions,
+  playbackSpeed,
+  onPlaybackSpeedChange,
   client,
   draft,
   onDraftChange,
@@ -346,6 +352,8 @@ export function ChatScreen({
   const actionPending = pendingAction !== null || sendPending || stopPending;
   const transcriptArea = useRef<HTMLDivElement | null>(null);
   const textToSpeechSession = useRef<TextToSpeechSession | null>(null);
+  // A download callback from an earlier render must still use the latest speed.
+  const latestSpeed = useRef(playbackSpeed);
   const [autoAudioEnabled, setAutoAudioEnabled] = useState(false);
   const [autoAudioSubmitting, setAutoAudioSubmitting] = useState(false);
   const handledAudioEntries = useRef(new Set<number>());
@@ -445,6 +453,28 @@ export function ChatScreen({
   }
 
   useEffect(() => stopSpeech, [audioConversationKey, state.audioCacheClearCount]);
+
+  function changePlaybackSpeed(speed: number) {
+    latestSpeed.current = speed;
+    onPlaybackSpeedChange(speed);
+    textToSpeechSession.current?.setPlaybackRate(speed / 10);
+  }
+
+  // A click or Space in the transcript pauses or continues started playback.
+  // Controls, links, code, text selection and double clicks keep their own use.
+  function pauseFromTranscript(event: MouseEvent<HTMLDivElement>) {
+    if (event.detail > 1 || !window.getSelection()?.isCollapsed
+      || (event.target as Element).closest('a, button, input, select, textarea, label, summary, pre, [role="button"]')) return;
+    if (spokenEntry?.state === 'playing') textToSpeechSession.current?.togglePause();
+  }
+
+  function pauseFromKeyboard(event: KeyboardEvent<HTMLDivElement>) {
+    // Only the focused transcript itself; focused buttons and links handle their own Space.
+    if (event.key !== ' ' || event.target !== event.currentTarget || spokenEntry?.state !== 'playing'
+      || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    event.preventDefault();
+    if (!event.repeat) textToSpeechSession.current?.togglePause();
+  }
 
   const canStreamSpeech = useCallback((entry: SessionSnapshot['transcript'][number]) => {
     const voice = speechVoices.get(entry.participant_id);
@@ -586,6 +616,7 @@ export function ChatScreen({
         sessionId: snapshot.session_id, entryId: entry.id, cached: true,
       }),
       leadingSilence: automaticSpeech.current,
+      playbackRate: latestSpeed.current / 10,
       onError: (failure) => {
         if (textToSpeechSession.current === session) setActionError(failure.message);
       },
@@ -804,14 +835,18 @@ export function ChatScreen({
     <section className="cha-chat-column" aria-label="Chat area">
       {state.chatToolbarVisible && snapshot && (
         <ChatToolbar snapshot={snapshot} disabled={!connected || generationActive || actionPending}
+          playbackSpeed={playbackSpeed} onPlaybackSpeedChange={changePlaybackSpeed}
           onCharacter={(id) => void chooseTarget(id)}
           onSettings={(id, patch) => void changeSettings(id, patch)} />
       )}
       <div
         aria-label="Conversation transcript"
         className="cha-transcript"
+        onClick={pauseFromTranscript}
+        onKeyDown={pauseFromKeyboard}
         onScroll={noteReadingPosition}
         ref={transcriptArea}
+        tabIndex={-1}
       >
         {(!snapshot || (snapshot.transcript.length === 0 && !generationActive)) && (
           <div className="cha-chat-welcome">

@@ -1,5 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionSnapshot } from '../api/client';
 import { snapshotFixture } from '../test/fixtures';
@@ -24,6 +25,8 @@ function snapshot(): SessionSnapshot {
 }
 
 type Entry = SessionSnapshot['transcript'][number];
+
+const speed = () => ({ playbackSpeed: 10, onPlaybackSpeedChange: vi.fn() });
 
 function entry(kind: Entry['kind'], id: string): Entry {
   return { id: 1, kind, participant_id: id, addressed_to: id, addressed_to_name: id,
@@ -69,7 +72,7 @@ describe('Chat toolbar', () => {
     const onCharacter = vi.fn();
     const onSettings = vi.fn();
     const value = snapshot();
-    const { rerender } = render(<ChatToolbar snapshot={value} disabled={false}
+    const { rerender } = render(<ChatToolbar snapshot={value} disabled={false} {...speed()}
       onCharacter={onCharacter} onSettings={onSettings} />);
     expect(screen.getAllByRole('combobox')).toHaveLength(3);
     expect(screen.getByLabelText('Model')).toHaveDisplayValue('FW Kimi');
@@ -89,7 +92,7 @@ describe('Chat toolbar', () => {
     expect(onSettings).toHaveBeenLastCalledWith('assistant', { reasoning_effort: 'xhigh' });
     await user.selectOptions(screen.getByLabelText('Character'), 'other');
     expect(onCharacter).toHaveBeenCalledWith('other');
-    rerender(<ChatToolbar snapshot={{ ...value, default_character_id: 'other' }} disabled={false}
+    rerender(<ChatToolbar snapshot={{ ...value, default_character_id: 'other' }} disabled={false} {...speed()}
       onCharacter={onCharacter} onSettings={onSettings} />);
     expect(screen.getByLabelText('Model')).toHaveDisplayValue('Other preset');
     expect(screen.getByLabelText('Effort')).toHaveDisplayValue('Low');
@@ -100,7 +103,7 @@ describe('Chat toolbar', () => {
     value.default_character_id = '*';
     value.transcript = [entry('human', 'other')];
     const onSettings = vi.fn();
-    render(<ChatToolbar snapshot={value} disabled={false} onCharacter={vi.fn()} onSettings={onSettings} />);
+    render(<ChatToolbar snapshot={value} disabled={false} {...speed()} onCharacter={vi.fn()} onSettings={onSettings} />);
     fireEvent.change(screen.getByLabelText('Effort'), { target: { value: 'high' } });
     expect(onSettings).toHaveBeenCalledWith('other', { reasoning_effort: 'high' });
     expect(value.default_character_id).toBe('*');
@@ -109,7 +112,7 @@ describe('Chat toolbar', () => {
   it('locks only the model while a Forum default applies', () => {
     const value = snapshot();
     value.chat_settings.model_locked = true;
-    render(<ChatToolbar snapshot={value} disabled={false} onCharacter={vi.fn()} onSettings={vi.fn()} />);
+    render(<ChatToolbar snapshot={value} disabled={false} {...speed()} onCharacter={vi.fn()} onSettings={vi.fn()} />);
     expect(screen.getByLabelText('Model')).toBeDisabled();
     expect(screen.getByLabelText('Model')).toHaveDisplayValue('FW Kimi');
     expect(screen.getByLabelText('Character')).toBeEnabled();
@@ -117,8 +120,47 @@ describe('Chat toolbar', () => {
   });
 
   it('keeps confirmed values visible while disabled', () => {
-    render(<ChatToolbar snapshot={snapshot()} disabled onCharacter={vi.fn()} onSettings={vi.fn()} />);
+    render(<ChatToolbar snapshot={snapshot()} disabled {...speed()} onCharacter={vi.fn()} onSettings={vi.fn()} />);
     expect(screen.getByLabelText('Model')).toHaveDisplayValue('FW Kimi');
     for (const select of screen.getAllByRole('combobox')) expect(select).toBeDisabled();
+  });
+
+  it('steps the playback speed through the Notes range and disables each bound', async () => {
+    function Speed() {
+      const [value, setValue] = useState(10);
+      return <ChatToolbar snapshot={snapshot()} disabled={false} playbackSpeed={value}
+        onCharacter={vi.fn()} onSettings={vi.fn()} onPlaybackSpeedChange={setValue} />;
+    }
+    render(<Speed />);
+    const user = userEvent.setup();
+    const group = screen.getByRole('group', { name: 'Playback speed' });
+    const decrease = within(group).getByRole('button', { name: 'Decrease speed' });
+    const increase = within(group).getByRole('button', { name: 'Increase speed' });
+    expect(within(group).getAllByRole('button')).toHaveLength(2);
+    expect(group).toHaveTextContent('1.0×');
+    for (const rate of ['1.5×', '2.0×']) {
+      await user.click(increase);
+      expect(group).toHaveTextContent(rate);
+    }
+    expect(increase).toBeDisabled();
+    for (const rate of ['1.5×', '1.0×', '0.5×']) {
+      await user.click(decrease);
+      expect(group).toHaveTextContent(rate);
+    }
+    expect(decrease).toBeDisabled();
+    expect(increase).toBeEnabled();
+  });
+
+  it('keeps the speed controls when the selectors are disabled or have no settings', () => {
+    const { rerender } = render(<ChatToolbar snapshot={snapshot()} disabled {...speed()}
+      onCharacter={vi.fn()} onSettings={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Decrease speed' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Increase speed' })).toBeEnabled();
+    const value = snapshot();
+    value.chat_settings.characters = [];
+    rerender(<ChatToolbar snapshot={value} disabled={false} {...speed()}
+      onCharacter={vi.fn()} onSettings={vi.fn()} />);
+    expect(screen.queryAllByRole('combobox')).toHaveLength(0);
+    expect(screen.getByRole('group', { name: 'Playback speed' })).toHaveTextContent('1.0×');
   });
 });

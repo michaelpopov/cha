@@ -166,6 +166,7 @@ export interface TextToSpeechSessionOptions {
   onError?(error: Error): void;
   audio?: HTMLAudioElement;
   leadingSilence?: boolean;
+  playbackRate?: number;
 }
 
 export class TextToSpeechSession {
@@ -178,8 +179,22 @@ export class TextToSpeechSession {
   private endPlayback: (() => void) | null = null;
   private playbackWaitTimer: ReturnType<typeof setTimeout> | undefined;
   private leadingSilenceSeconds = 0;
+  private playbackRate: number;
 
-  constructor(private readonly options: TextToSpeechSessionOptions) {}
+  constructor(private readonly options: TextToSpeechSessionOptions) {
+    this.playbackRate = options.playbackRate ?? 1;
+  }
+
+  // Applies now if the audio element exists; otherwise when it is created.
+  setPlaybackRate(rate: number): void {
+    this.playbackRate = rate;
+    if (this.audio) this.applyPlaybackRate(this.audio);
+  }
+
+  private applyPlaybackRate(audio: HTMLAudioElement): void {
+    audio.defaultPlaybackRate = this.playbackRate;
+    audio.playbackRate = this.playbackRate;
+  }
 
   async play(): Promise<void> {
     this.releasePlaybackFocus = claimSpeechPlayback(() => this.finish(true));
@@ -210,7 +225,8 @@ export class TextToSpeechSession {
   private silentFrames(frame: CodecFrame): Uint8Array<ArrayBuffer> {
     if (!this.options.leadingSilence || this.leadingSilenceSeconds > 0
       || (this.options.playback?.position ?? 0) > 0 || frame.header.layer !== 'Layer III') return new Uint8Array();
-    const count = Math.ceil(2500 / frame.duration);
+    // Keep 2.5 seconds of real time at the starting rate for the output device.
+    const count = Math.ceil(2500 * this.playbackRate / frame.duration);
     const silence = new Uint8Array(count * frame.data.length);
     for (let offset = 0; offset < silence.length; offset += frame.data.length) {
       silence.set(frame.data.subarray(0, 4), offset);
@@ -245,6 +261,20 @@ export class TextToSpeechSession {
     }
   }
 
+  // Pauses or continues started playback in place, as the system media controls do.
+  togglePause(): void {
+    const audio = this.audio;
+    if (!audio) return;
+    if (!audio.paused) { audio.pause(); return; }
+    this.endPlayback ??= beginSpeechPlayback();
+    audio.play().catch((error: unknown) => {
+      // A pause before playback continues rejects play() with AbortError; that is not a failure.
+      if (this.stopped || (error instanceof DOMException && error.name === 'AbortError')) return;
+      this.options.onError?.(new TextToSpeechError('Audio could not be played.'));
+      this.finish();
+    });
+  }
+
   private createAudio(url: string, managed = false): HTMLAudioElement {
     const audio = this.options.audio ?? new Audio();
     // Safari needs this before attaching a ManagedMediaSource without an AirPlay URL.
@@ -252,6 +282,8 @@ export class TextToSpeechSession {
     audio.src = url;
     // Reset the reused Safari player before playback or checking resume metadata.
     audio.load();
+    // load() resets playbackRate to defaultPlaybackRate, so set both after it.
+    this.applyPlaybackRate(audio);
     this.audio = audio;
     const signal = this.request.signal;
     audio.addEventListener('ended', () => this.finish(true), { once: true, signal });
