@@ -86,7 +86,9 @@ bool deadline_exempt(Method method) noexcept {
     case Method::vault_r2_download:
     case Method::session_summary_generate:
     case Method::notes_read_page:
+    case Method::cloud_store_list:
     case Method::cloud_store_get:
+    case Method::cloud_store_update:
     case Method::cloud_store_delete:
         return true;
     default:
@@ -1107,6 +1109,12 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 require_only_keys(params, {"api_key_id", "store_id"});
                 start_background(connection_id, id, application.delete_cloud_store(
                     require_identifier(params, "api_key_id"), require_string(params, "store_id"), epoch));
+                return;
+            case Method::cloud_store_update:
+                require_only_keys(params, {"api_key_id", "store_id", "name", "description"});
+                start_background(connection_id, id, application.update_cloud_store(
+                    require_identifier(params, "api_key_id"), require_string(params, "store_id"),
+                    require_string(params, "name"), require_string(params, "description"), epoch));
                 return;
             case Method::cloud_store_cancel: {
                 require_only_keys(params, {"request_id"});

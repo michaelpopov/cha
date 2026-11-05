@@ -68,6 +68,7 @@ struct FolderStoreRemoteResult {
     FolderStoreRemoteKind kind{FolderStoreRemoteKind::failed};
     std::string message;
     std::string id;
+    std::string document_id;
     std::string status;
     std::int64_t active{};
     std::int64_t pending{};
@@ -114,6 +115,13 @@ public:
     [[nodiscard]] FolderStoreDetail get_store(
         FolderStoreService service, std::string_view store_id, std::string_view key,
         const std::atomic_bool& cancel);
+    // OpenAI renames the store and keeps the description in metadata.description;
+    // its native description stays unchanged. Gemini keeps both values in CHA's
+    // DESCRIPTION.txt metadata document; its displayName stays unchanged.
+    // Reads and lists use the metadata.
+    [[nodiscard]] FolderStoreDetail update_store(
+        FolderStoreService service, std::string_view store_id, std::string_view name,
+        std::string_view description, std::string_view key, const std::atomic_bool& cancel);
     // Deletes the store's files or documents, then the store. An absent store
     // after a complete child cleanup counts as deleted.
     [[nodiscard]] FolderStoreRemoteResult delete_store(

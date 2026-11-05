@@ -9,11 +9,13 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <ctime>
 #include <functional>
 #include <memory>
 #include <set>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace cha {
@@ -122,6 +124,11 @@ FolderStoreRemoteResult classify(
             const auto identity = body.find(identity_field);
             if (identity != body.end() && identity->is_string()) {
                 result.id = identity->get<std::string>();
+            }
+            if (body.contains("response") && body["response"].is_object()) {
+                const auto document = body["response"].find("documentName");
+                if (document != body["response"].end() && document->is_string())
+                    result.document_id = document->get<std::string>();
             }
             if (body.contains("status") && body["status"].is_string()) {
                 result.status = body["status"].get<std::string>();
@@ -281,6 +288,54 @@ FolderStoreRemoteResult read_pages(const FolderStoreTransport& transport, Folder
         if (!cursor.empty() && !cursors.insert(cursor).second) return invalid();
     } while (!cursor.empty());
     return {.kind = FolderStoreRemoteKind::ok};
+}
+
+struct GoogleStoreMetadata {
+    FolderStoreRemoteResult result;
+    std::vector<std::string> documents;
+    std::optional<std::string> name;
+    std::string description;
+};
+
+std::optional<std::pair<std::string, std::string>> google_metadata_values(const Json& document) {
+    if (!document.is_object() || !document.contains("displayName") || document["displayName"] != "DESCRIPTION.txt"
+        || !document.contains("customMetadata") || !document["customMetadata"].is_array()) return {};
+    const Json* name = nullptr;
+    const Json* description = nullptr;
+    for (const auto& entry : document["customMetadata"]) {
+        if (!entry.is_object() || !entry.contains("key")) continue;
+        if (entry["key"] == "name") name = &entry;
+        if (entry["key"] == "description") description = &entry;
+    }
+    if (name == nullptr || !string_list(*name)) return {};
+    std::pair<std::string, std::string> values;
+    for (const auto& piece : (*name)["stringListValue"]["values"]) values.first += piece.get<std::string>();
+    if (description != nullptr && string_list(*description)) {
+        for (const auto& piece : (*description)["stringListValue"]["values"]) values.second += piece.get<std::string>();
+    }
+    return values;
+}
+
+GoogleStoreMetadata google_store_metadata(const FolderStoreTransport& transport,
+    std::string_view store_id, std::string_view key, const std::atomic_bool& cancel) {
+    GoogleStoreMetadata metadata;
+    metadata.result = read_pages(transport, get_request(FolderStoreService::google, key),
+        std::string(google_origin) + "/v1beta/" + std::string(store_id) + "/documents?pageSize=20",
+        false, "documents", [&](const Json& document) {
+            const auto values = google_metadata_values(document);
+            if (!values) return true;
+            std::string id;
+            optional_text(document, "name", id);
+            metadata.documents.push_back(std::move(id));
+            metadata.name = values->first;
+            metadata.description = values->second;
+            return true;
+        }, cancel);
+    if (metadata.documents.size() != 1) {
+        metadata.name.reset();
+        metadata.description.clear();
+    }
+    return metadata;
 }
 
 bool google_upload_url_valid(std::string_view url) {
@@ -521,6 +576,17 @@ FolderStoreList FolderStoreClient::list_stores(
             return true;
         }, cancel);
     if (found.result.kind != FolderStoreRemoteKind::ok) found.stores.clear();
+    if (!openai && found.result.kind == FolderStoreRemoteKind::ok) {
+        for (auto& store : found.stores) {
+            const auto metadata = google_store_metadata(transport_, store.id, key, cancel);
+            if (metadata.result.kind != FolderStoreRemoteKind::ok) {
+                found.result = metadata.result;
+                found.stores.clear();
+                break;
+            }
+            if (metadata.name) store.name = *metadata.name;
+        }
+    }
     return found;
 }
 
@@ -549,6 +615,9 @@ FolderStoreDetail FolderStoreClient::get_store(
     if (openai) {
         if (!optional_text(body, "name", detail.name) || !optional_text(body, "description", detail.description)
             || !body.contains("created_at") || !body["created_at"].is_number_integer()) return invalid();
+        // The update API cannot change the description, so CHA saves edits in metadata.
+        if (body.contains("metadata") && body["metadata"].is_object() && body["metadata"].contains("description")
+            && body["metadata"]["description"].is_string()) detail.description = body["metadata"]["description"];
         detail.created_at = utc_text(body["created_at"].get<std::int64_t>());
         if (detail.created_at.empty()) return invalid();
         return detail;
@@ -556,34 +625,111 @@ FolderStoreDetail FolderStoreClient::get_store(
     if (!optional_text(body, "displayName", detail.name) || !body.contains("createTime")
         || !body["createTime"].is_string() || body["createTime"].get_ref<const std::string&>().empty()) return invalid();
     detail.created_at = body["createTime"].get<std::string>();
-    // CHA stores the description on its DESCRIPTION.txt document (google_upload_store_metadata).
-    int candidates = 0;
-    std::string description;
-    const auto listed = read_pages(transport_, get_request(service, key),
-        std::string(google_origin) + "/v1beta/" + std::string(store_id) + "/documents?pageSize=20",
-        false, "documents", [&](const Json& document) {
-            if (!document.contains("displayName") || document["displayName"] != "DESCRIPTION.txt") return true;
-            if (!document.contains("customMetadata") || !document["customMetadata"].is_array()) return true;
-            const Json* name = nullptr;
-            const Json* text = nullptr;
-            for (const auto& entry : document["customMetadata"]) {
-                if (!entry.is_object() || !entry.contains("key")) continue;
-                if (entry["key"] == "name") name = &entry;
-                if (entry["key"] == "description") text = &entry;
-            }
-            if (name == nullptr || !string_list(*name)) return true;
-            ++candidates;
-            description.clear();
-            if (text != nullptr && string_list(*text)) {
-                for (const auto& piece : (*text)["stringListValue"]["values"]) description += piece.get<std::string>();
-            }
-            return true;
-        }, cancel);
-    if (listed.kind != FolderStoreRemoteKind::ok) {
-        detail.result = listed;
+    // Gemini has no store update method. CHA's metadata document holds editable values.
+    const auto metadata = google_store_metadata(transport_, store_id, key, cancel);
+    if (metadata.result.kind != FolderStoreRemoteKind::ok) {
+        detail.result = metadata.result;
         return detail;
     }
-    if (candidates == 1) detail.description = std::move(description);
+    if (metadata.name) detail.name = *metadata.name;
+    detail.description = metadata.description;
+    return detail;
+}
+
+FolderStoreDetail FolderStoreClient::update_store(
+    FolderStoreService service, std::string_view store_id, std::string_view name,
+    std::string_view description, std::string_view key, const std::atomic_bool& cancel) {
+    const auto failed = [](FolderStoreRemoteResult result) {
+        return FolderStoreDetail{.result = std::move(result)};
+    };
+    const bool openai = service == FolderStoreService::openai;
+    if (openai ? !safe_component(store_id) : !google_store_valid(store_id))
+        return failed(invalid_response("The remote store ID is invalid."));
+    if (cancel.load()) return failed(classify(FolderStoreHttpResponse{.cancelled = true}, false));
+    if (openai) {
+        // Read the current metadata first so the update keeps its other keys.
+        auto request = get_request(service, key);
+        request.url = std::string(openai_origin) + "/vector_stores/" + std::string(store_id);
+        const auto current = transport_(request, cancel);
+        auto result = classify(current, false);
+        if (result.kind != FolderStoreRemoteKind::ok) return failed(std::move(result));
+        if (result.operation_error || result.id != store_id)
+            return failed(invalid_response("The provider returned invalid store details."));
+        const auto body = Json::parse(current.body, nullptr, false);
+        auto metadata = body.contains("metadata") && body["metadata"].is_object() ? body["metadata"] : Json::object();
+        metadata["description"] = description;
+        request.method = "POST";
+        request.headers.push_back({"Content-Type", "application/json"});
+        request.body = Json{{"name", name}, {"metadata", std::move(metadata)}}.dump();
+        result = classify(transport_(request, cancel), false);
+        if (result.kind != FolderStoreRemoteKind::ok) return failed(std::move(result));
+        if (result.operation_error || result.id != store_id)
+            return failed(invalid_response("The provider did not confirm the store update."));
+    } else {
+        const auto metadata = google_store_metadata(transport_, store_id, key, cancel);
+        if (metadata.result.kind != FolderStoreRemoteKind::ok) return failed(metadata.result);
+        const auto prefix = std::string(store_id) + "/documents/";
+        for (const auto& id : metadata.documents) {
+            if (!id.starts_with(prefix) || !safe_component(std::string_view(id).substr(prefix.size())))
+                return failed(invalid_response("The store metadata document ID is invalid."));
+        }
+        // Finish indexing the replacement before deleting the previous metadata.
+        auto uploaded = google_upload_store_metadata(store_id, name, description, key, cancel, cancel);
+        if (uploaded.kind != FolderStoreRemoteKind::ok) return failed(std::move(uploaded));
+        const auto operation = uploaded.id;
+        while (!uploaded.done) {
+            if (cancel.load()) return failed(classify(FolderStoreHttpResponse{.cancelled = true}, false));
+            uploaded = google_inspect_operation(operation, key, cancel);
+            if (uploaded.kind != FolderStoreRemoteKind::ok) return failed(std::move(uploaded));
+            if (!uploaded.done) std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        const auto& replacement = uploaded.document_id;
+        if (!replacement.starts_with(prefix) || !safe_component(std::string_view(replacement).substr(prefix.size()))
+            || std::find(metadata.documents.begin(), metadata.documents.end(), replacement) != metadata.documents.end())
+            return failed(invalid_response("The provider did not identify the replacement metadata document."));
+        const auto remove = [&](std::string_view id) {
+            auto request = get_request(service, key);
+            request.method = "DELETE";
+            request.url = std::string(google_origin) + "/v1beta/" + std::string(id) + "?force=true";
+            auto result = classify(cancel.load() ? FolderStoreHttpResponse{.cancelled = true} : transport_(request, cancel), false);
+            if (result.operation_error) result.kind = FolderStoreRemoteKind::failed;
+            return result;
+        };
+        const auto rollback = [&](FolderStoreRemoteResult failure) {
+            const auto removed = remove(replacement);
+            if (removed.kind != FolderStoreRemoteKind::ok && removed.kind != FolderStoreRemoteKind::not_found)
+                failure.message += " The replacement metadata could not be removed. Duplicate DESCRIPTION.txt documents may remain.";
+            return failed(std::move(failure));
+        };
+        // Check the replacement itself before removing the only saved metadata.
+        auto request = get_request(service, key);
+        request.url = std::string(google_origin) + "/v1beta/" + replacement;
+        const auto response = transport_(request, cancel);
+        auto result = classify(response, false, "name");
+        if (result.kind != FolderStoreRemoteKind::ok) return rollback(std::move(result));
+        const auto values = google_metadata_values(Json::parse(response.body, nullptr, false));
+        if (result.operation_error || result.id != replacement || !values
+            || values->first != name || values->second != description)
+            return rollback(invalid_response("The provider did not save the replacement metadata correctly."));
+        for (const auto& id : metadata.documents) {
+            auto result = remove(id);
+            if (result.kind == FolderStoreRemoteKind::ok || result.kind == FolderStoreRemoteKind::not_found) continue;
+            // A failed response can arrive after deletion succeeded. Never remove
+            // the replacement unless a readable previous document still exists.
+            request.url = std::string(google_origin) + "/v1beta/" + id;
+            const auto previous = transport_(request, cancel);
+            const auto checked = classify(previous, false, "name");
+            if (checked.kind == FolderStoreRemoteKind::not_found) continue;
+            if (checked.kind == FolderStoreRemoteKind::ok && !checked.operation_error && checked.id == id
+                && google_metadata_values(Json::parse(previous.body, nullptr, false)))
+                return rollback(std::move(result));
+            result.message += " The previous metadata could not be confirmed. The replacement was kept.";
+            return failed(std::move(result));
+        }
+    }
+    auto detail = get_store(service, store_id, key, cancel);
+    if (detail.result.kind == FolderStoreRemoteKind::ok && (detail.name != name || detail.description != description))
+        detail.result = invalid_response("The provider did not apply all changes. Reopen the store to check its saved values.");
     return detail;
 }
 

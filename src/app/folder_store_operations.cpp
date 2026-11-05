@@ -45,4 +45,10 @@ std::shared_ptr<OperationReply> Application::delete_cloud_store(
     return impl_->notes->delete_cloud_store(api_key_id, store_id, epoch);
 }
 
+std::shared_ptr<OperationReply> Application::update_cloud_store(
+    std::string_view api_key_id, std::string_view store_id, std::string name,
+    std::string description, std::uint64_t epoch) {
+    return impl_->notes->update_cloud_store(api_key_id, store_id, std::move(name), std::move(description), epoch);
+}
+
 } // namespace cha::app

@@ -50,9 +50,11 @@ describe('native CHA client', () => {
     const detail = { id: 'vs_1', name: 'Research', description: 'Notes', created_at: '2026-11-03T09:15:00Z' };
     const list = vi.fn(() => ({ items: [{ id: 'vs_1', name: 'Research' }] }));
     const get = vi.fn(() => detail);
+    const update = vi.fn(() => detail);
     const bridge = createFakeNativeBridge({
       'cloudStore.list': list,
       'cloudStore.get': get,
+      'cloudStore.update': update,
       'cloudStore.delete': () => new Promise(() => {}),
     });
     const client = createNativeChaClient(bridge);
@@ -60,6 +62,8 @@ describe('native CHA client', () => {
     expect(list).toHaveBeenCalledExactlyOnceWith({ api_key_id: 'api_key_1' });
     expect(await client.getCloudStore('api_key_1', 'vs_1')).toEqual(detail);
     expect(get).toHaveBeenCalledExactlyOnceWith({ api_key_id: 'api_key_1', store_id: 'vs_1' });
+    expect(await client.updateCloudStore('api_key_1', 'vs_1', { name: 'Research', description: 'Notes' })).toEqual(detail);
+    expect(update).toHaveBeenCalledExactlyOnceWith({ api_key_id: 'api_key_1', store_id: 'vs_1', name: 'Research', description: 'Notes' });
 
     const controller = new AbortController();
     const deletion = client.deleteCloudStore('api_key_1', 'vs_1', controller.signal);
@@ -75,9 +79,11 @@ describe('native CHA client', () => {
     const invalid = createNativeChaClient(createFakeNativeBridge({
       'cloudStore.list': () => ({ items: [{ id: 1, name: 'Research' }] }),
       'cloudStore.get': () => ({ ...detail, created_at: 1 }),
+      'cloudStore.update': () => ({ ...detail, name: 1 }),
     }));
     await expect(invalid.listCloudStores('api_key_1')).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(invalid.getCloudStore('api_key_1', 'vs_1')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(invalid.updateCloudStore('api_key_1', 'vs_1', { name: 'Research', description: '' })).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
   it('reads event snapshots without changing their order or contents', async () => {

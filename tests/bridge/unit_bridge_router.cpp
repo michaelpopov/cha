@@ -2391,6 +2391,11 @@ TEST_F(BridgeRouterTest, CloudStoreMethodsUseTheSelectedKeyAndItsService) {
         if (request.method == "GET" && request.url.ends_with("/vector_stores/vs_1"))
             return FolderStoreHttpResponse{.status = 200,
                 .body = R"({"id":"vs_1","name":"Research","description":"Notes","created_at":1793697300})"};
+        if (request.method == "POST" && request.url.ends_with("/vector_stores/vs_1")) {
+            EXPECT_EQ(nlohmann::json::parse(request.body),
+                (nlohmann::json{{"name", "Research"}, {"metadata", {{"description", "Notes"}}}}));
+            return FolderStoreHttpResponse{.status = 200, .body = R"({"id":"vs_1"})"};
+        }
         if (request.url.ends_with("/files?limit=100"))
             return FolderStoreHttpResponse{.status = 200, .body = R"({"data":[],"has_more":false})"};
         return FolderStoreHttpResponse{.status = 200, .body = R"({"deleted":true})"};
@@ -2404,6 +2409,20 @@ TEST_F(BridgeRouterTest, CloudStoreMethodsUseTheSelectedKeyAndItsService) {
     ASSERT_TRUE(reply["ok"]) << reply.dump();
     EXPECT_EQ(reply["result"], nlohmann::json::parse(
         R"({"id":"vs_1","name":"Research","description":"Notes","created_at":"2026-11-03T09:15:00Z"})"));
+    reply = call("cloudStore.update", {{"api_key_id", key}, {"store_id", "vs_1"}, {"name", "Research"}, {"description", "Notes"}});
+    ASSERT_TRUE(reply["ok"]) << reply.dump();
+    EXPECT_EQ(reply["result"]["name"], "Research");
+    EXPECT_EQ(reply["result"]["description"], "Notes");
+    EXPECT_FALSE(call("cloudStore.update", {{"api_key_id", key}, {"store_id", "vs_1"}, {"name", "Research"}})["ok"]);
+    {
+        const auto sent = [&] { const std::lock_guard lock(mutex); return requests.size(); }();
+        reply = call("cloudStore.update", {{"api_key_id", key}, {"store_id", "vs_1"}, {"name", "Research"},
+            {"description", std::string(513, 'x')}});
+        EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+        EXPECT_EQ(reply["error"]["message"], "Description must be 512 characters or fewer for OpenAI.");
+        const std::lock_guard lock(mutex);
+        EXPECT_EQ(requests.size(), sent);
+    }
     reply = call("cloudStore.delete", {{"api_key_id", key}, {"store_id", "vs_1"}});
     ASSERT_TRUE(reply["ok"]) << reply.dump();
     EXPECT_EQ(reply["result"], nlohmann::json::object());
@@ -2422,6 +2441,30 @@ TEST_F(BridgeRouterTest, CloudStoreMethodsUseTheSelectedKeyAndItsService) {
     EXPECT_EQ(reply["error"]["message"], "Set cloud store API key");
     const std::lock_guard lock(mutex);
     EXPECT_EQ(requests.size(), before);
+}
+
+TEST_F(BridgeRouterTest, CloudStoreListingCanFinishItsMetadataReadsPastTheCommandDeadline) {
+    router_ = std::make_unique<BridgeRouter>(*application_,
+        BridgeRouter::Options{.platform = "test", .command_deadline = 0ms});
+    connection_ = router_->open_connection();
+    bootstrap_epoch();
+    const auto key = application_->create_api_key(
+        {.display_name = "Gemini", .value = "test-key", .cloud_store = "google"}, epoch_).id;
+    application_->set_folder_store_transport_for_tests([](const auto& request, const auto&) {
+        if (request.url.find("/documents?") != std::string::npos)
+            return FolderStoreHttpResponse{.status = 200, .body = "{}"};
+        return FolderStoreHttpResponse{.status = 200,
+            .body = R"({"fileSearchStores":[{"name":"fileSearchStores/a","displayName":"Research"}]})"};
+    });
+    const auto id = next_id_++;
+    router_->handle_request(connection_, request_json(connection_, id, epoch_, "cloudStore.list", {{"api_key_id", key}}).dump());
+    router_->expire_timeouts();
+    const auto batch = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(batch);
+    const auto reply = reply_with_id(*batch, id);
+    ASSERT_TRUE(reply["ok"]) << reply.dump();
+    EXPECT_EQ(reply["result"]["items"][0]["name"], "Research");
+    ack_delivery(*router_, connection_, *batch);
 }
 
 TEST_F(BridgeRouterTest, CloudStoreCancelStopsDeletionBeforeTheNextProviderCall) {

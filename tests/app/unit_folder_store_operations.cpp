@@ -150,8 +150,7 @@ protected:
         return application_->folder_store_operation_status(folder_id, epoch_);
     }
 
-    // Upload names the store after the folder and the folder's item reference.
-    std::string store_name() const { return "Research " + note_item_ref_id(folder_.id); }
+    std::string store_name() const { return "Research"; }
 
     FolderStoreTransport openai_transport(bool fail_index = false, bool not_found = false) {
         return [=](const FolderStoreHttpRequest& request, const std::atomic_bool&) {
@@ -282,8 +281,6 @@ TEST_F(FolderStoreOperationsTest, UploadRefusesKeyForAnotherCloudStore) {
 
 TEST_F(FolderStoreOperationsTest, UploadRefusesANameThatAStoreOfTheKeyAlreadyHas) {
     std::vector<std::string> requests;
-    ASSERT_TRUE(store_name().starts_with("Research ##"));
-    ASSERT_EQ(store_name().size(), std::string("Research ##000000").size());
     std::string list_body = nlohmann::json{{"data", {{{"id", "vs_old"}, {"name", store_name()}}}}, {"has_more", false}}.dump();
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
         requests.push_back(request.method + " " + request.url);
@@ -312,8 +309,8 @@ TEST_F(FolderStoreOperationsTest, UploadRefusesANameThatAStoreOfTheKeyAlreadyHas
     EXPECT_EQ(status.error, "The saved API key was rejected.");
     application_->close_folder_store_operation(status.operation_id, epoch_);
 
-    list_body = nlohmann::json{{"data", {{{"id", "vs_folder"}, {"name", "Research"}},
-        {{"id", "vs_case"}, {"name", "research " + note_item_ref_id(folder_.id)}},
+    list_body = nlohmann::json{{"data", {{{"id", "vs_folder"}, {"name", "Research " + note_item_ref_id(folder_.id)}},
+        {{"id", "vs_case"}, {"name", "research"}},
         {{"id", "vs_unnamed"}, {"name", nullptr}}}}, {"has_more", false}}.dump();
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
         if (store_list_request(request)) return json_ok(list_body);
@@ -664,8 +661,17 @@ TEST_F(FolderStoreOperationsTest, GoogleTransfersBeforePollingAndWaitsForLagging
         if (store_list_request(request)) return json_ok("{}");
         if (request.method == "DELETE") return json_ok("{}");
         if (request.url.find("/documents?") != std::string::npos) return json_ok("{}");
-        if (request.url.ends_with("/v1beta/fileSearchStores")) return json_ok(R"({"name":"fileSearchStores/store1"})");
-        if (request.url.ends_with(":uploadToFileSearchStore")) return json_ok("", {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}});
+        if (request.url.ends_with("/v1beta/fileSearchStores")) {
+            EXPECT_EQ(nlohmann::json::parse(request.body).at("displayName"), "Research");
+            return json_ok(R"({"name":"fileSearchStores/store1"})");
+        }
+        if (request.url.ends_with(":uploadToFileSearchStore")) {
+            if (uploads == 0) {
+                const auto metadata = nlohmann::json::parse(request.body).at("customMetadata");
+                EXPECT_EQ(metadata.at(0).at("stringListValue").at("values"), nlohmann::json::array({"Research"}));
+            }
+            return json_ok("", {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}});
+        }
         if (request.url.ends_with("/upload/session")) {
             ++uploads;
             return json_ok(nlohmann::json{{"name", "fileSearchStores/store1/upload/operations/op" + std::to_string(uploads)}}.dump());

@@ -443,10 +443,12 @@ function ForumLibraryForm({ client, dispatch, detail, onSaved }: RosterDetailPro
 }) {
   const [draft, setDraft] = useState<ForumLibrary | null>(detail.library);
   const [baseline, setBaseline] = useState(detail.library);
-  const [saving, setSaving] = useState(false);
+  const [operation, setOperation] = useState<'save' | 'refresh' | null>(null);
+  const saving = operation !== null;
   const [error, setError] = useState<string | null>(null);
   const reload = useFormReload(detail.id);
   const refresh = useDetailRefresh();
+  const latestLibrary = useRef(detail.library);
   const dirty = librarySignature(draft) !== librarySignature(baseline);
   reload.markDirty(dirty);
   function apply(value: ForumDetail) {
@@ -454,7 +456,10 @@ function ForumLibraryForm({ client, dispatch, detail, onSaved }: RosterDetailPro
     setBaseline(value.library);
     setError(null);
   }
-  useEffect(() => { reload.loaded(detail, apply); }, [detail]);
+  useEffect(() => {
+    latestLibrary.current = detail.library;
+    reload.loaded(detail, apply);
+  }, [detail]);
   const keys = useLoad(client, loadLibraryKeys, 'API keys could not be loaded.');
   const eligible = keys.data?.filter((key) => key.has_value && ['openai', 'google'].includes(key.cloud_store)) ?? [];
   const keyId = draft?.api_key_id ?? '';
@@ -483,23 +488,26 @@ function ForumLibraryForm({ client, dispatch, detail, onSaved }: RosterDetailPro
   const missingCatalogue = draft && draft.store_ids.some((id) => baseline?.api_key_id !== draft.api_key_id
     || !Object.hasOwn(baseline.catalogue, id));
   const canSave = (dirty || missingCatalogue) && valid && !blocked;
-  async function save(event: FormEvent) {
+  const canRefresh = draft !== null && !dirty && valid && !blocked;
+  async function save(event: FormEvent, refreshStores = false) {
     event.preventDefault();
-    if (!canSave) return;
-    setSaving(true);
+    if (refreshStores ? !canRefresh : !canSave) return;
+    setOperation(refreshStores ? 'refresh' : 'save');
     setError(null);
     try {
       const epoch = client.contextEpoch();
       const requireContext = () => {
         if (client.contextEpoch() !== epoch)
           throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
+        if (refreshStores && librarySignature(latestLibrary.current) !== librarySignature(draft))
+          throw new ChaError('invalid_argument', 'The Library changed. Review its selections and refresh again.');
       };
       const forumId = detail.id;
       const catalogue: ForumLibrary['catalogue'] = Object.create(null);
-      const failed: string[] = [];
+      const failed: { id: string; label: string }[] = [];
       if (draft) {
         for (const id of draft.store_ids) {
-          if (baseline?.api_key_id === draft.api_key_id && Object.hasOwn(baseline.catalogue, id)) {
+          if (!refreshStores && baseline?.api_key_id === draft.api_key_id && Object.hasOwn(baseline.catalogue, id)) {
             catalogue[id] = baseline.catalogue[id];
             continue;
           }
@@ -508,20 +516,34 @@ function ForumLibraryForm({ client, dispatch, detail, onSaved }: RosterDetailPro
             const store = await client.getCloudStore(draft.api_key_id, id);
             catalogue[id] = { name: store.name, description: store.description };
           } catch {
-            failed.push(labels[stores?.findIndex((store) => store.id === id) ?? -1] || id);
+            if (refreshStores && baseline?.api_key_id === draft.api_key_id && Object.hasOwn(baseline.catalogue, id))
+              catalogue[id] = baseline.catalogue[id];
+            failed.push({ id, label: labels[stores?.findIndex((store) => store.id === id) ?? -1] || id });
           }
         }
       }
       requireContext();
+      const failedLabels = failed.map(({ label }) => label).join(', ');
+      if (refreshStores && failed.length === draft?.store_ids.length) {
+        setError(`Could not refresh ${failedLabels}.`);
+        return;
+      }
       const saved = await client.updateForumLibrary(forumId, draft && { ...draft, catalogue });
       reload.remember(saved);
       apply(saved);
       onSaved(saved);
       dispatch({ type: 'forum-updated', forum: saved });
-      if (failed.length) setError(`Library saved. Could not read ${failed.join(', ')}.`);
+      if (refreshStores && draft) {
+        storesLoad.setData((current) => current?.keyId === draft.api_key_id ? {
+          ...current,
+          items: current.items.map((store) => draft.store_ids.includes(store.id) && catalogue[store.id]
+            && !failed.some(({ id }) => id === store.id) ? { ...store, name: catalogue[store.id].name } : store),
+        } : current);
+      }
+      if (failed.length) setError(refreshStores ? `Could not refresh ${failedLabels}.` : `Library saved. Could not read ${failedLabels}.`);
     } catch (failure) {
-      setError(publicErrorMessage(failure, 'Library could not be saved.'));
-    } finally { setSaving(false); }
+      setError(publicErrorMessage(failure, refreshStores ? 'Library could not be refreshed.' : 'Library could not be saved.'));
+    } finally { setOperation(null); }
   }
   function toggle(id: string) {
     setDraft((current) => current && ({ ...current, store_ids: current.store_ids.includes(id)
@@ -532,7 +554,9 @@ function ForumLibraryForm({ client, dispatch, detail, onSaved }: RosterDetailPro
     <label>API key
       <select className="cha-form-control" disabled={saving || !detail.writable} value={keyId}
         onChange={(event) => {
-          setDraft(event.target.value ? { api_key_id: event.target.value, store_ids: [], provider_id: null, catalogue: {} } : null);
+          const apiKeyId = event.target.value;
+          setDraft(apiKeyId === baseline?.api_key_id ? baseline
+            : apiKeyId ? { api_key_id: apiKeyId, store_ids: [], provider_id: null, catalogue: {} } : null);
           setError(null);
         }}>
         <option value="">None</option>
@@ -579,7 +603,12 @@ function ForumLibraryForm({ client, dispatch, detail, onSaved }: RosterDetailPro
     {error && <p className="cha-error-message" role="alert">{error}</p>}
     {reload.stale && <StaleNotice onReload={() => reload.accept(apply)} />}
     <div className="cha-settings-form-actions">
-      <button className="cha-button cha-button-primary" disabled={!canSave} type="submit">{saving ? 'Saving…' : 'Save'}</button>
+      <button className="cha-button cha-button-primary" disabled={!canSave} type="submit">{operation === 'save' ? 'Saving…' : 'Save'}</button>
+    </div>
+    <div className="cha-settings-form-actions">
+      <button className="cha-button" disabled={!canRefresh} onClick={(event) => void save(event, true)} type="button">
+        {operation === 'refresh' ? 'Refreshing…' : 'Refresh'}
+      </button>
     </div>
   </form>;
 }

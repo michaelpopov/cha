@@ -327,7 +327,8 @@ describe('Notes in the application', () => {
       expect(start.mock.calls).toEqual([[5, 'Kore', ['Text 5'], true], [4, 'Kore', ['Text 4'], true]]);
       expect(getNote.mock.calls.map(([id]) => id)).toEqual([5, 4]);
       expect(changed.mock.calls.map(([event]) => event.detail)).toEqual([study.id]);
-      expect(screen.getByRole('treeitem', { name: 'Study' })).toHaveFocus();
+      // DOM removal can precede the passive effect cleanup that restores focus.
+      await waitFor(() => expect(screen.getByRole('treeitem', { name: 'Study' })).toHaveFocus());
       fireEvent.click(screen.getByRole('button', { name: `Actions for ${bootstrapFixture.vault_name}` }));
       expect(screen.queryByRole('menuitem', { name: 'Generate audio' })).toBeNull();
     } finally { window.removeEventListener('cha-note-audio-changed', changed); }

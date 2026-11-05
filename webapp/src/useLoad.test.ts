@@ -1,9 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { createElement, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ChaError, type ChaClient } from './api/client';
 import { fixtureClient } from './test/fixtures';
 import { useLoad } from './useLoad';
+import { DetailRefreshProvider } from './detailRefresh';
 
 function deferred<Value>() {
   let resolve!: (value: Value) => void;
@@ -16,6 +18,32 @@ function deferred<Value>() {
 }
 
 describe('useLoad', () => {
+  it.each(['success', 'failure'])('keeps a local update after a late background %s', async (late) => {
+    const pending = deferred<string[]>();
+    const client = fixtureClient();
+    const load = vi.fn(async () => ['Original']).mockImplementationOnce(async () => ['Original'])
+      .mockImplementationOnce(() => pending.promise);
+    let epoch = 0;
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(DetailRefreshProvider, {
+      value: { epoch, refreshing: false, failed: false, stale: false, retry() {} }, children,
+    });
+    const { result, rerender } = renderHook(() => useLoad(client, load, 'Load failed.'), { wrapper });
+    await waitFor(() => expect(result.current.data).toEqual(['Original']));
+    epoch++;
+    rerender();
+    expect(load).toHaveBeenCalledTimes(2);
+    act(() => result.current.setData(['Refreshed']));
+    await act(async () => {
+      if (late === 'success') pending.resolve(['Obsolete']);
+      else pending.reject(new Error('Obsolete failure'));
+    });
+    expect(result.current.data).toEqual(['Refreshed']);
+    expect(result.current.error).toBeNull();
+    load.mockResolvedValueOnce(['Next read']);
+    act(() => result.current.retry());
+    await waitFor(() => expect(result.current.data).toEqual(['Next read']));
+  });
+
   it('keeps loaded data on ordinary renders and clears it when retrying', async () => {
     const client = fixtureClient();
     const refreshed = deferred<string[]>();

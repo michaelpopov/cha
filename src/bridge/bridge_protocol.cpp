@@ -123,6 +123,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::api_key_delete, "apiKey.delete"},
     {Method::cloud_store_list, "cloudStore.list"},
     {Method::cloud_store_get, "cloudStore.get"},
+    {Method::cloud_store_update, "cloudStore.update"},
     {Method::cloud_store_delete, "cloudStore.delete"},
     {Method::cloud_store_cancel, "cloudStore.cancel"},
     {Method::r2_storage_get, "r2Storage.get"},

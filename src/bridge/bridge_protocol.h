@@ -137,6 +137,7 @@ enum class Method {
     api_key_delete,
     cloud_store_list,
     cloud_store_get,
+    cloud_store_update,
     cloud_store_delete,
     cloud_store_cancel,
     r2_storage_get,

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ChaError, type ApiKeyDetail, type CloudStoreDetail } from '../api/client';
+import { DetailRefreshProvider, type DetailRefreshValue } from '../detailRefresh';
 import { initialAppState, type AppState } from '../state/view';
 import { fixtureClient } from '../test/fixtures';
 import { CloudStoreKeysScreen, CloudStoreScreen, CloudStoresScreen, cloudStoreLabels } from './CloudStoreSettings';
@@ -84,17 +85,116 @@ describe('Cloud store settings', () => {
     expect(await screen.findByRole('button', { name: 'Research' })).toBeInTheDocument();
   });
 
-  it('shows read-only store fields with line breaks and local creation time', async () => {
+  it('shows editable name and description with read-only local creation time', async () => {
     const getCloudStore = vi.fn(async () => detail);
     render(<CloudStoreScreen client={fixtureClient({ getCloudStore })} dispatch={vi.fn()} navigate={vi.fn()} state={storeState()} />);
     expect(await screen.findByLabelText('Name')).toHaveValue('Research');
     expect(getCloudStore).toHaveBeenCalledWith('api_key_1', 'vs_1');
-    expect(screen.getByLabelText('Name')).toHaveAttribute('readonly');
+    expect(screen.getByLabelText('Name')).not.toHaveAttribute('readonly');
     expect(screen.getByLabelText('Description')).toHaveValue('First line\nSecond line');
-    expect(screen.getByLabelText('Description')).toHaveAttribute('readonly');
+    expect(screen.getByLabelText('Description')).not.toHaveAttribute('readonly');
+    expect(screen.getByLabelText('Created')).toHaveAttribute('readonly');
     expect(screen.getByLabelText('Created')).toHaveValue(new Intl.DateTimeFormat(undefined,
       { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(detail.created_at)));
     expect(screen.getByRole('button', { name: 'OpenAI work' })).toBeInTheDocument();
+  });
+
+  it('uses the update reply for both saved fields and the deletion name', async () => {
+    let saved = detail;
+    const getCloudStore = vi.fn(async () => detail);
+    const updateCloudStore = vi.fn(async (_key, _id, request) => {
+      saved = { ...detail, ...request };
+      return saved;
+    });
+    render(<CloudStoreScreen client={fixtureClient({ getCloudStore, updateCloudStore })}
+      dispatch={vi.fn()} navigate={vi.fn()} state={storeState()} />);
+    await screen.findByLabelText('Name');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: '  Archive  ' } });
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Updated\nNotes' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(updateCloudStore).toHaveBeenCalledExactlyOnceWith('api_key_1', 'vs_1', { name: 'Archive', description: 'Updated\nNotes' });
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue('Archive'));
+    expect(screen.getByLabelText('Description')).toHaveValue('Updated\nNotes');
+    expect(getCloudStore).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('Permanently delete “Archive”');
+  });
+
+  it.each(['store', 'key'] as const)('waits for the selected %s instead of editing the previous store', async (selection) => {
+    const pending = deferred();
+    const next = { ...detail, id: selection === 'store' ? 'vs_2' : detail.id, name: 'Other store' };
+    const getCloudStore = vi.fn().mockResolvedValueOnce(detail).mockImplementation(async () => {
+      await pending.promise;
+      return next;
+    });
+    const client = fixtureClient({ getCloudStore });
+    const props = { client, dispatch: vi.fn(), navigate: vi.fn() };
+    const { rerender } = render(<CloudStoreScreen {...props} state={storeState()} />);
+    await screen.findByLabelText('Name');
+    const nextState = selection === 'store' ? storeState(next.id, next.name) : {
+      ...storeState(), inspectedCloudStoreKey: { id: 'api_key_2', name: 'Other key', notice: null },
+    };
+    rerender(<CloudStoreScreen {...props} state={nextState} />);
+    expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+    pending.resolve();
+    expect(await screen.findByLabelText('Name')).toHaveValue('Other store');
+  });
+
+  it('preserves drafts through equal refreshes and blocks stale saves until the user reloads', async () => {
+    let saved = detail;
+    const client = fixtureClient({ getCloudStore: async () => saved });
+    const refresh: DetailRefreshValue = { epoch: 1, refreshing: false, failed: false, stale: false, retry() {} };
+    const view = (epoch: number) => <DetailRefreshProvider value={{ ...refresh, epoch }}>
+      <CloudStoreScreen client={client} dispatch={vi.fn()} navigate={vi.fn()} state={storeState()} />
+    </DetailRefreshProvider>;
+    const { rerender } = render(view(1));
+    await screen.findByLabelText('Name');
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'My draft' } });
+    rerender(view(2));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    expect(screen.getByLabelText('Name')).toHaveValue('My draft');
+    saved = { ...detail, description: 'Changed elsewhere' };
+    rerender(view(3));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The cloud store changed.');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByLabelText('Name')).toHaveValue('My draft');
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(screen.getByLabelText('Name')).toHaveValue('Research');
+    expect(screen.getByLabelText('Description')).toHaveValue('Changed elsewhere');
+  });
+
+  it('keeps edits on failure and allows retrying an empty description', async () => {
+    const updateCloudStore = vi.fn().mockRejectedValueOnce(new ChaError('invalid_argument', 'The saved API key was rejected.'))
+      .mockResolvedValue({ ...detail, description: '' });
+    render(<CloudStoreScreen client={fixtureClient({ getCloudStore: async () => detail, updateCloudStore })}
+      dispatch={vi.fn()} navigate={vi.fn()} state={storeState('fileSearchStores/a')} />);
+    await screen.findByLabelText('Description');
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: '' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The saved API key was rejected.');
+    expect(screen.getByLabelText('Description')).toHaveValue('');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(updateCloudStore).toHaveBeenLastCalledWith('api_key_1', 'fileSearchStores/a', { name: 'Research', description: '' });
+  });
+
+  it('blocks empty names and disables editing and deletion during a save', async () => {
+    const pending = deferred();
+    const updateCloudStore = vi.fn(async () => { await pending.promise; return detail; });
+    render(<CloudStoreScreen client={fixtureClient({ getCloudStore: async () => detail, updateCloudStore })}
+      dispatch={vi.fn()} navigate={vi.fn()} state={storeState()} />);
+    await screen.findByLabelText('Name');
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: '   ' } });
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Archive' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    expect(screen.getByLabelText('Name')).toBeDisabled();
+    expect(screen.getByLabelText('Description')).toBeDisabled();
+    pending.reject(new Error('unavailable'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The store could not be saved.');
+    expect(screen.getByLabelText('Name')).toHaveValue('Archive');
   });
 
   it('confirms deletion with the provider text and returns to the refreshed list', async () => {

@@ -990,6 +990,16 @@ components:
         created_at:
           type: string
 
+    CloudStoreUpdate:
+      type: object
+      additionalProperties: false
+      required: [name, description]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
     R2StorageDetail:
       type: object
       additionalProperties: false

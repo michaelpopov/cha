@@ -144,6 +144,13 @@ void require_result(const FolderStoreRemoteResult& result, std::string_view labe
         + (result.message.empty() ? "The provider request failed." : result.message));
 }
 
+void require_openai_description(std::string_view description) {
+    const auto characters = std::count_if(description.begin(), description.end(),
+        [](unsigned char c) { return (c & 0xc0) != 0x80; });
+    if (characters > 512)
+        throw ApplicationError(ErrorCode::invalid_argument, "Description must be 512 characters or fewer for OpenAI.");
+}
+
 // Keeps a returned allocation for cleanup. A lost allocation is only logged.
 void keep_allocation(auto& self, const auto& control, const FolderStoreRemoteResult& result, bool file) {
     if (result.id.empty()) {
@@ -500,10 +507,7 @@ FolderStoreStart NotesService::start_folder_store_upload(std::int64_t folder_id,
     catch (const nlohmann::json::type_error&) {
         throw ApplicationError(ErrorCode::invalid_argument, "Description must be valid UTF-8.");
     }
-    const auto description_points = std::count_if(description.begin(), description.end(),
-        [](unsigned char c) { return (c & 0xc0) != 0x80; });
-    if (parsed == FolderStoreService::openai && description_points > 512)
-        throw ApplicationError(ErrorCode::invalid_argument, "Description must be 512 characters or fewer for OpenAI.");
+    if (parsed == FolderStoreService::openai) require_openai_description(description);
     if (folder_id <= 0 || folder_id > note_id_limit) throw ApplicationError(ErrorCode::invalid_argument, "A store can only belong to a real folder.");
     const auto folder = impl_->store->folder_store_folder(folder_id);
     if (!folder) throw ApplicationError(ErrorCode::invalid_argument, "A store can only belong to a real folder.");
@@ -520,7 +524,7 @@ FolderStoreStart NotesService::start_folder_store_upload(std::int64_t folder_id,
     control->vault_name = impl_->current_vault_name();
     control->service = parsed;
     control->api_key_id = std::move(api_key_id);
-    control->store_name = folder->name + " " + note_item_ref_id(folder_id);
+    control->store_name = folder->name;
     control->store_description = std::move(description);
     impl_->folder_store_controls[folder_id] = control;
     if (!impl_->launch_folder_store_control(control, [owner = impl_.get(), control] { owner->run_folder_store_upload(control); })) {
@@ -596,14 +600,14 @@ void require_cloud_result(const FolderStoreRemoteResult& result) {
 } // namespace
 
 std::shared_ptr<OperationReply> NotesService::Impl::launch_cloud_store(std::string_view api_key_id,
-    std::uint64_t epoch, bool deleting, CloudStoreWork work) {
+    std::uint64_t epoch, bool writing, CloudStoreWork work) {
     FolderStoreService service;
     std::string key;
     FolderStoreTransport transport;
     {
         const std::lock_guard lock(lifecycle_mutex);
         require_admitted(epoch);
-        if (deleting) store->require_main();
+        if (writing) store->require_main();
         const auto info = api_keys->find(api_key_id);
         if (!info) throw ApplicationError(ErrorCode::not_found, "That API key was not found.");
         if (info->cloud_store == "none") throw ApplicationError(ErrorCode::invalid_argument, "Set cloud store API key");
@@ -665,6 +669,21 @@ std::shared_ptr<OperationReply> NotesService::delete_cloud_store(
             const std::atomic_bool& cancel) {
             require_cloud_result(client.delete_store(service, id, key, cancel));
             return nlohmann::json::object();
+        });
+}
+
+std::shared_ptr<OperationReply> NotesService::update_cloud_store(
+    std::string_view api_key_id, std::string_view store_id, std::string name,
+    std::string description, std::uint64_t epoch) {
+    return impl_->launch_cloud_store(api_key_id, epoch, true,
+        [id = std::string(store_id), name = std::move(name), description = std::move(description)](
+            FolderStoreClient& client, FolderStoreService service, const std::string& key,
+            const std::atomic_bool& cancel) {
+            if (service == FolderStoreService::openai) require_openai_description(description);
+            const auto detail = client.update_store(service, id, name, description, key, cancel);
+            require_cloud_result(detail.result);
+            return nlohmann::json{{"id", detail.id}, {"name", detail.name},
+                {"description", detail.description}, {"created_at", detail.created_at}};
         });
 }
 

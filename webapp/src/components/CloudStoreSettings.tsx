@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChaError, publicErrorMessage, type ChaClient, type CloudStoreList } from '../api/client';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { ChaError, publicErrorMessage, type ChaClient, type CloudStoreDetail, type CloudStoreList, type CloudStoreUpdate } from '../api/client';
+import { useFormReload } from '../detailRefresh';
 import { useLoad } from '../useLoad';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ChevronLeftIcon, DatabaseIcon, KeyIcon } from './Icons';
@@ -65,23 +66,76 @@ export function CloudStoresScreen({ client, navigate, state }: SettingsScreenPro
 export function CloudStoreScreen({ client, navigate, state }: SettingsScreenProps) {
   const { id: apiKeyId, name: apiKeyName } = state.inspectedCloudStoreKey;
   const { id: storeId, label } = state.inspectedCloudStore;
-  const load = useCallback((loader: ChaClient) => (
-    apiKeyId && storeId ? loader.getCloudStore(apiKeyId, storeId) : Promise.reject(new Error('No store'))),
-  [apiKeyId, storeId]);
-  const { data: store, error: loadError, retry } = useLoad(client, load, 'The cloud store could not be loaded.');
+  const [store, setStore] = useState<CloudStoreDetail | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const reload = useFormReload(JSON.stringify([apiKeyId, storeId]));
+  const [draft, setDraft] = useState<CloudStoreUpdate | null>(null);
+  const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const deletion = useRef<AbortController | null>(null);
-  // Replies for a deletion that was cancelled or left are ignored.
-  useEffect(() => () => { deletion.current = null; }, []);
+  const saveRequest = useRef<object | null>(null);
+  function applyStore(loaded: CloudStoreDetail) {
+    setStore(loaded);
+    setDraft(null);
+  }
+  useEffect(() => {
+    let current = true;
+    const background = reload.start();
+    if (!background) { setStore(null); setDraft(null); }
+    setLoadError(null);
+    if (!apiKeyId || !storeId) return () => { current = false; };
+    void client.getCloudStore(apiKeyId, storeId).then(
+      (loaded) => {
+        if (current) reload.loaded(loaded, applyStore);
+      },
+      (failure: unknown) => {
+        if (!current) return;
+        setLoadError(publicErrorMessage(failure, 'The cloud store could not be loaded.'));
+        reload.fail(background);
+      },
+    );
+    return () => { current = false; };
+  }, [client, apiKeyId, storeId, reload.epoch, reload.attempt]);
+  reload.markDirty(draft !== null && store !== null
+    && (draft.name !== store.name || draft.description !== store.description));
+  useEffect(() => {
+    setDraft(null);
+    setSaving(false);
+    setError(null);
+    setPending(false);
+    setConfirming(false);
+    return () => { saveRequest.current = null; deletion.current = null; };
+  }, [apiKeyId, storeId]);
 
   function backToList(notice?: string) {
     if (apiKeyId) navigate({ type: 'inspect-cloud-store-key', apiKeyId, apiKeyName: apiKeyName ?? '', notice });
     else navigate({ type: 'show-settings-cloud-stores' });
   }
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!apiKeyId || !storeId || !draft?.name.trim() || saveRequest.current || pending || reload.blocked || loadError) return;
+    setSaving(true);
+    setError(null);
+    const request = {};
+    saveRequest.current = request;
+    try {
+      const saved = await client.updateCloudStore(apiKeyId, storeId, { name: draft.name.trim(), description: draft.description });
+      if (saveRequest.current !== request) return;
+      applyStore(saved);
+      reload.remember(saved);
+    } catch (failure: unknown) {
+      if (saveRequest.current === request) setError(publicErrorMessage(failure, 'The store could not be saved.'));
+    } finally {
+      if (saveRequest.current === request) {
+        saveRequest.current = null;
+        setSaving(false);
+      }
+    }
+  }
   async function confirmDelete() {
-    if (!apiKeyId || !storeId || deletion.current) return;
+    if (!apiKeyId || !storeId || deletion.current || saving) return;
     const controller = new AbortController();
     deletion.current = controller;
     setPending(true);
@@ -112,7 +166,9 @@ export function CloudStoreScreen({ client, navigate, state }: SettingsScreenProp
   }
 
   const openai = !storeId?.startsWith('fileSearchStores/');
-  const message = `Permanently delete “${label ?? storeId ?? ''}” and its files?`
+  const currentLabel = store && store.name !== label && `${store.name} (${storeId})` !== label
+    ? store.name || storeId : label;
+  const message = `Permanently delete “${currentLabel ?? storeId ?? ''}” and its files?`
     + (openai ? ' Files shared with other vector stores are removed from them too.' : '');
   return (
     <section className="cha-screen cha-navigation" aria-label="Cloud store details">
@@ -120,16 +176,26 @@ export function CloudStoreScreen({ client, navigate, state }: SettingsScreenProp
         <ChevronLeftIcon /><span>{apiKeyName}</span>
       </button>
       {store === null && !loadError && <p className="cha-state-message" role="status">Loading cloud store…</p>}
-      {loadError && <LoadFailure message={loadError} retry={retry} />}
-      {store && <div className="cha-settings-form">
-        <label>Name<input className="cha-form-control" readOnly value={store.name} /></label>
-        <label>Description<textarea className="cha-form-control" readOnly rows={6} value={store.description} /></label>
+      {(loadError || reload.stale) && <LoadFailure
+        message={loadError ?? 'The cloud store changed. Try again to load its saved values.'}
+        retry={reload.stale ? () => reload.accept(applyStore) : reload.retry} />}
+      {store && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+        <label>Name<input className="cha-form-control" disabled={saving || pending} required
+          onChange={(event) => setDraft({ name: event.target.value, description: draft?.description ?? store.description })}
+          value={draft?.name ?? store.name} /></label>
+        <label>Description<textarea className="cha-form-control" disabled={saving || pending} rows={6}
+          onChange={(event) => setDraft({ name: draft?.name ?? store.name, description: event.target.value })}
+          value={draft?.description ?? store.description} /></label>
         <label>Created<input className="cha-form-control" readOnly value={formatCreated(store.created_at)} /></label>
         {error && <p className="cha-error-message" role="alert">{error}</p>}
         <div className="cha-settings-form-actions">
-          <button className="cha-button cha-button-danger" disabled={pending} onClick={() => setConfirming(true)} type="button">Delete</button>
+          <button className="cha-button cha-button-primary" disabled={saving || pending || reload.blocked || !!loadError || !draft?.name.trim()}
+            type="submit">{saving ? 'Saving…' : 'Save'}</button>
         </div>
-      </div>}
+        <div className="cha-settings-form-actions">
+          <button className="cha-button cha-button-danger" disabled={pending || saving} onClick={() => setConfirming(true)} type="button">Delete</button>
+        </div>
+      </form>}
       {confirming && (
         <ConfirmDialog
           confirmLabel={pending ? 'Deleting…' : 'Delete store'}

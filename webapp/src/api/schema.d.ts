@@ -445,6 +445,10 @@ export interface components {
             description: string;
             created_at: string;
         };
+        CloudStoreUpdate: {
+            name: string;
+            description: string;
+        };
         R2StorageDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;

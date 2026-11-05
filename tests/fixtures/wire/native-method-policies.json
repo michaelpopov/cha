@@ -116,6 +116,7 @@
   "apiKey.delete": {"requires_context_epoch": true, "changes_context": false},
   "cloudStore.list": {"requires_context_epoch": true, "changes_context": false},
   "cloudStore.get": {"requires_context_epoch": true, "changes_context": false},
+  "cloudStore.update": {"requires_context_epoch": true, "changes_context": false},
   "cloudStore.delete": {"requires_context_epoch": true, "changes_context": false},
   "cloudStore.cancel": {"requires_context_epoch": true, "changes_context": false},
   "r2Storage.get": {"requires_context_epoch": true, "changes_context": false},

@@ -844,6 +844,11 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       );
       if (!isRecord(result)) throw new ChaProtocolError();
     },
+    updateCloudStore: (apiKeyId, storeId, request) => call(
+      'cloudStore.update',
+      { api_key_id: apiKeyId, store_id: storeId, ...request },
+      isCloudStoreDetail,
+    ),
     getR2Storage: () => call(
       'r2Storage.get',
       {},

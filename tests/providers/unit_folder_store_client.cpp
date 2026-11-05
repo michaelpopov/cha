@@ -282,6 +282,8 @@ TEST(FolderStoreHttp, ListsStoresFromEveryPageForBothServices) {
     std::vector<std::string> requests;
     FolderStoreClient client([&](const FolderStoreHttpRequest& request, const std::atomic_bool&) {
         requests.push_back(request.method + " " + request.url + " " + request.headers.front().name + "=" + request.headers.front().value);
+        if (request.url.find("/documents?") != std::string::npos)
+            return FolderStoreHttpResponse{.status = 200, .body = "{}"};
         if (request.url.find("/vector_stores") != std::string::npos) {
             return FolderStoreHttpResponse{.status = 200, .body = request.url.ends_with("limit=100")
                 ? R"({"data":[{"id":"vs_1","name":"One"},{"id":"vs_2","name":null}],"last_id":"vs_2","has_more":true})"
@@ -303,7 +305,10 @@ TEST(FolderStoreHttp, ListsStoresFromEveryPageForBothServices) {
         "GET https://api.openai.com/v1/vector_stores?limit=100 Authorization=Bearer sk-key",
         "GET https://api.openai.com/v1/vector_stores?limit=100&after=vs_2 Authorization=Bearer sk-key",
         "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores?pageSize=20 x-goog-api-key=g-key",
-        "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores?pageSize=20&pageToken=next%2B%2F%3D x-goog-api-key=g-key"}));
+        "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores?pageSize=20&pageToken=next%2B%2F%3D x-goog-api-key=g-key",
+        "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores/a/documents?pageSize=20 x-goog-api-key=g-key",
+        "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores/b/documents?pageSize=20 x-goog-api-key=g-key",
+        "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores/c/documents?pageSize=20 x-goog-api-key=g-key"}));
 
     FolderStoreClient empty([](const FolderStoreHttpRequest&, const std::atomic_bool&) {
         return FolderStoreHttpResponse{.status = 200, .body = "{}"};
@@ -365,6 +370,13 @@ TEST(FolderStoreHttp, ReadsOpenAiStoreDetailsWithUtcCreationTime) {
     ASSERT_EQ(detail.result.kind, FolderStoreRemoteKind::ok);
     EXPECT_EQ(detail.name, "");
     EXPECT_EQ(detail.description, "");
+    // An edited description in metadata replaces the native one, also when it is empty.
+    body = R"({"id":"vs_1","description":"Native","metadata":{"description":"Edited"},"created_at":0})";
+    EXPECT_EQ(client.get_store(FolderStoreService::openai, "vs_1", "sk-key", cancel).description, "Edited");
+    body = R"({"id":"vs_1","description":"Native","metadata":{"description":""},"created_at":0})";
+    EXPECT_EQ(client.get_store(FolderStoreService::openai, "vs_1", "sk-key", cancel).description, "");
+    body = R"({"id":"vs_1","description":"Native","metadata":{"owner":"other"},"created_at":0})";
+    EXPECT_EQ(client.get_store(FolderStoreService::openai, "vs_1", "sk-key", cancel).description, "Native");
     for (const auto& invalid : {R"({"id":"vs_2","created_at":1})", R"({"id":"vs_1","created_at":"today"})",
              R"({"id":"vs_1","name":5,"created_at":1})", R"({"id":"vs_1"})"}) {
         SCOPED_TRACE(invalid);
@@ -378,6 +390,194 @@ TEST(FolderStoreHttp, ReadsOpenAiStoreDetailsWithUtcCreationTime) {
     EXPECT_EQ(client.get_store(FolderStoreService::google, "vs_1", "g-key", cancel).result.kind,
         FolderStoreRemoteKind::failed);
     EXPECT_TRUE(requests.empty());
+}
+
+TEST(FolderStoreHttp, UpdatesOpenAiStoreAndVerifiesPersistedFields) {
+    nlohmann::json saved{{"id", "vs_1"}, {"name", "Before"}, {"description", "Old"},
+        {"metadata", {{"owner", "other"}}}, {"created_at", 1793697300}};
+    std::vector<std::string> requests;
+    bool ignore_metadata = false, fail_read = false;
+    FolderStoreClient client([&](const auto& request, const auto&) {
+        requests.push_back(request.method);
+        EXPECT_EQ(request.url, "https://api.openai.com/v1/vector_stores/vs_1");
+        EXPECT_EQ(request.headers.front().value, "Bearer sk-key");
+        if (fail_read) return FolderStoreHttpResponse{.status = 503, .body = R"({"error":{"code":"server_error"}})"};
+        if (request.method == "POST") {
+            // The modify API has no description field. OpenAI replaces the whole metadata map.
+            const auto body = nlohmann::json::parse(request.body);
+            EXPECT_EQ(body.size(), 2);
+            EXPECT_FALSE(body.contains("description"));
+            saved["name"] = body["name"];
+            if (!ignore_metadata) saved["metadata"] = body["metadata"];
+        }
+        return FolderStoreHttpResponse{.status = 200, .body = saved.dump()};
+    });
+    std::atomic_bool cancel{false};
+    auto detail = client.update_store(FolderStoreService::openai, "vs_1", "Renamed", "New\nNotes", "sk-key", cancel);
+    EXPECT_EQ(detail.result.kind, FolderStoreRemoteKind::ok);
+    EXPECT_EQ(detail.name, "Renamed");
+    EXPECT_EQ(detail.description, "New\nNotes");
+    EXPECT_EQ(detail.created_at, "2026-11-03T09:15:00Z");
+    EXPECT_EQ(requests, (std::vector<std::string>{"GET", "POST", "GET"}));
+    EXPECT_EQ(saved["description"], "Old");
+    EXPECT_EQ(saved["metadata"], (nlohmann::json{{"owner", "other"}, {"description", "New\nNotes"}}));
+    detail = client.update_store(FolderStoreService::openai, "vs_1", "Renamed", "", "sk-key", cancel);
+    EXPECT_EQ(detail.result.kind, FolderStoreRemoteKind::ok);
+    EXPECT_EQ(detail.description, "");
+    ignore_metadata = true;
+    detail = client.update_store(FolderStoreService::openai, "vs_1", "Renamed", "Other", "sk-key", cancel);
+    EXPECT_EQ(detail.result.kind, FolderStoreRemoteKind::failed);
+    EXPECT_NE(detail.result.message.find("did not apply all changes"), std::string::npos);
+    requests.clear();
+    fail_read = true;
+    EXPECT_EQ(client.update_store(FolderStoreService::openai, "vs_1", "x", "", "sk-key", cancel).result.kind,
+        FolderStoreRemoteKind::failed);
+    EXPECT_EQ(requests, std::vector<std::string>{"GET"});
+    requests.clear();
+    EXPECT_EQ(client.update_store(FolderStoreService::openai, "../files", "x", "", "sk-key", cancel).result.kind,
+        FolderStoreRemoteKind::failed);
+    cancel = true;
+    EXPECT_EQ(client.update_store(FolderStoreService::openai, "vs_1", "x", "", "sk-key", cancel).result.kind,
+        FolderStoreRemoteKind::cancelled);
+    EXPECT_TRUE(requests.empty());
+}
+
+TEST(FolderStoreHttp, ReplacesGeminiMetadataAfterIndexingAndUsesItInListsAndDetails) {
+    for (const std::string description : {"New\nNotes", ""}) {
+        SCOPED_TRACE(description);
+        auto metadata = nlohmann::json::parse(R"({"name":"fileSearchStores/a/documents/old","displayName":"DESCRIPTION.txt",
+            "customMetadata":[{"key":"name","stringListValue":{"values":["Before"]}}]})");
+        nlohmann::json replacement;
+        auto extra_metadata = metadata;
+        extra_metadata["name"] = "fileSearchStores/a/documents/old2";
+        bool extra_exists = description.empty(); // A retry also cleans a previous replacement left behind.
+        bool deleted = false, indexed = false;
+        int polls = 0;
+        FolderStoreClient client([&](const auto& request, const auto&) {
+            EXPECT_EQ(request.headers.front().value, "g-key");
+            if (request.url.ends_with(":uploadToFileSearchStore")) {
+                const auto body = nlohmann::json::parse(request.body);
+                replacement = {{"name", "fileSearchStores/a/documents/new"},
+                    {"displayName", "DESCRIPTION.txt"}, {"customMetadata", body["customMetadata"]}};
+                return FolderStoreHttpResponse{.status = 200,
+                    .headers = {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}}};
+            }
+            if (request.url.ends_with("/upload/session"))
+                return FolderStoreHttpResponse{.status = 200, .body = R"({"name":"fileSearchStores/a/upload/operations/op1"})"};
+            if (request.url.ends_with("/upload/operations/op1")) {
+                indexed = ++polls == 2;
+                return FolderStoreHttpResponse{.status = 200, .body = nlohmann::json{
+                    {"name", "fileSearchStores/a/upload/operations/op1"}, {"done", indexed},
+                    {"response", {{"documentName", "fileSearchStores/a/documents/new"}}}}.dump()};
+            }
+            if (request.method == "GET" && request.url.ends_with("/documents/new"))
+                return FolderStoreHttpResponse{.status = 200, .body = replacement.dump()};
+            if (request.method == "DELETE") {
+                EXPECT_TRUE(indexed);
+                EXPECT_TRUE(request.url.ends_with("/documents/old?force=true") || request.url.ends_with("/documents/old2?force=true"));
+                deleted = true;
+                if (request.url.ends_with("/documents/old2?force=true")) extra_exists = false;
+                else metadata = replacement;
+                return FolderStoreHttpResponse{.status = 200, .body = "{}"};
+            }
+            if (request.url.find("/documents?") != std::string::npos) {
+                auto documents = nlohmann::json::array({metadata,
+                    {{"name", "fileSearchStores/a/documents/note"}, {"displayName", "note.md"}}});
+                if (extra_exists) documents.push_back(extra_metadata);
+                return FolderStoreHttpResponse{.status = 200, .body = nlohmann::json{
+                    {"documents", documents}}.dump()};
+            }
+            const auto store = nlohmann::json{{"name", "fileSearchStores/a"}, {"displayName", "Before"},
+                {"createTime", "2026-11-03T09:15:00Z"}};
+            if (request.url.ends_with("/fileSearchStores?pageSize=20"))
+                return FolderStoreHttpResponse{.status = 200, .body = nlohmann::json{
+                    {"fileSearchStores", nlohmann::json::array({store})}}.dump()};
+            return FolderStoreHttpResponse{.status = 200, .body = store.dump()};
+        });
+        std::atomic_bool cancel{false};
+        const auto detail = client.update_store(FolderStoreService::google, "fileSearchStores/a", "Renamed", description, "g-key", cancel);
+        ASSERT_EQ(detail.result.kind, FolderStoreRemoteKind::ok) << detail.result.message;
+        EXPECT_TRUE(deleted);
+        EXPECT_FALSE(extra_exists);
+        EXPECT_EQ(detail.name, "Renamed");
+        EXPECT_EQ(detail.description, description);
+        EXPECT_EQ(detail.created_at, "2026-11-03T09:15:00Z");
+        const auto listed = client.list_stores(FolderStoreService::google, "g-key", cancel);
+        ASSERT_EQ(listed.result.kind, FolderStoreRemoteKind::ok);
+        EXPECT_EQ(store_rows(listed), (std::vector<std::string>{"fileSearchStores/a=Renamed"}));
+    }
+}
+
+TEST(FolderStoreHttp, FailedGeminiMetadataUploadDoesNotDeleteThePreviousDocument) {
+    bool deleted = false;
+    FolderStoreClient client([&](const auto& request, const auto&) {
+        if (request.method == "DELETE") deleted = true;
+        if (request.method == "GET") return FolderStoreHttpResponse{.status = 200, .body =
+            R"({"documents":[{"name":"fileSearchStores/a/documents/old","displayName":"DESCRIPTION.txt",
+                "customMetadata":[{"key":"name","stringListValue":{"values":["Before"]}}]}]})"};
+        return FolderStoreHttpResponse{.status = 503, .body = R"({"error":{"status":"UNAVAILABLE"}})"};
+    });
+    std::atomic_bool cancel{false};
+    const auto detail = client.update_store(FolderStoreService::google, "fileSearchStores/a", "Renamed", "New", "g-key", cancel);
+    EXPECT_EQ(detail.result.kind, FolderStoreRemoteKind::failed);
+    EXPECT_FALSE(deleted);
+}
+
+TEST(FolderStoreHttp, GeminiReplacementFailuresKeepVerifiedMetadata) {
+    for (const std::string_view mode : {"wrong_values", "delete_rejected", "delete_response_lost"}) {
+        SCOPED_TRACE(mode);
+        const auto original = nlohmann::json::parse(R"({"name":"fileSearchStores/a/documents/old","displayName":"DESCRIPTION.txt",
+            "customMetadata":[{"key":"name","stringListValue":{"values":["Before"]}},
+            {"key":"description","stringListValue":{"values":["Original notes"]}}]})");
+        auto replacement = original;
+        replacement["name"] = "fileSearchStores/a/documents/new";
+        replacement["customMetadata"][0]["stringListValue"]["values"] = {mode == "wrong_values" ? "Wrong" : "Renamed"};
+        bool replacement_exists = false, original_exists = true, attempted_old_delete = false;
+        FolderStoreClient client([&](const auto& request, const auto&) {
+            if (request.url.ends_with(":uploadToFileSearchStore"))
+                return FolderStoreHttpResponse{.status = 200,
+                    .headers = {{"X-Goog-Upload-URL", "https://generativelanguage.googleapis.com/upload/session"}}};
+            if (request.url.ends_with("/upload/session")) {
+                replacement_exists = true;
+                return FolderStoreHttpResponse{.status = 200, .body = R"({"name":"fileSearchStores/a/upload/operations/op1",
+                    "done":true,"response":{"documentName":"fileSearchStores/a/documents/new"}})"};
+            }
+            if (request.method == "DELETE") {
+                if (request.url.ends_with("/documents/new?force=true")) {
+                    replacement_exists = false;
+                    return FolderStoreHttpResponse{.status = 200, .body = "{}"};
+                }
+                EXPECT_TRUE(request.url.ends_with("/documents/old?force=true"));
+                attempted_old_delete = true;
+                if (mode == "delete_response_lost") original_exists = false;
+                return FolderStoreHttpResponse{.status = 503, .body = R"({"error":{"status":"UNAVAILABLE"}})"};
+            }
+            if (request.url.ends_with("/documents/new"))
+                return FolderStoreHttpResponse{.status = 200, .body = replacement.dump()};
+            if (request.url.ends_with("/documents/old")) {
+                if (!original_exists) return FolderStoreHttpResponse{.status = 404,
+                    .body = R"({"error":{"code":404,"status":"NOT_FOUND"}})"};
+                return FolderStoreHttpResponse{.status = 200, .body = original.dump()};
+            }
+            if (request.url.find("/documents?") != std::string::npos) {
+                auto documents = nlohmann::json::array();
+                if (original_exists) documents.push_back(original);
+                if (replacement_exists) documents.push_back(replacement);
+                return FolderStoreHttpResponse{.status = 200, .body = nlohmann::json{{"documents", documents}}.dump()};
+            }
+            return FolderStoreHttpResponse{.status = 200, .body = R"({"name":"fileSearchStores/a",
+                "displayName":"Before","createTime":"2026-11-03T09:15:00Z"})"};
+        });
+        std::atomic_bool cancel{false};
+        const auto result = client.update_store(FolderStoreService::google, "fileSearchStores/a", "Renamed", "Original notes", "key", cancel);
+        EXPECT_EQ(result.result.kind, mode == "delete_response_lost" ? FolderStoreRemoteKind::ok : FolderStoreRemoteKind::failed);
+        EXPECT_EQ(attempted_old_delete, mode != "wrong_values");
+        EXPECT_EQ(replacement_exists, mode == "delete_response_lost");
+        const auto saved = client.get_store(FolderStoreService::google, "fileSearchStores/a", "key", cancel);
+        ASSERT_EQ(saved.result.kind, FolderStoreRemoteKind::ok);
+        EXPECT_EQ(saved.name, mode == "delete_response_lost" ? "Renamed" : "Before");
+        EXPECT_EQ(saved.description, "Original notes");
+    }
 }
 
 TEST(FolderStoreHttp, ReadsGeminiStoreDescriptionFromItsOnlyMetadataDocument) {

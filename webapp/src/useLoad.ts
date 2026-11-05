@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react';
 
 import { publicErrorMessage, type ChaClient } from './api/client';
 import { useDetailRefresh } from './detailRefresh';
@@ -15,6 +15,13 @@ export function useLoad<Value>(
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const hasData = useRef(false);
+  const localRevision = useRef(0);
+  const replaceData = useCallback((value: SetStateAction<Value | null>) => {
+    // A successful local update supersedes an older background read.
+    localRevision.current++;
+    setData(value);
+    setError(null);
+  }, []);
   const retry = useCallback(() => {
     // Retry replaces the visible value. An epoch refresh leaves this set.
     hasData.current = false;
@@ -25,6 +32,7 @@ export function useLoad<Value>(
 
   useEffect(() => {
     let current = true;
+    const startedAt = localRevision.current;
     const background = hasData.current;
     if (!background) {
       setData(null);
@@ -33,17 +41,17 @@ export function useLoad<Value>(
     async function run() {
       try {
         const loaded = await load(client);
-        if (!current) return;
+        if (!current || startedAt !== localRevision.current) return;
         hasData.current = true;
         setData(loaded);
         setError(null);
       } catch (failure: unknown) {
-        if (current) setError(publicErrorMessage(failure, failureMessage));
+        if (current && startedAt === localRevision.current) setError(publicErrorMessage(failure, failureMessage));
       }
     }
     void run();
     return () => { current = false; };
   }, [client, load, failureMessage, refresh.epoch, revision]);
 
-  return { data, error, retry };
+  return { data, error, retry, setData: replaceData };
 }

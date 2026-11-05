@@ -75,6 +75,7 @@ export type ReplaceApiKeyValueRequest = components['schemas']['ReplaceApiKeyValu
 export type CloudStore = components['schemas']['CloudStore'];
 export type CloudStoreList = components['schemas']['CloudStoreList'];
 export type CloudStoreDetail = components['schemas']['CloudStoreDetail'];
+export type CloudStoreUpdate = components['schemas']['CloudStoreUpdate'];
 export type R2StorageDetail = components['schemas']['R2StorageDetail'];
 export type SaveR2StorageRequest = components['schemas']['SaveR2StorageRequest'];
 export type VaultUploadCheck = {
@@ -316,6 +317,7 @@ export interface ChaClient {
   deleteApiKey(apiKeyId: string): Promise<void>;
   listCloudStores(apiKeyId: string): Promise<CloudStoreList>;
   getCloudStore(apiKeyId: string, storeId: string): Promise<CloudStoreDetail>;
+  updateCloudStore(apiKeyId: string, storeId: string, request: CloudStoreUpdate): Promise<CloudStoreDetail>;
   // Aborting sends cloudStore.cancel; the native worker starts no further provider call.
   deleteCloudStore(apiKeyId: string, storeId: string, signal?: AbortSignal): Promise<void>;
   getR2Storage(): Promise<R2StorageDetail | null>;
