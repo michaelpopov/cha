@@ -56,12 +56,12 @@ export function ChatToolbar({ snapshot, disabled, playbackSpeed, onCharacter, on
       </>}
       <div aria-label="Playback speed" className="cha-notes-toolbar-group" role="group">
         <button aria-label="Decrease speed" className="cha-button" disabled={playbackSpeed <= 5}
-          onClick={() => onPlaybackSpeedChange(Math.max(5, playbackSpeed - 5))} title="Decrease speed" type="button">
+          onClick={() => onPlaybackSpeedChange(Math.max(5, playbackSpeed - 2))} title="Decrease speed" type="button">
           −
         </button>
         <span className="cha-chat-playback-speed">{(playbackSpeed / 10).toFixed(1)}×</span>
         <button aria-label="Increase speed" className="cha-button" disabled={playbackSpeed >= 20}
-          onClick={() => onPlaybackSpeedChange(Math.min(20, playbackSpeed + 5))} title="Increase speed" type="button">
+          onClick={() => onPlaybackSpeedChange(Math.min(20, playbackSpeed + 2))} title="Increase speed" type="button">
           +
         </button>
       </div>

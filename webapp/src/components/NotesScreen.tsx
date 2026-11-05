@@ -482,8 +482,8 @@ function FormatBar({
           open={formatMenu === 'speed'}
         >
           {[
-            { label: 'Decrease speed', speed: Math.max(5, playbackSpeed - 5), disabled: playbackSpeed <= 5 },
-            { label: 'Increase speed', speed: Math.min(20, playbackSpeed + 5), disabled: playbackSpeed >= 20 },
+            { label: 'Decrease speed', speed: Math.max(5, playbackSpeed - 2), disabled: playbackSpeed <= 5 },
+            { label: 'Increase speed', speed: Math.min(20, playbackSpeed + 2), disabled: playbackSpeed >= 20 },
             { label: 'Default speed', speed: 10, disabled: playbackSpeed === 10 },
           ].map(({ label, speed, disabled }) => (
             <button

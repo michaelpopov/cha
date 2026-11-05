@@ -138,12 +138,12 @@ describe('Chat toolbar', () => {
     const increase = within(group).getByRole('button', { name: 'Increase speed' });
     expect(within(group).getAllByRole('button')).toHaveLength(2);
     expect(group).toHaveTextContent('1.0×');
-    for (const rate of ['1.5×', '2.0×']) {
+    for (const rate of ['1.2×', '1.4×', '1.6×', '1.8×', '2.0×']) {
       await user.click(increase);
       expect(group).toHaveTextContent(rate);
     }
     expect(increase).toBeDisabled();
-    for (const rate of ['1.5×', '1.0×', '0.5×']) {
+    for (const rate of ['1.8×', '1.6×', '1.4×', '1.2×', '1.0×', '0.8×', '0.6×', '0.5×']) {
       await user.click(decrease);
       expect(group).toHaveTextContent(rate);
     }

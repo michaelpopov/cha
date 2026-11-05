@@ -1846,7 +1846,7 @@ describe('chat audio playback controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Increase speed' }));
     await act(async () => accept({ entry_id: 1, cached: false, state: 'queued' }));
     await waitFor(() => expect(audios.at(-1)?.play).toHaveBeenCalled());
-    expect(audios.at(-1)!.startRates).toEqual([[1.5, 1.5]]);
+    expect(audios.at(-1)!.startRates).toEqual([[1.2, 1.2]]);
   });
 
   it('starts each automatic reply at the selected speed', async () => {
@@ -1871,16 +1871,16 @@ describe('chat audio playback controls', () => {
     act(() => events.handlers[0].onSnapshot({ ...snapshotFixture, transcript: [reply] }));
     await waitFor(() => expect(audios.at(-1)?.play).toHaveBeenCalled());
     const first = audios.at(-1)!;
-    expect(first.startRates).toEqual([[1.5, 1.5]]);
+    expect(first.startRates).toEqual([[1.2, 1.2]]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Increase speed' }));
-    expect([first.defaultPlaybackRate, first.playbackRate]).toEqual([2, 2]);
+    expect([first.defaultPlaybackRate, first.playbackRate]).toEqual([1.4, 1.4]);
     act(() => events.handlers[0].onSnapshot({ ...snapshotFixture,
       transcript: [reply, { ...reply, id: 2, text: 'Second answer' }] }));
     act(() => { first.dispatchEvent(new Event('ended')); });
     await waitFor(() => expect(audios.at(-1)).not.toBe(first));
     await waitFor(() => expect(audios.at(-1)!.play).toHaveBeenCalled());
-    expect(audios.at(-1)!.startRates).toEqual([[2, 2]]);
+    expect(audios.at(-1)!.startRates).toEqual([[1.4, 1.4]]);
   });
 
   it('pauses and continues started audio from a transcript click or Space', async () => {
