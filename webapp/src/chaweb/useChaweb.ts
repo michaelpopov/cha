@@ -32,9 +32,13 @@ import {
   sameChawebPlace,
   sessionHash,
   sessionUnavailable,
+  notesHash,
+  type ChawebNotesRoute,
 } from './route';
+import { useChawebNotes } from './useChawebNotes';
 
 const pollDelayMs = 1_000;
+type Screen = 'list' | 'conversation' | 'notes' | 'note';
 
 type ConversationRef =
   | { kind: 'draft'; forumId: string }
@@ -109,7 +113,7 @@ function pageVisible(): boolean {
 function buildCommand(
   status: Status,
   conversation: ConversationRef | null,
-  screen: 'list' | 'conversation',
+  screen: Screen,
   drafts: DraftMap,
   snapshot: SessionSnapshot | null,
   bootstrap: Bootstrap | null,
@@ -149,7 +153,10 @@ export function useChaweb(client: ChaWebClient) {
   const [startupCanRetry, setStartupCanRetry] = useState(false);
   const [retry, setRetry] = useState(0);
   const [routeReady, setRouteReady] = useState(false);
-  const [screen, setScreen] = useState<'list' | 'conversation'>('list');
+  const [screen, setScreen] = useState<Screen>('list');
+  const [notesRoute, setNotesRoute] = useState<ChawebNotesRoute | null>(null);
+  const noteList = useRef<HTMLUListElement>(null);
+  const notes = useChawebNotes(client, notesRoute, reloadBootstrap);
   const [forumId, setForumId] = useState('');
   const [conversation, setConversation] = useState<ConversationRef | null>(null);
   const [promptFocus, setPromptFocus] = useState<PromptFocus | null>(null);
@@ -166,7 +173,7 @@ export function useChaweb(client: ChaWebClient) {
   const mounted = useRef(true);
   const bootstrapRef = useRef<Bootstrap | null>(null);
   const forumRef = useRef('');
-  const screenRef = useRef<'list' | 'conversation'>('list');
+  const screenRef = useRef<Screen>('list');
   const conversationRef = useRef<ConversationRef | null>(null);
   const draftsRef = useRef<DraftMap>({});
   const snapshotRef = useRef<SessionSnapshot | null>(null);
@@ -571,6 +578,8 @@ export function useChaweb(client: ChaWebClient) {
   }
 
   async function refreshVault() {
+    notes.reset();
+    setNotesRoute(null);
     invalidateList();
     retarget('');
     screenRef.current = 'list';
@@ -626,6 +635,7 @@ export function useChaweb(client: ChaWebClient) {
   }
 
   function assignSession(forum: string, session: string) {
+    setNotesRoute(null);
     const welcome = welcomeIdentity(forum, session);
     invalidateList();
     if (forumRef.current !== forum) setSessions([]);
@@ -652,6 +662,7 @@ export function useChaweb(client: ChaWebClient) {
   }
 
   function showList() {
+    setNotesRoute(null);
     invalidateList();
     screenRef.current = 'list';
     setScreen('list');
@@ -663,6 +674,14 @@ export function useChaweb(client: ChaWebClient) {
     const loaded = bootstrapRef.current;
     if (!loaded) return;
     const route = parseChawebHash(hash);
+    if (route.kind === 'notes' || route.kind === 'note') {
+      invalidateList();
+      retarget('');
+      screenRef.current = route.kind;
+      setScreen(route.kind);
+      setNotesRoute(route);
+      return;
+    }
     if (route.kind === 'list') {
       showList();
       return;
@@ -673,6 +692,27 @@ export function useChaweb(client: ChaWebClient) {
       return;
     }
     assignSession(route.forumId, route.sessionId);
+  }
+
+  function navigate(hash: string) {
+    if (sameChawebPlace(window.location.hash, hash)) return;
+    if (screenRef.current === 'notes' && noteList.current) {
+      window.history.replaceState({ ...window.history.state,
+        chawebNotesScroll: noteList.current.scrollTop }, '');
+    }
+    window.history.pushState(null, '', locationUrl(hash));
+    applyHistory(hash);
+  }
+
+  function showRoot(section: 'chats' | 'notes') {
+    if (section === 'chats') {
+      if (screenRef.current === 'list') return;
+      if (!window.location.hash || window.location.hash === '#/') showList();
+      else navigate('');
+    } else {
+      if (screenRef.current === 'notes') return;
+      navigate(notesRootHash);
+    }
   }
 
   function chooseForum(next: string) {
@@ -865,7 +905,7 @@ export function useChaweb(client: ChaWebClient) {
       window.history.replaceState(null, '', locationUrl());
     }
     const selected = conversationRef.current;
-    if (selected && conversationKey(selected) === key) {
+    if (selected && conversationKey(selected) === key && screenRef.current === 'conversation') {
       conversationRef.current = null;
       snapshotRef.current = null;
       forumRef.current = forum;
@@ -1017,6 +1057,15 @@ export function useChaweb(client: ChaWebClient) {
   }
 
   const bootstrapReady = bootstrap !== null;
+
+  useEffect(() => {
+    if (notesRoute?.kind !== 'notes' || notesRoute.folder !== undefined || !notes.listReady
+      || notes.folder === undefined) return;
+    const hash = notesHash(notes.folder);
+    // Resolving this entry's URL must not start another metadata read.
+    appliedHash.current = hash;
+    window.history.replaceState(window.history.state, '', locationUrl(hash));
+  }, [notesRoute, notes.listReady, notes.folder]);
 
   useEffect(() => {
     mounted.current = true;
@@ -1175,6 +1224,9 @@ export function useChaweb(client: ChaWebClient) {
   const showSending = Boolean(activeStatus?.sending);
   const pendingText = activeStatus?.pendingText ?? null;
   const deleting = Boolean(activeStatus?.deleting);
+  const notesRootHash = screen === 'note'
+    ? notesHash(notes.remembered ?? (notes.note ? notes.note.item.parent_id ?? 'root' : undefined))
+    : notesHash();
 
   return {
     bootstrap,
@@ -1188,6 +1240,11 @@ export function useChaweb(client: ChaWebClient) {
     listCanRetry,
     retryList,
     screen,
+    notes,
+    notesRootHash,
+    noteList,
+    navigate,
+    showRoot,
     snapshot: snapshotReady ? snapshot : null,
     draft: activeKey ? drafts[activeKey]?.text ?? '' : '',
     notice,

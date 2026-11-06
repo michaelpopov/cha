@@ -90,6 +90,8 @@ afterEach(() => {
 
 function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   return {
+    listNoteItems: vi.fn(async () => []),
+    getNote: vi.fn(),
     checkVaultUpload: vi.fn(),
     uploadVault: vi.fn(),
     downloadVault: vi.fn(),
@@ -140,6 +142,29 @@ async function openPlanning(api = client()) {
   await screen.findByText('First note');
   return api;
 }
+
+it('pauses conversation reads in Notes without stopping server generation and recovers on Back', async () => {
+  vi.useFakeTimers();
+  const api = client({ getSession: vi.fn(async () => snapshot('planning', { generation: generation(true) })) });
+  window.history.replaceState(null, '', '/#/forums/lobby/sessions/planning');
+  render(<App client={api} />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.getByText('First note')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('link', { name: 'Notes' }));
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  const reads = vi.mocked(api.getSession).mock.calls.length;
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  expect(api.getSession).toHaveBeenCalledTimes(reads);
+  expect(api.stopSession).not.toHaveBeenCalled();
+  expect(screen.getByText('No notes.')).toBeInTheDocument();
+  act(() => {
+    window.history.replaceState(null, '', '/#/forums/lobby/sessions/planning');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(api.getSession).toHaveBeenCalledTimes(reads + 1);
+  expect(screen.getByText('First note')).toBeInTheDocument();
+});
 
 it('clears recordings from the bottom icon button without deleting the session or draft', async () => {
   const user = userEvent.setup();

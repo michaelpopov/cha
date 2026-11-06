@@ -1,11 +1,13 @@
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 
-import type { SessionListing, SessionSnapshot } from '../api/client';
+import type { NoteItem, SessionListing, SessionSnapshot } from '../api/client';
 import { bootstrapFixture, plainVoice, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
 import { ChaWebError, type ChaWebClient } from './client';
+import { noteDocument, noteItem, paragraph } from '../test/notes';
+import { noteHash, notesHash } from './route';
 
 const lobbySessions: SessionListing[] = [
   { id: 'older', label: 'Older', live: false, updated_at: 10 },
@@ -80,6 +82,8 @@ afterEach(() => {
 
 function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   return {
+    listNoteItems: vi.fn(async () => []),
+    getNote: vi.fn(),
     checkVaultUpload: vi.fn(),
     uploadVault: vi.fn(),
     downloadVault: vi.fn(),
@@ -113,6 +117,211 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
     ...overrides,
   };
 }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((yes) => { resolve = yes; });
+  return { promise, resolve };
+}
+
+function notesClient(overrides: Partial<ChaWebClient> = {}) {
+  const items = [noteItem({ id: 10, kind: 'folder', name: 'Reading' }),
+    noteItem({ id: 1, parent_id: 10, name: 'First article' }),
+    noteItem({ id: 2, parent_id: 10, name: 'Second article' }),
+    noteItem({ id: 3, name: 'Top-level article' })];
+  return client({
+    listNoteItems: vi.fn(async () => items),
+    getNote: vi.fn(async (id) => ({ item: items.find((item) => item.id === id)!,
+      document: noteDocument(paragraph(`Complete prose for article ${id}`)) })),
+    ...overrides,
+  });
+}
+
+it('browses flat folders and real note links with Back/Forward and no duplicate root entries', async () => {
+  const api = notesClient();
+  await showList(api);
+  const user = userEvent.setup();
+  const originalLength = window.history.length;
+  await user.click(screen.getByRole('link', { name: 'Notes' }));
+  await screen.findByRole('button', { name: 'Folder' });
+  await waitFor(() => expect(window.location.hash).toBe(notesHash('root')));
+  expect(window.history.length).toBe(originalLength + 1);
+  expect(api.listNoteItems).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole('link', { name: 'Notes' }));
+  expect(window.history.length).toBe(originalLength + 1);
+  await user.click(screen.getByRole('button', { name: 'Folder' }));
+  await user.click(screen.getByRole('button', { name: 'Reading' }));
+  expect(window.location.hash).toBe(notesHash(10));
+  expect(screen.getByRole('button', { name: 'Folder' })).toHaveAccessibleDescription('Reading');
+  expect(screen.getByRole('link', { name: 'First article' })).toHaveAttribute('href', noteHash(1));
+  expect(screen.queryByRole('link', { name: 'Top-level article' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('link', { name: 'First article' }));
+  expect(await screen.findByRole('article')).toHaveAccessibleName('First article');
+  expect(screen.queryByRole('list', { name: 'Notes' })).not.toBeInTheDocument();
+  expect(document.title).toBe('First article — CHA');
+  expect(document.documentElement).toHaveClass('chaweb-reading');
+  expect((document.querySelector('.chaweb-app') as HTMLElement).style.height).toBe('');
+  act(() => window.history.back());
+  await screen.findByRole('button', { name: 'Folder' });
+  expect(window.location.hash).toBe(notesHash(10));
+  expect(document.documentElement).not.toHaveClass('chaweb-reading');
+  act(() => window.history.forward());
+  await screen.findByRole('article');
+  expect(api.getNote).toHaveBeenCalledTimes(2);
+  await user.click(screen.getByRole('link', { name: 'Notes' }));
+  expect(window.location.hash).toBe(notesHash(10));
+  expect(screen.getByRole('link', { name: 'Notes' })).toHaveAttribute('aria-current', 'page');
+  expect(api.stopSession).not.toHaveBeenCalled();
+  expect(api.startAudio).not.toHaveBeenCalled();
+});
+
+it('keeps an unsent chat draft when Notes opens and returns through the Chats root', async () => {
+  const user = userEvent.setup();
+  const api = notesClient();
+  await showList(api);
+  await user.click(screen.getByRole('button', { name: 'New Session' }));
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Keep this draft');
+  await user.click(screen.getByRole('link', { name: 'Notes' }));
+  await screen.findByRole('button', { name: 'Folder' });
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
+  expect(screen.getByRole('button', { name: 'Forum' })).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'New Session' }));
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Keep this draft');
+  expect(api.createSession).not.toHaveBeenCalled();
+});
+
+it('loads a direct note without metadata or voice settings and returns to its containing folder', async () => {
+  window.history.replaceState(null, '', `/${noteHash(1)}`);
+  const api = notesClient();
+  render(<App client={api} />);
+  await screen.findByRole('article');
+  expect(api.listNoteItems).not.toHaveBeenCalled();
+  expect(api.getVoiceInputRuntime).not.toHaveBeenCalled();
+  expect(api.getVoiceOutputRuntime).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('link', { name: 'Notes' }));
+  await screen.findByRole('button', { name: 'Folder' });
+  expect(window.location.hash).toBe(notesHash(10));
+  expect(screen.getByRole('button', { name: 'Folder' })).toHaveTextContent('Reading');
+});
+
+it('saves list scroll only on application departure and restores it with existing history state', async () => {
+  window.history.replaceState({ other: 'kept' }, '', `/${notesHash(10)}`);
+  const api = notesClient();
+  render(<App client={api} />);
+  const list = await screen.findByRole('list', { name: 'Notes' });
+  await screen.findByRole('link', { name: 'First article' });
+  Object.defineProperties(list, { scrollHeight: { configurable: true, value: 1000 },
+    clientHeight: { configurable: true, value: 200 } });
+  list.scrollTop = 350;
+  const replace = vi.spyOn(window.history, 'replaceState');
+  list.dispatchEvent(new Event('scroll'));
+  expect(replace).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('link', { name: 'First article' }));
+  expect(replace).toHaveBeenCalledWith({ other: 'kept', chawebNotesScroll: 350 }, '');
+  await screen.findByRole('article');
+  // jsdom has no layout; supply the destination list dimensions before restoration.
+  const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(1000);
+  const clientHeight = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(200);
+  const refreshed = deferred<NoteItem[]>();
+  vi.mocked(api.listNoteItems).mockReturnValueOnce(refreshed.promise);
+  act(() => window.history.back());
+  await screen.findByRole('link', { name: 'First article' });
+  const restored = screen.getByRole('list', { name: 'Notes' });
+  expect(restored.scrollTop).toBe(350);
+  // The user scrolls before fresh metadata arrives; the refresh keeps that position.
+  restored.scrollTop = 120;
+  await act(async () => refreshed.resolve([...await vi.mocked(api.listNoteItems).mock.results[0].value]));
+  expect(restored.scrollTop).toBe(120);
+  replace.mockRestore(); height.mockRestore(); clientHeight.mockRestore();
+});
+
+it('clears the old article and title during navigation and ignores late note results', async () => {
+  const one = deferred<Awaited<ReturnType<ChaWebClient['getNote']>>>();
+  const two = deferred<Awaited<ReturnType<ChaWebClient['getNote']>>>();
+  const api = notesClient({ getNote: vi.fn().mockReturnValueOnce(one.promise).mockReturnValueOnce(two.promise) });
+  window.history.replaceState(null, '', `/${noteHash(1)}`);
+  const title = document.title;
+  render(<App client={api} />);
+  await waitFor(() => expect(api.getNote).toHaveBeenCalledTimes(1));
+  act(() => {
+    window.history.pushState(null, '', `/${noteHash(2)}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  expect(screen.queryByRole('article')).not.toBeInTheDocument();
+  await act(async () => two.resolve({ item: noteItem({ id: 2, name: 'Second title' }), document: noteDocument(paragraph('Second prose')) }));
+  expect(screen.getByRole('article')).toHaveAccessibleName('Second title');
+  await act(async () => one.resolve({ item: noteItem({ id: 1, name: 'First title' }), document: noteDocument(paragraph('First prose')) }));
+  expect(document.title).toBe('Second title — CHA');
+  expect(screen.queryByText('First prose')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('link', { name: 'Chats' }));
+  expect(document.title).toBe(title);
+});
+
+it('keeps Notes visible when a departed conversation deletion completes', async () => {
+  const deletion = deferred<void>();
+  const api = notesClient({ deleteSession: vi.fn(() => deletion.promise) });
+  window.history.replaceState(null, '', '/#/forums/lobby/sessions/planning');
+  render(<App client={api} />);
+  const user = userEvent.setup();
+  const remove = await screen.findByRole('button', { name: 'Delete session' });
+  await waitFor(() => expect(remove).toBeEnabled());
+  await user.click(remove);
+  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  await user.click(screen.getByRole('link', { name: 'Notes' }));
+  await screen.findByRole('button', { name: 'Folder' });
+  await act(async () => deletion.resolve());
+  expect(screen.getByRole('button', { name: 'Folder' })).toBeInTheDocument();
+  expect(window.location.hash).toBe(notesHash('root'));
+});
+
+it('keeps missing and failed note routes in Notes with an explicit Retry', async () => {
+  const api = notesClient({ getNote: vi.fn()
+    .mockRejectedValueOnce(new ChaWebError(503, 'Temporarily unavailable'))
+    .mockRejectedValueOnce(new ChaWebError(404, 'Missing')) });
+  window.history.replaceState(null, '', `/${noteHash(1)}`);
+  render(<App client={api} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Temporarily unavailable');
+  expect(window.location.hash).toBe(noteHash(1));
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('This note is no longer available.'));
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Notes' })).toHaveAttribute('aria-current', 'page');
+});
+
+it('escapes an empty note title and keeps unsupported content out of an article', async () => {
+  const name = '<img src=x onerror=alert(1)>';
+  const api = notesClient({ getNote: vi.fn(async () => ({ item: noteItem({ name }),
+    document: noteDocument({ type: 'paragraph' }) })) });
+  window.history.replaceState(null, '', `/${noteHash(1)}`);
+  render(<App client={api} />);
+  expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent(name);
+  expect(screen.getByText('This note is empty.')).toBeInTheDocument();
+  expect(document.querySelector('img,[contenteditable]')).toBeNull();
+  cleanup();
+  const invalid = notesClient({ getNote: vi.fn(async () => ({ item: noteItem(),
+    document: noteDocument({ type: 'unsupported' }) })) });
+  render(<App client={invalid} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('This note cannot be displayed.');
+  expect(screen.queryByRole('article')).not.toBeInTheDocument();
+});
+
+it('keeps the article DOM stable through image failure and unrelated viewport updates', async () => {
+  const api = notesClient({ getNote: vi.fn(async () => ({ item: noteItem(), document: noteDocument(
+    paragraph('Keep the prose'), { type: 'image', attrs: { src: 'data:image/png;base64,iVBORw0KGgo=', alt: 'Failed pixels' } },
+  ) })) });
+  window.history.replaceState(null, '', `/${noteHash(1)}`);
+  render(<App client={api} />);
+  const article = await screen.findByRole('article');
+  const prose = screen.getByText('Keep the prose');
+  fireEvent.error(screen.getByRole('img', { name: 'Failed pixels' }));
+  expect(screen.getByText('Failed pixels')).toBeInTheDocument();
+  fireEvent(window, new Event('resize'));
+  fireEvent(document, new Event('visibilitychange'));
+  expect(screen.getByRole('article')).toBe(article);
+  expect(screen.getByText('Keep the prose')).toBe(prose);
+  expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  expect(api.getNote).toHaveBeenCalledOnce();
+});
 
 async function showList(api = client()) {
   render(<App client={api} />);

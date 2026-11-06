@@ -254,6 +254,54 @@ TEST_F(ChaWebAdapterTest, BootstrapUsesExistingSerializer) {
     EXPECT_NE(response.raw.find("Content-Type: application/json"), std::string::npos);
 }
 
+TEST_F(ChaWebAdapterTest, NotesReadsReturnOriginalDocumentsWithoutNativeStateOrMutations) {
+    const auto epoch = application_->context_epoch();
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Reading", epoch);
+    const auto note = application_->create_note_item(folder.id, NoteItemKind::note, "Article", epoch);
+    const auto document = nlohmann::json::parse(R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Original prose","marks":[{"type":"highlight"}]}]}]})");
+    application_->save_note(note.id, document, epoch);
+    application_->save_note_scroll_position(note.id, 123, epoch);
+    application_->set_note_read_only(note.id, true, epoch);
+    const auto before = application_->get_note(note.id, epoch);
+    const auto listing = get("/api/cha/v1/notes");
+    ASSERT_EQ(listing.status, 200) << listing.raw;
+    EXPECT_EQ(listing.json, nlohmann::json({{"items", application_->list_note_items(epoch)}}));
+    bool annotation_read = false;
+    for (const auto& item : listing.json.at("items")) {
+        if (item.at("kind") == "folder") continue;
+        const auto id = item.at("id").get<std::int64_t>();
+        const auto response = get("/api/cha/v1/notes/" + std::to_string(id));
+        ASSERT_EQ(response.status, 200) << response.raw;
+        EXPECT_EQ(response.json.size(), 2);
+        EXPECT_EQ(response.json.at("item"), item);
+        EXPECT_EQ(response.json.at("document"), application_->get_note(id, epoch).document);
+        annotation_read |= item.at("kind") == "annotation";
+    }
+    EXPECT_TRUE(annotation_read);
+    EXPECT_EQ(application_->get_note(note.id, epoch).document, before.document);
+    EXPECT_EQ(application_->get_note(note.id, epoch).scroll_top, before.scroll_top);
+    EXPECT_EQ(get("/api/cha/v1/notes/" + std::to_string(folder.id)).status, 404);
+    EXPECT_EQ(get("/api/cha/v1/notes/9007199254740991").status, 404);
+}
+
+TEST_F(ChaWebAdapterTest, NotesRejectInvalidRoutesAndEveryMutationMethod) {
+    const auto epoch = application_->context_epoch();
+    const auto note = application_->create_note_item({}, NoteItemKind::note, "Empty", epoch);
+    const auto path = "/api/cha/v1/notes/" + std::to_string(note.id);
+    const auto before = application_->get_note(note.id, epoch).document;
+    for (const auto* suffix : {"/0", "/-1", "/+1", "/1.5", "/9007199254740992",
+             "/999999999999999999999999", "/%31", "/1/extra", "/1/", "/abc"}) {
+        EXPECT_EQ(get(std::string("/api/cha/v1/notes") + suffix).status, 404) << suffix;
+    }
+    for (const auto* method : {"POST", "PUT", "PATCH", "DELETE"}) {
+        for (const auto& uri : {std::string("/api/cha/v1/notes"), path}) {
+            EXPECT_EQ(exchange(*application_, {.method = method, .document_uri = uri,
+                .body = R"({"document":{"type":"doc"}})", .content_type = "application/json"}).status, 404);
+        }
+    }
+    EXPECT_EQ(application_->get_note(note.id, epoch).document, before);
+}
+
 TEST_F(ChaWebAdapterTest, VoiceInputUsesStoredSettingsAndKeepsOpenAiCredentialsOnTheServer) {
     EXPECT_TRUE(get("/api/cha/v1/voice-input").json.is_null());
     const std::string answer = "test SDP answer";
@@ -1160,6 +1208,8 @@ TEST_F(ChaWebAdapterTest, UnavailableApplicationReturns503) {
     EXPECT_EQ(
         response.json.at("error").at("message"),
         "The application is unavailable.");
+    EXPECT_EQ(get("/api/cha/v1/notes").status, 503);
+    EXPECT_EQ(get("/api/cha/v1/notes/1").status, 503);
 }
 
 TEST_F(ChaWebAdapterTest, UnknownSubmissionOutcomeKeepsTheSession) {

@@ -21,8 +21,11 @@ import {
   type CreateSessionResult,
   type SessionListing,
   type SessionSnapshot,
+  type NoteItem,
+  type NoteContent,
 } from '../api/client';
 import { isRecord } from '../api/guards';
+import { isNoteItem, isNoteItemList } from '../api/noteGuards';
 import { validateBootstrap } from '../state/bootstrap';
 
 const API = '/api/cha/v1';
@@ -48,8 +51,11 @@ export function chaWebMessage(failure: unknown, fallback: string): string {
 }
 
 export type ChaWebBootstrap = Bootstrap & { vault_parent?: string | null };
+export type ChaWebNote = { item: NoteItem; document: NoteContent['document'] };
 
 export interface ChaWebClient {
+  listNoteItems(signal?: AbortSignal): Promise<NoteItem[]>;
+  getNote(id: number, signal?: AbortSignal): Promise<ChaWebNote>;
   checkVaultUpload(): Promise<VaultUploadCheck>;
   uploadVault(check: VaultUploadCheck): Promise<number>;
   downloadVault(): Promise<number>;
@@ -170,6 +176,19 @@ function isVaultTransfer(value: unknown): value is { byte_count: number } {
 
 export function createChaWebClient(): ChaWebClient {
   return {
+    async listNoteItems(signal) {
+      return (await exchange('GET', `${API}/notes`, 200,
+        (response) => readGuarded(response, isNoteItemList), undefined, signal)).items;
+    },
+
+    getNote(id, signal) {
+      if (!Number.isSafeInteger(id) || id < 1) return Promise.reject(new ChaProtocolError());
+      return exchange('GET', `${API}/notes/${id}`, 200,
+        (response) => readGuarded(response, (value): value is ChaWebNote => (
+          isRecord(value) && Object.keys(value).length === 2 && isNoteItem(value.item)
+          && value.item.id === id && value.item.kind !== 'folder' && isRecord(value.document)
+        )), undefined, signal);
+    },
     async checkVaultUpload() {
       return exchange('POST', `${API}/vault/upload-check`, 200,
         (response) => readGuarded(response,

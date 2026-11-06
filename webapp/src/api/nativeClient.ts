@@ -1,3 +1,4 @@
+import { hasExactKeys, isNoteId, isNoteItem, isNoteItemList, isNoteParent } from './noteGuards';
 import { prepareEpubImport } from '../notes/epubImport';
 import { readFileBytes } from '../notes/pictures';
 
@@ -150,19 +151,6 @@ function isVaultDetail(value: unknown): value is VaultDetail {
     && typeof value.can_delete === 'boolean';
 }
 
-function isNoteId(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-
-function isNoteParent(value: unknown): value is number | null {
-  return value === null || isNoteId(value);
-}
-
-function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actual = Object.keys(value);
-  return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
-}
-
 function isFolderStoreChoices(value: unknown): value is FolderStoreChoices {
   return isRecord(value) && hasExactKeys(value, ['choices']) && Array.isArray(value.choices)
     && value.choices.every(choice => isRecord(choice)
@@ -188,30 +176,6 @@ function isFolderStoreOperation(value: unknown): value is FolderStoreOperation {
     && typeof value.error === 'string'
     && ['', 'preflight', 'error', 'success', 'cancelled', 'warning'].includes(value.result as string)
     && typeof value.terminal === 'boolean' && typeof value.known_cleanup_remains === 'boolean';
-}
-
-function isNoteItem(value: unknown): value is NoteItem {
-  return isRecord(value)
-    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'has_audio', 'read_only', 'is_summary',
-      'summary_linked',
-      ...(Object.hasOwn(value, 'forum_id') ? ['forum_id'] : [])])
-    && (!Object.hasOwn(value, 'forum_id') || (value.kind === 'folder' && typeof value.forum_id === 'string'))
-    && isNoteId(value.id)
-    && isNoteParent(value.parent_id)
-    && (value.kind === 'folder' || value.kind === 'note' || value.kind === 'annotation')
-    && typeof value.name === 'string' && value.name.length > 0
-    && typeof value.has_compressed === 'boolean'
-    && typeof value.has_audio === 'boolean'
-    && typeof value.read_only === 'boolean'
-    && typeof value.is_summary === 'boolean' && typeof value.summary_linked === 'boolean'
-    && (!value.is_summary || value.kind === 'note') && (!value.summary_linked || value.is_summary);
-}
-
-function isNoteItemList(value: unknown): value is { items: NoteItem[] } {
-  return isRecord(value)
-    && hasExactKeys(value, ['items'])
-    && Array.isArray(value.items)
-    && value.items.every(isNoteItem);
 }
 
 function isNoteContent(value: unknown): value is NoteContent {

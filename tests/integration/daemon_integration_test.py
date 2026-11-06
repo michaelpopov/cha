@@ -25,6 +25,7 @@ import tempfile
 import threading
 import time
 import unittest
+import zlib
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -545,6 +546,41 @@ class ChaWebIntegration(DaemonHarness):
         snap = self.snapshot(created["id"])
         self.assertTrue(any("second note" in text for text in self.texts(snap)))
         self.assertEqual(self.exchange("GET", "/v1/models")[0], 404)
+
+    def test_notes_reads_are_complete_and_read_only(self):
+        self.stop(self.daemon)
+        database = self.directory / "alice" / "test.sqlite3"
+        # Larger than nginx's request-body limit: reads must not truncate it.
+        document = {"type": "doc", "content": [{"type": "paragraph", "content": [
+            {"type": "text", "text": "Saved prose. " * 30000}]}]}
+        with sqlite3.connect(database) as db:
+            folder = db.execute("INSERT INTO note_items(kind,name) VALUES('folder','Reading')").lastrowid
+            note = db.execute("""INSERT INTO note_items(parent_id,kind,name,content_json,
+                compressed_text,read_only,scroll_top) VALUES(?,'note','Article',?,'Summary only',1,432)""",
+                (folder, zlib.compress(json.dumps(document).encode()))).lastrowid
+            annotation = db.execute("""INSERT INTO note_items(parent_id,kind,name,content_json,read_only)
+                VALUES(?,'annotation','ANNOTATIONS',?,1)""",
+                (folder, zlib.compress(json.dumps(document).encode()))).lastrowid
+            before = db.execute("SELECT * FROM note_items ORDER BY id").fetchall()
+        self.daemon = self.start_daemon("alice")
+        self.wait_ready()
+        status, _, raw = self.exchange("GET", CHAWEB + "/notes")
+        self.assertEqual(status, 200, raw)
+        items = {item["id"]: item for item in json.loads(raw)["items"]}
+        self.assertIn(folder, items)
+        for item_id in (note, annotation):
+            path = CHAWEB + f"/notes/{item_id}"
+            status, headers, raw = self.exchange("GET", path)
+            self.assertEqual(status, 200, raw[:300])
+            self.assertEqual(json.loads(raw), {"item": items[item_id], "document": document})
+            self.assertIn("no-store", headers.get("cache-control", ""))
+            for method in ("POST", "PUT", "PATCH", "DELETE"):
+                self.assertEqual(self.exchange(method, path, {})[0], 404)
+                self.assertEqual(self.exchange(method, CHAWEB + "/notes", {})[0], 404)
+        for suffix in (str(folder), "9007199254740991", "0", "-1", "1.5", "9007199254740992", "1/extra"):
+            self.assertEqual(self.exchange("GET", CHAWEB + "/notes/" + suffix)[0], 404)
+        with sqlite3.connect(database) as db:
+            self.assertEqual(db.execute("SELECT * FROM note_items ORDER BY id").fetchall(), before)
 
     def test_audio_chunks_through_nginx(self):
         self.use_provider()

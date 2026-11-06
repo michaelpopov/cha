@@ -155,6 +155,7 @@ export function useVoiceInput(
       || startup.current) return;
     const wasRecording = session.current !== null;
     if (wasRecording && !await finish()) return;
+    if (current.current.blocked) return;
     const phrase = current.current.runtime?.send_phrase ?? '';
     const text = spoken || wasRecording ? withoutVoiceSendPhrase(current.current.draft, phrase) : null;
     if (spoken && text === null) return;
@@ -194,6 +195,10 @@ export function useVoiceInput(
 
   useEffect(() => {
     let active = true;
+    if (key === 'none') {
+      setRuntime(null);
+      return;
+    }
     void client.getVoiceInputRuntime().then(
       (value) => { if (active) setRuntime(value); },
       (failure) => { if (active) setError(chaWebMessage(failure, 'Voice input settings could not be loaded.')); },

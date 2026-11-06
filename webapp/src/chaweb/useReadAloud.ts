@@ -37,7 +37,7 @@ export function useReadAloud(
   deleting: boolean,
   conversationKey = snapshot ? `${snapshot.forum.id}/${snapshot.session_id}` : '',
 ): ReadAloud {
-  const configuration = useTextToSpeechConfiguration(client);
+  const configuration = useTextToSpeechConfiguration(client, vaultName, Boolean(conversationKey));
   const [entryId, setEntryId] = useState<number | null>(null);
   const [state, setState] = useState<'loading' | 'playing'>('loading');
   const [error, setError] = useState<string | null>(null);

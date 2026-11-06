@@ -51,12 +51,14 @@ export function speechVoice(voice: Pick<VoiceUpdate, 'elevenlabs_voice_id' | 'sp
 export function useTextToSpeechConfiguration(
   client: Pick<ChaClient, 'getVoiceOutputRuntime'>,
   vault?: string,
+  enabled = true,
 ): TextToSpeechConfiguration | null {
   const [configuration, setConfiguration] =
     useState<TextToSpeechConfiguration | null>(null);
   useEffect(() => {
     let current = true;
     setConfiguration(null);
+    if (!enabled) return;
     void client.getVoiceOutputRuntime().then(
       (loaded) => {
         if (!current) return;
@@ -72,7 +74,7 @@ export function useTextToSpeechConfiguration(
       () => { if (current) setConfiguration(null); },
     );
     return () => { current = false; };
-  }, [client, vault]);
+  }, [client, vault, enabled]);
   return configuration;
 }
 

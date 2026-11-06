@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChaProtocolError } from '../api/client';
 import { bootstrapFixture, snapshotFixture } from '../test/fixtures';
 import { createChaWebClient } from './client';
+import { noteItem, noteDocument, paragraph } from '../test/notes';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -27,6 +28,31 @@ function installFetch(handler: (url: string, init?: RequestInit) => Promise<Resp
 }
 
 describe('ChaWeb HTTP client', () => {
+  it('reads note metadata and full documents with cancellable GETs only', async () => {
+    const item = noteItem();
+    const detail = { item, document: noteDocument(paragraph('Large saved prose. '.repeat(20000))) };
+    const calls = installFetch((url) => jsonResponse(url.endsWith('/notes') ? { items: [item] } : detail));
+    const client = createChaWebClient();
+    const controller = new AbortController();
+    await expect(client.listNoteItems(controller.signal)).resolves.toEqual([item]);
+    await expect(client.getNote(1, controller.signal)).resolves.toEqual(detail);
+    expect(calls.map((call) => [call.url, call.init?.method, call.init?.body])).toEqual([
+      ['/api/cha/v1/notes', 'GET', undefined], ['/api/cha/v1/notes/1', 'GET', undefined],
+    ]);
+    await expect(client.getNote(0)).rejects.toBeInstanceOf(ChaProtocolError);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('rejects mismatched note IDs, folders, and malformed metadata', async () => {
+    let payload: unknown = { item: noteItem({ id: 2 }), document: noteDocument(paragraph('Wrong')) };
+    installFetch(() => jsonResponse(payload));
+    const client = createChaWebClient();
+    await expect(client.getNote(1)).rejects.toBeInstanceOf(ChaProtocolError);
+    payload = { item: noteItem({ kind: 'folder' }), document: {} };
+    await expect(client.getNote(1)).rejects.toBeInstanceOf(ChaProtocolError);
+    payload = { items: [noteItem({ id: 0 })] };
+    await expect(client.listNoteItems()).rejects.toBeInstanceOf(ChaProtocolError);
+  });
   it('checks and uploads the current vault with the checked ETag and epoch', async () => {
     const check = { etag: 'version', status: 'match', context_epoch: 4 };
     const calls = installFetch((url) => jsonResponse(url.endsWith('/upload-check')

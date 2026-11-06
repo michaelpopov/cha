@@ -50,7 +50,7 @@ const notesPasteSelectionMeta = 'notesPasteSelection';
 const notesHighlightMeta = 'notesHighlight';
 const notesCommentMeta = 'notesComment';
 const notesDeleteCommentMeta = 'notesDeleteComment';
-const noteCommentColor = '#b3d9ff';
+export const noteCommentColor = '#b3d9ff';
 // Overlapping imports share four picture download slots. Background page and
 // file imports have their own slots, so a paste or drop does not wait for them.
 const noteImportTails = { editor: Promise.resolve(), background: Promise.resolve() };

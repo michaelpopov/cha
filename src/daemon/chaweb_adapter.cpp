@@ -10,6 +10,7 @@
 #include "util/path_name.h"
 #include "util/text.h"
 
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <limits>
@@ -154,6 +155,8 @@ bool prompt_allowed(
 
 enum class Route {
     unknown,
+    notes,
+    note,
     bootstrap,
     voice_output,
     voice_input,
@@ -179,6 +182,7 @@ struct ParsedRoute {
     std::string forum_id;
     std::string session_id;
     EntryId entry_id{};
+    std::int64_t note_id{};
 };
 
 bool take_segment(std::string_view& rest, std::string_view& part) {
@@ -201,6 +205,15 @@ ParsedRoute parse_route(std::string_view uri) {
     std::string_view rest = uri.substr(base_prefix.size());
     std::string_view first;
     if (!take_segment(rest, first)) return {};
+    if (first == "notes") {
+        if (rest.empty()) return {.route = Route::notes};
+        if (rest.find_first_not_of("0123456789") != std::string_view::npos) return {};
+        std::int64_t id{};
+        const auto [end, error] = std::from_chars(rest.data(), rest.data() + rest.size(), id);
+        if (error != std::errc{} || end != rest.data() + rest.size()
+            || id < 1 || id > 9007199254740991LL) return {};
+        return {.route = Route::note, .note_id = id};
+    }
     if (first == "bootstrap") {
         if (!rest.empty()) return {};
         return {.route = Route::bootstrap};
@@ -745,6 +758,24 @@ void handle_chaweb_request(
     try {
         if (stop.load()) return;
         const ParsedRoute route = parse_route(request.document_uri);
+        if (request.method == "GET" && (route.route == Route::notes || route.route == Route::note)) {
+            const auto epoch = application.context_epoch();
+            const auto items = application.list_note_items(epoch);
+            if (route.route == Route::notes) {
+                write_json(fd, 200, {{"items", items}}, stop);
+            } else {
+                const auto item = std::find_if(items.begin(), items.end(), [&](const auto& value) {
+                    return value.id == route.note_id;
+                });
+                if (item == items.end() || item->kind == NoteItemKind::folder) {
+                    write_code(fd, ErrorCode::not_found, stop);
+                } else {
+                    const auto content = application.get_note(route.note_id, epoch);
+                    write_json(fd, 200, {{"item", *item}, {"document", content.document}}, stop);
+                }
+            }
+            return;
+        }
         if (request.method == "POST" && (route.route == Route::upload_check
                 || route.route == Route::upload || route.route == Route::download)) {
             if (!require_json_body(request, fd, stop)) return;

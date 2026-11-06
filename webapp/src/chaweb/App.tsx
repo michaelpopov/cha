@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 
 import { ConfirmDialog } from '../components/ConfirmDialog';
 
@@ -11,12 +11,19 @@ import { useReadAloud } from './useReadAloud';
 import { useVoiceInput } from './useVoiceInput';
 import type { ChaWebClient } from './client';
 import { VaultActions } from './vaultActions';
+import { NotesView, followLocalLink } from './notes';
+import { NoteView } from './note';
 
 const emptyTranscript: [] = [];
 
 export function App({ client }: { client: ChaWebClient }) {
   const viewport = useVisualViewport();
   const model = useChaweb(client);
+  const reading = model.screen === 'note';
+  useLayoutEffect(() => {
+    document.documentElement.classList.toggle('chaweb-reading', reading);
+    return () => document.documentElement.classList.remove('chaweb-reading');
+  }, [reading]);
   const speech = useReadAloud(client,
     model.screen === 'conversation' ? model.snapshot : null,
     model.bootstrap?.vault_name, model.deleting, model.audioKey);
@@ -61,7 +68,7 @@ export function App({ client }: { client: ChaWebClient }) {
   const forums = visibleForums(model.bootstrap);
 
   return (
-    <div className="chaweb-app" style={frame}>
+    <div className={`chaweb-app${reading ? ' chaweb-reading-app' : ''}`} style={reading ? undefined : frame}>
       {model.screen === 'list' ? (
         <SessionsView
           disabled={vaultBusy}
@@ -83,6 +90,10 @@ export function App({ client }: { client: ChaWebClient }) {
             onRefresh={model.refreshVault}
           />}
         />
+      ) : model.screen === 'notes' ? (
+        <NotesView model={model.notes} listRef={model.noteList} navigate={model.navigate} />
+      ) : model.screen === 'note' ? (
+        <NoteView model={model.notes} />
       ) : (
         <Conversation
           loaded={model.snapshot !== null}
@@ -125,6 +136,13 @@ export function App({ client }: { client: ChaWebClient }) {
           viewportHeight={viewport.height}
         />
       )}
+      <nav className="chaweb-navigation" aria-label="Main navigation">
+        <a href="#/" aria-current={model.screen === 'list' || model.screen === 'conversation' ? 'page' : undefined}
+          onClick={(event) => followLocalLink(event, () => model.showRoot('chats'))}>Chats</a>
+        <a href={model.notesRootHash}
+          aria-current={model.screen === 'notes' || model.screen === 'note' ? 'page' : undefined}
+          onClick={(event) => followLocalLink(event, () => model.showRoot('notes'))}>Notes</a>
+      </nav>
       {confirmDelete && model.screen === 'conversation'
         && confirmDelete.key === model.sessionKey && (
         <ConfirmDialog
