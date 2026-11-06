@@ -39,12 +39,14 @@ export function sameChawebPlace(left: string, right: string): boolean {
 }
 
 export function visibleForums(bootstrap: Bootstrap) {
-  return bootstrap.forums.filter((forum) => forum.id !== bootstrap.entrance_forum_id);
+  return bootstrap.forums.map((forum) => forum.id === bootstrap.entrance_forum_id
+    ? { ...forum, display_name: 'Welcome' } : forum);
 }
 
 export function defaultForumId(bootstrap: Bootstrap): string {
-  const forums = visibleForums(bootstrap);
-  return forums.find((forum) => forum.id === bootstrap.initial_forum_id)?.id ?? forums[0]?.id ?? '';
+  const forums = bootstrap.forums.filter((forum) => forum.id !== bootstrap.entrance_forum_id);
+  return forums.find((forum) => forum.id === bootstrap.initial_forum_id)?.id
+    ?? forums[0]?.id ?? bootstrap.forums[0]?.id ?? '';
 }
 
 export function isWelcomeSession(

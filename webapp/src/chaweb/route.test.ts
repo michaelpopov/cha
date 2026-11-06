@@ -34,9 +34,11 @@ it('treats the same stored session as one place', () => {
   expect(sameChawebPlace('#/nope', '#/other')).toBe(false);
 });
 
-it('hides Entrance and Welcome and ignores the initial session for the default forum', () => {
-  expect(visibleForums(bootstrapFixture).map((forum) => forum.id)).toEqual(['lobby']);
+it('includes Welcome and prefers an ordinary default forum when one is available', () => {
+  expect(visibleForums(bootstrapFixture).map((forum) => [forum.id, forum.display_name]))
+    .toEqual([['entrance', 'Welcome'], ['lobby', 'The Lobby']]);
   expect(defaultForumId(bootstrapFixture)).toBe('lobby');
+  expect(defaultForumId({ ...bootstrapFixture, forums: [bootstrapFixture.forums[0]] })).toBe('entrance');
   expect(sessionUnavailable(bootstrapFixture, 'entrance', 'welcome')).toBe(true);
   expect(sessionUnavailable(bootstrapFixture, 'entrance', 'builtin-welcome')).toBe(false);
   expect(sessionUnavailable(bootstrapFixture, 'lobby', 'builtin-welcome')).toBe(true);

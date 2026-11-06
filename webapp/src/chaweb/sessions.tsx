@@ -7,7 +7,7 @@ import { formatTimestamp } from './time';
 
 export function sessionsForNavigation(sessions: SessionListing[]): SessionListing[] {
   return sessions
-    .filter((session) => session.id !== welcomeSessionId)
+    .slice()
     .sort((left, right) => right.updated_at - left.updated_at);
 }
 
@@ -20,12 +20,14 @@ export function SessionsView({
   onForum,
   onOpen,
   onNewSession,
+  entranceForumId,
   onRetry,
   disabled = false,
   vaultActions,
 }: {
   forums: ForumSummary[];
   forumId: string;
+  entranceForumId: string;
   sessions: SessionListing[];
   currentSessionId: string | null;
   error: string | null;
@@ -39,7 +41,7 @@ export function SessionsView({
   const picker = useRef<HTMLDetailsElement>(null);
   const selectedForum = forums.find((forum) => forum.id === forumId);
   const rows = sessionsForNavigation(sessions);
-  const canCreate = forums.length > 0;
+  const canCreate = selectedForum !== undefined && forumId !== entranceForumId;
 
   useEffect(() => {
     const closeOutside = (event: Event) => {
@@ -131,7 +133,9 @@ export function SessionsView({
                 onClick={() => onOpen(session.id)}
                 type="button"
               >
-                <span className="chaweb-session-title">{session.label}</span>
+                <span className="chaweb-session-title">
+                  {session.id === welcomeSessionId ? 'Entrance' : session.label}
+                </span>
                 <time
                   className="chaweb-session-time"
                   dateTime={new Date(session.updated_at * 1000).toISOString()}
@@ -144,9 +148,9 @@ export function SessionsView({
           );
         })}
       </ul>
-      <button className="chaweb-new-session" disabled={disabled || !canCreate} onClick={onNewSession} type="button">
+      {canCreate && <button className="chaweb-new-session" disabled={disabled} onClick={onNewSession} type="button">
         New Session
-      </button>
+      </button>}
       {vaultActions}
     </div>
   );

@@ -10,7 +10,6 @@ import { ChaWebError, type ChaWebClient } from './client';
 const lobbySessions: SessionListing[] = [
   { id: 'older', label: 'Older', live: false, updated_at: 10 },
   { id: 'planning', label: 'Planning', live: true, updated_at: 50 },
-  { id: 'builtin-welcome', label: 'Welcome', live: false, updated_at: 99 },
 ];
 
 const archiveForum = {
@@ -98,12 +97,16 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
     clearAudio: vi.fn(async () => undefined),
     getBootstrap: vi.fn(async () => boot()),
     listSessions: vi.fn(async (forumId: string) => (
-      forumId === 'archive'
+      forumId === 'entrance'
+        ? [{ id: 'builtin-welcome', label: 'Welcome', live: false, updated_at: 99 }]
+        : forumId === 'archive'
         ? [{ id: 'stored', label: 'Stored', live: false, updated_at: 3 }]
         : lobbySessions
     )),
     createSession: vi.fn(),
-    getSession: vi.fn(async (_forumId: string, sessionId: string) => snapshot(sessionId)),
+    getSession: vi.fn(async (forumId: string, sessionId: string) => (
+      forumId === 'entrance' ? welcomeSnapshot('idle') : snapshot(sessionId)
+    )),
     submitInput: vi.fn(),
     stopSession: vi.fn(),
     deleteSession: vi.fn(),
@@ -133,7 +136,7 @@ it('disables Parent merge without a parent and all transfers without R2 storage'
   for (const name of ['Upload', 'Download', 'Parent merge']) {
     expect(screen.getByRole('button', { name })).toBeDisabled();
   }
-  expect(screen.getByRole('button', { name: 'Assistant' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Assistant' })).not.toBeInTheDocument();
 });
 
 it('uploads a matching R2 version immediately and disables navigation during the upload', async () => {
@@ -150,12 +153,12 @@ it('uploads a matching R2 version immediately and disables navigation during the
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'New Session' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Download' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Assistant' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Forum' }).closest('details')).toHaveAttribute('inert');
   expect(screen.getByRole('status')).toHaveTextContent('Uploading');
   await act(async () => finish(42));
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'New Session' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'Assistant' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Forum' }).closest('details')).not.toHaveAttribute('inert');
 });
 
 it.each(['mismatch', 'missing'] as const)('confirms uploads when the R2 version is %s', async (status) => {
@@ -241,13 +244,14 @@ it('shows a transfer failure and permits another action', async () => {
   expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
 });
 
-it('shows forums and recent sessions with Assistant in the vault actions', async () => {
+it('shows Welcome in the forum picker and keeps only transfers in the vault actions', async () => {
   const user = userEvent.setup();
   const api = await showList();
   const forum = screen.getByRole('button', { name: 'Forum' });
   expect(forum).toHaveTextContent('The Lobby');
   expect(forum).toHaveTextContent('Guide');
   await user.click(forum);
+  expect(screen.getByRole('button', { name: 'Welcome Assistant' })).toHaveAttribute('aria-pressed', 'false');
   expect(screen.queryByRole('button', { name: /Entrance/ })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'The Lobby Guide' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('button', { name: 'Archive Editor · Critic' })).toHaveAttribute('aria-pressed', 'false');
@@ -261,7 +265,7 @@ it('shows forums and recent sessions with Assistant in the vault actions', async
   expect(screen.queryByRole('button', { name: 'Welcome' })).not.toBeInTheDocument();
   const actions = within(screen.getByRole('group', { name: 'Vault actions' })).getAllByRole('button');
   expect(actions.map((button) => button.getAttribute('aria-label')))
-    .toEqual(['Upload', 'Download', 'Parent merge', 'Assistant']);
+    .toEqual(['Upload', 'Download', 'Parent merge']);
   expect(api.getSession).not.toHaveBeenCalled();
   expect(api.createSession).not.toHaveBeenCalled();
   expect(api.listSessions).toHaveBeenCalledTimes(1);
@@ -329,6 +333,22 @@ it('opens Welcome from its direct address', async () => {
   expect(api.createSession).not.toHaveBeenCalled();
 });
 
+it('loads Welcome navigation without waiting for an ordinary forum', async () => {
+  const user = userEvent.setup();
+  window.history.replaceState(null, '', '/#/forums/entrance/sessions/builtin-welcome');
+  const ordinary = new Promise<SessionListing[]>(() => {});
+  const api = client({
+    listSessions: vi.fn((forumId: string) => forumId === 'entrance'
+      ? Promise.resolve([{ id: 'builtin-welcome', label: 'Welcome', live: false, updated_at: 99 }])
+      : ordinary),
+  });
+  render(<App client={api} />);
+  await screen.findByRole('textbox', { name: 'Message' });
+  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  expect(await screen.findByRole('button', { name: /^Entrance/ })).toHaveAttribute('aria-current', 'true');
+  expect(api.listSessions).toHaveBeenCalledWith('entrance');
+});
+
 function entranceForum() {
   return boot().forums[0]!;
 }
@@ -390,7 +410,7 @@ function renamedBoot() {
   };
 }
 
-it('opens Assistant from the vault actions and reloads bootstrap when the answer ends', async () => {
+it('opens Assistant from Welcome and reloads bootstrap when the answer ends', async () => {
   const user = userEvent.setup();
   let phase: 'idle' | 'active' | 'saved' = 'idle';
   let renamed = false;
@@ -400,7 +420,11 @@ it('opens Assistant from the vault actions and reloads bootstrap when the answer
     submitInput: vi.fn(async () => { phase = 'active'; }),
   });
   await showList(api);
-  await user.click(screen.getByRole('button', { name: 'Assistant' }));
+  await user.click(screen.getByRole('button', { name: 'Forum' }));
+  await user.click(screen.getByRole('button', { name: 'Welcome Assistant' }));
+  expect(screen.getByRole('button', { name: 'Forum' })).toHaveTextContent('Welcome');
+  expect(screen.queryByRole('button', { name: 'New Session' })).not.toBeInTheDocument();
+  await user.click(await screen.findByRole('button', { name: /^Entrance/ }));
   await screen.findByRole('textbox', { name: 'Message' });
   expect(api.getSession).toHaveBeenCalledWith('entrance', 'builtin-welcome');
   expect(api.createSession).not.toHaveBeenCalled();
@@ -416,7 +440,11 @@ it('opens Assistant from the vault actions and reloads bootstrap when the answer
   expect(await screen.findByText('Configuration was saved.', {}, { timeout: 3_000 })).toBeInTheDocument();
 
   window.history.back();
-  expect(await screen.findByRole('button', { name: 'Forum' })).toHaveTextContent('Guide renamed');
+  expect(await screen.findByRole('button', { name: 'Forum' })).toHaveTextContent('Welcome');
+  expect(await screen.findByRole('button', { name: /^Entrance/ })).toHaveAttribute('aria-current', 'true');
+  await user.click(screen.getByRole('button', { name: 'Forum' }));
+  await user.click(screen.getByRole('button', { name: 'The Lobby Guide renamed' }));
+  expect(screen.getByRole('button', { name: 'Forum' })).toHaveTextContent('Guide renamed');
   expect(api.createSession).not.toHaveBeenCalled();
 
   window.history.forward();
@@ -441,9 +469,14 @@ it('opens Assistant with the keyboard and reloads bootstrap when its answer is a
     submitInput: vi.fn(async () => { phase = 'saved'; }),
   });
   await showList(api);
-  screen.getByRole('button', { name: 'Assistant' }).focus();
+  screen.getByRole('button', { name: 'Forum' }).focus();
+  await user.keyboard('{Enter}');
+  screen.getByRole('button', { name: 'Welcome Assistant' }).focus();
+  await user.keyboard('{Enter}');
+  (await screen.findByRole('button', { name: /^Entrance/ })).focus();
   await user.keyboard('{Enter}');
   await screen.findByRole('textbox', { name: 'Message' });
+  expect(screen.getByRole('button', { name: 'Delete session' })).toBeDisabled();
   const opened = getBootstrap.mock.calls.length;
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Fix it');
   await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -451,6 +484,10 @@ it('opens Assistant with the keyboard and reloads bootstrap when its answer is a
   await waitFor(() => expect(getBootstrap.mock.calls.length).toBeGreaterThan(opened));
   expect(api.createSession).not.toHaveBeenCalled();
   expect(api.submitInput).toHaveBeenCalledWith('entrance', 'builtin-welcome', 'Fix it');
+  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  expect(screen.getByRole('button', { name: 'Forum' })).toHaveTextContent('Welcome');
+  expect(await screen.findByRole('button', { name: /^Entrance/ })).toHaveAttribute('aria-current', 'true');
+  expect(screen.queryByRole('button', { name: 'New Session' })).not.toBeInTheDocument();
 });
 
 it('opens Assistant when the vault has no ordinary forums', async () => {
@@ -464,10 +501,9 @@ it('opens Assistant when the vault has no ordinary forums', async () => {
     }),
   });
   render(<App client={api} />);
-  expect(await screen.findByRole('button', { name: 'Assistant' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'New Session' })).toBeDisabled();
-  expect(screen.queryByRole('button', { name: 'Forum' })).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Assistant' }));
+  expect(await screen.findByRole('button', { name: 'Forum' })).toHaveTextContent('Welcome');
+  expect(screen.queryByRole('button', { name: 'New Session' })).not.toBeInTheDocument();
+  await user.click(await screen.findByRole('button', { name: /^Entrance/ }));
   expect(await screen.findByRole('textbox', { name: 'Message' })).toBeInTheDocument();
   expect(api.getSession).toHaveBeenCalledWith('entrance', 'builtin-welcome');
   expect(api.createSession).not.toHaveBeenCalled();

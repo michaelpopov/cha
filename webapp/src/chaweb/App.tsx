@@ -68,6 +68,7 @@ export function App({ client }: { client: ChaWebClient }) {
           currentSessionId={model.currentSessionId}
           error={model.listError}
           forumId={model.forumId}
+          entranceForumId={model.bootstrap.entrance_forum_id}
           forums={forums}
           onForum={model.chooseForum}
           onNewSession={model.newSession}
@@ -80,7 +81,6 @@ export function App({ client }: { client: ChaWebClient }) {
             client={client}
             onBusy={setVaultBusy}
             onRefresh={model.refreshVault}
-            onOpenAssistant={model.openWelcome}
           />}
         />
       ) : (

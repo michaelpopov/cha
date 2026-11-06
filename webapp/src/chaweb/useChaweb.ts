@@ -8,7 +8,6 @@ import {
   type SessionSnapshot,
 } from '../api/client';
 import { lastEntryId, type PromptFocus } from '../transcriptScroll';
-import { welcomeSessionId } from '../state/route';
 import { welcomeSnapshot, welcomeSubmission, type WelcomeTurn } from '../welcomeTurn';
 import { chaWebMessage, type ChaWebBootstrap, type ChaWebClient } from './client';
 import {
@@ -313,16 +312,9 @@ export function useChaweb(client: ChaWebClient) {
     }, pollDelayMs);
   }
 
-  function listForumId(): string {
-    const loaded = bootstrapRef.current;
-    const current = forumRef.current;
-    if (loaded && current && current !== loaded.entrance_forum_id) return current;
-    return loaded ? defaultForumId(loaded) : '';
-  }
-
   function refreshWelcome() {
     void reloadBootstrap().catch(() => undefined);
-    const forum = listForumId();
+    const forum = forumRef.current;
     if (forum) refreshList(forum);
   }
 
@@ -636,14 +628,12 @@ export function useChaweb(client: ChaWebClient) {
   function assignSession(forum: string, session: string) {
     const welcome = welcomeIdentity(forum, session);
     invalidateList();
-    if (!welcome && forumRef.current !== forum) setSessions([]);
+    if (forumRef.current !== forum) setSessions([]);
     const next: ConversationRef = { kind: 'session', forumId: forum, sessionId: session };
     conversationRef.current = next;
     screenRef.current = 'conversation';
-    if (!welcome) {
-      forumRef.current = forum;
-      setForumId(forum);
-    }
+    forumRef.current = forum;
+    setForumId(forum);
     setConversation(next);
     setAudioKey(sessionDraftKey(forum, session));
     setScreen('conversation');
@@ -706,7 +696,7 @@ export function useChaweb(client: ChaWebClient) {
 
   function newSession() {
     const forum = forumRef.current;
-    if (!forum) return;
+    if (!forum || forum === bootstrapRef.current?.entrance_forum_id) return;
     invalidateList();
     appliedHash.current = '';
     if (window.location.hash) window.history.pushState(null, '', locationUrl());
@@ -722,31 +712,11 @@ export function useChaweb(client: ChaWebClient) {
 
   function showSessions() {
     const current = conversationRef.current;
-    const loaded = bootstrapRef.current;
-    if (current && loaded) {
-      const forum = current.forumId === loaded.entrance_forum_id
-        ? defaultForumId(loaded) : current.forumId;
-      if (forum) {
-        forumRef.current = forum;
-        setForumId(forum);
-      }
+    if (current) {
+      forumRef.current = current.forumId;
+      setForumId(current.forumId);
     }
     showList();
-  }
-
-  function openWelcome() {
-    const loaded = bootstrapRef.current;
-    if (!loaded) return;
-    const forum = loaded.entrance_forum_id;
-    const session = welcomeSessionId;
-    if (!isWelcomeSession(loaded, forum, session)) return;
-    const hash = sessionHash(forum, session);
-    appliedHash.current = hash;
-    if (window.location.hash !== hash) {
-      window.history.pushState(null, '', locationUrl(hash));
-    }
-    setListError(null);
-    assignSession(forum, session);
   }
 
   function onDraft(text: string) {
@@ -1245,7 +1215,6 @@ export function useChaweb(client: ChaWebClient) {
       : null,
     chooseForum,
     openSession,
-    openWelcome,
     newSession,
     showSessions,
     refreshVault,
