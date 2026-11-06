@@ -1152,13 +1152,14 @@ TEST_F(NoteAudioBackground, UploadEtagPublicationDoesNotResetTheRecoveryWarning)
         .url = "http://127.0.0.1:" + std::to_string(backup.port()) + "/bucket/",
         .access_key_id = "access", .secret_key = "secret"}, epoch);
     activate(); backup.start();
-    auto uploading = std::async(std::launch::async, [this, starting_epoch = epoch] {
-        return application->upload_database({}, starting_epoch);
-    });
+    const auto uploading = application->start_database_upload({}, epoch);
+    const auto upload_done = std::make_shared<std::promise<void>>();
+    auto upload_ready = upload_done->get_future();
+    uploading->set_ready_callback([upload_done] { upload_done->set_value(); });
     const bool upload_started = backup.wait_for_requests(2, 2s);
     if (!upload_started) {
         backup.resume_responses();
-        (void)uploading.get();
+        EXPECT_EQ(upload_ready.wait_for(2s), std::future_status::ready);
         FAIL() << "The backup upload did not start";
     }
     epoch = application->context_epoch();
@@ -1173,8 +1174,11 @@ TEST_F(NoteAudioBackground, UploadEtagPublicationDoesNotResetTheRecoveryWarning)
     saved_attempt(server.port()); server.start(); activate();
     const auto warning_status = warning_ready.wait_for(2s);
     backup.resume_responses();
-    (void)uploading.get(); backup.join();
+    EXPECT_EQ(upload_ready.wait_for(2s), std::future_status::ready);
+    backup.join();
     release.set_value();
+    ASSERT_TRUE(uploading->peek());
+    EXPECT_TRUE(std::holds_alternative<nlohmann::json>(*uploading->peek()));
     ASSERT_EQ(warning_status, std::future_status::ready);
     ASSERT_TRUE(finished()); server.join();
     const auto events = application->list_events(epoch);

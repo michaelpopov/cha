@@ -509,10 +509,6 @@ public:
         std::string_view source_name,
         std::string password,
         std::uint64_t epoch);
-    [[nodiscard]] MaintenanceResult merge_parent_vault(
-        std::string password,
-        std::uint64_t epoch,
-        const std::function<bool()>& cancelled = {});
     [[nodiscard]] std::vector<std::string> list_r2_vaults(
         std::uint64_t epoch) const;
     [[nodiscard]] VaultDefinition download_r2_vault(
@@ -520,9 +516,6 @@ public:
         std::uint64_t epoch);
     [[nodiscard]] R2UploadCheck check_database_upload(
         std::uint64_t epoch) const;
-    [[nodiscard]] R2DatabaseTransfer upload_database(
-        std::optional<std::string> expected_etag,
-        std::uint64_t epoch);
     // Copies the database now and transfers it in the background. The reply
     // has byte_count and context_epoch. Maintenance is refused until it ends.
     [[nodiscard]] std::shared_ptr<OperationReply> start_database_upload(

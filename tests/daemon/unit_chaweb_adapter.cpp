@@ -245,8 +245,6 @@ TEST_F(ChaWebAdapterTest, BootstrapUsesExistingSerializer) {
     const CgiResponse response = get(std::string(bootstrap_path));
     EXPECT_EQ(response.status, 200);
     nlohmann::json expected = boot.presentation;
-    expected["vault_parent"] = nullptr;
-    expected["capabilities"] = {{"can_modify", false}, {"can_transfer_r2", false}};
     EXPECT_EQ(response.json, expected);
     EXPECT_EQ(response.json.at("entrance_forum_id"), std::string(entrance_id));
     EXPECT_FALSE(response.json.contains("state"));
@@ -458,41 +456,6 @@ TEST_F(ChaWebAdapterTest, AdmitsAudioBatchesAndRejectsInvalidRequestsWithoutChan
     EXPECT_TRUE(status.json.at("downloads").empty());
 }
 
-TEST_F(ChaWebAdapterTest, ClearsAllSessionAudioWithoutVoiceConfigurationOrChangingOtherSessions) {
-    const auto path = session_path("lobby", add_audio_entry(EntryStatus::complete, true, 2));
-    const auto other = session_path("lobby", add_audio_entry(EntryStatus::complete, true));
-    const auto transcript = get(path).json.at("transcript");
-    const auto clear = [&](const nlohmann::json& body, std::string type = std::string(json_type)) {
-        auto request = post_request(path + "/audio", body.dump(), std::move(type));
-        request.method = "DELETE";
-        return exchange(*application_, request);
-    };
-    EXPECT_EQ(clear({{"vault_name", "Other"}}).status, 409);
-    EXPECT_EQ(clear({{"vault_name", 1}}).status, 400);
-    EXPECT_EQ(clear(nlohmann::json::object()).status, 400);
-    EXPECT_EQ(clear({{"vault_name", "Test"}, {"entry_id", 1}}).status, 400);
-    EXPECT_EQ(clear({{"vault_name", "Test"}}, "text/plain").status, 415);
-    EXPECT_EQ(get(path + "/audio").json.at("cached_entry_ids"), nlohmann::json::array({1, 2}));
-    ASSERT_EQ(clear({{"vault_name", "Test"}}).status, 204);
-    EXPECT_TRUE(get(path + "/audio").json.at("cached_entry_ids").empty());
-    EXPECT_TRUE(get(path + "/audio").json.at("downloads").empty());
-    EXPECT_EQ(get(path + "/entries/1/audio").status, 404);
-    EXPECT_EQ(get(path + "/entries/2/audio").status, 404);
-    auto after = get(path).json.at("transcript");
-    ASSERT_EQ(after.size(), transcript.size());
-    for (std::size_t index = 0; index < after.size(); ++index) {
-        EXPECT_FALSE(after[index].at("has_cached_audio").get<bool>());
-        after[index]["has_cached_audio"] = true;
-    }
-    EXPECT_EQ(after, transcript);
-    EXPECT_EQ(get(other + "/entries/1/audio").status, 200);
-    EXPECT_EQ(get(other + "/audio").json.at("cached_entry_ids"), nlohmann::json::array({1}));
-    EXPECT_EQ(clear({{"vault_name", "Test"}}).status, 204);
-    auto missing = post_request(session_path("lobby", "missing") + "/audio", "{\"vault_name\":\"Test\"}");
-    missing.method = "DELETE";
-    EXPECT_EQ(exchange(*application_, missing).status, 404);
-}
-
 TEST_F(ChaWebAdapterTest, AudioRequestsValidateEntryVaultAndBody) {
     const auto path = session_path("lobby", add_audio_entry());
     const auto source = path + "/entries/1/audio";
@@ -597,8 +560,13 @@ TEST_F(ChaWebAdapterTest, UnknownRoutesAndMethodsAreNotFoundWithoutCors) {
         {"GET", "/v1/models"},
         {"POST", "/v1/chat/completions"},
         {"POST", "/api/cha/v1/bootstrap"},
+        {"POST", "/api/cha/v1/vault/upload-check"},
+        {"POST", "/api/cha/v1/vault/upload"},
+        {"POST", "/api/cha/v1/vault/download"},
+        {"POST", "/api/cha/v1/vault/merge-parent"},
         {"OPTIONS", "/api/cha/v1/bootstrap"},
         {"GET", "/api/cha/v1/forums/lobby/sessions/abc/input"},
+        {"DELETE", "/api/cha/v1/forums/lobby/sessions/abc/audio"},
         {"POST", "/api/cha/v1/forums/lobby/sessions/abc"},
         {"GET", "/api/cha/v1/forums/../sessions"},
         {"GET", "/api/cha/v1/forums/lobby/sessions/has/slash"},
@@ -616,228 +584,6 @@ TEST_F(ChaWebAdapterTest, UnknownRoutesAndMethodsAreNotFoundWithoutCors) {
         EXPECT_EQ(response.raw.find("Access-Control"), std::string::npos);
         EXPECT_FALSE(response.json.contains("type"));
     }
-}
-
-TEST_F(ChaWebAdapterTest, ChecksAndUploadsTheVaultWithTheExpectedR2Version) {
-    MockHttpServer server({
-        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        "HTTP/1.1 200 OK\r\nETag: \"uploaded-version\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        "HTTP/1.1 200 OK\r\nETag: \"uploaded-version\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        "HTTP/1.1 200 OK\r\nETag: \"next-version\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-    });
-    (void)application_->save_r2_storage({
-        .display_name = "Backups",
-        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/bucket/",
-        .access_key_id = "test-access-key",
-        .secret_key = std::string("test-secret-key"),
-    }, application_->context_epoch());
-    server.start();
-    const auto check = post("/api/cha/v1/vault/upload-check", nlohmann::json::object());
-    ASSERT_EQ(check.status, 200) << check.raw;
-    EXPECT_EQ(check.json["status"], "missing");
-    EXPECT_TRUE(check.json["etag"].is_null());
-    EXPECT_EQ(check.json["context_epoch"], application_->context_epoch());
-    const auto uploaded = post("/api/cha/v1/vault/upload", {
-        {"etag", check.json["etag"]}, {"context_epoch", check.json["context_epoch"]}});
-    ASSERT_EQ(uploaded.status, 200) << uploaded.raw;
-    EXPECT_GT(uploaded.json["byte_count"].get<std::uintmax_t>(), 0U);
-    EXPECT_EQ(application_->current_vault().get().r2_etag, "uploaded-version");
-    const auto matching = post("/api/cha/v1/vault/upload-check", nlohmann::json::object());
-    ASSERT_EQ(matching.status, 200) << matching.raw;
-    EXPECT_EQ(matching.json["status"], "match");
-    EXPECT_EQ(matching.json["etag"], "uploaded-version");
-    const auto second = post("/api/cha/v1/vault/upload", {
-        {"etag", matching.json["etag"]}, {"context_epoch", matching.json["context_epoch"]}});
-    server.join();
-    ASSERT_EQ(second.status, 200) << second.raw;
-    EXPECT_EQ(application_->current_vault().get().r2_etag, "next-version");
-    ASSERT_EQ(server.requests().size(), 7U);
-    EXPECT_TRUE(server.requests()[0].starts_with("PUT /bucket/"));
-    EXPECT_TRUE(server.requests()[1].starts_with("PUT /bucket/"));
-    EXPECT_TRUE(server.requests()[2].starts_with("PUT /bucket/"));
-    EXPECT_TRUE(server.requests()[3].starts_with("HEAD /bucket/"));
-    EXPECT_TRUE(server.requests()[4].starts_with("PUT /bucket/"));
-    EXPECT_TRUE(server.requests()[5].starts_with("PUT /bucket/"));
-    EXPECT_NE(server.requests()[5].find("If-Match: \"uploaded-version\""), std::string::npos);
-    EXPECT_TRUE(server.requests()[6].starts_with("PUT /bucket/"));
-}
-
-TEST_F(ChaWebAdapterTest, DownloadsBacksUpAndReloadsTheVault) {
-    const auto session_id = create_session();
-    test::TestWorkspace remote;
-    remote.add_persona("remote_persona", "Remote persona");
-    const auto remote_database = test::import_test_database(remote.root());
-    std::ifstream input(remote_database, std::ios::binary);
-    const std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-    input.close();
-    MockHttpServer server({
-        http_response("application/toml", "vault_name = \"Test\"\ndata = \"remote.sqlite3\"\n"),
-        http_response("application/vnd.sqlite3", bytes),
-    });
-    (void)application_->save_r2_storage({
-        .display_name = "Backups",
-        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/bucket/",
-        .access_key_id = "test-access-key",
-        .secret_key = std::string("test-secret-key"),
-    }, application_->context_epoch());
-    const auto epoch = application_->context_epoch();
-    server.start();
-    const auto response = post("/api/cha/v1/vault/download", nlohmann::json::object());
-    server.join();
-    ASSERT_EQ(response.status, 200) << response.raw;
-    EXPECT_GT(response.json["byte_count"].get<std::uintmax_t>(), bytes.size());
-    EXPECT_GT(application_->context_epoch(), epoch);
-    EXPECT_TRUE(std::filesystem::exists(database_.string() + ".bac"));
-    EXPECT_TRUE(std::filesystem::exists(application_->current_vault().get().source.string() + ".bac"));
-    EXPECT_EQ(application_->get_persona("remote_persona", application_->context_epoch()).summary.display_name,
-        "Remote persona");
-    EXPECT_EQ(get(session_path("lobby", session_id)).status, 404);
-    EXPECT_EQ(get(std::string(bootstrap_path)).json["capabilities"]["can_transfer_r2"], false);
-}
-
-TEST_F(ChaWebAdapterTest, VaultTransfersValidateRequestsAndRejectStaleUploads) {
-    for (const std::string path : {"/api/cha/v1/vault/upload-check", "/api/cha/v1/vault/upload",
-            "/api/cha/v1/vault/download"}) {
-        SCOPED_TRACE(path);
-        EXPECT_EQ(get(path).status, 404);
-        EXPECT_EQ(post(path, nlohmann::json::object(), "text/plain").status, 415);
-        EXPECT_EQ(post(path, {{"unknown", true}}).status, 400);
-        EXPECT_EQ(post(path, nlohmann::json::array()).status, 400);
-    }
-    for (const nlohmann::json& body : {
-            nlohmann::json::object(), nlohmann::json{{"etag", nullptr}},
-            nlohmann::json{{"etag", 4}, {"context_epoch", 1}},
-            nlohmann::json{{"etag", nullptr}, {"context_epoch", -1}}}) {
-        EXPECT_EQ(post("/api/cha/v1/vault/upload", body).status, 400);
-    }
-    const auto epoch = application_->context_epoch();
-    (void)application_->create_vault({.display_name = "Child", .copy_from = "Test"}, epoch);
-    (void)application_->switch_vault("Child", {}, epoch);
-    const auto stale = post("/api/cha/v1/vault/upload", {{"etag", nullptr}, {"context_epoch", epoch}});
-    EXPECT_EQ(stale.status, 409);
-    EXPECT_EQ(stale.json["error"]["code"], "vault_changed");
-}
-
-TEST_F(ChaWebAdapterTest, DownloadsAndMergesTheParentIntoTheCurrentVault) {
-    const auto child = application_->create_vault(
-        {.display_name = "Child", .copy_from = "Test"}, application_->context_epoch());
-    (void)application_->switch_vault(child.name, {}, application_->context_epoch());
-    test::TestWorkspace remote;
-    remote.add_persona("parent_persona", "Parent persona");
-    const auto remote_database = test::import_test_database(remote.root());
-    std::ifstream input(remote_database, std::ios::binary);
-    const std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-    input.close();
-    MockHttpServer server({
-        http_response("application/toml", "vault_name = \"Test\"\ndata = \"remote.sqlite3\"\n"),
-        http_response("application/vnd.sqlite3", bytes),
-    });
-    (void)application_->save_r2_storage({
-        .display_name = "Backups",
-        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/bucket/",
-        .access_key_id = "test-access-key",
-        .secret_key = std::string("test-secret-key"),
-    }, application_->context_epoch());
-    const auto epoch = application_->context_epoch();
-    const auto bootstrap = get(std::string(bootstrap_path));
-    EXPECT_EQ(bootstrap.json["vault_parent"], "Test");
-    EXPECT_EQ(bootstrap.json["capabilities"]["can_transfer_r2"], true);
-    server.start();
-    const auto response = post("/api/cha/v1/vault/merge-parent", nlohmann::json::object());
-    server.join();
-    ASSERT_EQ(response.status, 200) << response.raw;
-    EXPECT_GT(response.json.at("context_epoch").get<std::uint64_t>(), epoch);
-    EXPECT_EQ(application_->current_vault().get().name, "Child");
-    EXPECT_EQ(application_->current_vault().get().parent, "Test");
-    EXPECT_EQ(application_->get_persona("parent_persona", application_->context_epoch()).summary.display_name,
-        "Parent persona");
-    ASSERT_EQ(server.requests().size(), 2U);
-    EXPECT_TRUE(server.requests()[1].starts_with("GET /bucket/" + database_.filename().string() + " HTTP/1.1"));
-}
-
-TEST_F(ChaWebAdapterTest, ParentMergeValidatesRequestsAndReportsMissingParent) {
-    const std::string path = "/api/cha/v1/vault/merge-parent";
-    EXPECT_EQ(get(path).status, 404);
-    EXPECT_EQ(post(path, nlohmann::json::object(), "text/plain").status, 415);
-    for (const nlohmann::json& body : {
-            nlohmann::json{{"unknown", "value"}}, nlohmann::json{{"password", 42}},
-            nlohmann::json{{"password", "secret"}, {"extra", true}},
-            nlohmann::json::array()}) {
-        EXPECT_EQ(post(path, body).status, 400);
-    }
-    const auto response = post(path, nlohmann::json::object());
-    EXPECT_EQ(response.status, 400);
-    EXPECT_EQ(response.json["error"]["code"], "invalid_argument");
-    EXPECT_EQ(response.json["error"]["message"], "The current vault has no parent");
-}
-
-TEST_F(ChaWebAdapterTest, ParentMergeReportsMissingR2Key) {
-    const auto child = application_->create_vault(
-        {.display_name = "Child", .copy_from = "Test"}, application_->context_epoch());
-    (void)application_->switch_vault(child.name, {}, application_->context_epoch());
-    const auto response = post("/api/cha/v1/vault/merge-parent", nlohmann::json::object());
-    EXPECT_EQ(response.status, 400);
-    EXPECT_EQ(response.json["error"]["code"], "invalid_argument");
-    EXPECT_EQ(response.json["error"]["message"], "The current vault has no R2 key");
-}
-
-TEST_F(ChaWebAdapterTest, ParentMergeReportsR2HttpFailures) {
-    const auto child = application_->create_vault(
-        {.display_name = "Child", .copy_from = "Test"}, application_->context_epoch());
-    (void)application_->switch_vault(child.name, {}, application_->context_epoch());
-    const std::string missing = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-    for (const bool missing_definition : {true, false}) {
-        SCOPED_TRACE(missing_definition);
-        MockHttpServer server(missing_definition ? std::vector<std::string>{missing}
-            : std::vector<std::string>{http_response("application/toml",
-                "vault_name = \"Test\"\ndata = \"remote.sqlite3\"\n"), missing});
-        (void)application_->save_r2_storage({
-            .display_name = "Backups",
-            .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/bucket/",
-            .access_key_id = "test-access-key",
-            .secret_key = std::string("test-secret-key"),
-        }, application_->context_epoch());
-        const auto epoch = application_->context_epoch();
-        server.start();
-        const auto response = post("/api/cha/v1/vault/merge-parent", nlohmann::json::object());
-        server.join();
-        EXPECT_EQ(response.status, 400) << response.raw;
-        EXPECT_EQ(response.json["error"]["code"], "invalid_argument");
-        EXPECT_EQ(response.json["error"]["message"], missing_definition
-            ? "R2 vault definition was not found. The bucket may contain a legacy database-only upload; "
-                "upload with the current CHA version before downloading."
-            : "R2 download failed with HTTP status 404");
-        // The download starts after local sessions stop, so the failed merge publishes a new context.
-        EXPECT_GT(application_->context_epoch(), epoch);
-        EXPECT_EQ(application_->current_vault().get().name, "Child");
-    }
-}
-
-TEST_F(ChaWebAdapterTest, VaultTransfersReportOtherProcessesAndTheSecondaryRole) {
-    auto secondary = Application::open(make_command(workspace_, database_));
-    const auto busy = post("/api/cha/v1/vault/download", nlohmann::json::object());
-    EXPECT_EQ(busy.status, 400) << busy.raw;
-    EXPECT_EQ(busy.json["error"]["code"], "invalid_argument");
-    EXPECT_EQ(busy.json["error"]["message"], "Close other CHA processes using this vault, then try again.");
-
-    const auto refused = exchange(*secondary, post_request("/api/cha/v1/vault/download", "{}"));
-    EXPECT_EQ(refused.status, 400) << refused.raw;
-    EXPECT_EQ(refused.json["error"]["code"], "invalid_argument");
-    EXPECT_EQ(refused.json["error"]["message"], "Settings can be changed only in the main CHA process.");
-}
-
-TEST_F(ChaWebAdapterTest, ParentMergeRequiresTheProtectedParentsPassword) {
-    const auto child = application_->create_vault(
-        {.display_name = "Child", .copy_from = "Test"}, application_->context_epoch());
-    (void)application_->switch_vault(child.name, {}, application_->context_epoch());
-    (void)application_->update_vault("Test", {.display_name = "Test", .password = "secret"},
-        application_->context_epoch());
-    const auto response = post("/api/cha/v1/vault/merge-parent", nlohmann::json::object());
-    EXPECT_EQ(response.status, 401);
-    EXPECT_EQ(response.json["error"]["code"], "source_vault_password_required");
 }
 
 TEST_F(ChaWebAdapterTest, DeletesOnlyTheNamedSession) {

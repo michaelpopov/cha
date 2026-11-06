@@ -9,7 +9,7 @@ import {
 } from '../api/client';
 import { lastEntryId, type PromptFocus } from '../transcriptScroll';
 import { welcomeSnapshot, welcomeSubmission, type WelcomeTurn } from '../welcomeTurn';
-import { chaWebMessage, type ChaWebBootstrap, type ChaWebClient } from './client';
+import { chaWebMessage, type ChaWebClient } from './client';
 import {
   applyAcknowledgement,
   classifyReadFailure,
@@ -147,7 +147,7 @@ function buildCommand(
 }
 
 export function useChaweb(client: ChaWebClient) {
-  const [bootstrap, setBootstrap] = useState<ChaWebBootstrap | null>(null);
+  const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [loading, setLoading] = useState(true);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [startupCanRetry, setStartupCanRetry] = useState(false);
@@ -577,26 +577,6 @@ export function useChaweb(client: ChaWebClient) {
     });
   }
 
-  async function refreshVault() {
-    notes.reset();
-    setNotesRoute(null);
-    invalidateList();
-    retarget('');
-    screenRef.current = 'list';
-    setScreen('list');
-    conversationRef.current = null;
-    snapshotRef.current = null;
-    setConversation(null);
-    setSnapshot(null);
-    setSessions([]);
-    setListError(null);
-    patchStatus(() => emptyStatus);
-    appliedHash.current = '';
-    window.history.replaceState(null, '', locationUrl());
-    await reloadBootstrap();
-    refreshList(forumRef.current);
-  }
-
   function noteAck(key: string) {
     const loop = readLoop.current;
     loop.ack[key] = (loop.ack[key] ?? 0) + 1;
@@ -748,15 +728,6 @@ export function useChaweb(client: ChaWebClient) {
     setScreen('conversation');
     setListError(null);
     retarget('');
-  }
-
-  function showSessions() {
-    const current = conversationRef.current;
-    if (current) {
-      forumRef.current = current.forumId;
-      setForumId(current.forumId);
-    }
-    showList();
   }
 
   function onDraft(text: string) {
@@ -1273,11 +1244,6 @@ export function useChaweb(client: ChaWebClient) {
     chooseForum,
     openSession,
     newSession,
-    showSessions,
-    refreshVault,
-    vaultBlocked: Object.values(status.conversations).some((current) => (
-      current.sending || current.stopPending || current.deleting
-    )),
     onDraft,
     send,
     stop,

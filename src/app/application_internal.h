@@ -77,14 +77,7 @@ struct Application::Impl {
             std::string_view source_name,
             std::string password,
             std::uint64_t epoch);
-        MaintenanceResult merge_parent_vault(
-            std::string password,
-            std::uint64_t epoch,
-            const std::function<bool()>& cancelled);
         R2UploadCheck check_database_upload(std::uint64_t epoch) const;
-        R2DatabaseTransfer upload_database(
-            std::optional<std::string> expected_etag,
-            std::uint64_t epoch);
         std::shared_ptr<OperationReply> start_database_upload(
             std::optional<std::string> expected_etag,
             std::uint64_t epoch);
@@ -95,12 +88,6 @@ struct Application::Impl {
         void publish_vault_names();
         void delete_forum(std::string_view forum_id, std::uint64_t epoch);
     private:
-        MaintenanceResult merge(
-            std::string_view source_name,
-            std::string password,
-            std::uint64_t epoch,
-            bool download_parent,
-            const std::function<bool()>& cancelled);
         void publish_vault(VaultDefinition vault);
         R2DatabaseUpload prepare_upload(
             std::uint64_t epoch, VaultDefinition& vault, R2StorageKey& storage);

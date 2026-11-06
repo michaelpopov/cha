@@ -345,14 +345,6 @@ html.chaweb-reading,
   border-top: 1px solid var(--border);
 }
 
-.chaweb-vault-actions {
-  display: flex;
-  flex: none;
-  justify-content: space-evenly;
-  padding: 4px 0;
-  border-top: 1px solid var(--border);
-}
-
 .chaweb-transcript {
   flex: 1 1 0;
   min-height: 0;

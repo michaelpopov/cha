@@ -16,7 +16,6 @@ function Editor({
   commandDisabled = false,
   onSend = () => {},
   onStop = () => {},
-  onSessions = () => {},
   viewportHeight = 700,
 }) {
   const [value, setValue] = useState('Hi');
@@ -36,9 +35,6 @@ function Editor({
   return (
     <Composer
       commandDisabled={commandDisabled}
-      copied={false}
-      copyDisabled
-      onCopy={() => {}}
       deleteDisabled
       deleting={false}
       expanded={expanded}
@@ -47,7 +43,6 @@ function Editor({
       onDelete={() => {}}
       onExpanded={setExpanded}
       onSend={onSend}
-      onSessions={onSessions}
       onStop={onStop}
       value={value}
       viewportHeight={viewportHeight}
@@ -157,15 +152,9 @@ it('ignores a release that did not start on the size button', async () => {
   expect(screen.getByRole('button', { name: 'Shrink editor' })).toBeInTheDocument();
 });
 
-it('dismisses the keyboard from Sessions and does not grow with the draft', async () => {
-  const user = userEvent.setup();
-  const onSessions = vi.fn();
-  render(<Editor onSessions={onSessions} />);
+it('does not grow with the draft', () => {
+  render(<Editor />);
   const box = screen.getByRole('textbox', { name: 'Message' });
-  box.focus();
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
-  expect(onSessions).toHaveBeenCalledTimes(1);
-  expect(box).not.toHaveFocus();
   fireEvent.change(box, { target: { value: `${'line\n'.repeat(40)}end` } });
   expect(box).toHaveStyle({ height: '56px' });
 });

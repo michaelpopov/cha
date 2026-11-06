@@ -38,16 +38,6 @@ export function useChawebNotes(client: ChaWebClient, route: ChawebNotesRoute | n
     controller.current = null;
   }
 
-  function reset() {
-    cancel();
-    itemsRef.current = null;
-    setListing(null);
-    setDetail(null);
-    setRemembered(undefined);
-    setListError(null);
-    setListLoading(false);
-  }
-
   useEffect(() => {
     cancel();
     setDetail(null);
@@ -122,6 +112,6 @@ export function useChawebNotes(client: ChaWebClient, route: ChawebNotesRoute | n
     missing: detail?.route === route && detail?.missing === true,
     // Never display the previous document while the route effect catches up.
     note: detail?.route === route ? detail?.note ?? null : null,
-    reset, retry: () => setRetry((count) => count + 1),
+    retry: () => setRetry((count) => count + 1),
   };
 }

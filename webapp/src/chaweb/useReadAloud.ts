@@ -12,9 +12,6 @@ export interface ReadAloud {
   entryId: number | null;
   state: 'loading' | 'playing';
   error: string | null;
-  clearing: boolean;
-  clearDisabled: boolean;
-  clear(): Promise<void>;
   isCached(entry: TranscriptEntry): boolean;
   isDownloading(entry: TranscriptEntry): boolean;
   toggle(entry: TranscriptEntry): void;
@@ -41,20 +38,15 @@ export function useReadAloud(
   const [entryId, setEntryId] = useState<number | null>(null);
   const [state, setState] = useState<'loading' | 'playing'>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [clearing, setClearing] = useState(false);
   const [downloaded, setDownloaded] = useState<ReadonlySet<number>>(new Set());
   const [automatic, setAutomatic] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [clearCount, setClearCount] = useState(0);
   const automaticRef = useRef(false);
   const automaticPlayback = useRef(false);
   const automaticAudio = useRef<HTMLAudioElement | null>(null);
   const modeAttempt = useRef(0);
   const handledDownloads = useRef(new Set<number>());
   const handledSpeech = useRef(new Set<number>());
-  const clearingRef = useRef(false);
-  const cacheCleared = useRef(false);
-  const pending = useRef(new Set<Promise<unknown>>());
   const selected = useRef<number | null>(null);
   const attempt = useRef(0);
   const player = useRef<TextToSpeechSession | null>(null);
@@ -64,11 +56,6 @@ export function useReadAloud(
 
   const downloadsClient = useMemo<Pick<ChaClient,
     'getAudioDownloads' | 'startAudioDownload' | 'startAudioDownloadBatch'>>(() => {
-    function track<T>(request: Promise<T>) {
-      pending.current.add(request);
-      void request.then(() => pending.current.delete(request), () => pending.current.delete(request));
-      return request;
-    }
     return {
       async getAudioDownloads(forum, session) {
         try { return await client.getAudioStatus(forum, session); }
@@ -85,12 +72,12 @@ export function useReadAloud(
         }
       },
       startAudioDownload: (forum, session, id, request) =>
-        track(client.startAudio(forum, session, id, request.vault_name)),
-      startAudioDownloadBatch: (forum, session, request) => track(client.startAudioBatch(
-        forum, session, request.entries.map((entry) => entry.entry_id), request.vault_name)),
+        client.startAudio(forum, session, id, request.vault_name),
+      startAudioDownloadBatch: (forum, session, request) => client.startAudioBatch(
+        forum, session, request.entries.map((entry) => entry.entry_id), request.vault_name),
     };
   }, [client]);
-  const downloads = useAudioDownloads(downloadsClient, forum, session, vaultName, clearCount);
+  const downloads = useAudioDownloads(downloadsClient, forum, session, vaultName, 0);
 
   function stop() {
     attempt.current += 1;
@@ -103,12 +90,8 @@ export function useReadAloud(
 
   useEffect(() => {
     setError(null);
-    setClearing(false);
     setDownloaded(new Set());
     disableAutomatic();
-    clearingRef.current = false;
-    cacheCleared.current = false;
-    pending.current.clear();
     positions.current.clear();
     return () => {
       modeAttempt.current += 1;
@@ -123,7 +106,7 @@ export function useReadAloud(
 
   function isCached(entry: TranscriptEntry): boolean {
     return downloaded.has(entry.id) || Boolean(downloads.status?.cached_entry_ids.includes(entry.id))
-      || Boolean(entry.has_cached_audio && !cacheCleared.current);
+      || Boolean(entry.has_cached_audio);
   }
 
   function isDownloading(entry: TranscriptEntry): boolean {
@@ -141,7 +124,7 @@ export function useReadAloud(
 
   function toggleAutomatic() {
     if (automaticRef.current) { disableAutomatic(); return; }
-    if (!conversationKey || !vaultName || deleting || clearingRef.current || !configuration) return;
+    if (!conversationKey || !vaultName || deleting || !configuration) return;
     setError(null);
     modeAttempt.current += 1;
     // Only replies completed after enabling need automatic audio.
@@ -161,7 +144,7 @@ export function useReadAloud(
   }
 
   function toggle(entry: TranscriptEntry, automatically = false) {
-    if (!forum || !session || !vaultName || deleting || clearingRef.current
+    if (!forum || !session || !vaultName || deleting
       || !canRead(entry)) return;
     handledSpeech.current.add(entry.id);
     const wasSelected = selected.current === entry.id;
@@ -211,7 +194,6 @@ export function useReadAloud(
         if (active()) setState('playing');
       }, failed);
     }
-    // Cache hints in a polled snapshot can still predate the clear request.
     if (isCached(entry)) { play(); return; }
     if (automatically) { play(true); return; }
     const request = downloadsClient.startAudioDownload(forum, session, entry.id,
@@ -225,7 +207,7 @@ export function useReadAloud(
   }
 
   useEffect(() => {
-    if (!automaticRef.current || submitting || clearing || !configuration || !snapshot
+    if (!automaticRef.current || submitting || !configuration || !snapshot
       || !vaultName || !downloads.status) return;
     if (downloads.unavailable) {
       setError(downloads.unavailable);
@@ -251,7 +233,7 @@ export function useReadAloud(
   });
 
   useEffect(() => {
-    if (!automaticRef.current || submitting || clearing || deleting || !snapshot
+    if (!automaticRef.current || submitting || deleting || !snapshot
       || !downloads.status || downloads.unavailable || selected.current !== null) return;
     const jobs = new Map(downloads.status.downloads.map((job) => [job.entry_id, job]));
     for (const entry of snapshot.transcript) {
@@ -270,45 +252,15 @@ export function useReadAloud(
     }
   });
 
-  async function clear() {
-    if (!forum || !session || !vaultName || deleting || clearingRef.current) return;
-    clearingRef.current = true;
-    setClearing(true);
-    disableAutomatic();
-    stop();
-    positions.current.clear();
-    setError(null);
-    const current = attempt.current;
-    try {
-      // A previous generation request must be admitted before we cancel its job.
-      await Promise.allSettled([...pending.current]);
-      await client.clearAudio(forum, session, vaultName);
-      if (attempt.current === current) {
-        cacheCleared.current = true;
-        setDownloaded(new Set());
-        setClearCount((count) => count + 1);
-      }
-    } catch (failure) {
-      if (attempt.current === current) {
-        setError(chaWebMessage(failure, 'Audio recordings could not be cleared. Try again.'));
-      }
-    } finally {
-      if (attempt.current === current) {
-        clearingRef.current = false;
-        setClearing(false);
-      }
-    }
-  }
-
   // Hold capture as soon as a reply awaits automatic playback, before its
   // download is admitted or the player is created.
-  const busy = entryId !== null || (automatic && !clearing && !deleting && Boolean(snapshot?.transcript
+  const busy = entryId !== null || (automatic && !deleting && Boolean(snapshot?.transcript
     .some((entry) => canRead(entry) && !handledSpeech.current.has(entry.id)
       && !downloads.status?.downloads.some((job) => job.entry_id === entry.id && job.state === 'failed'))));
 
-  return { available: configuration !== null, busy, entryId, state, error, toggle, clearing, clear, isCached, isDownloading,
+  return { available: configuration !== null, busy, entryId, state, error, toggle, isCached, isDownloading,
     automatic, toggleAutomatic,
-    automaticDisabled: !conversationKey || !vaultName || deleting || clearing
+    automaticDisabled: !conversationKey || !vaultName || deleting
       || (!configuration && !automatic),
-    clearDisabled: !forum || !session || !vaultName || deleting || clearing };
+  };
 }

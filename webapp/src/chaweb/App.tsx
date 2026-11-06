@@ -10,7 +10,6 @@ import { useChaweb } from './useChaweb';
 import { useReadAloud } from './useReadAloud';
 import { useVoiceInput } from './useVoiceInput';
 import type { ChaWebClient } from './client';
-import { VaultActions } from './vaultActions';
 import { NotesView, followLocalLink } from './notes';
 import { NoteView } from './note';
 
@@ -30,7 +29,6 @@ export function App({ client }: { client: ChaWebClient }) {
   const voice = useVoiceInput(client, model.sessionKey, model.draft,
     model.onDraft, model.send, model.voiceBlocked, speech.busy);
   const [expanded, setExpanded] = useState(false);
-  const [vaultBusy, setVaultBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{
     key: string; title: string; message: string;
   } | null>(null);
@@ -71,7 +69,6 @@ export function App({ client }: { client: ChaWebClient }) {
     <div className={`chaweb-app${reading ? ' chaweb-reading-app' : ''}`} style={reading ? undefined : frame}>
       {model.screen === 'list' ? (
         <SessionsView
-          disabled={vaultBusy}
           currentSessionId={model.currentSessionId}
           error={model.listError}
           forumId={model.forumId}
@@ -82,13 +79,6 @@ export function App({ client }: { client: ChaWebClient }) {
           onOpen={model.openSession}
           onRetry={model.listCanRetry ? model.retryList : undefined}
           sessions={model.sessions}
-          vaultActions={<VaultActions
-            blocked={model.vaultBlocked}
-            bootstrap={model.bootstrap}
-            client={client}
-            onBusy={setVaultBusy}
-            onRefresh={model.refreshVault}
-          />}
         />
       ) : model.screen === 'notes' ? (
         <NotesView model={model.notes} listRef={model.noteList} navigate={model.navigate} />
@@ -127,7 +117,6 @@ export function App({ client }: { client: ChaWebClient }) {
           onExpanded={setExpanded}
           onRetry={model.retryConversation ?? undefined}
           onSend={voice.send}
-          onSessions={model.showSessions}
           onStop={model.stop}
           pendingText={model.pendingText}
           personas={model.bootstrap.personas}

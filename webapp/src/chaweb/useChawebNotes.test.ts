@@ -91,31 +91,6 @@ it('loads metadata for a direct annotation, retries explicitly, and never polls'
   expect(getNote).toHaveBeenCalledTimes(2);
 });
 
-it('clears vault state and rejects an in-flight list or note after reset', async () => {
-  const metadata = deferred<NoteItem[]>();
-  const client = { ...createChaWebClient(), listNoteItems: vi.fn(() => metadata.promise) };
-  const route = { kind: 'notes' } as const;
-  const { result } = renderHook(() => useChawebNotes(client, route, async () => undefined));
-  act(() => result.current.reset());
-  await act(async () => metadata.resolve([noteItem()]));
-  expect(result.current.items).toBeNull();
-  expect(result.current.note).toBeNull();
-  expect(result.current.remembered).toBeUndefined();
-});
-
-it('rejects an in-flight document after vault reset even when its numeric ID is reused', async () => {
-  const old = deferred<ChaWebNote>();
-  const client = { ...createChaWebClient(), getNote: vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce(note(1)) };
-  const { result, rerender } = renderHook(({ route }: { route: ChawebNotesRoute | null }) => useChawebNotes(client, route, async () => undefined),
-    { initialProps: { route: { kind: 'note', id: 1 } as ChawebNotesRoute | null } });
-  act(() => result.current.reset());
-  rerender({ route: null });
-  rerender({ route: { kind: 'note', id: 1 } });
-  await waitFor(() => expect(result.current.note?.item.id).toBe(1));
-  await act(async () => old.resolve({ item: noteItem({ name: 'Old vault' }), document: noteDocument(paragraph('Old content')) }));
-  expect(result.current.note?.item.name).toBe('Article');
-});
-
 it('uses bootstrap recovery for a changed vault context without a background retry', async () => {
   const client = { ...createChaWebClient(), getNote: vi.fn(async () => { throw new ChaWebError(409, 'Vault changed', 'vault_changed'); }) };
   const route = { kind: 'note', id: 1 } as const;

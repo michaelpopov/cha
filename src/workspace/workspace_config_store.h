@@ -356,8 +356,7 @@ public:
     void merge(
         const std::filesystem::path& source_database_path,
         const SessionLease& source_lease,
-        std::string_view source_password = {},
-        const std::function<void()>& prepare_source = {});
+        std::string_view source_password = {});
 
     void append_event(EventSeverity severity, std::string_view message);
     [[nodiscard]] std::vector<ActivityEvent> list_events() const;

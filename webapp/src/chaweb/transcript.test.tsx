@@ -199,7 +199,6 @@ it('keeps following the end when the pending area changes size', () => {
         onDraft={() => {}}
         onExpanded={() => {}}
         onSend={() => {}}
-        onSessions={() => {}}
         onStop={() => {}}
         pendingText={pendingText}
         personas={[]}
@@ -237,7 +236,6 @@ it('keeps the editor mounted, focused, and unchanged when the transcript is repl
         onDraft={setDraft}
         onExpanded={() => {}}
         onSend={() => {}}
-        onSessions={() => {}}
         onStop={() => {}}
         personas={[]}
         sessionKey="lobby/planning"

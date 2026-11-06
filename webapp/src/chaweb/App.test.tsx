@@ -84,10 +84,6 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   return {
     listNoteItems: vi.fn(async () => []),
     getNote: vi.fn(),
-    checkVaultUpload: vi.fn(),
-    uploadVault: vi.fn(),
-    downloadVault: vi.fn(),
-    mergeParentVault: vi.fn(),
     getVoiceInputRuntime: vi.fn(async () => null),
     connectVoiceInput: vi.fn(),
     startXaiVoiceInput: vi.fn(),
@@ -98,7 +94,6 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
     startAudio: vi.fn(),
     startAudioBatch: vi.fn(),
     getAudioStatus: vi.fn(async () => ({ cached_entry_ids: [], downloads: [] })),
-    clearAudio: vi.fn(async () => undefined),
     getBootstrap: vi.fn(async () => boot()),
     listSessions: vi.fn(async (forumId: string) => (
       forumId === 'entrance'
@@ -329,131 +324,7 @@ async function showList(api = client()) {
   return api;
 }
 
-function vaultBoot(parent: string | null = 'Parent') {
-  return { ...boot(), vault_parent: parent,
-    capabilities: { can_modify: false, can_transfer_r2: true } };
-}
-
-it('disables Parent merge without a parent and all transfers without R2 storage', async () => {
-  const api = client({ getBootstrap: vi.fn(async () => vaultBoot(null)) });
-  const view = render(<App client={api} />);
-  expect(await screen.findByRole('button', { name: 'Parent merge' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
-  view.unmount();
-  await showList();
-  for (const name of ['Upload', 'Download', 'Parent merge']) {
-    expect(screen.getByRole('button', { name })).toBeDisabled();
-  }
-  expect(screen.queryByRole('button', { name: 'Assistant' })).not.toBeInTheDocument();
-});
-
-it('uploads a matching R2 version immediately and disables navigation during the upload', async () => {
-  const user = userEvent.setup();
-  const check = { etag: 'version', status: 'match' as const, context_epoch: 4 };
-  let finish!: (bytes: number) => void;
-  const api = client({ getBootstrap: vi.fn(async () => vaultBoot()),
-    checkVaultUpload: vi.fn(async () => check),
-    uploadVault: vi.fn(() => new Promise<number>((resolve) => { finish = resolve; })),
-  });
-  await showList(api);
-  await user.click(screen.getByRole('button', { name: 'Upload' }));
-  expect(api.uploadVault).toHaveBeenCalledExactlyOnceWith(check);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'New Session' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Download' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Forum' }).closest('details')).toHaveAttribute('inert');
-  expect(screen.getByRole('status')).toHaveTextContent('Uploading');
-  await act(async () => finish(42));
-  expect(screen.queryByRole('status')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'New Session' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'Forum' }).closest('details')).not.toHaveAttribute('inert');
-});
-
-it.each(['mismatch', 'missing'] as const)('confirms uploads when the R2 version is %s', async (status) => {
-  const user = userEvent.setup();
-  const check = { etag: status === 'missing' ? null : 'changed', status, context_epoch: 4 };
-  const api = client({ getBootstrap: vi.fn(async () => vaultBoot()),
-    checkVaultUpload: vi.fn(async () => check), uploadVault: vi.fn(async () => 42) });
-  await showList(api);
-  await user.click(screen.getByRole('button', { name: 'Upload' }));
-  const dialog = await screen.findByRole('dialog');
-  expect(api.uploadVault).not.toHaveBeenCalled();
-  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-  expect(api.uploadVault).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: 'Upload' }));
-  await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Upload' }));
-  expect(api.uploadVault).toHaveBeenCalledExactlyOnceWith(check);
-});
-
-it.each(['Download', 'Parent merge'])('refreshes the vault and session list after %s', async (name) => {
-  const user = userEvent.setup();
-  let changed = false;
-  const updatedBoot = { ...vaultBoot(), forums: [boot().forums[0], archiveForum] };
-  const api = client({
-    getBootstrap: vi.fn(async () => changed ? updatedBoot : vaultBoot()),
-    listSessions: vi.fn(async () => changed
-      ? [{ id: 'remote', label: 'Remote session', live: false, updated_at: 100 }] : lobbySessions),
-    downloadVault: vi.fn(async () => { changed = true; return 42; }),
-    mergeParentVault: vi.fn(async () => { changed = true; }),
-  });
-  await showList(api);
-  await screen.findByRole('button', { name: /Planning/ });
-  await user.click(screen.getByRole('button', { name }));
-  const dialog = within(await screen.findByRole('dialog'));
-  expect(api.downloadVault).not.toHaveBeenCalled();
-  expect(api.mergeParentVault).not.toHaveBeenCalled();
-  expect(dialog.getByText(/including all local notes and folders/)).toBeInTheDocument();
-  expect(dialog.getByText(/replace .*existing \.bac backup/)).toBeInTheDocument();
-  if (name === 'Parent merge') {
-    expect(dialog.getByText(/Notes and folders in .* stay unchanged/)).toBeInTheDocument();
-    expect(dialog.getByText(/If the merge fails, the downloaded parent remains/)).toBeInTheDocument();
-  }
-  expect(dialog.getByRole('button', { name: 'Cancel' })).toHaveFocus();
-  await user.click(dialog.getByRole('button', { name: 'Cancel' }));
-  expect(api.downloadVault).not.toHaveBeenCalled();
-  expect(api.mergeParentVault).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name })).toHaveFocus();
-  await user.click(screen.getByRole('button', { name }));
-  await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name }));
-  expect(await screen.findByRole('button', { name: /Remote session/ })).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /Planning/ })).not.toBeInTheDocument();
-  expect(api.getBootstrap).toHaveBeenCalledTimes(2);
-  expect(api.listSessions).toHaveBeenLastCalledWith('archive');
-  expect(screen.getByRole('button', { name: 'New Session' })).toBeEnabled();
-});
-
-it('requests the parent password and retries the merge with it', async () => {
-  const user = userEvent.setup();
-  const api = client({ getBootstrap: vi.fn(async () => vaultBoot()),
-    mergeParentVault: vi.fn().mockRejectedValueOnce(
-      new ChaWebError(401, 'Password required.', 'source_vault_password_required'),
-    ).mockResolvedValueOnce(undefined),
-  });
-  await showList(api);
-  await user.click(screen.getByRole('button', { name: 'Parent merge' }));
-  await user.click(within(await screen.findByRole('dialog', { name: 'Download and merge parent?' }))
-    .getByRole('button', { name: 'Parent merge' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Open Parent' });
-  await user.type(within(dialog).getByLabelText('Password'), 'secret');
-  await user.click(within(dialog).getByRole('button', { name: 'Open vault' }));
-  expect(api.mergeParentVault).toHaveBeenLastCalledWith('secret');
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Parent merge' })).toBeEnabled());
-  expect(screen.queryByRole('status')).not.toBeInTheDocument();
-});
-
-it('shows a transfer failure and permits another action', async () => {
-  const user = userEvent.setup();
-  const api = client({ getBootstrap: vi.fn(async () => vaultBoot()),
-    checkVaultUpload: vi.fn(async () => { throw new ChaWebError(400, 'R2 rejected the request.'); }) });
-  await showList(api);
-  await user.click(screen.getByRole('button', { name: 'Upload' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('R2 rejected the request.');
-  expect(api.uploadVault).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
-});
-
-it('shows Welcome in the forum picker and keeps only transfers in the vault actions', async () => {
+it('shows Welcome in the forum picker and lists sessions without vault actions', async () => {
   const user = userEvent.setup();
   const api = await showList();
   const forum = screen.getByRole('button', { name: 'Forum' });
@@ -472,9 +343,7 @@ it('shows Welcome in the forum picker and keeps only transfers in the vault acti
   expect(rows).toHaveLength(2);
   expect(planning).not.toHaveTextContent(/live|generating/i);
   expect(screen.queryByRole('button', { name: 'Welcome' })).not.toBeInTheDocument();
-  const actions = within(screen.getByRole('group', { name: 'Vault actions' })).getAllByRole('button');
-  expect(actions.map((button) => button.getAttribute('aria-label')))
-    .toEqual(['Upload', 'Download', 'Parent merge']);
+  expect(screen.queryByRole('group', { name: 'Vault actions' })).not.toBeInTheDocument();
   expect(api.getSession).not.toHaveBeenCalled();
   expect(api.createSession).not.toHaveBeenCalled();
   expect(api.listSessions).toHaveBeenCalledTimes(1);
@@ -502,7 +371,7 @@ it('opens the current session again and ignores a duplicate history event', asyn
   const api = client();
   render(<App client={api} />);
   await screen.findByRole('textbox', { name: 'Message' });
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   const planning = await screen.findByRole('button', { name: /Planning/ });
   expect(planning).toHaveAttribute('aria-current', 'true');
   await user.click(planning);
@@ -553,7 +422,7 @@ it('loads Welcome navigation without waiting for an ordinary forum', async () =>
   });
   render(<App client={api} />);
   await screen.findByRole('textbox', { name: 'Message' });
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   expect(await screen.findByRole('button', { name: /^Entrance/ })).toHaveAttribute('aria-current', 'true');
   expect(api.listSessions).toHaveBeenCalledWith('entrance');
 });
@@ -693,7 +562,7 @@ it('opens Assistant with the keyboard and reloads bootstrap when its answer is a
   await waitFor(() => expect(getBootstrap.mock.calls.length).toBeGreaterThan(opened));
   expect(api.createSession).not.toHaveBeenCalled();
   expect(api.submitInput).toHaveBeenCalledWith('entrance', 'builtin-welcome', 'Fix it');
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   expect(screen.getByRole('button', { name: 'Forum' })).toHaveTextContent('Welcome');
   expect(await screen.findByRole('button', { name: /^Entrance/ })).toHaveAttribute('aria-current', 'true');
   expect(screen.queryByRole('button', { name: 'New Session' })).not.toBeInTheDocument();
@@ -783,7 +652,7 @@ it('keeps the editor mode and does not submit from the keyboard', async () => {
   expect(api.createSession).not.toHaveBeenCalled();
   expect(api.submitInput).not.toHaveBeenCalled();
   expect(api.stopSession).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   await user.click(await screen.findByRole('button', { name: /Planning/ }));
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Draft');
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveStyle({ height: '306px' });

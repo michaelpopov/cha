@@ -2888,7 +2888,7 @@ WorkspaceConfigApplyResult WorkspaceConfigStore::undo_config(
 void WorkspaceConfigStore::merge(
     const std::filesystem::path& source_database_path,
     const SessionLease& source_lease,
-    std::string_view source_password, const std::function<void()>& prepare_source) {
+    std::string_view source_password) {
     const std::filesystem::path source = normalize_path(source_database_path);
     if (source == database_path()) {
         fail_path(
@@ -2900,7 +2900,6 @@ void WorkspaceConfigStore::merge(
     }
 
     (void)impl_->edit([&](const Workspace& published, WorkspaceConfigEditor& editor) {
-        if (prepare_source) prepare_source();
         const WorkspaceDatabaseState state =
             inspect_workspace_session_database(source, source_password);
         if (state != WorkspaceDatabaseState::valid_v2) {

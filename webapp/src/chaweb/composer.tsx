@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react';
 
-import { CheckIcon, ClearAudioIcon, CopyIcon, ForumsIcon, MicrophoneIcon, PaperPlaneIcon, SpeakerIcon, StopIcon, TrashIcon } from '../components/Icons';
+import { MicrophoneIcon, PaperPlaneIcon, SpeakerIcon, StopIcon, TrashIcon } from '../components/Icons';
 import type { VoiceInput } from './useVoiceInput';
 
 const compactHeight = 56;
@@ -38,16 +38,10 @@ export function Composer({
   expanded,
   onExpanded,
   viewportHeight,
-  onSessions,
   onDelete,
-  onCopy,
-  onClearAudio,
-  clearAudioDisabled,
   onAutomaticAudio,
   automaticAudio = false,
   automaticAudioDisabled,
-  copyDisabled,
-  copied,
   deleteDisabled,
   deleting,
   mode,
@@ -61,16 +55,10 @@ export function Composer({
   expanded: boolean;
   onExpanded(expanded: boolean): void;
   viewportHeight: number;
-  onSessions(): void;
   onDelete(): void;
-  onCopy(): void;
-  onClearAudio?(): void;
-  clearAudioDisabled?: boolean;
   onAutomaticAudio?(): void;
   automaticAudio?: boolean;
   automaticAudioDisabled?: boolean;
-  copyDisabled: boolean;
-  copied: boolean;
   deleteDisabled: boolean;
   deleting: boolean;
   mode: 'send' | 'stop';
@@ -142,11 +130,6 @@ export function Composer({
     toggleExpanded();
   }
 
-  function showSessions() {
-    editorRef.current?.blur();
-    onSessions();
-  }
-
   const commandLabel = mode === 'stop' ? 'Stop' : 'Send';
 
   return (
@@ -188,9 +171,6 @@ export function Composer({
         value={value}
       />
       <div className="chaweb-controls">
-        <button aria-label="Sessions" className="chaweb-icon-button" disabled={deleting} onClick={showSessions} type="button">
-          <ForumsIcon />
-        </button>
         <button
           aria-label="Delete session"
           className="chaweb-icon-button"
@@ -199,16 +179,6 @@ export function Composer({
           type="button"
         >
           <TrashIcon />
-        </button>
-        <button
-          aria-label="Clear audio recordings"
-          title="Clear audio recordings"
-          className="chaweb-icon-button"
-          disabled={deleting || clearAudioDisabled || !onClearAudio}
-          onClick={onClearAudio}
-          type="button"
-        >
-          <ClearAudioIcon />
         </button>
         <button
           aria-label="Auto audio response"
@@ -220,15 +190,6 @@ export function Composer({
           type="button"
         >
           <SpeakerIcon />
-        </button>
-        <button
-          aria-label={copied ? 'Copied conversation' : 'Copy conversation'}
-          className="chaweb-icon-button"
-          disabled={copyDisabled}
-          onClick={onCopy}
-          type="button"
-        >
-          {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
         {voice?.available && (
           <button

@@ -158,7 +158,7 @@ export function Transcript({
                 {canRead && (
                   <button
                     className={`chaweb-read-aloud${cached ? ' is-cached' : downloading ? ' is-downloading' : ''}`}
-                    disabled={deleting || speech.clearing}
+                    disabled={deleting}
                     onClick={() => speech.toggle(entry)}
                     type="button"
                     aria-label={speechLabel}

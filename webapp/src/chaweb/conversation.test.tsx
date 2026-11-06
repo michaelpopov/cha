@@ -9,7 +9,7 @@ afterEach(() => vi.restoreAllMocks());
 const props = {
   characters: [], personas: [], draft: 'Unsent prompt', onDraft: vi.fn(),
   expanded: false, onExpanded: vi.fn(), viewportHeight: 700, sessionKey: 'lobby/planning',
-  onSessions: vi.fn(), onDelete: vi.fn(), deleteDisabled: false, deleting: false,
+  onDelete: vi.fn(), deleteDisabled: false, deleting: false,
   mode: 'send' as const, commandDisabled: false, onSend: vi.fn(), onStop: vi.fn(), notice: null,
   entries: [{
     id: 1, kind: 'human' as const, participant_id: 'reader', display_name: 'Reader',
@@ -22,31 +22,12 @@ const props = {
   }],
 };
 
-// jsdom does not lay out text; the browser check covers the actual innerText.
-function renderedText() {
-  screen.getByLabelText('Conversation transcript').querySelectorAll<HTMLElement>(
-    '.chaweb-speaker, .chaweb-entry-text, .chaweb-entry-status',
-  ).forEach((part) => {
-    Object.defineProperty(part, 'innerText', { configurable: true, value: part.textContent?.trim() });
-  });
-}
-
-it('copies speakers and messages without their timestamps, disables duplicate requests, and confirms success', async () => {
+it('copies individual messages, disables duplicate requests, and confirms success', async () => {
   const user = userEvent.setup();
   let finish!: () => void;
   const writeText = vi.spyOn(navigator.clipboard, 'writeText')
     .mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
   render(<Conversation {...props} />);
-  renderedText();
-  await user.click(screen.getByRole('button', { name: 'Copy conversation' }));
-  expect(writeText).toHaveBeenCalledExactlyOnceWith('Reader\nQuestion\n\nGuide\nReply');
-  expect(document.querySelectorAll('.chaweb-entry-time')).toHaveLength(2);
-  expect(screen.getByRole('button', { name: 'Copy conversation' })).toBeDisabled();
-  await act(async () => finish());
-  expect(screen.getByRole('status')).toHaveTextContent('Copied to clipboard');
-  expect(screen.getByRole('textbox')).toHaveValue('Unsent prompt');
-  expect(props.onSend).not.toHaveBeenCalled();
-
   const copyResponse = screen.getByRole('button', { name: 'Copy response' });
   expect(copyResponse.textContent).toBe('');
   await user.click(copyResponse);
@@ -71,16 +52,6 @@ it('reports a failure and allows retry without changing the prompt', async () =>
   const writeText = vi.spyOn(navigator.clipboard, 'writeText')
     .mockRejectedValueOnce(new Error('Denied')).mockResolvedValue(undefined);
   render(<Conversation {...props} />);
-  renderedText();
-  await user.click(screen.getByRole('button', { name: 'Copy conversation' }));
-  expect(screen.getByRole('alert')).toHaveTextContent('Could not copy the conversation. Try again.');
-  expect(screen.getByRole('textbox')).toHaveValue('Unsent prompt');
-  await user.click(screen.getByRole('button', { name: 'Copy conversation' }));
-  expect(writeText).toHaveBeenCalledTimes(2);
-  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  expect(screen.getByRole('status')).toHaveTextContent('Copied to clipboard');
-
-  writeText.mockRejectedValueOnce(new Error('Denied'));
   await user.click(screen.getByRole('button', { name: 'Copy response' }));
   expect(screen.getByRole('alert')).toHaveTextContent('Could not copy the response. Try again.');
   await user.click(screen.getByRole('button', { name: 'Copy response' }));
@@ -97,11 +68,11 @@ it('reports a failure and allows retry without changing the prompt', async () =>
   expect(screen.getByRole('textbox')).toHaveValue('Unsent prompt');
 });
 
-it('disables copying an empty conversation or one being deleted', () => {
+it('has no message copy controls for an empty conversation and disables them during deletion', () => {
   const { rerender } = render(<Conversation {...props} entries={[]} />);
-  expect(screen.getByRole('button', { name: 'Copy conversation' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Copy response' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Copy prompt' })).not.toBeInTheDocument();
   rerender(<Conversation {...props} deleting />);
-  expect(screen.getByRole('button', { name: 'Copy conversation' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Copy response' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Copy prompt' })).toBeDisabled();
 });

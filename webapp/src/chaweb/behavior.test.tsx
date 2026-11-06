@@ -92,10 +92,6 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   return {
     listNoteItems: vi.fn(async () => []),
     getNote: vi.fn(),
-    checkVaultUpload: vi.fn(),
-    uploadVault: vi.fn(),
-    downloadVault: vi.fn(),
-    mergeParentVault: vi.fn(),
     getVoiceInputRuntime: vi.fn(async () => null),
     connectVoiceInput: vi.fn(),
     startXaiVoiceInput: vi.fn(),
@@ -106,7 +102,6 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
     startAudio: vi.fn(),
     startAudioBatch: vi.fn(),
     getAudioStatus: vi.fn(async () => ({ cached_entry_ids: [], downloads: [] })),
-    clearAudio: vi.fn(async () => undefined),
     getBootstrap: vi.fn(async () => boot()),
     listSessions: vi.fn(async (forumId: string) => (
       forumId === 'archive'
@@ -166,26 +161,6 @@ it('pauses conversation reads in Notes without stopping server generation and re
   expect(screen.getByText('First note')).toBeInTheDocument();
 });
 
-it('clears recordings from the bottom icon button without deleting the session or draft', async () => {
-  const user = userEvent.setup();
-  const cleared = deferred<void>();
-  const api = await openPlanning(client({ clearAudio: vi.fn(() => cleared.promise) }));
-  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Unsent note');
-  const button = screen.getByRole('button', { name: 'Clear audio recordings' });
-  expect(button).toHaveClass('chaweb-icon-button');
-  expect(button.querySelector('svg')).not.toBeNull();
-  expect(button).toHaveTextContent('');
-  await user.click(button);
-  expect(api.clearAudio).toHaveBeenCalledExactlyOnceWith('lobby', 'planning', 'Personal');
-  expect(button).toBeDisabled();
-  await act(async () => cleared.resolve());
-  expect(button).toBeEnabled();
-  expect(screen.getByText('First note')).toBeInTheDocument();
-  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Unsent note');
-  expect(api.deleteSession).not.toHaveBeenCalled();
-  expect(window.location.hash).toContain('/planning');
-});
-
 it('confirms the named session, focuses Cancel, and preserves the conversation on cancellation', async () => {
   const user = userEvent.setup();
   const api = await openPlanning();
@@ -193,8 +168,7 @@ it('confirms the named session, focuses Cancel, and preserves the conversation o
   await user.type(box, 'Unsent note');
   const controls = screen.getByRole('button', { name: 'Delete session' }).parentElement!;
   expect(within(controls).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
-    .toEqual(['Sessions', 'Delete session', 'Clear audio recordings',
-      'Auto audio response', 'Copy conversation', 'Send']);
+    .toEqual(['Delete session', 'Auto audio response', 'Send']);
   await user.click(screen.getByRole('button', { name: 'Delete session' }));
   const dialog = screen.getByRole('dialog', { name: 'Delete session “planning”?' });
   expect(dialog).toHaveTextContent('The unsent prompt will also be discarded.');
@@ -217,7 +191,7 @@ it('returns to the same forum after deletion, clears its URL and draft, and keep
   }));
   await user.click(screen.getByRole('button', { name: 'New Session' }));
   await user.type(screen.getByRole('textbox'), 'Separate new draft');
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   await user.click(await screen.findByRole('button', { name: /Planning/ }));
   await screen.findByText('First note');
   await user.type(screen.getByRole('textbox'), 'Deleted draft');
@@ -225,7 +199,6 @@ it('returns to the same forum after deletion, clears its URL and draft, and keep
   await user.click(screen.getByRole('button', { name: 'Delete' }));
   expect(api.deleteSession).toHaveBeenCalledExactlyOnceWith('lobby', 'planning');
   expect(screen.getByRole('status')).toHaveTextContent('Deleting');
-  expect(screen.getByRole('button', { name: 'Sessions' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Delete session' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   await act(async () => deleted.resolve());
@@ -270,7 +243,7 @@ it('disables deletion for unsent sessions and while input or Stop is pending', a
   }));
   await user.click(screen.getByRole('button', { name: 'New Session' }));
   expect(screen.getByRole('button', { name: 'Delete session' })).toBeDisabled();
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   await user.click(await screen.findByRole('button', { name: /Planning/ }));
   await screen.findByText('First note');
   await user.type(screen.getByRole('textbox'), 'Hello');
@@ -356,14 +329,14 @@ it('keeps one new draft per forum and does not create a session', async () => {
   await user.click(screen.getByRole('button', { name: 'New Session' }));
   expect(window.location.hash).toBe('');
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Lobby draft');
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   await user.click(screen.getByRole('button', { name: 'Forum' }));
   await user.click(screen.getByRole('button', { name: /^Archive / }));
   await user.click(screen.getByRole('button', { name: 'New Session' }));
   const archive = screen.getByRole('textbox', { name: 'Message' });
   expect(archive).toHaveValue('');
   await user.type(archive, 'Archive draft');
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   await user.click(screen.getByRole('button', { name: 'Forum' }));
   await user.click(screen.getByRole('button', { name: /^The Lobby / }));
   await user.click(screen.getByRole('button', { name: 'New Session' }));
@@ -429,15 +402,21 @@ it('follows Back and Forward without a second request for one place', async () =
   await user.click(await screen.findByRole('button', { name: /Planning/ }));
   await screen.findByText('First note');
   expect(api.getSession).toHaveBeenCalledTimes(1);
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   await user.click(await screen.findByRole('button', { name: /Older/ }));
   await screen.findByText('First note');
   expect(api.getSession).toHaveBeenCalledTimes(2);
   expect(api.getSession).toHaveBeenLastCalledWith('lobby', 'older');
 
   await settleHistory(() => window.history.back());
+  expect(screen.getByRole('button', { name: 'Forum' })).toBeInTheDocument();
+  expect(api.getSession).toHaveBeenCalledTimes(2);
+  await settleHistory(() => window.history.back());
   expect(api.getSession).toHaveBeenCalledTimes(3);
   expect(api.getSession).toHaveBeenLastCalledWith('lobby', 'planning');
+  await settleHistory(() => window.history.forward());
+  expect(screen.getByRole('button', { name: 'Forum' })).toBeInTheDocument();
+  expect(api.getSession).toHaveBeenCalledTimes(3);
   await settleHistory(() => window.history.forward());
   expect(api.getSession).toHaveBeenCalledTimes(4);
   expect(api.getSession).toHaveBeenLastCalledWith('lobby', 'older');
@@ -460,7 +439,7 @@ it('associates a late creation with its draft and leaves the other view', async 
   await user.type(box, '@Guide hello');
   await user.click(screen.getByRole('button', { name: 'Send' }));
   fireEvent.change(box, { target: { value: '@Guide hello!' } });
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   await user.click(screen.getByRole('button', { name: 'Forum' }));
   await user.click(screen.getByRole('button', { name: /^Archive / }));
   await user.click(screen.getByRole('button', { name: /Stored/ }));
@@ -478,7 +457,7 @@ it('associates a late creation with its draft and leaves the other view', async 
   expect(archiveBox).toHaveValue('Archive text');
   expect(api.createSession).toHaveBeenCalledTimes(1);
   expect(api.createSession).toHaveBeenCalledWith('lobby', '@Guide hello');
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   await user.click(screen.getByRole('button', { name: 'Forum' }));
   await user.click(screen.getByRole('button', { name: /^The Lobby / }));
   await user.click(await screen.findByRole('button', { name: /Fresh/ }));
@@ -500,7 +479,7 @@ it('keeps a pending input when the reader leaves and returns', async () => {
   const box = screen.getByRole('textbox', { name: 'Message' });
   await user.type(box, 'Still sending');
   await user.click(screen.getByRole('button', { name: 'Send' }));
-  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
   await user.click(screen.getByRole('button', { name: /Planning/ }));
   expect(await screen.findByRole('status')).toHaveTextContent('Sending');
   expect(api.submitInput).toHaveBeenCalledTimes(1);
@@ -687,7 +666,7 @@ it('does not poll a hidden page, the session list, or a new draft', async () => 
   fireEvent.click(screen.getByRole('button', { name: 'New Session' }));
   await act(() => vi.advanceTimersByTimeAsync(3_000));
   expect(api.getSession).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+  fireEvent.click(screen.getByRole('link', { name: 'Chats' }));
   fireEvent.click(screen.getByRole('button', { name: /Planning/ }));
   await act(async () => {
     gates[0].resolve(snapshot('planning', { generation: generation(true) }));
@@ -702,7 +681,7 @@ it('does not poll a hidden page, the session list, or a new draft', async () => 
   fireEvent(document, new Event('visibilitychange'));
   await act(() => vi.advanceTimersByTimeAsync(0));
   expect(api.getSession).toHaveBeenCalledTimes(2);
-  fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+  fireEvent.click(screen.getByRole('link', { name: 'Chats' }));
   await act(() => vi.advanceTimersByTimeAsync(5_000));
   expect(api.getSession).toHaveBeenCalledTimes(2);
 });
@@ -842,7 +821,7 @@ it('does not replay a lost first send when the list has no new row', async () =>
   await act(() => vi.advanceTimersByTimeAsync(30_000));
   expect(api.createSession).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole('button', { name: /Maybe sent/ })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+  fireEvent.click(screen.getByRole('link', { name: 'Chats' }));
   await act(() => vi.advanceTimersByTimeAsync(0));
   expect(screen.queryByRole('button', { name: /fresh/i })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'New Session' }));
@@ -979,7 +958,7 @@ it('keeps first Sends pending independently across forums', async () => {
     fireEvent.click(screen.getByRole('button', { name: 'New Session' }));
     fireEvent.change(screen.getByRole('textbox'), { target: { value: forum } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Chats' }));
   }
   chooseForum('lobby');
   fireEvent.click(screen.getByRole('button', { name: 'New Session' }));
@@ -1004,7 +983,7 @@ it('keeps input and Stop pending independently across sessions', async () => {
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Send once' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Chats' }));
     await act(() => vi.advanceTimersByTimeAsync(0));
   }
   fireEvent.click(screen.getByRole('button', { name: /Planning/ }));
@@ -1057,7 +1036,7 @@ it('does not count a failed list as inspection after an uncertain creation', asy
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Maybe created' } });
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
   await act(() => vi.advanceTimersByTimeAsync(0));
-  fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+  fireEvent.click(screen.getByRole('link', { name: 'Chats' }));
   await act(() => vi.advanceTimersByTimeAsync(0));
   fireEvent.click(screen.getByRole('button', { name: 'New Session' }));
   expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
@@ -1119,7 +1098,7 @@ it('waits for fresh state when reopening the current idle session', async () => 
   render(<App client={api} />);
   await act(() => vi.advanceTimersByTimeAsync(0));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Draft' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+  fireEvent.click(screen.getByRole('link', { name: 'Chats' }));
   await act(() => vi.advanceTimersByTimeAsync(0));
   fireEvent.click(screen.getByRole('button', { name: /Planning/ }));
   expect(screen.getByText('First note')).toBeInTheDocument();
@@ -1162,7 +1141,7 @@ it('preserves edits in a new session opened before creation returns', async () =
   fireEvent.click(screen.getByRole('button', { name: 'New Session' }));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'First input' } });
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+  fireEvent.click(screen.getByRole('link', { name: 'Chats' }));
   await act(() => vi.advanceTimersByTimeAsync(0));
   fireEvent.click(screen.getByRole('button', { name: /Fresh/ }));
   await act(() => vi.advanceTimersByTimeAsync(0));

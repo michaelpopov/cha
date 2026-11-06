@@ -868,22 +868,6 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
     std::string_view source_name,
     std::string password,
     std::uint64_t epoch) {
-    return merge(source_name, std::move(password), epoch, false, {});
-}
-
-MaintenanceResult Application::Impl::VaultMaintenance::merge_parent_vault(
-    std::string password,
-    std::uint64_t epoch,
-    const std::function<bool()>& cancelled) {
-    return merge({}, std::move(password), epoch, true, cancelled);
-}
-
-MaintenanceResult Application::Impl::VaultMaintenance::merge(
-    std::string_view source_name,
-    std::string password,
-    std::uint64_t epoch,
-    bool download_parent,
-    const std::function<bool()>& cancelled) {
     Impl::PendingContextNotice notice;
     MaintenanceResult result;
     try {
@@ -891,13 +875,6 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge(
         app.require_admitted(epoch);
         app.store->require_main();
         const auto current = app.current_vault_.get();
-        if (download_parent) {
-            if (!current.parent) {
-                throw ApplicationError(
-                    ErrorCode::invalid_argument, "The current vault has no parent");
-            }
-            source_name = *current.parent;
-        }
         const VaultDefinition* const source =
             find_vault(app.command.vaults, source_name);
         if (source == nullptr) {
@@ -912,45 +889,20 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge(
         }
 
         VaultDefinition selected = *source;
-        const auto download_storage = download_parent ? app.api_keys->r2() : std::nullopt;
-        if (download_parent && !download_storage) {
-            throw ApplicationError(ErrorCode::invalid_argument, "The current vault has no R2 key");
-        }
         auto source_main = SessionLease::acquire_main(selected.data);
         SessionLease source_lease = SessionLease::acquire(
             selected.data,
             vault_in_use_message);
-        const auto prepare_source = [&] {
-            if (download_parent) {
-                (void)download_database_from_r2(
-                    selected.data, selected.source, *download_storage,
-                    R2DatabaseLease::already_held, password,
-                    [this, &cancelled] {
-                        return app.stopping_flag.load() || (cancelled && cancelled());
-                    });
-                selected = load_vault_definition_file(
-                    app.command.config_directory, selected.source);
-                vault::assign_vault_paths(selected, app.command);
-                for (auto& configured : app.command.vaults) {
-                    if (configured.source == selected.source) configured = selected;
-                }
-                publish_vault_names();
-            }
-            if (selected.password_protected) {
-                require_openable_protected_database(selected.data, password);
-            }
-        };
-
-        if (cancelled && cancelled()) {
-            throw ApplicationError(ErrorCode::operation_cancelled, "Parent merge was cancelled");
-        }
         if (!drain_for_maintenance(notice)) {
             throw std::runtime_error(
                 "Could not pause active sessions for database maintenance");
         }
         bool merged = false;
         try {
-            app.store->merge(selected.data, source_lease, password, prepare_source);
+            if (selected.password_protected) {
+                require_openable_protected_database(selected.data, password);
+            }
+            app.store->merge(selected.data, source_lease, password);
             app.notes->clear_audio_warnings_locked();
             merged = true;
             {
@@ -1043,17 +995,6 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::finish_upload(
         app.command.vault = *configured;
         publish_vault(*configured);
     });
-}
-
-R2DatabaseTransfer Application::Impl::VaultMaintenance::upload_database(
-    std::optional<std::string> expected_etag,
-    std::uint64_t epoch) {
-    const std::string etag = expected_etag.value_or("");
-    VaultDefinition vault;
-    R2StorageKey storage;
-    auto upload = prepare_upload(epoch, vault, storage);
-    return finish_upload(std::move(upload), vault, storage, etag,
-        [this] { return app.stopping_flag.load(); });
 }
 
 // The bridge worker makes the copy. The transfer can take minutes, so it runs

@@ -17,7 +17,6 @@ import {
   isSessionListingArray,
   isSessionSnapshot,
   type Bootstrap,
-  type VaultUploadCheck,
   type CreateSessionResult,
   type SessionListing,
   type SessionSnapshot,
@@ -50,16 +49,11 @@ export function chaWebMessage(failure: unknown, fallback: string): string {
   return fallback;
 }
 
-export type ChaWebBootstrap = Bootstrap & { vault_parent?: string | null };
 export type ChaWebNote = { item: NoteItem; document: NoteContent['document'] };
 
 export interface ChaWebClient {
   listNoteItems(signal?: AbortSignal): Promise<NoteItem[]>;
   getNote(id: number, signal?: AbortSignal): Promise<ChaWebNote>;
-  checkVaultUpload(): Promise<VaultUploadCheck>;
-  uploadVault(check: VaultUploadCheck): Promise<number>;
-  downloadVault(): Promise<number>;
-  mergeParentVault(password?: string): Promise<void>;
   getVoiceInputRuntime(): Promise<NativeVoiceInputRuntime | null>;
   connectVoiceInput(sdp: string, languages: string[], signal: AbortSignal): Promise<string>;
   startXaiVoiceInput(sessionId: string, languages: string[], signal: AbortSignal): Promise<XaiVoiceStartResult>;
@@ -70,8 +64,7 @@ export interface ChaWebClient {
   startAudio(forumId: string, sessionId: string, entryId: number, vaultName: string): Promise<AudioDownloadAcceptance>;
   startAudioBatch(forumId: string, sessionId: string, entryIds: number[], vaultName: string): Promise<AudioDownloadBatchAcceptance>;
   getAudioStatus(forumId: string, sessionId: string): Promise<AudioDownloadStatus>;
-  clearAudio(forumId: string, sessionId: string, vaultName: string): Promise<void>;
-  getBootstrap(): Promise<ChaWebBootstrap>;
+  getBootstrap(): Promise<Bootstrap>;
   listSessions(forumId: string): Promise<SessionListing[]>;
   createSession(forumId: string, text: string): Promise<CreateSessionResult>;
   getSession(forumId: string, sessionId: string): Promise<SessionSnapshot>;
@@ -169,11 +162,6 @@ async function readGuarded<T>(
   return payload;
 }
 
-function isVaultTransfer(value: unknown): value is { byte_count: number } {
-  return isRecord(value) && Number.isSafeInteger(value.byte_count)
-    && (value.byte_count as number) >= 0;
-}
-
 export function createChaWebClient(): ChaWebClient {
   return {
     async listNoteItems(signal) {
@@ -188,35 +176,6 @@ export function createChaWebClient(): ChaWebClient {
           isRecord(value) && Object.keys(value).length === 2 && isNoteItem(value.item)
           && value.item.id === id && value.item.kind !== 'folder' && isRecord(value.document)
         )), undefined, signal);
-    },
-    async checkVaultUpload() {
-      return exchange('POST', `${API}/vault/upload-check`, 200,
-        (response) => readGuarded(response,
-          (value): value is VaultUploadCheck => isRecord(value)
-            && (value.etag === null || typeof value.etag === 'string')
-            && ['match', 'mismatch', 'missing'].includes(value.status as string)
-            && Number.isSafeInteger(value.context_epoch) && (value.context_epoch as number) > 0), {});
-    },
-
-    async uploadVault(check) {
-      const result = await exchange('POST', `${API}/vault/upload`, 200,
-        (response) => readGuarded(response, isVaultTransfer),
-        { etag: check.etag, context_epoch: check.context_epoch });
-      return result.byte_count;
-    },
-
-    async downloadVault() {
-      const result = await exchange('POST', `${API}/vault/download`, 200,
-        (response) => readGuarded(response, isVaultTransfer), {});
-      return result.byte_count;
-    },
-
-    async mergeParentVault(password) {
-      await exchange('POST', `${API}/vault/merge-parent`, 200,
-        (response) => readGuarded(response,
-          (value): value is { context_epoch: number } => isRecord(value)
-            && Number.isSafeInteger(value.context_epoch) && (value.context_epoch as number) > 0),
-        password ? { password } : {});
     },
     async getVoiceInputRuntime() {
       return exchange('GET', `${API}/voice-input`, 200,
@@ -284,19 +243,11 @@ export function createChaWebClient(): ChaWebClient {
         { vault_name: vaultName, entry_ids: entryIds });
     },
 
-    async clearAudio(forumId, sessionId, vaultName) {
-      await exchange('DELETE', `${sessionPath(forumId, sessionId)}/audio`, 204,
-        async () => undefined, { vault_name: vaultName });
-    },
-
     async getBootstrap() {
       return exchange('GET', `${API}/bootstrap`, 200, async (response) => {
         const payload = await readJson(response);
         try {
-          const bootstrap = validateBootstrap(payload) as ChaWebBootstrap;
-          if (bootstrap.vault_parent !== undefined && bootstrap.vault_parent !== null
-              && typeof bootstrap.vault_parent !== 'string') throw new ChaProtocolError();
-          return bootstrap;
+          return validateBootstrap(payload);
         } catch {
           throw new ChaProtocolError();
         }

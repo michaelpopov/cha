@@ -1726,22 +1726,8 @@ MaintenanceResult Application::merge_vault(
         source_name, std::move(password), epoch);
 }
 
-MaintenanceResult Application::merge_parent_vault(
-    std::string password,
-    std::uint64_t epoch,
-    const std::function<bool()>& cancelled) {
-    return impl_->vault_maintenance.merge_parent_vault(std::move(password), epoch, cancelled);
-}
-
 R2UploadCheck Application::check_database_upload(std::uint64_t epoch) const {
     return impl_->vault_maintenance.check_database_upload(epoch);
-}
-
-R2DatabaseTransfer Application::upload_database(
-    std::optional<std::string> expected_etag,
-    std::uint64_t epoch) {
-    return impl_->vault_maintenance.upload_database(
-        std::move(expected_etag), epoch);
 }
 
 std::shared_ptr<OperationReply> Application::start_database_upload(

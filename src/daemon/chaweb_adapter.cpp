@@ -2,7 +2,6 @@
 
 #include "app/current_vault.h"
 #include "app/media_operations.h"
-#include "app/r2_database_transfer.h"
 #include "bridge/bridge_protocol.h"
 #include "storage/session_lease.h"
 #include "util/logging.h"
@@ -171,10 +170,6 @@ enum class Route {
     stop,
     audio_status,
     entry_audio,
-    merge_parent,
-    upload_check,
-    upload,
-    download,
 };
 
 struct ParsedRoute {
@@ -217,13 +212,6 @@ ParsedRoute parse_route(std::string_view uri) {
     if (first == "bootstrap") {
         if (!rest.empty()) return {};
         return {.route = Route::bootstrap};
-    }
-    if (first == "vault") {
-        if (rest == "merge-parent") return {.route = Route::merge_parent};
-        if (rest == "upload-check") return {.route = Route::upload_check};
-        if (rest == "upload") return {.route = Route::upload};
-        if (rest == "download") return {.route = Route::download};
-        return {};
     }
     if (first == "voice-output") {
         if (!rest.empty()) return {};
@@ -472,12 +460,7 @@ void serve_bootstrap(
         write_code(fd, ErrorCode::application_unavailable, stop);
         return;
     }
-    nlohmann::json body = boot.presentation;
-    const auto parent = application.current_vault().get().parent;
-    body["vault_parent"] = parent ? nlohmann::json(*parent) : nlohmann::json(nullptr);
-    body["capabilities"] = {{"can_modify", boot.capabilities.can_modify},
-        {"can_transfer_r2", boot.capabilities.can_transfer_r2}};
-    write_json(fd, 200, body, stop);
+    write_json(fd, 200, boot.presentation, stop);
 }
 
 void serve_list(
@@ -501,11 +484,11 @@ void serve_audio(
         write_code(fd, *error, stop);
         return;
     }
-    if (request.method == "POST" || request.method == "DELETE") {
+    if (request.method == "POST") {
         if (!require_json_body(request, fd, stop)) return;
         const auto body = parse_object(request.body, fd, stop);
         if (!body) return;
-        if (request.method == "POST" && route.route == Route::audio_status) {
+        if (route.route == Route::audio_status) {
             if (body->size() != 2 || !body->contains("vault_name")
                 || !body->at("vault_name").is_string() || !body->contains("entry_ids")
                 || !body->at("entry_ids").is_array() || body->at("entry_ids").empty()) {
@@ -534,15 +517,6 @@ void serve_audio(
         if (body->size() != 1 || !body->contains("vault_name")
             || !body->at("vault_name").is_string()) {
             write_code(fd, ErrorCode::invalid_argument, stop);
-            return;
-        }
-        if (request.method == "DELETE") {
-            if (body->at("vault_name").get<std::string>() != application.current_vault().get().name) {
-                write_code(fd, ErrorCode::vault_changed, stop);
-                return;
-            }
-            application.clear_audio_cache(route.forum_id, route.session_id, epoch);
-            write_cgi(fd, 204, {}, {}, stop);
             return;
         }
         const auto accepted = application.start_audio(
@@ -776,65 +750,6 @@ void handle_chaweb_request(
             }
             return;
         }
-        if (request.method == "POST" && (route.route == Route::upload_check
-                || route.route == Route::upload || route.route == Route::download)) {
-            if (!require_json_body(request, fd, stop)) return;
-            const auto body = parse_object(request.body, fd, stop);
-            if (!body) return;
-            const auto epoch = application.context_epoch();
-            if (route.route == Route::upload) {
-                if (body->size() != 2 || !body->contains("etag")
-                    || !(body->at("etag").is_null() || body->at("etag").is_string())
-                    || !body->contains("context_epoch")
-                    || !body->at("context_epoch").is_number_unsigned()) {
-                    write_code(fd, ErrorCode::invalid_argument, stop);
-                    return;
-                }
-                const auto expected_etag = body->at("etag").is_null()
-                    ? std::optional<std::string>{}
-                    : std::optional<std::string>{body->at("etag").get<std::string>()};
-                const auto transferred = application.upload_database(
-                    expected_etag, body->at("context_epoch").get<std::uint64_t>());
-                write_json(fd, 200, {{"byte_count", transferred.byte_count}}, stop);
-            } else {
-                if (!body->empty()) {
-                    write_code(fd, ErrorCode::invalid_argument, stop);
-                    return;
-                }
-                if (route.route == Route::upload_check) {
-                    const auto check = application.check_database_upload(epoch);
-                    write_json(fd, 200, {
-                        {"etag", check.etag ? nlohmann::json(*check.etag) : nlohmann::json(nullptr)},
-                        {"status", check.status == R2EtagStatus::match ? "match"
-                            : check.status == R2EtagStatus::mismatch ? "mismatch" : "missing"},
-                        {"context_epoch", epoch}}, stop);
-                } else {
-                    const auto transferred = application.download_database(epoch);
-                    write_json(fd, 200, {{"byte_count", transferred.byte_count}}, stop);
-                }
-            }
-            return;
-        }
-        if (request.method == "POST" && route.route == Route::merge_parent) {
-            if (!require_json_body(request, fd, stop)) return;
-            const auto body = parse_object(request.body, fd, stop);
-            if (!body) return;
-            if (body->size() > 1 || (!body->empty()
-                && (!body->contains("password") || !body->at("password").is_string()))) {
-                write_code(fd, ErrorCode::invalid_argument, stop);
-                return;
-            }
-            try {
-                const auto merged = application.merge_parent_vault(
-                    body->value("password", std::string{}), application.context_epoch(),
-                    [&stop] { return stop.load(); });
-                write_json(fd, 200, {{"context_epoch", merged.context_epoch}}, stop);
-            } catch (const app::ApplicationError& error) {
-                if (error.code != ErrorCode::invalid_argument) throw;
-                write_code(fd, error.code, stop, error.what());
-            }
-            return;
-        }
         if (request.method == "GET" && route.route == Route::bootstrap) {
             serve_bootstrap(application, fd, stop);
             return;
@@ -859,8 +774,7 @@ void handle_chaweb_request(
         if ((request.method == "GET"
                 && (route.route == Route::audio_status || route.route == Route::entry_audio))
             || (request.method == "POST"
-                && (route.route == Route::entry_audio || route.route == Route::audio_status))
-            || (request.method == "DELETE" && route.route == Route::audio_status)) {
+                && (route.route == Route::entry_audio || route.route == Route::audio_status))) {
             serve_audio(application, request, route, fd, stop);
             return;
         }
@@ -900,14 +814,9 @@ void handle_chaweb_request(
         write_code(fd, ErrorCode::invalid_argument, stop);
     } catch (const UnknownVaultError&) {
         write_code(fd, ErrorCode::not_found, stop);
-    } catch (const VaultPasswordError&) {
-        write_error(fd, 401, error_body(ErrorCode::source_vault_password_required), stop);
     } catch (const WorkspaceRestartRequiredError& error) {
         log_error(error.what());
         write_code(fd, ErrorCode::application_unavailable, stop);
-    } catch (const R2HttpStatusError& error) {
-        log_error(error.what());
-        write_code(fd, ErrorCode::invalid_argument, stop, error.what());
     } catch (const std::exception& error) {
         log_error(error.what());
         write_code(fd, ErrorCode::internal_error, stop);
