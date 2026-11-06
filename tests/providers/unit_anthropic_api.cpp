@@ -63,7 +63,7 @@ TEST(AnthropicApi, ConfigurationAndCustomEndpointsIgnoreUnusedValues) {
     config.temperature = std::numeric_limits<double>::quiet_NaN();
     config.reasoning_effort = "obsolete";
     config.openrouter_targets = {"bad target", "bad target"};
-    config.web_search = WebSearchMode::required;
+    config.web_search = WebSearchMode::automatic;
     EXPECT_FALSE(provider_config_error(config));
     EXPECT_TRUE(provider_supports_reasoning_effort(config, config.api));
     config.host = "openrouter.ai";
@@ -87,7 +87,7 @@ TEST(AnthropicApi, ProjectsHistoryAndTranslatesTheCompleteSharedToolCatalog) {
     };
     ModelBackendConfig config{.model = "claude-test", .temperature = 0.5,
         .reasoning_effort = "high", .api = ProviderApi::anthropic,
-        .web_search = WebSearchMode::required, .openrouter_targets = {"ignored"}};
+        .web_search = WebSearchMode::automatic, .openrouter_targets = {"ignored"}};
     RequestTextSizes sizes;
     auto body = Json::parse(build_anthropic_request_body(request, config, "System prompt", &sizes));
     const auto projected = project_model_context(request, "System prompt");

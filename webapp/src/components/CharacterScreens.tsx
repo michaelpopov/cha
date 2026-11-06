@@ -563,7 +563,6 @@ export function CharacterSettingsScreen({
               <option value="">Provider default</option>
               <option value="off">Off</option>
               <option value="auto">Automatic</option>
-              <option value="required">Required</option>
             </select>
           </label>
           <label htmlFor="cha-character-web-search-tool">On-demand web search

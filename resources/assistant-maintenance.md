@@ -133,7 +133,9 @@ Unusable search overrides warn and are omitted from effective configuration:
 a providerless character cannot apply one, and an enabled override cannot apply
 to an unsupported provider. Saved source remains intact and can become applicable
 after provider reassignment. An explicit off still applies with any provider.
-Provider-hosted search and CHA's on-demand search are separate controls.
+Provider-hosted search supports `off` and `auto` (Automatic). Automatic lets the
+model choose whether to search. Legacy `required` values load as `auto` with a
+warning. Provider-hosted search and CHA's on-demand search are separate controls.
 `web_search_tool` inherits the workspace `tool_enabled` when omitted; an
 explicit `false` also disables page reading, including in Welcome.
 Firecrawl page reading can otherwise be available while on-demand search is
@@ -147,8 +149,7 @@ Saved conversation summary search and reading are automatically available in the
 current persistent forum, including ordinary built-in Assistant requests. There is
 no character setting for them. Web controls, including `web_search_tool = false`,
 do not disable summary access. Welcome, maintenance, and auxiliary requests cannot
-use these tools. Required effective provider-hosted web search excludes them
-throughout the generation, as does Gemini 2.5's File Search-only branch. The model
+use these tools. Gemini 2.5's native File Search-only branch omits them. The model
 must support function calls. Provider errors do not trigger capability guessing or
 retries; select a compatible model if the endpoint rejects function tools.
 
@@ -204,9 +205,16 @@ through the host's OAuth owner. Keep host repair separate from vault configurati
 An attached note is a copy in the chat. It uses compressed text when present,
 and later edits are picked up by adding the note again in the chat.
 
-A Forum Library gives native File Search to characters whose effective provider
-uses the Library's saved API key. A Forum default provider replaces the model
-for all characters. Attached folders do not give search access.
+A Forum Library gives native File Search to compatible direct OpenAI or Gemini
+connections using the same saved Library key. Other function-capable chat
+connections use `library_search` to retrieve source excerpts with the Library's
+key while the selected character model writes the answer. Gemini retrieval uses
+a fixed helper model and the Library account's API usage. Results are bounded
+excerpts, not complete files. Library retrieval and Automatic web search can be
+used together; web settings do not disable Library access. Welcome maintenance
+and auxiliary requests do not receive Library tools. A Forum default provider
+replaces the model for all characters; leave it unset to use different character
+providers. Attached folders do not give search access.
 
 ## Writing prompt content
 

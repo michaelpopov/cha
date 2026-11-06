@@ -212,7 +212,7 @@ export interface components {
             /** @enum {string} */
             auth: "none" | "openai_subscription";
             /** @enum {string} */
-            web_search: "off" | "auto" | "required";
+            web_search: "off" | "auto";
             /** @enum {string} */
             cache_retention: "off" | "short" | "long";
             openrouter_targets?: string[];
@@ -242,7 +242,7 @@ export interface components {
             /** @enum {string} */
             auth: "none" | "openai_subscription";
             /** @enum {string} */
-            web_search: "off" | "auto" | "required";
+            web_search: "off" | "auto";
             /** @enum {string} */
             cache_retention: "off" | "short" | "long";
             openrouter_targets: string[];
@@ -496,7 +496,7 @@ export interface components {
             /** @enum {string|null} */
             reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | null;
             /** @enum {string|null} */
-            web_search: "off" | "auto" | "required" | null;
+            web_search: "off" | "auto" | null;
             web_search_tool: boolean | null;
             available_providers: components["schemas"]["ProviderOption"][];
             available_styles: components["schemas"]["StyleOption"][];
@@ -530,7 +530,7 @@ export interface components {
             /** @enum {string|null} */
             reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | null;
             /** @enum {string|null} */
-            web_search: "off" | "auto" | "required" | null;
+            web_search: "off" | "auto" | null;
             web_search_tool: boolean | null;
         };
         UpdateCharacterDefinitionRequest: {

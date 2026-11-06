@@ -362,10 +362,10 @@ protected:
         providers->shutdown();
         auto naming_provider_config = store->snapshot()->find_provider("query")->config;
         naming_provider_config.reasoning_effort = "high";
-        naming_provider_config.web_search = WebSearchMode::required;
+        naming_provider_config.web_search = WebSearchMode::automatic;
         store->apply_provider_update("query", "Query", naming_provider_config);
         store->apply_character_settings(workspace_assistant_id, "query",
-            std::nullopt, std::nullopt, "high", WebSearchMode::required, true);
+            std::nullopt, std::nullopt, "high", WebSearchMode::automatic, true);
         providers = std::make_shared<Providers>(naming_factory(),
             [this](auto worker) { workers.push_back(std::move(worker)); },
             [this](const auto& input, const auto&) { classified.push_back(input); return decision; });

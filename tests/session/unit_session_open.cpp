@@ -461,12 +461,13 @@ TEST_F(ForumLibraryTest, MissingAndEmptyCatalogueDoNotDisableNativeSearch) {
     }
 }
 
-TEST_F(ForumLibraryTest, IncompatibleProviderEndpointsAndKeyIdentitiesHaveNoCatalogue) {
+TEST_F(ForumLibraryTest, IncompatibleProviderEndpointsAndKeyIdentitiesGetApplicationScope) {
     library({"vs_a"});
     auto c = controller(identity);
     for (int variant = 0; variant < 6; ++variant) {
         auto incompatible = config;
         incompatible.web_search = WebSearchMode::off;
+        incompatible.timeout_s = 47;
         switch (variant) {
         case 0: incompatible.api_key_id = "api_key_3"; break;
         case 1: incompatible.host = "proxy.example.com"; break;
@@ -478,7 +479,13 @@ TEST_F(ForumLibraryTest, IncompatibleProviderEndpointsAndKeyIdentitiesHaveNoCata
         (void)store_->apply_provider_update("test", "Incompatible", incompatible);
         send(*c);
         EXPECT_TRUE(requests.back().library_store_ids.empty());
-        EXPECT_EQ(definitions.back()->system_prompt.find("Forum Library catalogue"), std::string::npos);
+        ASSERT_TRUE(requests.back().library_search);
+        const auto& scope = *requests.back().library_search;
+        EXPECT_EQ(scope.service, "openai");
+        EXPECT_EQ(scope.store_ids, (std::vector<std::string>{"vs_a"}));
+        EXPECT_EQ(scope.key, "same-secret");
+        EXPECT_EQ(scope.timeout_s, 47);
+        EXPECT_NE(definitions.back()->system_prompt.find("Forum Library catalogue"), std::string::npos);
     }
 }
 
@@ -491,7 +498,10 @@ TEST_F(ForumLibraryTest, MixedMulticastAndAssistantUseNativeLibraryWithoutAttach
         EXPECT_EQ(request.library_store_ids, request.run.target.id == "writer"
             ? std::vector<std::string>{} : (std::vector<std::string>{"vs_a", "vs_b"}));
     }
-    EXPECT_NE(log().find("Effective provider cannot use the Library key"), std::string::npos);
+    EXPECT_TRUE(requests.back().library_search);
+    EXPECT_EQ(requests.back().library_search->service, "openai");
+    for (const auto& request : requests)
+        EXPECT_EQ(bool(request.library_search), request.run.target.id == "writer");
     EXPECT_EQ(log().find("same-secret"), std::string::npos);
     const auto other = sessions_->create("other", "Isolated").identity;
     auto second = controller(other);
@@ -534,7 +544,8 @@ TEST_F(ForumLibraryTest, DefaultMasksSessionChoicesAndPreservesEffortAndCharacte
     send(*c);
     EXPECT_EQ(definitions.back()->provider.id, google_provider);
     EXPECT_TRUE(requests.back().library_store_ids.empty());
-    EXPECT_EQ(definitions.back()->system_prompt.find("Forum Library catalogue"), std::string::npos);
+    ASSERT_TRUE(requests.back().library_search);
+    EXPECT_NE(definitions.back()->system_prompt.find("Forum Library catalogue"), std::string::npos);
     library({"fileSearchStores/one", "fileSearchStores/two"}, google_provider, "api_key_2");
     send(*c, "*");
     for (std::size_t i = requests.size() - 3; i < requests.size(); ++i) {
@@ -629,6 +640,44 @@ TEST_F(ForumLibraryTest, AllChildrenAndPreparedRepliesRetainTheirStartingRevisio
     EXPECT_EQ(requests.back().library_store_ids, (std::vector<std::string>{"fileSearchStores/new"}));
 }
 
+
+TEST_F(ForumLibraryTest, ApplicationScopeOwnsOriginalCredentialsAndFreshGenerationSeesEdits) {
+    library({"vs_original"});
+    auto c = controller(identity);
+    defer = true;
+    ASSERT_TRUE(c->submit_prompt(workspace_guest_id, "Question", "Writer").input_consumed);
+    ASSERT_EQ(pending.size(), 1u);
+    (void)store_->apply_api_key_update("api_key_1", "OpenAI", "new-secret", "openai");
+    library({"vs_changed"});
+    pending.front()();
+    pending.clear();
+    drain(*c);
+    ASSERT_TRUE(requests.back().library_search);
+    EXPECT_EQ(requests.back().library_search->key, "same-secret");
+    EXPECT_EQ(requests.back().library_search->store_ids, (std::vector<std::string>{"vs_original"}));
+    defer = false;
+    send(*c, "Writer");
+    ASSERT_TRUE(requests.back().library_search);
+    EXPECT_EQ(requests.back().library_search->key, "new-secret");
+    EXPECT_EQ(requests.back().library_search->store_ids, (std::vector<std::string>{"vs_changed"}));
+    EXPECT_EQ(requests.front().library_search->key, "same-secret");
+}
+
+TEST_F(ForumLibraryTest, ApplicationRouteCoversGoogleLibraryAndSkipsTestBackend) {
+    library({"fileSearchStores/a"}, {}, "api_key_2");
+    auto c = controller(identity);
+    send(*c);
+    EXPECT_TRUE(requests.back().library_store_ids.empty());
+    ASSERT_TRUE(requests.back().library_search);
+    EXPECT_EQ(requests.back().library_search->service, "google");
+    EXPECT_EQ(requests.back().library_search->store_ids, (std::vector<std::string>{"fileSearchStores/a"}));
+    config.mode = Mode::test;
+    (void)store_->apply_provider_update("test", "Test", config);
+    send(*c);
+    EXPECT_TRUE(requests.back().library_store_ids.empty());
+    EXPECT_FALSE(requests.back().library_search);
+}
+
 TEST_F(ForumLibraryTest, NamingAndProviderFailureKeepExistingBoundaries) {
     library({"fileSearchStores/one"}, google_provider, "api_key_2");
     auto c = controller(identity);
@@ -639,6 +688,8 @@ TEST_F(ForumLibraryTest, NamingAndProviderFailureKeepExistingBoundaries) {
     EXPECT_EQ(requests[0].library_store_ids, (std::vector<std::string>{"fileSearchStores/one"}));
     EXPECT_EQ(definitions[0]->provider.id, google_provider);
     EXPECT_TRUE(requests[1].library_store_ids.empty());
+    EXPECT_FALSE(requests[1].library_search);
+    EXPECT_FALSE(requests[1].library_search_tool);
     EXPECT_EQ(definitions[1]->system_prompt.find("Forum Library catalogue"), std::string::npos);
     EXPECT_EQ(definitions[1]->provider.config.model, store_->snapshot()->find_provider("test")->config.model);
     const auto& entries = c->view().transcript.entries;
@@ -686,6 +737,8 @@ TEST_F(SessionOpenTest, WelcomeMaintenanceSkipsLibraryAndAttachUsesTheActiveVaul
     ASSERT_EQ(requests.size(), 1u);
     EXPECT_TRUE(requests[0].maintenance_tool);
     EXPECT_TRUE(requests[0].library_store_ids.empty());
+    EXPECT_FALSE(requests[0].library_search);
+    EXPECT_FALSE(requests[0].library_search_tool);
 }
 
 

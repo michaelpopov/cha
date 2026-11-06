@@ -43,7 +43,7 @@ TEST(GoogleApi, NativeConfigurationAndEndpoints) {
     EXPECT_EQ(provider_endpoint(config), "http://[::1]:8080/v1beta/models/gemini-test:generateContent");
     config.reasoning_effort = "obsolete";
     config.openrouter_targets = {"bad target", "bad target"};
-    config.web_search = WebSearchMode::required;
+    config.web_search = WebSearchMode::automatic;
     EXPECT_FALSE(provider_config_error(config));
     EXPECT_TRUE(provider_supports_reasoning_effort(config, config.api));
     EXPECT_FALSE(provider_supports_web_search(config));
@@ -68,7 +68,7 @@ TEST(GoogleApi, EncodesProjectedHistoryOptionsAndSharedTools) {
     };
     ModelBackendConfig config{.model = "gemini", .temperature = 0.5, .max_tokens = 123,
         .reasoning_effort = "high", .api = ProviderApi::google,
-        .web_search = WebSearchMode::required, .openrouter_targets = {"ignored"}};
+        .web_search = WebSearchMode::automatic, .openrouter_targets = {"ignored"}};
     RequestTextSizes sizes;
     const auto body = Json::parse(build_google_request_body(request, config, "System prompt", &sizes));
     const auto projected = project_model_context(request, "System prompt");

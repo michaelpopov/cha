@@ -214,7 +214,7 @@ TEST(ApplicationSettings, SavesCharacterWhenNewProviderCannotUseSearchOverride) 
         {.display_name = "Muller", .elevenlabs_voice_id = "muller"}, epoch);
     ASSERT_NO_THROW((void)application->get_provider("fireworks", epoch));
 
-    for (const auto search : {WebSearchMode::automatic, WebSearchMode::required}) {
+    for (const auto search : {WebSearchMode::automatic}) {
         // Switching providers keeps the previous search selection in the form.
         const auto original = application->update_character("guide",
             {.provider = "test", .web_search = search}, epoch);

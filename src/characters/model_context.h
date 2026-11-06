@@ -22,6 +22,17 @@ using SharedModelHistory = std::shared_ptr<const ModelHistory>;
 using WebReadTool = std::function<std::string(std::string_view, const std::atomic_bool&,
     const std::function<void()>&)>;
 
+// Immutable Library credentials and scope for one ordinary generation.
+struct LibrarySearchScope {
+    std::string service;
+    std::vector<std::string> store_ids;
+    std::string key;
+    int timeout_s{};
+};
+
+using LibrarySearchTool = std::function<std::string(
+    std::string_view, const std::atomic_bool&)>;
+
 using SummaryTool = std::function<std::string(
     std::string_view, std::string_view, const std::atomic_bool&)>;
 
@@ -55,8 +66,10 @@ struct GenerationRequest {
         std::string_view, std::string_view, const std::atomic_bool&)> maintenance_tool;
     // Auxiliary requests such as session naming do not need conversation tool rules.
     bool include_tool_instructions{true};
-    // Native File Search store IDs for this provider. Empty means no Library.
+    // Native File Search store IDs. Empty for application retrieval.
     std::vector<std::string> library_store_ids;
+    std::optional<LibrarySearchScope> library_search;
+    LibrarySearchTool library_search_tool;
 };
 
 enum class ModelRole {

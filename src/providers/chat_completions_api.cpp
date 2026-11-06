@@ -135,6 +135,8 @@ std::string build_chat_completions_request_body(
     const ModelBackendConfig& config,
     std::string_view system_prompt,
     RequestTextSizes* text_sizes) {
+    if (!input.library_store_ids.empty() && (input.library_search || input.library_search_tool))
+        throw std::logic_error("Native and application Library retrieval cannot be combined");
     if (text_sizes) *text_sizes = {};
     Json messages = Json::array();
     for (const ModelMessage& message :
@@ -194,9 +196,7 @@ std::string build_chat_completions_request_body(
         body["tools"] = Json::array({
             Json{{"type", "openrouter:web_search"}},
         });
-        body["tool_choice"] = config.web_search == WebSearchMode::required
-            ? "required"
-            : "auto";
+        body["tool_choice"] = "auto";
     }
     if (!input.run.prompt_cache_key.empty()
         && config.cache_retention != CacheRetention::off) {
@@ -211,6 +211,8 @@ std::string build_chat_completions_request_body(
     if (input.web_search_tool) add_web_search_tool(body, config.api);
     if (input.web_read_tool) add_web_read_tool(body, config.api);
     if (!input.maintenance_tool && input.summary_tool) add_summary_tools(body, config.api);
+    if (!input.maintenance_tool && input.library_search_tool && input.library_store_ids.empty())
+        add_library_search_tool(body, config.api);
     if (input.include_tool_instructions) update_tool_instructions(body, config.api, text_sizes, input.summary_context);
     return dump_json(body, "Model request");
 }
@@ -270,6 +272,11 @@ void ChatCompletionsStreamDecoder::accumulate_delta(const Json& delta) {
             if (!message_.contains(field)) message_[field] = "";
             message_[field].get_ref<std::string&>() += delta[field].get<std::string>();
         }
+    }
+    if (delta.contains("annotations") && delta["annotations"].is_array()) {
+        auto& annotations = message_["annotations"];
+        if (annotations.is_null()) annotations = Json::array();
+        for (const auto& annotation : delta["annotations"]) annotations.push_back(annotation);
     }
     if (delta.contains("reasoning_details") && delta["reasoning_details"].is_array()) {
         auto& details = message_["reasoning_details"];

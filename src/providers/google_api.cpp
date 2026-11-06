@@ -28,6 +28,8 @@ bool google_file_search_only_model(std::string_view model) {
 std::string build_google_request_body(
     const GenerationRequest& input, const ModelBackendConfig& config,
     std::string_view system_prompt, RequestTextSizes* text_sizes) {
+    if (!input.library_store_ids.empty() && (input.library_search || input.library_search_tool))
+        throw std::logic_error("Native and application Library retrieval cannot be combined");
     if (text_sizes) *text_sizes = {};
     Json body{{"contents", Json::array()}};
     for (const auto& message : project_model_context(input, system_prompt)) {
@@ -71,6 +73,7 @@ std::string build_google_request_body(
             if (input.web_search_tool) add_web_search_tool(body, ProviderApi::google);
             if (input.web_read_tool) add_web_read_tool(body, ProviderApi::google);
             if (input.summary_tool) add_summary_tools(body, ProviderApi::google);
+            if (input.library_search_tool) add_library_search_tool(body, ProviderApi::google);
         }
         if (stores) {
             if (!body.contains("tools")) body["tools"] = Json::array();

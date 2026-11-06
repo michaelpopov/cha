@@ -1,5 +1,6 @@
 #include "providers/providers.h"
 
+#include "providers/folder_store_client.h"
 #include "util/logging.h"
 
 #include <algorithm>
@@ -165,6 +166,7 @@ void ProviderRequest::execute(
             + operation_fields("web_search", statistics.web_search)
             + operation_fields("web_read", statistics.web_read)
             + operation_fields("summary", statistics.summary)
+            + operation_fields("library_search", statistics.library_search)
             + operation_fields("maintenance", statistics.maintenance)
             + " tool_calls_requested=" + std::to_string(statistics.tool_calls_requested)
             + " tool_calls_rejected=" + std::to_string(statistics.tool_calls_rejected)
@@ -251,6 +253,12 @@ void ProviderRequest::execute(
                     mark_web_used();
                 }
                 return result;
+            };
+        }
+        if (generation.library_search) {
+            generation.library_search_tool = [scope = *generation.library_search](
+                std::string_view query, const std::atomic_bool& cancelled) {
+                return FolderStoreClient{}.search_library(scope, query, cancelled);
             };
         }
         if (input_.summary_context_loader) {

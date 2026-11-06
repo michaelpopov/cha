@@ -96,7 +96,6 @@ TEST(ResponsesApi, BuildsRequestFieldsAndMapsRoles) {
     };
     const Case cases[]{
         {WebSearchMode::automatic, "example.test", "web_search", "auto"},
-        {WebSearchMode::required, "example.test", "web_search", "required"},
         {WebSearchMode::automatic, "OPENROUTER.AI.", "openrouter:web_search", "auto"},
     };
     for (const auto& item : cases) {
@@ -178,7 +177,7 @@ TEST(ResponsesApi, SubscriptionBodyUsesFallbackInstructionsAndOmitsExtras) {
 }
 
 TEST(ResponsesApi, SubscriptionHostedSearchCoexistsWithFunctionsAndYieldsToMaintenance) {
-    for (const auto mode : {WebSearchMode::off, WebSearchMode::automatic, WebSearchMode::required}) {
+    for (const auto mode : {WebSearchMode::off, WebSearchMode::automatic}) {
         SCOPED_TRACE(to_string(mode));
         Transcript transcript;
         auto input = make_request(transcript, "Search the web");
@@ -189,8 +188,7 @@ TEST(ResponsesApi, SubscriptionHostedSearchCoexistsWithFunctionsAndYieldsToMaint
         config.auth = ProviderAuth::openai_subscription;
         config.host = "chatgpt.com";
         const auto body = Json::parse(build_responses_request_body(input, config, "System"));
-        EXPECT_EQ(body["tool_choice"], (mode == WebSearchMode::required
-            ? Json{{"type", "web_search"}} : Json("auto")));
+        EXPECT_EQ(body["tool_choice"], Json("auto"));
         EXPECT_EQ(body["tools"].size(), mode == WebSearchMode::off ? 2u : 3u);
         if (mode != WebSearchMode::off) EXPECT_EQ(body["tools"][0], (Json{{"type", "web_search"}}));
         const auto offset = mode == WebSearchMode::off ? 0u : 1u;
@@ -597,7 +595,7 @@ TEST(ResponsesApi, ReportsMalformedOrFailedNonStreamingBodies) {
 
 
 TEST(ResponsesApi, LibrarySearchCoexistsWithHostedWebAndFunctionsAndYieldsToMaintenance) {
-    for (const auto mode : {WebSearchMode::off, WebSearchMode::automatic, WebSearchMode::required}) {
+    for (const auto mode : {WebSearchMode::off, WebSearchMode::automatic}) {
         Transcript transcript;
         auto input = make_request(transcript, "Question");
         input.library_store_ids = {"vs_one", "vs_two"};
@@ -609,7 +607,7 @@ TEST(ResponsesApi, LibrarySearchCoexistsWithHostedWebAndFunctionsAndYieldsToMain
         auto body = Json::parse(build_responses_request_body(input, config, "System"));
         EXPECT_EQ(body["store"], false);
         EXPECT_EQ(body["include"], Json::array({"reasoning.encrypted_content", "file_search_call.results"}));
-        EXPECT_EQ(body["tool_choice"], mode == WebSearchMode::required ? "required" : "auto");
+        EXPECT_EQ(body["tool_choice"], "auto");
         EXPECT_EQ(body["tools"].size(), mode == WebSearchMode::off ? 3u : 4u);
         EXPECT_EQ(body["tools"].back(), (Json{{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}));
         EXPECT_EQ(body.dump().find("Research"), std::string::npos);
@@ -617,24 +615,6 @@ TEST(ResponsesApi, LibrarySearchCoexistsWithHostedWebAndFunctionsAndYieldsToMain
         input.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
         body = Json::parse(build_responses_request_body(input, config, "System"));
         for (const auto& tool : body["tools"]) EXPECT_NE(tool.value("type", ""), "file_search");
-    }
-}
-
-TEST(ResponsesApi, RequiredOpenAiWebSearchCannotBeSatisfiedByLibrarySearch) {
-    for (const bool stream : {false, true}) {
-        Transcript transcript;
-        auto input = make_request(transcript, "Question");
-        input.library_store_ids = {"vs_one", "vs_two"};
-        input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
-        auto config = responses_config(WebSearchMode::required);
-        config.host = "api.openai.com";
-        config.stream = stream;
-        const auto body = Json::parse(build_responses_request_body(input, config, "System"));
-        EXPECT_EQ(body["tool_choice"], (Json{{"type", "web_search"}}));
-        EXPECT_EQ(body["tools"], (Json::array({{{"type", "web_search"}},
-            {{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}})));
-        EXPECT_EQ(body["include"], Json::array({"file_search_call.results"}));
-        EXPECT_NE(body["instructions"].get<std::string>().find("Summary search and reading are unavailable"), std::string::npos);
     }
 }
 

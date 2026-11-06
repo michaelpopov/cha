@@ -11,7 +11,7 @@ enum class Mode { net, test };
 enum class ReasoningFormat { automatic, none, reasoning_content, reasoning };
 enum class ProviderApi { chat_completions, responses, google, anthropic };
 enum class ProviderAuth { none, openai_subscription };
-enum class WebSearchMode { off, automatic, required };
+enum class WebSearchMode { off, automatic };
 enum class CacheRetention { off, short_, long_ };
 
 inline constexpr std::string_view default_reasoning_effort = "none";

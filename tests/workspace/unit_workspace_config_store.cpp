@@ -3055,7 +3055,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SetProviderIgnoresSearchOverrideAndCanMa
     EXPECT_EQ(toml::parse(stored_config(database(), path))["web_search"].value<std::string>(), "required");
     changes[0].value = std::string("second");
     ASSERT_TRUE(store->apply_config(store->config_revision(), changes).committed);
-    EXPECT_EQ(store->snapshot()->find_character("guide")->web_search, WebSearchMode::required);
+    EXPECT_EQ(store->snapshot()->find_character("guide")->web_search, WebSearchMode::automatic);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyCommitsAtomicallyAndReportsByteSizes) {

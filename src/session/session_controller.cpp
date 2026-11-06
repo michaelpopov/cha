@@ -909,7 +909,8 @@ void SessionController::start_generation(
                 ? "Page reading is unavailable: no web_reader URL is configured"
                 : "Page reading is unavailable: no reader API key is configured");
         std::vector<std::string> library_store_ids;
-        if (!maintenance && forum && forum->library) {
+        std::optional<LibrarySearchScope> library_search;
+        if (!maintenance && definition->provider.config.mode == Mode::net && forum && forum->library) {
             const auto& library = *forum->library;
             const auto context = "Forum Library: forum=" + identity_.forum_id
                 + " session=" + identity_.session_id + " character=" + target.id
@@ -921,10 +922,12 @@ void SessionController::start_generation(
                     *current->find_api_key(library.api_key_id))) {
                 library_store_ids = library.store_ids;
             } else {
-                log_info(context + "Effective provider cannot use the Library key; omitting search.");
+                const auto& key = *current->find_api_key(library.api_key_id);
+                library_search = LibrarySearchScope{key.cloud_store, library.store_ids,
+                    key.value, definition->provider.config.timeout_s};
             }
         }
-        const bool with_catalogue = !library_store_ids.empty() && !catalogue.empty();
+        const bool with_catalogue = (!library_store_ids.empty() || library_search) && !catalogue.empty();
         if (maintenance || !notes.empty() || with_catalogue) {
             auto copy = std::make_shared<CharacterDefinition>(*definition);
             if (!notes.empty()) {
@@ -971,6 +974,7 @@ void SessionController::start_generation(
                 },
                 .summary_tool = summaries ? summary_tool_ : SummaryTool{},
                 .library_store_ids = std::move(library_store_ids),
+                .library_search = std::move(library_search),
             },
             .web_search_tool = tool_enabled
                 ? std::optional<WorkspaceWebSearch>(current->web_search()) : std::nullopt,

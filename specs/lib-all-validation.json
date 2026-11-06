@@ -1,0 +1,2129 @@
+{
+  "local_date": "2026-11-05",
+  "local_timezone": "America/Los_Angeles",
+  "implementation": "specs/lib-all-design.md",
+  "local_validation": {
+    "build_targets": [
+      "cha_tests",
+      "cha_app_tests"
+    ],
+    "cha_tests": {
+      "passed": 868,
+      "skipped_opt_in_live_tests": 2
+    },
+    "cha_app_tests": {
+      "passed": 600
+    },
+    "webapp": {
+      "api_types_regenerated": true,
+      "check_passed": true,
+      "passed_tests": 1675
+    },
+    "diff_check_passed": true,
+    "provider_regressions_after_streamed_citation_replay": {
+      "passed": 239,
+      "skipped_opt_in_live_tests": 1
+    }
+  },
+  "live_validation": {
+    "scope": "Temporary driver uses production request builders, provider loop, protocol decoders, Library client and HTTPS transport. Session route selection and lifecycle are covered by deterministic tests.",
+    "selected_checks": [
+      {
+        "answer_correct": null,
+        "completed": true,
+        "hosted_actions": [],
+        "label": "openai-direct-retrieval",
+        "match_count": 1,
+        "model": "",
+        "model_http": [],
+        "protocol": "vector-store search REST",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [],
+        "truncated": false,
+        "duration_s": 1.31,
+        "native": false,
+        "web": false,
+        "pass": true,
+        "run": "initial-driver",
+        "stream": null
+      },
+      {
+        "answer_bytes": 102,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "",
+        "hosted_actions": [
+          "file_search_call"
+        ],
+        "label": "openai-native",
+        "model": "gpt-5.6-terra",
+        "model_http": [
+          200
+        ],
+        "protocol": "responses",
+        "retrieval_http": [],
+        "source_verified": true,
+        "tools": [
+          "file_search"
+        ],
+        "duration_s": 3.85,
+        "native": true,
+        "web": false,
+        "pass": true,
+        "run": "initial-driver",
+        "stream": true
+      },
+      {
+        "answer_bytes": 190,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "stop",
+        "hosted_actions": [],
+        "label": "claude-openai",
+        "match_count": 1,
+        "model": "anthropic/claude-sonnet-4.6",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "chat_completions",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "function",
+          "library_search",
+          "function"
+        ],
+        "truncated": false,
+        "duration_s": 4.69,
+        "native": false,
+        "web": false,
+        "pass": true,
+        "run": "corrected-driver",
+        "stream": true
+      },
+      {
+        "answer_bytes": 170,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "stop",
+        "hosted_actions": [],
+        "label": "claude-google",
+        "match_count": 1,
+        "model": "anthropic/claude-sonnet-4.6",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "chat_completions",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "function",
+          "library_search",
+          "function"
+        ],
+        "truncated": false,
+        "duration_s": 9.26,
+        "native": false,
+        "web": false,
+        "pass": true,
+        "run": "corrected-driver",
+        "stream": true
+      },
+      {
+        "answer_correct": null,
+        "completed": true,
+        "hosted_actions": [],
+        "label": "google-two-store-helper",
+        "match_count": 2,
+        "model": "gemini-3.8-flash",
+        "model_http": [],
+        "protocol": "Google generateContent REST v1beta",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [],
+        "truncated": false,
+        "duration_s": 7.4,
+        "native": false,
+        "web": false,
+        "pass": true,
+        "run": "initial-driver",
+        "stream": null,
+        "requested_store_count": 2,
+        "topK": 10,
+        "maxOutputTokens": 2048,
+        "generated_answer_used_as_source": false
+      },
+      {
+        "answer_bytes": 124,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "stop",
+        "hosted_actions": [
+          "fileSearch"
+        ],
+        "label": "google-native",
+        "model": "gemini-3.8-flash",
+        "model_http": [
+          200
+        ],
+        "protocol": "google",
+        "retrieval_http": [],
+        "source_verified": true,
+        "tools": [],
+        "duration_s": 6.11,
+        "native": true,
+        "web": false,
+        "pass": true,
+        "run": "initial-driver",
+        "stream": true
+      },
+      {
+        "answer_bytes": 129,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "",
+        "hosted_actions": [],
+        "label": "subscription-openai",
+        "match_count": 1,
+        "model": "gpt-6-astra",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "responses",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "function",
+          "library_search",
+          "library_search",
+          "function",
+          "library_search"
+        ],
+        "truncated": false,
+        "duration_s": 7.24,
+        "native": false,
+        "web": false,
+        "pass": true,
+        "run": "initial-driver",
+        "stream": true
+      },
+      {
+        "answer_bytes": 112,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "stop",
+        "hosted_actions": [],
+        "label": "cross-google-answer-openai-library",
+        "match_count": 1,
+        "model": "gemini-3.8-flash",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "google",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "library_search"
+        ],
+        "truncated": false,
+        "duration_s": 4.23,
+        "native": false,
+        "web": false,
+        "pass": true,
+        "run": "initial-driver",
+        "stream": true
+      },
+      {
+        "answer_bytes": 96,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "",
+        "hosted_actions": [],
+        "label": "cross-openai-answer-google-library",
+        "match_count": 1,
+        "model": "gpt-5.6-terra",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "responses",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "function",
+          "library_search",
+          "library_search",
+          "function",
+          "library_search"
+        ],
+        "truncated": false,
+        "duration_s": 9.54,
+        "native": false,
+        "web": false,
+        "pass": true,
+        "run": "initial-driver",
+        "stream": true
+      },
+      {
+        "answer_bytes": 112,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "",
+        "hosted_actions": [],
+        "label": "subscription-google",
+        "match_count": 1,
+        "model": "gpt-6-astra",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "responses",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "function",
+          "library_search",
+          "library_search",
+          "function",
+          "library_search"
+        ],
+        "truncated": false,
+        "duration_s": 13.08,
+        "native": false,
+        "web": false,
+        "pass": true,
+        "run": "initial-driver",
+        "stream": true
+      },
+      {
+        "answer_bytes": 100,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "",
+        "hosted_actions": [],
+        "label": "automatic-library-only-direct",
+        "match_count": 1,
+        "model": "gpt-5.6-terra",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "responses",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "web_search",
+          "function",
+          "library_search",
+          "library_search",
+          "web_search",
+          "function",
+          "library_search"
+        ],
+        "truncated": false,
+        "duration_s": 10.12,
+        "native": false,
+        "web": true,
+        "pass": true,
+        "web_was_optional": true,
+        "run": "initial-driver",
+        "stream": true
+      },
+      {
+        "answer_bytes": 266,
+        "answer_correct": true,
+        "answer_versions": [
+          "3.15.2"
+        ],
+        "completed": true,
+        "finish_reason": "",
+        "hosted_actions": [
+          "web_search_call"
+        ],
+        "label": "web-and-library-direct",
+        "match_count": 1,
+        "model": "gpt-5.6-terra",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "responses",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200,
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "web_search",
+          "function",
+          "library_search",
+          "library_search",
+          "library_search",
+          "web_search",
+          "function",
+          "library_search"
+        ],
+        "truncated": false,
+        "web_citation_present": true,
+        "duration_s": 18.09,
+        "native": false,
+        "web": true,
+        "pass": true,
+        "web_answer_correct": true,
+        "run": "independent-web-answer-check",
+        "stream": true
+      },
+      {
+        "answer_bytes": 1109,
+        "answer_correct": true,
+        "answer_versions": [
+          "3.15.2",
+          "3.14.10",
+          "3.13.18",
+          "3.12.16",
+          "3.11.18",
+          "3.15.0"
+        ],
+        "completed": true,
+        "finish_reason": "",
+        "hosted_actions": [
+          "openrouter:web_search"
+        ],
+        "label": "web-and-library-openrouter-responses",
+        "match_count": 1,
+        "model": "anthropic/claude-sonnet-4.6",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "responses",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "openrouter:web_search",
+          "function",
+          "library_search",
+          "library_search",
+          "openrouter:web_search",
+          "function",
+          "library_search"
+        ],
+        "truncated": false,
+        "web_citation_present": true,
+        "duration_s": 15.6,
+        "native": false,
+        "web": true,
+        "pass": true,
+        "web_answer_correct": true,
+        "run": "claude-openrouter-streaming",
+        "stream": true
+      },
+      {
+        "answer_bytes": 396,
+        "answer_correct": true,
+        "answer_versions": [
+          "3.15.2"
+        ],
+        "completed": true,
+        "finish_reason": "",
+        "hosted_actions": [
+          "web_search_call"
+        ],
+        "label": "web-and-library-subscription",
+        "match_count": 1,
+        "model": "gpt-6-astra",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "responses",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "web_search",
+          "function",
+          "library_search",
+          "library_search",
+          "web_search",
+          "function",
+          "library_search"
+        ],
+        "truncated": false,
+        "web_citation_present": true,
+        "duration_s": 10.75,
+        "native": false,
+        "web": true,
+        "pass": true,
+        "web_answer_correct": true,
+        "run": "independent-web-answer-check",
+        "stream": true
+      },
+      {
+        "answer_bytes": 85,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "",
+        "hosted_actions": [],
+        "label": "automatic-library-only-openrouter-responses",
+        "match_count": 1,
+        "model": "openai/gpt-5.6-terra",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "responses",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "openrouter:web_search",
+          "function",
+          "library_search",
+          "library_search",
+          "openrouter:web_search",
+          "function",
+          "library_search"
+        ],
+        "truncated": false,
+        "duration_s": 4.43,
+        "native": false,
+        "web": true,
+        "pass": true,
+        "web_was_optional": true,
+        "run": "corrected-driver",
+        "stream": true
+      },
+      {
+        "answer_bytes": 1258,
+        "answer_correct": true,
+        "answer_versions": [
+          "3.15.2",
+          "3.14.10",
+          "3.13.18",
+          "3.12.16",
+          "3.11.18",
+          "3.15.0"
+        ],
+        "completed": true,
+        "finish_reason": "stop",
+        "hosted_actions": [
+          "openrouter:web_search"
+        ],
+        "label": "web-and-library-openrouter-chat",
+        "match_count": 1,
+        "model": "anthropic/claude-sonnet-4.6",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "chat_completions",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "openrouter:web_search",
+          "function",
+          "library_search",
+          "openrouter:web_search",
+          "function"
+        ],
+        "truncated": false,
+        "usage_field_names": [
+          "completion_tokens",
+          "completion_tokens_details",
+          "cost",
+          "cost_details",
+          "is_byok",
+          "prompt_tokens",
+          "prompt_tokens_details",
+          "server_tool_use_details",
+          "total_tokens"
+        ],
+        "web_citation_present": true,
+        "duration_s": 16.33,
+        "native": false,
+        "web": true,
+        "pass": true,
+        "web_answer_correct": true,
+        "run": "claude-openrouter-buffered-chat",
+        "stream": false
+      },
+      {
+        "answer_bytes": 101,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "stop",
+        "hosted_actions": [],
+        "label": "automatic-library-only-openrouter-chat",
+        "match_count": 1,
+        "model": "openai/gpt-5.6-terra",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "chat_completions",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "openrouter:web_search",
+          "function",
+          "library_search",
+          "openrouter:web_search",
+          "function"
+        ],
+        "truncated": false,
+        "duration_s": 4.81,
+        "native": false,
+        "web": true,
+        "pass": true,
+        "web_was_optional": true,
+        "run": "corrected-driver",
+        "stream": true
+      },
+      {
+        "answer_bytes": 121,
+        "answer_correct": true,
+        "completed": true,
+        "finish_reason": "",
+        "hosted_actions": [],
+        "label": "automatic-library-only-subscription",
+        "match_count": 1,
+        "model": "gpt-6-astra",
+        "model_http": [
+          200,
+          200
+        ],
+        "protocol": "responses",
+        "retrieval_errors": 0,
+        "retrieval_http": [
+          200
+        ],
+        "source_verified": true,
+        "tools": [
+          "web_search",
+          "function",
+          "library_search",
+          "library_search",
+          "web_search",
+          "function",
+          "library_search"
+        ],
+        "truncated": false,
+        "duration_s": 6.61,
+        "native": false,
+        "web": true,
+        "pass": true,
+        "web_was_optional": true,
+        "run": "initial-driver",
+        "stream": true
+      },
+      {
+        "answer_correct": null,
+        "completed": false,
+        "hosted_actions": [],
+        "label": "unavailable-openai-store",
+        "match_count": 0,
+        "model": "",
+        "model_http": [],
+        "protocol": "",
+        "retrieval_errors": 1,
+        "retrieval_http": [
+          404
+        ],
+        "source_verified": null,
+        "tool_error_code": "unavailable",
+        "tool_error_message_present": true,
+        "tools": [],
+        "truncated": false,
+        "pass": true,
+        "expected_failure": true
+      }
+    ],
+    "passed": 19,
+    "total": 19,
+    "all_created_resources_deleted": true,
+    "web_answer_primary_source": "https://www.python.org/downloads/",
+    "expected_web_version": "3.15.2",
+    "limitations": [
+      "Claude was checked live through OpenRouter; native Anthropic wire handling was tested deterministically.",
+      "OpenRouter GPT runs and streamed Claude Chat runs returned correct Library facts and web version but did not establish hosted web use. Passing OpenRouter combination evidence uses Claude with Responses streaming and Chat Completions buffered.",
+      "No provider model fallback was added. Answering models were selected explicitly for each acceptance check.",
+      "Streamed Chat Completions citation retention was checked deterministically after the live runs."
+    ],
+    "attempts": [
+      {
+        "name": "initial-driver",
+        "started_utc": "2026-11-06T01:27:59.122584+00:00",
+        "finished_utc": "2026-11-06T01:28:54.234744+00:00",
+        "checks": [
+          {
+            "answer_correct": false,
+            "completed": true,
+            "hosted_actions": [],
+            "label": "openai-direct-retrieval",
+            "match_count": 1,
+            "model": "",
+            "model_http": [],
+            "protocol": "",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [],
+            "truncated": false,
+            "duration_s": 1.31,
+            "native": false,
+            "web": false,
+            "pass": true,
+            "run": "initial-driver",
+            "stream": null
+          },
+          {
+            "answer_bytes": 102,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [
+              "file_search_call",
+              "file_search_call",
+              "file_search_call"
+            ],
+            "label": "openai-native",
+            "model": "gpt-5.6-terra",
+            "model_http": [
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_http": [],
+            "source_verified": true,
+            "tools": [
+              "file_search"
+            ],
+            "duration_s": 3.85,
+            "native": true,
+            "web": false,
+            "pass": true,
+            "run": "initial-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "claude-openai",
+            "model": "anthropic/claude-sonnet-4.6",
+            "model_http": [
+              404
+            ],
+            "protocol": "chat_completions",
+            "remote_error_code": 404,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "function"
+            ],
+            "duration_s": 0.21,
+            "native": false,
+            "web": false,
+            "pass": false,
+            "run": "initial-driver",
+            "stream": true,
+            "limitation": "Temporary driver used /api/v1/v1 instead of /api/v1."
+          },
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "claude-google",
+            "model": "anthropic/claude-sonnet-4.6",
+            "model_http": [
+              404
+            ],
+            "protocol": "chat_completions",
+            "remote_error_code": 404,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "function"
+            ],
+            "duration_s": 0.35,
+            "native": false,
+            "web": false,
+            "pass": false,
+            "run": "initial-driver",
+            "stream": true,
+            "limitation": "Temporary driver used /api/v1/v1 instead of /api/v1."
+          },
+          {
+            "answer_correct": false,
+            "completed": true,
+            "hosted_actions": [],
+            "label": "google-two-store-helper",
+            "match_count": 2,
+            "model": "",
+            "model_http": [],
+            "protocol": "",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [],
+            "truncated": false,
+            "duration_s": 7.4,
+            "native": false,
+            "web": false,
+            "pass": true,
+            "run": "initial-driver",
+            "stream": null
+          },
+          {
+            "answer_bytes": 124,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "stop",
+            "hosted_actions": [
+              "fileSearch"
+            ],
+            "label": "google-native",
+            "model": "gemini-3.8-flash",
+            "model_http": [
+              200
+            ],
+            "protocol": "google",
+            "retrieval_http": [],
+            "source_verified": true,
+            "tools": [],
+            "duration_s": 6.11,
+            "native": true,
+            "web": false,
+            "pass": true,
+            "run": "initial-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 129,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "subscription-openai",
+            "match_count": 1,
+            "model": "gpt-6-astra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "function",
+              "library_search",
+              "library_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "duration_s": 7.24,
+            "native": false,
+            "web": false,
+            "pass": true,
+            "run": "initial-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 112,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "stop",
+            "hosted_actions": [],
+            "label": "cross-google-answer-openai-library",
+            "match_count": 1,
+            "model": "gemini-3.8-flash",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "google",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "library_search"
+            ],
+            "truncated": false,
+            "duration_s": 4.23,
+            "native": false,
+            "web": false,
+            "pass": true,
+            "run": "initial-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 96,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "cross-openai-answer-google-library",
+            "match_count": 1,
+            "model": "gpt-5.6-terra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "function",
+              "library_search",
+              "library_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "duration_s": 9.54,
+            "native": false,
+            "web": false,
+            "pass": true,
+            "run": "initial-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 112,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "subscription-google",
+            "match_count": 1,
+            "model": "gpt-6-astra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "function",
+              "library_search",
+              "library_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "duration_s": 13.08,
+            "native": false,
+            "web": false,
+            "pass": true,
+            "run": "initial-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 100,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "automatic-library-only-direct",
+            "match_count": 1,
+            "model": "gpt-5.6-terra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "web_search",
+              "function",
+              "library_search",
+              "library_search",
+              "web_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "duration_s": 10.12,
+            "native": false,
+            "web": true,
+            "pass": true,
+            "web_was_optional": true,
+            "run": "initial-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 345,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [
+              "web_search_call",
+              "web_search_call",
+              "web_search_call"
+            ],
+            "label": "web-and-library-direct",
+            "match_count": 1,
+            "model": "gpt-5.6-terra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200,
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "web_search",
+              "function",
+              "library_search",
+              "library_search",
+              "library_search",
+              "web_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "duration_s": 16.31,
+            "native": false,
+            "web": true,
+            "pass": true,
+            "run": "initial-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "web-and-library-openrouter-responses",
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              404
+            ],
+            "protocol": "responses",
+            "remote_error_code": 404,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search"
+            ],
+            "duration_s": 0.23,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "run": "initial-driver",
+            "stream": true,
+            "limitation": "Temporary driver used /api/v1/v1 instead of /api/v1."
+          },
+          {
+            "answer_bytes": 421,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [
+              "web_search_call",
+              "web_search_call"
+            ],
+            "label": "web-and-library-subscription",
+            "match_count": 1,
+            "model": "gpt-6-astra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "web_search",
+              "function",
+              "library_search",
+              "library_search",
+              "web_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "duration_s": 12.0,
+            "native": false,
+            "web": true,
+            "pass": true,
+            "run": "initial-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "automatic-library-only-openrouter-responses",
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              404
+            ],
+            "protocol": "responses",
+            "remote_error_code": 404,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search"
+            ],
+            "duration_s": 0.23,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "web_was_optional": true,
+            "run": "initial-driver",
+            "stream": true,
+            "limitation": "Temporary driver used /api/v1/v1 instead of /api/v1."
+          },
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "web-and-library-openrouter-chat",
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              404
+            ],
+            "protocol": "chat_completions",
+            "remote_error_code": 404,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "openrouter:web_search",
+              "function"
+            ],
+            "duration_s": 0.22,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "run": "initial-driver",
+            "stream": true,
+            "limitation": "Temporary driver used /api/v1/v1 instead of /api/v1."
+          },
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "automatic-library-only-openrouter-chat",
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              404
+            ],
+            "protocol": "chat_completions",
+            "remote_error_code": 404,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "openrouter:web_search",
+              "function"
+            ],
+            "duration_s": 0.24,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "web_was_optional": true,
+            "run": "initial-driver",
+            "stream": true,
+            "limitation": "Temporary driver used /api/v1/v1 instead of /api/v1."
+          },
+          {
+            "answer_bytes": 121,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "automatic-library-only-subscription",
+            "match_count": 1,
+            "model": "gpt-6-astra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "web_search",
+              "function",
+              "library_search",
+              "library_search",
+              "web_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "duration_s": 6.61,
+            "native": false,
+            "web": true,
+            "pass": true,
+            "web_was_optional": true,
+            "run": "initial-driver",
+            "stream": true
+          }
+        ],
+        "cleanup": [
+          {
+            "service": "google",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "google",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai-file",
+            "deleted_http": 200,
+            "pass": true
+          }
+        ]
+      },
+      {
+        "name": "driver-credential-alias-error",
+        "started_utc": "2026-11-06T01:29:47.102789+00:00",
+        "finished_utc": "2026-11-06T01:30:12.319634+00:00",
+        "checks": [
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "claude-google",
+            "model": "anthropic/claude-sonnet-4.6",
+            "model_http": [
+              401
+            ],
+            "protocol": "chat_completions",
+            "remote_error_code": 401,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "function"
+            ],
+            "duration_s": 0.47,
+            "native": false,
+            "web": false,
+            "pass": false,
+            "run": "driver-credential-alias-error",
+            "stream": true,
+            "limitation": "Temporary driver did not expand the saved OpenRouter key alias; it sent an empty credential."
+          },
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "web-and-library-openrouter-responses",
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              401
+            ],
+            "protocol": "responses",
+            "remote_error_code": 401,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search"
+            ],
+            "duration_s": 0.48,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "run": "driver-credential-alias-error",
+            "stream": true,
+            "limitation": "Temporary driver did not expand the saved OpenRouter key alias; it sent an empty credential."
+          },
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "claude-openai",
+            "model": "anthropic/claude-sonnet-4.6",
+            "model_http": [
+              401
+            ],
+            "protocol": "chat_completions",
+            "remote_error_code": 401,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "function"
+            ],
+            "duration_s": 0.49,
+            "native": false,
+            "web": false,
+            "pass": false,
+            "run": "driver-credential-alias-error",
+            "stream": true,
+            "limitation": "Temporary driver did not expand the saved OpenRouter key alias; it sent an empty credential."
+          },
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "automatic-library-only-openrouter-responses",
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              401
+            ],
+            "protocol": "responses",
+            "remote_error_code": 401,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search"
+            ],
+            "duration_s": 0.13,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "web_was_optional": true,
+            "run": "driver-credential-alias-error",
+            "stream": true,
+            "limitation": "Temporary driver did not expand the saved OpenRouter key alias; it sent an empty credential."
+          },
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "web-and-library-openrouter-chat",
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              401
+            ],
+            "protocol": "chat_completions",
+            "remote_error_code": 401,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "openrouter:web_search",
+              "function"
+            ],
+            "duration_s": 0.14,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "run": "driver-credential-alias-error",
+            "stream": true,
+            "limitation": "Temporary driver did not expand the saved OpenRouter key alias; it sent an empty credential."
+          },
+          {
+            "answer_bytes": 0,
+            "answer_correct": false,
+            "completed": false,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "automatic-library-only-openrouter-chat",
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              401
+            ],
+            "protocol": "chat_completions",
+            "remote_error_code": 401,
+            "retrieval_http": [],
+            "source_verified": false,
+            "tools": [
+              "openrouter:web_search",
+              "function"
+            ],
+            "duration_s": 0.14,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "web_was_optional": true,
+            "run": "driver-credential-alias-error",
+            "stream": true,
+            "limitation": "Temporary driver did not expand the saved OpenRouter key alias; it sent an empty credential."
+          }
+        ],
+        "cleanup": [
+          {
+            "service": "google",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "google",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai-file",
+            "deleted_http": 200,
+            "pass": true
+          }
+        ]
+      },
+      {
+        "name": "corrected-driver",
+        "started_utc": "2026-11-06T01:31:16.209068+00:00",
+        "finished_utc": "2026-11-06T01:32:05.395166+00:00",
+        "checks": [
+          {
+            "answer_bytes": 190,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "stop",
+            "hosted_actions": [],
+            "label": "claude-openai",
+            "match_count": 1,
+            "model": "anthropic/claude-sonnet-4.6",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "chat_completions",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "function",
+              "library_search",
+              "function"
+            ],
+            "truncated": false,
+            "duration_s": 4.69,
+            "native": false,
+            "web": false,
+            "pass": true,
+            "run": "corrected-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 265,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "web-and-library-openrouter-responses",
+            "match_count": 1,
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200,
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search",
+              "library_search",
+              "library_search",
+              "openrouter:web_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "duration_s": 7.16,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "run": "corrected-driver",
+            "stream": true,
+            "limitation": "Answer and Library passages were correct; hosted web execution was not established from this response."
+          },
+          {
+            "answer_bytes": 85,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "automatic-library-only-openrouter-responses",
+            "match_count": 1,
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search",
+              "library_search",
+              "openrouter:web_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "duration_s": 4.43,
+            "native": false,
+            "web": true,
+            "pass": true,
+            "web_was_optional": true,
+            "run": "corrected-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 170,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "stop",
+            "hosted_actions": [],
+            "label": "claude-google",
+            "match_count": 1,
+            "model": "anthropic/claude-sonnet-4.6",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "chat_completions",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "function",
+              "library_search",
+              "function"
+            ],
+            "truncated": false,
+            "duration_s": 9.26,
+            "native": false,
+            "web": false,
+            "pass": true,
+            "run": "corrected-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 101,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "stop",
+            "hosted_actions": [],
+            "label": "automatic-library-only-openrouter-chat",
+            "match_count": 1,
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "chat_completions",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search",
+              "openrouter:web_search",
+              "function"
+            ],
+            "truncated": false,
+            "duration_s": 4.81,
+            "native": false,
+            "web": true,
+            "pass": true,
+            "web_was_optional": true,
+            "run": "corrected-driver",
+            "stream": true
+          },
+          {
+            "answer_bytes": 218,
+            "answer_correct": true,
+            "completed": true,
+            "finish_reason": "stop",
+            "hosted_actions": [],
+            "label": "web-and-library-openrouter-chat",
+            "match_count": 1,
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "chat_completions",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search",
+              "openrouter:web_search",
+              "function"
+            ],
+            "truncated": false,
+            "duration_s": 11.84,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "run": "corrected-driver",
+            "stream": true,
+            "limitation": "Answer and Library passages were correct; hosted web execution was not established from this response."
+          }
+        ],
+        "cleanup": [
+          {
+            "service": "google",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "google",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai-file",
+            "deleted_http": 200,
+            "pass": true
+          }
+        ]
+      },
+      {
+        "name": "independent-web-answer-check",
+        "started_utc": "2026-11-06T01:33:24.497097+00:00",
+        "finished_utc": "2026-11-06T01:34:13.664880+00:00",
+        "checks": [
+          {
+            "answer_bytes": 265,
+            "answer_correct": true,
+            "answer_versions": [
+              "3.15.2"
+            ],
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [],
+            "label": "web-and-library-openrouter-responses",
+            "match_count": 1,
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200,
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search",
+              "library_search",
+              "library_search",
+              "openrouter:web_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "duration_s": 7.76,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "web_answer_correct": true,
+            "run": "independent-web-answer-check",
+            "stream": true,
+            "limitation": "Answer and Library passages were correct; hosted web execution was not established from this response."
+          },
+          {
+            "answer_bytes": 396,
+            "answer_correct": true,
+            "answer_versions": [
+              "3.15.2"
+            ],
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [
+              "web_search_call",
+              "web_search_call"
+            ],
+            "label": "web-and-library-subscription",
+            "match_count": 1,
+            "model": "gpt-6-astra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "web_search",
+              "function",
+              "library_search",
+              "library_search",
+              "web_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "web_citation_present": true,
+            "duration_s": 10.75,
+            "native": false,
+            "web": true,
+            "pass": true,
+            "web_answer_correct": true,
+            "run": "independent-web-answer-check",
+            "stream": true
+          },
+          {
+            "answer_bytes": 273,
+            "answer_correct": true,
+            "answer_versions": [
+              "3.15.2"
+            ],
+            "completed": true,
+            "finish_reason": "stop",
+            "hosted_actions": [],
+            "label": "web-and-library-openrouter-chat",
+            "match_count": 1,
+            "model": "openai/gpt-5.6-terra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "chat_completions",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search",
+              "openrouter:web_search",
+              "function"
+            ],
+            "truncated": false,
+            "duration_s": 6.74,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "web_answer_correct": true,
+            "run": "independent-web-answer-check",
+            "stream": true,
+            "limitation": "Answer and Library passages were correct; hosted web execution was not established from this response."
+          },
+          {
+            "answer_bytes": 266,
+            "answer_correct": true,
+            "answer_versions": [
+              "3.15.2"
+            ],
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [
+              "web_search_call",
+              "web_search_call",
+              "web_search_call"
+            ],
+            "label": "web-and-library-direct",
+            "match_count": 1,
+            "model": "gpt-5.6-terra",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200,
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "web_search",
+              "function",
+              "library_search",
+              "library_search",
+              "library_search",
+              "web_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "web_citation_present": true,
+            "duration_s": 18.09,
+            "native": false,
+            "web": true,
+            "pass": true,
+            "web_answer_correct": true,
+            "run": "independent-web-answer-check",
+            "stream": true
+          }
+        ],
+        "cleanup": [
+          {
+            "service": "google",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai-file",
+            "deleted_http": 200,
+            "pass": true
+          }
+        ]
+      },
+      {
+        "name": "claude-openrouter-streaming",
+        "started_utc": "2026-11-06T01:35:08.580470+00:00",
+        "finished_utc": "2026-11-06T01:35:40.760154+00:00",
+        "checks": [
+          {
+            "answer_bytes": 900,
+            "answer_correct": true,
+            "answer_versions": [
+              "3.15.2",
+              "3.15.0",
+              "3.15.2",
+              "3.15.2",
+              "3.15.2"
+            ],
+            "completed": true,
+            "finish_reason": "stop",
+            "hosted_actions": [],
+            "label": "web-and-library-openrouter-chat",
+            "match_count": 1,
+            "model": "anthropic/claude-sonnet-4.6",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "chat_completions",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search",
+              "openrouter:web_search",
+              "function"
+            ],
+            "truncated": false,
+            "duration_s": 13.3,
+            "native": false,
+            "web": true,
+            "pass": false,
+            "web_answer_correct": true,
+            "run": "claude-openrouter-streaming",
+            "stream": true,
+            "limitation": "Answer and Library passages were correct; hosted web execution was not established from this response."
+          },
+          {
+            "answer_bytes": 1109,
+            "answer_correct": true,
+            "answer_versions": [
+              "3.15.2",
+              "3.15.2",
+              "3.14.10",
+              "3.13.18",
+              "3.12.16",
+              "3.11.18",
+              "3.15.0",
+              "3.15.2",
+              "3.15.2"
+            ],
+            "completed": true,
+            "finish_reason": "",
+            "hosted_actions": [
+              "openrouter:web_search",
+              "openrouter:web_search"
+            ],
+            "label": "web-and-library-openrouter-responses",
+            "match_count": 1,
+            "model": "anthropic/claude-sonnet-4.6",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "responses",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search",
+              "library_search",
+              "openrouter:web_search",
+              "function",
+              "library_search"
+            ],
+            "truncated": false,
+            "web_citation_present": true,
+            "duration_s": 15.6,
+            "native": false,
+            "web": true,
+            "pass": true,
+            "web_answer_correct": true,
+            "run": "claude-openrouter-streaming",
+            "stream": true
+          }
+        ],
+        "cleanup": [
+          {
+            "service": "google",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai-file",
+            "deleted_http": 200,
+            "pass": true
+          }
+        ]
+      },
+      {
+        "name": "claude-openrouter-buffered-chat",
+        "started_utc": "2026-11-06T01:36:32.525276+00:00",
+        "finished_utc": "2026-11-06T01:37:09.643116+00:00",
+        "checks": [
+          {
+            "answer_bytes": 1258,
+            "answer_correct": true,
+            "answer_versions": [
+              "3.15.2",
+              "3.15.2",
+              "3.14.10",
+              "3.13.18",
+              "3.12.16",
+              "3.11.18",
+              "3.15.0",
+              "3.15.2",
+              "3.15.2"
+            ],
+            "completed": true,
+            "finish_reason": "stop",
+            "hosted_actions": [
+              "openrouter:web_search",
+              "openrouter:web_search"
+            ],
+            "label": "web-and-library-openrouter-chat",
+            "match_count": 1,
+            "model": "anthropic/claude-sonnet-4.6",
+            "model_http": [
+              200,
+              200
+            ],
+            "protocol": "chat_completions",
+            "retrieval_errors": 0,
+            "retrieval_http": [
+              200
+            ],
+            "source_verified": true,
+            "tools": [
+              "openrouter:web_search",
+              "function",
+              "library_search",
+              "openrouter:web_search",
+              "function"
+            ],
+            "truncated": false,
+            "usage_field_names": [
+              "completion_tokens",
+              "completion_tokens_details",
+              "cost",
+              "cost_details",
+              "is_byok",
+              "prompt_tokens",
+              "prompt_tokens_details",
+              "server_tool_use_details",
+              "total_tokens"
+            ],
+            "web_citation_present": true,
+            "duration_s": 16.33,
+            "native": false,
+            "web": true,
+            "pass": true,
+            "web_answer_correct": true,
+            "run": "claude-openrouter-buffered-chat",
+            "stream": false
+          }
+        ],
+        "cleanup": [
+          {
+            "service": "google",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai",
+            "deleted_http": 200,
+            "verify_http": 404,
+            "pass": true
+          },
+          {
+            "service": "openai-file",
+            "deleted_http": 200,
+            "pass": true
+          }
+        ]
+      }
+    ],
+    "metadata_only": true
+  }
+}

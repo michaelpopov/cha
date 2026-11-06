@@ -8,6 +8,7 @@
 
 namespace cha {
 
+void add_library_search_tool(nlohmann::json& body, ProviderApi api);
 void add_summary_tools(nlohmann::json& body, ProviderApi api);
 bool summary_tools_available(const nlohmann::json& body, ProviderApi api);
 void add_web_search_tool(nlohmann::json& body, ProviderApi api);

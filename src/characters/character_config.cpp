@@ -1,6 +1,7 @@
 #include "characters/character_config.h"
 
 #include "util/text.h"
+#include "util/logging.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -143,7 +144,10 @@ std::optional<ReasoningFormat> parse_reasoning_format(std::string_view value) {
 std::optional<WebSearchMode> parse_web_search_mode(std::string_view value) {
     if (value == "off") return WebSearchMode::off;
     if (value == "auto") return WebSearchMode::automatic;
-    if (value == "required") return WebSearchMode::required;
+    if (value == "required") {
+        log_warn("Obsolete web_search value 'required'; using 'auto'.");
+        return WebSearchMode::automatic;
+    }
     return std::nullopt;
 }
 
@@ -226,7 +230,6 @@ std::string_view to_string(WebSearchMode value) {
     switch (value) {
     case WebSearchMode::off: return "off";
     case WebSearchMode::automatic: return "auto";
-    case WebSearchMode::required: return "required";
     }
     throw std::logic_error("Unknown web search mode");
 }

@@ -739,7 +739,7 @@ TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
     const WorkspaceCharacter* const character = workspace.find_character("guide");
     ASSERT_NE(character, nullptr);
     EXPECT_EQ(character->reasoning_effort, "xhigh");
-    EXPECT_EQ(character->web_search, WebSearchMode::required);
+    EXPECT_EQ(character->web_search, WebSearchMode::automatic);
 
     const WorkspaceStyle* const style = workspace.find_style("loud-style");
     ASSERT_NE(style, nullptr);
@@ -756,7 +756,7 @@ TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
     EXPECT_EQ(runtime.model, "model-one");
     EXPECT_EQ(runtime.api, ProviderApi::responses);
     EXPECT_EQ(runtime.reasoning_effort, "xhigh");
-    EXPECT_EQ(runtime.web_search, WebSearchMode::required);
+    EXPECT_EQ(runtime.web_search, WebSearchMode::automatic);
     EXPECT_EQ(provider->config.reasoning_effort, "high");
     EXPECT_EQ(provider->config.web_search, WebSearchMode::automatic);
 }
@@ -789,6 +789,27 @@ TEST(Workspace, LoadsProviderReasoningDefaultsAndWarnsForUnsupportedValues) {
         EXPECT_EQ(file_bytes(log_file).find("Ignoring unsupported provider reasoning_effort")
                       != std::string::npos, item.warning);
     }
+}
+
+TEST(Workspace, LegacyRequiredWebSearchWarnsAndTypedSavesNormalizeToAuto) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("test", "host = 'api.openai.com'\nport = 443\nhttps = true\n"
+        "mode = 'net'\nmodel = 'test'\napi = 'responses'\nweb_search = 'required'\n");
+    fixture.write_character_config("display_name = 'Guide'\nprovider = 'test'\nweb_search = 'required'\n");
+    const auto log_file = fixture.root() / "legacy-web-search.log";
+    initialize_diagnostic_logging(log_file, "warn");
+    struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop;
+    const auto workspace = Workspace::load(fixture.root());
+    EXPECT_EQ(workspace.find_provider("test")->config.web_search, WebSearchMode::automatic);
+    EXPECT_EQ(workspace.find_character("guide")->web_search, WebSearchMode::automatic);
+    EXPECT_EQ(to_string(workspace.find_provider("test")->config.web_search), "auto");
+    const auto warnings = file_bytes(log_file);
+    EXPECT_NE(warnings.find("Obsolete web_search value 'required'; using 'auto'"), std::string::npos);
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_character_settings("guide", "test", std::nullopt, std::nullopt,
+            std::nullopt, workspace.find_character("guide")->web_search);
+    });
+    EXPECT_NE(file_bytes(fixture.root() / "characters/guide/character.toml").find("auto"), std::string::npos);
 }
 
 TEST(Workspace, LoadsLegacyMinimalReasoningAsLowAndNamesAffectedFiles) {
@@ -1541,7 +1562,7 @@ TEST(Workspace, WritesConfigurationWithoutChangingTheLoadedInstance) {
     edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
         editor.write_character_settings(
             "guide", "second", std::string_view{"mono"},
-            std::nullopt, std::string_view{"xhigh"}, WebSearchMode::required);
+            std::nullopt, std::string_view{"xhigh"}, WebSearchMode::automatic);
     });
     edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
         editor.write_forum_default_character("lobby", "writer");
@@ -1562,7 +1583,7 @@ TEST(Workspace, WritesConfigurationWithoutChangingTheLoadedInstance) {
     EXPECT_EQ(reloaded.find_character("guide")->provider_id, "second");
     EXPECT_EQ(reloaded.find_character("guide")->style_id, "mono");
     EXPECT_EQ(reloaded.find_character("guide")->reasoning_effort, "xhigh");
-    EXPECT_EQ(reloaded.find_character("guide")->web_search, WebSearchMode::required);
+    EXPECT_EQ(reloaded.find_character("guide")->web_search, WebSearchMode::automatic);
     EXPECT_EQ(
         reloaded.find_forum("lobby")->default_character_id,
         "writer");
@@ -2226,7 +2247,7 @@ TEST(Workspace, LoadsOpenAiSubscriptionProvider) {
 }
 
 TEST(Workspace, LoadsOpenAiSubscriptionHostedSearchModes) {
-    for (const auto mode : {WebSearchMode::automatic, WebSearchMode::required}) {
+    for (const auto mode : {WebSearchMode::automatic}) {
         SCOPED_TRACE(to_string(mode));
         test::TestWorkspace fixture;
         auto config = subscription_provider_toml();
@@ -2329,8 +2350,8 @@ TEST(Workspace, LoadsOpenAiSubscriptionWebSearchOverrides) {
         LoadWarningCollector warnings;
         const auto workspace = Workspace::load(fixture.root(), &warnings);
         const auto id = assistant ? workspace_assistant_id : "guide";
-        EXPECT_EQ(workspace.find_character(id)->web_search, WebSearchMode::required);
-        EXPECT_EQ(workspace.character_definition(assistant ? workspace_entrance_id : "lobby", id).provider.config.web_search, WebSearchMode::required);
+        EXPECT_EQ(workspace.find_character(id)->web_search, WebSearchMode::automatic);
+        EXPECT_EQ(workspace.character_definition(assistant ? workspace_entrance_id : "lobby", id).provider.config.web_search, WebSearchMode::automatic);
         EXPECT_EQ(file_bytes(fixture.root() / path), source);
         EXPECT_TRUE(warnings.empty());
     }
@@ -2468,7 +2489,7 @@ TEST(Workspace, SavingOpenAiSubscriptionPreservesWebSearchOverrides) {
     fixture.write_character_config(
         "display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
     const Workspace workspace = Workspace::load(fixture.root());
-    for (const auto mode : {WebSearchMode::automatic, WebSearchMode::required}) {
+    for (const auto mode : {WebSearchMode::automatic}) {
         EXPECT_NO_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
             editor.write_character_settings(
                 "guide", "chatgpt", std::nullopt, std::nullopt, std::nullopt, mode);

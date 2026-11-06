@@ -114,6 +114,8 @@ std::string build_responses_request_body(
     const ModelBackendConfig& config,
     std::string_view system_prompt,
     RequestTextSizes* text_sizes) {
+    if (!input.library_store_ids.empty() && (input.library_search || input.library_search_tool))
+        throw std::logic_error("Native and application Library retrieval cannot be combined");
     if (text_sizes) *text_sizes = {};
     Json messages = Json::array();
     std::string instructions;
@@ -200,11 +202,6 @@ std::string build_responses_request_body(
             body["tools"] = Json::array({Json{{"type", web_search_type}}});
             body["tool_choice"] = "auto";
             break;
-        case WebSearchMode::required:
-            body["tools"] = Json::array({Json{{"type", web_search_type}}});
-            body["tool_choice"] = subscription || is_direct_openai_host(config.host)
-                ? Json{{"type", "web_search"}} : Json("required");
-            break;
         default:
             throw std::logic_error("Unknown web search mode");
         }
@@ -225,6 +222,8 @@ std::string build_responses_request_body(
             body["include"].push_back("file_search_call.results");
         }
     }
+    if (!input.maintenance_tool && input.library_search_tool && input.library_store_ids.empty())
+        add_library_search_tool(body, config.api);
     if (input.include_tool_instructions) update_tool_instructions(body, config.api, text_sizes, input.summary_context);
     return dump_json(body, "Model request");
 }

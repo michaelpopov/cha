@@ -451,7 +451,7 @@ export function isCharacterDetail(value: unknown): value is CharacterDetail {
     && (value.style === null || typeof value.style === 'string')
     && (value.voice_id === null || typeof value.voice_id === 'string')
     && isOneOf(value.reasoning_effort, ['none', 'low', 'medium', 'high', 'xhigh', null])
-    && isOneOf(value.web_search, ['off', 'auto', 'required', null])
+    && isOneOf(value.web_search, ['off', 'auto', null])
     && (value.web_search_tool === null || typeof value.web_search_tool === 'boolean')
     && Array.isArray(value.available_providers)
     && value.available_providers.every((option) => isRecord(option)
@@ -539,7 +539,7 @@ export function isProviderDetail(value: unknown): value is ProviderDetail {
     && typeof value.https === 'boolean'
     && isOneOf(value.api, ['chat_completions', 'responses', 'google', 'anthropic'])
     && isOneOf(value.auth, ['none', 'openai_subscription'])
-    && isOneOf(value.web_search, ['off', 'auto', 'required'])
+    && isOneOf(value.web_search, ['off', 'auto'])
     && isOneOf(value.cache_retention, ['off', 'short', 'long'])
     && Array.isArray(value.openrouter_targets)
     && value.openrouter_targets.every((target) => typeof target === 'string')

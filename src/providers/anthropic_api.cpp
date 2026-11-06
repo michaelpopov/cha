@@ -38,6 +38,8 @@ void validate_block(const Json& block) {
 std::string build_anthropic_request_body(
     const GenerationRequest& input, const ModelBackendConfig& config,
     std::string_view system_prompt, RequestTextSizes* text_sizes) {
+    if (!input.library_store_ids.empty() && (input.library_search || input.library_search_tool))
+        throw std::logic_error("Native and application Library retrieval cannot be combined");
     if (text_sizes) *text_sizes = {};
     Json body{{"model", config.model}, {"stream", config.stream},
         {"max_tokens", config.max_tokens.value_or(default_max_tokens)}, {"messages", Json::array()}};
@@ -61,6 +63,8 @@ std::string build_anthropic_request_body(
     if (input.web_search_tool) add_web_search_tool(body, ProviderApi::anthropic);
     if (input.web_read_tool) add_web_read_tool(body, ProviderApi::anthropic);
     if (!input.maintenance_tool && input.summary_tool) add_summary_tools(body, ProviderApi::anthropic);
+    if (!input.maintenance_tool && input.library_search_tool && input.library_store_ids.empty())
+        add_library_search_tool(body, ProviderApi::anthropic);
     if (input.include_tool_instructions) update_tool_instructions(body, ProviderApi::anthropic, text_sizes, input.summary_context);
     return dump_json(body, "Model request");
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "characters/character_config.h"
+#include "characters/model_context.h"
 #include "providers/credentials.h"
 #include "storage/folder_store_storage.h"
 
@@ -43,6 +44,7 @@ struct FolderStoreHttpRequest {
     std::string body;
     std::vector<FolderStoreMultipartPart> multipart;
     bool capture_headers{};
+    int timeout_s{600};
 };
 
 struct FolderStoreHttpResponse {
@@ -106,6 +108,11 @@ FolderStoreHttpResponse folder_store_curl_transport(
 class FolderStoreClient {
 public:
     explicit FolderStoreClient(FolderStoreTransport transport = {});
+
+    // Scope is validated against the starting workspace; dispatch validates the query.
+    [[nodiscard]] std::string search_library(
+        const LibrarySearchScope& scope, std::string_view query,
+        const std::atomic_bool& cancellation);
 
     // Reads every page of the stores that the key can access. A store without
     // a name has an empty name.

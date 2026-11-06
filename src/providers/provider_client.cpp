@@ -577,6 +577,9 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
     }
     if (input.summary_tool && summary_tools_available(Json::parse(prepared.bytes), config.api))
         prepared.summary_tool = input.summary_tool;
+    if (input.library_search_tool
+        && function_tool_available(Json::parse(prepared.bytes), config.api, "library_search"))
+        prepared.library_search_tool = input.library_search_tool;
     return prepared;
 }
 
@@ -589,7 +592,7 @@ GenerationResult ProviderClient::perform(
     const bool maintenance = static_cast<bool>(payload.maintenance_tool);
     const int max_tool_calls = maintenance
         ? maintenance_call_limit
-        : (payload.web_read_tool || payload.summary_tool ? 16 : 4);
+        : (payload.web_read_tool || payload.summary_tool || payload.library_search_tool ? 16 : 4);
     const int max_web_calls = payload.web_read_tool ? 16 : 4;
     int web_calls_used = 0;
     int tool_calls_used = 0;
@@ -643,7 +646,7 @@ GenerationResult ProviderClient::perform(
             + " received_answer=" + (round_received_answer ? "true" : "false"));
         if (result.outcome != GenerationOutcome::completed || result.tool_calls.empty())
             return result;
-        if (!maintenance && !payload.web_search_tool && !payload.web_read_tool && !payload.summary_tool) {
+        if (!maintenance && !payload.web_search_tool && !payload.web_read_tool && !payload.summary_tool && !payload.library_search_tool) {
             statistics.tool_calls_rejected += result.tool_calls.size();
             return {GenerationOutcome::protocol_error,
                 "Model requested a tool when tools were unavailable", total};
@@ -653,7 +656,7 @@ GenerationResult ProviderClient::perform(
             statistics.tool_calls_rejected += result.tool_calls.size();
             return {GenerationOutcome::protocol_error,
                 maintenance ? "Model kept requesting tools after the maintenance tool limit"
-                    : payload.summary_tool ? "Model kept requesting tools after the overall tool limit"
+                    : (payload.summary_tool || payload.library_search_tool) ? "Model kept requesting tools after the overall tool limit"
                     : payload.web_read_tool ? "Model kept requesting tools after the web tool limit"
                     : "Model kept requesting web search after the search limit", total};
         }
@@ -684,7 +687,7 @@ GenerationResult ProviderClient::perform(
                 ++statistics.tool_calls_rejected;
                 output = maintenance
                     ? R"({"error":"limit","message":"Maintenance tool limit reached. Answer using the available results.","committed":false})"
-                    : payload.summary_tool
+                    : (payload.summary_tool || payload.library_search_tool)
                     ? R"({"error":"limit","message":"Overall tool limit reached. Answer using the available results."})"
                     : R"({"error":"Web tool limit reached. Answer using the available results."})";
                 continue;
@@ -737,6 +740,32 @@ GenerationResult ProviderClient::perform(
                 output = R"({"error":"too_large","message":"Tool results for this answer are too large. This call was not run.","committed":false})";
                 continue;
             }
+            if (call.name == "library_search") {
+                ++statistics.library_search.calls;
+                RecordDuration timing{statistics.library_search.duration};
+                if (!payload.library_search_tool
+                    || !function_tool_available(body, definition_->provider.config.api, "library_search")) {
+                    ++statistics.tool_calls_rejected;
+                    output = R"({"error":"unavailable","message":"Library search is unavailable for this request."})";
+                } else if (!arguments.is_object() || arguments.size() != 1
+                    || !arguments.contains("query") || !arguments["query"].is_string()
+                    || arguments["query"].get_ref<const std::string&>().size() > 2048
+                    || trim_view(arguments["query"].get_ref<const std::string&>()).empty()) {
+                    ++statistics.tool_calls_rejected;
+                    output = R"({"error":"invalid_argument","message":"library_search requires one nonempty UTF-8 string query of at most 2048 bytes."})";
+                } else {
+                    try {
+                        output = payload.library_search_tool(
+                            trim_view(arguments["query"].get_ref<const std::string&>()), cancellation);
+                    } catch (const std::exception&) {
+                        output = R"({"error":"unavailable","message":"Library retrieval is unavailable."})";
+                    }
+                }
+                if (cancellation.load()) ++statistics.library_search.cancelled;
+                else if (tool_failed(output)) ++statistics.library_search.failed;
+                statistics.library_search.result_bytes += output.size();
+                continue;
+            }
             if (call.name == "summary_search" || call.name == "summary_read") {
                 if (!payload.summary_tool) {
                     ++statistics.tool_calls_rejected;
@@ -761,7 +790,7 @@ GenerationResult ProviderClient::perform(
                     ++statistics.tool_calls_rejected;
                     output = maintenance
                         ? R"({"error":"limit","message":"Web calls are unavailable for this answer: the web-call limit was reached. Maintenance tools may remain usable until the overall tool limit.","committed":false})"
-                        : R"({"error":"limit","message":"Web calls are unavailable for this answer: the web-call limit was reached. Summary tools may remain usable until the overall tool limit."})";
+                        : R"({"error":"limit","message":"Web calls are unavailable for this answer: the web-call limit was reached. Summary and Library tools may remain usable until the overall tool limit."})";
                     continue;
                 }
             }
@@ -874,8 +903,6 @@ GenerationResult ProviderClient::perform(
         if (google) messages.push_back({{"role", "user"}, {"parts", std::move(google_parts)}});
         // A full result budget ends tool use for the whole answer, as the call limit does.
         if (force_final) tool_calls_used = max_tool_calls;
-        // Required provider-hosted search must not force another search forever.
-        if (!google && !anthropic) body["tool_choice"] = "auto";
         if (tool_calls_used >= max_tool_calls) {
             // Some providers still request calls when tool definitions remain.
             log_debug("Tool limit reached: requesting final answer without tools");
@@ -974,7 +1001,7 @@ GenerationResult ProviderClient::perform_once(
 
     const std::string& request_body = payload.bytes;
     const bool maintenance = static_cast<bool>(payload.maintenance_tool);
-    const bool collect_tool_calls = maintenance || payload.web_search_tool || payload.web_read_tool || payload.summary_tool;
+    const bool collect_tool_calls = maintenance || payload.web_search_tool || payload.web_read_tool || payload.summary_tool || payload.library_search_tool;
     const std::size_t argument_limit = maintenance
         ? maintenance_argument_limit : ordinary_tool_argument_limit;
     std::unique_ptr<StreamingResponseDecoder> decoder;

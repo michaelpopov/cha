@@ -1146,4 +1146,171 @@ TEST(FolderStoreHttp, GoogleMetadataUsesByteSafeOrderedListsAndPlainText) {
 }
 
 } // namespace
+
+TEST(LibrarySearch, OpenAiUsesCapturedScopeAndKeepsPartialResults) {
+    LibrarySearchScope scope{"openai", {"vs_one", "vs_two"}, "library-secret", 37};
+    std::vector<FolderStoreHttpRequest> requests;
+    FolderStoreClient client([&](const auto& request, const auto&) {
+        requests.push_back(request);
+        EXPECT_EQ(request.method, "POST");
+        EXPECT_EQ(request.timeout_s, 37);
+        EXPECT_EQ(request.headers[0].name, "Authorization");
+        EXPECT_EQ(request.headers[0].value, "Bearer library-secret");
+        EXPECT_EQ(nlohmann::json::parse(request.body), (nlohmann::json{{"query", "standalone query"}, {"max_num_results", 5}}));
+        if (requests.size() == 2) return FolderStoreHttpResponse{403, R"({"error":{"message":"library-secret private query"}})"};
+        return FolderStoreHttpResponse{200, R"({"has_more":true,"data":[{"file_id":"file_1","filename":"Book","content":[{"type":"text","text":"First"},{"type":"image"},{"type":"text","text":"Second"}]}]})"};
+    });
+    test::TestWorkspace workspace;
+    const auto log_file = workspace.root() / "retrieval.log";
+    initialize_diagnostic_logging(log_file, "info");
+    const auto encoded = client.search_library(scope, "standalone query", std::atomic_bool{false});
+    shutdown_diagnostic_logging();
+    std::ifstream log_input(log_file);
+    const std::string diagnostic{std::istreambuf_iterator<char>(log_input), std::istreambuf_iterator<char>()};
+    EXPECT_NE(diagnostic.find("Library search: service=openai stores=2 matches=1 partial=true truncated=true"), std::string::npos);
+    for (const auto* private_text : {"library-secret", "standalone query", "private query", "First", "Second"})
+        EXPECT_EQ(diagnostic.find(private_text), std::string::npos);
+    const auto result = nlohmann::json::parse(encoded);
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_EQ(requests[0].url, "https://api.openai.com/v1/vector_stores/vs_one/search");
+    EXPECT_EQ(requests[1].url, "https://api.openai.com/v1/vector_stores/vs_two/search");
+    ASSERT_EQ(result["matches"].size(), 1u);
+    EXPECT_EQ(result["matches"][0], (nlohmann::json{{"store_id", "vs_one"}, {"file_id", "file_1"},
+        {"title", "Book"}, {"uri", nullptr}, {"text", "First\nSecond"}}));
+    EXPECT_EQ(result["errors"][0]["store_id"], "vs_two");
+    EXPECT_TRUE(result["truncated"]);
+    EXPECT_FALSE(result.contains("error"));
+    EXPECT_EQ(encoded.find("library-secret"), std::string::npos);
+    EXPECT_EQ(encoded.find("private query"), std::string::npos);
+}
+
+TEST(LibrarySearch, EmptyOpenAiSearchIsSuccessfulButMalformedSourcesAreErrors) {
+    for (const auto* body : {R"({"data":[]})", R"({"data":[{"file_id":4}]})", "not json",
+            R"({"data":[{"file_id":"f","filename":"t","content":[{"type":"text","text":7}]}]})"}) {
+        FolderStoreClient client([&](const auto&, const auto&) { return FolderStoreHttpResponse{200, body}; });
+        const auto result = nlohmann::json::parse(client.search_library(
+            {"openai", {"vs_a"}, "secret", 600}, "q", std::atomic_bool{false}));
+        EXPECT_TRUE(result["matches"].empty());
+        EXPECT_EQ(result.contains("error"), std::string_view(body) != R"({"data":[]})");
+    }
+}
+
+TEST(LibrarySearch, GeminiUsesOneFixedHelperAndReturnsOnlySourcePassages) {
+    using Json = nlohmann::json;
+    int calls = 0;
+    FolderStoreClient client([&](const auto& request, const auto&) {
+        ++calls;
+        EXPECT_EQ(request.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
+        EXPECT_EQ(request.headers[0].name, "x-goog-api-key");
+        EXPECT_EQ(request.headers[0].value, "library-key");
+        EXPECT_EQ(request.timeout_s, 29);
+        const auto body = Json::parse(request.body);
+        EXPECT_EQ(body["tools"], (Json::array({{{"fileSearch", {
+            {"fileSearchStoreNames", {"fileSearchStores/a", "fileSearchStores/b"}}, {"topK", 10}}}}})));
+        EXPECT_EQ(body["generationConfig"], (Json{{"candidateCount", 1}, {"maxOutputTokens", 2048}}));
+        EXPECT_EQ(body["contents"].size(), 1u);
+        return FolderStoreHttpResponse{200, R"({"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"Invented helper answer"}]},"groundingMetadata":{"groundingChunks":[{"retrievedContext":{"text":"Real first passage","title":"First","fileSearchStore":"fileSearchStores/a"}},{"retrievedContext":{"text":"Real second passage","uri":"private://source"}}]}}]})"};
+    });
+    const auto encoded = client.search_library({"google", {"fileSearchStores/a", "fileSearchStores/b"}, "library-key", 29},
+        "query", std::atomic_bool{false});
+    const auto result = Json::parse(encoded);
+    EXPECT_EQ(calls, 1);
+    ASSERT_EQ(result["matches"].size(), 2u);
+    EXPECT_EQ(result["matches"][0]["text"], "Real first passage");
+    EXPECT_EQ(result["matches"][0]["store_id"], "fileSearchStores/a");
+    EXPECT_TRUE(result["matches"][0]["file_id"].is_null());
+    EXPECT_TRUE(result["matches"][0]["uri"].is_null());
+    EXPECT_TRUE(result["matches"][1]["store_id"].is_null());
+    EXPECT_TRUE(result["matches"][1]["title"].is_null());
+    EXPECT_EQ(result["matches"][1]["uri"], "private://source");
+    EXPECT_EQ(encoded.find("Invented helper answer"), std::string::npos);
+    EXPECT_EQ(encoded.find("library-key"), std::string::npos);
+}
+
+TEST(LibrarySearch, GeminiRejectsForeignAndUngroundedResponsesAndAcceptsGroundedTokenLimit) {
+    using Json = nlohmann::json;
+    const auto context = [](Json source, std::string finish = "STOP") {
+        return Json{{"candidates", Json::array({{{"finishReason", finish},
+            {"groundingMetadata", {{"groundingChunks", Json::array({{{"retrievedContext", source}}})}}}}})}};
+    };
+    for (const auto& body : {
+            context({{"text", "source"}, {"fileSearchStore", "fileSearchStores/foreign"}}),
+            context({{"text", "source"}}, "SAFETY"), Json{{"candidates", Json::array()}},
+            Json::parse(R"({"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"answer"}]}}]})"),
+            context({{"text", 7}}), context(Json::object())}) {
+        FolderStoreClient client([&](const auto&, const auto&) { return FolderStoreHttpResponse{200, body.dump()}; });
+        const auto result = Json::parse(client.search_library({"google", {"fileSearchStores/a"}, "key", 10},
+            "q", std::atomic_bool{false}));
+        EXPECT_EQ(result["error"], "unavailable");
+        EXPECT_TRUE(result["matches"].empty());
+        EXPECT_TRUE(result["errors"][0]["store_id"].is_null());
+    }
+    FolderStoreClient client([&](const auto&, const auto&) {
+        return FolderStoreHttpResponse{200, context({{"text", "passage"}}, "MAX_TOKENS").dump()};
+    });
+    const auto result = Json::parse(client.search_library({"google", {"fileSearchStores/a"}, "key", 10},
+        "q", std::atomic_bool{false}));
+    EXPECT_FALSE(result.contains("error"));
+    EXPECT_TRUE(result["truncated"]);
+    EXPECT_EQ(result["matches"][0]["store_id"], "fileSearchStores/a");
+}
+
+TEST(LibrarySearch, Utf8MetadataAndSerializedEscapingStayWithinBounds) {
+    using Json = nlohmann::json;
+    for (const bool escaped : {false, true}) {
+        std::string text;
+        for (int i = 0; i < 2000; ++i) text += escaped ? "\x01\x02\x03" : "📚x";
+        Json data = Json::array();
+        for (int i = 0; i < 7; ++i) data.push_back({{"file_id", "file"}, {"filename", text},
+            {"content", Json::array({{{"type", "text"}, {"text", text}}})}});
+        int calls = 0;
+        FolderStoreClient client([&](const auto&, const auto&) { ++calls; return FolderStoreHttpResponse{200, Json{{"data", data}}.dump()}; });
+        const auto encoded = client.search_library({"openai", {"vs_a", "vs_b"}, "key", 600}, "q", std::atomic_bool{false});
+        const auto result = Json::parse(encoded);
+        EXPECT_EQ(calls, 2);
+        EXPECT_LE(encoded.size(), 64u * 1024);
+        EXPECT_TRUE(result["truncated"]);
+        ASSERT_FALSE(result["matches"].empty());
+        EXPECT_LE(result["matches"].size(), 10u);
+        if (escaped) EXPECT_LT(result["matches"].size(), 10u);
+        for (const auto& match : result["matches"]) {
+            EXPECT_LE(match["text"].get<std::string>().size(), 4096u);
+            EXPECT_LE(match["title"].get<std::string>().size(), 512u);
+        }
+    }
+}
+
+TEST(LibrarySearch, GeminiBoundsTextChunksAndReportsOmittedImages) {
+    using Json = nlohmann::json;
+    Json chunks = Json::array({{{"image", {{"uri", "unused://image"}}}}});
+    for (int i = 0; i < 12; ++i) chunks.push_back({{"retrievedContext", {{"text", "Passage " + std::to_string(i)}}}});
+    FolderStoreClient client([&](const auto&, const auto&) {
+        return FolderStoreHttpResponse{200, Json{{"candidates", Json::array({{{"finishReason", "STOP"},
+            {"groundingMetadata", {{"groundingChunks", chunks}}}}})}}.dump()};
+    });
+    const auto result = Json::parse(client.search_library({"google", {"fileSearchStores/a"}, "key", 600},
+        "q", std::atomic_bool{false}));
+    ASSERT_EQ(result["matches"].size(), 10u);
+    EXPECT_EQ(result["matches"][0]["text"], "Passage 0");
+    EXPECT_EQ(result["matches"][9]["text"], "Passage 9");
+    EXPECT_TRUE(result["truncated"]);
+    EXPECT_TRUE(result["errors"].empty());
+}
+
+TEST(LibrarySearch, CancellationStopsBeforeBetweenAndAfterRequests) {
+    for (bool before : {false, true}) {
+        std::atomic_bool cancel{before};
+        int calls = 0;
+        FolderStoreClient client([&](const auto&, const auto&) {
+            ++calls;
+            cancel = true;
+            return FolderStoreHttpResponse{200, R"({"data":[]})"};
+        });
+        const auto result = nlohmann::json::parse(client.search_library({"openai", {"vs_a", "vs_b"}, "key", 600}, "q", cancel));
+        EXPECT_EQ(calls, before ? 0 : 1);
+        EXPECT_EQ(result["error"], "cancelled");
+    }
+    EXPECT_EQ(FolderStoreHttpRequest{}.timeout_s, 600);
+}
+
 } // namespace cha

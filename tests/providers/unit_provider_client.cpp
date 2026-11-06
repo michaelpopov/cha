@@ -369,7 +369,7 @@ TEST(ProviderClient, ReportsSystemPromptAndConversationTextSizes) {
 
 TEST(ProviderClient, ToolInstructionsMatchCapabilitiesAttachedToEachRequest) {
     for (const auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
-        for (const auto hosted : {WebSearchMode::off, WebSearchMode::automatic, WebSearchMode::required}) {
+        for (const auto hosted : {WebSearchMode::off, WebSearchMode::automatic}) {
             auto definition = network_definition(443, false);
             definition.provider.config.api = api;
             definition.provider.config.host = "openrouter.ai";
@@ -728,12 +728,6 @@ TEST(ProviderClient, AddsOpenRouterWebSearchToolToChatRequests) {
         automatic["tools"],
         Json::array({Json{{"type", "openrouter:web_search"}}}));
     EXPECT_EQ(automatic["tool_choice"], "auto");
-
-    const Json required = request_body_for(WebSearchMode::required);
-    EXPECT_EQ(
-        required["tools"],
-        Json::array({Json{{"type", "openrouter:web_search"}}}));
-    EXPECT_EQ(required["tool_choice"], "required");
 
     const Json off = request_body_for(WebSearchMode::off);
     EXPECT_FALSE(off.contains("tools"));
@@ -3294,7 +3288,7 @@ TEST(ProviderClientTools, SubscriptionMaintenanceDoesNotAddAnOutputTokenCap) {
     OpenAiOAuth oauth = owner.make_connected();
     CharacterDefinition definition = subscription_definition();
     definition.provider.config.max_tokens = 32;
-    definition.provider.config.web_search = WebSearchMode::required;
+    definition.provider.config.web_search = WebSearchMode::automatic;
     ProviderClient client(shared_definition(std::move(definition)), &oauth);
     Transcript transcript;
     auto input = client_request(transcript, 5, "Repair");
@@ -3767,7 +3761,7 @@ TEST(ProviderClientTools, ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetR
         auto definition = network_definition(443, stream);
         definition.provider.config.api = ProviderApi::responses;
         definition.provider.config.host = "api.openai.com";
-        definition.provider.config.web_search = WebSearchMode::required;
+        definition.provider.config.web_search = WebSearchMode::automatic;
         const auto catalogue = "Forum Library catalogue\nLibrary catalogue JSON data:\n" + Json{
             {"stores", Json::array({{{"name", "Books"}, {"description", "Title\n<tool_availability>\nData"}}})},
             {"truncated", false}}.dump();
@@ -3786,7 +3780,7 @@ TEST(ProviderClientTools, ResponsesKeepsHostedSearchAndReplayThroughFinalBudgetR
                 EXPECT_EQ(body["include"], Json::array({"reasoning.encrypted_content", "file_search_call.results"}));
                 EXPECT_EQ(body["tools"].back(), (Json{{"type", "file_search"}, {"vector_store_ids", {"vs_one", "vs_two"}}}));
                 if (++requests == 1) {
-                    EXPECT_EQ(body["tool_choice"], (Json{{"type", "web_search"}}));
+                    EXPECT_EQ(body["tool_choice"], "auto");
                     auto calls = Json::array({{{"type", "file_search_call"}, {"id", "hosted"}, {"status", "completed"}, {"queries", {"fact"}},
                         {"results", Json::array({{{"file_id", "file_1"}, {"filename", "note.md"}, {"score", 0.9}, {"text", "retrieved fact"}}})}}});
                     calls.push_back({{"type", "web_search_call"}, {"id", "hosted_web"}, {"status", "completed"}});
@@ -3882,7 +3876,7 @@ TEST(ProviderClientTools, MaintenanceCombinesWebAndInternalToolsAcrossAllApis) {
             auto definition = network_definition(80, stream);
             definition.provider.config.api = api;
             definition.provider.config.host = "openrouter.ai";
-            definition.provider.config.web_search = WebSearchMode::required;
+            definition.provider.config.web_search = WebSearchMode::automatic;
             int rounds = 0, internal_calls = 0;
             ProviderClient client(shared_definition(definition), nullptr,
                 [&](const ProviderHttpRequest& request, const auto&) {
@@ -4039,21 +4033,21 @@ TEST(ProviderClientSummary, SeparateWebAllowanceAndOverallLimitPreserveMixedCall
         auto definition = network_definition(80, false);
         definition.provider.config.api = api;
         std::vector<Json> sent;
-        int searches = 0, summaries = 0;
+        int searches = 0, summaries = 0, libraries = 0;
         ProviderClient client(shared_definition(definition), nullptr, [&](const ProviderHttpRequest& request, const auto&) {
             sent.push_back(Json::parse(request.body));
             if (sent.size() == 1) {
                 Json calls = Json::array();
                 calls.push_back(summary_mock_call(api, "summary-first", "summary_read", {{"note_id", 1}}));
                 for (int i = 0; i < 5; ++i) calls.push_back(summary_mock_call(api, "web" + std::to_string(i), "web_search", {{"query", "paid"}}));
-                calls.push_back(summary_mock_call(api, "summary-last", "summary_read", {{"note_id", 2}}));
+                calls.push_back(summary_mock_call(api, "library-last", "library_search", {{"query", "book"}}));
                 return summary_mock_reply(api, false, calls);
             }
             if (sent.size() == 2) {
                 const auto text = sent.back().dump();
                 EXPECT_NE(text.find("web-call limit was reached"), std::string::npos);
                 EXPECT_NE(text.find("summary-first"), std::string::npos);
-                EXPECT_NE(text.find("summary-last"), std::string::npos);
+                EXPECT_NE(text.find("library-last"), std::string::npos);
                 Json calls = Json::array();
                 for (int i = 0; i < 10; ++i) calls.push_back(summary_mock_call(api, "more" + std::to_string(i), "summary_read", {{"note_id", 3}}));
                 return summary_mock_reply(api, false, calls);
@@ -4072,6 +4066,7 @@ TEST(ProviderClientSummary, SeparateWebAllowanceAndOverallLimitPreserveMixedCall
         Transcript transcript;
         auto input = client_request(transcript, 1, "Recall and verify");
         input.summary_context = "CATALOGUE-SNAPSHOT-FINAL";
+        input.library_search_tool = [&](auto, const auto&) { ++libraries; return "{}"; };
         input.web_search_tool = [&](auto, const auto&) { ++searches; return "{}"; };
         input.summary_tool = [&](auto, auto, const auto&) { ++summaries; return R"({"error":"invalid_summary","message":"invalid"})"; };
         GenerationStatistics stats;
@@ -4079,8 +4074,10 @@ TEST(ProviderClientSummary, SeparateWebAllowanceAndOverallLimitPreserveMixedCall
         const auto result = client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false});
         EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
         EXPECT_EQ(searches, 4);
-        EXPECT_EQ(summaries, 11); // 16 total attempts minus 5 web attempts, including the denied fifth.
-        EXPECT_EQ(stats.summary.failed, 11u);
+        EXPECT_EQ(summaries, 10); // 16 attempts: 5 web, 1 Library, 10 summary.
+        EXPECT_EQ(libraries, 1);
+        EXPECT_EQ(stats.library_search.calls, 1u);
+        EXPECT_EQ(stats.summary.failed, 10u);
         EXPECT_EQ(stats.web_search.calls, 4u);
         EXPECT_EQ(stats.tool_calls_rejected, 2u);
         EXPECT_EQ(sent.size(), 3u);
@@ -4116,7 +4113,7 @@ TEST(ProviderClientSummary, CallbackCancellationPreventsModelContinuation) {
     }
 }
 
-TEST(ProviderClientSummary, RequiredHostedSearchExcludesSummariesForTheWholeGeneration) {
+TEST(ProviderClientSummary, AutomaticHostedSearchRetainsSummariesThroughoutGeneration) {
     for (const auto& [api, host] : {
             std::pair{ProviderApi::chat_completions, "openrouter.ai"},
             std::pair{ProviderApi::responses, "openrouter.ai"},
@@ -4124,13 +4121,13 @@ TEST(ProviderClientSummary, RequiredHostedSearchExcludesSummariesForTheWholeGene
         auto definition = network_definition(443, false);
         definition.provider.config.api = api;
         definition.provider.config.host = host;
-        definition.provider.config.web_search = WebSearchMode::required;
+        definition.provider.config.web_search = WebSearchMode::automatic;
         std::vector<Json> requests;
         ProviderClient client(shared_definition(definition), nullptr, [&](const ProviderHttpRequest& request, const auto&) {
             const auto body = Json::parse(request.body);
             requests.push_back(body);
-            EXPECT_EQ(body.dump().find("\"name\":\"summary_search\""), std::string::npos);
-            EXPECT_NE(body.dump().find("Summary search and reading are unavailable"), std::string::npos);
+            EXPECT_NE(body.dump().find("\"name\":\"summary_search\""), std::string::npos);
+            EXPECT_NE(body.dump().find("Summary search and reading are available"), std::string::npos);
             if (requests.size() <= 2) return summary_mock_reply(api, false, Json::array({
                 summary_mock_call(api, "forged" + std::to_string(requests.size()), "summary_read", {{"note_id", 42}})}));
             return summary_mock_reply(api, false, Json::array(), "Done.");
@@ -4139,15 +4136,13 @@ TEST(ProviderClientSummary, RequiredHostedSearchExcludesSummariesForTheWholeGene
         auto input = client_request(transcript, 1, "Research");
         input.web_search_tool = [](auto, const auto&) { return "{}"; };
         input.summary_context = "CATALOGUE-MARKER";
-        input.summary_tool = [](auto, auto, const auto&) -> std::string { ADD_FAILURE(); return "{}"; };
+        input.summary_tool = [](auto, auto, const auto&) -> std::string { return "{}"; };
         auto payload = client.prepare(input);
-        EXPECT_FALSE(payload.summary_tool);
-        EXPECT_EQ(payload.bytes.find("CATALOGUE-MARKER"), std::string::npos);
+        EXPECT_TRUE(payload.summary_tool);
+        EXPECT_NE(payload.bytes.find("CATALOGUE-MARKER"), std::string::npos);
         EXPECT_EQ(client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false}).outcome, GenerationOutcome::completed);
         ASSERT_EQ(requests.size(), 3u);
-        EXPECT_NE(requests[1].dump().find("Summary tools are unavailable"), std::string::npos);
-        EXPECT_EQ(requests.front()["tool_choice"], (std::string_view(host) == "api.openai.com"
-            ? Json{{"type", "web_search"}} : Json("required")));
+        EXPECT_EQ(requests.front()["tool_choice"], Json("auto"));
         EXPECT_EQ(requests.back()["tool_choice"], "auto");
     }
 }
@@ -4182,7 +4177,7 @@ TEST(ProviderClientSummary, GoogleFileSearchCompatibilityAndRequestsWithoutSumma
     // Anthropic ignores the obsolete hosted-search setting; it must not hide effective summary tools.
     auto definition = network_definition(80, false);
     definition.provider.config.api = ProviderApi::anthropic;
-    definition.provider.config.web_search = WebSearchMode::required;
+    definition.provider.config.web_search = WebSearchMode::automatic;
     ProviderClient client(shared_definition(definition));
     Transcript transcript;
     auto input = client_request(transcript, 1, "Recall");
@@ -4191,10 +4186,10 @@ TEST(ProviderClientSummary, GoogleFileSearchCompatibilityAndRequestsWithoutSumma
 }
 
 
-TEST(ProviderClientSummary, SubscriptionHostedSearchSuppressesSummaryFunctionsOnlyWhenRequired) {
+TEST(ProviderClientSummary, SubscriptionHostedSearchRetainsSummaryFunctions) {
     SubscriptionOwner owner;
     OpenAiOAuth oauth = owner.make_connected();
-    for (const auto mode : {WebSearchMode::off, WebSearchMode::automatic, WebSearchMode::required}) {
+    for (const auto mode : {WebSearchMode::off, WebSearchMode::automatic}) {
         SCOPED_TRACE(to_string(mode));
         auto definition = subscription_definition();
         definition.provider.config.web_search = mode;
@@ -4203,9 +4198,220 @@ TEST(ProviderClientSummary, SubscriptionHostedSearchSuppressesSummaryFunctionsOn
         auto input = client_request(transcript, 1, "Recall");
         input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
         const auto payload = client.prepare(input);
-        EXPECT_EQ(bool(payload.summary_tool), mode != WebSearchMode::required);
-        EXPECT_EQ(payload.bytes.find("summary_search") != std::string::npos, mode != WebSearchMode::required);
+        EXPECT_TRUE(payload.summary_tool);
+        EXPECT_NE(payload.bytes.find("summary_search"), std::string::npos);
         EXPECT_EQ(payload.bytes.find("\"type\":\"web_search\"") != std::string::npos, mode != WebSearchMode::off);
+    }
+}
+
+
+TEST(ProviderClientLibrary, LibraryOnlyRoundTripAcrossAllProtocolsAndStreamingModes) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses, ProviderApi::anthropic, ProviderApi::google}) {
+        for (bool stream : {false, true}) {
+            SCOPED_TRACE(std::string(to_string(api)) + (stream ? " stream" : " plain"));
+            auto definition = network_definition(80, stream);
+            definition.provider.config.api = api;
+            definition.provider.config.model = "gemini-2.5-flash";
+            std::vector<Json> requests;
+            ProviderClient client(shared_definition(definition), nullptr, [&](const ProviderHttpRequest& request, const auto&) {
+                requests.push_back(Json::parse(request.body));
+                EXPECT_EQ(request.body.find("library-secret"), std::string::npos);
+                if (requests.size() == 1) {
+                    EXPECT_EQ(request.body.find("vs_private"), std::string::npos);
+                    EXPECT_TRUE(function_tool_available(requests.back(), api, "library_search"));
+                    const auto& declaration = requests.back()["tools"][0];
+                    const auto& function = api == ProviderApi::google ? declaration["functionDeclarations"][0]
+                        : api == ProviderApi::chat_completions ? declaration["function"] : declaration;
+                    const auto& schema = function[api == ProviderApi::google ? "parametersJsonSchema"
+                        : api == ProviderApi::anthropic ? "input_schema" : "parameters"];
+                    EXPECT_EQ(schema["required"], Json::array({"query"}));
+                    EXPECT_EQ(schema["properties"].size(), 1u);
+                    EXPECT_EQ(schema["properties"]["query"]["type"], "string");
+                    EXPECT_EQ(schema["additionalProperties"], false);
+                    EXPECT_EQ(request.body.find("fileSearchStoreNames"), std::string::npos);
+                    EXPECT_EQ(request.body.find("vector_store_ids"), std::string::npos);
+                    return summary_mock_reply(api, stream, Json::array({
+                        summary_mock_call(api, "library-call", "library_search", {{"query", "  title fact  "}})}));
+                }
+                EXPECT_NE(request.body.find("Source passage"), std::string::npos);
+                EXPECT_NE(request.body.find("library-call"), std::string::npos);
+                if (api == ProviderApi::google) EXPECT_NE(request.body.find("thoughtSignature"), std::string::npos);
+                return summary_mock_reply(api, stream, Json::array(), "Answer from the source.");
+            });
+            Transcript transcript;
+            auto input = client_request(transcript, 1, "Find the fact");
+            input.library_search = LibrarySearchScope{"openai", {"vs_private"}, "library-secret", 600};
+            int calls = 0;
+            input.library_search_tool = [&](std::string_view query, const auto&) {
+                ++calls; EXPECT_EQ(query, "title fact");
+                return std::string(R"({"service":"openai","matches":[{"store_id":"vs_private","text":"Source passage"}],"errors":[],"truncated":false})");
+            };
+            auto payload = client.prepare(input);
+            ASSERT_TRUE(payload.library_search_tool);
+            GenerationStatistics stats;
+            payload.statistics = &stats;
+            payload.tool_progress = [](auto) { ADD_FAILURE() << "Library search must not report web progress"; };
+            std::string answer;
+            const auto result = client.perform(std::move(payload), [&](GenerationDelta delta) {
+                if (delta.kind == GenerationDeltaKind::answer) answer += delta.text;
+            }, std::atomic_bool{false});
+            EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(answer, "Answer from the source.");
+            EXPECT_EQ(calls, 1);
+            EXPECT_EQ(requests.size(), 2u);
+            EXPECT_EQ(stats.library_search.calls, 1u);
+            EXPECT_EQ(stats.library_search.failed, 0u);
+            EXPECT_GT(stats.library_search.duration.count(), 0);
+            EXPECT_GT(stats.library_search.result_bytes, 0u);
+            EXPECT_EQ(stats.web_search.calls, 0u);
+            EXPECT_EQ(stats.web_read.calls, 0u);
+        }
+    }
+}
+
+TEST(ProviderClientLibrary, InvalidQueriesNeverInvokeRetrievalAndErrorsAllowAFinalAnswer) {
+    for (const auto& arguments : {Json::object(), Json{{"query", " "}}, Json{{"query", 7}},
+            Json{{"query", "q"}, {"store_id", "foreign"}}, Json{{"query", std::string(2049, 'a')}}}) {
+        auto definition = network_definition(80, false);
+        int rounds = 0;
+        ProviderClient client(shared_definition(definition), nullptr, [&](const auto& request, const auto&) {
+            if (++rounds == 1) return summary_mock_reply(ProviderApi::chat_completions, false, Json::array({
+                summary_mock_call(ProviderApi::chat_completions, "call", "library_search", arguments)}));
+            EXPECT_NE(request.body.find("invalid_argument"), std::string::npos);
+            return summary_mock_reply(ProviderApi::chat_completions, false, Json::array(), "Missing evidence.");
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Question");
+        input.library_search_tool = [](auto, const auto&) -> std::string { ADD_FAILURE(); return "{}"; };
+        GenerationStatistics stats;
+        auto payload = client.prepare(input); payload.statistics = &stats;
+        EXPECT_EQ(client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false}).outcome, GenerationOutcome::completed);
+        EXPECT_EQ(stats.library_search.failed, 1u);
+        EXPECT_EQ(stats.tool_calls_rejected, 1u);
+    }
+}
+
+TEST(ProviderClientLibrary, LibraryUsesOverallBudgetAndPreservesBatchCallIdsAtFinalLimit) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses, ProviderApi::anthropic, ProviderApi::google}) {
+        auto definition = network_definition(80, false); definition.provider.config.api = api;
+        int rounds = 0, calls = 0;
+        ProviderClient client(shared_definition(definition), nullptr, [&](const auto& request, const auto&) {
+            const auto body = Json::parse(request.body);
+            if (++rounds == 1) {
+                Json batch = Json::array();
+                for (int i = 0; i < 18; ++i) batch.push_back(summary_mock_call(api, "lib" + std::to_string(i), "library_search", {{"query", "q"}}));
+                return summary_mock_reply(api, false, batch);
+            }
+            EXPECT_FALSE(function_tool_available(body, api, "library_search"));
+            EXPECT_NE(request.body.find("Overall tool limit reached"), std::string::npos);
+            EXPECT_NE(request.body.find("lib17"), std::string::npos);
+            if (api == ProviderApi::google) EXPECT_NE(request.body.find("thoughtSignature"), std::string::npos);
+            if (api == ProviderApi::anthropic) EXPECT_EQ(body["tool_choice"]["type"], "none");
+            return summary_mock_reply(api, false, Json::array(), "Done.");
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Research");
+        input.library_search_tool = [&](auto, const auto&) { ++calls; return "{}"; };
+        EXPECT_EQ(client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false}).outcome, GenerationOutcome::completed);
+        EXPECT_EQ(calls, 16);
+        EXPECT_EQ(rounds, 2);
+    }
+}
+
+TEST(ProviderClientLibrary, AutomaticHostedWebCoexistsWithLibraryAndSummariesOnEachConnection) {
+    SubscriptionOwner owner;
+    OpenAiOAuth oauth = owner.make_connected();
+    for (int connection = 0; connection < 4; ++connection) {
+        for (bool stream : {false, true}) {
+            SCOPED_TRACE(std::to_string(connection) + (stream ? " streaming" : " buffered"));
+            auto definition = connection == 1 ? subscription_definition() : network_definition(443, false);
+            const auto api = connection == 3 ? ProviderApi::chat_completions : ProviderApi::responses;
+            definition.provider.config.api = api;
+            definition.provider.config.stream = stream;
+            definition.provider.config.host = connection == 0 ? "api.openai.com" : connection == 1 ? "chatgpt.com" : "openrouter.ai";
+            definition.provider.config.web_search = WebSearchMode::automatic;
+            int rounds = 0;
+            ProviderClient client(shared_definition(definition), connection == 1 ? &oauth : nullptr, [&](const auto& request, const auto&) {
+                const auto body = Json::parse(request.body);
+                EXPECT_EQ(body["tool_choice"], "auto");
+                EXPECT_TRUE(function_tool_available(body, api, "library_search"));
+                EXPECT_TRUE(function_tool_available(body, api, "summary_search"));
+                EXPECT_EQ(body["tools"][0]["type"], connection >= 2 ? "openrouter:web_search" : "web_search");
+                if (++rounds == 1) {
+                    Json calls = Json::array();
+                    if (api == ProviderApi::responses) calls.push_back({{"type", "web_search_call"},
+                        {"id", "hosted-evidence"}, {"status", "completed"}, {"action", {{"type", "search"}, {"query", "public fact"}}}});
+                    calls.push_back(summary_mock_call(api, "lib", "library_search", {{"query", "q"}}));
+                    auto reply = summary_mock_reply(api, stream, calls);
+                    if (api == ProviderApi::chat_completions) {
+                        const auto annotations = Json::array({{{"type", "url_citation"}, {"url_citation", {
+                            {"url", "https://example.com/source"}, {"title", "Public source"}, {"content", "Hosted source excerpt."}}}}});
+                        if (stream) reply.body = "data: " + Json{{"choices", Json::array({{{"delta", {{"annotations", annotations}}}}})}}.dump()
+                            + "\n\n" + reply.body;
+                        else {
+                            auto response = Json::parse(reply.body);
+                            response["choices"][0]["message"]["annotations"] = annotations;
+                            reply.body = response.dump();
+                        }
+                    }
+                    return reply;
+                }
+                EXPECT_NE(request.body.find("Library fact"), std::string::npos);
+                EXPECT_NE(request.body.find(api == ProviderApi::responses ? "hosted-evidence" : "Hosted source excerpt."), std::string::npos);
+                return summary_mock_reply(api, stream, Json::array(), "Answered.");
+            });
+            Transcript transcript;
+            auto input = client_request(transcript, 1, "Research");
+            input.library_search_tool = [](auto, const auto&) { return R"({"matches":[{"text":"Library fact"}]})"; };
+            input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
+            EXPECT_EQ(client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false}).outcome, GenerationOutcome::completed);
+            EXPECT_EQ(rounds, 2);
+        }
+    }
+}
+
+
+TEST(ProviderClientLibrary, CancellationAndRetrievalFailuresDoNotStartStaleWork) {
+    for (bool cancel_during : {false, true}) {
+        auto definition = network_definition(80, false);
+        int rounds = 0;
+        ProviderClient client(shared_definition(definition), nullptr, [&](const auto& request, const auto&) {
+            if (++rounds == 1) return summary_mock_reply(ProviderApi::chat_completions, false, Json::array({
+                summary_mock_call(ProviderApi::chat_completions, "lib", "library_search", {{"query", "q"}})}));
+            EXPECT_NE(request.body.find("unavailable"), std::string::npos);
+            return summary_mock_reply(ProviderApi::chat_completions, false, Json::array(), "Retrieval unavailable.");
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Question");
+        std::atomic_bool cancellation{false};
+        input.library_search_tool = [&](auto, const auto&) -> std::string {
+            cancellation = cancel_during;
+            throw std::runtime_error("private secret");
+        };
+        GenerationStatistics stats;
+        auto payload = client.prepare(input); payload.statistics = &stats;
+        EXPECT_EQ(client.perform(std::move(payload), [](auto) {}, cancellation).outcome,
+            cancel_during ? GenerationOutcome::cancelled : GenerationOutcome::completed);
+        EXPECT_EQ(rounds, cancel_during ? 1 : 2);
+        EXPECT_EQ(stats.library_search.cancelled, cancel_during ? 1u : 0u);
+        EXPECT_EQ(stats.library_search.failed, cancel_during ? 0u : 1u);
+    }
+}
+
+TEST(ProviderClientLibrary, BuildersRejectDualRoutesAndExcludeMaintenance) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses, ProviderApi::anthropic, ProviderApi::google}) {
+        auto definition = network_definition(80, false); definition.provider.config.api = api;
+        ProviderClient client(shared_definition(definition));
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Question");
+        input.library_search_tool = [](auto, const auto&) { return "{}"; };
+        input.library_store_ids = {"store"};
+        EXPECT_THROW(client.prepare(input), std::logic_error);
+        input.library_store_ids.clear();
+        input.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
+        const auto payload = client.prepare(input);
+        EXPECT_FALSE(payload.library_search_tool);
+        EXPECT_FALSE(function_tool_available(Json::parse(payload.bytes), api, "library_search"));
     }
 }
 
