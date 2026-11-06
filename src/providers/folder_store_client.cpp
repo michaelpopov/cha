@@ -713,7 +713,8 @@ FolderStoreClient::FolderStoreClient(FolderStoreTransport transport)
     : transport_(transport ? std::move(transport) : folder_store_curl_transport) {}
 
 FolderStoreList FolderStoreClient::list_stores(
-    FolderStoreService service, std::string_view key, const std::atomic_bool& cancel) {
+    FolderStoreService service, std::string_view key, const std::atomic_bool& cancel,
+    bool resolve_metadata) {
     const bool openai = service == FolderStoreService::openai;
     FolderStoreList found;
     found.result = read_pages(transport_, get_request(service, key),
@@ -730,7 +731,7 @@ FolderStoreList FolderStoreClient::list_stores(
             return true;
         }, cancel);
     if (found.result.kind != FolderStoreRemoteKind::ok) found.stores.clear();
-    if (!openai && found.result.kind == FolderStoreRemoteKind::ok) {
+    if (!openai && resolve_metadata && found.result.kind == FolderStoreRemoteKind::ok) {
         for (auto& store : found.stores) {
             const auto metadata = google_store_metadata(transport_, store.id, key, cancel);
             if (metadata.result.kind != FolderStoreRemoteKind::ok) {

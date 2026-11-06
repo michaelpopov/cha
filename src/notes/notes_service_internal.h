@@ -137,9 +137,27 @@ struct NotesService::Impl {
     [[nodiscard]] bool folder_store_lifetime(const std::shared_ptr<FolderStoreControl>& control);
     void run_folder_store_upload(std::shared_ptr<FolderStoreControl> control);
     void run_folder_store_cleanup(std::shared_ptr<FolderStoreControl> control);
+    struct CloudStoreCache {
+        std::uint64_t epoch{};
+        FolderStoreService service{};
+        std::string key;
+        // Readers can use the last complete snapshot while Refresh downloads.
+        std::mutex data_mutex;
+        std::optional<std::vector<FolderStoreDetail>> stores;
+        bool invalidated_during_download{};
+        // Serializes initial loads, refreshes, edits and deletions for this key.
+        std::mutex download_mutex;
+    };
+    // The map and credential checks use lifecycle_mutex. Workers retain their
+    // entry, so a late result cannot populate a replacement key or vault.
+    std::map<std::string, std::shared_ptr<CloudStoreCache>, std::less<>> cloud_store_cache;
+    std::shared_ptr<CloudStoreCache> cloud_store_cache_locked(std::string_view api_key_id, std::uint64_t epoch);
+    void invalidate_cloud_stores_locked(std::string_view api_key_id);
+    std::vector<FolderStoreDetail> cloud_store_snapshot(CloudStoreCache& cache,
+        FolderStoreClient& client, const std::atomic_bool& cancel, bool refresh = false);
     using CloudStoreWork = std::function<nlohmann::json(
-        FolderStoreClient&, FolderStoreService, const std::string& key, const std::atomic_bool& cancel)>;
-    // Resolves the key under lifecycle_mutex, then runs the work as a background job.
+        FolderStoreClient&, CloudStoreCache&, const std::atomic_bool& cancel)>;
+    // Caller holds lifecycle_mutex. Network work runs after releasing it.
     std::shared_ptr<OperationReply> launch_cloud_store(
         std::string_view api_key_id, std::uint64_t epoch, bool writing, CloudStoreWork work);
     bool launch_folder_store_control(

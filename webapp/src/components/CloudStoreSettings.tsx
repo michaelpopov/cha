@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ChaError, publicErrorMessage, type ChaClient, type CloudStoreDetail, type CloudStoreList, type CloudStoreUpdate } from '../api/client';
-import { useFormReload } from '../detailRefresh';
+import { useDetailRefresh, useFormReload } from '../detailRefresh';
 import { useLoad } from '../useLoad';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ChevronLeftIcon, DatabaseIcon, KeyIcon } from './Icons';
@@ -41,17 +41,51 @@ export function CloudStoreKeysScreen({ client, navigate }: SettingsScreenProps) 
 }
 
 export function CloudStoresScreen({ client, navigate, state }: SettingsScreenProps) {
-  const { id: apiKeyId, notice } = state.inspectedCloudStoreKey;
+  const { id: apiKeyId, name: apiKeyName, notice } = state.inspectedCloudStoreKey;
+  const { epoch } = useDetailRefresh();
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const refreshRequest = useRef<object | null>(null);
   const load = useCallback((loader: ChaClient) => (
     apiKeyId ? loader.listCloudStores(apiKeyId) : Promise.reject(new Error('No API key'))), [apiKeyId]);
-  const { data, error, retry } = useLoad(client, load, 'Cloud stores could not be loaded.');
+  const { data, error, retry, setData } = useLoad(client, load, 'Cloud stores could not be loaded.');
+  useEffect(() => {
+    setRefreshing(false);
+    setRefreshError(null);
+    return () => { refreshRequest.current = null; };
+  }, [client, apiKeyId, epoch]);
+  async function refresh() {
+    if (!apiKeyId || refreshRequest.current) return;
+    const request = {};
+    refreshRequest.current = request;
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const loaded = await client.refreshCloudStores(apiKeyId);
+      if (refreshRequest.current === request) setData(loaded);
+    } catch (failure: unknown) {
+      if (refreshRequest.current === request)
+        setRefreshError(publicErrorMessage(failure, 'Cloud stores could not be refreshed.'));
+    } finally {
+      if (refreshRequest.current === request) {
+        refreshRequest.current = null;
+        setRefreshing(false);
+      }
+    }
+  }
   const labels = data ? cloudStoreLabels(data.items) : [];
   return (
     <section className="cha-screen cha-navigation" aria-label="Cloud store list">
-      <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-cloud-stores' })} type="button">
-        <ChevronLeftIcon /><span>Cloud stores</span>
-      </button>
+      <div className="cha-detail-actions">
+        <button className="cha-back-row" onClick={() => navigate({ type: 'show-settings-cloud-stores' })} type="button">
+          <ChevronLeftIcon /><span>Cloud stores{apiKeyName ? ` · ${apiKeyName}` : ''}</span>
+        </button>
+        <button className="cha-button" disabled={refreshing || !apiKeyId} onClick={() => void refresh()} type="button">
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
       {notice && <p className="cha-error-message" role="alert">{notice}</p>}
+      {refreshError && <p className="cha-error-message" role="alert">{refreshError}</p>}
       {data === null && !error && <p className="cha-state-message" role="status">Loading cloud stores…</p>}
       {error && <LoadFailure message={error} retry={retry} />}
       {data && <div className="cha-list">

@@ -1096,9 +1096,14 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 break;
             }
             case Method::cloud_store_list:
-                require_only_keys(params, {"api_key_id"});
+                if (params.contains("refresh")) require_only_keys(params, {"api_key_id", "refresh"});
+                else require_only_keys(params, {"api_key_id"});
+                if (params.contains("refresh") && !params.at("refresh").is_boolean())
+                    throw std::invalid_argument("The request was not valid.");
                 start_background(connection_id, id,
-                    application.list_cloud_stores(require_identifier(params, "api_key_id"), epoch));
+                    params.value("refresh", false)
+                        ? application.refresh_cloud_stores(require_identifier(params, "api_key_id"), epoch)
+                        : application.list_cloud_stores(require_identifier(params, "api_key_id"), epoch));
                 return;
             case Method::cloud_store_get:
                 require_only_keys(params, {"api_key_id", "store_id"});

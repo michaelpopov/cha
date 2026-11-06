@@ -9,6 +9,9 @@
 
 namespace cha {
 
+struct FolderStoreHttpRequest;
+struct FolderStoreHttpResponse;
+
 // Public fields deliberately make every deadline and bound injectable by tests.
 struct RuntimeSettings {
     std::size_t session_limit{8};
@@ -39,6 +42,7 @@ struct RuntimeSettings {
         std::function<void(std::int64_t, std::shared_ptr<std::atomic_bool>)> folder_store_worker_started;
         std::function<void()> folder_store_before_lifetime_lock;
         std::function<void(std::int64_t)> folder_store_worker_finished;
+        std::function<FolderStoreHttpResponse(const FolderStoreHttpRequest&, const std::atomic_bool&)> folder_store_transport;
     };
     TestHooks test_hooks;
 };

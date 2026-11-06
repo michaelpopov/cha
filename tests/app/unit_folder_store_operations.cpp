@@ -17,6 +17,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace cha::app {
@@ -185,6 +186,11 @@ protected:
             finished_cv_.notify_all();
         };
         { std::lock_guard lock(finished_mutex_); finished_.clear(); }
+        if (!settings.test_hooks.folder_store_transport) {
+            settings.test_hooks.folder_store_transport = [](const auto&, const auto&) {
+                return json_ok(R"({"data":[],"fileSearchStores":[]})");
+            };
+        }
         application_ = Application::open(make_command(workspace_, database_), {}, settings);
         epoch_ = application_->context_epoch();
     }
@@ -203,6 +209,346 @@ protected:
     std::condition_variable finished_cv_;
     std::set<std::int64_t> finished_;
 };
+
+OperationReply::Result wait_cloud_reply(const std::shared_ptr<OperationReply>& reply) {
+    auto ready = std::make_shared<std::promise<void>>();
+    auto future = ready->get_future();
+    reply->set_ready_callback([ready] { ready->set_value(); });
+    if (future.wait_for(5s) != std::future_status::ready) {
+        ADD_FAILURE() << "Cloud store request did not finish";
+        return OperationReply::Failure{};
+    }
+    return *reply->peek();
+}
+
+nlohmann::json cloud_json(const std::shared_ptr<OperationReply>& reply) {
+    const auto result = wait_cloud_reply(reply);
+    if (const auto* value = std::get_if<nlohmann::json>(&result)) return *value;
+    ADD_FAILURE() << std::get<OperationReply::Failure>(result).message;
+    return nlohmann::json::object();
+}
+
+TEST_F(FolderStoreOperationsTest, StoreListAndDetailsShareOneDownloadUntilRefresh) {
+    std::atomic_int calls{};
+    std::atomic_bool refreshed{};
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        ++calls;
+        if (store_list_request(request)) return json_ok(R"({"data":[{"id":"vs_1","name":"Research"}]})");
+        return json_ok(nlohmann::json{{"id", "vs_1"}, {"name", refreshed.load() ? "Archive" : "Research"},
+            {"description", "Notes"}, {"created_at", 1793697300}}.dump());
+    });
+    EXPECT_EQ(cloud_json(application_->list_cloud_stores(key_, epoch_))["items"][0]["name"], "Research");
+    EXPECT_EQ(cloud_json(application_->get_cloud_store(key_, "vs_1", epoch_))["description"], "Notes");
+    (void)cloud_json(application_->list_cloud_stores(key_, epoch_));
+    EXPECT_EQ(calls.load(), 2);
+    refreshed = true;
+    EXPECT_EQ(cloud_json(application_->refresh_cloud_stores(key_, epoch_))["items"][0]["name"], "Archive");
+    EXPECT_EQ(cloud_json(application_->get_cloud_store(key_, "vs_1", epoch_))["name"], "Archive");
+    EXPECT_EQ(calls.load(), 4);
+}
+
+TEST_F(FolderStoreOperationsTest, FailedRefreshKeepsTheCompletePreviousSnapshot) {
+    std::atomic_bool fail{};
+    std::atomic_int calls{};
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        ++calls;
+        if (store_list_request(request)) return json_ok(fail.load()
+            ? R"({"data":[{"id":"vs_2","name":"Replacement"}]})"
+            : R"({"data":[{"id":"vs_1","name":"Research"}]})");
+        if (fail.load()) return FolderStoreHttpResponse{.status = 503};
+        return json_ok(R"({"id":"vs_1","name":"Research","created_at":1793697300})");
+    });
+    const auto original = cloud_json(application_->list_cloud_stores(key_, epoch_));
+    fail = true;
+    EXPECT_TRUE(std::holds_alternative<OperationReply::Failure>(wait_cloud_reply(application_->refresh_cloud_stores(key_, epoch_))));
+    EXPECT_EQ(cloud_json(application_->list_cloud_stores(key_, epoch_)), original);
+    EXPECT_EQ(cloud_json(application_->get_cloud_store(key_, "vs_1", epoch_))["name"], "Research");
+    EXPECT_EQ(calls.load(), 4);
+}
+
+TEST_F(FolderStoreOperationsTest, InitialReadersShareTheLoadAndCachedReadsDoNotWaitForRefresh) {
+    Gate gate;
+    std::atomic_int calls{};
+    application_->set_folder_store_transport_for_tests([&](const auto&, const auto&) {
+        ++calls;
+        gate.arrive_and_wait();
+        return json_ok(R"({"data":[]})");
+    });
+    const auto first = application_->list_cloud_stores(key_, epoch_);
+    ASSERT_TRUE(gate.wait_entered());
+    const auto second = application_->list_cloud_stores(key_, epoch_);
+    gate.release();
+    EXPECT_TRUE(cloud_json(first)["items"].empty());
+    EXPECT_TRUE(cloud_json(second)["items"].empty());
+    EXPECT_EQ(calls.load(), 1);
+
+    Gate refresh_gate;
+    application_->set_folder_store_transport_for_tests([&](const auto&, const auto&) {
+        ++calls;
+        refresh_gate.arrive_and_wait();
+        return json_ok(R"({"data":[]})");
+    });
+    const auto refresh = application_->refresh_cloud_stores(key_, epoch_);
+    ASSERT_TRUE(refresh_gate.wait_entered());
+    const auto cached = application_->list_cloud_stores(key_, epoch_);
+    EXPECT_TRUE(cloud_json(cached)["items"].empty());
+    refresh_gate.release();
+    (void)cloud_json(refresh);
+    EXPECT_EQ(calls.load(), 2);
+}
+
+TEST_F(FolderStoreOperationsTest, KeyReplacementDoesNotReuseAnOlderDownload) {
+    Gate gate;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        if (request.headers.front().value == "Bearer sk-test") {
+            gate.arrive_and_wait();
+            return store_list_request(request)
+                ? json_ok(R"({"data":[{"id":"vs_old","name":"Old"}]})")
+                : json_ok(R"({"id":"vs_old","name":"Old","created_at":1793697300})");
+        }
+        EXPECT_EQ(request.headers.front().value, "Bearer replacement");
+        return json_ok(R"({"data":[]})");
+    });
+    const auto old = application_->list_cloud_stores(key_, epoch_);
+    ASSERT_TRUE(gate.wait_entered());
+    (void)application_->replace_api_key_value(key_, {.value = "replacement", .cloud_store = "openai"}, epoch_);
+    const auto current = cloud_json(application_->list_cloud_stores(key_, epoch_));
+    EXPECT_TRUE(current["items"].empty());
+    gate.release();
+    EXPECT_EQ(cloud_json(old)["items"][0]["name"], "Old");
+    EXPECT_EQ(cloud_json(application_->list_cloud_stores(key_, epoch_)), current);
+}
+
+TEST_F(FolderStoreOperationsTest, StartupAndRefreshReadGoogleDocumentPagesOnce) {
+    const auto gemini = application_->create_api_key(
+        {.display_name = "Unused Gemini", .value = "google-key", .cloud_store = "google"}, epoch_).id;
+    (void)application_->create_api_key({.display_name = "Models", .value = "model-key", .cloud_store = "none"}, epoch_);
+    Gate gate;
+    std::atomic_int lists{};
+    std::atomic_int details{};
+    std::atomic_int first_document_page{};
+    std::atomic_int second_document_page{};
+    std::atomic_bool refreshed{};
+    RuntimeSettings settings;
+    settings.test_hooks.folder_store_transport = [&](const auto& request, const auto&) {
+        if (store_list_request(request)) {
+            ++lists;
+            gate.arrive_and_wait();
+            if (request.url.find("vector_stores") != std::string::npos)
+                return json_ok(R"({"data":[{"id":"vs_1","name":"Research"}]})");
+            EXPECT_EQ(request.headers.front().value, "google-key");
+            return json_ok(R"({"fileSearchStores":[{"name":"fileSearchStores/a","displayName":"Gemini"}]})");
+        }
+        if (request.url.find("/documents?") != std::string::npos) {
+            if (request.url.find("pageToken=next") == std::string::npos) {
+                ++first_document_page;
+                return json_ok(R"({"documents":[{"name":"fileSearchStores/a/documents/note","displayName":"note.md"}],"nextPageToken":"next"})");
+            }
+            ++second_document_page;
+            const auto metadata = nlohmann::json{{"name", "fileSearchStores/a/documents/meta"},
+                {"displayName", "DESCRIPTION.txt"}, {"customMetadata", nlohmann::json::array({
+                    {{"key", "name"}, {"stringListValue", {{"values", {refreshed.load() ? "Gemini archive" : "Gemini library"}}}}},
+                    {{"key", "description"}, {"stringListValue", {{"values", {refreshed.load() ? "Updated notes" : "Original notes"}}}}},
+                })}};
+            return json_ok(nlohmann::json{{"documents", nlohmann::json::array({metadata})}}.dump());
+        }
+        ++details;
+        if (request.url.ends_with("/vs_1"))
+            return json_ok(R"({"id":"vs_1","name":"Research","created_at":1793697300})");
+        return json_ok(R"({"name":"fileSearchStores/a","displayName":"Gemini","createTime":"2026-11-03T09:15:00Z"})");
+    };
+    reopen(settings); // Returns even while the provider is blocked.
+    ASSERT_TRUE(gate.wait_entered());
+    EXPECT_TRUE(application_->running());
+    gate.release();
+    EXPECT_EQ(cloud_json(application_->get_cloud_store(key_, "vs_1", epoch_))["name"], "Research");
+    const auto initial = cloud_json(application_->get_cloud_store(gemini, "fileSearchStores/a", epoch_));
+    EXPECT_EQ(initial["name"], "Gemini library");
+    EXPECT_EQ(initial["description"], "Original notes");
+    EXPECT_EQ(initial["created_at"], "2026-11-03T09:15:00Z");
+    EXPECT_EQ(lists.load(), 2);
+    EXPECT_EQ(details.load(), 2);
+    EXPECT_EQ(first_document_page.load(), 1);
+    EXPECT_EQ(second_document_page.load(), 1);
+
+    refreshed = true;
+    const auto listed = cloud_json(application_->refresh_cloud_stores(gemini, epoch_));
+    EXPECT_EQ(listed["items"], nlohmann::json::array({{{"id", "fileSearchStores/a"}, {"name", "Gemini archive"}}}));
+    const auto updated = cloud_json(application_->get_cloud_store(gemini, "fileSearchStores/a", epoch_));
+    EXPECT_EQ(updated["description"], "Updated notes");
+    (void)cloud_json(application_->list_cloud_stores(gemini, epoch_));
+    EXPECT_EQ(cloud_json(application_->get_cloud_store(key_, "vs_1", epoch_))["name"], "Research");
+    EXPECT_EQ(lists.load(), 3);
+    EXPECT_EQ(details.load(), 3);
+    EXPECT_EQ(first_document_page.load(), 2);
+    EXPECT_EQ(second_document_page.load(), 2);
+}
+
+TEST_F(FolderStoreOperationsTest, StoreEditsAndDeletesUpdateTheCachedSnapshot) {
+    std::string name = "Research";
+    std::string description;
+    std::atomic_int calls{};
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        ++calls;
+        if (store_list_request(request)) return json_ok(R"({"data":[{"id":"vs_1","name":"Research"}]})");
+        if (request.method == "DELETE") return json_ok(R"({"deleted":true})");
+        if (request.url.find("/files?") != std::string::npos) return json_ok(R"({"data":[]})");
+        if (request.method == "POST") {
+            const auto body = nlohmann::json::parse(request.body);
+            name = body["name"];
+            description = body["metadata"]["description"];
+            return json_ok(R"({"id":"vs_1"})");
+        }
+        return json_ok(nlohmann::json{{"id", "vs_1"}, {"name", name}, {"description", description}, {"created_at", 1793697300}}.dump());
+    });
+    (void)cloud_json(application_->list_cloud_stores(key_, epoch_));
+    (void)cloud_json(application_->update_cloud_store(key_, "vs_1", "Archive", "Updated", epoch_));
+    const auto after_edit = calls.load();
+    EXPECT_EQ(cloud_json(application_->list_cloud_stores(key_, epoch_))["items"][0]["name"], "Archive");
+    EXPECT_EQ(cloud_json(application_->get_cloud_store(key_, "vs_1", epoch_))["description"], "Updated");
+    EXPECT_EQ(calls.load(), after_edit);
+    (void)cloud_json(application_->delete_cloud_store(key_, "vs_1", epoch_));
+    const auto after_delete = calls.load();
+    EXPECT_TRUE(cloud_json(application_->list_cloud_stores(key_, epoch_))["items"].empty());
+    EXPECT_TRUE(std::holds_alternative<OperationReply::Failure>(wait_cloud_reply(application_->get_cloud_store(key_, "vs_1", epoch_))));
+    EXPECT_EQ(calls.load(), after_delete);
+}
+
+TEST_F(FolderStoreOperationsTest, FailedUpdateVerificationDoesNotKeepValuesFromBeforeTheWrite) {
+    std::string name = "Research";
+    bool fail_verification = false;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        if (store_list_request(request)) return json_ok(R"({"data":[{"id":"vs_1","name":"Research"}]})");
+        if (request.method == "POST") {
+            name = nlohmann::json::parse(request.body)["name"];
+            fail_verification = true;
+            return json_ok(R"({"id":"vs_1"})");
+        }
+        if (std::exchange(fail_verification, false)) return FolderStoreHttpResponse{.status = 503};
+        return json_ok(nlohmann::json{{"id", "vs_1"}, {"name", name}, {"created_at", 1793697300}}.dump());
+    });
+    EXPECT_EQ(cloud_json(application_->get_cloud_store(key_, "vs_1", epoch_))["name"], "Research");
+    EXPECT_TRUE(std::holds_alternative<OperationReply::Failure>(wait_cloud_reply(
+        application_->update_cloud_store(key_, "vs_1", "Archive", "", epoch_))));
+    EXPECT_EQ(cloud_json(application_->get_cloud_store(key_, "vs_1", epoch_))["name"], "Archive");
+}
+
+TEST_F(FolderStoreOperationsTest, FailedDeleteResponseDoesNotKeepADeletedStoreInTheCache) {
+    bool deleted = false;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        if (store_list_request(request)) return json_ok(deleted ? R"({"data":[]})"
+            : R"({"data":[{"id":"vs_1","name":"Research"}]})");
+        if (request.url.find("/files?") != std::string::npos) return json_ok(R"({"data":[]})");
+        if (request.method == "DELETE") {
+            deleted = true;
+            return FolderStoreHttpResponse{.status = 503};
+        }
+        return json_ok(R"({"id":"vs_1","name":"Research","created_at":1793697300})");
+    });
+    (void)cloud_json(application_->list_cloud_stores(key_, epoch_));
+    EXPECT_TRUE(std::holds_alternative<OperationReply::Failure>(wait_cloud_reply(
+        application_->delete_cloud_store(key_, "vs_1", epoch_))));
+    EXPECT_TRUE(cloud_json(application_->list_cloud_stores(key_, epoch_))["items"].empty());
+}
+
+TEST_F(FolderStoreOperationsTest, UploadInvalidationKeepsConcurrentEditsOnTheSameCacheEntry) {
+    Gate update_gate;
+    std::atomic_bool edited{};
+    std::atomic_bool created{};
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (store_list_request(request)) {
+            auto data = nlohmann::json::array({{{"id", "vs_existing"}, {"name", "Before"}}});
+            if (created.load()) data.push_back({{"id", "vs_1"}, {"name", "Research"}});
+            return json_ok(nlohmann::json{{"data", data}}.dump());
+        }
+        if (request.url.ends_with("/vs_existing")) {
+            if (request.method == "POST") {
+                update_gate.arrive_and_wait();
+                edited = true;
+                return json_ok(R"({"id":"vs_existing"})");
+            }
+            return json_ok(nlohmann::json{{"id", "vs_existing"},
+                {"name", edited.load() ? "After" : "Before"}, {"created_at", 1793697300}}.dump());
+        }
+        if (request.method == "GET" && request.url.ends_with("/vs_1"))
+            return json_ok(R"({"id":"vs_1","name":"Research","created_at":1793697300})");
+        if (request.method == "POST" && request.url.ends_with("/vector_stores")) created = true;
+        return openai_transport()(request, cancel);
+    });
+    (void)cloud_json(application_->list_cloud_stores(key_, epoch_));
+    const auto update = application_->update_cloud_store(key_, "vs_existing", "After", "", epoch_);
+    ASSERT_TRUE(update_gate.wait_entered());
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
+    EXPECT_EQ(wait_status(folder_.id).result, "success");
+    const auto reader = application_->list_cloud_stores(key_, epoch_);
+    auto ready = std::make_shared<std::promise<void>>();
+    auto future = ready->get_future();
+    reader->set_ready_callback([ready] { ready->set_value(); });
+    // The upload invalidates the snapshot. Its next load must follow the edit.
+    EXPECT_EQ(future.wait_for(100ms), std::future_status::timeout);
+    update_gate.release();
+    EXPECT_EQ(cloud_json(update)["name"], "After");
+    EXPECT_EQ(cloud_json(reader)["items"][0]["name"], "After");
+    EXPECT_EQ(cloud_json(application_->get_cloud_store(key_, "vs_existing", epoch_))["name"], "After");
+}
+
+TEST_F(FolderStoreOperationsTest, UploadInvalidationRejectsAnOlderRefreshSnapshot) {
+    std::atomic_bool refresh_blocked{};
+    std::atomic_bool created{};
+    Gate refresh_gate;
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (store_list_request(request)) {
+            if (refresh_blocked.exchange(false)) {
+                refresh_gate.arrive_and_wait();
+                return json_ok(R"({"data":[]})");
+            }
+            return json_ok(created.load() ? R"({"data":[{"id":"vs_1","name":"Research"}]})" : R"({"data":[]})");
+        }
+        if (request.method == "GET" && request.url.ends_with("/vs_1"))
+            return json_ok(R"({"id":"vs_1","name":"Research","created_at":1793697300})");
+        if (request.method == "POST" && request.url.ends_with("/vector_stores")) created = true;
+        return openai_transport()(request, cancel);
+    });
+    (void)cloud_json(application_->list_cloud_stores(key_, epoch_));
+    refresh_blocked = true;
+    const auto refresh = application_->refresh_cloud_stores(key_, epoch_);
+    ASSERT_TRUE(refresh_gate.wait_entered());
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
+    EXPECT_EQ(wait_status(folder_.id).result, "success");
+    refresh_gate.release();
+    // The Refresh reply is not an error, but its older result is not cached.
+    EXPECT_TRUE(cloud_json(refresh)["items"].empty());
+    EXPECT_EQ(cloud_json(application_->list_cloud_stores(key_, epoch_))["items"][0]["name"], "Research");
+}
+
+TEST_F(FolderStoreOperationsTest, FailedUploadCleanupInvalidatesTheStoreList) {
+    std::atomic_bool created{};
+    application_->set_folder_store_transport_for_tests([&](const auto& request, const auto& cancel) {
+        if (store_list_request(request))
+            return json_ok(created.load() ? R"({"data":[{"id":"vs_1","name":"Research"}]})" : R"({"data":[]})");
+        if (request.method == "GET" && request.url.ends_with("/vs_1"))
+            return json_ok(R"({"id":"vs_1","name":"Research","created_at":1793697300})");
+        if (request.method == "DELETE") return FolderStoreHttpResponse{.status = 403};
+        if (request.method == "POST" && request.url.ends_with("/vector_stores")) created = true;
+        return openai_transport(true)(request, cancel);
+    });
+    EXPECT_TRUE(cloud_json(application_->list_cloud_stores(key_, epoch_))["items"].empty());
+    (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);
+    EXPECT_TRUE(wait_status(folder_.id).known_cleanup_remains);
+    EXPECT_EQ(cloud_json(application_->list_cloud_stores(key_, epoch_))["items"][0]["id"], "vs_1");
+}
+
+TEST_F(FolderStoreOperationsTest, StoreRemovedDuringDetailDownloadDoesNotBlockTheOtherStores) {
+    application_->set_folder_store_transport_for_tests([](const auto& request, const auto&) {
+        if (store_list_request(request))
+            return json_ok(R"({"data":[{"id":"vs_removed","name":"Removed"},{"id":"vs_1","name":"Research"}]})");
+        if (request.url.ends_with("/vs_removed")) return FolderStoreHttpResponse{.status = 404,
+            .body = R"({"error":{"type":"invalid_request_error","message":"missing"}})"};
+        return json_ok(R"({"id":"vs_1","name":"Research","created_at":1793697300})");
+    });
+    EXPECT_EQ(cloud_json(application_->list_cloud_stores(key_, epoch_))["items"],
+        nlohmann::json::array({{{"id", "vs_1"}, {"name", "Research"}}}));
+}
 
 TEST_F(FolderStoreOperationsTest, UploadsThroughOpenAiFakeHttpAndOnlyAnEventRecordsTheStore) {
     application_->set_folder_store_transport_for_tests(openai_transport());
@@ -800,6 +1146,8 @@ TEST_F(FolderStoreOperationsTest, VaultSwitchStopsCloudStoreDeletionBeforeTheNex
     std::vector<std::string> requests;
     bool switched = false;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {
+        // The copied vault starts its own background cache load.
+        if (store_list_request(request)) return json_ok(R"({"data":[]})");
         {
             const std::lock_guard lock(mutex);
             if (switched) ADD_FAILURE() << "Provider call after the vault switch: " << request.url;

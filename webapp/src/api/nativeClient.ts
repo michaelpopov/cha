@@ -831,6 +831,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       await call('apiKey.delete', { api_key_id: apiKeyId }, isRecord);
     },
     listCloudStores: (apiKeyId) => call('cloudStore.list', { api_key_id: apiKeyId }, isCloudStoreList),
+    refreshCloudStores: (apiKeyId) => call('cloudStore.list', { api_key_id: apiKeyId, refresh: true }, isCloudStoreList),
     getCloudStore: (apiKeyId, storeId) => call(
       'cloudStore.get',
       { api_key_id: apiKeyId, store_id: storeId },

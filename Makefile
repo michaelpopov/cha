@@ -1,4 +1,4 @@
-.PHONY: build package package-linux package-macos package-windows web-check web-stage test test-daemon test-ui itest itest-local itest-daemon run-native-dev clean-san
+.PHONY: build package package-linux package-macos package-windows web-check web-stage start stop test test-daemon test-ui itest itest-local itest-daemon run-native-dev clean-san
 
 ifeq ($(package),linux)
 .DEFAULT_GOAL := package-linux
@@ -45,6 +45,13 @@ web-check:
 
 web-stage:
 	npm --prefix webapp run stage
+
+# Use the local HTTPS setup created for this Mac.
+start:
+	./build/chaweb-local/start.sh
+
+stop:
+	./build/chaweb-local/stop.sh
 
 ifneq ($(OS),Windows_NT)
 CHA_TEST_PLATFORM := $(shell uname -s)

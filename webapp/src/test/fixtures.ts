@@ -344,6 +344,7 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     }),
     deleteApiKey: async () => undefined,
     listCloudStores: async () => ({ items: [] }),
+    refreshCloudStores: async () => ({ items: [] }),
     getCloudStore: async (_apiKeyId, storeId) => ({
       id: storeId, name: 'Store', description: '', created_at: '2026-11-03T09:15:00Z',
     }),

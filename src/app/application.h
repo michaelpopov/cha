@@ -599,6 +599,8 @@ public:
     // Cloud stores in Settings. Results follow CloudStoreList and CloudStoreDetail.
     [[nodiscard]] std::shared_ptr<OperationReply> list_cloud_stores(
         std::string_view api_key_id, std::uint64_t epoch);
+    [[nodiscard]] std::shared_ptr<OperationReply> refresh_cloud_stores(
+        std::string_view api_key_id, std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> get_cloud_store(
         std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> update_cloud_store(

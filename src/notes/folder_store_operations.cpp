@@ -197,6 +197,7 @@ bool cleanup(auto& self, const auto& control, FolderStoreClient& client) {
                     record_event(self, EventSeverity::warning, warning);
                     control->warned = true;
                 }
+                if (store_resource) self.invalidate_cloud_stores_locked(control->api_key_id);
                 if (store_resource) control->store_id.reset();
                 else std::erase(control->file_ids, id);
             });
@@ -391,7 +392,8 @@ void NotesService::Impl::run_folder_store_upload(std::shared_ptr<FolderStoreCont
         }
         guarded(*this, control, [&] {
             if (control->cancel_forward->load()) throw Cancelled{};
-            // This Event is the only record of the new store in CHA.
+            invalidate_cloud_stores_locked(control->api_key_id);
+            // This Event is the only persistent record of the new store in CHA.
             store->append_event(EventSeverity::success, "Uploaded " + std::to_string(control->total)
                 + " notes from " + context(*control) + resource_ids(*control) + ".");
             control->terminal = true;
@@ -413,6 +415,8 @@ void NotesService::Impl::run_folder_store_upload(std::shared_ptr<FolderStoreCont
             if (remote_started) {
                 if (!cleanup(*this, control, client)) message += guarded(*this, control, [&] { return " " + control->error; });
                 guarded(*this, control, [&] {
+                    // A store can remain after a failed cleanup or an unconfirmed allocation.
+                    invalidate_cloud_stores_locked(control->api_key_id);
                     if (!control->unknown_allocation) return;
                     control->warned = true;
                     const auto warning = unknown_warning(*control);
@@ -597,36 +601,95 @@ void require_cloud_result(const FolderStoreRemoteResult& result) {
         result.kind == FolderStoreRemoteKind::not_found ? ErrorCode::not_found : ErrorCode::invalid_argument, message);
 }
 
+nlohmann::json cloud_store_detail(const FolderStoreDetail& detail) {
+    return {{"id", detail.id}, {"name", detail.name},
+        {"description", detail.description}, {"created_at", detail.created_at}};
+}
+
+nlohmann::json cloud_store_list(const std::vector<FolderStoreDetail>& stores) {
+    auto items = nlohmann::json::array();
+    for (const auto& store : stores) items.push_back({{"id", store.id}, {"name", store.name}});
+    return {{"items", std::move(items)}};
+}
+
 } // namespace
+
+std::shared_ptr<NotesService::Impl::CloudStoreCache> NotesService::Impl::cloud_store_cache_locked(
+    std::string_view api_key_id, std::uint64_t epoch) {
+    require_admitted(epoch);
+    const auto info = api_keys->find(api_key_id);
+    if (!info) throw ApplicationError(ErrorCode::not_found, "That API key was not found.");
+    if (info->cloud_store == "none") throw ApplicationError(ErrorCode::invalid_argument, "Set cloud store API key");
+    if (!info->has_value) throw ApplicationError(ErrorCode::invalid_argument, "The saved API key is missing or empty.");
+    const auto service = parse_folder_store_service(info->cloud_store);
+    const auto key = api_keys->value(api_key_id);
+    auto& cache = cloud_store_cache[std::string(api_key_id)];
+    if (!cache || cache->epoch != epoch || cache->service != service || cache->key != key) {
+        cache = std::make_shared<CloudStoreCache>();
+        cache->epoch = epoch;
+        cache->service = service;
+        cache->key = key;
+    }
+    return cache;
+}
+
+void NotesService::Impl::invalidate_cloud_stores_locked(std::string_view api_key_id) {
+    const auto found = cloud_store_cache.find(api_key_id);
+    if (found == cloud_store_cache.end()) return;
+    const std::lock_guard lock(found->second->data_mutex);
+    // Keep the entry so current edits and subsequent loads still serialize.
+    found->second->stores.reset();
+    found->second->invalidated_during_download = true;
+}
+
+std::vector<FolderStoreDetail> NotesService::Impl::cloud_store_snapshot(
+    CloudStoreCache& cache, FolderStoreClient& client, const std::atomic_bool& cancel, bool refresh) {
+    if (!refresh) {
+        const std::lock_guard lock(cache.data_mutex);
+        if (cache.stores) return *cache.stores;
+    }
+    const std::lock_guard download(cache.download_mutex);
+    {
+        const std::lock_guard lock(cache.data_mutex);
+        if (!refresh && cache.stores) return *cache.stores;
+        cache.invalidated_during_download = false;
+    }
+    const auto listed = client.list_stores(cache.service, cache.key, cancel, /*resolve_metadata=*/false);
+    require_cloud_result(listed.result);
+    std::vector<FolderStoreDetail> stores;
+    stores.reserve(listed.stores.size());
+    for (const auto& store : listed.stores) {
+        auto detail = client.get_store(cache.service, store.id, cache.key, cancel);
+        // A store can disappear between listing it and reading its details.
+        if (detail.result.kind == FolderStoreRemoteKind::not_found) continue;
+        require_cloud_result(detail.result);
+        stores.push_back(std::move(detail));
+    }
+    if (cancel.load() || published_epoch.load() != cache.epoch)
+        throw ApplicationError(ErrorCode::operation_cancelled, "The operation was cancelled.");
+    // Publish only a complete download. A failed Refresh keeps the old snapshot.
+    // After an invalidation, return this download but do not cache it.
+    const std::lock_guard lock(cache.data_mutex);
+    if (!cache.invalidated_during_download) cache.stores = stores;
+    return stores;
+}
 
 std::shared_ptr<OperationReply> NotesService::Impl::launch_cloud_store(std::string_view api_key_id,
     std::uint64_t epoch, bool writing, CloudStoreWork work) {
-    FolderStoreService service;
-    std::string key;
-    FolderStoreTransport transport;
-    {
-        const std::lock_guard lock(lifecycle_mutex);
-        require_admitted(epoch);
-        if (writing) store->require_main();
-        const auto info = api_keys->find(api_key_id);
-        if (!info) throw ApplicationError(ErrorCode::not_found, "That API key was not found.");
-        if (info->cloud_store == "none") throw ApplicationError(ErrorCode::invalid_argument, "Set cloud store API key");
-        if (!info->has_value) throw ApplicationError(ErrorCode::invalid_argument, "The saved API key is missing or empty.");
-        service = parse_folder_store_service(info->cloud_store);
-        key = api_keys->value(api_key_id);
-        transport = folder_store_transport ? folder_store_transport : folder_store_curl_transport;
-    }
+    auto cache = cloud_store_cache_locked(api_key_id, epoch);
+    if (writing) store->require_main();
+    auto transport = folder_store_transport ? folder_store_transport : folder_store_curl_transport;
     auto reply = std::make_shared<OperationReply>();
-    if (!background_jobs.launch([reply, epoch, service, key = std::move(key), transport = std::move(transport),
+    if (!background_jobs.launch([reply, cache, transport = std::move(transport),
             work = std::move(work), &published_epoch = published_epoch](std::atomic_bool& cancel) {
             // Cancel, an abandoned reply, or a vault change stops the next provider call.
             FolderStoreClient client([&](const FolderStoreHttpRequest& request, const std::atomic_bool& stop) {
-                if (stop.load() || reply->abandoned() || published_epoch.load() != epoch)
+                if (stop.load() || reply->abandoned() || published_epoch.load() != cache->epoch)
                     return FolderStoreHttpResponse{.cancelled = true};
                 return transport(request, stop);
             });
             try {
-                reply->complete(work(client, service, key, cancel));
+                reply->complete(work(client, *cache, cancel));
             } catch (const ApplicationError& error) {
                 reply->fail(error.code, error.what());
             } catch (const std::exception& error) {
@@ -639,35 +702,79 @@ std::shared_ptr<OperationReply> NotesService::Impl::launch_cloud_store(std::stri
     return reply;
 }
 
+void NotesService::preload_cloud_stores_locked() {
+    const auto epoch = impl_->published_epoch.load();
+    std::erase_if(impl_->cloud_store_cache, [&](const auto& item) { return item.second->epoch != epoch; });
+    for (const auto& key : impl_->api_keys->list()) {
+        if ((key.cloud_store != "openai" && key.cloud_store != "google") || !key.has_value) continue;
+        if (impl_->cloud_store_cache.contains(key.id)) continue;
+        try {
+            (void)impl_->launch_cloud_store(key.id, epoch, false,
+                [owner = impl_.get(), id = key.id](FolderStoreClient& client, Impl::CloudStoreCache& cache,
+                    const std::atomic_bool& cancel) {
+                    try {
+                        (void)owner->cloud_store_snapshot(cache, client, cancel);
+                    } catch (const std::exception& error) {
+                        log_warn("Cloud store preload failed for key " + id + ": " + error.what());
+                        throw;
+                    }
+                    return nlohmann::json::object();
+                });
+        } catch (const std::exception& error) {
+            log_warn("Cloud store preload could not start for key " + key.id + ": " + error.what());
+        }
+    }
+}
+
 std::shared_ptr<OperationReply> NotesService::list_cloud_stores(std::string_view api_key_id, std::uint64_t epoch) {
+    const std::lock_guard lock(impl_->lifecycle_mutex);
     return impl_->launch_cloud_store(api_key_id, epoch, false,
-        [](FolderStoreClient& client, FolderStoreService service, const std::string& key, const std::atomic_bool& cancel) {
-            const auto listed = client.list_stores(service, key, cancel);
-            require_cloud_result(listed.result);
-            auto items = nlohmann::json::array();
-            for (const auto& store : listed.stores) items.push_back({{"id", store.id}, {"name", store.name}});
-            return nlohmann::json{{"items", std::move(items)}};
+        [owner = impl_.get()](FolderStoreClient& client, Impl::CloudStoreCache& cache, const std::atomic_bool& cancel) {
+            return cloud_store_list(owner->cloud_store_snapshot(cache, client, cancel));
+        });
+}
+
+std::shared_ptr<OperationReply> NotesService::refresh_cloud_stores(std::string_view api_key_id, std::uint64_t epoch) {
+    const std::lock_guard lock(impl_->lifecycle_mutex);
+    return impl_->launch_cloud_store(api_key_id, epoch, false,
+        [owner = impl_.get()](FolderStoreClient& client, Impl::CloudStoreCache& cache, const std::atomic_bool& cancel) {
+            return cloud_store_list(owner->cloud_store_snapshot(cache, client, cancel, true));
         });
 }
 
 std::shared_ptr<OperationReply> NotesService::get_cloud_store(
     std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch) {
+    const std::lock_guard lock(impl_->lifecycle_mutex);
     return impl_->launch_cloud_store(api_key_id, epoch, false,
-        [id = std::string(store_id)](FolderStoreClient& client, FolderStoreService service, const std::string& key,
+        [owner = impl_.get(), id = std::string(store_id)](FolderStoreClient& client, Impl::CloudStoreCache& cache,
             const std::atomic_bool& cancel) {
-            const auto detail = client.get_store(service, id, key, cancel);
-            require_cloud_result(detail.result);
-            return nlohmann::json{{"id", detail.id}, {"name", detail.name},
-                {"description", detail.description}, {"created_at", detail.created_at}};
+            if (cache.service == FolderStoreService::openai ? !safe_component(id) : !google_store_valid(id))
+                throw ApplicationError(ErrorCode::invalid_argument, "The remote store ID is invalid.");
+            const auto stores = owner->cloud_store_snapshot(cache, client, cancel);
+            const auto found = std::ranges::find(stores, id, &FolderStoreDetail::id);
+            if (found == stores.end()) throw ApplicationError(ErrorCode::not_found, "That cloud store was not found.");
+            return cloud_store_detail(*found);
         });
 }
 
 std::shared_ptr<OperationReply> NotesService::delete_cloud_store(
     std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch) {
+    const std::lock_guard lock(impl_->lifecycle_mutex);
     return impl_->launch_cloud_store(api_key_id, epoch, true,
-        [id = std::string(store_id)](FolderStoreClient& client, FolderStoreService service, const std::string& key,
+        [id = std::string(store_id)](FolderStoreClient& client, Impl::CloudStoreCache& cache,
             const std::atomic_bool& cancel) {
-            require_cloud_result(client.delete_store(service, id, key, cancel));
+            const std::lock_guard download(cache.download_mutex);
+            const auto result = client.delete_store(cache.service, id, cache.key, cancel);
+            {
+                const std::lock_guard lock(cache.data_mutex);
+                if (!result.operation_error && (result.kind == FolderStoreRemoteKind::ok || result.kind == FolderStoreRemoteKind::not_found)) {
+                    if (cache.stores) std::erase_if(*cache.stores, [&](const auto& store) { return store.id == id; });
+                } else {
+                    // A failed response does not prove that the provider kept the store.
+                    cache.stores.reset();
+                }
+            }
+            require_cloud_result(result);
             return nlohmann::json::object();
         });
 }
@@ -675,15 +782,26 @@ std::shared_ptr<OperationReply> NotesService::delete_cloud_store(
 std::shared_ptr<OperationReply> NotesService::update_cloud_store(
     std::string_view api_key_id, std::string_view store_id, std::string name,
     std::string description, std::uint64_t epoch) {
+    const std::lock_guard lock(impl_->lifecycle_mutex);
     return impl_->launch_cloud_store(api_key_id, epoch, true,
         [id = std::string(store_id), name = std::move(name), description = std::move(description)](
-            FolderStoreClient& client, FolderStoreService service, const std::string& key,
-            const std::atomic_bool& cancel) {
-            if (service == FolderStoreService::openai) require_openai_description(description);
-            const auto detail = client.update_store(service, id, name, description, key, cancel);
+            FolderStoreClient& client, Impl::CloudStoreCache& cache, const std::atomic_bool& cancel) {
+            if (cache.service == FolderStoreService::openai) require_openai_description(description);
+            const std::lock_guard download(cache.download_mutex);
+            const auto detail = client.update_store(cache.service, id, name, description, cache.key, cancel);
+            {
+                const std::lock_guard lock(cache.data_mutex);
+                if (detail.result.kind != FolderStoreRemoteKind::ok || detail.result.operation_error) {
+                    // The write may have succeeded before its verification failed.
+                    cache.stores.reset();
+                } else if (cache.stores) {
+                    const auto found = std::ranges::find(*cache.stores, id, &FolderStoreDetail::id);
+                    if (found == cache.stores->end()) cache.stores->push_back(detail);
+                    else *found = detail;
+                }
+            }
             require_cloud_result(detail.result);
-            return nlohmann::json{{"id", detail.id}, {"name", detail.name},
-                {"description", detail.description}, {"created_at", detail.created_at}};
+            return cloud_store_detail(detail);
         });
 }
 

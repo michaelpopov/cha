@@ -65,8 +65,63 @@ describe('Cloud store settings', () => {
     expect(listCloudStores).toHaveBeenCalledWith('api_key_1');
     expect(screen.getByRole('button', { name: 'Archive' })).toBeInTheDocument();
     expect(navigate).toHaveBeenCalledWith({ type: 'inspect-cloud-store', storeId: 'vs_2', label: 'Research (vs_2)' });
-    await userEvent.click(screen.getByRole('button', { name: 'Cloud stores' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cloud stores · OpenAI work' }));
     expect(navigate).toHaveBeenLastCalledWith({ type: 'show-settings-cloud-stores' });
+  });
+
+  it('refreshes the selected key while retaining rows, then replaces them with the reply', async () => {
+    const pending = deferred();
+    const refreshCloudStores = vi.fn(async () => {
+      await pending.promise;
+      return { items: [{ id: 'vs_2', name: 'Archive' }] };
+    });
+    render(<CloudStoresScreen client={fixtureClient({
+      listCloudStores: async () => ({ items: [{ id: 'vs_1', name: 'Research' }] }), refreshCloudStores,
+    })} dispatch={vi.fn()} navigate={vi.fn()} state={storeState()} />);
+    await screen.findByRole('button', { name: 'Research' });
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(refreshCloudStores).toHaveBeenCalledExactlyOnceWith('api_key_1');
+    expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Research' })).toBeInTheDocument();
+    pending.resolve();
+    expect(await screen.findByRole('button', { name: 'Archive' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Research' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+  });
+
+  it('keeps cached rows after a failed refresh and allows another refresh', async () => {
+    const refreshCloudStores = vi.fn().mockRejectedValueOnce(new ChaError('invalid_argument', 'The saved API key was rejected.'))
+      .mockResolvedValueOnce({ items: [] });
+    render(<CloudStoresScreen client={fixtureClient({
+      listCloudStores: async () => ({ items: [{ id: 'vs_1', name: 'Research' }] }), refreshCloudStores,
+    })} dispatch={vi.fn()} navigate={vi.fn()} state={storeState()} />);
+    await screen.findByRole('button', { name: 'Research' });
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The saved API key was rejected.');
+    expect(screen.getByRole('button', { name: 'Research' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByText('No cloud stores')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('ignores a refresh reply after the selected key changes', async () => {
+    const pending = deferred();
+    const client = fixtureClient({
+      listCloudStores: async (id) => ({ items: [{ id: 'vs_1', name: id === 'api_key_1' ? 'Research' : 'Other store' }] }),
+      refreshCloudStores: async () => { await pending.promise; return { items: [{ id: 'vs_old', name: 'Old refresh' }] }; },
+    });
+    const props = { client, dispatch: vi.fn(), navigate: vi.fn() };
+    const { rerender } = render(<CloudStoresScreen {...props} state={storeState()} />);
+    await screen.findByRole('button', { name: 'Research' });
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    rerender(<CloudStoresScreen {...props} state={{ ...storeState(),
+      inspectedCloudStoreKey: { id: 'api_key_2', name: 'Other key', notice: null },
+    }} />);
+    await screen.findByRole('button', { name: 'Other store' });
+    pending.resolve();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
+    expect(screen.queryByRole('button', { name: 'Old refresh' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Other store' })).toBeInTheDocument();
   });
 
   it('shows an empty store list, a carried notice, and a retryable provider error', async () => {

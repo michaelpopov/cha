@@ -2391,6 +2391,9 @@ TEST_F(BridgeRouterTest, CloudStoreMethodsUseTheSelectedKeyAndItsService) {
         if (request.method == "GET" && request.url.ends_with("/vector_stores/vs_1"))
             return FolderStoreHttpResponse{.status = 200,
                 .body = R"({"id":"vs_1","name":"Research","description":"Notes","created_at":1793697300})"};
+        if (request.method == "GET" && request.url.ends_with("/vector_stores/vs_2"))
+            return FolderStoreHttpResponse{.status = 200,
+                .body = R"({"id":"vs_2","name":null,"created_at":1793697300})"};
         if (request.method == "POST" && request.url.ends_with("/vector_stores/vs_1")) {
             EXPECT_EQ(nlohmann::json::parse(request.body),
                 (nlohmann::json{{"name", "Research"}, {"metadata", {{"description", "Notes"}}}}));
@@ -2409,6 +2412,11 @@ TEST_F(BridgeRouterTest, CloudStoreMethodsUseTheSelectedKeyAndItsService) {
     ASSERT_TRUE(reply["ok"]) << reply.dump();
     EXPECT_EQ(reply["result"], nlohmann::json::parse(
         R"({"id":"vs_1","name":"Research","description":"Notes","created_at":"2026-11-03T09:15:00Z"})"));
+    const auto before_refresh = [&] { const std::lock_guard lock(mutex); return requests.size(); }();
+    reply = call("cloudStore.list", {{"api_key_id", key}, {"refresh", true}});
+    ASSERT_TRUE(reply["ok"]) << reply.dump();
+    EXPECT_EQ([&] { const std::lock_guard lock(mutex); return requests.size(); }(), before_refresh + 3);
+    EXPECT_FALSE(call("cloudStore.list", {{"api_key_id", key}, {"refresh", "true"}})["ok"]);
     reply = call("cloudStore.update", {{"api_key_id", key}, {"store_id", "vs_1"}, {"name", "Research"}, {"description", "Notes"}});
     ASSERT_TRUE(reply["ok"]) << reply.dump();
     EXPECT_EQ(reply["result"]["name"], "Research");
@@ -2453,6 +2461,9 @@ TEST_F(BridgeRouterTest, CloudStoreListingCanFinishItsMetadataReadsPastTheComman
     application_->set_folder_store_transport_for_tests([](const auto& request, const auto&) {
         if (request.url.find("/documents?") != std::string::npos)
             return FolderStoreHttpResponse{.status = 200, .body = "{}"};
+        if (request.url.ends_with("/fileSearchStores/a"))
+            return FolderStoreHttpResponse{.status = 200,
+                .body = R"({"name":"fileSearchStores/a","displayName":"Research","createTime":"2026-11-03T09:15:00Z"})"};
         return FolderStoreHttpResponse{.status = 200,
             .body = R"({"fileSearchStores":[{"name":"fileSearchStores/a","displayName":"Research"}]})"};
     });

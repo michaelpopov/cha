@@ -35,6 +35,10 @@ std::shared_ptr<OperationReply> Application::list_cloud_stores(std::string_view 
     return impl_->notes->list_cloud_stores(api_key_id, epoch);
 }
 
+std::shared_ptr<OperationReply> Application::refresh_cloud_stores(std::string_view api_key_id, std::uint64_t epoch) {
+    return impl_->notes->refresh_cloud_stores(api_key_id, epoch);
+}
+
 std::shared_ptr<OperationReply> Application::get_cloud_store(
     std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch) {
     return impl_->notes->get_cloud_store(api_key_id, store_id, epoch);

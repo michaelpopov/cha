@@ -311,6 +311,15 @@ TEST(FolderStoreHttp, ListsStoresFromEveryPageForBothServices) {
         "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores/b/documents?pageSize=20 x-goog-api-key=g-key",
         "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores/c/documents?pageSize=20 x-goog-api-key=g-key"}));
 
+    requests.clear();
+    found = client.list_stores(FolderStoreService::google, "g-key", cancel, /*resolve_metadata=*/false);
+    ASSERT_EQ(found.result.kind, FolderStoreRemoteKind::ok);
+    EXPECT_EQ(store_rows(found), (std::vector<std::string>{
+        "fileSearchStores/a=Alpha", "fileSearchStores/b=", "fileSearchStores/c=Gamma"}));
+    EXPECT_EQ(requests, (std::vector<std::string>{
+        "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores?pageSize=20 x-goog-api-key=g-key",
+        "GET https://generativelanguage.googleapis.com/v1beta/fileSearchStores?pageSize=20&pageToken=next%2B%2F%3D x-goog-api-key=g-key"}));
+
     FolderStoreClient empty([](const FolderStoreHttpRequest&, const std::atomic_bool&) {
         return FolderStoreHttpResponse{.status = 200, .body = "{}"};
     });

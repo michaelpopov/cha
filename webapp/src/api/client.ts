@@ -316,6 +316,7 @@ export interface ChaClient {
   replaceApiKeyValue(apiKeyId: string, request: ReplaceApiKeyValueRequest): Promise<ApiKeyDetail>;
   deleteApiKey(apiKeyId: string): Promise<void>;
   listCloudStores(apiKeyId: string): Promise<CloudStoreList>;
+  refreshCloudStores(apiKeyId: string): Promise<CloudStoreList>;
   getCloudStore(apiKeyId: string, storeId: string): Promise<CloudStoreDetail>;
   updateCloudStore(apiKeyId: string, storeId: string, request: CloudStoreUpdate): Promise<CloudStoreDetail>;
   // Aborting sends cloudStore.cancel; the native worker starts no further provider call.

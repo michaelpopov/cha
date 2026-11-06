@@ -115,9 +115,11 @@ public:
         const std::atomic_bool& cancellation);
 
     // Reads every page of the stores that the key can access. A store without
-    // a name has an empty name.
+    // a name has an empty name. Disable metadata resolution when only IDs are
+    // needed; Google names then come from displayName without document reads.
     [[nodiscard]] FolderStoreList list_stores(
-        FolderStoreService service, std::string_view key, const std::atomic_bool& cancel);
+        FolderStoreService service, std::string_view key, const std::atomic_bool& cancel,
+        bool resolve_metadata = true);
     // created_at is an RFC 3339 UTC string. A missing description is empty.
     [[nodiscard]] FolderStoreDetail get_store(
         FolderStoreService service, std::string_view store_id, std::string_view key,

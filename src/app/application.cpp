@@ -390,6 +390,7 @@ Application::Impl::Impl(
     running = true;
     notified_epoch = live_sessions->context_epoch();
     published_epoch.store(notified_epoch);
+    notes->preload_cloud_stores_locked();
 }
 
 void Application::Impl::publish_capabilities_locked() {
@@ -450,6 +451,7 @@ void Application::Impl::resume_resources() {
     if (audio_downloads) audio_downloads->resume();
     if (resource_hooks.resume) resource_hooks.resume();
     notes->resume_note_audio_locked();
+    notes->preload_cloud_stores_locked();
 }
 
 void Application::Impl::take_context_notice(PendingContextNotice& notice) {

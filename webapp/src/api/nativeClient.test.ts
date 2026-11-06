@@ -60,6 +60,8 @@ describe('native CHA client', () => {
     const client = createNativeChaClient(bridge);
     expect(await client.listCloudStores('api_key_1')).toEqual({ items: [{ id: 'vs_1', name: 'Research' }] });
     expect(list).toHaveBeenCalledExactlyOnceWith({ api_key_id: 'api_key_1' });
+    expect(await client.refreshCloudStores('api_key_1')).toEqual({ items: [{ id: 'vs_1', name: 'Research' }] });
+    expect(list).toHaveBeenLastCalledWith({ api_key_id: 'api_key_1', refresh: true });
     expect(await client.getCloudStore('api_key_1', 'vs_1')).toEqual(detail);
     expect(get).toHaveBeenCalledExactlyOnceWith({ api_key_id: 'api_key_1', store_id: 'vs_1' });
     expect(await client.updateCloudStore('api_key_1', 'vs_1', { name: 'Research', description: 'Notes' })).toEqual(detail);
@@ -82,6 +84,7 @@ describe('native CHA client', () => {
       'cloudStore.update': () => ({ ...detail, name: 1 }),
     }));
     await expect(invalid.listCloudStores('api_key_1')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(invalid.refreshCloudStores('api_key_1')).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(invalid.getCloudStore('api_key_1', 'vs_1')).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(invalid.updateCloudStore('api_key_1', 'vs_1', { name: 'Research', description: '' })).rejects.toBeInstanceOf(ChaProtocolError);
   });
