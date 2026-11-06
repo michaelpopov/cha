@@ -187,26 +187,26 @@ std::string build_responses_request_body(
                 body["session_id"] = input.run.prompt_cache_key;
             }
         }
+    }
 
-        if (!input.maintenance_tool) {
-            const char* const web_search_type = is_openrouter_host(config.host)
-                ? "openrouter:web_search"
-                : "web_search";
-            switch (config.web_search) {
-            case WebSearchMode::off:
-                break;
-            case WebSearchMode::automatic:
-                body["tools"] = Json::array({Json{{"type", web_search_type}}});
-                body["tool_choice"] = "auto";
-                break;
-            case WebSearchMode::required:
-                body["tools"] = Json::array({Json{{"type", web_search_type}}});
-                body["tool_choice"] = is_direct_openai_host(config.host)
-                    ? Json{{"type", "web_search"}} : Json("required");
-                break;
-            default:
-                throw std::logic_error("Unknown web search mode");
-            }
+    if (!input.maintenance_tool) {
+        const char* const web_search_type = is_openrouter_host(config.host)
+            ? "openrouter:web_search"
+            : "web_search";
+        switch (config.web_search) {
+        case WebSearchMode::off:
+            break;
+        case WebSearchMode::automatic:
+            body["tools"] = Json::array({Json{{"type", web_search_type}}});
+            body["tool_choice"] = "auto";
+            break;
+        case WebSearchMode::required:
+            body["tools"] = Json::array({Json{{"type", web_search_type}}});
+            body["tool_choice"] = subscription || is_direct_openai_host(config.host)
+                ? Json{{"type", "web_search"}} : Json("required");
+            break;
+        default:
+            throw std::logic_error("Unknown web search mode");
         }
     }
 

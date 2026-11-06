@@ -4191,19 +4191,22 @@ TEST(ProviderClientSummary, GoogleFileSearchCompatibilityAndRequestsWithoutSumma
 }
 
 
-TEST(ProviderClientSummary, IgnoredSubscriptionHostedSearchSettingDoesNotSuppressSummaryFunctions) {
+TEST(ProviderClientSummary, SubscriptionHostedSearchSuppressesSummaryFunctionsOnlyWhenRequired) {
     SubscriptionOwner owner;
     OpenAiOAuth oauth = owner.make_connected();
-    auto definition = subscription_definition();
-    definition.provider.config.web_search = WebSearchMode::required;
-    ProviderClient client(shared_definition(definition), &oauth);
-    Transcript transcript;
-    auto input = client_request(transcript, 1, "Recall");
-    input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
-    const auto payload = client.prepare(input);
-    EXPECT_TRUE(payload.summary_tool);
-    EXPECT_NE(payload.bytes.find("summary_search"), std::string::npos);
-    EXPECT_EQ(payload.bytes.find("\"type\":\"web_search\""), std::string::npos);
+    for (const auto mode : {WebSearchMode::off, WebSearchMode::automatic, WebSearchMode::required}) {
+        SCOPED_TRACE(to_string(mode));
+        auto definition = subscription_definition();
+        definition.provider.config.web_search = mode;
+        ProviderClient client(shared_definition(definition), &oauth);
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Recall");
+        input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
+        const auto payload = client.prepare(input);
+        EXPECT_EQ(bool(payload.summary_tool), mode != WebSearchMode::required);
+        EXPECT_EQ(payload.bytes.find("summary_search") != std::string::npos, mode != WebSearchMode::required);
+        EXPECT_EQ(payload.bytes.find("\"type\":\"web_search\"") != std::string::npos, mode != WebSearchMode::off);
+    }
 }
 
 } // namespace

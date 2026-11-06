@@ -2225,6 +2225,23 @@ TEST(Workspace, LoadsOpenAiSubscriptionProvider) {
         ProviderAuth::openai_subscription);
 }
 
+TEST(Workspace, LoadsOpenAiSubscriptionHostedSearchModes) {
+    for (const auto mode : {WebSearchMode::automatic, WebSearchMode::required}) {
+        SCOPED_TRACE(to_string(mode));
+        test::TestWorkspace fixture;
+        auto config = subscription_provider_toml();
+        const auto position = config.find("web_search = \"off\"");
+        config.replace(position, std::string("web_search = \"off\"").size(),
+            "web_search = \"" + std::string(to_string(mode)) + "\"");
+        fixture.write_provider("chatgpt", config);
+        fixture.write_character_config("display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
+        const auto workspace = Workspace::load(fixture.root());
+        EXPECT_TRUE(provider_supports_web_search(workspace.find_provider("chatgpt")->config));
+        EXPECT_EQ(workspace.find_provider("chatgpt")->config.web_search, mode);
+        EXPECT_EQ(workspace.character_definition("lobby", "guide").provider.config.web_search, mode);
+    }
+}
+
 TEST(Workspace, RejectsUnknownProviderAuth) {
     test::TestWorkspace fixture;
     fixture.write_provider(
@@ -2283,11 +2300,6 @@ TEST(Workspace, RejectsInvalidOpenAiSubscriptionSettings) {
         "host = \"chatgpt.com\"\nport = 443\nhttps = true\n"
         "base_path = \"/backend-api/codex\"\nmode = \"net\"\n"
         "api = \"responses\"\nmodel = \"gpt-5.6-terra\"\nstream = true\n"
-        "web_search = \"auto\"\ncache_retention = \"off\"\n",
-        "auth = \"openai_subscription\"\n"
-        "host = \"chatgpt.com\"\nport = 443\nhttps = true\n"
-        "base_path = \"/backend-api/codex\"\nmode = \"net\"\n"
-        "api = \"responses\"\nmodel = \"gpt-5.6-terra\"\nstream = true\n"
         "web_search = \"off\"\ncache_retention = \"short\"\n",
         "auth = \"openai_subscription\"\n"
         "host = \"chatgpt.com\"\nport = 443\nhttps = true\n"
@@ -2305,7 +2317,7 @@ TEST(Workspace, RejectsInvalidOpenAiSubscriptionSettings) {
     }
 }
 
-TEST(Workspace, IgnoresOpenAiSubscriptionWebSearchOverrides) {
+TEST(Workspace, LoadsOpenAiSubscriptionWebSearchOverrides) {
     for (const bool assistant : {false, true}) {
         test::TestWorkspace fixture;
         fixture.write_provider("chatgpt", subscription_provider_toml());
@@ -2317,11 +2329,10 @@ TEST(Workspace, IgnoresOpenAiSubscriptionWebSearchOverrides) {
         LoadWarningCollector warnings;
         const auto workspace = Workspace::load(fixture.root(), &warnings);
         const auto id = assistant ? workspace_assistant_id : "guide";
-        EXPECT_FALSE(workspace.find_character(id)->web_search);
-        EXPECT_EQ(workspace.character_definition(assistant ? workspace_entrance_id : "lobby", id).provider.config.web_search, WebSearchMode::off);
+        EXPECT_EQ(workspace.find_character(id)->web_search, WebSearchMode::required);
+        EXPECT_EQ(workspace.character_definition(assistant ? workspace_entrance_id : "lobby", id).provider.config.web_search, WebSearchMode::required);
         EXPECT_EQ(file_bytes(fixture.root() / path), source);
-        ASSERT_FALSE(warnings.empty());
-        EXPECT_EQ(warnings.back().path, path);
+        EXPECT_TRUE(warnings.empty());
     }
 }
 
@@ -2451,14 +2462,12 @@ TEST(Workspace, IgnoresUnusedForumMemberSettingsWithWarnings) {
     EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
 }
 
-TEST(Workspace, SavingOpenAiSubscriptionIgnoresUnsupportedWebSearchOverrides) {
+TEST(Workspace, SavingOpenAiSubscriptionPreservesWebSearchOverrides) {
     test::TestWorkspace fixture;
     fixture.write_provider("chatgpt", subscription_provider_toml());
     fixture.write_character_config(
         "display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
     const Workspace workspace = Workspace::load(fixture.root());
-    const auto log_file = fixture.root() / "web-search-warnings.log";
-    initialize_diagnostic_logging(log_file, "warn");
     for (const auto mode : {WebSearchMode::automatic, WebSearchMode::required}) {
         EXPECT_NO_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
             editor.write_character_settings(
@@ -2466,13 +2475,9 @@ TEST(Workspace, SavingOpenAiSubscriptionIgnoresUnsupportedWebSearchOverrides) {
         }));
         const Workspace reloaded = Workspace::load(fixture.root());
         EXPECT_EQ(reloaded.find_character("guide")->provider_id, "chatgpt");
-        EXPECT_FALSE(reloaded.find_character("guide")->web_search);
-        EXPECT_EQ(file_bytes(fixture.root() / "characters/guide/character.toml").find("web_search"),
-            std::string::npos);
+        EXPECT_EQ(reloaded.find_character("guide")->web_search, mode);
+        EXPECT_EQ(reloaded.character_definition("lobby", "guide").provider.config.web_search, mode);
     }
-    shutdown_diagnostic_logging();
-    EXPECT_NE(file_bytes(log_file).find("Ignoring unsupported provider web search for character 'guide'"),
-        std::string::npos);
 }
 
 
@@ -2509,7 +2514,8 @@ TEST(Workspace, SessionModelAndEffortUseConfiguredPrecedenceAndGuardSearch) {
         workspace = Workspace::load(fixture.root());
         settings.provider_id = "other";
         selected = workspace.character_definition("lobby", "guide", {}, &settings).provider;
-        EXPECT_EQ(selected.config.web_search, WebSearchMode::off) << api;
+        EXPECT_EQ(selected.config.web_search, api == "responses"
+            ? WebSearchMode::automatic : WebSearchMode::off) << api;
         EXPECT_EQ(selected.config.reasoning_effort, "xhigh") << api;
     }
     fixture.write_character_config("display_name = \"Guide\"\nprovider = \"test\"\n");

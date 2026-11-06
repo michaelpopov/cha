@@ -64,7 +64,7 @@ bool summary_tools_available(const nlohmann::json& body, ProviderApi api) {
 
 void add_summary_tools(nlohmann::json& body, ProviderApi api) {
     using Json = nlohmann::json;
-    // Inspect effective hosted capability, including subscription requests that ignore config.
+    // Inspect effective hosted capability in the request body.
     const auto choice = body.value("tool_choice", Json());
     if (choice == "required" || (choice.is_object() && choice.value("type", "") == "web_search")) {
         for (const auto& tool : body.value("tools", Json::array())) {

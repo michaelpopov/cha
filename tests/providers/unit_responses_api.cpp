@@ -143,7 +143,7 @@ TEST(ResponsesApi, SubscriptionBodyUsesFallbackInstructionsAndOmitsExtras) {
                 2, "assistant", "Assistant", "Earlier answer",
                 EntryStatus::complete, 6),
         });
-    ModelBackendConfig config = responses_config(WebSearchMode::automatic);
+    ModelBackendConfig config = responses_config();
     config.auth = ProviderAuth::openai_subscription;
     config.host = "api.openai.com";
     config.temperature = 0.5;
@@ -175,6 +175,33 @@ TEST(ResponsesApi, SubscriptionBodyUsesFallbackInstructionsAndOmitsExtras) {
         {{"role", "assistant"}, {"content", "Earlier answer"}},
         {{"role", "user"}, {"content", "from You:\nCurrent question"}},
     }));
+}
+
+TEST(ResponsesApi, SubscriptionHostedSearchCoexistsWithFunctionsAndYieldsToMaintenance) {
+    for (const auto mode : {WebSearchMode::off, WebSearchMode::automatic, WebSearchMode::required}) {
+        SCOPED_TRACE(to_string(mode));
+        Transcript transcript;
+        auto input = make_request(transcript, "Search the web");
+        input.web_search_tool = [](auto, const auto&) { return "[]"; };
+        input.web_read_tool = [](auto, const auto&, const auto&) { return "page"; };
+        input.library_store_ids = {"vs_not_supported_by_subscription"};
+        auto config = responses_config(mode);
+        config.auth = ProviderAuth::openai_subscription;
+        config.host = "chatgpt.com";
+        const auto body = Json::parse(build_responses_request_body(input, config, "System"));
+        EXPECT_EQ(body["tool_choice"], (mode == WebSearchMode::required
+            ? Json{{"type", "web_search"}} : Json("auto")));
+        EXPECT_EQ(body["tools"].size(), mode == WebSearchMode::off ? 2u : 3u);
+        if (mode != WebSearchMode::off) EXPECT_EQ(body["tools"][0], (Json{{"type", "web_search"}}));
+        const auto offset = mode == WebSearchMode::off ? 0u : 1u;
+        EXPECT_EQ(body["tools"][offset]["type"], "function");
+        EXPECT_EQ(body["tools"][offset]["name"], "web_search");
+        EXPECT_EQ(body["tools"][offset + 1]["name"], "web_read");
+        input.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
+        const auto maintenance = Json::parse(build_responses_request_body(input, config, "System"));
+        EXPECT_EQ(maintenance["tool_choice"], "auto");
+        for (const auto& tool : maintenance["tools"]) EXPECT_NE(tool.value("type", ""), "web_search");
+    }
 }
 
 TEST(ResponsesApi, DefaultsToNoneReasoningAndAddsToolInstructionsWithoutSystemPrompt) {

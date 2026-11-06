@@ -155,8 +155,7 @@ std::optional<CacheRetention> parse_cache_retention(std::string_view value) {
 }
 
 bool provider_supports_web_search(const ModelBackendConfig& config) {
-    if (config.auth == ProviderAuth::openai_subscription || config.api == ProviderApi::google
-        || config.api == ProviderApi::anthropic) return false;
+    if (config.api == ProviderApi::google || config.api == ProviderApi::anthropic) return false;
     return config.api == ProviderApi::responses || is_openrouter_host(config.host);
 }
 
@@ -216,7 +215,6 @@ std::optional<std::string_view> provider_config_error(
             || !config.api_key_env.empty()
             || config.temperature
             || config.max_tokens
-            || config.web_search != WebSearchMode::off
             || config.cache_retention != CacheRetention::off) {
             return "has invalid openai_subscription settings";
         }

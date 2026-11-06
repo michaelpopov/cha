@@ -862,13 +862,11 @@ For this auth type, all of the following are mandatory invariants:
 - `stream = true`;
 - no `api_key` or `api_key_env`;
 - no `temperature` or `max_tokens`;
-- `web_search = "off"`;
 - `cache_retention = "off"` must be explicit because its ordinary default is
   `short`.
 
 The endpoint is fixed to
-`https://chatgpt.com/backend-api/codex/responses`. Character-level web-search
-overrides other than `off` are also invalid for this provider.
+`https://chatgpt.com/backend-api/codex/responses`.
 
 The provider TOML declares that OAuth must be used; it does not contain or
 create a login. The user connects in the application's Settings page under
@@ -895,7 +893,7 @@ requires API format `Responses` and Base URL
 
 `web_search` other than `off` is accepted for:
 
-- the Responses API, except an `openai_subscription` provider;
+- the Responses API, including an `openai_subscription` provider;
 - OpenRouter Chat Completions (`host` equal to `openrouter.ai`, ignoring case
   and one trailing dot).
 
@@ -1549,7 +1547,7 @@ publishes pending sessions that already have entries.
 | display-name conflict | Character and persona public names must be globally unique case-insensitively |
 | `unknown variable` | `$${...}` has no value in the merged prompt scope |
 | include escapes the forum/workspace | Relative include crossed its containment root |
-| unsupported web search | API/auth/host combination cannot use requested search mode |
+| unsupported web search | API/host combination cannot use requested search mode |
 | invalid `openai_subscription` settings | OAuth provider differs from one of the mandatory invariants |
 | `Sign in to ChatGPT before using this provider.` | OAuth provider is configured but Settings has no connected account |
 | `Password required to open this vault` | The selected vault has `protected = true`; enter its SQLCipher password in the launcher or vault-switch dialog |
