@@ -1,6 +1,7 @@
 #include "providers/folder_store_client.h"
 #include "providers/api_key_store.h"
 #include "support/test_workspace.h"
+#include "support/mock_http_server.h"
 #include "util/logging.h"
 #include <fstream>
 #include "workspace/workspace_config_store.h"
@@ -1311,6 +1312,47 @@ TEST(LibrarySearch, CancellationStopsBeforeBetweenAndAfterRequests) {
         EXPECT_EQ(result["error"], "cancelled");
     }
     EXPECT_EQ(FolderStoreHttpRequest{}.timeout_s, 600);
+}
+
+TEST(LibrarySearch, TransportTimeoutReturnsSafeScopedErrors) {
+    for (const auto* service : {"openai", "google"}) {
+        const std::string store = std::string_view(service) == "openai"
+            ? "vs_one" : "fileSearchStores/one";
+        FolderStoreClient client([](const auto& request, const auto&) {
+            EXPECT_EQ(request.timeout_s, 17);
+            return FolderStoreHttpResponse{
+                .error = "Operation timed out: private-query library-secret"};
+        });
+        const auto encoded = client.search_library(
+            {service, {store}, "library-secret", 17}, "private-query",
+            std::atomic_bool{false});
+        const auto result = nlohmann::json::parse(encoded);
+        EXPECT_EQ(result["error"], "unavailable");
+        EXPECT_TRUE(result["matches"].empty());
+        ASSERT_EQ(result["errors"].size(), 1u);
+        EXPECT_EQ(result["errors"][0]["store_id"],
+            std::string_view(service) == "openai" ? nlohmann::json(store) : nlohmann::json(nullptr));
+        EXPECT_EQ(encoded.find("private-query"), std::string::npos);
+        EXPECT_EQ(encoded.find("library-secret"), std::string::npos);
+    }
+}
+
+TEST(FolderStoreHttp, CurlHonorsTheCapturedRequestTimeout) {
+    // This HTTP peer accepts the connection but cannot complete TLS. The
+    // request timeout must bound the handshake without relaxing HTTPS-only use.
+    MockHttpServer server({http_response("application/json", "{}")});
+    server.start();
+    FolderStoreHttpRequest request;
+    request.method = "GET";
+    request.url = "https://127.0.0.1:" + std::to_string(server.port()) + "/slow";
+    request.timeout_s = 1;
+    const auto started = std::chrono::steady_clock::now();
+    const auto response = folder_store_curl_transport(request, std::atomic_bool{false});
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    EXPECT_GE(elapsed, std::chrono::milliseconds(500));
+    EXPECT_LT(elapsed, std::chrono::seconds(4));
+    EXPECT_FALSE(response.cancelled);
+    EXPECT_FALSE(response.error.empty());
 }
 
 } // namespace cha

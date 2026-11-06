@@ -201,6 +201,65 @@ TEST(ApplicationSettings, SavesNotesCompressionSettingsInTheVault) {
     EXPECT_NO_THROW(application->delete_provider(provider.id, application->context_epoch()));
 }
 
+TEST(ApplicationSettings, CharacterSettingsNormalizeLegacySearchOnlyWhenChanged) {
+    for (const std::string api : {"responses", "chat_completions"}) {
+        SCOPED_TRACE(api);
+        test::TestWorkspace workspace;
+        const std::string host = api == "responses" ? "api.openai.com" : "openrouter.ai";
+        workspace.write_provider("test", "host = '" + host + "'\nport = 443\nhttps = true\n"
+            "mode = 'test'\nmodel = 'test'\napi = '" + api + "'\n");
+        const std::string original = "# Guide for book questions\n"
+            "display_name = 'Guide'\nprovider = 'test'\nweb_search = 'required'\n";
+        workspace.write_character_config(original);
+        const auto database = test::import_test_database(workspace.root());
+        auto application = Application::open(make_command(workspace, database));
+        const auto epoch = application->context_epoch();
+        const std::string path = "characters/guide/character.toml";
+        const auto raw_config = [&] {
+            return application->store().read_config(std::vector<std::string>{path})
+                .files.at(0).content;
+        };
+        const auto loaded = application->get_character("guide", epoch);
+        ASSERT_EQ(loaded.web_search, WebSearchMode::automatic);
+        EXPECT_EQ(raw_config(), original);
+
+        // Install an undo record without changing the parsed settings.
+        const std::string annotated = original + "# Keep this comment too\n";
+        const auto annotated_edit = application->store().apply_config(
+            application->store().config_revision(),
+            std::vector<WorkspaceConfigChange>{{.path = path, .content = annotated}});
+        ASSERT_TRUE(annotated_edit.committed);
+        ASSERT_TRUE(annotated_edit.undo_available);
+        CharacterSettingsUpdate update{
+            .provider = loaded.provider.value(), .style = loaded.style, .voice = loaded.voice,
+            .reasoning_effort = loaded.reasoning_effort, .web_search = loaded.web_search,
+            .web_search_tool = loaded.web_search_tool,
+        };
+        EXPECT_EQ(application->update_character("guide", update, epoch).web_search,
+            WebSearchMode::automatic);
+        EXPECT_EQ(raw_config(), annotated);
+        EXPECT_EQ(application->store().config_revision(), annotated_edit.revision);
+        EXPECT_TRUE(application->store().undo_config(annotated_edit.revision).committed);
+        EXPECT_EQ(raw_config(), original);
+
+        (void)application->update_character_definition("guide", {.display_name = "Mentor"}, epoch);
+        EXPECT_NE(raw_config().find("required"), std::string::npos);
+
+        // Change a real settings field while leaving the parsed search mode alone.
+        update.web_search_tool = true;
+        EXPECT_EQ(application->update_character("guide", update, epoch).web_search,
+            WebSearchMode::automatic);
+        EXPECT_EQ(raw_config().find("required"), std::string::npos);
+        EXPECT_NE(raw_config().find("auto"), std::string::npos);
+        application.reset();
+        application = Application::open(make_command(workspace, database));
+        const auto reopened = application->get_character("guide", application->context_epoch());
+        EXPECT_EQ(reopened.web_search, WebSearchMode::automatic);
+        EXPECT_EQ(reopened.web_search_tool, true);
+        EXPECT_EQ(raw_config().find("required"), std::string::npos);
+    }
+}
+
 TEST(ApplicationSettings, SavesCharacterWhenNewProviderCannotUseSearchOverride) {
     test::TestWorkspace workspace;
     workspace.write_provider("fireworks",

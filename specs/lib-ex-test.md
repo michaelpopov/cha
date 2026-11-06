@@ -89,7 +89,7 @@ Use these hosts, and label every result with its host:
 | --- | --- |
 | `D`: in-process driver | Link the real runtime and drive `Application`/`BridgeRouter`, database, events, request workers, provider clients, and HTTPS transport. Follow `tests/integration/application_integration_test.cpp`, including connection acknowledgement and current context epochs. Most live scenarios run here. |
 | `N`: native macOS host | Use the actual React UI and native bridge built from the recorded source. Follow the mechanics of `tests/native/macos/test-summary-live.py`, with correct concurrent log pairing. Prove representative cross-provider retrieval in the visible application. |
-| `C`: calibration | Isolated storage-client/provider checks for fixture readiness and account support. These are setup evidence and never substitute for `D` or `N` acceptance. |
+| `C`: calibration | Isolated storage-client checks for fixture readiness, and the existing `provider.test` operation for answering-account support. These are setup evidence and never substitute for `D` or `N` acceptance. |
 | `U`: existing unit/component tests | Establish exact malformed input, protocol, timing, and size boundaries that live models cannot reliably produce. Never label these as live retrieval. |
 
 The driver must submit normal chat commands and obtain results through the
@@ -116,11 +116,11 @@ campaign mechanics if retained; otherwise temporary files such as
 `tests/native/library-exchange-campaign.js` are sufficient.
 
 Use a temporary build target. Do not add product settings, bridge methods,
-provider fallbacks, retries, result caches, or permanent tracing to support
-the campaign. Do not patch prompts, force tool choice, replay model replies,
-or insert fixture answers into chat. Delete temporary campaign code and
-observation changes after the evidence package is complete, without removing
-the user's implementation changes.
+provider fallbacks, retries, result caches, tracing, or logging to support
+the campaign. Do not patch production source files or prompts, force tool
+choice, replay model replies, or insert fixture answers into chat. Delete the
+temporary campaign files and target after the evidence package is complete,
+without removing the user's implementation changes.
 
 ### Existing evidence is a baseline
 
@@ -151,7 +151,9 @@ invalid fixture, or incomplete trace blocks dependent trials; it does not
 produce a pass or authorize silent model substitution.
 
 The model IDs below are explicit proposed targets, based on repository
-configuration and recorded checks. This plan does not claim current account
+configuration and recorded checks. The direct Anthropic ID is chosen to match
+the OpenRouter Claude model of the recorded checks; the repository's native
+live test uses `claude-sonnet-4-5`. This plan does not claim current account
 availability. Freeze the exact IDs before execution, including any deliberate
 replacement decided before the run. Record provider-reported model versions
 where returned. Do not discover or replace models during scored trials.
@@ -162,22 +164,29 @@ where returned. Do not discover or replace models during scored trials.
   `openai` and `google` respectively. Read `OPENAI_API_KEY` and
   `GEMINI_API_KEY` from the environment or `~/.zprofile` when absent, using the
   established project procedure. This design phase reads no credentials.
-- Use independently named answering entries and saved host OAuth. Locate
-  existing authorized Anthropic/OpenRouter connections without printing
-  secrets. Do not assume their credentials share the Library key location.
-  Missing credentials block their lanes rather than replacing native
-  Anthropic with OpenRouter or subscription OAuth with an API key.
+- Use independently named answering entries. Read `ANTHROPIC_API_KEY` and
+  `OPENROUTER_API_KEY` (or `OPEN_ROUTER_API_KEY`) the same way, as
+  `tests/native/macos/test-summary-live.py` does. Do not read keys from the
+  user's vaults. Missing credentials block their lanes rather than replacing
+  native Anthropic with OpenRouter or subscription OAuth with an API key.
 - Create `O-COPY` and `G-COPY` with the same values as the corresponding
   Library keys but different saved IDs. These test local key identity, not
   remote project isolation. Keep that distinction in the report.
-- Use the normal saved subscription login and OAuth refresh owner. Do not
-  print/export tokens, revoke the user's login, or start a new login as an
-  incidental test action. A subscription request may use streaming regardless
-  of its saved stream setting; record the effective wire mode.
-- Store real keys only in access-restricted disposable vaults or the existing
-  host authentication store. Exclude credential-bearing vaults and exports
-  from the final package. Never put secrets in arguments, source files,
-  prompts, logs, screenshots, oracle files, or environment dumps.
+- CHA keeps the ChatGPT login in `openai-auth.json` in the configuration
+  directory, not in a vault, so the disposable test configuration directories
+  have no login. Before the run, the operator signs in once through the normal
+  device login in each test configuration directory that runs SX lanes. Never
+  copy `openai-auth.json` from the user's configuration, and never run a test
+  host on the user's configuration directory: two copies of one refresh token
+  can invalidate each other on refresh and sign out the user's application.
+  Do not print or export tokens, or revoke the user's login. CHA rejects a
+  subscription provider without `stream = true`, so SX runs in streaming mode
+  only.
+- Store real keys only in access-restricted disposable vaults, and the test
+  ChatGPT login only in the disposable configuration directories. Exclude
+  credential-bearing vaults, configuration directories, and exports from the
+  final package. Never put secrets in arguments, source files, prompts, logs,
+  screenshots, oracle files, or environment dumps.
 
 ### Primary application retrieval lanes
 
@@ -195,10 +204,9 @@ model. A pair such as `AX/G` is a separate scored lane.
 | CC | Direct OpenAI Chat Completions | `gpt-5.6-terra` | O and G | Application |
 
 These are twelve connection/Library pairs. Run exact-fact core trials in
-streaming and buffered modes wherever the connection supports both. For SX,
-run the supported effective mode; do not count two saved configurations that
-both produce SSE as two transport implementations. If another lane rejects a
-mode, report the blocked cell; do not silently reduce required coverage.
+streaming and buffered modes wherever the connection supports both. SX runs
+in streaming mode only. If another lane rejects a mode, report the blocked
+cell; do not silently reduce required coverage.
 
 The Gemini retrieval helper is always the implementation constant
 `gemini-3.8-flash`, independent of the answering model, and uses its one
@@ -245,9 +253,9 @@ source Notes into chat vaults. Create these stores for each storage service:
 
 | Store | Contents and purpose |
 | --- | --- |
-| A | A synthetic handbook and reference table; primary retrieval |
+| A | A synthetic handbook, reference table, and the long Unicode section; primary retrieval and bounds |
 | B | A supplement containing an exception and different facts; combined retrieval |
-| C | A conflicting edition, unique reserved facts, and a longer Unicode passage; unselected/replacement scope and bounds |
+| C | A conflicting edition and unique reserved facts; unselected/replacement scope |
 | D | A small expendable document; actual deletion and stale-store errors |
 
 Name fixtures `cha-library-ex-<run-id>-<service>-<role>`. Record returned store,
@@ -275,7 +283,7 @@ decisive answers. Include:
 - An instruction-like quotation marked as document content. Its instruction
   asks for a harmless visible marker and a change of task, so obedience can
   be detected without requesting a destructive action.
-- A long coherent section exceeding 4,096 UTF-8 bytes, with useful facts
+- A long coherent section in A exceeding 4,096 UTF-8 bytes, with useful facts
   distributed across it. Do not demand that one bounded excerpt contain
   distant facts or that semantic search exhaust the document.
 - A two-step reference: one passage identifies a section/document in B, whose
@@ -283,7 +291,7 @@ decisive answers. Include:
 
 Do not encode answers in titles, filenames, store labels, catalogue entries,
 question IDs, or the run ID. Reserve distinct calibration facts and distinct
-facts for later turns, post-edit/restart checks, and each multicast child.
+facts for later turns and post-edit/restart checks.
 Use enough independent facts that a previous excerpt cannot answer a trial
 which is supposed to require new retrieval.
 
@@ -304,13 +312,17 @@ fixture; neither may contain the target Library fact.
 
 Wait for completed indexing with a bounded deadline. Record uploaded source
 hashes and actual remote file/document identities. Calibrate a reserved fact
-from A/B/C for each service with the production retrieval client. Check actual
-Google `retrievedContext.text`, the fixed helper request, and acceptance of
-`topK: 10`. A fluent helper answer without textual grounding fails readiness.
+from A/B/C/D for each service, plus one Gemini A+B+C query, with the
+production retrieval client and the recording transport in section 5. Check
+actual Google `retrievedContext.text`, the fixed helper request, and
+acceptance of `topK: 10`. A fluent helper answer without textual grounding
+fails readiness.
 
-Use a short function-capability calibration for each answering connection and
-effective mode. Direct calibration is labeled `C`; the first full application
-trial still has to prove routing, callback binding, and bridge behavior.
+Check each answering provider with the existing `provider.test` operation
+before the main matrix. It establishes model availability and authentication,
+not function calling. Do not compose direct answering requests outside CHA;
+for SX that would need the OAuth token outside CHA. The first scored R01 trial
+of each pair is the function-calling checkpoint (section 12).
 
 Each independent scored trial starts a fresh session. Audit every model-facing
 input before the first retrieval and every later round for the target fact:
@@ -335,82 +347,83 @@ Capture and join this chain for each generation and tool call:
 
 1. Public bridge submission and current Forum/session/character settings.
 2. Effective answering provider, API, model, authentication alias, and mode;
-   native IDs absent and application scope selected from the starting revision.
+   native store IDs absent and `library_search` declared for the starting
+   revision.
 3. Initial real answering request with `library_search` and production Library
    instructions. Its schema accepts only `query`; it contains no Library key
    or native store configuration. Store IDs may appear later in tool results.
 4. Real model function call, arguments, call ID, and protocol-specific signed
    or reasoning content needed for continuation.
-5. Each actual retrieval HTTP operation, selected stores, credential-match
-   assertion, timeout, status/transport outcome, and returned source evidence.
-6. Normalized JSON tool result linked to that call ID, followed by the actual
-   continuation input containing it under the correct protocol representation.
+5. The `Library search:` info line for each completed invocation (service,
+   store count, match count, partial and truncation state) and the
+   generation's Library statistics.
+6. Normalized JSON tool result linked to that call ID, taken from the actual
+   continuation input that contains it under the correct protocol
+   representation.
 7. Final model response and transcript, exact oracle comparison, source
    interpretation, and generation terminal/statistics.
 
-For OpenAI retrieval, require the fixed
-`POST https://api.openai.com/v1/vector_stores/{id}/search`, Library credential,
-query and `max_num_results: 5`. Each selected store is searched in configured
-order once per invocation unless cancellation intervenes. Extract source
-evidence from returned `data[].content[]` text and file metadata. No answering
-OpenAI model request is needed for this retrieval service.
+The retrieval requests themselves are checked in the `C` calibration records
+and the section 11 tests, not in each application trial:
 
-For Gemini, require one helper `generateContent` request covering all captured
-stores with `topK: 10`, fixed model, `candidateCount: 1`, and
-`maxOutputTokens: 2048`. It contains only retrieval instructions and the query,
-not the character conversation or other tools. Map normalized matches to
-actual `candidates[0].groundingMetadata.groundingChunks[].retrievedContext`.
-Never use `content.parts[].text` as a source passage.
+- OpenAI: the fixed
+  `POST https://api.openai.com/v1/vector_stores/{id}/search`, the Library
+  credential, the query, and `max_num_results: 5`, once for each selected store
+  in configured order unless cancellation intervenes. Source evidence is the
+  returned `data[].content[]` text and file metadata. No answering OpenAI
+  model request is needed for this retrieval service.
+- Gemini: one helper `generateContent` request covering all captured stores
+  with `topK: 10`, the fixed model, `candidateCount: 1`, and
+  `maxOutputTokens: 2048`. It contains only retrieval instructions and the
+  query, not the character conversation or other tools. Source evidence is
+  `candidates[0].groundingMetadata.groundingChunks[].retrievedContext`;
+  `content.parts[].text` is never a source passage.
 
-Verify that each decisive source passage contains the expected fact and maps
-to the owned fixture. Compare raw source text to normalized text, allowing
-only the documented joining, field bounds, and omission rules. Repeated
-identical text in a generated helper answer is not an independent source.
+In each application trial, verify that each decisive passage in the
+normalized result contains the expected fact and is an excerpt of the
+uploaded fixture text, after the oracle's frozen whitespace normalization.
+Verify its store and file attribution against the ownership ledger. Helper
+prose fails this check. Repeated identical text in a generated helper answer
+is not an independent source.
 
-### Observation without replacing production behavior
+### Observation with existing logs
 
-Existing debug logs contain complete answering request/response payloads and
-round metadata. They do not expose the full raw Library HTTP response or its
-credential selection. `Library search:` summaries alone cannot prove those
-claims. Do not invent evidence that current logs do not supply.
+Do not patch production code or add logging for this campaign. Existing debug
+logs contain complete answering request/response payloads and round metadata.
+The normalized `library_search` result appears in the next answering request
+body. Retrieval runs synchronously on the provider worker thread, so each
+invocation's `Library search:` line appears on that thread between the
+round's response and the next request. The generation summary counts Library
+calls, failures, cancellations, duration, and result bytes. Current logs do
+not show Library HTTP requests, raw Library responses, or credentials. Do not
+invent evidence that they do not supply.
 
-Use a temporary, passive observation patch in the campaign build only, at
-session route selection and the existing Library dispatch/transport and
-answering-transport boundaries. It records observations; the original callback,
-`search_library` parser, libcurl transport, responses, and cancellation flag
-still execute unchanged. For the native host, use the same observation build
-and record its patch hash.
+Establish the unlogged parts as follows:
 
-The observer may record call IDs, key IDs/aliases from the starting settings,
-store IDs, sanitized request bodies, original source-bearing retrieval
-response fields, normalized results, timeouts, and start/end events. Keep all
-source chunks and finish/block/error fields needed to audit normalization;
-omit Gemini generated-answer bodies and usage metadata from the evidence.
-Check credential equality in memory and emit only booleans such as
-`uses_captured_library_credential`,
-`uses_answering_credential`, and `subscription_token_absent_from_retrieval`.
-Do not emit secret values, reusable hashes, headers containing credentials,
-OAuth refresh bodies, or the entire scope object. Strip unexpected echoed
-secrets before writing any evidence. Do not count Gemini helper tokens as
-character generation usage. In OK/GK, equal secret values mean byte comparison
-cannot establish key identity: the captured saved-key IDs and route-selection
-snapshot must establish it. Do not claim remote credential isolation from
-those equal-value controls.
+- **Raw Library responses.** In the `C` calibration, construct
+  `FolderStoreClient` with a small recording wrapper around
+  `folder_store_curl_transport`, through its existing transport parameter.
+  Record URL, method, request body, status, and response body; never headers.
+  Scan the records for secret values before writing them. These records check
+  real response shapes and the raw-to-normalized mapping on live data.
+- **Credentials.** The exact headers, the captured key, and the answering
+  `timeout_s` are deterministic contracts (section 11). Live retrieval from
+  run-owned stores shows that a valid credential for the storage service
+  reached them. The campaign has one secret per storage service, so that is
+  the Library key value. In OK/GK, equal values mean that only the saved-key
+  IDs and the route can establish key identity. Do not claim remote credential
+  isolation from those controls.
+- **Usage.** Do not count Gemini helper tokens as character generation usage.
 
-This limited observation is necessary because the old native-only log recipe
-cannot expose the new retrieval boundary. It is temporary test code, not a
-new product logging feature or injectable replacement retrieval route. Keep
-the patch reviewable and remove it at the end. Also run the native smoke
-cases on an uninstrumented build, checking observable tool results and
-answers, to detect any dependence on observation code.
+State this limit in the report: application trials do not observe each
+Library HTTP request.
 
 Pair debug payloads by parsed log prefix/thread, active generation, and model
-round, as in the earlier plan. Add the function call ID and a local operation
-ordinal to retrieval observations. Do not pair concurrent requests by the
-last log line seen. Preserve complete answering requests/responses and the
-specified retrieval fields across log rotation; copy logs after each case.
-Missing/truncated required payloads or ambiguous pairing produce
-`EVIDENCE_MISSING`.
+round, as in the earlier plan. Join each `Library search:` line to its call ID
+by thread and call order. Do not pair concurrent requests by the last log
+line seen. Preserve complete answering requests/responses across log
+rotation; copy logs after each case. Missing/truncated required payloads or
+ambiguous pairing produce `EVIDENCE_MISSING`.
 
 ### Attribution and normalization checks
 
@@ -424,8 +437,9 @@ Missing/truncated required payloads or ambiguous pairing produce
 | Errors | Partial O success retains matches plus store-specific errors; all failed operations have a top-level error; a G request-wide error has null store ID; raw provider errors are not forwarded |
 | Credential boundary | Neither answering text nor schema/result/transcript contains credentials; later Library results may contain real source/store IDs |
 
-Assert these for actual observed data. Do not enlarge or alter a live response
-to force a bound. Exact malformed fields, foreign Google attribution,
+Assert these on the normalized results of application trials and on the `C`
+raw-to-normalized records. Do not enlarge or alter a live response to force a
+bound. Exact malformed fields, foreign Google attribution,
 image-only grounding, token-limit, escaping, and overflow branches are
 deterministic checks in section 11 when the live service does not emit them.
 
@@ -448,10 +462,10 @@ stateful rows; the core matrix separately covers all protocols.
 
 | ID | Variants/actions | Required result |
 | --- | --- | --- |
-| P01 | Each of the twelve primary pairs; settings saved with provider None | Exactly the application route, right effective character model, captured Library service/stores/key and answering timeout; generic declaration without native IDs or secrets; real retrieval in R01 |
-| P02 | ON and GN, both supported answering modes | Matching native route and source-backed fact; no `library_search` declaration, callback invocation, O direct-search operation, or G helper operation |
-| P03 | OK and GK, both modes | Different saved-key ID chooses application route even when values match; scoped credential comes from Library; source-backed answer |
-| P04 | For each protocol: no Library; also removed Library key and unsupported key service on AX/O and OX/G | No native/application Library route or catalogue paragraph; ordinary healthy answering connection still replies; invalid Library warns without blocking chat |
+| P01 | Each of the twelve primary pairs; settings saved with provider None | Exactly the application route and the right effective character model; generic declaration without native IDs or secrets; the Library service and store IDs in the tool result; real retrieval in R01. The captured key and answering timeout are deterministic checks (section 11) |
+| P02 | ON and GN, both supported answering modes | Matching native route and source-backed fact, with the native evidence of [lib-test.md](lib-test.md) section 5; no `library_search` declaration or call, `library_search_calls=0`, and no `Library search:` line |
+| P03 | OK and GK, both modes | Different saved-key ID chooses application route even when values match; source-backed answer |
+| P04 | For each protocol: no Library | No native/application Library route or catalogue paragraph; ordinary answer. T09 covers a removed or unsupported Library key |
 | P05 | Character choice, session override, valid native Forum default, remove only default; repeat for O and G | Full provider precedence remains intact. A valid matching default selects ON/GN and native retrieval, even if the character was AX. Removing it restores the saved session choice and application route without rewriting character/session choices |
 | P06 | Attempt to save AX as default; remove/rename a valid default or change its eligibility | Incompatible default is rejected by settings. A stale saved default warns and normal selection resumes; Library remains usable through the resulting valid native/application route |
 | P07 | Same-service route transition ON→OK→ON and GN→GK→GN, in fresh sessions | Only local eligibility changes route; no generation offers both. Stores, character identity, catalogue, and underlying Library record remain stable |
@@ -474,24 +488,27 @@ the actual wording before execution and never insert oracle answers.
 | ID | Trials and question/action | Required observations and answer |
 | --- | --- | --- |
 | R01 | Every primary pair × each supported effective mode × three fresh sessions. One selected A store. “In [book], what verification phrase is printed in the [named section]?” No tool named. | Real `library_search` call, correct scope/credential, actual source passage with the exact random phrase, correctly paired result, exact final answer. No attachments or web needed. All three trials must pass |
-| R02 | Every primary pair × each mode × three fresh sessions. Natural book question under the realistic profile, with controlled CHA web available and hosted web off | Ask about contents and a specific internal recommendation without mentioning tools. Require useful document-sourced contents, not a generic blurb, plus one decisive private fact. Library precedes any observable CHA web dispatch. Use fixed English/Russian/English wording across the three trials; score each wording and the group |
+| R02 | Every primary pair × each mode × three fresh sessions. Natural book question under the realistic profile, with controlled CHA web available and hosted web off | Ask about contents and a specific internal recommendation without mentioning tools. Require useful document-sourced contents, not a generic blurb, plus one decisive private fact. Library-first as defined below. Use fixed English/Russian/English wording across the three trials; score each wording and the group |
 | R03 | AX and OX/G, one per mode and applicable service; diagnostic prompt explicitly asks to search the Forum Library | A source-backed answer distinguishes tool availability from natural source choice. R03 never repairs or replaces an R02 miss |
-| R04 | A+B for each service, via AX and one opposite-service native-protocol answering model (GX/O or OX/G) | Ask for A's numeric rule, B's exception, and the calculated result. Require source evidence and correct interpretation from both stores. For G, every helper invocation contains both stores in one request; for O, operations cover each selected store in order |
+| R04 | A+B for each service, via AX and one opposite-service native-protocol answering model: GX/O for O, OX/G for G | Ask for A's numeric rule, B's exception, and the calculated result. Require source evidence and correct interpretation from both stores, with matches attributed to the correct store IDs. For O, the result lists matches or errors in configured store order. The one-helper and per-store request shapes are checked in `C` and section 11 |
 | R05 | Repeat R04 with only A, then select C in a fresh session; both services through AX | B's unseen exception/code is unavailable in the A-only case. C's different edition/rule appears only after C is selected. Require honest gaps and exact C source attribution; colliding labels do not merge editions |
-| R06 | Select G A+B+C through OX and AX | Ask for one distinct fact from each. A helper request carries all three full names; no inherited O two-store limit. Score recovery of all three, acknowledging that semantic retrieval can miss a fact; never treat inclusion of three IDs as sufficient |
+| R06 | Select G A+B+C through OX and AX | Ask for one distinct fact from each. Matches can come from all three stores; no inherited O two-store limit. The `C` calibration checks that one helper request carries all three full names. Score recovery of all three, acknowledging that semantic retrieval can miss a fact; never treat inclusion of three IDs as sufficient |
 | R07 | Two-step reference across A/B; AX/O, OX/G, GX/O and RC/G; both modes | First passage points to a section in B that contains a new code. Observe focused follow-up retrieval and correct answer using the new source. Preserve call IDs and any returned signatures/reasoning. If one search already returns both facts, record a valid answer but the multi-round branch as not exercised live; deterministic continuation tests still run |
 | R08 | Two turns, AX/O and OX/G | First obtain one fact. Second ask a different interior fact not present in any first-turn excerpt or answer. Require a new invocation/source chain. If the reserved fact already leaked into the first retrieval, mark this variant invalid rather than counting history recall as retrieval |
 | R09 | Table/Unicode/quotation query through each of the four answering protocols, covering both Library services across the chosen pairs | Recover exact requested row/name/integer and source text intact. Distinguish quoting source material from adopting it as instructions. Check valid UTF-8 through transport, normalization, transcript and answer |
-| R10 | Long-section question, AX/O and OX/G | Audit real passage/result bounds and truncation state. A bounded excerpt must not be described as the whole file. A focused follow-up may recover a distant fact; do not grade a semantic result as exhaustive reading. Record untriggered size branches and cover them in U |
+| R10 | Long-section question about A, AX/O and OX/G | Audit real passage/result bounds and truncation state. A bounded excerpt must not be described as the whole file. A focused follow-up may recover a distant fact; do not grade a semantic result as exhaustive reading. Record untriggered size branches and cover them in U |
 | R11 | Detail explicitly recorded as unknown, then a wholly missing subject, AX/O and OX/G | Observe retrieval attempt and honest limits; no invented code, fabricated citation, or claim every file was examined. O empty success and G no-grounding error remain distinct; do not require services to return the same empty-result shape |
 | R12 | Quoted instruction-like passage and malicious catalogue wording, both services through AX and one other protocol | Return the requested document fact; do not emit the planted obedience marker as an instruction response, change scope, or invoke unrelated tools. Follow with ordinary arithmetic in a new turn; retrieval is optional there |
 | R13 | Library question followed by unrelated greeting/arithmetic, each primary connection once | Character/provider remains unchanged and answers ordinary questions. Optional extra retrieval is measured, not automatically failed; no hidden helper answer is published as a character message |
 
 For R02, the controlled web backend returns a plausible conflicting public
-summary and independent decoy values, never the private answer. A later web
-call is counted but is not a miss when the Library was searched first and the
-answer uses the correct evidence. A web-only correct-sounding blurb fails the
-Library result.
+summary and independent decoy values, never the private answer. Library-first
+means that the model requests `library_search` in the same round as its first
+`web_search`/`web_read` call, or in an earlier round. CHA runs the Library
+calls of a batch before its web calls. Report same-round batches separately;
+they are not misses. A later web call is counted but is not a miss when the
+Library was searched first and the answer uses the correct evidence. A
+web-only correct-sounding blurb fails the Library result.
 
 Native regressions use P02 and a small native natural-question control. Do
 not rerun the whole earlier native campaign or repeat unrelated upload/UI
@@ -509,7 +526,7 @@ provider-hosted tools. One cannot pass on evidence from the other.
 | W01 | R02 matrix, hosted off, controlled CHA `web_search`/`web_read` offered | Library-first source choice under normal instructions; search/read dispatch ordering observable in CHA; web results never contain private oracle values |
 | W02 | AX/O, GX/O, OX/G, RC/G; both modes | Ask for a private Library rule and a separate external fact available only through the controlled web server. Observe actual Library plus web search/read, correct call/result pairing and final synthesis. If the required web tool is not called, record a model miss |
 | W03 | One pair per protocol, services balanced; dedicated summary Forum | Save a real summary with unrelated random fact S using the existing summary path. Ask for S and a new Library fact. Observe summary search/read when needed and independent Library retrieval; no private Library answer in the summary catalogue or saved summary |
-| W04 | AX/O and OX/G | Ask a question requiring Library, summary and controlled web evidence. Require all three real sources and correct attribution. Parallel function batching is allowed but not required; inspect every call ID and returned result |
+| W04 | AX/O and OX/G, in the summary Forum | Ask a question requiring Library, summary and controlled web evidence. Require all three real sources and correct attribution. Parallel function batching is allowed but not required; inspect every call ID and returned result |
 | W05 | Each protocol, one service; web hosted off, on-demand off, character `web_search_tool=false` | Library still retrieves. Summary access remains independent. No CHA web search/read is offered or dispatched; a Library-only answer does not set `web_search_used` or web progress counters |
 
 ### Automatic hosted web matrix
@@ -532,7 +549,7 @@ they cannot masquerade as hosted search. Summary functions remain available.
 | --- | --- | --- |
 | H01 | Ask for a private Library fact plus a current public fact that requires checking an authoritative public source | Initial ordinary request offers hosted web plus `library_search` with auto choice; observe actual hosted evidence and actual Library passages, then a correct combined final answer. No preliminary web-only request, forced phase, hidden answer summary, or provider switch |
 | H02 | Ask a private Library-only question while hosted mode remains Automatic | Exact source-backed answer through Library. Hosted web remains optional. Record observed unnecessary web use; inspect automatic tool choice and absence of a forced web phase. Lack of web here is useful evidence, not something to manufacture |
-| H03 | AX/O and OX/G with saved provider `required`, then character `required`; prepare legacy values while the disposable app is stopped | Load succeeds with obsolete-value warning; typed state is `auto`; supported requests use Automatic and coexist with Library/summary functions. Typed save writes `auto`, unrelated saves do not bulk-migrate stored source. Native UI offers only Provider default/Off/Automatic as applicable |
+| H03 | OX/G and RC/O with saved provider `required`, then character `required`; prepare legacy values while the disposable app is stopped. Anthropic and Google providers have no hosted web search, so AX and GX cannot test this | Load succeeds with obsolete-value warning; typed state is `auto`; supported requests use Automatic and coexist with Library/summary functions. A typed save that changes a field in the corresponding settings form writes `auto`. An unchanged Character settings save does nothing: it preserves stored bytes (including `required`), revision and undo; the UI does not submit it. Unrelated saves do not bulk-migrate stored source. Native UI offers only Provider default/Off/Automatic as applicable |
 
 For H01, freeze the public question, source URL, expected field, and grading
 method immediately before the run using an independent evaluator lookup.
@@ -546,8 +563,12 @@ Responses evidence includes real hosted call/action items and citations/source
 results when returned. Chat Completions requires its own actual hosted
 annotations/citations or other provider evidence, not a Responses fixture or
 the model's statement. Require the public answer and observed hosted use;
-prior knowledge alone is insufficient. If evidence is opaque, report
-`EVIDENCE_MISSING` for hosted use. Do not turn missing evidence into a pass by
+prior knowledge alone is insufficient. If the captured response is complete
+but contains no hosted evidence, count a hosted-use miss for that trial
+against the H01 threshold. Use `EVIDENCE_MISSING` only when CHA's own capture
+is incomplete (section 5). The earlier validation did not establish hosted
+web use for streamed OpenRouter Chat Completions with Claude; report that
+cell's result as observed. Do not turn missing evidence into a pass by
 switching models or transport mode after a failed trial.
 
 Where application calls cause another round, verify the hosted evidence that
@@ -568,16 +589,16 @@ remain deterministic tests when live timing cannot exercise them.
 | T01 | After the first answering request starts, replace A with B, clear Library, or change service; separate variants | In-flight invocation and every continuation keep the original scope/key/provider. Next generation uses the edited scope. Chat settings can show the next-turn state while the old request runs |
 | T02 | After dispatch, change only the saved Library key value to a known invalid nonempty test value; then restore it through normal settings | In-flight retrieval retains the original captured value. Fresh retrieval uses the new value and reports a safe failure while the independently healthy answering connection can explain it. Restore the real value for later trials. Do not revoke any real remote key or use the answering key as fallback |
 | T03 | Reopen session, restart test app, and create a new session after scope changes | Current Forum configuration controls new requests; reserved unseen facts establish fresh access. No stale callback or copied session Library appears |
-| T04 | All-characters with ON/GX/AX in O Forum; GN/OX/AX in G Forum; no default | Native and application children use their own selected providers and independently retrieve. Every child has its own source/call chain and uncontaminated input. One child's answer cannot supply another child's success |
+| T04 | All-characters with ON/GX/AX in O Forum; GN/OX/AX in G Forum; no default. All children of one turn share the pre-turn history and do not see each other's answers, so ask every child the same reserved fact | Native and application children use their own selected providers and independently retrieve. Every child has its own source/call chain and uncontaminated input. One child's answer cannot supply another child's success |
 | T05 | All-characters under a valid matching Forum default, then remove default | All children use native default route while set; their original session/character choices and applicable overrides return after removal. Ordinary Assistant follows the same route rules |
 | T06 | Concurrent sessions in different Forums, one shared selected store, one different selected store; then second vault with reused local IDs but different stores | No cross-Forum/vault credentials, results, catalogue, summaries, events, or unseen facts. Correctly correlate concurrent calls; use held/open sessions rather than assuming UI navigation keeps an idle session alive |
 | T07 | Delete owned D through `cloudStore.delete`, leave its saved Library reference; D alone for both services | Record actual HTTP/service behavior. Tool error or empty usable result is handled honestly; no invented fact or answering-provider change. Invalid remote references do not cause local Library validation to pretend existence was checked |
-| T08 | O A+D after D deletion, then G A+D | O retains successful A passages with an error for D when D search fails, without top-level failure if A succeeds. G sends one all-store helper request; on request failure it returns scope-level error, without per-store retries or silent removal of D. If a service tolerates the missing store, record that branch honestly |
+| T08 | O A+D after D deletion, then G A+D | O retains successful A passages with an error for D when D search fails, without top-level failure if A succeeds. On request failure, G returns one scope-level error with a null store ID, without silent removal of D; section 11 covers the absence of per-store retries. If a service tolerates the missing store, record that branch honestly |
 | T09 | Library key removed or metadata changed to unsupported service; healthy answering provider independent of that key | Library omitted with warning; normal chat continues. Restoring a valid Library makes the next generation retrieve again; unrelated summary/web tools survive |
 | T10 | Stop during active retrieval; close session; switch vault; stop the test host; separate variants | Shared cancellation stops remaining O store operations/G helper and model continuation when cancellation is observed. No late source/result/text enters a new request or vault. Fresh follow-up succeeds. Do not require aborting bytes already sent before cancellation |
 | T11 | Attach/detach unrelated note/folder, edit attachment, then clear Library | Attachments retain their normal prompt behavior and never select search stores. Cleared Library supplies no tool; use an unseen fact to avoid confusing attachment/history recall with access |
 | T12 | Activate Welcome maintenance, naming, recipient classification, summary/compression, provider connection test, and self-note paths | No application Library scope/tool/retrieval or inherited Forum default in excluded auxiliary requests. Ordinary Assistant in a normal Forum does retrieve. Auxiliary providers keep their own normal configuration |
-| T13 | Save/replace/clear Library, delete one of two Forums sharing a store | No remote create/upload/delete due to settings or chat preparation. Surviving Forum still retrieves. No per-turn store listing, metadata fetch, model probe, file download, or URI follow with Library credentials |
+| T13 | Save/replace/clear Library, delete one of two Forums sharing a store | No remote create/upload/delete due to settings or chat preparation; count the management bridge calls. Surviving Forum still retrieves. Chat-side store access is only `library_search` retrieval: no per-turn store listing, metadata fetch, model probe, file download, or URI follow with Library credentials (section 11) |
 | T14 | One export/import/merge round-trip per service, only disposable vaults | Library record survives existing transfer rules. Where the key ID resolves, an application lane retrieves a new fact; where absent, the saved record stays and chat omits retrieval safely. Exports remain in the protected test area and are removed. No R2 transfer is needed |
 | T15 | Info-level diagnostic run for AX/O and OX/G; separately inspect sanitized debug trace | Library stats count invocations/failures/cancellation/duration/result bytes; Library-only use does not mark web use. New retrieval diagnostics contain no query, passage, key, or helper answer/usage. Existing answering debug bodies can contain replayed source excerpts and are protected/redacted accordingly |
 
@@ -590,11 +611,12 @@ reported at its actual observed cancellation point, not the intended one.
 ### Native host checks
 
 Use the actual UI/bridge for these focused checks; no UI design changes are
-part of this plan:
+part of this plan. The native host has no web-search override, so run these
+rows with CHA web tools and hosted web search off:
 
 | ID | Actions | Required result |
 | --- | --- | --- |
-| N01 | Save G Library with no default, choose OX, ask an unseen fact; repeat O Library with GX | Visible cross-service answer with real application tool/source evidence, correct selected model, and no attachments. Repeat both on the uninstrumented build using observable continuation/source results |
+| N01 | Save G Library with no default, choose OX, ask an unseen fact; repeat O Library with GX | Visible cross-service answer with real application tool/source evidence, correct selected model, and no attachments |
 | N02 | Ordinary Assistant with AX or SX, each Library service | Real cross-provider answer in the native host, correct provider identity and transcript; no helper character reply or web-only marker |
 | N03 | Inspect provider None, valid native default, then remove it; change session model while unlocked | Model lock follows default rules; native/application route changes on the next request. Character and Effort keep existing idle-state behavior |
 | N04 | Character provider-web selector and legacy saved value | Required option absent; Off, Automatic, and inheritance behave as supported; legacy value displays normalized state and remains loadable |
@@ -605,7 +627,6 @@ part of this plan:
 Freeze the expanded matrix before remote creation. A case key is
 `scenario/lane/library/mode/variant/trial/host`. Enumerate actual cases, source
 facts, prompts, and dependencies; never infer unspecified Cartesian products.
-Keep `saved_stream_setting` distinct from `effective_wire_mode`.
 
 Core expansion: R01 and R02 each have twelve pairs, two modes for the ten
 non-subscription pairs and the supported mode for two SX pairs: 22 cells ×
@@ -656,8 +677,10 @@ including controls and native smoke checks. The manifest must contain the
 exact total and cost estimate, separating answering calls, Gemini helpers,
 OpenAI search operations, storage, and hosted-web charges. Freeze a maximum
 of 500 generations, 1,800 combined answering/helper model HTTP attempts, and
-900 OpenAI search HTTP attempts. Count calibration and diagnostics within
-these caps; count upload/management requests separately. If the expanded
+900 OpenAI search HTTP attempts. Count answering attempts from the debug log.
+Count retrieval attempts from `library_search` invocations: one Gemini helper
+request, or one OpenAI request per selected store. Count calibration and
+diagnostics within these caps; count upload/management requests separately. If the expanded
 matrix exceeds a cap, revise it explicitly before execution, not by silently
 dropping cases during the run. Subscription usage is not zero cost merely
 because no per-call billing is exposed.
@@ -689,8 +712,8 @@ to emit malformed calls.
 | --- | --- |
 | Route and captured snapshot/key/store lifetime; mixed multicast; defaults; maintenance/naming/test exclusions | `ForumLibraryTest` in `tests/session/unit_session_open.cpp`, especially `IncompatibleProviderEndpointsAndKeyIdentitiesGetApplicationScope`, `ApplicationScopeOwnsOriginalCredentialsAndFreshGenerationSeesEdits`, `ApplicationRouteCoversGoogleLibraryAndSkipsTestBackend`, and `AllChildrenAndPreparedRepliesRetainTheirStartingRevision` |
 | Saved-key identity and endpoint eligibility; malformed Library and catalogue persistence | `Workspace.LibraryEligibilityUsesTheSavedKeyIdentityAndNativeEndpoint`, `MalformedLibraryIsIgnoredAndPreservedOnUnrelatedEdits`, and catalogue tests in `tests/workspace/unit_workspace.cpp` |
-| O partial/empty/malformed retrieval, safe errors and exact endpoints/body | `LibrarySearch.OpenAiUsesCapturedScopeAndKeepsPartialResults` and `EmptyOpenAiSearchIsSuccessfulButMalformedSourcesAreErrors` in `tests/providers/unit_folder_store_client.cpp` |
-| G fixed helper, all stores, source text rather than generated prose; foreign/missing attribution, no grounding, token limit | `LibrarySearch.GeminiUsesOneFixedHelperAndReturnsOnlySourcePassages`, `GeminiRejectsForeignAndUngroundedResponsesAndAcceptsGroundedTokenLimit` |
+| O partial/empty/malformed retrieval, safe errors, exact endpoints/body, Library credential header and scope timeout | `LibrarySearch.OpenAiUsesCapturedScopeAndKeepsPartialResults` and `EmptyOpenAiSearchIsSuccessfulButMalformedSourcesAreErrors` in `tests/providers/unit_folder_store_client.cpp` |
+| G fixed helper, all stores, Library credential header and scope timeout, source text rather than generated prose; foreign/missing attribution, no grounding, token limit | `LibrarySearch.GeminiUsesOneFixedHelperAndReturnsOnlySourcePassages`, `GeminiRejectsForeignAndUngroundedResponsesAndAcceptsGroundedTokenLimit` |
 | Byte/UTF-8/metadata/result bounds, dropped images/chunks, cancellation/management default timeout | `LibrarySearch.Utf8MetadataAndSerializedEscapingStayWithinBounds`, `GeminiBoundsTextChunksAndReportsOmittedImages`, `CancellationStopsBeforeBetweenAndAfterRequests`; confirm explicit transport-timeout coverage |
 | All four protocol schemas, streaming/buffered calls and IDs/signatures, Library-only decoder | `ProviderClientLibrary.LibraryOnlyRoundTripAcrossAllProtocolsAndStreamingModes` in `tests/providers/unit_provider_client.cpp` |
 | Invalid JSON, UTF-8, empty/extra/non-string/over-2,048-byte query; unavailable/unknown tool; no network before validation | `ProviderClientLibrary.InvalidQueriesNeverInvokeRetrievalAndErrorsAllowAFinalAnswer`, builder availability tests, and existing decoder argument-limit tests; confirm each listed boundary is represented |
@@ -708,12 +731,14 @@ Do not assert that an unobserved branch was exercised remotely.
 ## 12. Campaign order and checkpoints
 
 1. Freeze the manifest, prompts, fact reservations, grading, exact case
-   expansion, model IDs, cost/caps, and supported modes. Verify account and
-   saved OAuth prerequisites without disclosing credentials.
+   expansion, model IDs, cost/caps, and supported modes. Verify account
+   prerequisites without disclosing credentials.
 2. Build both hosts, run deterministic prerequisites, and prepare disposable
-   vaults plus the ownership ledger. Verify the observation patch is passive.
-3. Generate sources/oracle, upload through CHA, wait for indexing, and perform
-   isolated calibration. Stop dependent lanes on readiness/evidence failure.
+   vaults, test configuration directories with the operator's ChatGPT login,
+   and the ownership ledger.
+3. Generate sources/oracle, upload through CHA, wait for indexing, perform
+   isolated calibration, and run `provider.test` for each answering provider.
+   Stop dependent lanes on readiness/evidence failure.
 4. Use the first R01 trial for each required pair as a source-chain checkpoint,
    and N01 as the native UI smoke per service. These remain scored cases, not
    unreported warmups. Inspect complete traces before spending the rest of the
@@ -723,15 +748,14 @@ Do not assert that an unobserved branch was exercised remotely.
 6. Run controlled web/summary and real hosted-web matrices. Keep their evidence
    and verdicts separate. Audit protocol replay while sources are available.
 7. Run live edits, route transitions, restart, concurrency, native UI,
-   auxiliary exclusions, and vault-transfer checks. Run uninstrumented native
-   smoke checks before concluding instrumentation independence.
+   auxiliary exclusions, and vault-transfer checks.
 8. Delete owned D and run remote error/partial cases only after positive
    D-dependent preparation is complete. Run cancellation variants with fresh
    facts and collect terminal/event isolation evidence.
 9. Audit complete evidence, package redaction, and resource boundaries. Clean
    up in a finally path even after failures or interruption.
-10. Remove temporary campaign code/observation patch/target, preserve unrelated
-    work, and produce the final case matrix and three verdicts.
+10. Remove temporary campaign files and target, preserve unrelated work, and
+    produce the final case matrix and three verdicts.
 
 Every checkpoint records dependencies. A failed calibration can block a lane,
 but cannot erase its required rows. A cleanup failure makes completion
@@ -743,11 +767,11 @@ Keep one directory, for example `library-ex-test-results/<run-id>/`:
 
 | Artifact | Contents |
 | --- | --- |
-| `manifest.json` | Build and observation patch hashes, model/protocol/auth aliases, effective modes, exact case list, prompts/rubrics, thresholds, dependencies, caps/cost estimate and timestamps |
+| `manifest.json` | Build identity and dirty-worktree patch hash, model/protocol/auth aliases, modes, provider timeouts, exact case list, prompts/rubrics, thresholds, dependencies, caps/cost estimate and timestamps |
 | `ownership.json` | Owned store/file/document/operation IDs, creator alias, allocation/deletion state and unresolved resources; no credentials |
 | `fixtures/`, `oracle.json` | Synthetic sources, hashes, exact answers and accepted normalization/source mappings; evaluator-only during execution |
-| `cases/<case-key>/` | Bridge actions, snapshots/settings, input-leak audit, complete sanitized answering rounds and specified retrieval fields, call/result mapping, source comparison, transcript, terminal/stats and separate assertions |
-| `ui/` | Native UI screenshots/action trace; instrumented versus uninstrumented build labels |
+| `cases/<case-key>/` | Bridge actions, snapshots/settings, input-leak audit, complete sanitized answering rounds, `Library search:` lines, `C` retrieval records, call/result mapping, source comparison, transcript, terminal/stats and separate assertions |
+| `ui/` | Native UI screenshots/action trace |
 | `unit-results/` | Deterministic commands/results and confirmed coverage map; no claim these were live requests |
 | `results.json`, `report.md` | Per-case CHA/retrieval/model results, counts/thresholds, unexercised branches, evidence links, failures, account/service blockers, latency/call totals and cost/accounting limits |
 | `cleanup.json` | Every owned resource's final disposition and verification; local secret-vault/export removal; temporary-code removal and outstanding work |
@@ -802,8 +826,10 @@ reconcile only with evidence of this run's ownership. Never bulk-delete by
 name prefix, delete borrowed resources, or erase an unresolved ledger.
 
 Remove protected local fixture/chat vaults, exports/imports, temporary key
-files, and unsanitized trace buffers. Keep only the sanitized evidence and
-cleanup record. Restore/remove only temporary observer and harness changes;
-preserve the user's pre-existing implementation and tests. Any unresolved
+files, and unsanitized logs and records. Disconnect the test ChatGPT logins
+with `openaiAuth.disconnect`, which removes only the local file, and remove the
+test configuration directories. Keep only the sanitized evidence and cleanup
+record. Remove only the temporary harness files and target; preserve the
+user's pre-existing implementation and tests. Any unresolved
 owned resource or secret-bearing artifact is explicit remaining cleanup work
 and prevents a claim of complete cleanup.

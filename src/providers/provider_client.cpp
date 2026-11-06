@@ -440,6 +440,10 @@ GenerationResult classify_success_response_error(
     std::string_view body) {
     if (result.outcome != GenerationOutcome::protocol_error) return result;
 
+    if (result.refused) {
+        result.message = "The provider refused to answer.";
+        return result;
+    }
     if (const auto recognized = recognized_provider_error(status, result.message)) {
         result.message = *recognized;
     } else if (const auto recognized = recognized_provider_error(status, body)) {

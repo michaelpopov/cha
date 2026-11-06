@@ -3533,6 +3533,37 @@ std::string anthropic_stream(const Json& message) {
         + event({{"type", "message_stop"}});
 }
 
+TEST(ProviderClient, RefusalWithoutAnswerTextReportsTheRefusal) {
+    for (const auto api : {ProviderApi::chat_completions, ProviderApi::anthropic}) {
+        for (const bool stream : {false, true}) {
+            SCOPED_TRACE(std::string(to_string(api)) + (stream ? " streaming" : " buffered"));
+            auto definition = network_definition(80, stream);
+            definition.provider.config.api = api;
+            ProviderClient client(shared_definition(definition), nullptr,
+                [&](const ProviderHttpRequest&, const std::atomic_bool&) {
+                    const std::string type = stream ? "text/event-stream" : "application/json";
+                    if (api == ProviderApi::anthropic) {
+                        const auto message = anthropic_response(Json::array(), "refusal");
+                        return ProviderHttpResponse{200, type,
+                            stream ? anthropic_stream(message) : message.dump()};
+                    }
+                    const Json message{{"role", "assistant"}, {"content", nullptr}, {"refusal", "No"}};
+                    const Json choice{{stream ? "delta" : "message", message},
+                        {"finish_reason", "content_filter"}};
+                    const auto body = Json{{"choices", Json::array({choice})}}.dump();
+                    return ProviderHttpResponse{200, type,
+                        stream ? "data: " + body + "\n\ndata: [DONE]\n\n" : body};
+                });
+            Transcript transcript;
+            const auto result = client.perform(
+                client.prepare(client_request(transcript, 1, "Question")),
+                [](auto) {}, std::atomic_bool{false});
+            EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+            EXPECT_EQ(result.message, "The provider refused to answer.");
+        }
+    }
+}
+
 TEST(ProviderClient, AnthropicUsesNativeEndpointVersionAndOptionalSavedBearerKey) {
     test::TestWorkspace workspace;
     auto config = WorkspaceConfigStore::open(test::import_test_database(workspace.root()));
@@ -4270,7 +4301,7 @@ TEST(ProviderClientLibrary, LibraryOnlyRoundTripAcrossAllProtocolsAndStreamingMo
 }
 
 TEST(ProviderClientLibrary, InvalidQueriesNeverInvokeRetrievalAndErrorsAllowAFinalAnswer) {
-    for (const auto& arguments : {Json::object(), Json{{"query", " "}}, Json{{"query", 7}},
+    for (const auto& arguments : {Json::object(), Json{{"query", ""}}, Json{{"query", " "}}, Json{{"query", 7}},
             Json{{"query", "q"}, {"store_id", "foreign"}}, Json{{"query", std::string(2049, 'a')}}}) {
         auto definition = network_definition(80, false);
         int rounds = 0;
@@ -4288,6 +4319,34 @@ TEST(ProviderClientLibrary, InvalidQueriesNeverInvokeRetrievalAndErrorsAllowAFin
         EXPECT_EQ(client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false}).outcome, GenerationOutcome::completed);
         EXPECT_EQ(stats.library_search.failed, 1u);
         EXPECT_EQ(stats.tool_calls_rejected, 1u);
+    }
+}
+
+TEST(ProviderClientLibrary, MalformedJsonAndUtf8ByteBoundariesAreValidatedBeforeRetrieval) {
+    std::string query;
+    for (int i = 0; i < 512; ++i) query += "📚";
+    ASSERT_EQ(query.size(), 2048u);
+    for (const auto& arguments : {std::string("{"), std::string(R"({"query":"\uD800"})"),
+            Json{{"query", query}}.dump(), Json{{"query", query + "a"}}.dump()}) {
+        const bool valid = arguments == Json{{"query", query}}.dump();
+        auto definition = network_definition(80, false);
+        int rounds = 0, retrievals = 0;
+        ProviderClient client(shared_definition(definition), nullptr, [&](const auto& request, const auto&) {
+            if (++rounds == 1) return tool_reply(ProviderApi::chat_completions, false,
+                Json::array({search_call(ProviderApi::chat_completions, "library", arguments, "library_search")}));
+            EXPECT_EQ(request.body.find("invalid_argument") == std::string::npos, valid);
+            return summary_mock_reply(ProviderApi::chat_completions, false, Json::array(), "Final answer.");
+        });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "Question");
+        input.library_search_tool = [&](std::string_view actual, const auto&) {
+            ++retrievals;
+            EXPECT_EQ(actual, query);
+            return std::string(R"({"matches":[],"errors":[]})");
+        };
+        EXPECT_EQ(client.perform(client.prepare(input), [](auto) {}, std::atomic_bool{false}).outcome,
+            GenerationOutcome::completed);
+        EXPECT_EQ(retrievals, valid ? 1 : 0);
     }
 }
 

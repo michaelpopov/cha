@@ -205,16 +205,19 @@ through the host's OAuth owner. Keep host repair separate from vault configurati
 An attached note is a copy in the chat. It uses compressed text when present,
 and later edits are picked up by adding the note again in the chat.
 
-A Forum Library gives native File Search to compatible direct OpenAI or Gemini
-connections using the same saved Library key. Other function-capable chat
-connections use `library_search` to retrieve source excerpts with the Library's
-key while the selected character model writes the answer. Gemini retrieval uses
-a fixed helper model and the Library account's API usage. Results are bounded
-excerpts, not complete files. Library retrieval and Automatic web search can be
-used together; web settings do not disable Library access. Welcome maintenance
-and auxiliary requests do not receive Library tools. A Forum default provider
-replaces the model for all characters; leave it unset to use different character
-providers. Attached folders do not give search access.
+A Forum Library gives native File Search only to a direct OpenAI Responses or
+direct Gemini connection that uses the same saved API key as the Library. All
+other function-capable chat connections use `library_search`: CHA retrieves
+bounded source excerpts with the Library's key, and the selected character model
+writes the answer. When `library_search` reads a Gemini Library, CHA uses a
+fixed helper model and the Library account's API usage; native Gemini File
+Search does not use it. Results are bounded excerpts, not complete files.
+Library retrieval and Automatic web search can be used together; web settings
+do not disable Library access. Welcome maintenance and auxiliary requests do not
+receive Library tools. A Forum default provider replaces the model for all
+characters and must be a connection that can use the Library natively; leave it
+unset to use different character providers. Attached folders do not give search
+access.
 
 ## Writing prompt content
 

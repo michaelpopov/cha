@@ -215,7 +215,10 @@ describe('Notes in the application', () => {
     fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Saved plan');
     fireEvent.click(screen.getByRole('treeitem', { name: 'New note' }));
-    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    await waitFor(() => {
+      expect(noteEditor().isEditable).toBe(true);
+      expect(noteEditor().getText()).toBe('');
+    });
     act(() => typeInNote('My edits'));
     if (hidden) {
       fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' }));
