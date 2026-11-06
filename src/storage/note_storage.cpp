@@ -128,26 +128,21 @@ bool name_taken(
     return statement.step();
 }
 
-struct SummaryName {
-    std::int64_t number;
-    std::string name;
-};
-
-SummaryName summary_name(storage::SqliteDatabase& database, std::int64_t parent,
-    std::string_view label) {
+std::string summary_name(storage::SqliteDatabase& database, std::int64_t parent,
+    std::string_view label, std::chrono::system_clock::time_point now) {
     validate_display_label(label, "Session label");
-    auto highest = database.prepare("SELECT IFNULL(MAX(s.number), 0) FROM note_summaries s "
-        "JOIN note_items n ON n.id=s.note_id WHERE n.parent_id=?", parent);
-    (void)highest.step();
-    // An older note can already use a numbered name.
-    for (auto number = highest.integer(0) + 1;; ++number) {
-        auto prefix = std::to_string(number);
-        if (prefix.size() < 3) prefix.insert(0, 3 - prefix.size(), '0');
-        prefix += " ";
-        auto candidate = prefix + display_label_prefix(label, 200 - prefix.size());
+    constexpr auto epoch = std::chrono::sys_days{std::chrono::year{2026}/11/6};
+    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - epoch).count();
+    const auto number = std::max<std::int64_t>(0, elapsed) / 900 + 1;
+    auto prefix = note_item_ref_id(number).substr(2);
+    while (prefix.size() > 3 && prefix.front() == '0') prefix.erase(0, 1);
+    prefix += " ";
+    for (std::int64_t copy = 1;; ++copy) {
+        const auto suffix = copy == 1 ? std::string{} : " (" + std::to_string(copy) + ")";
+        auto candidate = prefix + display_label_prefix(label, 200 - prefix.size() - suffix.size()) + suffix;
         if (name_taken(database, parent, candidate, 0)) continue;
         require_name(candidate);
-        return {number, std::move(candidate)};
+        return candidate;
     }
 }
 
@@ -1016,11 +1011,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS note_items_sibling_name
 CREATE INDEX IF NOT EXISTS note_items_parent
     ON note_items(parent_id);
 
--- number is NULL for summaries saved before numbering.
 CREATE TABLE IF NOT EXISTS note_summaries (
     note_id INTEGER PRIMARY KEY REFERENCES note_items(id) ON DELETE CASCADE,
-    session_key INTEGER UNIQUE REFERENCES sessions(session_key) ON DELETE SET NULL,
-    number INTEGER
+    session_key INTEGER UNIQUE REFERENCES sessions(session_key) ON DELETE SET NULL
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS note_audio_attempts (
@@ -1080,14 +1073,6 @@ CREATE TABLE IF NOT EXISTS session_files (
         }
     }
     if (!has_forum_id) database.execute("ALTER TABLE note_items ADD COLUMN forum_id TEXT");
-    bool has_summary_number = false;
-    {
-        auto columns = database.prepare("PRAGMA table_info(note_summaries)");
-        while (columns.step()) {
-            if (columns.text(1) == "number") has_summary_number = true;
-        }
-    }
-    if (!has_summary_number) database.execute("ALTER TABLE note_summaries ADD COLUMN number INTEGER");
     database.execute("CREATE UNIQUE INDEX IF NOT EXISTS note_items_forum_id "
         "ON note_items(forum_id) WHERE forum_id IS NOT NULL");
 }
@@ -1360,7 +1345,8 @@ NoteSummaryTarget note_summary_target(storage::SqliteDatabase& database, const F
 }
 
 NoteItem note_commit_summary(storage::SqliteDatabase& database, const FullSessionId& identity,
-    const NoteSummaryTarget& target, const nlohmann::json& document) {
+    const NoteSummaryTarget& target, const nlohmann::json& document,
+    std::chrono::system_clock::time_point now) {
     const auto compact = compact_document(document, target.target_note_id.value_or(0), true);
     if (!document.contains("type") || document["type"] != "doc"
         || !document.contains("content") || !document["content"].is_array() || !summary_text(document))
@@ -1391,15 +1377,14 @@ NoteItem note_commit_summary(storage::SqliteDatabase& database, const FullSessio
             update.bind(2, id);
             update.run();
         } else {
-            const auto name = summary_name(database, target.parent_id, label);
+            const auto name = summary_name(database, target.parent_id, label, now);
             auto insert = database.prepare("INSERT INTO note_items(parent_id, kind, name, content_json, read_only) VALUES (?, 'note', ?, ?, 1)");
             insert.bind(1, target.parent_id);
-            insert.bind(2, name.name);
+            insert.bind(2, name);
             insert.bind_blob(3, blob);
             insert.run();
             id = database.last_insert_rowid();
-            database.prepare("INSERT INTO note_summaries(note_id, session_key, number) VALUES (?, ?, ?)",
-                id, key, name.number).run();
+            database.prepare("INSERT INTO note_summaries(note_id, session_key) VALUES (?, ?)", id, key).run();
         }
         rebuild_folder_annotations(database, target.parent_id, false);
         event_append_in_transaction(database, EventSeverity::success, "Summary saved for “" + label + "” ("

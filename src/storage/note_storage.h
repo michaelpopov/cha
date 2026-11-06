@@ -4,6 +4,7 @@
 #include "chat/session_identity.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <exception>
@@ -93,7 +94,8 @@ struct NoteSummaryTarget {
     storage::SqliteDatabase& database, const FullSessionId& identity);
 [[nodiscard]] NoteItem note_commit_summary(storage::SqliteDatabase& database,
     const FullSessionId& identity, const NoteSummaryTarget& target,
-    const nlohmann::json& document);
+    const nlohmann::json& document,
+    std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
 struct SummaryChapters {
     std::string short_markdown;
     std::string long_markdown;

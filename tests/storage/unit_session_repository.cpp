@@ -588,7 +588,7 @@ TEST_F(SessionRepositoryTest, LinkedSummaryKeepsNameOnClosedRenameAndAllSessionC
     EXPECT_EQ(repository.rename(session.identity, "Renamed").label, "Renamed");
     {
         storage::SqliteDatabase database(database_path(), storage::SqliteDatabase::Mode::read_write);
-        EXPECT_EQ(note_find_item(database, note.id)->name, "001 Original");
+        EXPECT_EQ(note_find_item(database, note.id)->name, note.name);
     }
     repository.delete_session(session.identity);
     const auto unused = repository.create("lobby", "");
