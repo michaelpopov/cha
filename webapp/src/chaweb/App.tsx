@@ -118,7 +118,7 @@ export function App({ client }: { client: ChaWebClient }) {
         />
       )}
       <nav className="chaweb-navigation" aria-label="Main navigation">
-        <a href="#/" aria-current={model.screen === 'list' || model.screen === 'conversation' ? 'page' : undefined}
+        <a href={model.chatsRootHash} aria-current={model.screen === 'list' || model.screen === 'conversation' ? 'page' : undefined}
           onClick={(event) => followLocalLink(event, () => model.showRoot('chats'))}>Chats</a>
         <a href={model.notesRootHash}
           aria-current={model.screen === 'notes' || model.screen === 'note' ? 'page' : undefined}

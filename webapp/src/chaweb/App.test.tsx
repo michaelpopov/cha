@@ -7,7 +7,7 @@ import { bootstrapFixture, plainVoice, snapshotFixture } from '../test/fixtures'
 import { App } from './App';
 import { ChaWebError, type ChaWebClient } from './client';
 import { noteDocument, noteItem, paragraph } from '../test/notes';
-import { noteHash, notesHash } from './route';
+import { noteHash, notesHash, sessionHash } from './route';
 
 const lobbySessions: SessionListing[] = [
   { id: 'older', label: 'Older', live: false, updated_at: 10 },
@@ -170,7 +170,7 @@ it('browses flat folders and real note links with Back/Forward and no duplicate 
   expect(api.startAudio).not.toHaveBeenCalled();
 });
 
-it('keeps an unsent chat draft when Notes opens and returns through the Chats root', async () => {
+it('restores an unsent chat draft directly when returning from Notes', async () => {
   const user = userEvent.setup();
   const api = notesClient();
   await showList(api);
@@ -178,11 +178,57 @@ it('keeps an unsent chat draft when Notes opens and returns through the Chats ro
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Keep this draft');
   await user.click(screen.getByRole('link', { name: 'Notes' }));
   await screen.findByRole('button', { name: 'Folder' });
+  const historyLength = window.history.length;
   await user.click(screen.getByRole('link', { name: 'Chats' }));
-  expect(screen.getByRole('button', { name: 'Forum' })).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'New Session' }));
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Keep this draft');
+  expect(screen.queryByRole('button', { name: 'New Session' })).not.toBeInTheDocument();
+  expect(window.history.length).toBe(historyLength + 1);
   expect(api.createSession).not.toHaveBeenCalled();
+});
+
+it('restores the last chat session and its draft from Notes with Back and Forward', async () => {
+  const user = userEvent.setup();
+  const api = notesClient();
+  await showList(api);
+  await user.click(await screen.findByRole('button', { name: /^Planning/ }));
+  await screen.findByText('First note');
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Session draft');
+  await user.click(screen.getByRole('link', { name: 'Notes' }));
+  await screen.findByRole('button', { name: 'Folder' });
+  await user.click(screen.getByRole('link', { name: 'Top-level article' }));
+  await screen.findByRole('article');
+  expect(screen.getByRole('link', { name: 'Chats' })).toHaveAttribute('href', sessionHash('lobby', 'planning'));
+  const reads = vi.mocked(api.getSession).mock.calls.length;
+  const historyLength = window.history.length;
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
+  expect(window.location.hash).toBe(sessionHash('lobby', 'planning'));
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Session draft');
+  await waitFor(() => expect(api.getSession).toHaveBeenCalledTimes(reads + 1));
+  expect(window.history.length).toBe(historyLength + 1);
+  act(() => window.history.back());
+  await screen.findByRole('article');
+  act(() => window.history.forward());
+  await screen.findByRole('textbox', { name: 'Message' });
+  expect(window.location.hash).toBe(sessionHash('lobby', 'planning'));
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Session draft');
+});
+
+it('restores the session list and selected forum when that was the last chat view', async () => {
+  const user = userEvent.setup();
+  await showList(notesClient());
+  await user.click(await screen.findByRole('button', { name: /^Planning/ }));
+  await screen.findByText('First note');
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
+  await user.click(screen.getByRole('button', { name: 'Forum' }));
+  await user.click(screen.getByRole('button', { name: 'Archive Editor · Critic' }));
+  await screen.findByRole('button', { name: /^Stored/ });
+  await user.click(screen.getByRole('link', { name: 'Notes' }));
+  await screen.findByRole('button', { name: 'Folder' });
+  expect(screen.getByRole('link', { name: 'Chats' })).toHaveAttribute('href', '#/');
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
+  await screen.findByRole('button', { name: /^Stored/ });
+  expect(screen.getByRole('button', { name: 'Forum' })).toHaveAccessibleDescription('Archive Editor · Critic');
+  expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
 });
 
 it('loads a direct note without metadata or voice settings and returns to its containing folder', async () => {

@@ -173,6 +173,7 @@ export function useChaweb(client: ChaWebClient) {
   const bootstrapRef = useRef<Bootstrap | null>(null);
   const forumRef = useRef('');
   const screenRef = useRef<Screen>('list');
+  const lastChatScreen = useRef<'list' | 'conversation'>('list');
   const conversationRef = useRef<ConversationRef | null>(null);
   const draftsRef = useRef<DraftMap>({});
   const snapshotRef = useRef<SessionSnapshot | null>(null);
@@ -654,6 +655,9 @@ export function useChaweb(client: ChaWebClient) {
     if (!loaded) return;
     const route = parseChawebHash(hash);
     if (route.kind === 'notes' || route.kind === 'note') {
+      if (screenRef.current === 'list' || screenRef.current === 'conversation') {
+        lastChatScreen.current = screenRef.current;
+      }
       invalidateList();
       retarget('');
       screenRef.current = route.kind;
@@ -686,6 +690,13 @@ export function useChaweb(client: ChaWebClient) {
   function showRoot(section: 'chats' | 'notes') {
     if (section === 'chats') {
       if (screenRef.current === 'list') return;
+      const previous = conversationRef.current;
+      if ((screenRef.current === 'notes' || screenRef.current === 'note')
+          && lastChatScreen.current === 'conversation' && previous) {
+        navigate(previous.kind === 'session' ? sessionHash(previous.forumId, previous.sessionId) : '');
+        if (previous.kind === 'draft') newSession();
+        return;
+      }
       if (!window.location.hash || window.location.hash === '#/') showList();
       else navigate('');
     } else {
@@ -1185,6 +1196,9 @@ export function useChaweb(client: ChaWebClient) {
   const showSending = Boolean(activeStatus?.sending);
   const pendingText = activeStatus?.pendingText ?? null;
   const deleting = Boolean(activeStatus?.deleting);
+  const chatsRootHash = (screen === 'notes' || screen === 'note')
+    && lastChatScreen.current === 'conversation' && conversation?.kind === 'session'
+    ? sessionHash(conversation.forumId, conversation.sessionId) : '#/';
   const notesRootHash = screen === 'note'
     ? notesHash(notes.remembered ?? (notes.note ? notes.note.item.parent_id ?? 'root' : undefined))
     : notesHash();
@@ -1202,6 +1216,7 @@ export function useChaweb(client: ChaWebClient) {
     retryList,
     screen,
     notes,
+    chatsRootHash,
     notesRootHash,
     noteList,
     navigate,
