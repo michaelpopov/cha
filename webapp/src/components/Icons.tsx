@@ -78,22 +78,6 @@ export function DatabaseIcon(props: IconProps) {
   );
 }
 
-export function MergeIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M7 21V3m-4 4 4-4 4 4M17 21v-5c0-4-10-3-10-9" {...stroke} />
-    </Icon>
-  );
-}
-
-export function WrenchIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="m14.7 6.3 3 3 3.5-3.5a6 6 0 0 1-7.6 7.6l-7.5 7.5a2.1 2.1 0 0 1-3-3l7.5-7.5a6 6 0 0 1 7.6-7.6z" {...stroke} />
-    </Icon>
-  );
-}
-
 export function MessageIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -175,15 +159,6 @@ export function PlaybackSpeedIcon(props: IconProps) {
     <Icon {...stroke} strokeWidth={2} {...props}>
       <path d="m12 14 4-4" />
       <path d="M3.34 19a10 10 0 1 1 17.32 0" />
-    </Icon>
-  );
-}
-
-export function ClearAudioIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M2 7v4M5 4v10M8 2v16M11 6v8M14 3v6M17 6v2" {...stroke} />
-      <path d="M13 12h9M16 12v-2h3v2M14 12l1 10h5l1-10M16.5 15v4M18.5 15v4" {...stroke} />
     </Icon>
   );
 }

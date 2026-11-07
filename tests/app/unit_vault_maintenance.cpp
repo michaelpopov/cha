@@ -846,6 +846,22 @@ TEST(ApplicationVault, MergeSynchronizationFailureMarksApplicationUnavailable) {
     EXPECT_TRUE(boot.presentation.forums.empty());
 }
 
+TEST(ApplicationVault, MergeChecksSourcePasswordBeforeMaintenance) {
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    const auto on_b = application->switch_vault("B", {}, application->context_epoch());
+    (void)application->update_vault(
+        "B", {.display_name = "B", .password = "secret"}, on_b.context_epoch);
+    (void)application->switch_vault("A", {}, application->context_epoch());
+    const auto epoch = application->context_epoch();
+
+    EXPECT_ANY_THROW((void)application->merge_vault("B", "wrong", epoch));
+
+    // A wrong password must not pause sessions or publish a new context.
+    EXPECT_EQ(application->context_epoch(), epoch);
+    EXPECT_EQ(application->state(), ApplicationState::running);
+}
+
 TEST(ApplicationVault, ProtectionSetupFailureRestoresRunningContext) {
     TwoVaults pair;
     auto application = Application::open(pair.command);

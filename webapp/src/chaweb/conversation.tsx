@@ -20,8 +20,6 @@ export function Conversation({
   onExpanded,
   viewportHeight,
   sessionKey,
-  onDelete,
-  deleteDisabled,
   deleting,
   mode,
   commandDisabled,
@@ -47,8 +45,6 @@ export function Conversation({
   onExpanded(expanded: boolean): void;
   viewportHeight: number;
   sessionKey: string;
-  onDelete(): void;
-  deleteDisabled: boolean;
   deleting: boolean;
   mode: 'send' | 'stop';
   commandDisabled: boolean;
@@ -61,6 +57,8 @@ export function Conversation({
   speech?: ReadAloud;
   voice?: VoiceInput;
 }) {
+  // Voice mode works with audio output, microphone input, or both.
+  const voiceMode = Boolean(speech?.automatic || voice?.enabled);
   return (
     <div className="chaweb-conversation">
       <Transcript
@@ -93,15 +91,14 @@ export function Conversation({
       <Composer
         voice={voice}
         commandDisabled={commandDisabled || Boolean(voice?.finishing)}
-        deleteDisabled={deleteDisabled}
         deleting={deleting}
         expanded={expanded}
         mode={mode}
         onChange={onDraft}
         onAutomaticAudio={speech?.toggleAutomatic}
-        automaticAudio={speech?.automatic}
-        automaticAudioDisabled={!speech || speech.automaticDisabled}
-        onDelete={onDelete}
+        automaticAudio={voiceMode}
+        automaticAudioDisabled={!speech
+          || (!voiceMode && speech.automaticDisabled && !voice?.available)}
         onExpanded={onExpanded}
         onSend={onSend}
         onStop={onStop}

@@ -258,10 +258,12 @@ it('keeps Notes visible when a departed conversation deletion completes', async 
   window.history.replaceState(null, '', '/#/forums/lobby/sessions/planning');
   render(<App client={api} />);
   const user = userEvent.setup();
-  const remove = await screen.findByRole('button', { name: 'Delete session' });
+  await screen.findByRole('textbox');
+  await user.click(screen.getByRole('link', { name: 'Chats' }));
+  const remove = await screen.findByRole('button', { name: 'Delete session “Planning”' });
   await waitFor(() => expect(remove).toBeEnabled());
   await user.click(remove);
-  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  await user.click(remove);
   await user.click(screen.getByRole('link', { name: 'Notes' }));
   await screen.findByRole('button', { name: 'Folder' });
   await act(async () => deletion.resolve());
@@ -336,8 +338,8 @@ it('shows Welcome in the forum picker and lists sessions without vault actions',
   expect(screen.getByRole('button', { name: 'The Lobby Guide' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('button', { name: 'Archive Editor · Critic' })).toHaveAttribute('aria-pressed', 'false');
   await user.keyboard('{Escape}');
-  const planning = await screen.findByRole('button', { name: /Planning/ });
-  const rows = within(screen.getByRole('list', { name: 'Sessions' })).getAllByRole('button');
+  const planning = await screen.findByRole('button', { name: /^Planning/ });
+  const rows = within(screen.getByRole('list', { name: 'Sessions' })).getAllByRole('button').filter((button) => !button.classList.contains('chaweb-session-delete'));
   expect(rows[0]).toBe(planning);
   expect(rows[1]).toHaveTextContent(/^Older/);
   expect(rows).toHaveLength(2);
@@ -372,7 +374,7 @@ it('opens the current session again and ignores a duplicate history event', asyn
   render(<App client={api} />);
   await screen.findByRole('textbox', { name: 'Message' });
   await user.click(screen.getByRole('link', { name: 'Chats' }));
-  const planning = await screen.findByRole('button', { name: /Planning/ });
+  const planning = await screen.findByRole('button', { name: /^Planning/ });
   expect(planning).toHaveAttribute('aria-current', 'true');
   await user.click(planning);
   expect(api.getSession).toHaveBeenCalledTimes(2);
@@ -395,8 +397,8 @@ it('changes the list when the forum changes and does not open a session', async 
   expect(forum).not.toHaveTextContent('Guide');
   expect(forum).toHaveFocus();
   expect(forum.closest('details')).not.toHaveAttribute('open');
-  expect(await screen.findByRole('button', { name: /Stored/ })).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /Planning/ })).not.toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: /^Stored/ })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^Planning/ })).not.toBeInTheDocument();
   expect(api.getSession).not.toHaveBeenCalled();
   expect(api.createSession).not.toHaveBeenCalled();
   expect(api.listSessions).toHaveBeenCalledWith('archive');
@@ -509,7 +511,8 @@ it('opens Assistant from Welcome and reloads bootstrap when the answer ends', as
   expect(window.location.hash).toBe('#/forums/entrance/sessions/builtin-welcome');
 
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Repair the guide name');
-  await user.click(screen.getByRole('button', { name: 'Send' }));
+  await user.click(screen.getByRole('textbox', { name: 'Message' }));
+  await user.keyboard('{Enter}');
   expect(api.submitInput).toHaveBeenCalledWith('entrance', 'builtin-welcome', 'Repair the guide name');
   expect(await screen.findByText('Repaired the name.')).toBeInTheDocument();
 
@@ -554,10 +557,11 @@ it('opens Assistant with the keyboard and reloads bootstrap when its answer is a
   (await screen.findByRole('button', { name: /^Entrance/ })).focus();
   await user.keyboard('{Enter}');
   await screen.findByRole('textbox', { name: 'Message' });
-  expect(screen.getByRole('button', { name: 'Delete session' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: /Delete session/ })).not.toBeInTheDocument();
   const opened = getBootstrap.mock.calls.length;
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Fix it');
-  await user.click(screen.getByRole('button', { name: 'Send' }));
+  await user.click(screen.getByRole('textbox', { name: 'Message' }));
+  await user.keyboard('{Enter}');
   expect(await screen.findByText('Configuration was saved.')).toBeInTheDocument();
   await waitFor(() => expect(getBootstrap.mock.calls.length).toBeGreaterThan(opened));
   expect(api.createSession).not.toHaveBeenCalled();
@@ -643,7 +647,7 @@ it('keeps the editor mode and does not submit from the keyboard', async () => {
     },
   });
   const api = await showList();
-  await user.click(await screen.findByRole('button', { name: /Planning/ }));
+  await user.click(await screen.findByRole('button', { name: /^Planning/ }));
   const box = await screen.findByRole('textbox', { name: 'Message' });
   await user.click(screen.getByRole('button', { name: 'Expand editor' }));
   expect(box).toHaveStyle({ height: '306px' });
@@ -653,7 +657,7 @@ it('keeps the editor mode and does not submit from the keyboard', async () => {
   expect(api.submitInput).not.toHaveBeenCalled();
   expect(api.stopSession).not.toHaveBeenCalled();
   await user.click(screen.getByRole('link', { name: 'Chats' }));
-  await user.click(await screen.findByRole('button', { name: /Planning/ }));
+  await user.click(await screen.findByRole('button', { name: /^Planning/ }));
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Draft');
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveStyle({ height: '306px' });
 });

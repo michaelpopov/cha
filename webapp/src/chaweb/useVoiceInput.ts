@@ -188,11 +188,6 @@ export function useVoiceInput(
     void start();
   }
 
-  function toggle() {
-    if (!enabled && (blocked || speechBusy || playing || phase !== 'idle')) return;
-    setListening(!enabled);
-  }
-
   useEffect(() => {
     let active = true;
     if (key === 'none') {
@@ -259,12 +254,8 @@ export function useVoiceInput(
     available,
     enabled,
     status,
-    label: phase === 'starting' ? 'Cancel voice input setup'
-      : enabled ? 'Stop voice input' : 'Start voice input',
-    disabled: phase === 'finishing' || (!enabled && (blocked || speechBusy || playing)),
     finishing: phase === 'finishing',
     error,
-    toggle,
     setListening,
     send: () => { void send(); },
   };

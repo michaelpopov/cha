@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { ForumSummary, SessionListing } from '../api/client';
-import { CheckIcon, ChevronRightIcon } from '../components/Icons';
+import { CheckIcon, ChevronRightIcon, TrashIcon } from '../components/Icons';
 import { welcomeSessionId } from '../state/route';
 import { formatTimestamp } from './time';
 
@@ -22,6 +22,9 @@ export function SessionsView({
   onNewSession,
   entranceForumId,
   onRetry,
+  onDelete,
+  canDelete,
+  isDeleting,
 }: {
   forums: ForumSummary[];
   forumId: string;
@@ -33,11 +36,31 @@ export function SessionsView({
   onOpen(sessionId: string): void;
   onNewSession(): void;
   onRetry?(): void;
+  onDelete(sessionId: string): void;
+  canDelete(sessionId: string): boolean;
+  isDeleting(sessionId: string): boolean;
 }) {
   const picker = useRef<HTMLDetailsElement>(null);
+  const list = useRef<HTMLUListElement>(null);
+  const [revealed, setRevealed] = useState<string | null>(null);
   const selectedForum = forums.find((forum) => forum.id === forumId);
   const rows = sessionsForNavigation(sessions);
   const canCreate = selectedForum !== undefined && forumId !== entranceForumId;
+
+  useEffect(() => {
+    function closeOutside(event: Event) {
+      const row = event.target instanceof Element ? event.target.closest('li') : null;
+      if (!row || !list.current?.contains(row) || row.dataset.sessionId !== revealed) {
+        setRevealed(null);
+      }
+    }
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('focusin', closeOutside);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('focusin', closeOutside);
+    };
+  }, [revealed]);
 
   useEffect(() => {
     const closeOutside = (event: Event) => {
@@ -55,6 +78,7 @@ export function SessionsView({
 
   useEffect(() => {
     if (picker.current) picker.current.open = false;
+    setRevealed(null);
   }, [forumId]);
 
   return (
@@ -116,11 +140,20 @@ export function SessionsView({
       {onRetry && (
         <button className="chaweb-new-session" onClick={onRetry} type="button">Retry</button>
       )}
-      <ul aria-label="Sessions" className="chaweb-list">
+      <ul aria-label="Sessions" className="chaweb-list" ref={list}>
         {rows.map((session) => {
           const current = session.id === currentSessionId;
           return (
-            <li key={session.id}>
+            <SessionRow
+              key={session.id}
+              sessionId={session.id}
+              label={session.label}
+              revealed={revealed === session.id}
+              onReveal={(open) => setRevealed(open ? session.id : null)}
+              onDelete={() => onDelete(session.id)}
+              canDelete={session.id !== welcomeSessionId && canDelete(session.id)}
+              deleting={isDeleting(session.id)}
+            >
               <button
                 aria-current={current ? 'true' : undefined}
                 className="chaweb-session"
@@ -138,7 +171,7 @@ export function SessionsView({
                 </time>
                 {current && <CheckIcon />}
               </button>
-            </li>
+            </SessionRow>
           );
         })}
       </ul>
@@ -147,4 +180,81 @@ export function SessionsView({
       </button>}
     </div>
   );
+}
+
+function SessionRow({ sessionId, label, revealed, onReveal, onDelete, canDelete, deleting, children }: {
+  sessionId: string;
+  label: string;
+  revealed: boolean;
+  onReveal(open: boolean): void;
+  onDelete(): void;
+  canDelete: boolean;
+  deleting: boolean;
+  children: React.ReactNode;
+}) {
+  const gesture = useRef<{ x: number; y: number; horizontal: boolean; vertical: boolean } | null>(null);
+  const suppressClick = useRef(false);
+  const [drag, setDrag] = useState<number | null>(null);
+  // The first click on a hidden Delete shows it. Only a shown Delete deletes.
+  function onDeleteClick() {
+    if (revealed) onDelete();
+    else onReveal(true);
+  }
+  return <li
+    className={`chaweb-session-row${revealed ? ' is-revealed' : ''}${canDelete || deleting ? ' is-deletable' : ''}`}
+    data-session-id={sessionId}
+    onPointerDown={(event) => {
+      suppressClick.current = false;
+      if (event.button !== 0 || !event.isPrimary || !canDelete
+          || (event.target as Element).closest('.chaweb-session-delete')) return;
+      gesture.current = { x: event.clientX, y: event.clientY, horizontal: false, vertical: false };
+    }}
+    onPointerMove={(event) => {
+      const start = gesture.current;
+      if (!start || start.vertical) return;
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
+      if (!start.horizontal && Math.max(Math.abs(dx), Math.abs(dy)) >= 10) {
+        if (Math.abs(dy) >= Math.abs(dx)) { start.vertical = true; return; }
+        start.horizontal = true;
+        suppressClick.current = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
+      if (start.horizontal) setDrag(Math.max(-88, Math.min(0, (revealed ? -88 : 0) + dx)));
+    }}
+    onPointerUp={(event) => {
+      if (gesture.current?.horizontal) {
+        const dx = event.clientX - gesture.current.x;
+        onReveal((revealed ? -88 : 0) + dx < -36);
+      }
+      gesture.current = null;
+      setDrag(null);
+    }}
+    onPointerCancel={() => { gesture.current = null; setDrag(null); }}
+    onClickCapture={(event) => {
+      if (suppressClick.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        suppressClick.current = false;
+      } else if (revealed && !(event.target as Element).closest('.chaweb-session-delete')) {
+        event.preventDefault();
+        event.stopPropagation();
+        onReveal(false);
+      }
+    }}
+    onKeyDown={(event) => {
+      if (event.key === 'Escape') { onReveal(false); event.currentTarget.querySelector('button')?.focus(); }
+    }}
+  >
+    <div className="chaweb-session-slide" style={drag === null ? undefined : { transform: `translateX(${drag}px)`, transition: 'none' }}>
+      {children}
+    </div>
+    {(canDelete || deleting) && <button
+      aria-label={`Delete session “${label}”`}
+      className="chaweb-session-delete"
+      disabled={!canDelete || deleting}
+      onClick={onDeleteClick}
+      type="button"
+    ><TrashIcon /><span>{deleting ? 'Deleting…' : 'Delete'}</span></button>}
+  </li>;
 }

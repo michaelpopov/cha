@@ -188,9 +188,7 @@ it('keeps following the end when the pending area changes size', () => {
       <Conversation
         characters={[]}
         commandDisabled={false}
-        deleteDisabled
         deleting={false}
-        onDelete={() => {}}
         draft=""
         entries={entries}
         expanded={false}
@@ -225,9 +223,7 @@ it('keeps the editor mounted, focused, and unchanged when the transcript is repl
       <Conversation
         characters={[]}
         commandDisabled={false}
-        deleteDisabled
         deleting={false}
-        onDelete={() => {}}
         draft={draft}
         entries={entries}
         expanded={false}

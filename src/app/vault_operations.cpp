@@ -893,15 +893,15 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
         SessionLease source_lease = SessionLease::acquire(
             selected.data,
             vault_in_use_message);
+        if (selected.password_protected) {
+            require_openable_protected_database(selected.data, password);
+        }
         if (!drain_for_maintenance(notice)) {
             throw std::runtime_error(
                 "Could not pause active sessions for database maintenance");
         }
         bool merged = false;
         try {
-            if (selected.password_protected) {
-                require_openable_protected_database(selected.data, password);
-            }
             app.store->merge(selected.data, source_lease, password);
             app.notes->clear_audio_warnings_locked();
             merged = true;

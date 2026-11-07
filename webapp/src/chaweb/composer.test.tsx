@@ -35,12 +35,10 @@ function Editor({
   return (
     <Composer
       commandDisabled={commandDisabled}
-      deleteDisabled
       deleting={false}
       expanded={expanded}
       mode={mode}
       onChange={setValue}
-      onDelete={() => {}}
       onExpanded={setExpanded}
       onSend={onSend}
       onStop={onStop}
@@ -79,13 +77,16 @@ it('sends on desktop Enter, inserts a newline on Ctrl+Enter, and ignores composi
   expect(box).toHaveValue('Hi\n');
 });
 
-it('inserts a newline on a coarse pointer and does not send', async () => {
+it('sends on phone Enter and requests a Send key on the software keyboard', async () => {
   const user = userEvent.setup();
   const onSend = vi.fn();
   render(<Editor coarse onSend={onSend} />);
-  screen.getByRole('textbox', { name: 'Message' }).focus();
+  const box = screen.getByRole('textbox', { name: 'Message' });
+  expect(box).toHaveAttribute('enterkeyhint', 'send');
+  box.focus();
   await user.keyboard('{Enter}');
-  expect(onSend).not.toHaveBeenCalled();
+  expect(onSend).toHaveBeenCalledTimes(1);
+  expect(box).toHaveValue('Hi');
 });
 
 it('keeps Stop off Enter and leaves a disabled command idle', async () => {
@@ -101,10 +102,40 @@ it('keeps Stop off Enter and leaves a disabled command idle', async () => {
   expect(onSend).not.toHaveBeenCalled();
 
   rerender(<Editor commandDisabled onSend={onSend} />);
-  expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
   screen.getByRole('textbox').focus();
   await user.keyboard('{Enter}');
   expect(onSend).not.toHaveBeenCalled();
+});
+
+it('uses one voice toggle beside the size control and lets an active mode be switched off', async () => {
+  const user = userEvent.setup();
+  const onAutomaticAudio = vi.fn();
+  function VoiceEditor() {
+    const [automaticAudio, setAutomaticAudio] = useState(false);
+    return <Composer commandDisabled={false} deleting={false} expanded={false}
+      onExpanded={() => {}} viewportHeight={700} mode="send" value="Draft"
+      onChange={() => {}} onSend={() => {}} onStop={() => {}}
+      automaticAudio={automaticAudio} onAutomaticAudio={() => {
+        onAutomaticAudio();
+        setAutomaticAudio(!automaticAudio);
+      }} />;
+  }
+  render(<VoiceEditor />);
+  const voice = screen.getByRole('button', { name: 'Voice mode' });
+  expect(screen.getAllByRole('button')).toHaveLength(2);
+  expect(voice.parentElement).toBe(screen.getByRole('button', { name: 'Expand editor' }).parentElement);
+  expect(voice).toHaveAttribute('aria-pressed', 'false');
+  screen.getByRole('textbox').focus();
+  await user.click(voice);
+  expect(voice).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('textbox')).not.toHaveFocus();
+  expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
+  await user.click(voice);
+  expect(voice).toHaveAttribute('aria-pressed', 'false');
+  expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
+  expect(onAutomaticAudio).toHaveBeenCalledTimes(2);
 });
 
 it('toggles with Enter and Space and keeps the editor focused for a pointer press', async () => {

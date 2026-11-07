@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react';
 
-import { MicrophoneIcon, PaperPlaneIcon, SpeakerIcon, StopIcon, TrashIcon } from '../components/Icons';
+import { PaperPlaneIcon, SpeakerIcon, StopIcon } from '../components/Icons';
 import type { VoiceInput } from './useVoiceInput';
 
 const compactHeight = 56;
@@ -10,10 +10,6 @@ export function editorPixelHeight(expanded: boolean, viewportHeight: number): nu
   const chrome = 44 + 44;
   const usable = Math.max(compactHeight, viewportHeight - chrome);
   return Math.max(compactHeight, Math.round(usable / 2));
-}
-
-function coarsePointer(): boolean {
-  return window.matchMedia?.('(pointer: coarse)')?.matches === true;
 }
 
 function ExpandIcon() {
@@ -38,11 +34,9 @@ export function Composer({
   expanded,
   onExpanded,
   viewportHeight,
-  onDelete,
   onAutomaticAudio,
   automaticAudio = false,
   automaticAudioDisabled,
-  deleteDisabled,
   deleting,
   mode,
   commandDisabled,
@@ -55,11 +49,9 @@ export function Composer({
   expanded: boolean;
   onExpanded(expanded: boolean): void;
   viewportHeight: number;
-  onDelete(): void;
   onAutomaticAudio?(): void;
   automaticAudio?: boolean;
   automaticAudioDisabled?: boolean;
-  deleteDisabled: boolean;
   deleting: boolean;
   mode: 'send' | 'stop';
   commandDisabled: boolean;
@@ -94,7 +86,6 @@ export function Composer({
       if (!event.currentTarget.readOnly) insertNewline(event.currentTarget);
       return;
     }
-    if (coarsePointer()) return;
     event.preventDefault();
     if (mode === 'send' && !commandDisabled) onSend();
   }
@@ -130,11 +121,51 @@ export function Composer({
     toggleExpanded();
   }
 
-  const commandLabel = mode === 'stop' ? 'Stop' : 'Send';
-
   return (
     <div className="chaweb-composer">
       <div className="chaweb-size-row">
+        <button
+          aria-label="Voice mode"
+          aria-pressed={automaticAudio}
+          title={automaticAudio ? 'Turn voice mode off' : 'Turn voice mode on'}
+          className="chaweb-icon-button"
+          disabled={deleting || automaticAudioDisabled || !onAutomaticAudio}
+          onClick={() => {
+            editorRef.current?.blur();
+            onAutomaticAudio?.();
+          }}
+          type="button"
+        >
+          {automaticAudio ? <SpeakerIcon /> : <SpeakerOffIcon />}
+        </button>
+        {/* Voice mode makes the editor read-only, so Enter is not available on a phone. */}
+        {automaticAudio && mode === 'send' && (
+          <button
+            aria-label="Send"
+            title="Send"
+            className="chaweb-icon-button"
+            disabled={commandDisabled}
+            onClick={() => {
+              editorRef.current?.blur();
+              onSend();
+            }}
+            type="button"
+          >
+            <PaperPlaneIcon className="chaweb-send-icon" />
+          </button>
+        )}
+        {mode === 'stop' && (
+          <button
+            aria-label="Stop"
+            title="Stop generation"
+            className="chaweb-icon-button"
+            disabled={commandDisabled}
+            onClick={onStop}
+            type="button"
+          >
+            <StopIcon />
+          </button>
+        )}
         {voice?.status && (
           <div
             className={`chaweb-voice-status is-${voice.status}`}
@@ -146,7 +177,7 @@ export function Composer({
         )}
         <button
           aria-label={expanded ? 'Shrink editor' : 'Expand editor'}
-          className="chaweb-icon-button"
+          className="chaweb-icon-button chaweb-size-button"
           onClick={onSizeClick}
           onPointerCancel={onSizePointerEnd}
           onPointerDown={onSizePointerDown}
@@ -160,6 +191,7 @@ export function Composer({
       <textarea
         aria-label="Message"
         className="chaweb-editor"
+        enterKeyHint="send"
         onChange={(event) => onChange(event.target.value)}
         onCompositionEnd={() => { composing.current = false; }}
         onCompositionStart={() => { composing.current = true; }}
@@ -170,57 +202,15 @@ export function Composer({
         style={{ height }}
         value={value}
       />
-      <div className="chaweb-controls">
-        <button
-          aria-label="Delete session"
-          className="chaweb-icon-button"
-          disabled={deleteDisabled}
-          onClick={onDelete}
-          type="button"
-        >
-          <TrashIcon />
-        </button>
-        <button
-          aria-label="Auto audio response"
-          aria-pressed={automaticAudio}
-          title="Auto audio response"
-          className="chaweb-icon-button"
-          disabled={deleting || automaticAudioDisabled || !onAutomaticAudio}
-          onClick={onAutomaticAudio}
-          type="button"
-        >
-          <SpeakerIcon />
-        </button>
-        {voice?.available && (
-          <button
-            aria-label={voice.label}
-            aria-pressed={voice.enabled}
-            title={voice.label}
-            className="chaweb-icon-button"
-            disabled={deleting || voice.disabled}
-            onClick={() => {
-              editorRef.current?.blur();
-              voice.toggle();
-            }}
-            type="button"
-          >
-            <MicrophoneIcon />
-          </button>
-        )}
-        <button
-          aria-label={commandLabel}
-          className="chaweb-icon-button"
-          disabled={commandDisabled}
-          onClick={() => {
-            editorRef.current?.blur();
-            if (mode === 'stop') onStop();
-            else onSend();
-          }}
-          type="button"
-        >
-          {mode === 'stop' ? <StopIcon /> : <PaperPlaneIcon className="chaweb-send-icon" />}
-        </button>
-      </div>
     </div>
+  );
+}
+
+function SpeakerOffIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="20" viewBox="0 0 24 24" width="20">
+      <path d="M5 10h3l4-3.5v11L8 14H5zM16 10l4 4m0-4-4 4"
+        stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" />
+    </svg>
   );
 }

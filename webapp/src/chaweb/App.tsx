@@ -1,6 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react';
-
-import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useVisualViewport } from './viewport';
 import { visibleForums } from './route';
@@ -29,17 +27,21 @@ export function App({ client }: { client: ChaWebClient }) {
   const voice = useVoiceInput(client, model.sessionKey, model.draft,
     model.onDraft, model.send, model.voiceBlocked, speech.busy);
   const [expanded, setExpanded] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<{
-    key: string; title: string; message: string;
-  } | null>(null);
-  useEffect(() => {
-    setConfirmDelete(null);
-  }, [model.screen, model.sessionKey]);
-  function toggleAutomaticAudio() {
-    const enabled = !speech.automatic;
-    speech.toggleAutomatic();
-    voice.setListening(enabled);
+  // Voice mode is one switch for automatic audio and the microphone.
+  function toggleVoiceMode() {
+    const on = !speech.automatic && !voice.enabled;
+    if (speech.automatic !== on) speech.toggleAutomatic();
+    voice.setListening(on);
   }
+  // A part can stop by itself: the microphone on a hidden page, or audio
+  // after an error. Then stop the other part too.
+  const voiceParts = useRef({ automatic: false, listening: false });
+  useEffect(() => {
+    const before = voiceParts.current;
+    voiceParts.current = { automatic: speech.automatic, listening: voice.enabled };
+    if (before.automatic && !speech.automatic) voice.setListening(false);
+    else if (before.listening && !voice.enabled && speech.automatic) speech.toggleAutomatic();
+  }, [speech.automatic, voice.enabled]);
 
   const frame = {
     top: viewport.offsetTop,
@@ -69,6 +71,9 @@ export function App({ client }: { client: ChaWebClient }) {
     <div className={`chaweb-app${reading ? ' chaweb-reading-app' : ''}`} style={reading ? undefined : frame}>
       {model.screen === 'list' ? (
         <SessionsView
+          onDelete={model.deleteSession}
+          canDelete={model.canDelete}
+          isDeleting={model.isDeleting}
           currentSessionId={model.currentSessionId}
           error={model.listError}
           forumId={model.forumId}
@@ -90,11 +95,10 @@ export function App({ client }: { client: ChaWebClient }) {
           contextKey={model.focusKey}
           promptFocus={model.promptFocus}
           onPromptFocused={model.consumePromptFocus}
-          speech={{ ...speech, toggleAutomatic: toggleAutomaticAudio }}
+          speech={{ ...speech, toggleAutomatic: toggleVoiceMode }}
           voice={voice}
           characters={model.snapshot?.characters ?? []}
           commandDisabled={model.commandDisabled}
-          deleteDisabled={model.deleteDisabled}
           deleting={model.deleting}
           draft={model.draft}
           entries={model.snapshot?.transcript ?? emptyTranscript}
@@ -102,18 +106,6 @@ export function App({ client }: { client: ChaWebClient }) {
           mode={model.mode}
           notice={model.notice}
           onDraft={model.onDraft}
-          onDelete={() => {
-            if (model.deleteDisabled || !model.snapshot) return;
-            setConfirmDelete({
-              key: model.sessionKey,
-              title: `Delete session “${model.snapshot.session_label}”?`,
-              message: [
-                'This cannot be undone.',
-                model.snapshot.generation.active ? 'The current reply will be stopped.' : '',
-                model.draft ? 'The unsent prompt will also be discarded.' : '',
-              ].filter(Boolean).join(' '),
-            });
-          }}
           onExpanded={setExpanded}
           onRetry={model.retryConversation ?? undefined}
           onSend={voice.send}
@@ -132,21 +124,6 @@ export function App({ client }: { client: ChaWebClient }) {
           aria-current={model.screen === 'notes' || model.screen === 'note' ? 'page' : undefined}
           onClick={(event) => followLocalLink(event, () => model.showRoot('notes'))}>Notes</a>
       </nav>
-      {confirmDelete && model.screen === 'conversation'
-        && confirmDelete.key === model.sessionKey && (
-        <ConfirmDialog
-          className="chaweb-delete-dialog"
-          confirmLabel="Delete"
-          initialFocus="cancel"
-          message={confirmDelete.message}
-          onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => {
-            model.deleteSession(confirmDelete.key);
-            setConfirmDelete(null);
-          }}
-          title={confirmDelete.title}
-        />
-      )}
     </div>
   );
 }

@@ -54,7 +54,6 @@ interface ConversationStatus {
   stopPending?: boolean;
   stopping?: boolean;
   deleting?: boolean;
-  deleteError?: string;
   // A write had an unknown result. Send waits until the user sees fresh state.
   unverified?: boolean;
 }
@@ -761,7 +760,7 @@ export function useChaweb(client: ChaWebClient) {
       const draft = draftsRef.current[key] ?? { text: '', revision: 0 };
       const forum = current.forumId;
       const { text, revision } = draft;
-      patchStatus((state) => withConversation(state, key, { sending: true, notice: undefined, deleteError: undefined }));
+      patchStatus((state) => withConversation(state, key, { sending: true, notice: undefined }));
       void clientRef.current.createSession(forum, text).then(
         (created) => createdOk(forum, revision, text, created, marker),
         (error: unknown) => { consumePromptFocus(marker); createdFail(forum, error); },
@@ -773,7 +772,7 @@ export function useChaweb(client: ChaWebClient) {
     const forum = current.forumId;
     const session = current.sessionId;
     const { text, revision } = draft;
-    patchStatus((state) => withConversation(state, key, { sending: true, notice: undefined, deleteError: undefined }));
+    patchStatus((state) => withConversation(state, key, { sending: true, notice: undefined }));
     void clientRef.current.submitInput(forum, session, text).then(
       () => inputOk(forum, key, revision, text),
       (error: unknown) => {
@@ -802,7 +801,7 @@ export function useChaweb(client: ChaWebClient) {
     const key = sessionDraftKey(forum, session);
     markWelcomePending(forum, session);
     patchStatus((state) => withConversation(
-      state, key, { stopPending: true, notice: stopRequestedNotice, deleteError: undefined },
+      state, key, { stopPending: true, notice: stopRequestedNotice },
     ));
     void clientRef.current.stopSession(forum, session).then(
       () => stopOk(key),
@@ -810,35 +809,26 @@ export function useChaweb(client: ChaWebClient) {
     );
   }
 
-  function canDelete() {
-    const current = conversationRef.current;
-    const loaded = bootstrapRef.current;
-    if (current?.kind === 'session' && loaded
-        && isWelcomeSession(loaded, current.forumId, current.sessionId)) {
-      return false;
-    }
-    const command = buildCommand(
-      statusRef.current, conversationRef.current, screenRef.current,
-      draftsRef.current, snapshotRef.current, bootstrapRef.current,
-    );
-    return screenRef.current === 'conversation'
-      && command.kind === 'session' && command.snapshotReady
-      && !command.sending && !command.stopPending && !command.stopping
-      && !command.stateUnknown && !command.sendBlocked
-      && !statusRef.current.conversations[currentDraftKey() ?? '']?.deleting;
+  function isDeleting(sessionId: string) {
+    return Boolean(statusRef.current.conversations[sessionDraftKey(forumRef.current, sessionId)]?.deleting);
   }
 
-  function deleteSession(confirmedKey: string) {
-    const current = conversationRef.current;
-    if (!current || current.kind !== 'session'
-        || conversationKey(current) !== confirmedKey || !canDelete()) return;
-    const { forumId: forum, sessionId: session } = current;
-    const key = confirmedKey;
-    clearReadTimer();
-    // Ignore any snapshot that was requested before deletion began.
-    readLoop.current.gen += 1;
-    readLoop.current.queued = false;
-    patchStatus((state) => withConversation(state, key, { deleting: true, deleteError: undefined, notice: 'Deleting' }));
+  function canDelete(sessionId: string) {
+    const forum = forumRef.current;
+    const loaded = bootstrapRef.current;
+    if (screenRef.current !== 'list' || !loaded || !forumIsValid(loaded, forum)
+        || isWelcomeSession(loaded, forum, sessionId)) return false;
+    // Delete also stops generation, so wait only for requests in flight.
+    const pending = statusRef.current.conversations[sessionDraftKey(forum, sessionId)];
+    return !pending?.deleting && !pending?.sending && !pending?.stopPending;
+  }
+
+  function deleteSession(session: string) {
+    if (!sessions.some((row) => row.id === session) || !canDelete(session)) return;
+    const forum = forumRef.current;
+    const key = sessionDraftKey(forum, session);
+    setListError(null);
+    patchStatus((state) => withConversation(state, key, { deleting: true, notice: 'Deleting' }));
     void clientRef.current.deleteSession(forum, session).then(
       () => deletedOk(forum, session, key),
       (error: unknown) => {
@@ -847,11 +837,11 @@ export function useChaweb(client: ChaWebClient) {
           deletedOk(forum, session, key);
           return;
         }
-        patchStatus((state) => withConversation(state, key, {
-          deleting: undefined,
-          notice: undefined,
-          deleteError: chaWebMessage(error, 'The session could not be deleted.'),
-        }));
+        patchStatus((state) => withConversation(state, key, { deleting: undefined, notice: undefined }));
+        // The session list shows delete errors, also after a return from elsewhere.
+        if (forumRef.current === forum) {
+          setListError(chaWebMessage(error, 'The session could not be deleted.'));
+        }
         if (currentDraftKey() === key) requestRead();
       },
     );
@@ -1189,7 +1179,7 @@ export function useChaweb(client: ChaWebClient) {
   const notice = activeKey
     ? (status.reconnectingKey === activeKey
       ? reconnectingNotice
-      : activeStatus?.deleteError ?? activeStatus?.notice
+      : activeStatus?.notice
         ?? (snapshotReady ? snapshot?.notice ?? null : null))
     : null;
   const showSending = Boolean(activeStatus?.sending);
@@ -1227,7 +1217,8 @@ export function useChaweb(client: ChaWebClient) {
     mode: control.mode,
     commandDisabled: control.disabled || deleting,
     deleting,
-    deleteDisabled: !canDelete(),
+    canDelete,
+    isDeleting,
     deleteSession,
     retryConversation: status.blockedKey === activeKey && status.reconnectingKey === null
       ? retryRead

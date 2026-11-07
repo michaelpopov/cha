@@ -9,7 +9,7 @@ afterEach(() => vi.restoreAllMocks());
 const props = {
   characters: [], personas: [], draft: 'Unsent prompt', onDraft: vi.fn(),
   expanded: false, onExpanded: vi.fn(), viewportHeight: 700, sessionKey: 'lobby/planning',
-  onDelete: vi.fn(), deleteDisabled: false, deleting: false,
+  deleting: false,
   mode: 'send' as const, commandDisabled: false, onSend: vi.fn(), onStop: vi.fn(), notice: null,
   entries: [{
     id: 1, kind: 'human' as const, participant_id: 'reader', display_name: 'Reader',

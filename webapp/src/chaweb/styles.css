@@ -402,51 +402,42 @@ html.chaweb-reading,
 
 .chaweb-composer {
   flex: 0 1 auto;
-  /* Keep both controls and one line of editable text above the keyboard. */
-  min-height: 124px;
+  /* Keep the control row and one line of editable text above the keyboard. */
+  min-height: 80px;
   display: flex;
   flex-direction: column;
 }
 
-.chaweb-size-row,
-.chaweb-controls {
+.chaweb-size-row {
   display: flex;
   flex: none;
   align-items: center;
 }
 
-.chaweb-size-row {
-  justify-content: flex-end;
+.chaweb-size-button {
+  margin-left: auto;
 }
 
 .chaweb-voice-status {
   display: flex;
-  flex: 1;
+  min-width: 0;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   margin: 4px 8px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--border);
   color: var(--muted-foreground);
-  font-weight: 600;
+  font-size: 0.78rem;
 }
 
-.chaweb-voice-status::before {
+.chaweb-voice-status.is-starting {
+  color: light-dark(rgb(125 79 0), rgb(255 213 115));
+}
+
+.chaweb-voice-status.is-starting::before {
   content: '';
   flex: none;
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: currentColor;
-}
-
-.chaweb-voice-status.is-starting {
-  background: light-dark(rgb(255 237 190), rgb(82 59 12));
-  color: light-dark(rgb(125 79 0), rgb(255 213 115));
-}
-
-.chaweb-voice-status.is-starting::before {
   border: 2px solid currentColor;
   border-right-color: transparent;
   background: transparent;
@@ -454,7 +445,6 @@ html.chaweb-reading,
 }
 
 .chaweb-voice-status.is-recording {
-  background: light-dark(rgb(208 244 221), rgb(20 65 38));
   color: light-dark(rgb(16 103 48), rgb(132 239 166));
 }
 
@@ -468,12 +458,9 @@ html.chaweb-reading,
   }
 }
 
-.chaweb-controls {
-  justify-content: space-evenly;
-}
-
 .chaweb-icon-button {
   display: inline-grid;
+  flex: none;
   width: 44px;
   height: 44px;
   place-items: center;
@@ -487,68 +474,6 @@ html.chaweb-reading,
 .chaweb-icon-button[aria-pressed="true"] {
   background: light-dark(rgb(30 113 190 / 12%), rgb(131 195 255 / 16%));
   color: var(--accent-foreground);
-}
-
-.chaweb-delete-dialog {
-  width: min(24rem, calc(100% - 2rem));
-  max-height: calc(100% - 2rem);
-  overflow: auto;
-  padding: 1rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans);
-  font-size: 16px;
-}
-
-.chaweb-delete-dialog::backdrop {
-  background: rgb(0 0 0 / 45%);
-}
-
-.chaweb-delete-dialog h2 {
-  margin: 0;
-  font-size: 1.1rem;
-  overflow-wrap: anywhere;
-}
-
-.chaweb-delete-dialog .cha-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-}
-
-.chaweb-delete-dialog button {
-  min-height: 44px;
-  padding: 0.5rem 1rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--secondary);
-  color: inherit;
-}
-
-.chaweb-delete-dialog label {
-  display: block;
-  margin: 1rem 0;
-}
-
-.chaweb-delete-dialog input {
-  display: block;
-  width: 100%;
-  margin-top: 0.5rem;
-  padding: 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--secondary);
-  color: inherit;
-}
-
-.chaweb-delete-dialog .cha-error-message {
-  color: light-dark(rgb(174 45 36), rgb(255 145 136));
-}
-
-.chaweb-delete-dialog .cha-button-danger {
-  color: light-dark(rgb(174 45 36), rgb(255 145 136));
 }
 
 .chaweb-icon-button svg {
@@ -695,3 +620,48 @@ html.chaweb-reading,
 .chaweb-entry-text.cha-font-serif.cha-scale-large { font-size: 1.18em; }
 .chaweb-entry-text.cha-font-mono.cha-scale-small { font-size: 0.84em; }
 .chaweb-entry-text.cha-font-mono.cha-scale-large { font-size: 1.06em; }
+
+.chaweb-session-row { position: relative; overflow: hidden; touch-action: pan-y; }
+.chaweb-session-slide {
+  position: relative;
+  z-index: 1;
+  background: var(--background);
+  transition: transform 160ms ease-out;
+}
+.chaweb-session-row.is-revealed .chaweb-session-slide { transform: translateX(-88px); }
+.chaweb-session-delete {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 88px;
+  border: 0;
+  background: light-dark(rgb(174 45 36), rgb(159 39 31));
+  color: white;
+  font: inherit;
+  cursor: pointer;
+}
+.chaweb-session-delete svg { display: none; }
+.chaweb-session-delete:disabled { opacity: 0.6; cursor: default; }
+.chaweb-session-delete:focus { z-index: 2; }
+/* The row clips overflow, so draw the focus ring inside it. */
+.chaweb-session-row :focus-visible { outline-offset: -2px; }
+
+@media (hover: hover) and (pointer: fine) {
+  .chaweb-session-row.is-deletable .chaweb-session { padding-right: 52px; }
+  .chaweb-session-row .chaweb-session-delete {
+    z-index: 2;
+    width: 44px;
+    background: var(--background);
+    color: var(--muted-foreground);
+    opacity: 0;
+  }
+  .chaweb-session-row:hover .chaweb-session-delete,
+  .chaweb-session-row:focus-within .chaweb-session-delete { opacity: 1; }
+  .chaweb-session-delete svg { display: inline; width: 18px; height: 18px; }
+  .chaweb-session-delete span { display: none; }
+  .chaweb-session-row.is-revealed .chaweb-session-delete { width: 88px; opacity: 1; }
+  .chaweb-session-row.is-revealed .chaweb-session-delete svg { display: none; }
+  .chaweb-session-row.is-revealed .chaweb-session-delete span { display: inline; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chaweb-session-slide { transition: none; }
+}
