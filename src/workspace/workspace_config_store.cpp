@@ -5,6 +5,7 @@
 #include "storage/session_lease.h"
 #include "storage/session_storage_layout.h"
 #include "storage/sqlite_storage.h"
+#include "storage/sync_storage.h"
 #include "storage/workspace_session_database.h"
 #include "util/base64.h"
 #include "util/curl.h"
@@ -15,12 +16,14 @@
 #include "workspace/builtins.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_editor.h"
+#include "workspace/workspace_internal.h"
 
 #include <toml++/toml.hpp>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -892,20 +895,118 @@ std::string_view stored_directory_id(
     return name.substr(0, slash);
 }
 
+constexpr std::string_view key_collection_path = "system/keys/config.toml";
+
+TextFiles config_files(const std::vector<ConfigFile>& rows) {
+    TextFiles files;
+    for (const auto& row : rows) files.emplace(row.name, row.content);
+    return files;
+}
+
+std::vector<ConfigFile> config_rows(const TextFiles& files) {
+    std::vector<ConfigFile> rows;
+    rows.reserve(files.size());
+    for (const auto& [name, content] : files) rows.push_back({name, content});
+    return rows;
+}
+
+void ignore_source_d1(std::vector<ConfigFile>& rows) {
+    if (std::erase_if(rows, [](const ConfigFile& row) {
+            return sync_is_d1_row(row.name, row.content);
+        })) {
+        log_warn("Ignored incoming D1 credentials; kept the local D1 values.");
+    }
+}
+
+std::uint64_t configured_key_counter(const TextFiles& files) {
+    const auto found = files.find(std::string(key_collection_path));
+    if (found == files.end()) return 0;
+    try {
+        const auto next = toml::parse(found->second)["next_id"].value<std::int64_t>();
+        if (next && *next > 0) return static_cast<std::uint64_t>(*next);
+    } catch (const toml::parse_error&) {
+    }
+    fail_path("Key collection config has invalid next_id");
+}
+
+// Keep the local key's path unless another key has taken its ID.
+void preserve_destination_d1(TextFiles& candidate, const TextFiles& destination) {
+    const auto local = std::ranges::find_if(destination, [](const auto& row) {
+        return sync_is_d1_row(row.first, row.second);
+    });
+    if (local == destination.end()) return;
+
+    constexpr std::string_view key_prefix = "system/keys/";
+    constexpr std::string_view key_suffix = "/config.toml";
+    std::uint64_t highest = 0;
+    for (const auto& [name, content] : candidate) {
+        if (name == local->first || name == key_collection_path
+            || !name.ends_with(key_suffix)) continue;
+        const auto id = stored_directory_id(name, key_prefix);
+        if (!id.empty() && name.size() == key_prefix.size() + id.size() + key_suffix.size())
+            highest = std::max(highest, workspace_detail::saved_key_suffix(id, name));
+    }
+    const auto local_id = stored_directory_id(local->first, key_prefix);
+    highest = std::max(highest, workspace_detail::saved_key_suffix(local_id, local->first));
+    constexpr auto max_counter = std::uint64_t{INT64_MAX};
+    if (highest >= max_counter) fail_path("API key ID space is exhausted");
+    const auto candidate_counter = configured_key_counter(candidate);
+    auto next_id = std::max({highest + 1, candidate_counter,
+        configured_key_counter(destination)});
+
+    if (const auto existing = candidate.find(local->first);
+        existing != candidate.end() && !sync_is_d1_row(existing->first, existing->second)) {
+        if (next_id >= max_counter) fail_path("API key ID space is exhausted");
+        candidate["system/keys/api_key_" + std::to_string(next_id++) + "/config.toml"] =
+            local->second;
+    } else {
+        candidate[local->first] = local->second;
+    }
+    if (next_id != candidate_counter)
+        candidate[std::string(key_collection_path)] =
+            "next_id = " + std::to_string(next_id) + "\n";
+}
+
+// Appends one config.edit record in the caller's transaction. D1 credential
+// rows are filtered out of the old and new sets separately, so an ordinary
+// key at a former D1 path is still sent. A D1-only change emits nothing.
+void record_config_edit(
+    Database& database,
+    std::string_view machine,
+    const std::vector<ConfigFile>& committed_rows,
+    const std::vector<ConfigFile>& rows) {
+    if (!sync_connected(database, machine)) return;
+    const ConfigDelta delta = sync_config_delta(committed_rows, rows);
+    if (std::ranges::all_of(delta.set, [](const ConfigFile& row) {
+            return row.name == key_collection_path;
+        }) && std::ranges::all_of(delta.names, [](const std::string& name) {
+            return name == key_collection_path;
+        })) return;
+    nlohmann::json fields;
+    fields["set"] = nlohmann::json::array();
+    for (const auto& row : delta.set)
+        fields["set"].push_back({{"name", row.name}, {"content", row.content}});
+    fields["delete"] = delta.names;
+    sync_queue_append(database, sync_make_record("config.edit", fields));
+}
+
 void commit_imported_rows(
     const std::filesystem::path& database,
     const std::vector<ConfigFile>& rows,
     const std::set<std::string>& valid_forums,
-    std::string_view database_password) {
+    std::string_view database_password,
+    std::string_view sync_machine = {}) {
     const WorkspaceDatabaseState state =
         inspect_workspace_session_database(database, database_password);
     switch (state) {
     case WorkspaceDatabaseState::missing: {
+        validate_configuration(rows);
         create_empty_workspace_session_database(database, database_password);
         try {
             Database handle(
                 database, Database::Mode::read_write, database_password);
             storage::SqliteTransaction transaction(handle);
+            ensure_sync_schema(handle);
             replace_workspace_config_files(handle, rows);
             transaction.commit();
         } catch (...) {
@@ -915,9 +1016,11 @@ void commit_imported_rows(
         break;
     }
     case WorkspaceDatabaseState::valid_v1: {
+        validate_configuration(rows);
         Database handle(database, Database::Mode::read_write, database_password);
         upgrade_workspace_session_database_from_v1(handle, rows);
         storage::SqliteTransaction transaction(handle);
+        ensure_sync_schema(handle);
         prune_orphan_sessions(handle, valid_forums);
         transaction.commit();
         break;
@@ -925,8 +1028,15 @@ void commit_imported_rows(
     case WorkspaceDatabaseState::valid_v2: {
         Database handle(database, Database::Mode::read_write, database_password);
         storage::SqliteTransaction transaction(handle);
-        replace_workspace_config_files(handle, rows);
+        ensure_sync_schema(handle);
+        const std::vector<ConfigFile> old_rows = read_workspace_config_files(handle);
+        auto candidate = config_files(rows);
+        preserve_destination_d1(candidate, config_files(old_rows));
+        const auto final_rows = config_rows(candidate);
+        validate_configuration(final_rows);
+        replace_workspace_config_files(handle, final_rows);
         prune_orphan_sessions(handle, valid_forums);
+        record_config_edit(handle, sync_machine, old_rows, final_rows);
         transaction.commit();
         break;
     }
@@ -942,7 +1052,8 @@ WorkspaceConfigTransfer import_workspace_configuration(
     const std::filesystem::path& source_directory,
     const std::filesystem::path& database_path,
     WorkspaceConfigLease lease_mode,
-    std::string_view database_password) {
+    std::string_view database_password,
+    std::string_view sync_machine) {
     const std::filesystem::path source =
         require_existing_directory(source_directory, "Import source");
     const std::filesystem::path database = normalize_path(database_path);
@@ -961,12 +1072,13 @@ WorkspaceConfigTransfer import_workspace_configuration(
         fail_legacy(source, database_exists);
     }
 
-    PrunedImport pruned = prune_imported_rows(collect_config_rows(source));
-    validate_configuration(pruned.rows);
+    auto source_rows = collect_config_rows(source);
+    ignore_source_d1(source_rows);
+    PrunedImport pruned = prune_imported_rows(std::move(source_rows));
 
     secure_workspace_session_database_files(database);
     commit_imported_rows(
-        database, pruned.rows, pruned.forums, database_password);
+        database, pruned.rows, pruned.forums, database_password, sync_machine);
     return {.file_count = pruned.rows.size()};
 }
 
@@ -1337,6 +1449,9 @@ std::optional<WorkspaceConfigKeyInfo> key_metadata_for(
         } else if (info.type == "R2") {
             info.credential_present =
                 !table["secret_key"].value_or(std::string{}).empty();
+        } else if (info.type == "D1") {
+            info.credential_present =
+                !table["api_token"].value_or(std::string{}).empty();
         }
     } catch (const toml::parse_error&) {
     }
@@ -1354,6 +1469,8 @@ struct WorkspaceConfigStore::Impl {
     std::optional<SessionLease> main_lease;
     std::unique_ptr<Database> database;
     std::optional<RuntimePrivateRoot> tree;
+    // Machine name carried from app.toml; empty means this vault never records.
+    std::string sync_machine;
     mutable std::mutex mutex;
     mutable std::mutex snapshot_mutex;
     std::shared_ptr<const Workspace> published_workspace;
@@ -1433,6 +1550,7 @@ struct WorkspaceConfigStore::Impl {
             create_note_items_schema(*database);
             create_folder_store_schema(*database);
             create_event_history_schema(*database);
+            ensure_sync_schema(*database);
             transaction.commit();
         }
         validate_workspace_session_contents(*database);
@@ -1469,14 +1587,17 @@ struct WorkspaceConfigStore::Impl {
         };
     }
 
-    void commit_and_publish(
+    bool commit_and_publish(
         const std::vector<ConfigFile>& committed_rows,
         const std::vector<ConfigFile>& rows,
         std::shared_ptr<const Workspace> candidate,
         std::string_view deleted_forum_id,
         UndoUpdate undo_update,
-        std::optional<UndoRecord> new_undo = {}) {
+        std::optional<UndoRecord> new_undo = {},
+        bool record_sync = true,
+        const std::set<std::string>* surviving_forums = nullptr) {
         const std::lock_guard publication_lock(snapshot_mutex);
+        bool notes_changed = false;
         const bool config_changed = committed_rows != rows;
         if (config_changed || !deleted_forum_id.empty()) {
             if (consume_runtime_fault(WorkspaceConfigFault::sqlite_begin)) {
@@ -1490,8 +1611,10 @@ struct WorkspaceConfigStore::Impl {
                 apply_config_changes(*database, committed_rows, rows);
             }
             const auto candidate_forums = forum_names(*candidate);
-            if (forum_names(*published_workspace) != candidate_forums)
+            if (forum_names(*published_workspace) != candidate_forums) {
                 note_sync_forums(*database, candidate_forums);
+                notes_changed = true;
+            }
             if (!deleted_forum_id.empty()) {
                 storage::SqliteStatement delete_sessions = database->prepare(
                     "DELETE FROM sessions WHERE forum_key IN ("
@@ -1503,6 +1626,8 @@ struct WorkspaceConfigStore::Impl {
                     deleted_forum_id);
                 delete_forum.run();
             }
+            if (surviving_forums) prune_orphan_sessions(*database, *surviving_forums);
+            if (record_sync) record_config_edit(*database, sync_machine, committed_rows, rows);
             if (consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
                 fail_path("Forced SQLite commit failure");
             }
@@ -1516,12 +1641,14 @@ struct WorkspaceConfigStore::Impl {
                 undo = std::move(new_undo);
             }
         }
+        return notes_changed;
     }
 
     template<typename Writer>
     WorkspaceConfigEditResult edit(
         Writer&& writer,
-        std::string_view deleted_forum_id = {}, bool exclusive = false) {
+        std::string_view deleted_forum_id = {}, bool exclusive = false,
+        bool record_sync = true) {
         const std::lock_guard lock(mutex);
         require_main();
         exclusive = exclusive || !deleted_forum_id.empty();
@@ -1555,7 +1682,7 @@ struct WorkspaceConfigStore::Impl {
 
             commit_and_publish(
                 committed_rows, rows, std::move(candidate), deleted_forum_id,
-                UndoUpdate::clear);
+                UndoUpdate::clear, {}, record_sync);
             return {.affected_forum_ids = std::move(affected_forum_ids)};
         };
         if (!exclusive) return perform();
@@ -1684,6 +1811,71 @@ struct WorkspaceConfigStore::Impl {
         return std::nullopt;
     }
 
+    // Overlays one incoming config.edit record: preserves the local D1
+    // setup, validates once, and commits once with recording disabled.
+    // Prunes sessions for every removed forum. An invalid candidate returns
+    // false so the caller can warn and skip the record.
+    SyncConfigApplyOutcome apply_received_config_edit(
+        const std::vector<ConfigFile>& set_rows,
+        const std::vector<std::string>& delete_names,
+        const std::function<bool()>& begin_maintenance) {
+        std::unique_lock lock(mutex);
+        require_main();
+        const std::shared_ptr<const Workspace> published = snapshot();
+        if (!published || published->root() != tree->workspace()) {
+            fail_path(
+                "Runtime configuration store has no matching loaded workspace");
+        }
+        const auto committed_rows = read_workspace_config_files(*database);
+        const auto destination = config_files(committed_rows);
+        auto files = destination;
+        auto ordinary_rows = set_rows;
+        ignore_source_d1(ordinary_rows);
+        Candidate candidate;
+        try {
+            for (const auto& name : delete_names) {
+                validate_stored_config_name(name);
+                files.erase(name);
+            }
+            for (const auto& row : ordinary_rows) files[row.name] = row.content;
+            preserve_destination_d1(files, destination);
+            if (const auto failure = load_candidate(
+                    files, WorkspaceConfigApplyError::validation_failure, candidate)) {
+                log_warn("Skipped incoming configuration change: " + failure->error_message);
+                return {.applied = false};
+            }
+        } catch (const std::runtime_error& error) {
+            log_warn(std::string("Skipped incoming configuration change: ") + error.what());
+            return {.applied = false};
+        }
+        if (committed_rows == candidate.rows) return {.applied = true};
+        if (begin_maintenance) {
+            const auto base_revision = revision;
+            // Draining sessions may wait for an actor that still needs the store.
+            lock.unlock();
+            if (!begin_maintenance()) return {.retry = true};
+            lock.lock();
+            if (revision != base_revision) return {.retry = true};
+        }
+
+        std::set<std::string> surviving;
+        for (const auto& forum : candidate.workspace->forums()) surviving.insert(forum.id);
+        const bool removes_forum = std::ranges::any_of(published->forums(),
+            [&](const auto& forum) { return !surviving.contains(forum.id); });
+        if (removes_forum) change_access(SessionLease::Mode::exclusive, true);
+        bool notes_changed;
+        try {
+            notes_changed = commit_and_publish(
+                committed_rows, candidate.rows, std::move(candidate.workspace), {},
+                UndoUpdate::clear, {}, false, &surviving);
+        } catch (...) {
+            if (removes_forum) change_access(SessionLease::Mode::shared, true);
+            throw;
+        }
+        if (removes_forum) change_access(SessionLease::Mode::shared, true);
+        return {.applied = true, .notes_changed = notes_changed};
+    }
+
     // Commits a loaded candidate. Reports only warnings from changed paths.
     WorkspaceConfigApplyResult commit_candidate(
         const std::vector<ConfigFile>& committed_rows,
@@ -1692,7 +1884,8 @@ struct WorkspaceConfigStore::Impl {
         const WorkspaceConfigCancelCheck& check,
         std::string_view action,
         UndoUpdate undo_update,
-        std::optional<UndoRecord> new_undo = {}) {
+        std::optional<UndoRecord> new_undo = {},
+        bool record_sync = true) {
         std::set<std::string> changed_paths;
         for (const auto& item : changed) changed_paths.insert(item.path);
         std::vector<LoadWarning> warnings;
@@ -1706,7 +1899,7 @@ struct WorkspaceConfigStore::Impl {
         }
         commit_and_publish(
             committed_rows, candidate.rows, std::move(candidate.workspace), {},
-            undo_update, std::move(new_undo));
+            undo_update, std::move(new_undo), record_sync);
         return {
             .committed = true,
             .revision = revision,
@@ -2086,6 +2279,18 @@ WorkspaceConfigStore::MaintenanceGuard
 WorkspaceConfigStore::reserve_maintenance() {
     return MaintenanceGuard(
         std::make_unique<MaintenanceGuard::Impl>(*impl_));
+}
+
+void WorkspaceConfigStore::set_sync_machine(std::string machine) {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->sync_machine = std::move(machine);
+}
+
+SyncConfigApplyOutcome WorkspaceConfigStore::apply_sync_config_edit(
+    const std::vector<ConfigFile>& set_rows,
+    const std::vector<std::string>& delete_names,
+    const std::function<bool()>& begin_maintenance) {
+    return impl_->apply_received_config_edit(set_rows, delete_names, begin_maintenance);
 }
 
 void WorkspaceConfigStore::apply_character_picture(
@@ -2573,6 +2778,20 @@ void WorkspaceConfigStore::apply_r2_storage_delete() {
     });
 }
 
+void WorkspaceConfigStore::apply_d1_storage_create(const D1StorageKey& key) {
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.create_d1_storage(key);
+        return std::vector<std::string>{};
+    }, {}, false, false);
+}
+
+void WorkspaceConfigStore::apply_d1_storage_update(const D1StorageKey& key) {
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_d1_storage(key);
+        return std::vector<std::string>{};
+    }, {}, false, false);
+}
+
 void WorkspaceConfigStore::apply_key_migration(
     std::span<const SavedApiKey> api_keys,
     const std::optional<R2StorageKey>& r2_storage,
@@ -2661,7 +2880,8 @@ NoteSummaryTarget WorkspaceConfigStore::summary_target(const FullSessionId& iden
 NoteItem WorkspaceConfigStore::commit_summary(const FullSessionId& identity,
     const NoteSummaryTarget& target, const nlohmann::json& document) {
     const std::lock_guard lock(impl_->mutex);
-    return note_commit_summary(*impl_->database, identity, target, document);
+    return note_commit_summary(*impl_->database, identity, target, document,
+        std::chrono::system_clock::now(), impl_->sync_machine);
 }
 
 NoteItem WorkspaceConfigStore::create_note_item(
@@ -2669,14 +2889,14 @@ NoteItem WorkspaceConfigStore::create_note_item(
     NoteItemKind kind,
     std::string_view name) {
     const std::lock_guard lock(impl_->mutex);
-    return note_create(*impl_->database, parent_id, kind, name);
+    return note_create(*impl_->database, parent_id, kind, name, impl_->sync_machine);
 }
 
 std::int64_t WorkspaceConfigStore::import_note_book(
     std::optional<std::int64_t> parent_id,
     std::string_view name, const std::vector<NoteImportEntry>& notes) {
     const std::lock_guard lock(impl_->mutex);
-    return note_import_book(*impl_->database, parent_id, name, notes);
+    return note_import_book(*impl_->database, parent_id, name, notes, impl_->sync_machine);
 }
 
 void WorkspaceConfigStore::export_note_folder(std::int64_t folder_id,
@@ -2688,7 +2908,7 @@ void WorkspaceConfigStore::export_note_folder(std::int64_t folder_id,
 std::int64_t WorkspaceConfigStore::import_note_folder(std::optional<std::int64_t> parent_id,
     const std::filesystem::path& source) {
     const std::lock_guard lock(impl_->mutex);
-    return note_import_folder(*impl_->database, parent_id, source);
+    return note_import_folder(*impl_->database, parent_id, source, impl_->sync_machine);
 }
 
 NoteContent WorkspaceConfigStore::get_note(std::int64_t id) const {
@@ -2705,7 +2925,7 @@ bool WorkspaceConfigStore::save_note(
     std::int64_t id,
     const nlohmann::json& document) {
     const std::lock_guard lock(impl_->mutex);
-    return note_save(*impl_->database, id, document);
+    return note_save(*impl_->database, id, document, impl_->sync_machine);
 }
 
 void WorkspaceConfigStore::save_note_scroll_position(std::int64_t id, std::int64_t scroll_top) {
@@ -2715,30 +2935,30 @@ void WorkspaceConfigStore::save_note_scroll_position(std::int64_t id, std::int64
 
 NoteItem WorkspaceConfigStore::set_note_read_only(std::int64_t id, bool read_only) {
     const std::lock_guard lock(impl_->mutex);
-    return note_set_read_only(*impl_->database, id, read_only);
+    return note_set_read_only(*impl_->database, id, read_only, impl_->sync_machine);
 }
 
 void WorkspaceConfigStore::save_compressed_note(std::int64_t id, std::string_view text) {
     const std::lock_guard lock(impl_->mutex);
-    note_save_compressed(*impl_->database, id, text);
+    note_save_compressed(*impl_->database, id, text, impl_->sync_machine);
 }
 
 bool WorkspaceConfigStore::commit_compressed_note(std::int64_t id, std::string_view source,
     std::string_view text, std::string_view success_message) {
     const std::lock_guard lock(impl_->mutex);
-    return note_commit_compressed(*impl_->database, id, source, text, success_message);
+    return note_commit_compressed(*impl_->database, id, source, text, success_message, impl_->sync_machine);
 }
 
 NoteItem WorkspaceConfigStore::rename_note_item(
     std::int64_t id,
     std::string_view name) {
     const std::lock_guard lock(impl_->mutex);
-    return note_rename(*impl_->database, id, name);
+    return note_rename(*impl_->database, id, name, impl_->sync_machine);
 }
 
 void WorkspaceConfigStore::delete_note_item(std::int64_t id) {
     const std::lock_guard lock(impl_->mutex);
-    note_delete(*impl_->database, id);
+    note_delete(*impl_->database, id, impl_->sync_machine);
 }
 
 std::vector<std::int64_t> WorkspaceConfigStore::folder_ids_in_subtree(
@@ -2912,6 +3132,7 @@ void WorkspaceConfigStore::merge(
             validate_workspace_session_database_identity(handle);
             validate_workspace_session_contents(handle);
             source_rows = read_workspace_config_files(handle);
+            ignore_source_d1(source_rows);
             validate_config_rows(source_rows);
         }
 
@@ -2948,9 +3169,7 @@ void WorkspaceConfigStore::merge(
             });
         }
 
-        for (const ConfigFile& row : source_rows) {
-            candidate[row.name] = row.content;
-        }
+        for (const auto& row : source_rows) candidate[row.name] = row.content;
 
         // Every merged key comes from S or D, and each loaded counter already
         // exceeds its own highest key ID, so the larger counter is safe.
@@ -2962,6 +3181,11 @@ void WorkspaceConfigStore::merge(
         }
         candidate["system/keys/config.toml"] =
             "next_id = " + std::to_string(next_id) + "\n";
+
+        // Source D1 rows never replace the destination setup. When a source
+        // ordinary key takes the destination D1 key's path, only the local
+        // D1 rows move to a free ID.
+        preserve_destination_d1(candidate, published.source_files());
 
         return std::vector<std::string>{};
     }, {}, true);

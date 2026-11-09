@@ -10,7 +10,29 @@ usage() {
 }
 
 run_pi() {
-    pi --mode json --no-session --model openrouter/meta/muse-spark-1.3-contributor "$@"
+    pi --mode json --no-session --model openrouter/meta/muse-spark-1.3-contributor "$@" |
+        tee "$pi_events" |
+        show_pi_events
+
+    # Pi continues after some errors. Only the last assistant message gives the result.
+    local pi_error
+    pi_error=$(jq -nr '
+        reduce inputs as $event ({};
+            .last = $event.type
+            | if $event.type == "message_end" and $event.message.role == "assistant"
+              then .assistant = $event.message else . end)
+        | if .last != "agent_end" or .assistant == null then
+            "Pi did not finish the session."
+          elif .assistant.stopReason == "error" or .assistant.stopReason == "aborted" then
+            .assistant.errorMessage // .assistant.stopReason
+          elif .assistant.stopReason != "stop" then
+            "Pi did not return a complete response."
+          else empty end
+    ' "$pi_events")
+    if [[ -n $pi_error ]]; then
+        echo "Pi session failed: $pi_error" >&2
+        exit 1
+    fi
 }
 
 show_pi_events() {
@@ -25,7 +47,7 @@ show_pi_events() {
             "\n[Pi tool " + (if .isError then "failed" else "done" end) + "] " + .toolName + "\n"
         elif .type == "message_end" and .message.role == "assistant"
             and (.message.stopReason == "error" or .message.stopReason == "aborted") then
-            ("\n[Pi error] " + (.message.errorMessage // .message.stopReason) + "\n") | halt_error(1)
+            "\n[Pi error] " + (.message.errorMessage // .message.stopReason) + "\n"
         elif .type == "agent_end" then
             "\n"
         else
@@ -73,20 +95,29 @@ if [[ -n $(git status --short) ]]; then
     echo "Warning: existing changes will also be reviewed and committed." >&2
 fi
 
-echo "Implementing block $block_number with Pi..."
-run_pi "Implement steps described in $block_file. Leave the changes uncommitted." |
-    show_pi_events
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/doit.XXXXXX")
+trap 'rm -rf -- "$tmp_dir"' EXIT
+pi_events="$tmp_dir/pi-events.jsonl"
 
-review_dir=$(mktemp -d "${TMPDIR:-/tmp}/doit.XXXXXX")
-trap 'rm -rf -- "$review_dir"' EXIT
-review_events="$review_dir/pi-review.jsonl"
+complete_line='- Status: Complete.'
+
+echo "Implementing block $block_number with Pi..."
+run_pi "Implement steps described in $block_file. You may update the Execution record section of $block_file with results and instructions for the next session. Leave other docs/ files unchanged. When all assigned work and validation are complete, change the Status line of the Execution record to exactly '$complete_line'. Do not write that line if work remains or a blocker is unresolved. Leave the changes uncommitted."
+
+if ! awk -v complete="$complete_line" '
+    /^### Execution record([[:space:]]|$)/ { in_record = 1; next }
+    /^#/ { in_record = 0 }
+    in_record && $0 == complete { complete_found = 1 }
+    END { exit !complete_found }
+' "$block_file"; then
+    echo "Block $block_number is not complete: $block_file has no '$complete_line' line." >&2
+    exit 1
+fi
 
 review_prompt="Uncommitted code changes implement steps described in $block_file. Review the uncommitted code. Use git status and git diff to identify modified, staged, and untracked files, then inspect relevant files as needed. Report only actionable correctness, security, regression, or necessary-test findings. For each finding, give the file, location, problem, and required fix. Do not modify files. Do not include praise, summaries, or optional suggestions. If there are no findings, output exactly NO_FINDINGS."
 
 echo "Reviewing uncommitted changes with Pi..."
-run_pi --tools read,bash,grep,find,ls "$review_prompt" |
-    tee "$review_events" |
-    show_pi_events
+run_pi --tools read,bash,grep,find,ls "$review_prompt"
 
 review_output=$(jq -sr '
     [
@@ -96,7 +127,7 @@ review_output=$(jq -sr '
         | join("")
     ]
     | last // ""
-' "$review_events")
+' "$pi_events")
 if [[ -z $review_output ]]; then
     echo "Pi did not produce a review." >&2
     exit 1
@@ -110,7 +141,7 @@ else
         "$block_file" "$review_output"
 
     echo "Applying review feedback with Pi..."
-    run_pi "$fix_prompt" | show_pi_events
+    run_pi "$fix_prompt"
 fi
 
 printf '\nCOMPLETED\n' >> "$block_file"

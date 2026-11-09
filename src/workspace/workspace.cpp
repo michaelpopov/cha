@@ -621,6 +621,24 @@ LoadedKey load_saved_key(
             key.secret_key, 16 * 1024, "secret_key", path, false);
         return key;
     }
+    if (type == "D1") {
+        static constexpr std::string_view fields[]{
+            "display_name", "type", "account_id", "database_id", "api_token"};
+        warn_unknown_fields(table, path, fields, "Key config", warnings);
+        D1StorageKey key{
+            .id = id,
+            .display_name = display_name,
+            .account_id = required_string(table, path, "account_id"),
+            .database_id = required_string(table, path, "database_id"),
+            .api_token = table["api_token"].value_or(std::string{}),
+        };
+        validate_saved_key_text(key.account_id, 16 * 1024, "account_id", path);
+        validate_saved_key_text(
+            key.database_id, 16 * 1024, "database_id", path);
+        validate_saved_key_text(
+            key.api_token, 16 * 1024, "api_token", path, false);
+        return key;
+    }
     throw std::runtime_error(
         "Key config '" + utf8_path(path) + "' has unknown type '" + type + "'");
 }
@@ -1289,6 +1307,7 @@ void build_index(
 struct LoadedKeys {
     std::vector<SavedApiKey> api_keys;
     std::optional<R2StorageKey> r2_storage;
+    std::optional<D1StorageKey> d1_storage;
 };
 
 LoadedKeys load_keys(
@@ -1304,6 +1323,14 @@ LoadedKeys load_keys(
             LoadedKey loaded = load_saved_key(source, directory, warnings);
             if (auto* api_key = std::get_if<SavedApiKey>(&loaded)) {
                 result.api_keys.push_back(std::move(*api_key));
+                continue;
+            }
+            if (auto* d1_key = std::get_if<D1StorageKey>(&loaded)) {
+                if (result.d1_storage) {
+                    throw std::runtime_error(
+                        "Workspace contains more than one D1 key");
+                }
+                result.d1_storage = std::move(*d1_key);
                 continue;
             }
             if (result.r2_storage) {
@@ -1325,6 +1352,7 @@ std::uint64_t load_next_api_key_id(
     const std::filesystem::path& root,
     std::span<const SavedApiKey> api_keys,
     const std::optional<R2StorageKey>& r2_storage,
+    const std::optional<D1StorageKey>& d1_storage,
     const LoadWarnings& warnings) {
     const std::filesystem::path keys_directory = root / "system" / "keys";
     std::uint64_t highest_key_id{};
@@ -1339,6 +1367,13 @@ std::uint64_t load_next_api_key_id(
             saved_key_suffix(
                 r2_storage->id,
                 keys_directory / r2_storage->id / "config.toml"));
+    }
+    if (d1_storage) {
+        highest_key_id = std::max(
+            highest_key_id,
+            saved_key_suffix(
+                d1_storage->id,
+                keys_directory / d1_storage->id / "config.toml"));
     }
     if (highest_key_id == std::numeric_limits<std::uint64_t>::max()) {
         throw std::runtime_error("API key ID space is exhausted");
@@ -2227,12 +2262,13 @@ Workspace Workspace::load(
     LoadedKeys keys = load_keys(source, workspace.root_, load_warnings);
     workspace.api_keys_ = std::move(keys.api_keys);
     workspace.r2_storage_ = std::move(keys.r2_storage);
+    workspace.d1_storage_ = std::move(keys.d1_storage);
     build_index(
         std::span<const SavedApiKey>(workspace.api_keys_),
         workspace.api_key_index_, "API key");
     workspace.next_api_key_id_ = load_next_api_key_id(
         source, workspace.root_, workspace.api_keys_, workspace.r2_storage_,
-        load_warnings);
+        workspace.d1_storage_, load_warnings);
 
     // Reference resolution needs the provider, style and voice indexes.
     LoadedProviders providers = load_providers(source, workspace.root_, load_warnings);

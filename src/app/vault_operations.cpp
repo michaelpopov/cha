@@ -393,6 +393,53 @@ void Application::Impl::VaultMaintenance::delete_forum(
     notice.dispatch();
 }
 
+SyncConfigApplyOutcome Application::Impl::VaultMaintenance::apply_sync_config_edit(
+    const std::vector<ConfigFile>& set_rows,
+    const std::vector<std::string>& delete_names,
+    std::uint64_t epoch) {
+    PendingContextNotice notice;
+    SyncConfigApplyOutcome result;
+    try {
+        const std::unique_lock lifecycle(app.lifecycle_mutex, std::try_to_lock);
+        if (!lifecycle || app.state.load() != ApplicationState::running
+            || app.stopping_flag || app.vault_upload_running
+            || app.published_epoch.load() != epoch) {
+            return {.retry = true};
+        }
+        try {
+            result = app.store->apply_sync_config_edit(set_rows, delete_names, [&] {
+                return drain_for_maintenance(notice, false);
+            });
+            if (global_maintenance) {
+                if (result.applied) {
+                    app.sessions->synchronize_forums(*app.store->snapshot());
+                    rebuild_mirror(session_mirror_root(app.current_vault_.get()));
+                    end_maintenance_locked(true, notice);
+                } else {
+                    cancel_maintenance_locked(notice);
+                }
+            }
+        } catch (const WorkspaceRestartRequiredError&) {
+            end_maintenance_locked(false, notice);
+            throw;
+        } catch (const SessionBusyError&) {
+            if (global_maintenance) cancel_maintenance_locked(notice);
+            result = {.retry = true};
+        } catch (...) {
+            if (global_maintenance) {
+                if (result.applied) end_maintenance_locked(false, notice);
+                else cancel_maintenance_locked(notice);
+            }
+            throw;
+        }
+    } catch (...) {
+        notice.dispatch();
+        throw;
+    }
+    notice.dispatch();
+    return result;
+}
+
 template<typename Operation>
 auto Application::Impl::VaultMaintenance::maintain_database(
     std::uint64_t epoch,
@@ -1125,7 +1172,8 @@ WorkspaceConfigTransfer Application::Impl::VaultMaintenance::import_configuratio
             *vault.modify,
             vault.data,
             WorkspaceConfigLease::already_held,
-            app.active_password);
+            app.active_password,
+            app.command.machine);
     });
 }
 

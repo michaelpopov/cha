@@ -33,6 +33,7 @@ struct VaultDefinition {
 struct ConfigurationDirectory {
     std::filesystem::path directory;
     std::string startup_vault;
+    std::string machine;
     std::optional<std::filesystem::path> mirror_base;
     std::optional<std::filesystem::path> modify_base;
     std::vector<VaultDefinition> vaults;
@@ -43,6 +44,7 @@ struct ConfigurationDirectory {
 
 struct ApplicationCommand {
     std::filesystem::path config_directory;
+    std::string machine;
     std::optional<std::filesystem::path> mirror_base;
     std::optional<std::filesystem::path> modify_base;
     std::vector<VaultDefinition> vaults;
@@ -81,6 +83,8 @@ void require_openable_protected_database(
 [[nodiscard]] std::optional<std::filesystem::path> session_mirror_root(
     const VaultDefinition& vault);
 
+bool valid_machine_name(std::string_view name);
+bool same_machine_name(std::string_view left, std::string_view right);
 // Parses the public command line and its required configuration directory.
 // Relative paths in that directory's files are resolved from the directory.
 ApplicationCommand parse_application_command(

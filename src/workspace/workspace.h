@@ -250,6 +250,9 @@ public:
     [[nodiscard]] const std::optional<R2StorageKey>& r2_storage() const noexcept {
         return r2_storage_;
     }
+    [[nodiscard]] const std::optional<D1StorageKey>& d1_storage() const noexcept {
+        return d1_storage_;
+    }
     [[nodiscard]] std::uint64_t next_api_key_id() const noexcept {
         return next_api_key_id_;
     }
@@ -341,6 +344,7 @@ private:
     WorkspaceWebSearch web_search_;
     std::vector<SavedApiKey> api_keys_;
     std::optional<R2StorageKey> r2_storage_;
+    std::optional<D1StorageKey> d1_storage_;
     std::uint64_t next_api_key_id_{1};
     std::vector<WorkspacePersona> personas_;
     TextFiles source_files_;

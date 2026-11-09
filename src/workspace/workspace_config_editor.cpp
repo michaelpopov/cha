@@ -48,6 +48,16 @@ toml::table r2_storage_table(const R2StorageKey& key) {
     return table;
 }
 
+toml::table d1_storage_table(const D1StorageKey& key) {
+    toml::table table;
+    table.insert("display_name", key.display_name);
+    table.insert("type", "D1");
+    table.insert("account_id", key.account_id);
+    table.insert("database_id", key.database_id);
+    table.insert("api_token", key.api_token);
+    return table;
+}
+
 toml::table key_collection_table(std::uint64_t next_id) {
     if (next_id > static_cast<std::uint64_t>(
             std::numeric_limits<std::int64_t>::max())) {
@@ -580,6 +590,7 @@ void WorkspaceConfigEditor::create_api_key(
     }
     if (workspace_.find_api_key(id) != nullptr
         || (workspace_.r2_storage_ && workspace_.r2_storage_->id == id)
+        || (workspace_.d1_storage_ && workspace_.d1_storage_->id == id)
         || source_.exists(directory)) {
         throw std::invalid_argument("Duplicate API key");
     }
@@ -636,6 +647,7 @@ void WorkspaceConfigEditor::create_r2_storage(const R2StorageKey& key) {
         throw std::invalid_argument("Invalid R2 key");
     }
     if (workspace_.r2_storage_ || workspace_.find_api_key(key.id) != nullptr
+        || (workspace_.d1_storage_ && workspace_.d1_storage_->id == key.id)
         || source_.exists(directory)) {
         throw std::invalid_argument("Duplicate R2 key");
     }
@@ -670,6 +682,63 @@ void WorkspaceConfigEditor::delete_r2_storage() {
     if (!workspace_.r2_storage_) throw std::out_of_range("Unknown R2 key");
     const std::filesystem::path directory =
         workspace_.root_ / "system" / "keys" / workspace_.r2_storage_->id;
+    remove_directory(directory);
+}
+
+void WorkspaceConfigEditor::create_d1_storage(const D1StorageKey& key) {
+    const std::filesystem::path directory =
+        workspace_.root_ / "system" / "keys" / key.id;
+    const std::filesystem::path path = directory / "config.toml";
+    try {
+        require_path_component(key.id, directory.parent_path());
+        (void)saved_key_suffix(key.id, path);
+        validate_saved_key_text(key.display_name, 100, "display_name", path);
+        validate_saved_key_text(key.account_id, 16 * 1024, "account_id", path);
+        validate_saved_key_text(
+            key.database_id, 16 * 1024, "database_id", path);
+        validate_saved_key_text(
+            key.api_token, 16 * 1024, "api_token", path, false);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid D1 key");
+    }
+    if (workspace_.d1_storage_ || workspace_.find_api_key(key.id) != nullptr
+        || (workspace_.r2_storage_ && workspace_.r2_storage_->id == key.id)
+        || source_.exists(directory)) {
+        throw std::invalid_argument("Duplicate D1 key");
+    }
+
+    write_toml(path, d1_storage_table(key));
+    write_next_api_key_id(saved_key_suffix(key.id, path) + 1);
+    (void)load_saved_key(source_, directory, {workspace_.root_});
+}
+
+void WorkspaceConfigEditor::write_d1_storage(const D1StorageKey& key) {
+    if (!workspace_.d1_storage_ || workspace_.d1_storage_->id != key.id) {
+        throw std::out_of_range("Unknown D1 key");
+    }
+    const std::filesystem::path directory =
+        workspace_.root_ / "system" / "keys" / key.id;
+    const std::filesystem::path path = directory / "config.toml";
+    D1StorageKey updated = key;
+    if (updated.api_token.empty()) updated.api_token = workspace_.d1_storage_->api_token;
+    try {
+        validate_saved_key_text(key.display_name, 100, "display_name", path);
+        validate_saved_key_text(key.account_id, 16 * 1024, "account_id", path);
+        validate_saved_key_text(
+            key.database_id, 16 * 1024, "database_id", path);
+        validate_saved_key_text(
+            updated.api_token, 16 * 1024, "api_token", path, false);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid D1 key");
+    }
+    write_toml(path, d1_storage_table(updated));
+    (void)load_saved_key(source_, directory, {workspace_.root_});
+}
+
+void WorkspaceConfigEditor::delete_d1_storage() {
+    if (!workspace_.d1_storage_) throw std::out_of_range("Unknown D1 key");
+    const std::filesystem::path directory =
+        workspace_.root_ / "system" / "keys" / workspace_.d1_storage_->id;
     remove_directory(directory);
 }
 

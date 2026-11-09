@@ -7,6 +7,7 @@
 #include "storage/note_storage.h"
 #include "storage/event_storage.h"
 #include "storage/session_lease.h"
+#include "storage/workspace_session_database.h"
 #include "workspace/workspace.h"
 
 #include <cstddef>
@@ -61,7 +62,8 @@ WorkspaceConfigTransfer import_workspace_configuration(
     const std::filesystem::path& source_directory,
     const std::filesystem::path& database_path,
     WorkspaceConfigLease lease = WorkspaceConfigLease::acquire,
-    std::string_view database_password = {});
+    std::string_view database_password = {},
+    std::string_view sync_machine = {});
 
 WorkspaceConfigTransfer export_workspace_configuration(
     const std::filesystem::path& database_path,
@@ -160,6 +162,12 @@ enum class WorkspaceConfigApplyError {
     cancelled,
 };
 
+struct SyncConfigApplyOutcome {
+    bool applied{};
+    bool notes_changed{};
+    bool retry{};
+};
+
 struct WorkspaceConfigChangedPath {
     std::string path;
     std::optional<std::size_t> old_bytes;
@@ -233,6 +241,17 @@ public:
     [[nodiscard]] const std::filesystem::path& welcome_path() const noexcept;
     [[nodiscard]] std::filesystem::path database_path() const;
     [[nodiscard]] MaintenanceGuard reserve_maintenance();
+    // Machine name from app.toml for D1 sync records. Empty means unnamed:
+    // the vault is disconnected and operations write no records or flags.
+    void set_sync_machine(std::string machine);
+    // Applies one incoming config.edit record for the sync Worker. Validates
+    // once, commits once with recording disabled, and prunes sessions for
+    // every removed forum. The maintenance callback runs after validation and
+    // before commit, with the store unlocked. Retry keeps the record pending.
+    [[nodiscard]] SyncConfigApplyOutcome apply_sync_config_edit(
+        const std::vector<ConfigFile>& set_rows,
+        const std::vector<std::string>& delete_names,
+        const std::function<bool()>& begin_maintenance = {});
     void apply_character_picture(
         std::string_view character_id,
         std::string_view filename,
@@ -349,6 +368,8 @@ public:
     void apply_r2_storage_create(const R2StorageKey& key);
     void apply_r2_storage_update(const R2StorageKey& key);
     void apply_r2_storage_delete();
+    void apply_d1_storage_create(const D1StorageKey& key);
+    void apply_d1_storage_update(const D1StorageKey& key);
     void apply_key_migration(
         std::span<const SavedApiKey> api_keys,
         const std::optional<R2StorageKey>& r2_storage,

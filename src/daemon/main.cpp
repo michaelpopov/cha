@@ -147,6 +147,7 @@ ApplicationCommand load_daemon_command(const std::filesystem::path& directory) {
     }
     return {
         .config_directory = settings.directory,
+        .machine = settings.machine,
         .mirror_base = settings.mirror_base,
         .modify_base = settings.modify_base,
         .vaults = settings.vaults,

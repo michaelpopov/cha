@@ -34,4 +34,13 @@ struct R2StorageInfo {
     bool has_secret_key{};
 };
 
+// D1 sync credentials share the saved-key namespace (system/keys/<id>/).
+struct D1StorageKey {
+    std::string id;
+    std::string display_name;
+    std::string account_id;
+    std::string database_id;
+    std::string api_token;
+};
+
 } // namespace cha

@@ -503,6 +503,29 @@ void ignore_obsolete_web_section(
         + "' [web] settings are unused and were ignored.");
 }
 
+bool valid_machine_name(std::string_view name) {
+    return !name.empty() && name.find('/') == std::string_view::npos;
+}
+
+std::string load_machine_name(
+    const toml::table& app,
+    const std::filesystem::path& app_file,
+    std::vector<std::string>& warnings) {
+    if (!app.contains("machine")) return {};
+    const std::optional<std::string> value = app["machine"].value<std::string>();
+    if (!value || !valid_machine_name(*value)) {
+        warnings.push_back(
+            "Application config '" + utf8_path(app_file)
+            + "' field 'machine' is not a non-empty name without '/'; it was ignored.");
+        return {};
+    }
+    return *value;
+}
+
+bool same_machine_name(std::string_view left, std::string_view right) {
+    return fold_ascii(left) == fold_ascii(right);
+}
+
 ConfigurationDirectory load_configuration_directory(
     const std::filesystem::path& directory,
     std::string_view replacement_name,
@@ -528,7 +551,7 @@ ConfigurationDirectory load_configuration_directory(
     warn_unknown_fields(
         app,
         app_file,
-        {"vault", "mirror", "modify", "web", "logging", "voice_input", "text_to_speech"},
+        {"vault", "machine", "mirror", "modify", "web", "logging", "voice_input", "text_to_speech"},
         "root",
         app_kind, warnings);
     const std::string configured_vault =
@@ -537,6 +560,7 @@ ConfigurationDirectory load_configuration_directory(
         app, root, app_file, "mirror", app_kind);
     const std::optional<std::filesystem::path> modify_base = optional_app_path(
         app, root, app_file, "modify", app_kind);
+    const std::string machine = load_machine_name(app, app_file, warnings);
     ignore_obsolete_web_section(app, app_file, warnings);
     const toml::table& logging =
         required_table(app, app_file, "logging", app_kind);
@@ -617,6 +641,7 @@ ConfigurationDirectory load_configuration_directory(
     return {
         .directory = root,
         .startup_vault = startup->name,
+        .machine = machine,
         .mirror_base = mirror_base,
         .modify_base = modify_base,
         .vaults = std::move(vaults),
@@ -654,6 +679,7 @@ ApplicationCommand parse_application_command(
 
     return {
         .config_directory = settings.directory,
+        .machine = settings.machine,
         .mirror_base = settings.mirror_base,
         .modify_base = settings.modify_base,
         .vaults = settings.vaults,

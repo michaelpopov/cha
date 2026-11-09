@@ -87,6 +87,10 @@ struct Application::Impl {
 
         void publish_vault_names();
         void delete_forum(std::string_view forum_id, std::uint64_t epoch);
+        SyncConfigApplyOutcome apply_sync_config_edit(
+            const std::vector<ConfigFile>& set_rows,
+            const std::vector<std::string>& delete_names,
+            std::uint64_t epoch);
     private:
         void publish_vault(VaultDefinition vault);
         R2DatabaseUpload prepare_upload(

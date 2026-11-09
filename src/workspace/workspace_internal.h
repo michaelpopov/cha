@@ -34,7 +34,7 @@ struct LoadWarnings {
     }
 };
 
-using LoadedKey = std::variant<SavedApiKey, R2StorageKey>;
+using LoadedKey = std::variant<SavedApiKey, R2StorageKey, D1StorageKey>;
 
 bool is_reserved_id(std::string_view id);
 

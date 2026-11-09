@@ -332,6 +332,7 @@ Application::Impl::Impl(
               const MaintenanceContext& context, const std::atomic_bool& cancelled) {
               return assistant->execute(name, arguments, context, cancelled);
           }) {
+    store->set_sync_machine(command.machine);
     vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{
         {std::string(entrance_id), std::string(welcome_id)},

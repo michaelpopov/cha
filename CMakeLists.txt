@@ -321,6 +321,8 @@ add_library(cha_lib STATIC
     src/session/summary_prompt_cache.cpp
     src/storage/session_database.cpp
     src/storage/note_storage.cpp
+    src/storage/sync_storage.cpp
+    src/app/d1_client.cpp
     src/storage/folder_store_storage.cpp
     src/storage/event_storage.cpp
     src/storage/session_label.cpp
@@ -564,6 +566,7 @@ if(BUILD_TESTING)
         tests/storage/unit_event_storage.cpp
         tests/storage/unit_session_repository.cpp
         tests/storage/unit_workspace_session_database.cpp
+        tests/storage/unit_sync.cpp
         tests/session/unit_controller_update.cpp
         tests/workspace/unit_workspace.cpp
         tests/workspace/unit_workspace_config_store.cpp

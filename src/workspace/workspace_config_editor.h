@@ -68,6 +68,9 @@ public:
     void create_r2_storage(const R2StorageKey& key);
     void write_r2_storage(const R2StorageKey& key);
     void delete_r2_storage();
+    void create_d1_storage(const D1StorageKey& key);
+    void write_d1_storage(const D1StorageKey& key);
+    void delete_d1_storage();
     void write_next_api_key_id(std::uint64_t next_id);
 
     void write_character_picture(

@@ -95,7 +95,8 @@ struct NoteSummaryTarget {
 [[nodiscard]] NoteItem note_commit_summary(storage::SqliteDatabase& database,
     const FullSessionId& identity, const NoteSummaryTarget& target,
     const nlohmann::json& document,
-    std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
+    std::chrono::system_clock::time_point now = std::chrono::system_clock::now(),
+    std::string_view sync_machine = {});
 struct SummaryChapters {
     std::string short_markdown;
     std::string long_markdown;
@@ -124,33 +125,41 @@ struct SummaryChapters {
     storage::SqliteDatabase& database,
     std::optional<std::int64_t> parent_id,
     std::string_view name,
-    const std::vector<NoteImportEntry>& notes);
+    const std::vector<NoteImportEntry>& notes,
+    std::string_view sync_machine = {});
 [[nodiscard]] NoteItem note_create(
     storage::SqliteDatabase& database,
     std::optional<std::int64_t> parent_id,
     NoteItemKind kind,
-    std::string_view name);
+    std::string_view name,
+    std::string_view sync_machine = {});
 [[nodiscard]] NoteContent note_get(
     storage::SqliteDatabase& database,
     std::int64_t id);
 bool note_save(
     storage::SqliteDatabase& database,
     std::int64_t id,
-    const nlohmann::json& document);
+    const nlohmann::json& document,
+    std::string_view sync_machine = {});
 void note_save_compressed(
-    storage::SqliteDatabase& database, std::int64_t id, std::string_view text);
+    storage::SqliteDatabase& database, std::int64_t id, std::string_view text,
+    std::string_view sync_machine = {});
 // Checks the saved Markdown and commits the result and success event together.
 bool note_commit_compressed(storage::SqliteDatabase& database, std::int64_t id,
-    std::string_view source, std::string_view text, std::string_view success_message);
+    std::string_view source, std::string_view text, std::string_view success_message,
+    std::string_view sync_machine = {});
 void note_save_scroll_position(
     storage::SqliteDatabase& database, std::int64_t id, std::int64_t scroll_top);
 [[nodiscard]] NoteItem note_set_read_only(
-    storage::SqliteDatabase& database, std::int64_t id, bool read_only);
+    storage::SqliteDatabase& database, std::int64_t id, bool read_only,
+    std::string_view sync_machine = {});
 [[nodiscard]] NoteItem note_rename(
     storage::SqliteDatabase& database,
     std::int64_t id,
-    std::string_view name);
-void note_delete(storage::SqliteDatabase& database, std::int64_t id);
+    std::string_view name,
+    std::string_view sync_machine = {});
+void note_delete(storage::SqliteDatabase& database, std::int64_t id,
+    std::string_view sync_machine = {});
 // Caller owns the transaction.
 void note_delete_in_transaction(storage::SqliteDatabase& database, std::int64_t id);
 struct NoteAudioAttempt {
@@ -177,12 +186,19 @@ NoteAudioClip note_audio_clip(storage::SqliteDatabase& database, std::int64_t id
 void note_save_audio(storage::SqliteDatabase& database, std::int64_t id,
     const std::vector<std::filesystem::path>& clips);
 
-// Writes the folder, its sub-folders, notes and audio clips to a new SQLite file
-// without a password. Annotations, summary and forum links are left out.
+// Applies one incoming sync record in its own transaction. Returns true when
+// notes changed. Throws NoteError when the record must be skipped with a
+// warning (missing parent, managed item, invalid candidate). Never writes an
+// outgoing record or sets a changed flag.
+[[nodiscard]] bool note_apply_record(
+    storage::SqliteDatabase& database, const nlohmann::json& record);
+// Exports the folder, its subfolders, notes and audio to a new SQLite file.
+// Annotations, summary links and forum links are left out.
 void note_export_folder(storage::SqliteDatabase& database, std::int64_t folder_id,
     const std::filesystem::path& destination);
 // Copies an exported folder into parent_id and returns the new folder ID.
 [[nodiscard]] std::int64_t note_import_folder(storage::SqliteDatabase& database,
-    std::optional<std::int64_t> parent_id, const std::filesystem::path& source);
+    std::optional<std::int64_t> parent_id, const std::filesystem::path& source,
+    std::string_view sync_machine = {});
 
 } // namespace cha
