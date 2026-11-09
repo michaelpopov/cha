@@ -69,7 +69,7 @@ that the user's answer is recorded in `specs/d1-alt-review.md`, section 8.
 | R23 | Duplicated records and partial writes are accepted. No sequence IDs and no cross-queue machinery. One REST request writes one record to all queues. The Worker tries again at its next loop, with no limit. | User, approved proposal |
 | R24 | Bad timing at registration is accepted. | User |
 | R25 | Items are named by name or path. R48 and R54 change this: only notes are named by path. | User |
-| R26 | R2 upload is blocked while the local queue has records. There is no removal step at R2 download. R47 adds the "changed" flag to the block. | User |
+| R26 | R2 upload is blocked while the local queue has records or notes have "changed" flags. After an R2 download, clear the delivered vault's local queue and flags before use. R57 applies this cleanup to every delivery route. | User, updated November 9, 2026 |
 | R27 | A prompt and its response move together. The Worker writes the pair after the response is complete. | User |
 | R28 | Incoming chat entries go at the end, with the next free numbers. | User |
 | R29 | Nothing moves for a chat until it has its name and its first response. At that moment, the application writes records for all that the chat has. After that, each change writes its own record. A receiver creates a chat when a record names a chat that it does not have. | User, approved proposal |
@@ -80,7 +80,7 @@ that the user's answer is recorded in `specs/d1-alt-review.md`, section 8.
 | R34 | Protected vaults synchronize like other vaults. Their records are plain text in D1. | User |
 | R35 | When a record changes a chat that is open on the screen, the screen shows the change. | User |
 | R36 | A machine name is in `app.toml`. The D1 credentials are in the vault, next to the R2 credentials. The Worker finds the recipients from the list of queue tables of the vault. There is no registry table. | Approved proposal |
-| R37 | The Worker loop runs every 30 seconds. At vault open, the loop runs once before the screens load. At application close, the Worker tries once to send. | User, approved proposal |
+| R37 | The Worker loop runs every 30 seconds. At vault open, the loop runs once before the screens load. At application close, the Worker tries once to send, and the native host waits for the full send attempt. | User, approved proposal; shutdown wait confirmed November 9, 2026 |
 | R38 | Changes that the Worker applies are not user operations, so they write no records. | Approved reading of R7 |
 | R39 | When a record changes the open note, the note on the screen updates. The notes tree also shows incoming changes at once. ChaWeb shows a change when its note page opens again. | User, approved reading |
 | R40 | The Worker reads up to 50 records in one request, applies them in order, and deletes them in one request. | Approved proposal |
@@ -99,6 +99,8 @@ that the user's answer is recorded in `specs/d1-alt-review.md`, section 8.
 | R53 | No save is refused because of D1. A record larger than the D1 limit moves as pieces, for all record kinds. The receiver builds the record from the pieces before it applies it. | User decision, review answer 4 |
 | R54 | Records use IDs, except for notes. Notes are named by path. A chat is named by forum ID and session ID. | User decision, review answer 2 |
 | R55 | A chat note copy whose source note no longer exists does not move. | User decision |
+| R56 | Configuration import and vault merge preserve the destination vault's D1 credentials, including their absence. Full vault copies and R2 downloads still carry the source credentials. | User decision, November 9, 2026 |
+| R57 | A newly delivered vault starts with an empty local send queue, whatever the delivery route. Clear its note "changed" flags too, so they cannot recreate the source's pending records. This applies to a new vault and to replacement of an existing vault. | User decision, November 9, 2026 |
 
 ## 3. Facts
 
@@ -108,7 +110,7 @@ that the user's answer is recorded in `specs/d1-alt-review.md`, section 8.
 |---|---|---|
 | F1 | The products are macOS and Windows. The Linux package has `cha-daemon` and ChaWeb. | [README.md:4](../README.md), [README.md:401](../README.md) |
 | F2 | Each vault has a `.toml` file and its own database file. A vault can be protected. | [README.md:85](../README.md), [README.md:108](../README.md) |
-| F3 | `cha-daemon` opens only its startup vault. A vault gets to Linux as a copy of its files. ChaWeb has no Settings and no R2 transfer. | [main.cpp:132](../src/daemon/main.cpp), [packaging/linux/README.md:113](../packaging/linux/README.md), [client.ts:55](../webapp/src/chaweb/client.ts) |
+| F3 | `cha-daemon` opens only its startup vault. The Linux setup guide tells the operator to place an existing vault's configuration directory on the server. This is a manual installation step. ChaWeb has no vault-copy operation, Settings, or R2 transfer. | [main.cpp:132](../src/daemon/main.cpp), [packaging/linux/README.md:113](../packaging/linux/README.md), [client.ts:55](../webapp/src/chaweb/client.ts) |
 | F4 | R2 upload and download move the whole database and its vault `.toml`. R2 credentials are per vault and travel with the database. | [README.md:306](../README.md), [README.md:311](../README.md) |
 | F5 | API keys are stored in the vault database. | [README.md:241](../README.md) |
 | F6 | Content tables: `config`, `forums`, `sessions`, `turns`, `entries`, `session_character_settings`, `session_folders`, `note_items`, `note_summaries`, `session_notes`, `session_files`. Local-only tables: `entry_audio`, `note_audio`, `note_audio_attempts`, `event_history`. | [workspace_session_database.cpp:38](../src/storage/workspace_session_database.cpp), [note_storage.cpp:989](../src/storage/note_storage.cpp), [folder_store_storage.cpp:100](../src/storage/folder_store_storage.cpp), [event_storage.cpp:38](../src/storage/event_storage.cpp) |
@@ -120,7 +122,7 @@ that the user's answer is recorded in `specs/d1-alt-review.md`, section 8.
 | F12 | The automatic chat name can arrive before or after the first response. | [session_controller.cpp:1444](../src/session/session_controller.cpp), [session_controller.cpp:1493](../src/session/session_controller.cpp) |
 | F13 | Chat operations: start, complete, cancel, and fail a turn; add a note, a file, or a folder; detach a folder; delete a turn; clear the history; set character settings; rename. A message to `@-` and a configuration notice are entries with no turn. | [session_database.h:92](../src/storage/session_database.h), [session_database.cpp:660](../src/storage/session_database.cpp), [session_controller.cpp:509](../src/session/session_controller.cpp), [session_controller.cpp:1096](../src/session/session_controller.cpp) |
 | F14 | Entry numbers must strictly increase. An open chat holds its next entry number in memory. | [session_database.cpp:295](../src/storage/session_database.cpp), [session_controller.cpp:501](../src/session/session_controller.cpp) |
-| F15 | `reload_session` only asks one open chat to stop, with the reason `reloading`. It does not wait. The screen reconnects after a stop with this reason. | [live_session_manager.cpp:818](../src/runtime/live_session_manager.cpp), [useLiveSession.ts:307](../webapp/src/useLiveSession.ts) |
+| F15 | `reload_session` only asks one open chat to stop, with the reason `reloading`. It does not wait. The desktop screen reconnects after a stop with this reason. ChaWeb has a separate read/recovery loop; it schedules further reads while generation is active. Both paths must be checked for incoming changes to an idle or generating chat. | [live_session_manager.cpp:818](../src/runtime/live_session_manager.cpp), [useLiveSession.ts:307](../webapp/src/useLiveSession.ts), [useChaweb.ts:306](../webapp/src/chaweb/useChaweb.ts) |
 | F16 | The application already sends note events to the screen, for example `notes.compressionChanged`. | [bridge_router.cpp:2059](../src/bridge/bridge_router.cpp) |
 | F17 | Settings edits and vault merge save through one function, `commit_and_publish`. It has the old rows, the new rows, and the ID of a deleted forum. It writes only the rows that changed, and it deletes the chats of a deleted forum. Configuration import does not use this function. It replaces the rows in its own transaction, and it deletes the chats of each forum that the new configuration does not have, with `prune_orphan_sessions`. | [workspace_config_store.cpp:1472](../src/workspace/workspace_config_store.cpp), [workspace_config_store.cpp:333](../src/workspace/workspace_config_store.cpp), [workspace_config_store.cpp:1495](../src/workspace/workspace_config_store.cpp), [workspace_config_store.cpp:2902](../src/workspace/workspace_config_store.cpp), [vault_operations.cpp:1115](../src/app/vault_operations.cpp), [workspace_config_store.cpp:925](../src/workspace/workspace_config_store.cpp), [workspace_config_store.cpp:866](../src/workspace/workspace_config_store.cpp) |
 | F18 | The configuration save makes, renames, and deletes the forum folders in the notes tree. | [workspace_config_store.cpp:1493](../src/workspace/workspace_config_store.cpp), [note_storage.cpp:1468](../src/storage/note_storage.cpp) |
@@ -130,7 +132,7 @@ that the user's answer is recorded in `specs/d1-alt-review.md`, section 8.
 | F22 | The R2 storage screen is the model for the D1 sync screen. | [R2StorageSettings.tsx:130](../webapp/src/components/R2StorageSettings.tsx) |
 | F23 | The ANNOTATIONS note of a folder is built again from the other notes of the folder by one function. Its content holds the local IDs of the source notes. | [note_storage.cpp:432](../src/storage/note_storage.cpp), [note_storage.cpp:458](../src/storage/note_storage.cpp) |
 | F24 | A turn delete needs the number of the response entry. | [session_database.cpp:838](../src/storage/session_database.cpp) |
-| F25 | A vault name can be any text. Vault names ignore ASCII letter case. A vault can be made as a copy, and a new vault can be downloaded from R2. | [application_config.cpp:245](../src/app/application_config.cpp), [path_name.cpp:158](../src/util/path_name.cpp), [vault_operations.cpp:468](../src/app/vault_operations.cpp), [vault_operations.cpp:719](../src/app/vault_operations.cpp) |
+| F25 | Vault names must pass `require_path_component`, including rejection of `/`, `\`, and `"`. Vault name comparison ignores ASCII letter case. Desktop vault creation can start from another local vault, and a new vault can be downloaded from R2. | [application_config.cpp:245](../src/app/application_config.cpp), [path_name.cpp:126](../src/util/path_name.cpp), [vault_operations.cpp:468](../src/app/vault_operations.cpp), [vault_operations.cpp:719](../src/app/vault_operations.cpp) |
 | F26 | A new chat starts with `next_request_id = 1`. The counter only grows. A clear and a turn delete do not reset it. Only one turn of a chat can run at a time. | [session_repository.cpp:603](../src/storage/session_repository.cpp), [session_database.cpp:301](../src/storage/session_database.cpp), [session_database.cpp:899](../src/storage/session_database.cpp), [workspace_session_database.cpp:435](../src/storage/workspace_session_database.cpp) |
 | F27 | A session delete first reserves the chat. The reservation stops the open chat and waits until it is released. A stop cancels a running reply and saves it as cancelled. | [application.cpp:768](../src/app/application.cpp), [live_session_manager.cpp:910](../src/runtime/live_session_manager.cpp), [session_controller.cpp:1835](../src/session/session_controller.cpp) |
 
@@ -179,6 +181,11 @@ machine = "mac"
 
 - The name must not contain `/`, because the queue table name uses `/` as a
   separator (R36, section 6.1).
+- If `machine` is invalid (not a string, empty, or containing `/`), ignore
+  it and write a warning. The application still starts and treats the machine
+  as having no name, so its vaults are not connected. "Save D1 credentials"
+  uses the missing-machine-name error in O6. An invalid optional sync setting
+  must not block unrelated operations.
 - Each machine must have a different name, and letter case does not make a
   name different (O8).
 - `app.toml` is outside the vault, so an R2 copy does not bring it (R36).
@@ -190,6 +197,19 @@ database ID, and API token. They use the same storage as the R2 credentials,
 so they come with an R2 copy (R36, F4).
 
 A change of these values writes no record (R44).
+
+Configuration import and vault merge keep the destination's D1 credential
+rows unchanged (R56). They ignore the source D1 credential rows and write a
+warning when such rows are ignored. If the destination has no D1 credentials,
+it still has none after the operation. Import and merge therefore neither
+connect nor disconnect a vault, and they do not clear its pending records or
+note flags. Other imported or merged changes still follow the normal
+record-writing rules.
+
+This rule applies to configuration import and merge. A full vault file copy
+or R2 download still brings the credentials stored in that database (R36,
+R56). The D1 sync screen provides the explicit credential change/disconnect
+operations on an existing vault (R43, R45).
 
 ### 5.3 Connected vault
 
@@ -207,6 +227,25 @@ The screen is as approved (R43). It uses the R2 storage screen as its model
 - Buttons: Reset, "Save D1 credentials", and "Disconnect from D1" when
   connected.
 - A confirmation before Disconnect.
+
+The approved mockup copy, supplied in the review, is:
+
+| Element | Text |
+|---|---|
+| API Keys row description | Configure synchronization between machines |
+| Account ID placeholder | Paste account ID |
+| Database ID placeholder | Paste database ID |
+| API token placeholder, no saved token | Paste API token |
+| API token placeholder, saved token | Leave blank to keep the current token |
+| Disconnect dialog title | Disconnect from D1? |
+| Disconnect dialog message | Disconnect this vault from D1 on this machine? Its D1 queue and its unsent changes will be deleted. |
+| Disconnect dialog buttons | Cancel; Disconnect from D1 |
+
+The six approved error texts are in O6. Loading messages and busy-state
+labels are not covered by this approval. Before implementation of those
+states, show any proposed additional text in a visual preview and obtain
+approval under `AGENTS.md`. Reuse the approved screen design for the other
+states without asking for approval again.
 
 "Save D1 credentials" (R43, R46):
 
@@ -226,14 +265,16 @@ The screen is as approved (R43). It uses the R2 storage screen as its model
 
 ### 5.5 Linux
 
-`cha-daemon` has no Settings and no R2 transfer (F3). A vault gets to Linux as
-a copy of its files (F3). So (R17, R51):
+`cha-daemon` has no Settings, vault-copy operation, or R2 transfer (F3).
+Its startup follows R17 and R51:
 
 - At start, if the vault is connected and the queue table of this machine is
   missing, `cha-daemon` makes the table. Then the Worker starts.
 - If the table goes missing while the daemon runs, the Worker stops and writes
   an error, as on the other machines. The next start of the daemon makes the
   table again.
+- Startup and creation of a missing D1 table retain this machine's unsent
+  records and note flags (R22).
 
 ## 6. Data
 
@@ -254,10 +295,10 @@ CREATE TABLE IF NOT EXISTS "q/<vault name>/<machine name>" (
   A record that fits in one row has `piece = 1` and `pieces = 1` (R53).
 - Each `"` in a name is written as `""` in the SQL text (R36).
 - The Worker finds the recipients with one query on `sqlite_master` (R36, R10,
-  C9). A table belongs to vault V when its name is `q/` + V + `/` + M, and M
-  has no `/`. M is then the machine name. The comparison ignores ASCII letter
-  case, as SQLite does for table names (F25). This rule does not use `LIKE`,
-  and it works also when a vault name contains `/`.
+  C9). Split each queue name into `q`, vault name, and machine name at `/`;
+  neither name can contain `/` (F25, section 5.1). Compare the vault name
+  using ASCII case-insensitive equality. Use exact comparison, not `LIKE`,
+  because valid names can contain `%` or `_`.
 - The tables of this machine are not recipients (R10).
 - There is no registry table (R36).
 
@@ -391,6 +432,12 @@ new (R9).
 Each chat operation checks the rule before and after the operation. A chat
 delete uses only the state before, because after it the chat does not exist.
 
+Terminal-turn recording belongs in `SessionJournal::complete_turn`,
+`cancel_turn`, and `fail_turn`, in the same transaction as the turn change.
+This includes interrupted-turn repair at chat open, which calls
+`journal_.fail_turn` ([session_controller.cpp:391](../src/session/session_controller.cpp)).
+If repair makes the chat shared, it writes the initial records too.
+
 - If the chat was not shared before and is shared after, the operation adds
   records for all that the chat has: finished turns, `@-` messages,
   attachments, and character settings. The records follow the order of the
@@ -423,6 +470,12 @@ The rows of the D1 credentials are left out (R44). There are two save paths
 - A configuration import replaces the rows in its own transaction. It reads
   the old rows before the replace.
 
+Both import and merge first exclude the source D1 credential rows and retain
+the destination's D1 rows, if any, in the candidate (R56). Validate and find
+the changed rows from that candidate. Keep the existing key-ID allocation
+counter valid for all retained keys, including D1 credentials. The unchanged
+D1 rows produce no record.
+
 One small helper finds the changed rows and adds the record. Both paths call
 it. If the save fails, its transaction adds no record.
 
@@ -439,6 +492,13 @@ it. If the save fails, its transaction adds no record.
 - At application close, at vault close, and at a vault switch, the Worker
   turns flagged notes into records and tries once to send the local queue.
   Then it stops (R33, R37).
+- At application close, the native host waits for that send pass to finish
+  (R37). Sending stops at the first failed record as in section 9.2; unsent
+  records remain for the next open. Individual requests keep their normal
+  timeouts. There is no deadline for the complete send pass. The current
+  native hosts impose a 10-second shutdown wait, so their shutdown path must
+  change to allow this ([macOS:900](../packaging/macos/main.swift),
+  [Windows:1870](../packaging/windows/main.cpp)).
 - It also stops during maintenance such as R2 download, and starts again after
   that (R20).
 - It uses curl with the timeouts of the R2 transfer (F20) and the REST API
@@ -531,16 +591,18 @@ The Worker builds a record from its pieces before it applies it (R53):
   R41).
 - Before the Worker applies a chat record, it reserves that chat in the same
   way as a session delete does (F27). The shutdown reason is `reloading`, so
-  the screen of an open chat reconnects after the release (R35, F15). If the
+  the desktop screen of an open chat reconnects after the release (R35, F15).
+  ChaWeb must show the change through its own read/recovery path (F15). If the
   chat is open, the reservation stops it and waits. A running reply stops and
-  is saved as cancelled. Then the Worker applies the record and releases the
-  chat. So the open chat cannot write with old entry numbers while the Worker
-  writes (F14).
+  is saved as cancelled. The Worker applies the record in its transaction
+  and releases the reservation. So the open chat cannot write with old entry
+  numbers while the Worker writes (F14).
 - If the reservation fails, the Worker stops the receive step in this loop.
   The rows stay in D1, and the next loop tries again.
 - If a chat record names a chat that this machine does not have, the Worker
   creates the chat with that session ID and the label of the record (R29,
-  R54).
+  R54). Use the existing schema defaults for `recent_pending` and
+  `discardable`, both 0.
 - `chat.entries` appends the entries with the next free numbers, and for a
   turn it stores the state of the record (R28, F14).
 - `chat.delete_turn` deletes the turn at that position (R52, F24). If there is
@@ -566,7 +628,8 @@ active, as after a Settings edit (R12).
 - After a group of records changes notes, the application sends one
   `notes.changed` event to the screen, in the same way as other note events
   (F16). The desktop notes screen then reloads the tree and the open note
-  (R39). Unsaved text in the open note is lost (R32).
+  (R39). Use the existing editor reload path; it already resets the note-save
+  hook when the editor changes. Unsaved text in the open note is lost (R32).
 - ChaWeb only reads notes (F21). Its note page shows the change when it opens
   again (R39).
 
@@ -586,8 +649,8 @@ an error to the log. The user must download the vault from R2. The download
 makes a new queue table (section 12.2). This is not automatic recovery (R46).
 
 `cha-daemon` makes a new table at its next start and continues (R51). The
-records in the deleted table are lost. To get a correct vault on Linux, the
-operator copies the vault files again (F3).
+records in the deleted table are lost. Restoring the missing content requires
+a fresh vault snapshot; creating the table only restores synchronization.
 
 This needs no catalog table and no status (R46). The missing table is the
 mark.
@@ -606,14 +669,21 @@ its upload is never refused.
 
 ### 12.2 Download that replaces the open vault
 
-There is no removal step at download (R26). After the download replaces the
-database, if the vault is connected, the application makes the queue table of
-this machine (R21, R46). Then the vault opens, and the first loop runs (R37).
+After downloading and validating the temporary database, clear its local
+`sync_queue` and all note `changed` flags in one transaction (R26, R57).
+Then install the cleaned database using the existing download path. If the
+vault is connected, the application makes the D1 queue table of this machine
+(R21, R46). Then the vault opens, and the first loop runs (R37). The cleanup
+does not delete incoming records from D1.
+The downloaded database brings its D1 credentials; the destination-preservation
+rule for configuration import and merge does not apply to this whole-vault
+replacement (R56).
 
 The order on a new desktop machine (R21, R24, R36):
 
 1. Write the machine name in `app.toml`.
-2. Download the vault from R2. The download brings the D1 credentials.
+2. Download the vault from R2. Keep the downloaded D1 credentials, but clear
+   the local send queue and note flags before use.
 3. The application makes the queue table of this machine.
 4. The vault opens, and the Worker starts.
 
@@ -624,9 +694,7 @@ reaches the new machine (R24).
 
 In these cases a connected vault has no queue table for this machine (F25):
 
-- A new vault that is downloaded from R2 and is not open. For a protected
-  vault, the application cannot read the credentials before the password is
-  given.
+- A new vault that is downloaded from R2 and is not open.
 - A vault made as a copy. It has a different name, so it has no table.
 - A machine name that is added or changed in `app.toml`. The table of the old
   name stays in D1 and gets records until section 11 deletes it.
@@ -634,6 +702,29 @@ In these cases a connected vault has no queue table for this machine (F25):
 In each case the Worker stops with the error of section 9.2. The user opens
 the D1 sync screen and selects "Save D1 credentials", which makes the table
 (section 5.4, R43, R46).
+
+A full vault copy carries its D1 credentials. A configuration import or
+merge into an existing vault instead preserves that destination's D1 setup,
+including no setup, as specified by R56.
+
+### 12.4 Cleanup in existing operations
+
+Both R2 download paths clean the temporary database before installing it
+(R57). Replacement of an existing protected vault already has its password.
+The current new-vault download rejects protected databases without a
+password ([r2_database_transfer.cpp](../src/app/r2_database_transfer.cpp)).
+Cleanup therefore completes within the download operation and needs no
+persistent flag or deferred work.
+
+Desktop "New vault" also has an existing option to start from another local
+vault. Clear the destination's queue and note flags before returning that
+new vault. Keep the source unchanged. This is local vault creation, separate
+from downloading a vault to another machine.
+
+Ordinary open, restart, and reconnection retain local outgoing work (R22).
+Configuration import and vault merge retain the destination's pending work
+and follow R56. Applying incoming change records never adds outgoing records
+or sets note flags (R38).
 
 ## 13. Accepted risks
 
@@ -681,9 +772,12 @@ Do these tests before implementation. The first two decide whether sections
   piece for each other queue table.
 - Whether a `batch` is all-or-nothing (C2).
 - How many rows read D1 counts for a query on an empty table.
-- Whether the screen of an open chat reconnects after the reservation of
-  section 10.3. The screen reconnects after the reason `reloading` (F15), but
-  the reservation refuses a reconnect while it is held.
+- Whether both the desktop and ChaWeb screens show incoming changes after
+  the reservation of section 10.3, for idle chats and running replies. The
+  desktop reconnects after the reason `reloading` (F15), but the reservation
+  refuses a reconnect while it is held. ChaWeb has a separate read/recovery
+  path, whose idle refresh behavior must also be established before the
+  Worker is implemented.
 
 ## 16. Approved points
 
