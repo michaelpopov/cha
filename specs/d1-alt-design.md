@@ -99,7 +99,7 @@ that the user's answer is recorded in `specs/d1-alt-review.md`, section 8.
 | R53 | No save is refused because of D1. A record larger than the D1 limit moves as pieces, for all record kinds. The receiver builds the record from the pieces before it applies it. | User decision, review answer 4 |
 | R54 | Records use IDs, except for notes. Notes are named by path. A chat is named by forum ID and session ID. | User decision, review answer 2 |
 | R55 | A chat note copy whose source note no longer exists does not move. | User decision |
-| R56 | Configuration import and vault merge preserve the destination vault's D1 credentials, including their absence. Full vault copies and R2 downloads still carry the source credentials. | User decision, November 9, 2026 |
+| R56 | Configuration import, vault merge, and received configuration records preserve the destination vault's D1 credential values, including their absence. If another key takes their storage ID, move only the local D1 key to a free ID. Full vault copies and R2 downloads still carry the source credentials. | User decision, November 9, 2026 |
 | R57 | A newly delivered vault starts with an empty local send queue, whatever the delivery route. Clear its note "changed" flags too, so they cannot recreate the source's pending records. This applies to a new vault and to replacement of an existing vault. | User decision, November 9, 2026 |
 
 ## 3. Facts
@@ -199,15 +199,30 @@ so they come with an R2 copy (R36, F4).
 A change of these values writes no record (R44).
 
 Configuration import and vault merge keep the destination's D1 credential
-rows unchanged (R56). They ignore the source D1 credential rows and write a
+values unchanged (R56). They ignore the source D1 credential rows and write a
 warning when such rows are ignored. If the destination has no D1 credentials,
 it still has none after the operation. Import and merge therefore neither
 connect nor disconnect a vault, and they do not clear its pending records or
 note flags. Other imported or merged changes still follow the normal
 record-writing rules.
 
-This rule applies to configuration import and merge. A full vault file copy
-or R2 download still brings the credentials stored in that database (R36,
+Saved keys share the `system/keys/<id>/` namespace. If a source non-D1 key
+takes the destination D1 key's path, retain the source key's ID and move only
+the destination D1 rows to a free key ID before final validation. Use the
+existing key allocator and advance its counter above all retained/allocated
+IDs. Keep the D1 values, connection, and pending work unchanged; no provider
+or other ordinary key reference is remapped. With no collision, keep the
+current D1 key ID.
+
+Apply the same preservation rule when receiving `config.edit`: an incoming
+non-D1 key can move the receiver's local D1 key to a free ID, but cannot replace
+its values. A deletion at its current path cannot delete the local D1 setup.
+The local relocation creates no outgoing record. This is a local D1 storage
+detail, not remapping the ordinary IDs carried by R48. These collision rules
+were approved on November 9, 2026.
+
+A full vault file copy or R2 download still brings the credentials stored
+in that database (R36,
 R56). The D1 sync screen provides the explicit credential change/disconnect
 operations on an existing vault (R43, R45).
 
@@ -471,10 +486,15 @@ The rows of the D1 credentials are left out (R44). There are two save paths
   the old rows before the replace.
 
 Both import and merge first exclude the source D1 credential rows and retain
-the destination's D1 rows, if any, in the candidate (R56). Validate and find
-the changed rows from that candidate. Keep the existing key-ID allocation
-counter valid for all retained keys, including D1 credentials. The unchanged
-D1 rows produce no record.
+the destination's D1 values, relocating only its D1 key on a path collision
+as specified in section 5.2 (R56). Validate and find the changed rows from
+that candidate. Keep the existing key-ID allocation counter valid for all
+retained keys, including D1 credentials.
+
+Exclude D1 rows separately from the old and new row sets before calculating
+the outgoing delta. Do not exclude the union of their path names: if an old
+D1 path now holds an ordinary API key, that new ordinary row must be sent.
+The D1 relocation itself produces no record.
 
 One small helper finds the changed rows and adds the record. Both paths call
 it. If the save fails, its transaction adds no record.
@@ -614,10 +634,12 @@ The Worker builds a record from its pieces before it applies it (R53):
 
 ### 10.4 Configuration
 
-The Worker puts the rows of `set` and `delete` on its current rows, validates
-the result one time, and saves it one time through `commit_and_publish` (R50,
-F17). In the same transaction, it deletes the chats of each forum that the new
-configuration does not have, with the existing `prune_orphan_sessions` (F17).
+The Worker puts the rows of `set` and `delete` on its current rows, preserves
+its local D1 values and handles a key-path collision as in section 5.2 (R56),
+validates the result one time, and saves it one time through
+`commit_and_publish` (R50, F17). In the same transaction, it deletes the chats
+of each forum that the new configuration does not have, with the existing
+`prune_orphan_sessions` (F17).
 So one record covers a forum delete in Settings and an import that removes
 several forums. It turns the record off (section 8.1, R38). An invalid
 result is skipped with a warning (R14). The new configuration then becomes
@@ -632,6 +654,11 @@ active, as after a Settings edit (R12).
   hook when the editor changes. Unsaved text in the open note is lost (R32).
 - ChaWeb only reads notes (F21). Its note page shows the change when it opens
   again (R39).
+- Extend ChaWeb's existing chat read loop with a 30-second delay after a
+  successful idle read; keep its 1-second delay during a reply. Hidden pages remain
+  paused; opening or returning to the page reads immediately. Keep existing
+  failure retries and one read timer. This cadence was approved on November 9,
+  2026 (R35).
 
 ## 11. Full D1 database
 
@@ -671,8 +698,11 @@ its upload is never refused.
 
 After downloading and validating the temporary database, clear its local
 `sync_queue` and all note `changed` flags in one transaction (R26, R57).
-Then install the cleaned database using the existing download path. If the
-vault is connected, the application makes the D1 queue table of this machine
+Commit, close the cleanup handles, and use the existing checkpoint helper to
+flush the temporary database. All handles must be closed before its sidecars
+are removed. A failed or busy checkpoint aborts installation. Then install
+the cleaned database using the existing download path. If the vault is
+connected, the application makes the D1 queue table of this machine
 (R21, R46). Then the vault opens, and the first loop runs (R37). The cleanup
 does not delete incoming records from D1.
 The downloaded database brings its D1 credentials; the destination-preservation

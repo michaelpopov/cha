@@ -9,23 +9,29 @@ usage() {
     exit 2
 }
 
-run_grok() {
-    local prompt=$1
+run_pi() {
+    pi --mode json --no-session --model openrouter/meta/muse-spark-1.3-contributor "$@"
+}
 
-    grok --always-approve --output-format streaming-json --single "$prompt" |
-        jq --unbuffered -j '
-            if .type == "thought" or .type == "text" then
-                .data
-            elif .type == "tool_call" then
-                "\n[Grok tool] " + (.title // .toolName // .kind // "unknown") + "\n"
-            elif .type == "error" then
-                "\n[Grok error] " + (.message // "unknown error") + "\n"
-            elif .type == "end" then
-                "\n"
-            else
-                empty
-            end
-        '
+show_pi_events() {
+    jq --unbuffered -j '
+        if .type == "message_update"
+            and (.assistantMessageEvent.type == "thinking_delta"
+                or .assistantMessageEvent.type == "text_delta") then
+            .assistantMessageEvent.delta
+        elif .type == "tool_execution_start" then
+            "\n[Pi tool] " + .toolName + "\n"
+        elif .type == "tool_execution_end" then
+            "\n[Pi tool " + (if .isError then "failed" else "done" end) + "] " + .toolName + "\n"
+        elif .type == "message_end" and .message.role == "assistant"
+            and (.message.stopReason == "error" or .message.stopReason == "aborted") then
+            ("\n[Pi error] " + (.message.errorMessage // .message.stopReason) + "\n") | halt_error(1)
+        elif .type == "agent_end" then
+            "\n"
+        else
+            empty
+        end
+    '
 }
 
 if [[ $# -ne 1 || ! $1 =~ ^[0-9]+$ ]]; then
@@ -56,7 +62,7 @@ if (( 10#$block_number > 1 )); then
     fi
 fi
 
-for command in grok pi git jq; do
+for command in pi git jq; do
     if ! command -v "$command" >/dev/null 2>&1; then
         echo "Required command not found: $command" >&2
         exit 1
@@ -67,8 +73,9 @@ if [[ -n $(git status --short) ]]; then
     echo "Warning: existing changes will also be reviewed and committed." >&2
 fi
 
-echo "Implementing block $block_number with Grok..."
-run_grok "Implement steps described in $block_file"
+echo "Implementing block $block_number with Pi..."
+run_pi "Implement steps described in $block_file. Leave the changes uncommitted." |
+    show_pi_events
 
 review_dir=$(mktemp -d "${TMPDIR:-/tmp}/doit.XXXXXX")
 trap 'rm -rf -- "$review_dir"' EXIT
@@ -76,53 +83,35 @@ review_events="$review_dir/pi-review.jsonl"
 
 review_prompt="Uncommitted code changes implement steps described in $block_file. Review the uncommitted code. Use git status and git diff to identify modified, staged, and untracked files, then inspect relevant files as needed. Report only actionable correctness, security, regression, or necessary-test findings. For each finding, give the file, location, problem, and required fix. Do not modify files. Do not include praise, summaries, or optional suggestions. If there are no findings, output exactly NO_FINDINGS."
 
-for review_round in 1 2; do
-    echo "Reviewing uncommitted changes with Pi (round $review_round)..."
-    pi --mode json --no-session --tools read,bash,grep,find,ls \
-        "$review_prompt" |
-        tee "$review_events" |
-        jq --unbuffered -j '
-            if .type == "message_update"
-                and (.assistantMessageEvent.type == "thinking_delta"
-                    or .assistantMessageEvent.type == "text_delta") then
-                .assistantMessageEvent.delta
-            elif .type == "tool_execution_start" then
-                "\n[Pi tool] " + .toolName + "\n"
-            elif .type == "tool_execution_end" then
-                "\n[Pi tool " + (if .isError then "failed" else "done" end) + "] " + .toolName + "\n"
-            elif .type == "agent_end" then
-                "\n"
-            else
-                empty
-            end
-        '
+echo "Reviewing uncommitted changes with Pi..."
+run_pi --tools read,bash,grep,find,ls "$review_prompt" |
+    tee "$review_events" |
+    show_pi_events
 
-    review_output=$(jq -sr '
-        [
-            .[]
-            | select(.type == "message_end" and .message.role == "assistant")
-            | [.message.content[]? | select(.type == "text") | .text]
-            | join("")
-        ]
-        | last // ""
-    ' "$review_events")
-    if [[ -z $review_output ]]; then
-        echo "Pi did not produce a review." >&2
-        exit 1
-    fi
+review_output=$(jq -sr '
+    [
+        .[]
+        | select(.type == "message_end" and .message.role == "assistant")
+        | [.message.content[]? | select(.type == "text") | .text]
+        | join("")
+    ]
+    | last // ""
+' "$review_events")
+if [[ -z $review_output ]]; then
+    echo "Pi did not produce a review." >&2
+    exit 1
+fi
 
-    if [[ $review_round -eq 2 && $review_output == NO_FINDINGS ]]; then
-        echo "The final review found no issues; skipping Grok fixes."
-        break
-    fi
-
+if [[ $review_output == NO_FINDINGS ]]; then
+    echo "The review found no issues."
+else
     printf -v fix_prompt \
-        'Address the code review comments below for the uncommitted changes implementing %s. Make only the necessary fixes, run relevant tests, and leave the changes uncommitted. If the review says NO_FINDINGS, verify the current changes and do not invent work.\n\nCode review comments:\n%s' \
+        'Evaluate the code review findings below for the uncommitted changes implementing %s. Fix only findings that are valid and consistent with project requirements and prior decisions. Run relevant tests and leave the changes uncommitted.\n\nCode review findings:\n%s' \
         "$block_file" "$review_output"
 
-    echo "Applying review feedback with Grok (round $review_round)..."
-    run_grok "$fix_prompt"
-done
+    echo "Applying review feedback with Pi..."
+    run_pi "$fix_prompt" | show_pi_events
+fi
 
 printf '\nCOMPLETED\n' >> "$block_file"
 

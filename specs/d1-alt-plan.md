@@ -20,9 +20,10 @@ Use the current design decisions throughout:
 
 - Configuration import has its own record-writing hook. Both configuration
   commit paths use a small helper to produce one changed-row record.
-- Configuration import and vault merge preserve the destination's D1
-  credentials, including their absence (R56). Full vault copies and R2
-  downloads still carry source credentials.
+- Configuration import, vault merge, and received configuration records
+  preserve the destination's D1 credential values, including their absence
+  (R56). On a collision with another key's path, move only the local D1 key
+  to a free ID. Full vault copies and R2 downloads still carry source credentials.
 - Every newly delivered vault has its local send queue and note `changed`
   flags cleared before use (R57). This applies to every delivery route,
   including replacement of an existing vault. Ordinary restarts keep
@@ -137,7 +138,9 @@ limits without credential values or user content.
    does not prove that an idle ChaWeb chat refreshes. Use a small test or
    temporary prototype to select the necessary changes to the existing
    ChaWeb read/recovery loop before implementing the Worker. Keep one read
-   loop per client; do not add a second polling subsystem.
+   loop per client; do not add a second polling subsystem. The approved cadence
+   is 30 seconds while idle and 1 second during a reply, with hidden pages
+   paused and existing immediate visibility reads and failure retries retained.
 
 **Exit condition:** the transport-size and full-database assumptions are
 supported by actual results, and both clients' refresh/reconnect paths are
@@ -159,8 +162,9 @@ silently skip oversized records or add a different remote service.
   account ID, database ID, and API token. Keep it in the vault's existing
   database-backed configuration storage. Full vault copies, protected vaults,
   and R2 transfer carry it naturally. Export may include the credential rows,
-  but configuration import and merge must preserve the destination's D1 rows,
-  including preserving their absence (R56).
+  but configuration import and merge must preserve the destination's D1 values,
+  including preserving their absence (R56). Its local key ID can change only
+  to make room for a colliding ordinary key, as specified in Phase 4.
 - Follow the existing secret-detail pattern: expose token presence in
   Settings details, and preserve the stored token when an update omits it.
   Do not log tokens or complete record bodies.
@@ -273,20 +277,30 @@ audio removal; annotation links; no echo; large content round trips.
   Settings and merge, and inside `commit_imported_rows` for import. Import
   must read the old rows before replacing them.
 - Before validating an import/merge candidate, exclude the source D1
-  credential rows and retain the destination's D1 rows unchanged. If the
+  credential rows and retain the destination's D1 values unchanged. If the
   destination has none, keep it that way. Log a warning when source D1 rows
-  are ignored. Reuse merge's existing maximum-key-counter rule; on import,
-  keep the counter above the IDs of any retained destination keys.
+  are ignored. If a non-D1 source key takes the destination D1 key's path,
+  move only the local D1 rows to a free ID using the existing key allocator.
+  Preserve source ordinary-key IDs and all their references. Keep the current
+  D1 ID when there is no collision. Reuse merge's maximum-key-counter rule and
+  advance the counter above all retained/allocated IDs before validation.
   Apply the normal validation and delta calculation to this final candidate.
   These operations do not clear the local queue/flags or change the D1
   connection; only their ordinary configuration changes add records.
   Preserve the existing behavior for ordinary API keys and R2 credentials.
 - Emit one `config.edit` in the operation's transaction. Its `set` and
-  `delete` lists contain only changed rows. Identify D1 credential rows in
-  both row sets and exclude their additions, changes, and deletions. A
-  D1-only change produces no record. Ordinary API and R2 keys remain included.
-- On receipt, overlay both lists on the current configuration, validate the
-  complete candidate once, and commit/publish it once with recording disabled.
+  `delete` lists contain only changed rows. Filter D1 credential rows separately
+  from each old/new set before finding the delta. Do not exclude their union
+  of path names: a new ordinary key at a former D1 path must still be sent.
+  A D1-only change or relocation produces no record. Ordinary API and R2 keys
+  remain included.
+- On receipt, overlay both lists on the current configuration. Before
+  validation, apply the same local-D1 preservation and collision rule:
+  preserve values or absence, move only the D1 key if an incoming ordinary key
+  takes its path, and retain it if a deletion names that path. Update the key
+  counter as needed. Then validate the complete candidate once and
+  commit/publish it once with recording disabled. The local relocation
+  creates no outgoing work.
 - In that same commit transaction, run the existing orphan-session pruning
   against the candidate forums. Retain managed-folder synchronization. Do
   not reintroduce a deleted-forum field or emit extra folder records.
@@ -308,6 +322,12 @@ credentials. Include pending records and flags: the destination credentials
 and existing pending work must survive, and a disconnected destination must
 remain disconnected. Verify ignored-row warnings and valid key allocation
 after preserving a destination D1 key with a higher ID than the source keys.
+Cover a source ordinary API key at the destination D1 ID, including a provider
+that references it. The ordinary key/reference must survive at the source ID,
+the D1 values must survive at a free ID, and the outgoing delta must include
+the ordinary key but no D1 rows. Apply that delta to a second vault whose D1
+key has the same collision; verify its connection and pending work survive,
+with no echo. Also cover a received deletion at the local D1 path.
 
 ## 9. Phase 5: chats and runtime reservations
 
@@ -443,9 +463,12 @@ incoming writes during generation; reservation failure and reconnect; no echo.
   `download_database_from_r2` and `download_new_database_from_r2`, validate
   the temporary database, ensure the sync schema, and clear its `sync_queue`
   and note flags in one transaction before `publish_downloads` installs it
-  (R26, R57). Complete and close SQLite writes before installation. Cleanup
-  failure uses the existing download failure path. Keep the downloaded
-  content and D1 credentials (R56), and preserve incoming records in D1.
+  (R26, R57). Commit and close the cleanup statements/handle, then call the
+  existing `checkpoint_workspace_session_database` in non-passive mode for
+  the temporary database and its password. Close all checkpoint handles before
+  `remove_sidecars` and installation. A failed/busy checkpoint uses the existing
+  download failure path. Keep the downloaded content and D1 credentials (R56),
+  and preserve incoming records in D1.
 - After replacement, create this machine's D1 queue when connected, then run
   the normal vault-open loop. The replacement path already has the protected
   vault's password. New-vault download currently rejects protected databases
@@ -471,8 +494,11 @@ startup offline, final flush after reply cancellation, vault switch, failed
 maintenance recovery, protected download, upload blocking, and daemon restart.
 For both download paths, use a fixture with queued records and note flags;
 verify that cleanup completes before installation and the content and D1
-credentials stay intact. Cover replacement of an existing protected vault
-and the current refusal of a new protected download without a password.
+credentials stay intact. Reopen the installed file through a fresh handle
+after temporary sidecars are gone and check an empty queue and zero flags.
+Cover WAL mode and checkpoint failure without replacing the destination.
+Cover replacement of an existing protected vault and the current refusal of
+a new protected download without a password.
 For desktop creation from another local vault, verify that the destination
 is clean and the source's pending work remains. Verify that normal restart
 and missing-table recovery preserve the daemon's own unsent work.
@@ -503,8 +529,10 @@ and missing-table recovery preserve the daemon's own unsent work.
   unsaved edits as approved.
 - Implement the desktop and ChaWeb refresh/reconnect adjustments selected in
   Phase 0 through each client's existing path. Verify idle and generating
-  chats on both. ChaWeb notes continue to refresh when the note page opens
-  again.
+  chats on both. In ChaWeb, reuse its read timer with a 30-second idle delay
+  and the existing 1-second active-reply delay. Retain hidden-page pause,
+  immediate reads on open/visibility return, and failure retries. ChaWeb notes
+  continue to refresh when the note page opens again.
 
 **Checks:** credential load/save failure, missing name, Save without edits,
 offline disconnect, confirmation cancel, reset, retained secret, route/client
