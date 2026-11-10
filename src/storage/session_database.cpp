@@ -5,6 +5,8 @@
 #include "storage/note_storage.h"
 #include "storage/session_timestamp.h"
 #include "storage/sqlite_storage.h"
+#include "storage/sync_chat.h"
+#include "storage/sync_storage.h"
 #include "storage/workspace_session_database.h"
 #include "util/path_name.h"
 
@@ -453,23 +455,6 @@ void transition_turn(
     }
 }
 
-void finish_turn(
-    Database& database,
-    SessionKey session_key,
-    RequestId request_id,
-    TurnState state,
-    const TranscriptEntry* entry) {
-    Transaction transaction(database);
-    transition_turn(database, session_key, request_id, state);
-    if (entry) {
-        insert_entry(
-            database, session_key,
-            current_epoch(database, session_key), *entry);
-    }
-    touch_session(database, session_key);
-    transaction.commit();
-}
-
 std::filesystem::path create_temporary_path(
     const std::filesystem::path& path) {
     const std::filesystem::path pattern_path = path.parent_path()
@@ -620,6 +605,18 @@ public:
 
     SessionKey session_key;
     Database database;
+    std::string sync_machine;
+
+    [[nodiscard]] bool connected() {
+        return !sync_machine.empty() && sync_connected(database, sync_machine);
+    }
+
+    [[nodiscard]] std::optional<SyncChatIdentity> shared_chat() {
+        if (!connected() || !sync_chat_is_shared(database, session_key)) return std::nullopt;
+        return sync_chat_identity(database, session_key);
+    }
+
+    void finish_turn(RequestId request_id, TurnState state, const TranscriptEntry* response);
 };
 
 SessionJournal::SessionJournal(
@@ -636,6 +633,41 @@ SessionJournal::SessionJournal(std::filesystem::path path) {
 }
 
 SessionJournal::~SessionJournal() = default;
+
+void SessionJournal::set_sync_machine(std::string machine) {
+    impl_->sync_machine = std::move(machine);
+}
+
+void SessionJournal::Impl::finish_turn(
+    RequestId request_id, TurnState state, const TranscriptEntry* response) {
+    Transaction transaction(database);
+    const bool recording = connected();
+    const bool was_shared = recording && sync_chat_is_shared(database, session_key);
+    transition_turn(database, session_key, request_id, state);
+    if (response)
+        insert_entry(database, session_key, current_epoch(database, session_key), *response);
+    touch_session(database, session_key);
+    if (recording && sync_chat_is_shared(database, session_key)) {
+        if (const auto identity = sync_chat_identity(database, session_key)) {
+            if (!was_shared) {
+                sync_record_chat_initial(database, session_key, *identity);
+            } else if (response) {
+                auto prompt = database.prepare(
+                    "SELECT entry_id, request_id, kind, participant_id, display_name, "
+                    "addressed_to, addressed_to_name, text, status, created_at, "
+                    "input_tokens, output_tokens, web_search_used FROM entries "
+                    "WHERE session_key=?1 AND request_id=?2 AND kind=0",
+                    session_key, sqlite_id(request_id, "Request ID"));
+                if (prompt.step()) {
+                    auto fields = sync_chat_entries_fields(
+                        {read_entry(prompt), *response}, static_cast<int>(state));
+                    sync_enqueue_chat(database, *identity, "chat.entries", std::move(fields));
+                }
+            }
+        }
+    }
+    transaction.commit();
+}
 
 void SessionJournal::start_turn(
     RequestId request_id,
@@ -663,6 +695,12 @@ void SessionJournal::record_entry(const TranscriptEntry& entry) {
         impl_->database, impl_->session_key,
         current_epoch(impl_->database, impl_->session_key), entry);
     touch_session(impl_->database, impl_->session_key);
+    if (entry.kind == EntryKind::human && entry.addressed_to == null_agent_handle) {
+        if (const auto identity = impl_->shared_chat()) {
+            sync_enqueue_chat(impl_->database, *identity, "chat.entries",
+                sync_chat_entries_fields({entry}, std::nullopt));
+        }
+    }
     transaction.commit();
 }
 
@@ -683,6 +721,15 @@ TranscriptEntry SessionJournal::add_note(const NoteText& note, EntryId entry_id)
     insert_entry(impl_->database, impl_->session_key,
         current_epoch(impl_->database, impl_->session_key), entry);
     touch_session(impl_->database, impl_->session_key);
+    if (const auto identity = impl_->shared_chat()) {
+        auto source = impl_->database.prepare("SELECT 1 FROM note_items WHERE id=?1", note.id);
+        // A copied note whose source was deleted has no path to send.
+        if (source.step()) {
+            sync_enqueue_chat(impl_->database, *identity, "chat.add_note",
+                {{"path", sync_note_path(impl_->database, note.id)},
+                 {"name", note.name}, {"text", note.text}});
+        }
+    }
     transaction.commit();
     return entry;
 }
@@ -705,6 +752,10 @@ TranscriptEntry SessionJournal::add_text_file(
     insert_entry(impl_->database, impl_->session_key,
         current_epoch(impl_->database, impl_->session_key), entry);
     touch_session(impl_->database, impl_->session_key);
+    if (const auto identity = impl_->shared_chat()) {
+        sync_enqueue_chat(impl_->database, *identity, "chat.add_file",
+            {{"name", name}, {"text", text}});
+    }
     transaction.commit();
     return entry;
 }
@@ -741,6 +792,12 @@ TranscriptEntry SessionJournal::add_folder(
     insert_entry(impl_->database, impl_->session_key,
         current_epoch(impl_->database, impl_->session_key), entry);
     touch_session(impl_->database, impl_->session_key);
+    if (!already) {
+        if (const auto identity = impl_->shared_chat()) {
+            sync_enqueue_chat(impl_->database, *identity, "chat.add_folder",
+                {{"path", sync_note_path(impl_->database, folder_id)}});
+        }
+    }
     transaction.commit();
     return entry;
 }
@@ -763,6 +820,15 @@ TranscriptEntry SessionJournal::detach_folder(
     insert_entry(impl_->database, impl_->session_key,
         current_epoch(impl_->database, impl_->session_key), entry);
     touch_session(impl_->database, impl_->session_key);
+    if (attached) {
+        if (const auto identity = impl_->shared_chat()) {
+            auto source = impl_->database.prepare("SELECT 1 FROM note_items WHERE id=?1", folder_id);
+            if (source.step()) {
+                sync_enqueue_chat(impl_->database, *identity, "chat.detach_folder",
+                    {{"path", sync_note_path(impl_->database, folder_id)}});
+            }
+        }
+    }
     transaction.commit();
     return entry;
 }
@@ -806,9 +872,7 @@ void SessionJournal::complete_turn(
     RequestId request_id,
     const TranscriptEntry& response) {
     validate_turn_entry(TurnRecordKind::completed, request_id, response);
-    finish_turn(
-        impl_->database, impl_->session_key, request_id,
-        TurnState::completed, &response);
+    impl_->finish_turn(request_id, TurnState::completed, &response);
 }
 
 void SessionJournal::cancel_turn(
@@ -821,18 +885,14 @@ void SessionJournal::cancel_turn(
     if (response) {
         validate_turn_entry(TurnRecordKind::cancelled, request_id, *response);
     }
-    finish_turn(
-        impl_->database, impl_->session_key, request_id,
-        TurnState::cancelled, response ? &*response : nullptr);
+    impl_->finish_turn(request_id, TurnState::cancelled, response ? &*response : nullptr);
 }
 
 void SessionJournal::fail_turn(
     RequestId request_id,
     const TranscriptEntry& error) {
     validate_turn_entry(TurnRecordKind::failed, request_id, error);
-    finish_turn(
-        impl_->database, impl_->session_key, request_id,
-        TurnState::failed, &error);
+    impl_->finish_turn(request_id, TurnState::failed, &error);
 }
 
 void SessionJournal::delete_turn(EntryId response_entry_id) {
@@ -852,6 +912,13 @@ void SessionJournal::delete_turn(EntryId response_entry_id) {
         throw std::invalid_argument(
             "Response entry does not identify a completed turn");
     }
+    const auto identity = impl_->shared_chat();
+    std::optional<std::int64_t> position;
+    if (identity) {
+        const auto turns = sync_chat_turns(impl_->database, impl_->session_key);
+        const auto found = std::ranges::find(turns, sqlite_id(*request_id, "Request ID"));
+        if (found != turns.end()) position = std::distance(turns.begin(), found) + 1;
+    }
     Statement entries = impl_->database.prepare(
         "DELETE FROM entries WHERE session_key = ?1 AND request_id = ?2",
         impl_->session_key,
@@ -869,6 +936,8 @@ void SessionJournal::delete_turn(EntryId response_entry_id) {
         throw std::runtime_error("Failed to delete transcript turn");
     }
     touch_session(impl_->database, impl_->session_key);
+    if (position)
+        sync_enqueue_chat(impl_->database, *identity, "chat.delete_turn", {{"turn", *position}});
     transaction.commit();
 }
 
@@ -893,11 +962,21 @@ void SessionJournal::set_character_settings(
         else statement.bind_null(4);
         statement.run();
     }
+    if (const auto identity = impl_->shared_chat()) {
+        nlohmann::json fields{{"character_id", character_id}};
+        fields["provider_id"] = settings.provider_id
+            ? nlohmann::json(*settings.provider_id) : nlohmann::json(nullptr);
+        fields["reasoning_effort"] = settings.reasoning_effort
+            ? nlohmann::json(*settings.reasoning_effort) : nlohmann::json(nullptr);
+        sync_enqueue_chat(impl_->database, *identity, "chat.character", std::move(fields));
+    }
     transaction.commit();
 }
 
 void SessionJournal::clear_history() {
     Transaction transaction(impl_->database);
+    const bool recording = impl_->connected();
+    const bool was_shared = recording && sync_chat_is_shared(impl_->database, impl_->session_key);
     Statement entries = impl_->database.prepare(
         "DELETE FROM entries WHERE session_key = ?1", impl_->session_key);
     entries.run();
@@ -912,11 +991,19 @@ void SessionJournal::clear_history() {
     files.run();
     session_folder_clear(impl_->database, impl_->session_key);
     touch_session(impl_->database, impl_->session_key);
+    if (const auto identity = impl_->shared_chat()) {
+        if (was_shared)
+            sync_enqueue_chat(impl_->database, *identity, "chat.clear", nlohmann::json::object());
+        else
+            sync_record_chat_initial(impl_->database, impl_->session_key, *identity);
+    }
     transaction.commit();
 }
 
 void SessionJournal::rename(std::string_view label) {
     Transaction transaction(impl_->database);
+    const bool was_shared = impl_->connected()
+        && sync_chat_is_shared(impl_->database, impl_->session_key);
     Statement update = impl_->database.prepare(
         "UPDATE sessions SET label = ?1, updated_at = ?2, recent_pending = 0, discardable = 0 "
         "WHERE session_key = ?3 AND archived_at IS NULL",
@@ -924,6 +1011,12 @@ void SessionJournal::rename(std::string_view label) {
     update.run();
     if (impl_->database.changes() != 1) {
         throw std::runtime_error("Failed to rename live session");
+    }
+    if (const auto identity = impl_->shared_chat()) {
+        if (was_shared)
+            sync_enqueue_chat(impl_->database, *identity, "chat.rename", nlohmann::json::object());
+        else
+            sync_record_chat_initial(impl_->database, impl_->session_key, *identity);
     }
     transaction.commit();
 }

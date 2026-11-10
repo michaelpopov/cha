@@ -907,16 +907,27 @@ std::vector<LiveSessionHandle> LiveSessionManager::active_sessions() {
     return result ? std::move(*result) : std::vector<LiveSessionHandle>{};
 }
 
+MaintenanceReservationResult LiveSessionManager::reserve_for_sync(
+    const FullSessionId& key, std::chrono::milliseconds deadline) {
+    return reserve_session(key, deadline, ShutdownReason::reloading);
+}
+
 MaintenanceReservationResult LiveSessionManager::reserve_for_deletion(
+    const FullSessionId& key, std::chrono::milliseconds deadline) {
+    return reserve_session(key, deadline, ShutdownReason::session_deleted);
+}
+
+MaintenanceReservationResult LiveSessionManager::reserve_session(
     const FullSessionId& key,
-    std::chrono::milliseconds deadline) {
+    std::chrono::milliseconds deadline,
+    ShutdownReason reason) {
     auto& impl = *runtime_->impl_;
     const auto end = std::chrono::steady_clock::now() + deadline;
     if (impl.stopping_requested.load()) return MaintenanceFailure::manager_stopping;
     auto active = std::make_shared<std::atomic_bool>(true);
     LiveSessionMaintenanceReservation reservation(*this, active);
     auto reply = std::make_shared<RuntimeReply<bool>>();
-    if (!impl.enqueue_control_until([&impl, key, reply, active, end] {
+    if (!impl.enqueue_control_until([&impl, key, reply, active, end, reason] {
             if (!active->load() || std::chrono::steady_clock::now() >= end
                 || impl.stopping_requested.load() || impl.global_maintenance
                 || impl.maintenance.contains(key)) {
@@ -927,7 +938,7 @@ MaintenanceReservationResult LiveSessionManager::reserve_for_deletion(
             if (impl.selected && *impl.selected == key) impl.selected.reset();
             const auto found = impl.sessions.find(key);
             if (found != impl.sessions.end()) {
-                found->second->request_shutdown(ShutdownReason::session_deleted);
+                found->second->request_shutdown(reason);
             }
             (void)reply->complete(true);
         }, end)) {

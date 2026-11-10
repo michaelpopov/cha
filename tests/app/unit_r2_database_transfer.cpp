@@ -2,6 +2,7 @@
 
 #include "storage/session_lease.h"
 #include "storage/note_storage.h"
+#include "storage/sync_storage.h"
 #include "storage/workspace_session_database.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
@@ -72,6 +73,23 @@ std::filesystem::path write_vault(
     output << "vault_name = " << std::quoted(std::string(name)) << "\n"
            << "data = " << std::quoted(database.string()) << "\n";
     return path;
+}
+
+void seed_pending_sync(const std::filesystem::path& path) {
+    {
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+        database.execute("PRAGMA journal_mode=WAL");
+        database.prepare(
+            "INSERT INTO config (name, content) VALUES (?1, ?2)",
+            "system/keys/api_key_1/config.toml",
+            "display_name = \"D1\"\ntype = \"D1\"\naccount_id = \"a\"\n"
+            "database_id = \"d\"\napi_token = \"t\"\n").run();
+        const auto note = note_create(database, std::nullopt, NoteItemKind::note, "Flagged");
+        database.prepare("UPDATE note_items SET changed=1 WHERE id=?1", note.id).run();
+        sync_queue_append(database, R"({"kind":"chat.clear"})");
+        ASSERT_TRUE(sync_has_pending(database));
+    }
+    checkpoint_workspace_session_database(path, {}, false);
 }
 
 TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
@@ -519,6 +537,7 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
     remote_workspace.add_persona("remote", "Remote Persona");
     const std::filesystem::path remote =
         test::import_test_database(remote_workspace.root());
+    seed_pending_sync(remote);
     const std::string remote_bytes = file_bytes(remote);
     const std::filesystem::path destination =
         remote_workspace.root() / "downloaded.sqlite3";
@@ -541,9 +560,19 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
     const R2DatabaseTransfer result = download_new_database_from_r2(
         destination, vault, "archive.sqlite3", key);
     server.join();
+    EXPECT_FALSE(std::filesystem::exists(stale_wal));
 
     EXPECT_EQ(result.byte_count, remote_vault.size() + remote_bytes.size());
-    EXPECT_EQ(file_bytes(destination), remote_bytes);
+    // Cleanup clears the queue/flags and checkpoints before installation,
+    // so the installed bytes differ from the raw download.
+    {
+        storage::SqliteDatabase installed(
+            destination, storage::SqliteDatabase::Mode::read_only);
+        EXPECT_TRUE(sync_queue_list(installed).empty());
+        EXPECT_FALSE(sync_has_pending(installed));
+        EXPECT_TRUE(sync_read_d1(installed));
+        EXPECT_TRUE(sync_note_find(installed, {"Flagged"}));
+    }
     const VaultDefinition downloaded = load_vault_definition_file(
         remote_workspace.root(), vault);
     EXPECT_EQ(downloaded.name, "Remote Archive");
@@ -553,7 +582,6 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
     EXPECT_EQ(
         inspect_workspace_session_database(destination),
         WorkspaceDatabaseState::valid_v2);
-    EXPECT_FALSE(std::filesystem::exists(stale_wal));
     std::filesystem::path backup = destination;
     backup += ".bac";
     EXPECT_FALSE(std::filesystem::exists(backup));
@@ -612,7 +640,12 @@ TEST(R2DatabaseTransfer, CreatesALocalDefinitionWhenR2HasOnlyTheDatabase) {
     server.join();
 
     EXPECT_EQ(result.byte_count, remote_bytes.size());
-    EXPECT_EQ(file_bytes(destination), remote_bytes);
+    {
+        storage::SqliteDatabase installed(
+            destination, storage::SqliteDatabase::Mode::read_only);
+        EXPECT_TRUE(sync_queue_list(installed).empty());
+        EXPECT_FALSE(sync_has_pending(installed));
+    }
     const VaultDefinition downloaded = load_vault_definition_file(
         workspace.root(), vault);
     EXPECT_EQ(downloaded.name, "philosophy");
@@ -637,6 +670,7 @@ TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
     std::ofstream(vault, std::ios::app) << "r2_etag = \"local-etag\"\n";
     const std::string local_bytes = file_bytes(local);
     const std::string local_vault = file_bytes(vault);
+    seed_pending_sync(remote);
     const std::string remote_bytes = file_bytes(remote);
     const std::string remote_vault =
         "vault_name = \"Test\"\n"
@@ -662,7 +696,14 @@ TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
     server.join();
 
     EXPECT_EQ(result.byte_count, remote_bytes.size() + remote_vault.size());
-    EXPECT_EQ(file_bytes(local), remote_bytes);
+    {
+        storage::SqliteDatabase installed(
+            local, storage::SqliteDatabase::Mode::read_only);
+        EXPECT_TRUE(sync_queue_list(installed).empty());
+        EXPECT_FALSE(sync_has_pending(installed));
+        EXPECT_TRUE(sync_read_d1(installed));
+        EXPECT_TRUE(sync_note_find(installed, {"Flagged"}));
+    }
     const VaultDefinition downloaded = load_vault_definition_file(
         local_workspace.root(), vault);
     EXPECT_EQ(downloaded.name, "Test");
@@ -680,6 +721,61 @@ TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
     EXPECT_TRUE(server.requests()[1].starts_with(
         "GET /cha-backups/workspace.sqlite3 HTTP/1.1"));
     EXPECT_EQ(server.requests()[1].find("If-Match:"), std::string::npos);
+}
+
+TEST(R2DatabaseTransfer, CleansProtectedReplacementBeforeInstallation) {
+    test::TestWorkspace local_workspace;
+    test::TestWorkspace remote_workspace;
+    const auto local = test::import_test_database(local_workspace.root());
+    const auto remote = test::import_test_database(remote_workspace.root());
+    constexpr std::string_view password = "password";
+    seed_pending_sync(remote);
+    protect_workspace_session_database(local, password);
+    protect_workspace_session_database(remote, password);
+    const auto vault = write_vault(local);
+    std::ofstream(vault, std::ios::app) << "protected = true\n";
+    const auto definition = file_bytes(vault);
+    MockHttpServer server({
+        http_response("application/toml", definition),
+        etag_response("application/vnd.sqlite3", file_bytes(remote), "protected-etag"),
+    });
+    server.start();
+    (void)download_database_from_r2(local, vault, storage(mock_url(server.port())),
+        R2DatabaseLease::acquire, password);
+    server.join();
+
+    storage::SqliteDatabase installed(local, storage::SqliteDatabase::Mode::read_only, password);
+    EXPECT_FALSE(sync_has_pending(installed));
+    EXPECT_TRUE(sync_read_d1(installed));
+    EXPECT_TRUE(sync_note_find(installed, {"Flagged"}));
+}
+
+TEST(R2DatabaseTransfer, CleanupFailureLeavesExistingDatabaseInPlace) {
+    test::TestWorkspace local_workspace;
+    test::TestWorkspace remote_workspace;
+    const auto local = test::import_test_database(local_workspace.root());
+    const auto remote = test::import_test_database(remote_workspace.root());
+    seed_pending_sync(remote);
+    {
+        storage::SqliteDatabase database(remote, storage::SqliteDatabase::Mode::read_write);
+        database.execute(
+            "CREATE TRIGGER fail_sync_cleanup BEFORE DELETE ON sync_queue "
+            "BEGIN SELECT RAISE(ABORT, 'Sync cleanup failed'); END");
+    }
+    checkpoint_workspace_session_database(remote, {}, false);
+    const auto vault = write_vault(local);
+    const auto local_bytes = file_bytes(local);
+    const auto local_definition = file_bytes(vault);
+    MockHttpServer server({
+        http_response("application/toml", local_definition),
+        etag_response("application/vnd.sqlite3", file_bytes(remote), "new-etag"),
+    });
+    server.start();
+    EXPECT_THROW((void)download_database_from_r2(local, vault, storage(mock_url(server.port()))),
+        std::runtime_error);
+    server.join();
+    EXPECT_EQ(file_bytes(local), local_bytes);
+    EXPECT_EQ(file_bytes(vault), local_definition);
 }
 
 TEST(R2DatabaseTransfer, InvalidDownloadLeavesBothFilesAndBackupsUntouched) {

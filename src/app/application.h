@@ -16,6 +16,7 @@
 #include "storage/note_storage.h"
 #include "storage/event_storage.h"
 #include "workspace/workspace_config_store.h"
+#include "app/d1_client.h"
 
 #include <chrono>
 #include <cstdint>
@@ -94,7 +95,8 @@ public:
     static std::unique_ptr<Application> open(
         const ApplicationCommand& command,
         std::string vault_password = {},
-        RuntimeSettings settings = {});
+        RuntimeSettings settings = {},
+        D1Client::Transport d1_transport_for_tests = {});
 
     ~Application();
     Application(const Application&) = delete;
@@ -482,6 +484,12 @@ public:
         SaveR2StorageRequest request,
         std::uint64_t epoch);
     void delete_r2_storage(std::uint64_t epoch);
+    [[nodiscard]] std::optional<D1StorageDetail> get_d1_storage(
+        std::uint64_t epoch);
+    [[nodiscard]] D1StorageDetail save_d1_storage(
+        SaveD1StorageRequest request,
+        std::uint64_t epoch);
+    void disconnect_d1_storage(std::uint64_t epoch);
 
     [[nodiscard]] OpenAiAuth openai_auth_status(
         std::uint64_t epoch);
@@ -532,6 +540,8 @@ public:
 
     [[nodiscard]] std::vector<NoteItem> list_note_items(std::uint64_t epoch);
     void set_note_compression_changed(NoteAudioChanged callback);
+    using NotesChanged = std::function<void(std::uint64_t epoch)>;
+    void set_notes_changed(NotesChanged callback);
     [[nodiscard]] nlohmann::json compress_note(
         std::int64_t id, std::uint64_t epoch, bool skip_ineligible = false);
     [[nodiscard]] nlohmann::json note_compression_status(std::int64_t id, std::uint64_t epoch);

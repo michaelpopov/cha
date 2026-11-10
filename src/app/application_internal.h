@@ -11,6 +11,7 @@
 #include "providers/openai_oauth.h"
 #include "providers/providers.h"
 #include "storage/session_repository.h"
+#include "app/d1_sync.h"
 #include "app/current_vault.h"
 #include "session/session_mirror.h"
 
@@ -22,10 +23,10 @@ struct Application::Impl {
     explicit Impl(
         const ApplicationCommand& selected_command,
         std::string selected_vault_password,
-        RuntimeSettings selected_settings);
+        RuntimeSettings selected_settings,
+        D1Client::Transport d1_transport);
 
     static constexpr unsigned can_modify = 1U << 0;
-    static constexpr unsigned can_transfer_r2 = 1U << 1;
 
     void publish_capabilities_locked();
 
@@ -55,6 +56,8 @@ struct Application::Impl {
     // Private coordinator for vault changes and database recovery. It uses the
     // application's existing admission state; callbacks are dispatched only
     // after releasing the lifecycle lock.
+    enum class SyncStart { resume, open, recover, credentials_saved };
+
     struct VaultMaintenance {
         explicit VaultMaintenance(Impl& application) : app(application) {}
 
@@ -87,10 +90,6 @@ struct Application::Impl {
 
         void publish_vault_names();
         void delete_forum(std::string_view forum_id, std::uint64_t epoch);
-        SyncConfigApplyOutcome apply_sync_config_edit(
-            const std::vector<ConfigFile>& set_rows,
-            const std::vector<std::string>& delete_names,
-            std::uint64_t epoch);
     private:
         void publish_vault(VaultDefinition vault);
         R2DatabaseUpload prepare_upload(
@@ -112,7 +111,9 @@ struct Application::Impl {
             PendingContextNotice& notice,
             bool cancel_audio = true, bool require_main = true);
         void cancel_maintenance_locked(PendingContextNotice& notice);
-        void end_maintenance_locked(bool available, PendingContextNotice& notice);
+        void end_maintenance_locked(
+            bool available, PendingContextNotice& notice,
+            SyncStart sync_start = SyncStart::resume);
         void reopen(
             WorkspaceConfigStore::MaintenanceGuard& database,
             const SessionRepository::MaintenanceGuard& repository);
@@ -124,7 +125,8 @@ struct Application::Impl {
         auto maintain_database(
             std::uint64_t epoch,
             Operation operation,
-            bool cancel_audio = true);
+            bool cancel_audio = true,
+            SyncStart sync_start = SyncStart::resume);
 
         Impl& app;
         std::optional<LiveSessionGlobalMaintenance> global_maintenance;
@@ -173,8 +175,14 @@ struct Application::Impl {
     std::uint64_t notified_epoch{};
     ApplicationState notified_state{ApplicationState::running};
     VaultMaintenance vault_maintenance{*this};
+    void start_sync_worker(SyncStart mode);
+    void resume_sync_worker();
     // Declared after its borrowed dependencies; BackgroundJobs joins in ~Impl.
     std::unique_ptr<NotesService> notes;
+    D1Client::Transport d1_test_transport;
+    std::mutex notes_changed_mutex;
+    NotesChanged notes_changed;
+    std::unique_ptr<D1SyncWorker> sync_worker;
 };
 
 } // namespace cha::app

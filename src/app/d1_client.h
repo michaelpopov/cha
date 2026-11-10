@@ -80,6 +80,8 @@ public:
         std::string_view table, std::int64_t last_rowid);
     [[nodiscard]] std::pair<std::int64_t, std::optional<Error>> count_rows(
         std::string_view table);
+    [[nodiscard]] std::pair<std::vector<std::int64_t>, std::optional<Error>> count_rows(
+        const std::vector<std::string>& tables);
     [[nodiscard]] std::optional<Error> drop_table(std::string_view table);
     [[nodiscard]] std::string query_url() const;
 

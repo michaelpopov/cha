@@ -244,6 +244,7 @@ public:
     // Machine name from app.toml for D1 sync records. Empty means unnamed:
     // the vault is disconnected and operations write no records or flags.
     void set_sync_machine(std::string machine);
+    [[nodiscard]] std::string sync_machine() const;
     // Applies one incoming config.edit record for the sync Worker. Validates
     // once, commits once with recording disabled, and prunes sessions for
     // every removed forum. The maintenance callback runs after validation and
@@ -370,6 +371,7 @@ public:
     void apply_r2_storage_delete();
     void apply_d1_storage_create(const D1StorageKey& key);
     void apply_d1_storage_update(const D1StorageKey& key);
+    void apply_d1_storage_delete();
     void apply_key_migration(
         std::span<const SavedApiKey> api_keys,
         const std::optional<R2StorageKey>& r2_storage,

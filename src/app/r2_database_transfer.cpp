@@ -1,6 +1,7 @@
 #include "app/r2_database_transfer.h"
 
 #include "storage/session_lease.h"
+#include "storage/sync_storage.h"
 #include "storage/workspace_session_database.h"
 #include "util/crypto.h"
 #include "util/curl.h"
@@ -1125,6 +1126,21 @@ R2DatabaseTransfer upload_database_to_r2(
     return upload.upload(storage, cancelled, expected_etag);
 }
 
+static void cleanup_downloaded_database(
+    const std::filesystem::path& temporary_path,
+    std::string_view password) {
+    {
+        storage::SqliteDatabase database(
+            temporary_path, storage::SqliteDatabase::Mode::read_write, password);
+        storage::SqliteTransaction transaction(database);
+        sync_clear_outgoing(database);
+        transaction.commit();
+    }
+    // Non-passive checkpoint uses TRUNCATE and rejects a busy checkpoint.
+    // Handles close before sidecars are removed. Failure aborts installation.
+    checkpoint_workspace_session_database(temporary_path, password, false);
+}
+
 R2DatabaseTransfer download_database_from_r2(
     const std::filesystem::path& database_path,
     const std::filesystem::path& vault_definition_path,
@@ -1180,6 +1196,7 @@ R2DatabaseTransfer download_database_from_r2(
         }
     });
 
+    cleanup_downloaded_database(database_temporary.get(), database_password);
     remove_sidecars(database_temporary.get());
     publish_downloads(
         database_temporary, vault_temporary, database, vault);
@@ -1304,6 +1321,7 @@ R2DatabaseTransfer download_new_database_from_r2(
         != WorkspaceDatabaseState::valid_v2) {
         throw std::runtime_error("R2 download is not a valid CHA database");
     }
+    cleanup_downloaded_database(database_temporary.get(), {});
     remove_sidecars(database_temporary.get());
     publish_downloads(
         database_temporary, vault_temporary, database, vault);

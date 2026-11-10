@@ -5,6 +5,8 @@
 #include "storage/session_label.h"
 #include "storage/session_timestamp.h"
 #include "storage/sqlite_storage.h"
+#include "storage/sync_chat.h"
+#include "storage/sync_storage.h"
 #include "storage/workspace_session_database.h"
 #include "util/logging.h"
 #include "util/path_name.h"
@@ -262,6 +264,16 @@ void SessionRepository::MaintenanceGuard::retarget(
 SessionRepository::MaintenanceGuard
 SessionRepository::reserve_maintenance() {
     return MaintenanceGuard(*this);
+}
+
+std::shared_ptr<SessionLease> SessionRepository::reserve_for_sync(const FullSessionId& identity) const {
+    const std::shared_lock operation(operation_mutex_);
+    return acquire_session(identity);
+}
+
+void SessionRepository::set_sync_machine(std::string machine) {
+    const std::unique_lock lock(operation_mutex_);
+    sync_machine_ = std::move(machine);
 }
 
 std::filesystem::path SessionRepository::database_path() const {
@@ -640,6 +652,17 @@ StoredSession SessionRepository::create(
         + std::to_string(max_session_id_attempts) + " attempts");
 }
 
+static std::optional<std::int64_t> sync_session_key(
+    Database& database, const FullSessionId& identity, std::string_view machine) {
+    if (machine.empty() || !sync_connected(database, machine)) return std::nullopt;
+    auto find = database.prepare(
+        "SELECT s.session_key FROM sessions s JOIN forums f USING(forum_key) "
+        "WHERE f.forum_id=?1 AND s.session_id=?2 AND s.archived_at IS NULL",
+        identity.forum_id, identity.session_id);
+    if (!find.step()) return std::nullopt;
+    return find.integer(0);
+}
+
 StoredSession SessionRepository::rename(
     const FullSessionId& identity,
     std::string label) const {
@@ -651,6 +674,8 @@ StoredSession SessionRepository::rename(
         database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);
     Transaction transaction(database);
+    const auto key = sync_session_key(database, identity, sync_machine_);
+    const bool was_shared = key && sync_chat_is_shared(database, *key);
     const std::int64_t updated_at = session_timestamp();
     Statement update = database.prepare(
         "UPDATE sessions SET label = ?1, updated_at = ?2, recent_pending = 0, discardable = 0 "
@@ -664,6 +689,14 @@ StoredSession SessionRepository::rename(
     update.run();
     if (database.changes() != 1) {
         throw missing_session_error(identity.session_id);
+    }
+    if (key && sync_chat_is_shared(database, *key)) {
+        if (const auto chat = sync_chat_identity(database, *key)) {
+            if (was_shared)
+                sync_enqueue_chat(database, *chat, "chat.rename", nlohmann::json::object());
+            else
+                sync_record_chat_initial(database, *key, *chat);
+        }
     }
     transaction.commit();
     return {
@@ -699,6 +732,9 @@ void SessionRepository::delete_session(const FullSessionId& identity) const {
         database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);
     Transaction transaction(database);
+    const auto key = sync_session_key(database, identity, sync_machine_);
+    const auto chat = key && sync_chat_is_shared(database, *key)
+        ? sync_chat_identity(database, *key) : std::nullopt;
     Statement remove = database.prepare(
         "DELETE FROM sessions WHERE session_key = ("
         "SELECT s.session_key FROM sessions AS s "
@@ -710,6 +746,8 @@ void SessionRepository::delete_session(const FullSessionId& identity) const {
     if (database.changes() != 1) {
         throw missing_session_error(identity.session_id);
     }
+    if (chat)
+        sync_enqueue_chat(database, *chat, "chat.delete", nlohmann::json::object());
     transaction.commit();
     release_pending(identity);
 }

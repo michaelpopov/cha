@@ -163,6 +163,13 @@ void delete_api_key(ApiKeyStore& api_keys, std::string_view id);
     ApiKeyStore& api_keys,
     const SaveR2StorageRequest& request);
 void delete_r2_storage(ApiKeyStore& api_keys);
+[[nodiscard]] D1StorageDetail d1_storage_detail(const D1StorageInfo& key);
+[[nodiscard]] std::optional<D1StorageDetail> get_d1_storage(
+    const ApiKeyStore& api_keys);
+[[nodiscard]] D1StorageDetail save_d1_storage(
+    ApiKeyStore& api_keys,
+    const SaveD1StorageRequest& request);
+void delete_d1_storage(ApiKeyStore& api_keys);
 
 [[nodiscard]] OpenAiAuth openai_auth_status(const OpenAiOAuth& owner);
 [[nodiscard]] OpenAiAuth start_openai_auth(

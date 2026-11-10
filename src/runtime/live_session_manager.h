@@ -137,6 +137,11 @@ public:
     [[nodiscard]] MaintenanceReservationResult reserve_for_deletion(
         const FullSessionId& key,
         std::chrono::milliseconds deadline);
+    // Sync path: stops an open chat with reason reloading so the screen
+    // reconnects after release. Same waiting semantics as deletion.
+    [[nodiscard]] MaintenanceReservationResult reserve_for_sync(
+        const FullSessionId& key,
+        std::chrono::milliseconds deadline);
     [[nodiscard]] GlobalMaintenanceResult reserve_global_maintenance(
         std::chrono::milliseconds deadline);
 
@@ -147,6 +152,8 @@ public:
 private:
     friend class LiveSessionMaintenanceReservation;
     friend class LiveSessionGlobalMaintenance;
+    [[nodiscard]] MaintenanceReservationResult reserve_session(
+        const FullSessionId& key, std::chrono::milliseconds deadline, ShutdownReason reason);
     void release_maintenance(const std::shared_ptr<std::atomic_bool>& active) noexcept;
 
     std::shared_ptr<SessionRuntime> runtime_;

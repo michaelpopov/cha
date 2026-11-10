@@ -5,7 +5,7 @@ set -euo pipefail
 started_at=$SECONDS
 
 usage() {
-    echo "Usage: $0 N" >&2
+    echo "Usage: $0 N DESIGN_FILE" >&2
     exit 2
 }
 
@@ -56,11 +56,20 @@ show_pi_events() {
     '
 }
 
-if [[ $# -ne 1 || ! $1 =~ ^[0-9]+$ ]]; then
+if [[ $# -ne 2 || ! $1 =~ ^[0-9]+$ ]]; then
     usage
 fi
 
 block_number=$1
+design_file=$2
+if [[ ! -f $design_file || ! -r $design_file ]]; then
+    printf 'Invalid design file: %s (expected a readable regular file)\n' "$design_file" >&2
+    exit 1
+fi
+if [[ $design_file != /* ]]; then
+    design_file="$PWD/$design_file"
+fi
+
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(git -C "$script_dir" rev-parse --show-toplevel)
 block_file="docs/block${block_number}.md"
@@ -84,7 +93,7 @@ if (( 10#$block_number > 1 )); then
     fi
 fi
 
-for command in pi git jq; do
+for command in pi codex git jq; do
     if ! command -v "$command" >/dev/null 2>&1; then
         echo "Required command not found: $command" >&2
         exit 1
@@ -143,6 +152,12 @@ else
     echo "Applying review feedback with Pi..."
     run_pi "$fix_prompt"
 fi
+
+echo "Reviewing uncommitted changes against the design with Codex..."
+design_review_prompt="Review the staged, unstaged, and untracked code changes against the technical design supplied on stdin from $design_file. Use $block_file to determine which design requirements apply to this block. Report actionable findings with file locations, or state that there are no findings. Do not edit files or commit changes."
+codex --yolo exec --model gpt-6.1-sol \
+    -c 'model_reasoning_effort="xhigh"' -c 'service_tier="fast"' \
+    "$design_review_prompt" < "$design_file"
 
 printf '\nCOMPLETED\n' >> "$block_file"
 

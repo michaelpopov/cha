@@ -548,6 +548,21 @@ struct SaveR2StorageRequest {
     std::optional<std::string> secret_key;
 };
 
+struct D1StorageDetail {
+    std::string id;
+    std::string display_name;
+    std::string account_id;
+    std::string database_id;
+    bool has_api_token{};
+};
+
+struct SaveD1StorageRequest {
+    std::string display_name;
+    std::string account_id;
+    std::string database_id;
+    std::optional<std::string> api_token;
+};
+
 struct OpenAiAuth {
     std::string status;
     std::optional<std::string> user_code;
@@ -629,6 +644,7 @@ void to_json(nlohmann::json& json, const VoiceOutputSettings& value);
 void to_json(nlohmann::json& json, const VoiceOutputRuntime& value);
 void to_json(nlohmann::json& json, const ApiKeyDetail& value);
 void to_json(nlohmann::json& json, const R2StorageDetail& value);
+void to_json(nlohmann::json& json, const D1StorageDetail& value);
 void to_json(nlohmann::json& json, const OpenAiAuth& value);
 void to_json(nlohmann::json& json, const Error& value);
 void to_json(nlohmann::json& json, const SnapshotEvent& value);

@@ -320,6 +320,8 @@ add_library(cha_lib STATIC
     src/session/session_controller.cpp
     src/session/summary_prompt_cache.cpp
     src/storage/session_database.cpp
+    src/storage/sync_chat.cpp
+    src/app/d1_sync.cpp
     src/storage/note_storage.cpp
     src/storage/sync_storage.cpp
     src/app/d1_client.cpp
@@ -567,6 +569,7 @@ if(BUILD_TESTING)
         tests/storage/unit_session_repository.cpp
         tests/storage/unit_workspace_session_database.cpp
         tests/storage/unit_sync.cpp
+        tests/storage/unit_sync_chat.cpp
         tests/session/unit_controller_update.cpp
         tests/workspace/unit_workspace.cpp
         tests/workspace/unit_workspace_config_store.cpp
@@ -656,6 +659,7 @@ if(BUILD_TESTING)
         tests/support/xai_fake_server.cpp
         tests/app/unit_application_config.cpp
         tests/app/unit_r2_database_transfer.cpp
+        tests/app/unit_d1_sync.cpp
         tests/runtime/unit_protocol.cpp
         tests/runtime/unit_wire_fixtures.cpp
         tests/session/unit_session_markdown.cpp

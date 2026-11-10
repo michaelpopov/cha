@@ -27,6 +27,7 @@ OpenedSession open_session(
     }
     PreparedSession prepared = sessions.prepare(identity);
     log_info("Session opened");
+    const std::string sync_machine = config.sync_machine();
     return {
         .label = prepared.label,
         .lease = std::move(prepared.lease),
@@ -44,7 +45,8 @@ OpenedSession open_session(
             std::move(prepared.restore),
             prepared.identity,
             context_epoch,
-            std::move(maintenance_prompt)),
+            std::move(maintenance_prompt),
+            sync_machine),
         .persist_default_character = [&config, forum_id = forum->id](
                                          std::string_view character_id) {
             try { (void)config.apply_forum_default_character(forum_id, character_id); }

@@ -227,7 +227,8 @@ FullSessionId fallback_session(const SessionRepository& sessions) {
 Application::Impl::Impl(
     const ApplicationCommand& selected_command,
     std::string selected_vault_password,
-    RuntimeSettings selected_settings)
+    RuntimeSettings selected_settings,
+    D1Client::Transport d1_transport)
     : command(selected_command),
       active_password(std::move(selected_vault_password)),
       settings(std::move(selected_settings)),
@@ -331,8 +332,10 @@ Application::Impl::Impl(
           [this](std::string_view name, std::string_view arguments,
               const MaintenanceContext& context, const std::atomic_bool& cancelled) {
               return assistant->execute(name, arguments, context, cancelled);
-          }) {
+          }),
+      d1_test_transport(std::move(d1_transport)) {
     store->set_sync_machine(command.machine);
+    vault_maintenance.publish_vault_names();
     vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{
         {std::string(entrance_id), std::string(welcome_id)},
@@ -344,6 +347,7 @@ Application::Impl::Impl(
         store->welcome_path(),
         seed,
         active_password);
+    sessions->set_sync_machine(command.machine);
     mirror = std::make_shared<SessionMirror>();
     if (const auto root = session_mirror_root(command.vault); root && store->is_main()) {
         try {
@@ -387,17 +391,63 @@ Application::Impl::Impl(
         [this] { return state.load() == ApplicationState::running && !stopping_flag; },
         !command.chaweb_host, [this] { return current_vault_.get().name; });
     assistant->bind_runtime(*live_sessions, *sessions);
-    publish_capabilities_locked();
     running = true;
     notified_epoch = live_sessions->context_epoch();
     published_epoch.store(notified_epoch);
     notes->preload_cloud_stores_locked();
+    start_sync_worker(command.chaweb_host ? SyncStart::recover : SyncStart::open);
+    publish_capabilities_locked();
+}
+
+void Application::Impl::start_sync_worker(SyncStart mode) {
+    if (mode == SyncStart::resume && sync_worker && sync_worker->stopped()) return;
+    sync_worker.reset();
+    if (command.machine.empty() || stopping_flag || !store->is_main() || !api_keys->d1())
+        return;
+    try {
+        D1SyncWorker::Config config;
+        config.database_path = store->database_path();
+        config.database_password = active_password;
+        config.vault = current_vault_.get().name;
+        config.machine = command.machine;
+        config.transport = d1_test_transport;
+        config.store = store.get();
+        config.sessions = sessions.get();
+        config.live_sessions = live_sessions.get();
+        config.application_stopping = [this] { return stopping_flag.load(); };
+        config.on_notes_changed = [this] {
+            NotesChanged callback;
+            {
+                const std::lock_guard lock(notes_changed_mutex);
+                callback = notes_changed;
+            }
+            if (callback && state.load() == ApplicationState::running && !stopping_flag)
+                callback(published_epoch.load());
+        };
+        sync_worker = std::make_unique<D1SyncWorker>(std::move(config));
+        if (mode == SyncStart::recover) sync_worker->ensure_local_queue();
+        if (mode == SyncStart::open || mode == SyncStart::recover) {
+            // Opening publishes the new context separately.
+            sync_worker->run_once(false);
+        }
+        sync_worker->start(mode == SyncStart::credentials_saved);
+    } catch (const std::exception& error) {
+        log_warn(std::string("D1 sync startup failed: ") + error.what());
+    }
+}
+
+void Application::Impl::resume_sync_worker() {
+    if (!sync_worker || stopping_flag) return;
+    try {
+        sync_worker->start();
+    } catch (const std::exception& error) {
+        log_warn(std::string("D1 sync restart failed: ") + error.what());
+    }
 }
 
 void Application::Impl::publish_capabilities_locked() {
     unsigned capabilities = 0;
     if (current_vault_.get().modify) capabilities |= can_modify;
-    if (api_keys->r2()) capabilities |= can_transfer_r2;
     published_capabilities.store(capabilities);
 }
 
@@ -405,13 +455,14 @@ ApplicationCapabilities Application::Impl::capabilities() const noexcept {
     const auto epoch = published_epoch.load();
     if (state.load() != ApplicationState::running) return {};
     const unsigned capabilities = published_capabilities.load();
+    const bool r2_available = store->snapshot()->r2_storage().has_value();
     if (state.load() != ApplicationState::running
         || published_epoch.load() != epoch) {
         return {};
     }
     return {
         .can_modify = (capabilities & can_modify) != 0,
-        .can_transfer_r2 = (capabilities & can_transfer_r2) != 0,
+        .can_transfer_r2 = r2_available,
     };
 }
 
@@ -465,6 +516,7 @@ void Application::Impl::take_context_notice(PendingContextNotice& notice) {
 }
 
 Application::Impl::~Impl() {
+    if (sync_worker) sync_worker->stop();
     speech_proxy.stop();
     pending_media.cancel_all();
     xai_voice.cancel_all();
@@ -496,7 +548,8 @@ Application::~Application() {
 std::unique_ptr<Application> Application::open(
     const ApplicationCommand& command,
     std::string vault_password,
-    RuntimeSettings settings) {
+    RuntimeSettings settings,
+    D1Client::Transport d1_transport_for_tests) {
     for (const std::string& warning : command.warnings) log_warn(warning);
     if (command.vault.password_protected && vault_password.empty()) {
         throw VaultPasswordError(
@@ -508,7 +561,8 @@ std::unique_ptr<Application> Application::open(
     }
     return std::unique_ptr<Application>(new Application(
         std::make_unique<Impl>(
-            command, std::move(vault_password), std::move(settings))));
+            command, std::move(vault_password), std::move(settings),
+            std::move(d1_transport_for_tests))));
 }
 
 ApplicationBootstrap Application::bootstrap() {
@@ -1495,6 +1549,97 @@ void Application::delete_r2_storage(std::uint64_t epoch) {
     impl_->publish_capabilities_locked();
 }
 
+std::optional<D1StorageDetail> Application::get_d1_storage(
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_d1_storage(*impl_->api_keys);
+}
+
+D1StorageDetail Application::save_d1_storage(
+    SaveD1StorageRequest request,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    impl_->store->require_main();
+    const auto& machine = impl_->command.machine;
+    if (machine.empty()) {
+        throw ApplicationError(
+            ErrorCode::invalid_argument,
+            "This machine has no name. Add machine to app.toml, then save again.");
+    }
+    const auto saved = impl_->api_keys->d1();
+    if (!request.api_token && saved) request.api_token = saved->api_token;
+    if (request.account_id.empty() || request.database_id.empty()
+        || !request.api_token || request.api_token->empty()) {
+        throw ApplicationError(ErrorCode::invalid_argument, "Invalid D1 credentials.");
+    }
+
+    if (impl_->sync_worker) impl_->sync_worker->stop();
+    D1StorageDetail result;
+    try {
+        D1Client client(
+            {request.account_id, request.database_id, *request.api_token},
+            impl_->d1_test_transport);
+        const std::string table = sync_queue_table(impl_->current_vault_.get().name, machine);
+        if (const auto error = client.create_queue_table(table)) {
+            log_warn("D1 table creation failed: " + error->message);
+            throw ApplicationError(
+                ErrorCode::invalid_argument,
+                "D1 could not be reached. Check the account ID, database ID, and API token.");
+        }
+        impl_->require_admitted(epoch);
+        try {
+            result = settings::save_d1_storage(*impl_->api_keys, request);
+        } catch (const ApplicationError&) {
+            throw;
+        } catch (const std::exception& error) {
+            log_warn(std::string("D1 credential save failed: ") + error.what());
+            throw ApplicationError(ErrorCode::internal_error, "D1 credentials could not be saved.");
+        }
+    } catch (...) {
+        impl_->resume_sync_worker();
+        throw;
+    }
+    impl_->start_sync_worker(Impl::SyncStart::credentials_saved);
+    return result;
+}
+
+void Application::disconnect_d1_storage(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    impl_->store->require_main();
+    const auto old = impl_->api_keys->d1();
+    if (!old) {
+        throw ApplicationError(
+            ErrorCode::not_found, "D1 storage credentials are not configured.");
+    }
+    if (impl_->sync_worker) impl_->sync_worker->stop();
+    try {
+        settings::delete_d1_storage(*impl_->api_keys);
+    } catch (const ApplicationError&) {
+        impl_->resume_sync_worker();
+        throw;
+    } catch (const std::exception& error) {
+        impl_->resume_sync_worker();
+        log_warn(std::string("D1 credential removal failed: ") + error.what());
+        throw ApplicationError(ErrorCode::internal_error, "D1 credentials could not be removed.");
+    }
+    impl_->sync_worker.reset();
+
+    const auto& machine = impl_->command.machine;
+    if (machine.empty()) return;
+    try {
+        D1Client client({old->account_id, old->database_id, old->api_token},
+            impl_->d1_test_transport);
+        const std::string table = sync_queue_table(impl_->current_vault_.get().name, machine);
+        if (const auto error = client.drop_table(table))
+            log_warn("D1 disconnect remote drop failed: " + error->message);
+    } catch (const std::exception& error) {
+        log_warn(std::string("D1 disconnect remote drop failed: ") + error.what());
+    }
+}
+
 OpenAiAuth Application::openai_auth_status(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -1634,6 +1779,11 @@ void Application::set_context_changed(ContextChanged callback) {
     notice.dispatch();
 }
 
+void Application::set_notes_changed(NotesChanged callback) {
+    const std::lock_guard lock(impl_->notes_changed_mutex);
+    impl_->notes_changed = std::move(callback);
+}
+
 void Application::request_shutdown() {
     impl_->stopping_flag = true;
     impl_->state.store(ApplicationState::stopping);
@@ -1674,7 +1824,25 @@ bool Application::join_shutdown(std::chrono::milliseconds grace) {
         : std::chrono::milliseconds::zero();
     joined = impl_->live_sessions->join_shutdown(remaining) && joined;
     joined = impl_->providers.shutdown_until(deadline) && joined;
-    if (joined) impl_->sessions->release_pending();
+    std::unique_ptr<D1SyncWorker> worker;
+    if (joined) {
+        worker = std::move(impl_->sync_worker);
+        impl_->sessions->release_pending();
+    }
+    lifecycle.unlock();
+    if (worker) {
+        worker->stop();
+        // The final send runs after local writers have finished, without a
+        // deadline for the pass. Individual requests keep their timeouts.
+        if (!impl_->unusable) {
+            try {
+                worker->flush_send();
+            } catch (const std::exception& error) {
+                log_warn(std::string("D1 sync final send failed: ") + error.what());
+            }
+        }
+    }
+    lifecycle.lock();
     impl_->stopped = true;
     impl_->running = false;
     impl_->state.store(ApplicationState::unavailable);

@@ -231,7 +231,8 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
     SessionRestore restored,
     FullSessionId identity,
     std::uint64_t context_epoch,
-    std::shared_ptr<const std::string> maintenance_prompt) {
+    std::shared_ptr<const std::string> maintenance_prompt,
+    std::string sync_machine) {
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(read_workspace),
         std::move(read_note),
@@ -240,7 +241,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
         std::move(initial_default_persona_id), std::move(database_path),
         session_key, std::move(database_password), providers,
         std::move(notifier), std::move(restored), {}, std::move(identity), {},
-        context_epoch, std::move(maintenance_prompt)));
+        context_epoch, std::move(maintenance_prompt), std::move(sync_machine)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_workspace_for_testing(
@@ -294,7 +295,8 @@ SessionController::SessionController(
     FullSessionId identity,
     std::shared_ptr<Providers> providers_owner,
     std::uint64_t context_epoch,
-    std::shared_ptr<const std::string> maintenance_prompt)
+    std::shared_ptr<const std::string> maintenance_prompt,
+    std::string sync_machine)
     : read_workspace_(std::move(read_workspace)),
       summary_tool_([path, database_password, forum_id = identity.forum_id](
           std::string_view name, std::string_view args, const std::atomic_bool& cancellation) {
@@ -336,6 +338,7 @@ SessionController::SessionController(
     if (!notifier_) throw std::invalid_argument("Session controller requires a wake notifier");
     if (!read_note_) throw std::invalid_argument("Session controller requires a note reader");
     if (!read_item_) throw std::invalid_argument("Session controller requires an item reader");
+    if (!sync_machine.empty()) journal_.set_sync_machine(sync_machine);
     initialize(std::move(restored), initial_default_persona_id);
 }
 

@@ -33,6 +33,8 @@ public:
         std::string_view display_name) const;
     [[nodiscard]] std::optional<R2StorageKey> r2() const;
     [[nodiscard]] std::optional<R2StorageInfo> r2_info() const;
+    [[nodiscard]] std::optional<D1StorageKey> d1() const;
+    [[nodiscard]] std::optional<D1StorageInfo> d1_info() const;
 
     ApiKeyInfo create(
         std::string_view display_name,
@@ -51,6 +53,12 @@ public:
         std::string_view access_key_id,
         std::optional<std::string_view> secret_key);
     void remove_r2();
+    D1StorageInfo save_d1(
+        std::string_view display_name,
+        std::string_view account_id,
+        std::string_view database_id,
+        std::optional<std::string_view> api_token);
+    void remove_d1();
     void migrate_vault();
 
 private:

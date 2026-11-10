@@ -312,3 +312,6 @@ tree state, tests, any blocker, and whether block 2 may start.
 - Validation commands and outcomes: cmake --preset ninja; cmake --build --preset ninja (clean); new tests tests/storage/unit_sync.cpp registered in cha_tests; ctest -R "Sync|D1Client" 43/43 pass; full ctest -j8 (excluding itest/live) 1714/1714 pass with only the 2 pre-existing live tests skipped. Real-database apply paths, rollback, migration/reopen, protected-vault schema path, and no-D1 operation covered; loopback curl exercised via MockHttpServer.
 - Decisions, deviations, or unresolved blockers: import into an empty database still brings no D1 rows (R56: import neither connects nor disconnects; full copies/R2 carry credentials) — tests establish D1 via direct row insert before store open, matching prior Save output. D1Client failure injection uses an injected Transport seam plus one real-curl loopback test instead of socket-level failure cases. No reconciliation machinery added; accepted risks unchanged.
 - Block 2 ready to start: No — phase-0 live checks are unresolved; local storage/transport/record/apply operations are available.
+
+COMPLETED
+

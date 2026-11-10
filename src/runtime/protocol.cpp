@@ -556,6 +556,16 @@ void to_json(nlohmann::json& json, const R2StorageDetail& value) {
     };
 }
 
+void to_json(nlohmann::json& json, const D1StorageDetail& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"account_id", value.account_id},
+        {"database_id", value.database_id},
+        {"has_api_token", value.has_api_token},
+    };
+}
+
 void to_json(nlohmann::json& json, const OpenAiAuth& value) {
     json = {{"status", value.status}};
     put_optional(json, "user_code", value.user_code);

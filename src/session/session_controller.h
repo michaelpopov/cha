@@ -61,7 +61,8 @@ public:
         SessionRestore restored,
         FullSessionId identity,
         std::uint64_t context_epoch = 0,
-        std::shared_ptr<const std::string> maintenance_prompt = {});
+        std::shared_ptr<const std::string> maintenance_prompt = {},
+        std::string sync_machine = {});
 
     // Tests use the same Workspace data path, but may own an injected provider
     // executor and use an activation fault hook.
@@ -189,7 +190,8 @@ private:
         FullSessionId identity = {},
         std::shared_ptr<Providers> providers_owner = {},
         std::uint64_t context_epoch = 0,
-        std::shared_ptr<const std::string> maintenance_prompt = {});
+        std::shared_ptr<const std::string> maintenance_prompt = {},
+        std::string sync_machine = {});
 
     void initialize(SessionRestore restored, std::string_view initial_persona_id);
     [[nodiscard]] SharedCharacterDefinition definition_for(

@@ -122,11 +122,13 @@ public:
     // Fences new repository operations and waits for existing ones. Live
     // actors write through SessionJournal and must be stopped separately.
     [[nodiscard]] MaintenanceGuard reserve_maintenance();
+    [[nodiscard]] std::shared_ptr<SessionLease> reserve_for_sync(const FullSessionId& identity) const;
     void synchronize_forums() const;
     void synchronize_forums(const Workspace& workspace) const;
 
     [[nodiscard]] std::filesystem::path database_path() const;
     [[nodiscard]] std::shared_ptr<const Workspace> workspace() const;
+    void set_sync_machine(std::string machine);
     void release_pending();
     void release_pending(const FullSessionId& identity) const;
 
@@ -147,6 +149,7 @@ private:
     FullSessionId temporary_identity_;
     std::string temporary_label_;
     std::filesystem::path temporary_database_path_;
+    std::string sync_machine_;
     mutable std::mutex leases_mutex_;
     mutable std::map<FullSessionId, std::weak_ptr<SessionLease>> leases_;
     mutable std::map<FullSessionId, std::shared_ptr<SessionLease>> pending_;

@@ -3,6 +3,7 @@
 #include "app/application_internal.h"
 #include "app/workspace_operations.h"
 #include "storage/sqlite_storage.h"
+#include "storage/sync_storage.h"
 #include "storage/workspace_session_database.h"
 #include "util/logging.h"
 #include "util/path_name.h"
@@ -253,13 +254,18 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
     app.notes->cancel_compressions_locked();
     app.notes->cancel_summaries_locked();
     app.notes->interrupt_folder_stores_locked();
-    app.state.store(ApplicationState::maintenance);
+    auto expected = ApplicationState::running;
+    if (!app.state.compare_exchange_strong(expected, ApplicationState::maintenance))
+        throw std::runtime_error("CHA application is unavailable");
+    // Stop receiving before draining the local writers.
+    if (app.sync_worker) app.sync_worker->stop();
     GlobalMaintenanceResult reserved = [&] {
         try {
             return app.live_sessions->reserve_global_maintenance(
                 maintenance_grace());
         } catch (...) {
-            app.state.store(ApplicationState::running);
+            publish_epoch(notice, ApplicationState::running);
+            app.resume_sync_worker();
             throw;
         }
     }();
@@ -274,6 +280,7 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         app.live_sessions->reload_session(
             {std::string(entrance_id), std::string(welcome_id)},
             std::chrono::steady_clock::now() + maintenance_grace());
+        app.resume_sync_worker();
         return false;
     }
     global_maintenance = std::move(
@@ -290,6 +297,14 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         return false;
     }
     app.sessions->release_pending();
+    // Controllers have finished; outgoing hooks had database access.
+    // Collect flags and attempt the final send before the database closes.
+    // Failures retain unsent work; maintenance still proceeds.
+    try {
+        if (app.sync_worker) app.sync_worker->flush_send();
+    } catch (const std::exception& error) {
+        log_warn(std::string("D1 sync maintenance flush failed: ") + error.what());
+    }
     return true;
 }
 
@@ -297,6 +312,7 @@ void Application::Impl::VaultMaintenance::cancel_maintenance_locked(PendingConte
     global_maintenance.reset();
     app.publish_capabilities_locked();
     publish_epoch(notice, ApplicationState::running);
+    app.resume_sync_worker();
     if (app.state.load() != ApplicationState::running
         || app.stopping_flag.load()) {
         return;
@@ -309,13 +325,16 @@ void Application::Impl::VaultMaintenance::cancel_maintenance_locked(PendingConte
     }
 }
 
-void Application::Impl::VaultMaintenance::end_maintenance_locked(bool available, PendingContextNotice& notice) {
+void Application::Impl::VaultMaintenance::end_maintenance_locked(
+    bool available, PendingContextNotice& notice, SyncStart sync_start) {
     global_maintenance.reset();
     if (!available) {
+        app.sync_worker.reset();
         app.unusable = true;
         publish_epoch(notice, ApplicationState::unavailable);
         return;
     }
+    app.start_sync_worker(sync_start);
     app.publish_capabilities_locked();
     publish_epoch(notice, ApplicationState::running);
     if (app.state.load() != ApplicationState::running
@@ -393,58 +412,11 @@ void Application::Impl::VaultMaintenance::delete_forum(
     notice.dispatch();
 }
 
-SyncConfigApplyOutcome Application::Impl::VaultMaintenance::apply_sync_config_edit(
-    const std::vector<ConfigFile>& set_rows,
-    const std::vector<std::string>& delete_names,
-    std::uint64_t epoch) {
-    PendingContextNotice notice;
-    SyncConfigApplyOutcome result;
-    try {
-        const std::unique_lock lifecycle(app.lifecycle_mutex, std::try_to_lock);
-        if (!lifecycle || app.state.load() != ApplicationState::running
-            || app.stopping_flag || app.vault_upload_running
-            || app.published_epoch.load() != epoch) {
-            return {.retry = true};
-        }
-        try {
-            result = app.store->apply_sync_config_edit(set_rows, delete_names, [&] {
-                return drain_for_maintenance(notice, false);
-            });
-            if (global_maintenance) {
-                if (result.applied) {
-                    app.sessions->synchronize_forums(*app.store->snapshot());
-                    rebuild_mirror(session_mirror_root(app.current_vault_.get()));
-                    end_maintenance_locked(true, notice);
-                } else {
-                    cancel_maintenance_locked(notice);
-                }
-            }
-        } catch (const WorkspaceRestartRequiredError&) {
-            end_maintenance_locked(false, notice);
-            throw;
-        } catch (const SessionBusyError&) {
-            if (global_maintenance) cancel_maintenance_locked(notice);
-            result = {.retry = true};
-        } catch (...) {
-            if (global_maintenance) {
-                if (result.applied) end_maintenance_locked(false, notice);
-                else cancel_maintenance_locked(notice);
-            }
-            throw;
-        }
-    } catch (...) {
-        notice.dispatch();
-        throw;
-    }
-    notice.dispatch();
-    return result;
-}
-
 template<typename Operation>
 auto Application::Impl::VaultMaintenance::maintain_database(
     std::uint64_t epoch,
     Operation operation,
-    bool cancel_audio) {
+    bool cancel_audio, SyncStart sync_start) {
     PendingContextNotice notice;
     using Result = std::invoke_result_t<Operation,
         WorkspaceConfigStore::MaintenanceGuard&, SessionRepository::MaintenanceGuard&>;
@@ -458,32 +430,20 @@ auto Application::Impl::VaultMaintenance::maintain_database(
                 "Could not pause active sessions for database maintenance");
         }
         try {
-            auto database = app.store->reserve_maintenance();
-            SessionRepository::MaintenanceGuard repository =
-                app.sessions->reserve_maintenance();
-            database.close();
-            repository.checkpoint();
-            bool reopened = false;
-            try {
-                result.emplace(operation(database, repository));
-                reopen(database, repository);
-                reopened = true;
-                end_maintenance_locked(true, notice);
-            } catch (...) {
-                if (!reopened) {
-                    try {
-                        reopen_after_failure(database, repository);
-                        end_maintenance_locked(true, notice);
-                    } catch (...) {
-                        end_maintenance_locked(false, notice);
-                        error = std::current_exception();
-                    }
-                    if (!error) error = std::current_exception();
-                } else {
-                    end_maintenance_locked(false, notice);
+            {
+                auto database = app.store->reserve_maintenance();
+                auto repository = app.sessions->reserve_maintenance();
+                database.close();
+                try {
+                    repository.checkpoint();
+                    result.emplace(operation(database, repository));
+                } catch (...) {
                     error = std::current_exception();
+                    reopen_after_failure(database, repository);
                 }
+                if (!error) reopen(database, repository);
             }
+            end_maintenance_locked(true, notice, error ? SyncStart::resume : sync_start);
         } catch (const WorkspaceRestartRequiredError&) {
             end_maintenance_locked(false, notice);
             throw;
@@ -577,6 +537,20 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
                 candidate.data,
                 source_password,
                 create.password);
+            // Clean the destination queue/flags; retain source pending work.
+            // The generic copy helper is unchanged for maintenance/password use.
+            try {
+                storage::SqliteDatabase fresh(
+                    candidate.data, storage::SqliteDatabase::Mode::read_write,
+                    create.password);
+                storage::SqliteTransaction transaction(fresh);
+                sync_clear_outgoing(fresh);
+                transaction.commit();
+            } catch (const std::exception& error) {
+                log_warn(
+                    std::string("New vault sync cleanup failed: ") + error.what());
+                throw;
+            }
         } else {
             create_workspace_session_database_from_configuration(
                 app.current_vault_.get().data,
@@ -876,12 +850,10 @@ MaintenanceResult Application::Impl::VaultMaintenance::switch_vault(
                         "Legacy API-key migration failed after switching vault: "
                         + std::string(error.what()));
                 }
-                end_maintenance_locked(true, notice);
+                end_maintenance_locked(true, notice, SyncStart::open);
             } catch (...) {
                 if (app.unusable) {
-                    global_maintenance.reset();
-                    publish_epoch(
-                        notice, ApplicationState::unavailable);
+                    end_maintenance_locked(false, notice);
                 } else if (
                     app.state.load() == ApplicationState::maintenance) {
                     if (database_closed) {
@@ -1009,6 +981,18 @@ R2DatabaseUpload Application::Impl::VaultMaintenance::prepare_upload(
                 ErrorCode::invalid_argument, "The active vault has no R2 key");
             vault = app.current_vault_.get();
             storage = *r2;
+            // Writers are excluded; the maintenance drain already collected
+            // flags and attempted one send. Refuse while pending work remains.
+            {
+                storage::SqliteDatabase pending_db(
+                    vault.data, storage::SqliteDatabase::Mode::read_only,
+                    app.active_password);
+                if (sync_has_pending(pending_db)) {
+                    throw ApplicationError(
+                        ErrorCode::invalid_argument,
+                        "Changes are not sent to D1 yet. Try again when D1 can be reached.");
+                }
+            }
             R2DatabaseUpload upload(vault.data, vault.source, app.active_password);
             app.vault_upload_running = true;
             reserved = true;
@@ -1151,7 +1135,7 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
             app.command.vault = *downloaded_vault;
             publish_vault(*downloaded_vault);
             return transferred;
-        });
+        }, true, SyncStart::recover);
     if (!downloaded_vault) {
         throw std::logic_error("Downloaded vault definition was not published");
     }

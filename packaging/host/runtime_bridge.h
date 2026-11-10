@@ -121,7 +121,8 @@ int32_t cha_runtime_read_resource_chunk(
 void cha_bytes_free(void* value);
 void cha_runtime_request_shutdown(ChaRuntime* runtime);
 // Joins the pump thread and application owners. Do not call from the UI
-// thread. Returns 1 when every owner finished inside grace_ms.
+// thread. The final D1 send runs after the grace-limited joins and can
+// outlast grace_ms. Returns 1 when shutdown is complete.
 int32_t cha_runtime_join_shutdown(ChaRuntime* runtime, int32_t grace_ms);
 
 void cha_string_free(char* value);

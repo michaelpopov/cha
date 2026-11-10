@@ -52,6 +52,16 @@ R2StorageInfo info(const R2StorageKey& key) {
     };
 }
 
+D1StorageInfo info(const D1StorageKey& key) {
+    return {
+        .id = key.id,
+        .display_name = key.display_name,
+        .account_id = key.account_id,
+        .database_id = key.database_id,
+        .has_api_token = !key.api_token.empty(),
+    };
+}
+
 ApiKeyInfo published_api_key(const WorkspaceConfigStore& config, std::string_view id) {
     const std::shared_ptr<const Workspace> current = config.snapshot();
     const SavedApiKey* const key = current->find_api_key(id);
@@ -206,6 +216,13 @@ std::optional<R2StorageKey> ApiKeyStore::r2() const {
     return current->r2_storage();
 }
 
+D1StorageInfo published_d1_storage(const WorkspaceConfigStore& config) {
+    const std::shared_ptr<const Workspace> current = config.snapshot();
+    const std::optional<D1StorageKey>& key = current->d1_storage();
+    if (!key) throw std::runtime_error("D1 storage is not configured");
+    return info(*key);
+}
+
 std::optional<R2StorageInfo> ApiKeyStore::r2_info() const {
     const std::shared_ptr<const Workspace> current = config_->snapshot();
     const std::optional<R2StorageKey>& key = current->r2_storage();
@@ -311,6 +328,64 @@ void ApiKeyStore::remove_r2() {
         throw std::out_of_range("R2 storage credentials are not configured");
     }
     config_->apply_r2_storage_delete();
+}
+
+std::optional<D1StorageKey> ApiKeyStore::d1() const {
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
+    return current->d1_storage();
+}
+
+std::optional<D1StorageInfo> ApiKeyStore::d1_info() const {
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
+    const std::optional<D1StorageKey>& key = current->d1_storage();
+    return key ? std::optional<D1StorageInfo>(info(*key)) : std::nullopt;
+}
+
+D1StorageInfo ApiKeyStore::save_d1(
+    std::string_view display_name,
+    std::string_view account_id,
+    std::string_view database_id,
+    std::optional<std::string_view> api_token) {
+    const std::lock_guard lock(mutex_);
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
+    const std::optional<D1StorageKey>& saved = current->d1_storage();
+    if (!saved && !api_token) {
+        throw std::invalid_argument("D1 API token is required");
+    }
+    std::string id;
+    if (saved) {
+        id = saved->id;
+    } else {
+        const std::uint64_t assigned_id = current->next_api_key_id();
+        if (assigned_id
+            >= static_cast<std::uint64_t>(
+                std::numeric_limits<std::int64_t>::max())) {
+            throw std::runtime_error("API key ID space exhausted");
+        }
+        id = "api_key_" + std::to_string(assigned_id);
+    }
+    D1StorageKey key{
+        .id = std::move(id),
+        .display_name = std::string(display_name),
+        .account_id = std::string(account_id),
+        .database_id = std::string(database_id),
+        .api_token = api_token ? std::string(*api_token) : saved->api_token,
+    };
+    if (saved) {
+        config_->apply_d1_storage_update(key);
+    } else {
+        config_->apply_d1_storage_create(key);
+    }
+    return published_d1_storage(*config_);
+}
+
+void ApiKeyStore::remove_d1() {
+    const std::lock_guard lock(mutex_);
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
+    if (!current->d1_storage()) {
+        throw std::out_of_range("D1 storage credentials are not configured");
+    }
+    config_->apply_d1_storage_delete();
 }
 
 void ApiKeyStore::migrate_vault() {

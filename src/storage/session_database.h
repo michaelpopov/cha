@@ -89,6 +89,9 @@ public:
     SessionJournal(const SessionJournal&) = delete;
     SessionJournal& operator=(const SessionJournal&) = delete;
 
+    // Machine name from app.toml for D1 sync. Empty disables recording.
+    void set_sync_machine(std::string machine);
+
     void start_turn(RequestId request_id, const TranscriptEntry& prompt);
     void record_entry(const TranscriptEntry& entry);
     // Stores the note copy and its notice in one transaction.

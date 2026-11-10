@@ -1595,7 +1595,8 @@ struct WorkspaceConfigStore::Impl {
         UndoUpdate undo_update,
         std::optional<UndoRecord> new_undo = {},
         bool record_sync = true,
-        const std::set<std::string>* surviving_forums = nullptr) {
+        const std::set<std::string>* surviving_forums = nullptr,
+        bool clear_outgoing = false) {
         const std::lock_guard publication_lock(snapshot_mutex);
         bool notes_changed = false;
         const bool config_changed = committed_rows != rows;
@@ -1626,7 +1627,15 @@ struct WorkspaceConfigStore::Impl {
                     deleted_forum_id);
                 delete_forum.run();
             }
-            if (surviving_forums) prune_orphan_sessions(*database, *surviving_forums);
+            if (surviving_forums) {
+                prune_orphan_sessions(*database, *surviving_forums);
+                for (const auto& [forum_id, name] : candidate_forums) {
+                    database->prepare(
+                        "INSERT INTO forums (forum_id) VALUES (?1) ON CONFLICT DO NOTHING",
+                        forum_id).run();
+                }
+            }
+            if (clear_outgoing) sync_clear_outgoing(*database);
             if (record_sync) record_config_edit(*database, sync_machine, committed_rows, rows);
             if (consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
                 fail_path("Forced SQLite commit failure");
@@ -1648,7 +1657,7 @@ struct WorkspaceConfigStore::Impl {
     WorkspaceConfigEditResult edit(
         Writer&& writer,
         std::string_view deleted_forum_id = {}, bool exclusive = false,
-        bool record_sync = true) {
+        bool record_sync = true, bool clear_outgoing = false) {
         const std::lock_guard lock(mutex);
         require_main();
         exclusive = exclusive || !deleted_forum_id.empty();
@@ -1682,7 +1691,7 @@ struct WorkspaceConfigStore::Impl {
 
             commit_and_publish(
                 committed_rows, rows, std::move(candidate), deleted_forum_id,
-                UndoUpdate::clear, {}, record_sync);
+                UndoUpdate::clear, {}, record_sync, nullptr, clear_outgoing);
             return {.affected_forum_ids = std::move(affected_forum_ids)};
         };
         if (!exclusive) return perform();
@@ -2281,6 +2290,11 @@ WorkspaceConfigStore::reserve_maintenance() {
         std::make_unique<MaintenanceGuard::Impl>(*impl_));
 }
 
+std::string WorkspaceConfigStore::sync_machine() const {
+    const std::lock_guard lock(impl_->mutex);
+    return impl_->sync_machine;
+}
+
 void WorkspaceConfigStore::set_sync_machine(std::string machine) {
     const std::lock_guard lock(impl_->mutex);
     impl_->sync_machine = std::move(machine);
@@ -2790,6 +2804,13 @@ void WorkspaceConfigStore::apply_d1_storage_update(const D1StorageKey& key) {
         editor.write_d1_storage(key);
         return std::vector<std::string>{};
     }, {}, false, false);
+}
+
+void WorkspaceConfigStore::apply_d1_storage_delete() {
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.delete_d1_storage();
+        return std::vector<std::string>{};
+    }, {}, false, false, true);
 }
 
 void WorkspaceConfigStore::apply_key_migration(

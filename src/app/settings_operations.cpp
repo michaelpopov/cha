@@ -308,6 +308,16 @@ R2StorageDetail r2_storage_detail(const R2StorageInfo& key) {
     };
 }
 
+D1StorageDetail d1_storage_detail(const D1StorageInfo& key) {
+    return {
+        .id = key.id,
+        .display_name = key.display_name,
+        .account_id = key.account_id,
+        .database_id = key.database_id,
+        .has_api_token = key.has_api_token,
+    };
+}
+
 OpenAiAuth openai_auth_from(const OpenAiOAuthSnapshot& snapshot) {
     OpenAiAuth result;
     result.status = std::string(status_name(snapshot.state));
@@ -972,6 +982,45 @@ void delete_r2_storage(ApiKeyStore& api_keys) {
             fail(
                 ErrorCode::not_found,
                 "R2 storage credentials are not configured.");
+        }
+        return 0;
+    });
+}
+
+std::optional<D1StorageDetail> get_d1_storage(
+    const ApiKeyStore& api_keys) {
+    const std::optional<D1StorageInfo> key = api_keys.d1_info();
+    if (!key) return std::nullopt;
+    return d1_storage_detail(*key);
+}
+
+D1StorageDetail save_d1_storage(
+    ApiKeyStore& api_keys,
+    const SaveD1StorageRequest& request) {
+    return with_settings_edit([&] {
+        try {
+            const std::optional<std::string_view> token = request.api_token
+                ? std::optional<std::string_view>(*request.api_token)
+                : std::nullopt;
+            return d1_storage_detail(api_keys.save_d1(
+                request.display_name,
+                request.account_id,
+                request.database_id,
+                token));
+        } catch (const std::invalid_argument&) {
+            fail(ErrorCode::invalid_argument, "Invalid D1 credentials.");
+        }
+    });
+}
+
+void delete_d1_storage(ApiKeyStore& api_keys) {
+    with_settings_edit([&] {
+        try {
+            api_keys.remove_d1();
+        } catch (const std::out_of_range&) {
+            fail(
+                ErrorCode::not_found,
+                "D1 storage credentials are not configured.");
         }
         return 0;
     });
